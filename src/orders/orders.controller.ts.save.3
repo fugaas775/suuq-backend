@@ -1,0 +1,85 @@
+import { Controller, Post, Patch, Body, Get, Param, Req, ParseIntPipe, Query, UseGuards, Request } from '@nestjs/common';
+import { OrdersService } from './orders.service';
+import { AuthGuard } from '@nestjs/passport';
+import { RolesGuard } from '../common/guards/roles.guard';
+import { Roles } from '../common/decorators/roles.decorator';
+import { OrderStatus } from './order.entity';
+
+@Controller('orders')
+export class OrdersController {
+  constructor(private readonly ordersService: OrdersService) {}
+
+  @Post()
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @Roles('CUSTOMER')
+  create(@Body() body: any, @Request() req: any) {
+    const customerEmail = req.user.email;
+    return this.ordersService.create({ ...body, customerEmail });
+  }
+
+  @Get('my-orders')
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @Roles('CUSTOMER')
+  getCustomerOrders(
+   @Req() req: any,
+   @Query('status') status?: OrderStatus
+ ) {
+    return this.ordersService.getCustomerOrders(req.user.email, status);
+  }
+  
+  
+
+  @Get('vendor-orders')
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @Roles('VENDOR')
+  findVendorOrders(@Request() req: any) {
+    return this.ordersService.findByVendorId(req.user.id);
+  }
+
+  @Get('vendor-earnings')
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @Roles('VENDOR')
+  getVendorEarnings(@Request() req: any) {
+    return this.ordersService.getVendorEarnings(req.user.id);
+  }
+
+  @Get(':id')
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  getOne(@Param('id') id: string, @Request() req: any) {
+    return this.ordersService.findOneByRole(+id, req.user);
+  }
+ 
+  @Get('sales/summary')
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @Roles('ADMIN')
+  getAdminSummary(@Query('from') from?: string, @Query('to') to?: string) {
+    return this.ordersService.getAdminSalesSummary(from, to);
+  }
+
+
+  @Get('sales/top-products')
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @Roles('ADMIN', 'VENDOR')
+  getTopProducts(@Request() req: any) {
+    return this.ordersService.getTopProducts(req.user);
+  }
+
+  @Patch(':id/status')
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @Roles('ADMIN', 'VENDOR')
+  updateOrderStatus(
+    @Param('id', ParseIntPipe) id: number,
+    @Body('status') status: OrderStatus,
+    @Req() req: any // ✅ fix: inject request object properly
+ ) {
+   return this.ordersService.updateStatus(id, status);
+ }
+
+
+
+
+}
+
+
+
+

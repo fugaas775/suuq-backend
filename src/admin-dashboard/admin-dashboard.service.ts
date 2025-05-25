@@ -1,0 +1,55 @@
+import { Injectable } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Between, Repository } from 'typeorm';
+import { User } from '../users/user.entity';
+import { Order } from '../orders/order.entity';
+import { Withdrawal } from '../withdrawals/entities/withdrawal.entity';
+
+@Injectable()
+export class AdminDashboardService {
+  constructor(
+    @InjectRepository(User)
+    private readonly userRepo: Repository<User>,
+    @InjectRepository(Order)
+    private readonly orderRepo: Repository<Order>,
+    @InjectRepository(Withdrawal)
+    private readonly withdrawalRepo: Repository<Withdrawal>,
+  ) {}
+
+  async getSummary({ from, to }: { from?: string; to?: string }) {
+    const dateFilter = from && to ? {
+      createdAt: Between(new Date(from), new Date(to + 'T23:59:59')),
+    } : {};
+
+    const [totalvendors, totalcustomers, totalorders, totalrevenue, totalwithdrawals] = await Promise.all([
+      this.userRepo.count({ where: { role: 'VENDOR' } }),
+      this.userRepo.count({ where: { role: 'CUSTOMER' } }),
+      this.orderRepo.count({ where: dateFilter }),
+      this.orderRepo
+        .createQueryBuilder('order')
+        .leftJoin('order.product', 'product')
+        .where(dateFilter)
+        .select('SUM(order.quantity * product.price)', 'revenue')
+        .getRawOne()
+        .then(res => Number(res.revenue || 0)),
+      this.withdrawalRepo
+        .createQueryBuilder('w')
+        .where('w.status = :status', { status: 'APPROVED' })
+        .andWhere(dateFilter.createdAt ? 'w.createdAt BETWEEN :from AND :to' : '1=1', {
+          from: from ? new Date(from) : undefined,
+          to: to ? new Date(to + 'T23:59:59') : undefined,
+        })
+        .select('SUM(w.amount)', 'total')
+        .getRawOne()
+        .then(res => Number(res.total || 0)),
+    ]);
+
+    return {
+      totalvendors,
+      totalcustomers,
+      totalorders,
+      totalrevenue,
+      totalwithdrawals,
+    };
+  }
+}
