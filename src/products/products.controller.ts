@@ -1,9 +1,25 @@
-import { Body, Controller, Post, Get, Query, Patch, ParseIntPipe, Req, Delete, Param, UseGuards, Request } from '@nestjs/common';
+import {
+  Controller,
+  Post,
+  Get,
+  Patch,
+  Delete,
+  Param,
+  Body,
+  Query,
+  Req,
+  UseGuards,
+  ParseIntPipe,
+  BadRequestException,
+} from '@nestjs/common';
 import { ProductsService } from './products.service';
-import { Roles } from '../common/decorators/roles.decorator';
-import { RolesGuard } from '../common/guards/roles.guard';
-import { AuthGuard } from '@nestjs/passport';
 import { UpdateProductDto } from './dto/update-product.dto';
+import { AuthGuard } from '@nestjs/passport';
+import { RolesGuard } from '../common/guards/roles.guard';
+import { Roles } from '../common/decorators/roles.decorator';
+import { plainToInstance } from 'class-transformer';
+import { ProductResponseDto } from './dto/product-response.dto';
+import { CreateProductDto } from './dto/create-product.dto';
 
 @Controller('products')
 export class ProductsController {
@@ -12,67 +28,84 @@ export class ProductsController {
   @Post()
   @UseGuards(AuthGuard('jwt'), RolesGuard)
   @Roles('VENDOR')
-  create(@Body() body: any, @Request() req: any) {
+   create(@Body() createProductDto: CreateProductDto, @Req() req: any) {
    return this.productsService.create({
-     name: body.name,
-     price: body.price,
-     description: body.description,
-     vendor: { id: req.user.id } as any, // ✅ safely bypasses TS check
-   });
+    ...createProductDto,
+    vendorId: req.user.id,
+    });
   }
 
   @Get()
-findAll(
-  @Query('vendorId') vendorId?: string,
-  @Query('featured') featured?: string,
-  @Query('per_page') perPage?: string,
-  @Query('page') page?: string,
-  @Query('category') category?: string,
-  @Query('search') search?: string,
-  @Query('orderby') orderby?: string,
-) {
-  if (vendorId) {
-    return this.productsService.findByVendorId(+vendorId);
+  async findAll(
+    @Query('per_page') perPageQuery?: string,
+    @Query('page') pageQuery?: string,
+    @Query('search') search?: string,
+    @Query('categoryId') categoryId?: string,
+    @Query('featured') featured?: string,
+    @Query('sort') sort?: string,
+    @Query('categorySlug') categorySlug?: string,
+    @Query('tag') tag?: string,
+  ) {
+    const perPage = parseInt(perPageQuery || '10', 10);
+    const page = parseInt(pageQuery || '1', 10);
+    const catId = categoryId ? parseInt(categoryId, 10) : undefined;
+    const isFeatured =
+      featured === 'true' ? true : featured === 'false' ? false : undefined;
+
+    if (isNaN(perPage) || isNaN(page)) {
+      throw new BadRequestException('Invalid pagination values');
+    }
+
+    const result = await this.productsService.findFiltered({
+      perPage,
+      page,
+      search,
+      categoryId: catId,
+      featured: isFeatured,
+      sort,
+      categorySlug,
+      tags: tag, // ✅ mapped correctly
+    });
+
+    return {
+      ...result,
+      items: plainToInstance(ProductResponseDto, result.items),
+    };
   }
 
-  return this.productsService.findFiltered({
-    featured: featured === 'true',
-    perPage: +(perPage ?? 10),
-    page: +(page ?? 1),
-    categoryId: category ? +category : undefined,
-    search: search || '',
-    orderby: orderby || 'date',
-  });
-}
+  @Get('suggest')
+  async suggest(@Query('q') q: string) {
+    return this.productsService.suggestNames(q); // ✅ now calls service
+  }
 
-
-  
+  @Get('/tags/suggest')
+  suggestTags(@Query('q') q: string) {
+    return this.productsService.suggestNames(q);
+  }
 
   @Get(':id')
-  findOne(@Param('id') id: string) {
-   return this.productsService.findOne(+id);
+  findOne(@Param('id', ParseIntPipe) id: number) {
+    return this.productsService.findOne(id);
   }
 
   @Patch(':id')
   @UseGuards(AuthGuard('jwt'), RolesGuard)
   @Roles('VENDOR')
   updateProduct(
-   @Param('id', ParseIntPipe) id: number,
-   @Body() updateProductDto: UpdateProductDto,
-   @Req() req: any,
- ) {
-   return this.productsService.updateProduct(id, updateProductDto, req.user);
+    @Param('id', ParseIntPipe) id: number,
+    @Body() updateProductDto: UpdateProductDto,
+    @Req() req: any,
+  ) {
+    return this.productsService.updateProduct(id, updateProductDto, req.user);
   }
 
   @Delete(':id')
   @UseGuards(AuthGuard('jwt'), RolesGuard)
   @Roles('VENDOR')
   deleteProduct(
-   @Param('id', ParseIntPipe) id: number,
-   @Req() req: any,
- ) {
-   return this.productsService.deleteProduct(id, req.user);
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: any,
+  ) {
+    return this.productsService.deleteProduct(id, req.user);
   }
-
 }
-

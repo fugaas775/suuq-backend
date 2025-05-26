@@ -1,4 +1,4 @@
-import { IsString, IsNumber, IsOptional } from 'class-validator';
+import { IsString, IsNumber, IsOptional, IsArray } from 'class-validator';
 
 export class CreateProductDto {
   @IsString()
@@ -10,5 +10,12 @@ export class CreateProductDto {
   @IsOptional()
   @IsString()
   description?: string;
+  
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true }) // Tag names as strings
+  tags?: string[];
+
+
 }
 

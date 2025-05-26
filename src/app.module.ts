@@ -15,6 +15,11 @@ import { AdminDeliveriesModule } from './admin/deliveries/deliveries.module';
 import { CategoriesModule } from './categories/categories.module';
 import { MediaModule } from './media/media.module';
 import { SettingsModule } from './settings/settings.module';
+import { Product } from './products/entities/product.entity';
+import { Category } from './categories/category.entity';
+import { User } from './users/user.entity';
+import { MediaEntity } from './media/media.entity';
+import { Tag } from './tags/tag.entity';
 
 @Module({
   imports: [
@@ -29,7 +34,9 @@ import { SettingsModule } from './settings/settings.module';
       username: process.env.DB_USERNAME,
       password: process.env.DB_PASSWORD,
       database: process.env.DB_NAME,
-      autoLoadEntities: true,
+      autoLoadEntities: false,
+      synchronize: false,
+      entities: [User, Product, Category, MediaEntity, Tag],
     }),
     UsersModule,
     AuthModule,

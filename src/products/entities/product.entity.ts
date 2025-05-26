@@ -1,11 +1,7 @@
-import {
-  Entity,
-  PrimaryGeneratedColumn,
-  Column,
-  ManyToOne,
-  JoinColumn,
-} from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, ManyToMany, JoinTable, CreateDateColumn } from 'typeorm';
 import { User } from '../../users/user.entity';
+import { Category } from '../../categories/category.entity';
+import { Tag } from '../../tags/tag.entity';
 
 @Entity()
 export class Product {
@@ -18,11 +14,24 @@ export class Product {
   @Column('decimal')
   price!: number;
 
-  @Column({ nullable: true })
+  @Column()
   description!: string;
 
-  @ManyToOne(() => User, (user) => user.products, { eager: true })
-  @JoinColumn({ name: 'vendorId' }) // Explicit FK column
-  vendor!: User;
-}
+  @CreateDateColumn()
+  createdAt!: Date;
 
+  @ManyToOne(() => User, (user: User) => user.products, { eager: false })
+  vendor!: User;
+
+  
+  @ManyToOne(() => Category, category => category.products, { nullable: true })
+  category?: Category;
+
+  @ManyToMany(() => Tag, (tag) => tag.products, { cascade: true })
+  @JoinTable()
+  tags!: Tag[];
+
+  @Column({ default: false })
+  featured?: boolean = false;
+ 
+}
