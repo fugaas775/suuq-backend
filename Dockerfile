@@ -20,7 +20,7 @@ RUN yarn build
 FROM node:18-alpine AS production
 
 # Install PM2 globally and curl for health checks
-RUN yarn global add pm2 && apk add --no-cache curl
+RUN npm install -g pm2 && apk add --no-cache curl
 
 # Set working directory
 WORKDIR /app

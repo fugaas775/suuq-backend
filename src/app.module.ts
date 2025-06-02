@@ -25,7 +25,7 @@ import { Tag } from './tags/tag.entity';
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      envFilePath: '.env',
+      envFilePath: ['.env.local', '.env'],
     }),
     TypeOrmModule.forRoot({
       type: 'postgres', // ✅ required to avoid driver undefined
