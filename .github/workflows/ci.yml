@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        node-version: [18.x, 20.x]
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_DB: suuq_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Use Node.js ${{ matrix.node-version }}
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ matrix.node-version }}
+        cache: 'yarn'
+
+    - name: Install dependencies
+      run: yarn install --frozen-lockfile
+
+    - name: Lint
+      run: yarn lint
+
+    - name: Type check
+      run: yarn build
+
+    - name: Run tests
+      run: yarn test
+      env:
+        NODE_ENV: test
+        DB_HOST: localhost
+        DB_PORT: 5432
+        DB_USERNAME: postgres
+        DB_PASSWORD: postgres
+        DB_NAME: suuq_test
+        JWT_SECRET: test_jwt_secret
+        JWT_EXPIRES_IN: 3600s
+        DO_SPACES_KEY: test_key
+        DO_SPACES_SECRET: test_secret
+        DO_SPACES_REGION: test_region
+        DO_SPACES_BUCKET: test_bucket
+        DO_SPACES_ENDPOINT: https://test.endpoint.com
+
+    - name: Run e2e tests
+      run: yarn test:e2e
+      env:
+        NODE_ENV: test
+        DB_HOST: localhost
+        DB_PORT: 5432
+        DB_USERNAME: postgres
+        DB_PASSWORD: postgres
+        DB_NAME: suuq_test
+        JWT_SECRET: test_jwt_secret
+        JWT_EXPIRES_IN: 3600s
+        DO_SPACES_KEY: test_key
+        DO_SPACES_SECRET: test_secret
+        DO_SPACES_REGION: test_region
+        DO_SPACES_BUCKET: test_bucket
+        DO_SPACES_ENDPOINT: https://test.endpoint.com
