@@ -35,11 +35,9 @@ export class DeliveriesService {
   }
 
   async getAllDeliveries() {
-   return this.deliveryRepo.find({
-    relations: ['order', 'order.product', 'order.product.vendor'],
-    order: { createdAt: 'DESC' },
+    return this.deliveryRepo.find({
+      relations: ['order', 'order.product', 'order.product.vendor'],
+      order: { createdAt: 'DESC' },
     });
   }
-
-
 }

@@ -28,10 +28,10 @@ export class ProductsController {
   @Post()
   @UseGuards(AuthGuard('jwt'), RolesGuard)
   @Roles('VENDOR')
-   create(@Body() createProductDto: CreateProductDto, @Req() req: any) {
-   return this.productsService.create({
-    ...createProductDto,
-    vendorId: req.user.id,
+  create(@Body() createProductDto: CreateProductDto, @Req() req: any) {
+    return this.productsService.create({
+      ...createProductDto,
+      vendorId: req.user.id,
     });
   }
 
@@ -102,10 +102,7 @@ export class ProductsController {
   @Delete(':id')
   @UseGuards(AuthGuard('jwt'), RolesGuard)
   @Roles('VENDOR')
-  deleteProduct(
-    @Param('id', ParseIntPipe) id: number,
-    @Req() req: any,
-  ) {
+  deleteProduct(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
     return this.productsService.deleteProduct(id, req.user);
   }
 }

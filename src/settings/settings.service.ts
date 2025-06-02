@@ -36,7 +36,7 @@ export class SettingsService {
   }
 
   async updateUserSettings(userId: number, dto: UpdateSettingsDto) {
-    let settings = await this.settingsRepo.findOne({
+    const settings = await this.settingsRepo.findOne({
       where: { user: { id: userId } },
       relations: ['user'],
     });

@@ -26,10 +26,12 @@ async function bootstrap() {
       console.log('⚠️  Router not ready yet.');
     }
   } catch (error) {
-    console.error('🔥 Route logger failed:', error instanceof Error ? error.message : error);
+    console.error(
+      '🔥 Route logger failed:',
+      error instanceof Error ? error.message : error,
+    );
   }
 
-  await app.listen(3000, '127.0.0.1'); 
+  await app.listen(3000, '127.0.0.1');
 }
 bootstrap();
-

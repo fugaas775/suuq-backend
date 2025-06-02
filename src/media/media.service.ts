@@ -10,8 +10,7 @@ export class MediaService {
   constructor(
     @InjectRepository(MediaEntity)
     private readonly mediaRepo: Repository<MediaEntity>,
-
-    ) {}
+  ) {}
 
   async saveFile(file: Express.Multer.File, ownerId: number) {
     const media = this.mediaRepo.create({
@@ -26,16 +25,15 @@ export class MediaService {
   }
 
   async deleteByKey(key: string, userId: number): Promise<boolean> {
-  const media = await this.mediaRepo.findOne({
-    where: { key, ownerId: userId },
-  });
+    const media = await this.mediaRepo.findOne({
+      where: { key, ownerId: userId },
+    });
 
-  if (!media) {
-    throw new Error('Media not found or not owned by user');
+    if (!media) {
+      throw new Error('Media not found or not owned by user');
+    }
+
+    await this.mediaRepo.remove(media);
+    return true;
   }
-
-  await this.mediaRepo.remove(media);
-  return true;
-}
-
 }

@@ -31,5 +31,4 @@ export class MediaEntity {
   @ManyToOne(() => User, (user) => user.media, { eager: false })
   @JoinColumn({ name: 'ownerId' })
   owner!: User;
-
 }

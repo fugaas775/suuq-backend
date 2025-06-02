@@ -1,15 +1,21 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn } from 'typeorm';
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  CreateDateColumn,
+} from 'typeorm';
 
-@Entity() 
-export class Notification { 
-  @PrimaryGeneratedColumn() 
+@Entity()
+export class Notification {
+  @PrimaryGeneratedColumn()
   id!: number;
 
-  @Column({ type: 'varchar' }) 
+  @Column({ type: 'varchar' })
   title!: string;
 
-  @Column({ type: 'text' }) 
+  @Column({ type: 'text' })
   message!: string;
 
-  @CreateDateColumn() 
-  createdAt!: Date; }
+  @CreateDateColumn()
+  createdAt!: Date;
+}

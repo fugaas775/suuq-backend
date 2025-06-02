@@ -1,4 +1,13 @@
-import { Controller, Get, Patch, Body, Param, ParseIntPipe, UseGuards, Req } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Patch,
+  Body,
+  Param,
+  ParseIntPipe,
+  UseGuards,
+  Req,
+} from '@nestjs/common';
 import { DeliveriesService } from './deliveries.service';
 import { AuthGuard } from '@nestjs/passport';
 import { RolesGuard } from '../auth/roles.guard';
@@ -19,15 +28,17 @@ export class DeliveriesController {
   @Patch(':id/status')
   @UseGuards(AuthGuard('jwt'), RolesGuard)
   @Roles('DELIVERER')
-  updateStatus(@Param('id', ParseIntPipe) id: number, @Body('status') status: DeliveryStatus) {
-   return this.deliveriesService.updateStatus(id, status);
+  updateStatus(
+    @Param('id', ParseIntPipe) id: number,
+    @Body('status') status: DeliveryStatus,
+  ) {
+    return this.deliveriesService.updateStatus(id, status);
   }
- 
+
   @UseGuards(AuthGuard('jwt'), RolesGuard)
   @Roles('ADMIN')
   @Get('all')
   getAllDeliveries() {
-   return this.deliveriesService.getAllDeliveries();
+    return this.deliveriesService.getAllDeliveries();
   }
-
 }

@@ -45,7 +45,6 @@ export class NotificationsController {
   @UseGuards(AuthGuard('jwt'))
   @Roles('CUSTOMER', 'VENDOR')
   getPublicNotifications() {
-   return this.notificationsService.findAll();
-   }
-
+    return this.notificationsService.findAll();
+  }
 }

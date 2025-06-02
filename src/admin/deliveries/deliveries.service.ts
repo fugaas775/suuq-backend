@@ -3,7 +3,10 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { Delivery, DeliveryStatus } from '../../deliveries/entities/delivery.entity';
+import {
+  Delivery,
+  DeliveryStatus,
+} from '../../deliveries/entities/delivery.entity';
 
 @Injectable()
 export class AdminDeliveriesService {

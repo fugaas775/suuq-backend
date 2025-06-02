@@ -8,7 +8,7 @@ import { Withdrawal } from '../withdrawals/entities/withdrawal.entity';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([User, Order, Withdrawal]) // ✅ Import UserRepository here
+    TypeOrmModule.forFeature([User, Order, Withdrawal]), // ✅ Import UserRepository here
   ],
   controllers: [AdminDashboardController],
   providers: [AdminDashboardService],

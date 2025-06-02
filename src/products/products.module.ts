@@ -14,4 +14,3 @@ import { Tag } from '../tags/tag.entity';
   exports: [ProductsService],
 })
 export class ProductsModule {}
-

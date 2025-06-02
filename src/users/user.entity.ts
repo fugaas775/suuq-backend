@@ -32,7 +32,6 @@ export class User {
   @OneToMany(() => MediaEntity, (media) => media.owner)
   media!: MediaEntity[];
 
-
   @CreateDateColumn()
   createdAt!: Date;
 
@@ -45,4 +44,3 @@ export class User {
   @Column({ nullable: true })
   avatarUrl?: string;
 }
-

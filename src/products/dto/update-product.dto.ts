@@ -18,5 +18,3 @@ export class UpdateProductDto {
   @IsString({ each: true })
   readonly tags?: string[];
 }
-
-

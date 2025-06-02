@@ -7,7 +7,6 @@ import {
 } from 'typeorm';
 import { Order } from '../../orders/order.entity';
 
-
 export enum DeliveryStatus {
   PENDING = 'PENDING',
   IN_TRANSIT = 'IN_TRANSIT',
@@ -30,5 +29,4 @@ export class Delivery {
 
   @Column({ type: 'varchar', default: DeliveryStatus.PENDING })
   status!: DeliveryStatus;
-
 }

@@ -1,4 +1,16 @@
-import { Controller, Post, Patch, Body, Get, Param, Req, ParseIntPipe, Query, UseGuards, Request } from '@nestjs/common';
+import {
+  Controller,
+  Post,
+  Patch,
+  Body,
+  Get,
+  Param,
+  Req,
+  ParseIntPipe,
+  Query,
+  UseGuards,
+  Request,
+} from '@nestjs/common';
 import { OrdersService } from './orders.service';
 import { AuthGuard } from '@nestjs/passport';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -20,13 +32,9 @@ export class OrdersController {
   @Get('my-orders')
   @UseGuards(AuthGuard('jwt'), RolesGuard)
   @Roles('CUSTOMER')
-  getCustomerOrders(
-   @Req() req: any,
-   @Query('status') status?: OrderStatus
- ) {
+  getCustomerOrders(@Req() req: any, @Query('status') status?: OrderStatus) {
     return this.ordersService.getCustomerOrders(req.user.email, status);
   }
-
 
   @Get('vendor-orders')
   @UseGuards(AuthGuard('jwt'), RolesGuard)
@@ -35,11 +43,10 @@ export class OrdersController {
     @Req() req: any,
     @Query('status') status?: OrderStatus,
     @Query('from') from?: string,
-    @Query('to') to?: string
+    @Query('to') to?: string,
   ) {
-   return this.ordersService.getVendorOrders(req.user.id, status, from, to);
+    return this.ordersService.getVendorOrders(req.user.id, status, from, to);
   }
-
 
   @Get('vendor-earnings')
   @UseGuards(AuthGuard('jwt'), RolesGuard)
@@ -53,14 +60,13 @@ export class OrdersController {
   getOne(@Param('id') id: string, @Request() req: any) {
     return this.ordersService.findOneByRole(+id, req.user);
   }
- 
+
   @Get('sales/summary')
   @UseGuards(AuthGuard('jwt'), RolesGuard)
   @Roles('ADMIN')
   getAdminSummary(@Query('from') from?: string, @Query('to') to?: string) {
     return this.ordersService.getAdminSalesSummary(from, to);
   }
-
 
   @Get('sales/top-products')
   @UseGuards(AuthGuard('jwt'), RolesGuard)
@@ -73,19 +79,10 @@ export class OrdersController {
   @UseGuards(AuthGuard('jwt'), RolesGuard)
   @Roles('VENDOR', 'ADMIN')
   updateOrderStatus(
-   @Param('id') id: number,
-   @Body('status') status: OrderStatus,
-   @Req() req: any
- ) {
-   return this.ordersService.updateStatus(+id, status, req.user);
+    @Param('id') id: number,
+    @Body('status') status: OrderStatus,
+    @Req() req: any,
+  ) {
+    return this.ordersService.updateStatus(+id, status, req.user);
   }
-
-
-
-
-
 }
-
-
-
-

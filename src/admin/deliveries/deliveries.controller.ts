@@ -13,7 +13,10 @@ import { AdminDeliveriesService } from './deliveries.service';
 import { AuthGuard } from '@nestjs/passport';
 import { Roles } from '../../auth/roles.decorator';
 import { RolesGuard } from '../../auth/roles.guard';
-import { Delivery, DeliveryStatus } from '../../deliveries/entities/delivery.entity';
+import {
+  Delivery,
+  DeliveryStatus,
+} from '../../deliveries/entities/delivery.entity';
 
 @Controller('admin/deliveries')
 @UseGuards(AuthGuard('jwt'), RolesGuard)
@@ -30,7 +33,7 @@ export class AdminDeliveriesController {
   @Roles('ADMIN')
   updateStatus(
     @Param('id', ParseIntPipe) id: number,
-    @Body('status') status: DeliveryStatus
+    @Body('status') status: DeliveryStatus,
   ) {
     return this.deliveriesService.updateStatus(id, status);
   }

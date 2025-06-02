@@ -1,4 +1,8 @@
-import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { TreeRepository, Repository } from 'typeorm';
 import { Category } from './category.entity';
@@ -53,7 +57,9 @@ export class CategoriesService {
     });
 
     if (dto.parentId) {
-      const parent = await this.categoryRepo.findOne({ where: { id: dto.parentId } });
+      const parent = await this.categoryRepo.findOne({
+        where: { id: dto.parentId },
+      });
       if (!parent) throw new NotFoundException('Parent category not found');
       category.parent = parent;
     }
@@ -76,7 +82,7 @@ export class CategoriesService {
 
     if (!category) throw new NotFoundException('Category not found');
 
-    category.products.forEach(product => {
+    category.products.forEach((product) => {
       if ('password' in product.vendor) {
         delete (product.vendor as any).password;
       }
@@ -88,7 +94,9 @@ export class CategoriesService {
   async delete(id: number): Promise<{ deleted: boolean }> {
     const count = await this.productRepo.count({ where: { category: { id } } });
     if (count > 0) {
-      throw new BadRequestException('Cannot delete category in use by products');
+      throw new BadRequestException(
+        'Cannot delete category in use by products',
+      );
     }
 
     const result = await this.categoryRepo.delete(id);

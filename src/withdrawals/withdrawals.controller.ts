@@ -55,7 +55,6 @@ export class WithdrawalsController {
   @Get('vendor-stats')
   @Roles('VENDOR')
   getVendorStats(@Req() req: any) {
-   return this.withdrawalsService.getVendorStats(req.user.id);
+    return this.withdrawalsService.getVendorStats(req.user.id);
   }
-
 }

@@ -21,4 +21,3 @@ export class ProductResponseDto {
   category?: CategoryDto;
   tags?: string[];
 }
-

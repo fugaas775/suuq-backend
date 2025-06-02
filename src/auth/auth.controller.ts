@@ -26,7 +26,7 @@ export class AuthController {
   login(@Body() dto: LoginDto) {
     return this.authService.login(dto);
   }
-  
+
   @Post('register-deliverer')
   async registerDeliverer(@Body() dto: RegisterDto) {
     return this.authService.register({ ...dto, role: 'DELIVERER' });
@@ -50,8 +50,6 @@ export class AuthController {
   @Get('profile')
   @UseGuards(AuthGuard('jwt'))
   getProfile(@Request() req: any) {
-   return req.user; // 🔁 returns { id, email, role } from validated JWT
+    return req.user; // 🔁 returns { id, email, role } from validated JWT
   }
-
-
 }

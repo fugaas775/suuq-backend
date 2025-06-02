@@ -6,14 +6,9 @@ import { UsersController } from './users.controller';
 import { MediaModule } from '../media/media.module';
 
 @Module({
-  imports: [
-    TypeOrmModule.forFeature([User]),
-    forwardRef(() => MediaModule),
-  ],
+  imports: [TypeOrmModule.forFeature([User]), forwardRef(() => MediaModule)],
   providers: [UsersService],
   controllers: [UsersController],
   exports: [UsersService],
 })
 export class UsersModule {}
-
-

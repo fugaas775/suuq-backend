@@ -16,12 +16,11 @@ export class UsersService {
   }
 
   async findByEmail(email: string) {
-   return this.userRepository.findOne({
-    where: { email },
-    select: ['id', 'email', 'password', 'role'], // ✅ include password!
+    return this.userRepository.findOne({
+      where: { email },
+      select: ['id', 'email', 'password', 'role'], // ✅ include password!
     });
   }
-
 
   async findOne(id: number) {
     return this.userRepository.findOne({ where: { id } });
@@ -39,4 +38,3 @@ export class UsersService {
     return this.userRepository.find();
   }
 }
-

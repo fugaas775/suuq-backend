@@ -12,5 +12,3 @@ import { Product } from '../products/entities/product.entity';
   exports: [TypeOrmModule],
 })
 export class CategoriesModule {}
-
-

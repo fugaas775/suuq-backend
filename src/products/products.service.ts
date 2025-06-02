@@ -24,7 +24,9 @@ export class ProductsService {
     @InjectRepository(Tag) private tagRepo: Repository<Tag>,
   ) {}
 
-  async create(data: CreateProductDto & { vendorId: number }): Promise<Product> {
+  async create(
+    data: CreateProductDto & { vendorId: number },
+  ): Promise<Product> {
     const { tags = [], vendorId, ...rest } = data;
 
     const vendor = await this.userRepo.findOneBy({ id: vendorId });
@@ -148,18 +150,27 @@ export class ProductsService {
     }
 
     if (tags) {
-     const tagList = tags.split(',').map((t) => t.trim());
-     qb.innerJoin('product.tags', 'tagFilter', 'tagFilter.name IN (:...tagList)', {
-      tagList,
-      });
-   }
+      const tagList = tags.split(',').map((t) => t.trim());
+      qb.innerJoin(
+        'product.tags',
+        'tagFilter',
+        'tagFilter.name IN (:...tagList)',
+        {
+          tagList,
+        },
+      );
+    }
 
     if (priceMin) {
-      qb.andWhere('product.price >= :priceMin', { priceMin: parseFloat(priceMin) });
+      qb.andWhere('product.price >= :priceMin', {
+        priceMin: parseFloat(priceMin),
+      });
     }
 
     if (priceMax) {
-      qb.andWhere('product.price <= :priceMax', { priceMax: parseFloat(priceMax) });
+      qb.andWhere('product.price <= :priceMax', {
+        priceMax: parseFloat(priceMax),
+      });
     }
 
     let orderByField: keyof Product = 'createdAt';
@@ -208,8 +219,8 @@ export class ProductsService {
   }
 
   async findAll(): Promise<Product[]> {
-   return this.productRepo.find({
-    relations: ['vendor', 'tags'],
+    return this.productRepo.find({
+      relations: ['vendor', 'tags'],
     });
   }
 
@@ -244,4 +255,4 @@ export class ProductsService {
 
     return [...existingTags, ...newTags];
   }
-}  
+}

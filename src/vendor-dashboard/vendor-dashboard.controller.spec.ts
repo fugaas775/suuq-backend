@@ -9,7 +9,9 @@ describe('VendorDashboardController', () => {
       controllers: [VendorDashboardController],
     }).compile();
 
-    controller = module.get<VendorDashboardController>(VendorDashboardController);
+    controller = module.get<VendorDashboardController>(
+      VendorDashboardController,
+    );
   });
 
   it('should be defined', () => {

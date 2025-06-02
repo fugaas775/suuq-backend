@@ -1,5 +1,14 @@
 // src/categories/category.entity.ts
-import { Entity, PrimaryGeneratedColumn, Column, Tree, TreeChildren, TreeParent, TreeRepository, OneToMany } from 'typeorm';
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  Tree,
+  TreeChildren,
+  TreeParent,
+  TreeRepository,
+  OneToMany,
+} from 'typeorm';
 import { Product } from '../products/entities/product.entity';
 
 @Entity()

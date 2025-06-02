@@ -17,11 +17,20 @@ export class AdminDashboardService {
   ) {}
 
   async getSummary({ from, to }: { from?: string; to?: string }) {
-    const dateFilter = from && to ? {
-      createdAt: Between(new Date(from), new Date(to + 'T23:59:59')),
-    } : {};
+    const dateFilter =
+      from && to
+        ? {
+            createdAt: Between(new Date(from), new Date(to + 'T23:59:59')),
+          }
+        : {};
 
-    const [totalvendors, totalcustomers, totalorders, totalrevenue, totalwithdrawals] = await Promise.all([
+    const [
+      totalvendors,
+      totalcustomers,
+      totalorders,
+      totalrevenue,
+      totalwithdrawals,
+    ] = await Promise.all([
       this.userRepo.count({ where: { role: 'VENDOR' } }),
       this.userRepo.count({ where: { role: 'CUSTOMER' } }),
       this.orderRepo.count({ where: dateFilter }),
@@ -31,17 +40,20 @@ export class AdminDashboardService {
         .where(dateFilter)
         .select('SUM(order.quantity * product.price)', 'revenue')
         .getRawOne()
-        .then(res => Number(res.revenue || 0)),
+        .then((res) => Number(res.revenue || 0)),
       this.withdrawalRepo
         .createQueryBuilder('w')
         .where('w.status = :status', { status: 'APPROVED' })
-        .andWhere(dateFilter.createdAt ? 'w.createdAt BETWEEN :from AND :to' : '1=1', {
-          from: from ? new Date(from) : undefined,
-          to: to ? new Date(to + 'T23:59:59') : undefined,
-        })
+        .andWhere(
+          dateFilter.createdAt ? 'w.createdAt BETWEEN :from AND :to' : '1=1',
+          {
+            from: from ? new Date(from) : undefined,
+            to: to ? new Date(to + 'T23:59:59') : undefined,
+          },
+        )
         .select('SUM(w.amount)', 'total')
         .getRawOne()
-        .then(res => Number(res.total || 0)),
+        .then((res) => Number(res.total || 0)),
     ]);
 
     return {

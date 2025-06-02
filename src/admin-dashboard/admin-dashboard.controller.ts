@@ -11,10 +11,7 @@ export class AdminDashboardController {
 
   @Get('summary')
   @Roles('ADMIN')
-  getSummary(
-    @Query('from') from?: string,
-    @Query('to') to?: string,
-  ) {
+  getSummary(@Query('from') from?: string, @Query('to') to?: string) {
     return this.dashboardService.getSummary({ from, to });
   }
 }

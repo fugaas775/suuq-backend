@@ -1,4 +1,12 @@
-import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, ManyToMany, JoinTable, CreateDateColumn } from 'typeorm';
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  ManyToOne,
+  ManyToMany,
+  JoinTable,
+  CreateDateColumn,
+} from 'typeorm';
 import { User } from '../../users/user.entity';
 import { Category } from '../../categories/category.entity';
 import { Tag } from '../../tags/tag.entity';
@@ -23,8 +31,9 @@ export class Product {
   @ManyToOne(() => User, (user: User) => user.products, { eager: false })
   vendor!: User;
 
-  
-  @ManyToOne(() => Category, category => category.products, { nullable: true })
+  @ManyToOne(() => Category, (category) => category.products, {
+    nullable: true,
+  })
   category?: Category;
 
   @ManyToMany(() => Tag, (tag) => tag.products, { cascade: true })
@@ -33,5 +42,4 @@ export class Product {
 
   @Column({ default: false })
   featured?: boolean = false;
- 
 }

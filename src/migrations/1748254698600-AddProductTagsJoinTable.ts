@@ -1,6 +1,8 @@
 import { MigrationInterface, QueryRunner } from 'typeorm';
 
-export class AddProductTagsJoinTable1748254698600 implements MigrationInterface {
+export class AddProductTagsJoinTable1748254698600
+  implements MigrationInterface
+{
   name = 'AddProductTagsJoinTable1748254698600';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
@@ -43,8 +45,12 @@ export class AddProductTagsJoinTable1748254698600 implements MigrationInterface 
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(`ALTER TABLE "product_tags_tag" DROP CONSTRAINT "FK_product_tags_tag_tag"`);
-    await queryRunner.query(`ALTER TABLE "product_tags_tag" DROP CONSTRAINT "FK_product_tags_tag_product"`);
+    await queryRunner.query(
+      `ALTER TABLE "product_tags_tag" DROP CONSTRAINT "FK_product_tags_tag_tag"`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "product_tags_tag" DROP CONSTRAINT "FK_product_tags_tag_product"`,
+    );
     await queryRunner.query(`DROP INDEX "IDX_product_tags_tag_tagId"`);
     await queryRunner.query(`DROP INDEX "IDX_product_tags_tag_productId"`);
     await queryRunner.query(`DROP TABLE "product_tags_tag"`);

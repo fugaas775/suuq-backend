@@ -10,4 +10,4 @@ import { Order } from '../orders/order.entity';
   controllers: [DeliveriesController],
   providers: [DeliveriesService],
 })
-export class DeliveriesModule {}
+export class DeliveriesModule {}
