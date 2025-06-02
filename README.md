@@ -59,6 +59,60 @@ $ yarn run test:cov
 
 ## Deployment
 
+### Environment Configuration
+
+Create a `.env` file in the root directory based on `.env.example`:
+
+```bash
+cp .env.example .env
+# Edit .env with your production values
+```
+
+### Docker Deployment
+
+```bash
+# Build the image
+docker build -t suuq-backend .
+
+# Run with environment file
+docker run -d \
+  --name suuq-api \
+  --env-file .env \
+  -p 3000:3000 \
+  suuq-backend
+```
+
+### DigitalOcean Deployment
+
+1. Set up environment variables in your DigitalOcean App Platform
+2. Use the included Dockerfile for container deployment
+3. Configure your database connection and DigitalOcean Spaces credentials
+
+Required environment variables:
+- `DB_HOST`, `DB_PORT`, `DB_USERNAME`, `DB_PASSWORD`, `DB_NAME`
+- `DO_SPACES_KEY`, `DO_SPACES_SECRET`, `DO_SPACES_REGION`, `DO_SPACES_BUCKET`, `DO_SPACES_ENDPOINT`
+- `JWT_SECRET`, `JWT_EXPIRES_IN`
+
+### Production Security
+
+The application includes production-ready security features:
+- Helmet.js for security headers
+- Rate limiting (100 requests/minute per IP)
+- Health check endpoint at `/api/health`
+
+### PM2 Production
+
+```bash
+# Install dependencies
+yarn install --production
+
+# Build the application
+yarn build
+
+# Start with PM2
+pm2 start ecosystem.config.js
+```
+
 When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
 
 If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
