@@ -330,8 +330,8 @@ export class ProductsService {
         email: product.vendor?.email,
         displayName: product.vendor?.displayName,
         avatarUrl: product.vendor?.avatarUrl,
-        store_name: product.vendor?.store_name,
-        name: product.vendor?.name,
+        store_name: product.vendor?.storeName,
+        name: product.vendor?.displayName || product.vendor?.storeName,
       },
       category: product.category
         ? {

@@ -1,7 +1,7 @@
 // src/app.module.ts
 import { Module } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { ConfigModule } from '@nestjs/config'; // Keep this as AppDataSource uses process.env
 
 // Import your application modules
 import { UsersModule } from './users/users.module';
@@ -23,30 +23,18 @@ import { SeedsModule } from './seeds/seeds.module';
 // Import AppDataSource
 import { AppDataSource } from './data-source'; // Adjust path if necessary
 
-// You no longer need these imports for TypeOrmModule.forRoot's entities array:
-// import { Product } from './products/entities/product.entity';
-// import { Category } from './categories/category.entity';
-// import { User } from './users/user.entity';
-// import { MediaEntity } from './media/media.entity';
-// import { Tag } from './tags/tag.entity';
-
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      envFilePath: '.env', // This ensures .env is loaded for the whole app
+      envFilePath: '.env',
     }),
     TypeOrmModule.forRootAsync({
-      // useFactory will be called to get the TypeORM options
-      useFactory: () => AppDataSource.options,
-      // If AppDataSource needed to be initialized before providing options (e.g., for subscribers or complex setup),
-      // you could use dataSourceFactory, but for providing options, useFactory is simpler.
-      // dataSourceFactory: async () => {
-      //   if (!AppDataSource.isInitialized) {
-      //     await AppDataSource.initialize();
-      //   }
-      //   return AppDataSource;
-      // }
+      useFactory: () => ({
+        ...AppDataSource.options,
+        // Ensure entities are auto-loaded if using glob pattern in AppDataSource.options
+        // If not, and you get "metadata for X not found" errors, add entities: [__dirname + '/**/*.entity{.ts,.js}'],
+      }),
     }),
     UsersModule,
     AuthModule,
