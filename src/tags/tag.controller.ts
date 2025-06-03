@@ -18,6 +18,11 @@ import { Roles } from '../common/decorators/roles.decorator';
 export class TagController {
   constructor(private readonly tagService: TagService) {}
 
+  @Get('suggest')
+  suggestTags() {
+    return this.tagService.suggestTags();
+    }
+
   @Get()
   findAll() {
     return this.tagService.findAll();

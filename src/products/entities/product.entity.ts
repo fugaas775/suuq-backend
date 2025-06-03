@@ -20,6 +20,12 @@ export class Product {
   @CreateDateColumn()
   createdAt!: Date;
 
+  @Column({ default: false })
+  isBlocked!: boolean;
+
+  @Column({ default: false })
+  featured!: boolean;
+
   @ManyToOne(() => User, (user: User) => user.products, { eager: false })
   vendor!: User;
 
@@ -31,7 +37,4 @@ export class Product {
   @JoinTable()
   tags!: Tag[];
 
-  @Column({ default: false })
-  featured?: boolean = false;
- 
-}
+  }

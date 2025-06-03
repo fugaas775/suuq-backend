@@ -1,6 +1,9 @@
+// src/app.module.ts
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { ConfigModule } from '@nestjs/config';
+import { ConfigModule } from '@nestjs/config'; // Keep this as AppDataSource uses process.env
+
+// Import your application modules
 import { UsersModule } from './users/users.module';
 import { AuthModule } from './auth/auth.module';
 import { ProductsModule } from './products/products.module';
@@ -15,28 +18,34 @@ import { AdminDeliveriesModule } from './admin/deliveries/deliveries.module';
 import { CategoriesModule } from './categories/categories.module';
 import { MediaModule } from './media/media.module';
 import { SettingsModule } from './settings/settings.module';
-import { Product } from './products/entities/product.entity';
-import { Category } from './categories/category.entity';
-import { User } from './users/user.entity';
-import { MediaEntity } from './media/media.entity';
-import { Tag } from './tags/tag.entity';
+
+// Import AppDataSource
+import { AppDataSource } from './data-source'; // Adjust path if necessary
+
+// You no longer need these imports for TypeOrmModule.forRoot's entities array:
+// import { Product } from './products/entities/product.entity';
+// import { Category } from './categories/category.entity';
+// import { User } from './users/user.entity';
+// import { MediaEntity } from './media/media.entity';
+// import { Tag } from './tags/tag.entity';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
-        isGlobal: true,
-        envFilePath: '.env',
+      isGlobal: true,
+      envFilePath: '.env', // This ensures .env is loaded for the whole app
     }),
-    TypeOrmModule.forRoot({
-      type: 'postgres', // ✅ required to avoid driver undefined
-      host: process.env.DB_HOST,
-      port: parseInt(process.env.DB_PORT || '5432', 10),
-      username: process.env.DB_USERNAME,
-      password: process.env.DB_PASSWORD,
-      database: process.env.DB_NAME,
-      autoLoadEntities: false,
-      synchronize: false,
-      entities: [User, Product, Category, MediaEntity, Tag],
+    TypeOrmModule.forRootAsync({
+      // useFactory will be called to get the TypeORM options
+      useFactory: () => AppDataSource.options,
+      // If AppDataSource needed to be initialized before providing options (e.g., for subscribers or complex setup),
+      // you could use dataSourceFactory, but for providing options, useFactory is simpler.
+      // dataSourceFactory: async () => {
+      //   if (!AppDataSource.isInitialized) {
+      //     await AppDataSource.initialize();
+      //   }
+      //   return AppDataSource;
+      // }
     }),
     UsersModule,
     AuthModule,
@@ -55,4 +64,3 @@ import { Tag } from './tags/tag.entity';
   ],
 })
 export class AppModule {}
-

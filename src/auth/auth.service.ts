@@ -2,97 +2,198 @@ import {
   Injectable,
   UnauthorizedException,
   ConflictException,
+  Logger,
+  InternalServerErrorException,
 } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import { JwtService } from '@nestjs/jwt';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { UsersService } from '../users/users.service';
-import { OAuth2Client } from 'google-auth-library';
+import { User, UserRole } from '../users/user.entity';
+import { OAuth2Client, TokenPayload } from 'google-auth-library';
 import { ConfigService } from '@nestjs/config';
+import { UserResponseDto } from '../users/dto/user-response.dto';
+import { plainToInstance } from 'class-transformer';
 
 @Injectable()
 export class AuthService {
-  private readonly oauthClient: OAuth2Client;
+  private readonly logger = new Logger(AuthService.name);
+  private readonly oauthClient: OAuth2Client | null = null;
 
   constructor(
     private readonly usersService: UsersService,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
   ) {
-    this.oauthClient = new OAuth2Client(
-      this.configService.get<string>('GOOGLE_WEB_CLIENT_ID'),
-    );
+    const googleClientId = this.configService.get<string>('GOOGLE_WEB_CLIENT_ID');
+    if (googleClientId) {
+      this.oauthClient = new OAuth2Client(googleClientId);
+    } else {
+      this.logger.warn('GOOGLE_WEB_CLIENT_ID is not configured. Google Sign-In will be disabled.');
+    }
   }
 
-  async register(dto: RegisterDto) {
-    const existing = await this.usersService.findByEmail(dto.email);
-    if (existing) {
+  async register(dto: RegisterDto): Promise<{ message: string; user: UserResponseDto }> {
+    this.logger.log(`[register] Attempting to register user: ${dto.email}`);
+    const existingUser = await this.usersService.findByEmail(dto.email);
+    if (existingUser) {
+      this.logger.warn(`[register] Email ${dto.email} already in use.`);
       throw new ConflictException('Email already in use');
     }
 
     const hashedPassword = await bcrypt.hash(dto.password, 10);
-    const user = await this.usersService.create({
-      ...dto,
-      password: hashedPassword,
-    });
+    this.logger.log(`[register] Password hashed for ${dto.email}`);
 
-    return {
-      message: 'User registered',
-      user,
-    };
+    try {
+      const userRoles: UserRole[] = dto.roles ? dto.roles : (dto.role ? [dto.role] : [UserRole.CUSTOMER]);
+
+      const userToCreateData: Partial<User> = {
+        email: dto.email,
+        password: hashedPassword,
+        displayName: dto.displayName,
+        avatarUrl: dto.avatarUrl,
+        storeName: dto.storeName, // This should now be fine if User entity has storeName
+        roles: userRoles,
+        isActive: true,
+      };
+      
+      const createdUser = await this.usersService.create(userToCreateData);
+      this.logger.log(`[register] User ${dto.email} created successfully with ID: ${createdUser.id}`);
+      
+      const userResponse = plainToInstance(UserResponseDto, createdUser, {
+        excludeExtraneousValues: true,
+      });
+
+      return {
+        message: 'User registered successfully',
+        user: userResponse,
+      };
+    } catch (error: any) {
+      this.logger.error(`[register] Error during user creation for ${dto.email}: ${error.message}`, error.stack);
+      throw new InternalServerErrorException('User registration failed.');
+    }
   }
 
-  async login(dto: LoginDto) {
+  async login(dto: LoginDto): Promise<{ access_token: string; user: UserResponseDto }> {
+    this.logger.log(`[login] Attempting login for user: ${dto.email}`);
+    
     const user = await this.usersService.findByEmail(dto.email);
-    if (!user || !(await bcrypt.compare(dto.password, user.password))) {
+
+    if (!user) {
+      this.logger.warn(`[login] User not found: ${dto.email}`);
       throw new UnauthorizedException('Invalid credentials');
+    }
+    this.logger.log(`[login] User found: ${user.email}, isActive: ${user.isActive}, Roles from DB: ${JSON.stringify(user.roles)}`);
+
+    if (!user.isActive) {
+      this.logger.warn(`[login] User account is deactivated: ${dto.email}`);
+      throw new UnauthorizedException('Account is deactivated. Please contact support.');
+    }
+
+    const isPasswordMatching = await bcrypt.compare(dto.password, user.password);
+    this.logger.log(`[login] Password match result for ${dto.email}: ${isPasswordMatching}`);
+
+    if (!isPasswordMatching) {
+      this.logger.warn(`[login] Password mismatch for user: ${dto.email}`);
+      throw new UnauthorizedException('Invalid credentials');
+    }
+
+    const rolesForPayload = Array.isArray(user.roles) ? user.roles : [];
+     if (rolesForPayload.length === 0) {
+        this.logger.warn(`[login] User ${user.email} has no roles assigned. This could be an issue.`);
     }
 
     const payload = {
       sub: user.id,
       email: user.email,
-      role: user.role,
+      roles: rolesForPayload,
     };
+    this.logger.log(`[login] Generating JWT for user: ${dto.email} with payload: ${JSON.stringify(payload)}`);
 
+    const accessToken = this.jwtService.sign(payload);
+    const userResponse = plainToInstance(UserResponseDto, user, {
+      excludeExtraneousValues: true,
+    });
+
+    this.logger.log(`[login] Login successful for user: ${dto.email}`);
     return {
-      access_token: this.jwtService.sign(payload),
-      user,
+      access_token: accessToken,
+      user: userResponse,
     };
   }
 
-  async googleLogin(token: string) {
-    const ticket = await this.oauthClient.verifyIdToken({
-      idToken: token,
-      audience: this.configService.get<string>('GOOGLE_WEB_CLIENT_ID'),
-    });
-
-    const payload = ticket.getPayload();
-    if (!payload?.email) {
-      throw new UnauthorizedException('Google account has no email');
+  async googleLogin(idToken: string): Promise<{ access_token: string; user: UserResponseDto }> {
+    this.logger.log(`[googleLogin] Attempting Google login with ID token (length: ${idToken?.length})`);
+    if (!this.oauthClient) {
+        this.logger.error('[googleLogin] OAuth2Client not initialized (GOOGLE_WEB_CLIENT_ID missing or invalid).');
+        throw new InternalServerErrorException('Google Sign-In is not configured on the server.');
     }
 
-    let user = await this.usersService.findByEmail(payload.email);
+    let googlePayload: TokenPayload | undefined;
+    try {
+      const ticket = await this.oauthClient.verifyIdToken({
+        idToken: idToken,
+        audience: this.configService.get<string>('GOOGLE_WEB_CLIENT_ID'),
+      });
+      googlePayload = ticket.getPayload();
+    } catch (error: any) {
+      this.logger.error(`[googleLogin] Invalid Google ID token: ${error.message}`, error.stack);
+      throw new UnauthorizedException('Invalid Google token');
+    }
+
+    if (!googlePayload?.email) {
+      this.logger.warn('[googleLogin] Google token payload did not contain an email.');
+      throw new UnauthorizedException('Google account email not found in token');
+    }
+    this.logger.log(`[googleLogin] Google token verified for email: ${googlePayload.email}`);
+
+    let user = await this.usersService.findByEmail(googlePayload.email);
 
     if (!user) {
-      user = await this.usersService.create({
-        email: payload.email,
-        displayName: payload.name,
-        avatarUrl: payload.picture,
-        role: 'CUSTOMER',
-        password: '',
-      });
+      this.logger.log(`[googleLogin] User ${googlePayload.email} not found. Creating new user.`);
+      try {
+        user = await this.usersService.create({
+          email: googlePayload.email,
+          displayName: googlePayload.name,
+          avatarUrl: googlePayload.picture,
+          roles: [UserRole.CUSTOMER],
+          password: `google_sso_${Date.now()}_${Math.random().toString(36).substring(2)}`,
+          isActive: true,
+        });
+        this.logger.log(`[googleLogin] New user created via Google: ${user.email}, ID: ${user.id}`);
+      } catch (error: any) {
+        this.logger.error(`[googleLogin] Error creating user for ${googlePayload.email}: ${error.message}`, error.stack);
+        throw new InternalServerErrorException('Could not create user account for Google Sign-In.');
+      }
+    } else {
+      this.logger.log(`[googleLogin] Existing user found: ${user.email}, ID: ${user.id}, isActive: ${user.isActive}`);
+      if (!user.isActive) {
+        this.logger.warn(`[googleLogin] User account (via Google) is deactivated: ${user.email}`);
+        throw new UnauthorizedException('User account is deactivated.');
+      }
+    }
+
+    const rolesForPayload = Array.isArray(user.roles) ? user.roles : [];
+     if (rolesForPayload.length === 0) {
+        this.logger.warn(`[googleLogin] User ${user.email} has no roles. This might be an issue.`);
     }
 
     const jwtPayload = {
       sub: user.id,
       email: user.email,
-      role: user.role,
+      roles: rolesForPayload,
     };
+    this.logger.log(`[googleLogin] Generating JWT for user: ${user.email} with payload: ${JSON.stringify(jwtPayload)}`);
+    const accessToken = this.jwtService.sign(jwtPayload);
+
+    const userResponse = plainToInstance(UserResponseDto, user, {
+      excludeExtraneousValues: true,
+    });
 
     return {
-      access_token: this.jwtService.sign(jwtPayload),
-      user,
+      access_token: accessToken,
+      user: userResponse,
     };
   }
 }

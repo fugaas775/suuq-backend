@@ -1,4 +1,4 @@
-import { Module, forwardRef } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { User } from './user.entity';
 import { UsersService } from './users.service';
@@ -15,5 +15,4 @@ import { MediaModule } from '../media/media.module';
   exports: [UsersService],
 })
 export class UsersModule {}
-
 

@@ -1,4 +1,3 @@
-// src/tags/tag.service.ts
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -8,27 +7,30 @@ import { Tag } from './tag.entity';
 export class TagService {
   constructor(
     @InjectRepository(Tag)
-    private readonly tagRepo: Repository<Tag>,
+    private readonly tagRepository: Repository<Tag>,
   ) {}
 
-  async create(name: string): Promise<Tag> {
-    const exists = await this.tagRepo.findOne({ where: { name } });
-    if (exists) return exists;
-    const tag = this.tagRepo.create({ name });
-    return this.tagRepo.save(tag);
+  async suggestTags(): Promise<string[]> {
+    const tags = await this.tagRepository.find({ take: 20, order: { name: 'ASC' } });
+    return tags.map(tag => tag.name);
   }
 
-  findAll(): Promise<Tag[]> {
-    return this.tagRepo.find({ order: { name: 'ASC' } });
+  async findAll(): Promise<Tag[]> {
+    return this.tagRepository.find({ order: { name: 'ASC' } });
+  }
+
+  async create(name: string): Promise<Tag> {
+    const tag = this.tagRepository.create({ name });
+    return this.tagRepository.save(tag);
   }
 
   async delete(id: number): Promise<{ deleted: boolean }> {
-    const result = await this.tagRepo.delete(id);
+    const result = await this.tagRepository.delete(id);
     return { deleted: (result.affected ?? 0) > 0 };
   }
 
   async findById(id: number): Promise<Tag> {
-    const tag = await this.tagRepo.findOneBy({ id });
+    const tag = await this.tagRepository.findOneBy({ id });
     if (!tag) throw new NotFoundException('Tag not found');
     return tag;
   }

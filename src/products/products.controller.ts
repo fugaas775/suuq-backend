@@ -108,4 +108,27 @@ export class ProductsController {
   ) {
     return this.productsService.deleteProduct(id, req.user);
   }
+
+  @Patch('/admin/products/:id/block')
+@UseGuards(AuthGuard('jwt'), RolesGuard)
+@Roles('ADMIN')
+async toggleBlockProduct(
+  @Param('id', ParseIntPipe) id: number,
+  @Body('isBlocked') isBlocked: boolean
+) {
+  return this.productsService.toggleBlockStatus(id, isBlocked);
+}
+
+  @Patch('/admin/products/:id/feature')
+@UseGuards(AuthGuard('jwt'), RolesGuard)
+@Roles('ADMIN')
+async toggleFeatureProduct(
+  @Param('id', ParseIntPipe) id: number,
+  @Body('featured') featured: boolean
+) {
+  return this.productsService.toggleFeatureStatus(id, featured);
+}
+ 
+
+
 }

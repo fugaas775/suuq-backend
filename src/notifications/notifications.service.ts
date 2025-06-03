@@ -10,6 +10,7 @@ export class NotificationsService {
   constructor(
     @InjectRepository(Notification)
     private readonly notificationRepo: Repository<Notification>,
+
   ) {}
 
   async create(title: string, message: string) {

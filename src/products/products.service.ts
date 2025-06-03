@@ -244,4 +244,26 @@ export class ProductsService {
 
     return [...existingTags, ...newTags];
   }
+
+   async toggleBlockStatus(id: number, isBlocked: boolean): Promise<Product> {
+  const product = await this.productRepo.findOneBy({ id });
+  if (!product) {
+    throw new NotFoundException('Product not found');
+  }
+
+  product.isBlocked = isBlocked;
+  return this.productRepo.save(product);
+}
+
+async toggleFeatureStatus(id: number, featured: boolean): Promise<Product> {
+  const product = await this.productRepo.findOneBy({ id });
+  if (!product) {
+    throw new NotFoundException('Product not found');
+  }
+
+  product.featured = featured;
+  return this.productRepo.save(product);
+}
+
+
 }  

@@ -1,11 +1,11 @@
-// src/data-source.ts
 import { DataSource } from 'typeorm';
-import { Product } from './products/entities/product.entity';
+import * as dotenv from 'dotenv';
 import { User } from './users/user.entity';
+import { Product } from './products/entities/product.entity';
 import { Category } from './categories/category.entity';
 import { MediaEntity } from './media/media.entity';
 import { Tag } from './tags/tag.entity';
-import * as dotenv from 'dotenv';
+import { DeviceToken } from './notifications/device-token.entity';
 
 dotenv.config();
 
@@ -16,7 +16,8 @@ export const AppDataSource = new DataSource({
   username: process.env.DB_USERNAME,
   password: process.env.DB_PASSWORD,
   database: process.env.DB_NAME,
-  entities: [Product, User, Category, MediaEntity, Tag],
-  migrations: ['src/migrations/*.ts'],
+  entities: [User, Product, Category, MediaEntity, Tag, DeviceToken],
+  migrations: [process.env.NODE_ENV === 'production' ? 'dist/migrations/*.js' : 'src/migrations/*.ts'],
   synchronize: false,
 });
+

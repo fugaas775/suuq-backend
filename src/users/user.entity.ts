@@ -2,17 +2,22 @@ import {
   Entity,
   PrimaryGeneratedColumn,
   Column,
+  OneToMany,
   CreateDateColumn,
   UpdateDateColumn,
-  OneToMany,
 } from 'typeorm';
-import { forwardRef } from '@nestjs/common';
+import { DeviceToken } from '../notifications/device-token.entity';
 import { MediaEntity } from '../media/media.entity';
 import { Product } from '../products/entities/product.entity';
 
-export type UserRole = 'CUSTOMER' | 'VENDOR' | 'ADMIN' | 'DELIVERER';
+export enum UserRole {
+  CUSTOMER = 'CUSTOMER',
+  VENDOR = 'VENDOR',
+  ADMIN = 'ADMIN',
+  DELIVERER = 'DELIVERER',
+}
 
-@Entity()
+@Entity('user')
 export class User {
   @PrimaryGeneratedColumn()
   id!: number;
@@ -23,15 +28,20 @@ export class User {
   @Column()
   password!: string;
 
-  @Column({ type: 'varchar' })
-  role!: UserRole;
+  @Column({
+    type: 'simple-array',
+    default: [UserRole.CUSTOMER],
+  })
+  roles!: UserRole[];
 
-  @OneToMany(() => Product, (product) => product.vendor)
-  products!: Product[];
+  @OneToMany(() => DeviceToken, (token) => token.user)
+  deviceTokens!: DeviceToken[];
 
   @OneToMany(() => MediaEntity, (media) => media.owner)
   media!: MediaEntity[];
 
+  @OneToMany(() => Product, (product) => product.vendor)
+  products!: Product[];
 
   @CreateDateColumn()
   createdAt!: Date;
@@ -44,5 +54,10 @@ export class User {
 
   @Column({ nullable: true })
   avatarUrl?: string;
-}
 
+  @Column({ default: true })
+  isActive!: boolean;
+
+  @Column({ nullable: true }) // Added based on TS error in AuthService
+  storeName?: string;
+}

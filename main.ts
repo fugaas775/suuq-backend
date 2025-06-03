@@ -20,5 +20,7 @@ async function bootstrap() {
   await app.listen(3000, '0.0.0.0');
   console.log('✅ Server listening on 0.0.0.0:3000');
   console.log('JWT_SECRET:', process.env.JWT_SECRET);
+  console.log('Entities:', AppDataSource.entityMetadatas.map(e => e.name));
+
 }
 bootstrap();
