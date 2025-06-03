@@ -19,6 +19,8 @@ import { CategoriesModule } from './categories/categories.module';
 import { MediaModule } from './media/media.module';
 import { SettingsModule } from './settings/settings.module';
 import { SeedsModule } from './seeds/seeds.module';
+import { ContentController } from './content/content.controller';
+import { ContentService } from './content/content.service';
 
 // Import AppDataSource
 import { AppDataSource } from './data-source'; // Adjust path if necessary
@@ -51,6 +53,14 @@ import { AppDataSource } from './data-source'; // Adjust path if necessary
     MediaModule,
     SettingsModule,
     SeedsModule,
+  ],
+
+controllers: [
+    ContentController,
+  ],
+
+providers: [
+    ContentService,
   ],
 })
 export class AppModule {}

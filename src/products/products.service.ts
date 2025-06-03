@@ -168,80 +168,96 @@ export class ProductsService {
     currentPage: number;
     totalPages: number;
   }> {
-    const qb = this.productRepo
-      .createQueryBuilder('product')
-      .leftJoinAndSelect('product.vendor', 'vendor')
-      .leftJoinAndSelect('product.category', 'category')
-      .leftJoinAndSelect('product.tags', 'tag')
-      .leftJoinAndSelect('product.images', 'images');
-
-    if (search) {
-      qb.andWhere('product.name ILIKE :search', { search: `%${search}%` });
-    }
-
-    if (categorySlug) {
-      qb.andWhere('category.slug = :categorySlug', { categorySlug });
-    } else if (categoryId) {
-      qb.andWhere('category.id = :categoryId', { categoryId });
-    }
-
-    if (typeof featured === 'boolean') {
-      qb.andWhere('product.featured = :featured', { featured });
-    }
-
-    if (tags) {
-      const tagList = tags.split(',').map((t) => t.trim());
-      qb.innerJoin('product.tags', 'tagFilter', 'tagFilter.name IN (:...tagList)', {
-        tagList,
+    try {
+      // Add debug log for parameters
+      console.log('[ProductsService] findFiltered params:', {
+        perPage, page, search, categoryId, categorySlug, featured, sort, priceMin, priceMax, tags
       });
+
+      const qb = this.productRepo
+        .createQueryBuilder('product')
+        .leftJoinAndSelect('product.vendor', 'vendor')
+        .leftJoinAndSelect('product.category', 'category')
+        .leftJoinAndSelect('product.tags', 'tag')
+        .leftJoinAndSelect('product.images', 'images');
+
+      if (search) {
+        qb.andWhere('product.name ILIKE :search', { search: `%${search}%` });
+      }
+
+      if (categorySlug) {
+        qb.andWhere('category.slug = :categorySlug', { categorySlug });
+      } else if (categoryId) {
+        qb.andWhere('category.id = :categoryId', { categoryId });
+      }
+
+      if (typeof featured === 'boolean') {
+        qb.andWhere('product.featured = :featured', { featured });
+      }
+
+      if (tags) {
+        const tagList = tags.split(',').map((t) => t.trim());
+        qb.innerJoin('product.tags', 'tagFilter', 'tagFilter.name IN (:...tagList)', {
+          tagList,
+        });
+      }
+
+      // Defensive: check if priceMin/priceMax are numbers before filtering
+      const minVal = priceMin ? parseFloat(priceMin) : undefined;
+      if (minVal !== undefined && !isNaN(minVal)) {
+        qb.andWhere('product.price >= :priceMin', { priceMin: minVal });
+      }
+
+      const maxVal = priceMax ? parseFloat(priceMax) : undefined;
+      if (maxVal !== undefined && !isNaN(maxVal)) {
+        qb.andWhere('product.price <= :priceMax', { priceMax: maxVal });
+      }
+
+      let orderByField: keyof Product = 'createdAt';
+      let orderDirection: 'ASC' | 'DESC' = 'DESC';
+
+      switch (sort) {
+        case 'price_asc':
+          orderByField = 'price';
+          orderDirection = 'ASC';
+          break;
+        case 'price_desc':
+          orderByField = 'price';
+          orderDirection = 'DESC';
+          break;
+        case 'name_asc':
+          orderByField = 'name';
+          orderDirection = 'ASC';
+          break;
+        case 'name_desc':
+          orderByField = 'name';
+          orderDirection = 'DESC';
+          break;
+      }
+
+      qb.orderBy(`product.${orderByField}`, orderDirection)
+        .skip((page - 1) * perPage)
+        .take(perPage);
+
+      const [items, total] = await qb.getManyAndCount();
+
+      // Defensive: ensure items is always an array
+      const dtos = Array.isArray(items) ? items.map((product) => this.mapProductToDto(product)) : [];
+
+      return {
+        items: dtos,
+        total,
+        perPage,
+        currentPage: page,
+        totalPages: Math.ceil(total / perPage),
+      };
+    } catch (err) {
+      // Log error for debugging
+      console.error('[ProductsService] findFiltered error:', err);
+      throw err;
     }
-
-    if (priceMin) {
-      qb.andWhere('product.price >= :priceMin', { priceMin: parseFloat(priceMin) });
-    }
-
-    if (priceMax) {
-      qb.andWhere('product.price <= :priceMax', { priceMax: parseFloat(priceMax) });
-    }
-
-    let orderByField: keyof Product = 'createdAt';
-    let orderDirection: 'ASC' | 'DESC' = 'DESC';
-
-    switch (sort) {
-      case 'price_asc':
-        orderByField = 'price';
-        orderDirection = 'ASC';
-        break;
-      case 'price_desc':
-        orderByField = 'price';
-        orderDirection = 'DESC';
-        break;
-      case 'name_asc':
-        orderByField = 'name';
-        orderDirection = 'ASC';
-        break;
-      case 'name_desc':
-        orderByField = 'name';
-        orderDirection = 'DESC';
-        break;
-    }
-
-    qb.orderBy(`product.${orderByField}`, orderDirection)
-      .skip((page - 1) * perPage)
-      .take(perPage);
-
-    const [items, total] = await qb.getManyAndCount();
-
-    const dtos = items.map((product) => this.mapProductToDto(product));
-
-    return {
-      items: dtos,
-      total,
-      perPage,
-      currentPage: page,
-      totalPages: Math.ceil(total / perPage),
-    };
   }
+
 
   async findAll(): Promise<ProductResponseDto[]> {
     const products = await this.productRepo.find({
@@ -249,6 +265,7 @@ export class ProductsService {
     });
     return products.map((product) => this.mapProductToDto(product));
   }
+
 
   async findByVendorId(vendorId: number): Promise<ProductResponseDto[]> {
     const products = await this.productRepo.find({

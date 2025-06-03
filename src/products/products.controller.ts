@@ -46,31 +46,49 @@ export class ProductsController {
     @Query('categorySlug') categorySlug?: string,
     @Query('tag') tag?: string,
   ) {
-    const perPage = parseInt(perPageQuery || '10', 10);
-    const page = parseInt(pageQuery || '1', 10);
-    const catId = categoryId ? parseInt(categoryId, 10) : undefined;
-    const isFeatured =
-      featured === 'true' ? true : featured === 'false' ? false : undefined;
+    try {
+      // Log for debugging
+      console.log('[ProductsController] findAll params:', {
+        perPageQuery, pageQuery, search, categoryId, featured, sort, categorySlug, tag
+      });
 
-    if (isNaN(perPage) || isNaN(page)) {
-      throw new BadRequestException('Invalid pagination values');
+      const perPage = parseInt(perPageQuery || '10', 10);
+      const page = parseInt(pageQuery || '1', 10);
+      const catId = categoryId ? parseInt(categoryId, 10) : undefined;
+      const isFeatured =
+        featured === 'true' ? true : featured === 'false' ? false : undefined;
+
+      if (isNaN(perPage) || isNaN(page)) {
+        throw new BadRequestException('Invalid pagination values');
+      }
+
+      const result = await this.productsService.findFiltered({
+        perPage,
+        page,
+        search,
+        categoryId: catId,
+        featured: isFeatured,
+        sort,
+        categorySlug,
+        tags: tag,
+      });
+
+      // Defensive: Ensure result/items exist
+      if (!result || !Array.isArray(result.items)) {
+        console.error('[ProductsController] findAll: result or result.items missing', result);
+        throw new BadRequestException('Product list could not be loaded');
+      }
+
+      return {
+        ...result,
+        items: plainToInstance(ProductResponseDto, result.items),
+      };
+    } catch (err) {
+      // Log the error for backend trace
+      console.error('[ProductsController] findAll error:', err);
+      // Optionally rethrow or wrap in a more specific exception
+      throw err;
     }
-
-    const result = await this.productsService.findFiltered({
-      perPage,
-      page,
-      search,
-      categoryId: catId,
-      featured: isFeatured,
-      sort,
-      categorySlug,
-      tags: tag, // ✅ mapped correctly
-    });
-
-    return {
-      ...result,
-      items: plainToInstance(ProductResponseDto, result.items),
-    };
   }
 
   @Get('suggest')
