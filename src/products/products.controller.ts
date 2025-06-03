@@ -45,6 +45,7 @@ export class ProductsController {
     @Query('sort') sort?: string,
     @Query('categorySlug') categorySlug?: string,
     @Query('tag') tag?: string,
+    @Query('status') status?: string, // <--- Add this line
   ) {
     const perPage = parseInt(perPageQuery || '10', 10);
     const page = parseInt(pageQuery || '1', 10);
@@ -65,6 +66,7 @@ export class ProductsController {
       sort,
       categorySlug,
       tags: tag, // ✅ mapped correctly
+      status,
     });
 
     return {
