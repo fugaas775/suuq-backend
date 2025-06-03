@@ -14,18 +14,20 @@ import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { plainToInstance } from 'class-transformer';
 import { ProductResponseDto } from './dto/product-response.dto';
+import { ProductImage } from './entities/product-image.entity';
 
 @Injectable()
 export class ProductsService {
   constructor(
     @InjectRepository(Product) private productRepo: Repository<Product>,
+    @InjectRepository(ProductImage) private productImageRepo: Repository<ProductImage>,
     @InjectRepository(User) private userRepo: Repository<User>,
     @InjectRepository(Order) private orderRepo: Repository<Order>,
     @InjectRepository(Tag) private tagRepo: Repository<Tag>,
   ) {}
 
-  async create(data: CreateProductDto & { vendorId: number }): Promise<Product> {
-    const { tags = [], vendorId, ...rest } = data;
+  async create(data: CreateProductDto & { vendorId: number }): Promise<ProductResponseDto> {
+    const { tags = [], images = [], vendorId, ...rest } = data;
 
     const vendor = await this.userRepo.findOneBy({ id: vendorId });
     if (!vendor) throw new NotFoundException('Vendor not found');
@@ -36,17 +38,38 @@ export class ProductsService {
       product.tags = await this.assignTags(tags);
     }
 
-    return this.productRepo.save(product);
+    // Save the product to get an ID
+    const savedProduct = await this.productRepo.save(product);
+
+    // Handle images
+    if (images.length) {
+      const imageEntities = images.map((src, idx) =>
+        this.productImageRepo.create({
+          src,
+          sortOrder: idx,
+          product: savedProduct,
+        }),
+      );
+      await this.productImageRepo.save(imageEntities);
+      savedProduct.images = imageEntities;
+    } else {
+      savedProduct.images = [];
+    }
+
+    return this.mapProductToDto(await this.productRepo.findOneOrFail({
+      where: { id: savedProduct.id },
+      relations: ['vendor', 'category', 'tags', 'images'],
+    }));
   }
 
   async updateProduct(
     id: number,
-    updateProductDto: UpdateProductDto & { tags?: string[] },
+    updateProductDto: UpdateProductDto & { tags?: string[]; images?: string[] },
     user: any,
-  ): Promise<Product> {
+  ): Promise<ProductResponseDto> {
     const product = await this.productRepo.findOne({
       where: { id },
-      relations: ['vendor', 'tags'],
+      relations: ['vendor', 'tags', 'images'],
     });
 
     if (!product) throw new NotFoundException('Product not found');
@@ -56,11 +79,33 @@ export class ProductsService {
 
     Object.assign(product, updateProductDto);
 
+    // Update tags if provided
     if (updateProductDto.tags?.length) {
       product.tags = await this.assignTags(updateProductDto.tags);
     }
 
-    return this.productRepo.save(product);
+    // Update images if provided
+    if (updateProductDto.images) {
+      // Remove old images
+      await this.productImageRepo.delete({ product: { id: product.id } });
+      // Add new images
+      const imageEntities = updateProductDto.images.map((src, idx) =>
+        this.productImageRepo.create({
+          src,
+          sortOrder: idx,
+          product: product,
+        }),
+      );
+      await this.productImageRepo.save(imageEntities);
+      product.images = imageEntities;
+    }
+
+    const saved = await this.productRepo.save(product);
+
+    return this.mapProductToDto(await this.productRepo.findOneOrFail({
+      where: { id: saved.id },
+      relations: ['vendor', 'category', 'tags', 'images'],
+    }));
   }
 
   async deleteProduct(id: number, user: any): Promise<{ deleted: boolean }> {
@@ -86,16 +131,12 @@ export class ProductsService {
   async findOne(id: number): Promise<ProductResponseDto | null> {
     const product = await this.productRepo.findOne({
       where: { id },
-      relations: ['vendor', 'tags'],
+      relations: ['vendor', 'category', 'tags', 'images'],
     });
 
     if (!product) return null;
 
-    const dto = plainToInstance(ProductResponseDto, product, {
-      excludeExtraneousValues: true,
-    });
-    dto.tags = product.tags?.map((t) => t.name) || [];
-    return dto;
+    return this.mapProductToDto(product);
   }
 
   async findFiltered({
@@ -131,7 +172,8 @@ export class ProductsService {
       .createQueryBuilder('product')
       .leftJoinAndSelect('product.vendor', 'vendor')
       .leftJoinAndSelect('product.category', 'category')
-      .leftJoinAndSelect('product.tags', 'tag');
+      .leftJoinAndSelect('product.tags', 'tag')
+      .leftJoinAndSelect('product.images', 'images');
 
     if (search) {
       qb.andWhere('product.name ILIKE :search', { search: `%${search}%` });
@@ -148,11 +190,11 @@ export class ProductsService {
     }
 
     if (tags) {
-     const tagList = tags.split(',').map((t) => t.trim());
-     qb.innerJoin('product.tags', 'tagFilter', 'tagFilter.name IN (:...tagList)', {
-      tagList,
+      const tagList = tags.split(',').map((t) => t.trim());
+      qb.innerJoin('product.tags', 'tagFilter', 'tagFilter.name IN (:...tagList)', {
+        tagList,
       });
-   }
+    }
 
     if (priceMin) {
       qb.andWhere('product.price >= :priceMin', { priceMin: parseFloat(priceMin) });
@@ -190,13 +232,7 @@ export class ProductsService {
 
     const [items, total] = await qb.getManyAndCount();
 
-    const dtos = items.map((product) => {
-      const dto = plainToInstance(ProductResponseDto, product, {
-        excludeExtraneousValues: true,
-      });
-      dto.tags = product.tags?.map((t) => t.name) || [];
-      return dto;
-    });
+    const dtos = items.map((product) => this.mapProductToDto(product));
 
     return {
       items: dtos,
@@ -207,17 +243,19 @@ export class ProductsService {
     };
   }
 
-  async findAll(): Promise<Product[]> {
-   return this.productRepo.find({
-    relations: ['vendor', 'tags'],
+  async findAll(): Promise<ProductResponseDto[]> {
+    const products = await this.productRepo.find({
+      relations: ['vendor', 'category', 'tags', 'images'],
     });
+    return products.map((product) => this.mapProductToDto(product));
   }
 
-  async findByVendorId(vendorId: number): Promise<Product[]> {
-    return this.productRepo.find({
+  async findByVendorId(vendorId: number): Promise<ProductResponseDto[]> {
+    const products = await this.productRepo.find({
       where: { vendor: { id: vendorId } },
-      relations: ['vendor', 'tags'],
+      relations: ['vendor', 'category', 'tags', 'images'],
     });
+    return products.map((product) => this.mapProductToDto(product));
   }
 
   async suggestNames(query: string): Promise<{ name: string }[]> {
@@ -245,25 +283,65 @@ export class ProductsService {
     return [...existingTags, ...newTags];
   }
 
-   async toggleBlockStatus(id: number, isBlocked: boolean): Promise<Product> {
-  const product = await this.productRepo.findOneBy({ id });
-  if (!product) {
-    throw new NotFoundException('Product not found');
+  async toggleBlockStatus(id: number, isBlocked: boolean): Promise<ProductResponseDto> {
+    const product = await this.productRepo.findOneBy({ id });
+    if (!product) {
+      throw new NotFoundException('Product not found');
+    }
+
+    product.isBlocked = isBlocked;
+    const saved = await this.productRepo.save(product);
+
+    return this.mapProductToDto(await this.productRepo.findOneOrFail({
+      where: { id: saved.id },
+      relations: ['vendor', 'category', 'tags', 'images'],
+    }));
   }
 
-  product.isBlocked = isBlocked;
-  return this.productRepo.save(product);
-}
+  async toggleFeatureStatus(id: number, featured: boolean): Promise<ProductResponseDto> {
+    const product = await this.productRepo.findOneBy({ id });
+    if (!product) {
+      throw new NotFoundException('Product not found');
+    }
 
-async toggleFeatureStatus(id: number, featured: boolean): Promise<Product> {
-  const product = await this.productRepo.findOneBy({ id });
-  if (!product) {
-    throw new NotFoundException('Product not found');
+    product.featured = featured;
+    const saved = await this.productRepo.save(product);
+
+    return this.mapProductToDto(await this.productRepo.findOneOrFail({
+      where: { id: saved.id },
+      relations: ['vendor', 'category', 'tags', 'images'],
+    }));
   }
 
-  product.featured = featured;
-  return this.productRepo.save(product);
-}
-
-
-}  
+  private mapProductToDto(product: Product): ProductResponseDto {
+    return {
+      id: product.id,
+      name: product.name,
+      price: Number(product.price),
+      sale_price: product.sale_price ? Number(product.sale_price) : undefined,
+      currency: product.currency,
+      images: product.images?.map(img => ({ src: img.src })) || [],
+      imageUrl: product.images?.length > 0 ? product.images[0].src : undefined,
+      description: product.description,
+      createdAt: product.createdAt,
+      featured: product.featured,
+      vendor: {
+        id: product.vendor?.id,
+        email: product.vendor?.email,
+        displayName: product.vendor?.displayName,
+        avatarUrl: product.vendor?.avatarUrl,
+        store_name: product.vendor?.store_name,
+        name: product.vendor?.name,
+      },
+      category: product.category
+        ? {
+            id: product.category.id,
+            name: product.category.name,
+          }
+        : undefined,
+      tags: product.tags?.map((t) => t.name) || [],
+      average_rating: product.average_rating ? Number(product.average_rating) : undefined,
+      rating_count: product.rating_count,
+    };
+  }
+} 

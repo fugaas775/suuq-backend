@@ -18,6 +18,7 @@ import { AdminDeliveriesModule } from './admin/deliveries/deliveries.module';
 import { CategoriesModule } from './categories/categories.module';
 import { MediaModule } from './media/media.module';
 import { SettingsModule } from './settings/settings.module';
+import { SeedsModule } from './seeds/seeds.module';
 
 // Import AppDataSource
 import { AppDataSource } from './data-source'; // Adjust path if necessary
@@ -61,6 +62,7 @@ import { AppDataSource } from './data-source'; // Adjust path if necessary
     CategoriesModule,
     MediaModule,
     SettingsModule,
+    SeedsModule,
   ],
 })
 export class AppModule {}

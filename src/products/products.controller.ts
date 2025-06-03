@@ -45,7 +45,9 @@ export class ProductsController {
     @Query('sort') sort?: string,
     @Query('categorySlug') categorySlug?: string,
     @Query('tag') tag?: string,
+<<<<<<< HEAD
     @Query('status') status?: string, // <--- Add this line
+>>>>>>> 7e76e96 (Update backend with latest changes (e.g., June 3 - Afternoon))
   ) {
     const perPage = parseInt(perPageQuery || '10', 10);
     const page = parseInt(pageQuery || '1', 10);

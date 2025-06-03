@@ -1,7 +1,8 @@
-import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, ManyToMany, JoinTable, CreateDateColumn } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, OneToMany, ManyToMany, JoinTable, CreateDateColumn } from 'typeorm';
 import { User } from '../../users/user.entity';
 import { Category } from '../../categories/category.entity';
 import { Tag } from '../../tags/tag.entity';
+import { ProductImage } from './product-image.entity';
 
 @Entity()
 export class Product {
@@ -32,6 +33,21 @@ export class Product {
   
   @ManyToOne(() => Category, category => category.products, { nullable: true })
   category?: Category;
+
+  @Column('decimal', { nullable: true })
+  sale_price?: number;
+
+  @Column({ nullable: true })
+  currency?: string;
+
+  @OneToMany(() => ProductImage, image => image.product, { cascade: true, eager: true })
+  images!: ProductImage[];
+
+  @Column('decimal', { nullable: true })
+  average_rating?: number;
+
+  @Column({ nullable: true })
+  rating_count?: number;
 
   @ManyToMany(() => Tag, (tag) => tag.products, { cascade: true })
   @JoinTable()
