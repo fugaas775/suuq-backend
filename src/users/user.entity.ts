@@ -5,6 +5,7 @@ import {
   OneToMany,
   CreateDateColumn,
   UpdateDateColumn,
+  Index,
 } from 'typeorm';
 import { DeviceToken } from '../notifications/device-token.entity';
 import { MediaEntity } from '../media/media.entity';
@@ -23,6 +24,7 @@ export class User {
   id!: number;
 
   @Column({ unique: true })
+  @Index()
   email!: string;
 
   @Column()
@@ -30,7 +32,7 @@ export class User {
 
   @Column({
     type: 'simple-array',
-    default: [UserRole.CUSTOMER],
+    default: UserRole.CUSTOMER,
   })
   roles!: UserRole[];
 
@@ -58,9 +60,10 @@ export class User {
   @Column({ default: true })
   isActive!: boolean;
 
-  @Column({ nullable: true }) // Added based on TS error in AuthService
+  @Column({ nullable: true })
   storeName?: string;
 
   @Column({ nullable: true })
+  @Index()
   googleId?: string;
 }
