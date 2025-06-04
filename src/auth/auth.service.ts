@@ -53,7 +53,7 @@ export class AuthService {
         password: hashedPassword,
         displayName: dto.displayName,
         avatarUrl: dto.avatarUrl,
-        storeName: dto.storeName, // This should now be fine if User entity has storeName
+        storeName: dto.storeName,
         roles: userRoles,
         isActive: true,
       };
@@ -116,11 +116,16 @@ export class AuthService {
     return { access_token, refreshToken, user: userResponse };
   }
 
-  async googleLogin(idToken: string): Promise<{ access_token: string; user: UserResponseDto }> {
+  /**
+   * Google Login
+   * @param dto GoogleAuthDto or raw idToken (you may want to change the signature to accept GoogleAuthDto)
+   */
+  async googleLogin(dto: { idToken: string }): Promise<{ access_token: string; refreshToken: string; user: UserResponseDto }> {
+    const idToken = dto.idToken;
     this.logger.log(`[googleLogin] Attempting Google login with ID token (length: ${idToken?.length})`);
     if (!this.oauthClient) {
-        this.logger.error('[googleLogin] OAuth2Client not initialized (GOOGLE_WEB_CLIENT_ID missing or invalid).');
-        throw new InternalServerErrorException('Google Sign-In is not configured on the server.');
+      this.logger.error('[googleLogin] OAuth2Client not initialized (GOOGLE_WEB_CLIENT_ID missing or invalid).');
+      throw new InternalServerErrorException('Google Sign-In is not configured on the server.');
     }
 
     let googlePayload: TokenPayload | undefined;
@@ -168,8 +173,8 @@ export class AuthService {
     }
 
     const rolesForPayload = Array.isArray(user.roles) ? user.roles : [];
-     if (rolesForPayload.length === 0) {
-        this.logger.warn(`[googleLogin] User ${user.email} has no roles. This might be an issue.`);
+    if (rolesForPayload.length === 0) {
+      this.logger.warn(`[googleLogin] User ${user.email} has no roles. This might be an issue.`);
     }
 
     const jwtPayload = {
@@ -178,7 +183,14 @@ export class AuthService {
       roles: rolesForPayload,
     };
     this.logger.log(`[googleLogin] Generating JWT for user: ${user.email} with payload: ${JSON.stringify(jwtPayload)}`);
-    const accessToken = this.jwtService.sign(jwtPayload);
+
+    const accessToken = this.jwtService.sign(jwtPayload, {
+      expiresIn: this.configService.get<string>('JWT_EXPIRES_IN') || '1h',
+    });
+    const refreshToken = this.jwtService.sign(jwtPayload, {
+      secret: this.configService.get<string>('JWT_REFRESH_SECRET') || process.env.JWT_REFRESH_SECRET || 'refreshSecret',
+      expiresIn: this.configService.get<string>('JWT_REFRESH_EXPIRES_IN') || '7d',
+    });
 
     const userResponse = plainToInstance(UserResponseDto, user, {
       excludeExtraneousValues: true,
@@ -186,6 +198,7 @@ export class AuthService {
 
     return {
       access_token: accessToken,
+      refreshToken,
       user: userResponse,
     };
   }
