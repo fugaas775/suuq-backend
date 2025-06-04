@@ -18,6 +18,7 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { plainToInstance } from 'class-transformer';
 import { UserResponseDto } from '../users/dto/user-response.dto';
 import { UserRole } from '../users/user.entity';
+import { GoogleAuthDto } from './dto/google-auth.dto'; // <-- Make sure you create this DTO
 
 interface AuthenticatedRequest extends Request {
   user: {
@@ -55,7 +56,7 @@ export class AuthController {
   async registerDeliverer(@Body() dto: Omit<RegisterDto, 'role' | 'roles'>) {
     const registerPayload: RegisterDto = {
       ...dto,
-      roles: [UserRole.DELIVERER], // Use enum member
+      roles: [UserRole.DELIVERER],
     };
     const { user } = await this.authService.register(registerPayload);
     return {
@@ -68,8 +69,8 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   async loginDeliverer(@Body() dto: LoginDto) {
     const { access_token, user } = await this.authService.login(dto);
-    if (!user.roles.includes(UserRole.DELIVERER)) { // Use enum member
-        throw new UnauthorizedException('Access denied. Not a deliverer account.');
+    if (!user.roles.includes(UserRole.DELIVERER)) {
+      throw new UnauthorizedException('Access denied. Not a deliverer account.');
     }
     return {
       access_token,
@@ -77,9 +78,20 @@ export class AuthController {
     };
   }
 
+  @Post('google')
+  @HttpCode(HttpStatus.OK)
+  async googleLogin(@Body() dto: GoogleAuthDto) {
+    const { access_token, refreshToken, user } = await this.authService.googleLogin(dto);
+    return {
+      accessToken: access_token,
+      refreshToken,
+      user: plainToInstance(UserResponseDto, user, { excludeExtraneousValues: true }),
+    };
+  }
+
   @Get('vendor-dashboard')
   @UseGuards(AuthGuard('jwt'), RolesGuard)
-  @Roles(UserRole.VENDOR) // Use enum member
+  @Roles(UserRole.VENDOR)
   getVendorDashboard(@Request() req: AuthenticatedRequest) {
     return {
       message: 'Welcome vendor',
