@@ -5,6 +5,7 @@ import {
   OneToMany,
   CreateDateColumn,
   UpdateDateColumn,
+  DeleteDateColumn,
   Index,
 } from 'typeorm';
 import { DeviceToken } from '../notifications/device-token.entity';
@@ -51,19 +52,41 @@ export class User {
   @UpdateDateColumn()
   updatedAt!: Date;
 
+  @DeleteDateColumn({ nullable: true })
+  deletedAt?: Date; // Soft delete field
+
+  // --- Audit fields ---
+  @Column({ nullable: true })
+  createdBy?: string; // Store user id or email of creator
+
+  @Column({ nullable: true })
+  updatedBy?: string; // Store user id or email of last updater
+
+  @Column({ nullable: true })
+  deletedBy?: string; // Store user id or email of deleter
+
+  // --- Profile fields ---
   @Column({ nullable: true })
   displayName?: string;
 
   @Column({ nullable: true })
   avatarUrl?: string;
 
-  @Column({ default: true })
-  isActive!: boolean;
-
   @Column({ nullable: true })
   storeName?: string;
 
+  @Column({ default: true })
+  isActive!: boolean;
+
+  // --- Google SSO ---
   @Column({ nullable: true })
   @Index()
   googleId?: string;
+
+  // --- Phone Number & Verification ---
+  @Column({ nullable: true, length: 20 })
+  phoneNumber?: string;
+
+  @Column({ default: false })
+  isPhoneVerified!: boolean;
 }
