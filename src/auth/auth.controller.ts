@@ -43,9 +43,10 @@ export class AuthController {
   @Post('login')
   @HttpCode(HttpStatus.OK)
   async login(@Body() dto: LoginDto) {
-    const { access_token, user } = await this.authService.login(dto);
+    const { access_token, refreshToken, user } = await this.authService.login(dto);
     return {
-      access_token,
+      accessToken: access_token, // Use camelCase for frontend consistency
+      refreshToken,
       user: plainToInstance(UserResponseDto, user, { excludeExtraneousValues: true }),
     };
   }

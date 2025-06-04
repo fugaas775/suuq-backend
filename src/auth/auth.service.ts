@@ -75,7 +75,7 @@ export class AuthService {
     }
   }
 
-  async login(dto: LoginDto): Promise<{ access_token: string; user: UserResponseDto }> {
+  async login(dto: LoginDto): Promise<{ access_token: string; refreshToken: string; user: UserResponseDto }> {
     this.logger.log(`[login] Attempting login for user: ${dto.email}`);
     
     const user = await this.usersService.findByEmail(dto.email);
@@ -87,40 +87,33 @@ export class AuthService {
     this.logger.log(`[login] User found: ${user.email}, isActive: ${user.isActive}, Roles from DB: ${JSON.stringify(user.roles)}`);
 
     if (!user.isActive) {
-      this.logger.warn(`[login] User account is deactivated: ${dto.email}`);
-      throw new UnauthorizedException('Account is deactivated. Please contact support.');
+      throw new UnauthorizedException('Account is inactive');
     }
 
-    const isPasswordMatching = await bcrypt.compare(dto.password, user.password);
-    this.logger.log(`[login] Password match result for ${dto.email}: ${isPasswordMatching}`);
-
-    if (!isPasswordMatching) {
-      this.logger.warn(`[login] Password mismatch for user: ${dto.email}`);
+    const isPasswordValid = await bcrypt.compare(dto.password, user.password);
+    if (!isPasswordValid) {
       throw new UnauthorizedException('Invalid credentials');
     }
 
-    const rolesForPayload = Array.isArray(user.roles) ? user.roles : [];
-     if (rolesForPayload.length === 0) {
-        this.logger.warn(`[login] User ${user.email} has no roles assigned. This could be an issue.`);
-    }
+    // Create payload for JWT
+    const payload = { sub: user.id, email: user.email, roles: user.roles };
 
-    const payload = {
-      sub: user.id,
-      email: user.email,
-      roles: rolesForPayload,
-    };
-    this.logger.log(`[login] Generating JWT for user: ${dto.email} with payload: ${JSON.stringify(payload)}`);
+    // Generate access token
+    const access_token = this.jwtService.sign(payload, {
+      expiresIn: this.configService.get<string>('JWT_EXPIRES_IN') || '1h',
+    });
 
-    const accessToken = this.jwtService.sign(payload);
+    // Generate refresh token (typically longer expiry)
+    const refreshToken = this.jwtService.sign(payload, {
+      secret: this.configService.get<string>('JWT_REFRESH_SECRET') || process.env.JWT_REFRESH_SECRET || 'refreshSecret',
+      expiresIn: this.configService.get<string>('JWT_REFRESH_EXPIRES_IN') || '7d',
+    });
+
     const userResponse = plainToInstance(UserResponseDto, user, {
       excludeExtraneousValues: true,
     });
 
-    this.logger.log(`[login] Login successful for user: ${dto.email}`);
-    return {
-      access_token: accessToken,
-      user: userResponse,
-    };
+    return { access_token, refreshToken, user: userResponse };
   }
 
   async googleLogin(idToken: string): Promise<{ access_token: string; user: UserResponseDto }> {
