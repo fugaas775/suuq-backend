@@ -60,4 +60,7 @@ export class User {
 
   @Column({ nullable: true }) // Added based on TS error in AuthService
   storeName?: string;
+
+  @Column({ nullable: true })
+  googleId?: string;
 }
