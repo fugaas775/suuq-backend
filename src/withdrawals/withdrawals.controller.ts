@@ -15,6 +15,7 @@ import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
 import { WithdrawalStatus } from './entities/withdrawal.entity';
 import { WithdrawalDto } from './dto/withdrawal.dto';
+import { UserRole } from '../users/user.entity'; // <-- Import the enum
 
 @Controller('withdrawals')
 @UseGuards(AuthGuard('jwt'), RolesGuard)
@@ -22,7 +23,7 @@ export class WithdrawalsController {
   constructor(private readonly withdrawalsService: WithdrawalsService) {}
 
   @Post('request')
-  @Roles('VENDOR')
+  @Roles(UserRole.VENDOR)
   requestWithdrawal(@Body() body: WithdrawalDto, @Req() req: any) {
     return this.withdrawalsService.createWithdrawal(
       body.amount,
@@ -32,19 +33,19 @@ export class WithdrawalsController {
   }
 
   @Get('my')
-  @Roles('VENDOR')
+  @Roles(UserRole.VENDOR)
   getVendorWithdrawals(@Req() req: any) {
     return this.withdrawalsService.getVendorWithdrawals(req.user.id);
   }
 
   @Get('all')
-  @Roles('ADMIN')
+  @Roles(UserRole.ADMIN)
   getAllWithdrawals() {
     return this.withdrawalsService.getAll();
   }
 
   @Patch(':id/status')
-  @Roles('ADMIN')
+  @Roles(UserRole.ADMIN)
   updateStatus(
     @Param('id', ParseIntPipe) id: number,
     @Body('status') status: WithdrawalStatus,
@@ -53,9 +54,8 @@ export class WithdrawalsController {
   }
 
   @Get('vendor-stats')
-  @Roles('VENDOR')
+  @Roles(UserRole.VENDOR)
   getVendorStats(@Req() req: any) {
    return this.withdrawalsService.getVendorStats(req.user.id);
   }
-
 }
