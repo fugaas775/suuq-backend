@@ -7,8 +7,8 @@ export enum OrderStatus {
   DELIVERED = 'DELIVERED',
 }
 
- @Entity()
- export class Order {
+@Entity()
+export class Order {
   @PrimaryGeneratedColumn()
   id!: number;
 
@@ -21,7 +21,11 @@ export enum OrderStatus {
   @Column()
   quantity!: number;
 
-  @Column({ type: 'varchar', default: OrderStatus.PENDING })
+  @Column({
+    type: 'enum',
+    enum: OrderStatus,
+    default: OrderStatus.PENDING,
+  })
   status!: OrderStatus;
    
   @CreateDateColumn()
@@ -29,9 +33,4 @@ export enum OrderStatus {
 
   @ManyToOne(() => Product, { eager: true })
   product!: Product;
-
- }
-
-
-
-
+}
