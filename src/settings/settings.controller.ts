@@ -2,7 +2,7 @@ import {
   Controller,
   Get,
   Put,
-  Patch, // <-- Add this import
+  Patch,
   Body,
   UseGuards,
   Request as ReqDecorator,
@@ -21,14 +21,13 @@ export class SettingsController {
     try {
       return await this.settingsService.getUserSettings(req.user.id);
     } catch (err) {
-      // Optionally log the error for debugging
       console.error('Error in getProfile:', err);
       throw err;
     }
   }
 
   @Put('profile')
-  @Patch('profile') // <-- Add this decorator to support PATCH as well
+  @Patch('profile')
   async updateProfile(
     @ReqDecorator() req: any,
     @Body() updateDto: UpdateSettingsDto,
@@ -36,7 +35,6 @@ export class SettingsController {
     try {
       return await this.settingsService.updateUserSettings(req.user.id, updateDto);
     } catch (err) {
-      // Optionally log the error for debugging
       console.error('Error in updateProfile:', err);
       throw err;
     }
