@@ -20,6 +20,7 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { plainToInstance } from 'class-transformer';
 import { ProductResponseDto } from './dto/product-response.dto';
 import { CreateProductDto } from './dto/create-product.dto';
+import { UserRole } from '../constants/roles'; // Import your centralized roles enum
 
 @Controller('products')
 export class ProductsController {
@@ -27,11 +28,11 @@ export class ProductsController {
 
   @Post()
   @UseGuards(AuthGuard('jwt'), RolesGuard)
-  @Roles('VENDOR')
-   create(@Body() createProductDto: CreateProductDto, @Req() req: any) {
-   return this.productsService.create({
-    ...createProductDto,
-    vendorId: req.user.id,
+  @Roles(UserRole.VENDOR)
+  create(@Body() createProductDto: CreateProductDto, @Req() req: any) {
+    return this.productsService.create({
+      ...createProductDto,
+      vendorId: req.user.id,
     });
   }
 
@@ -108,7 +109,7 @@ export class ProductsController {
 
   @Patch(':id')
   @UseGuards(AuthGuard('jwt'), RolesGuard)
-  @Roles('VENDOR')
+  @Roles(UserRole.VENDOR)
   updateProduct(
     @Param('id', ParseIntPipe) id: number,
     @Body() updateProductDto: UpdateProductDto,
@@ -119,7 +120,7 @@ export class ProductsController {
 
   @Delete(':id')
   @UseGuards(AuthGuard('jwt'), RolesGuard)
-  @Roles('VENDOR')
+  @Roles(UserRole.VENDOR)
   deleteProduct(
     @Param('id', ParseIntPipe) id: number,
     @Req() req: any,
@@ -128,25 +129,22 @@ export class ProductsController {
   }
 
   @Patch('/admin/products/:id/block')
-@UseGuards(AuthGuard('jwt'), RolesGuard)
-@Roles('ADMIN')
-async toggleBlockProduct(
-  @Param('id', ParseIntPipe) id: number,
-  @Body('isBlocked') isBlocked: boolean
-) {
-  return this.productsService.toggleBlockStatus(id, isBlocked);
-}
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @Roles(UserRole.ADMIN)
+  async toggleBlockProduct(
+    @Param('id', ParseIntPipe) id: number,
+    @Body('isBlocked') isBlocked: boolean
+  ) {
+    return this.productsService.toggleBlockStatus(id, isBlocked);
+  }
 
   @Patch('/admin/products/:id/feature')
-@UseGuards(AuthGuard('jwt'), RolesGuard)
-@Roles('ADMIN')
-async toggleFeatureProduct(
-  @Param('id', ParseIntPipe) id: number,
-  @Body('featured') featured: boolean
-) {
-  return this.productsService.toggleFeatureStatus(id, featured);
-}
- 
-
-
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @Roles(UserRole.ADMIN)
+  async toggleFeatureProduct(
+    @Param('id', ParseIntPipe) id: number,
+    @Body('featured') featured: boolean
+  ) {
+    return this.productsService.toggleFeatureStatus(id, featured);
+  }
 }
