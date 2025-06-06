@@ -13,6 +13,7 @@ import { TagService } from './tag.service';
 import { AuthGuard } from '@nestjs/passport';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
+import { UserRole } from '../../users/user-role.enum'; // <-- Import your enum
 
 @Controller('tags')
 export class TagController {
@@ -29,14 +30,14 @@ export class TagController {
   }
 
   @UseGuards(AuthGuard('jwt'), RolesGuard)
-  @Roles('ADMIN')
+  @Roles(UserRole.ADMIN) // <-- Use enum
   @Post()
   create(@Body('name') name: string) {
     return this.tagService.create(name);
   }
 
   @UseGuards(AuthGuard('jwt'), RolesGuard)
-  @Roles('ADMIN')
+  @Roles(UserRole.ADMIN) // <-- Use enum
   @Delete(':id')
   delete(@Param('id', ParseIntPipe) id: number) {
     return this.tagService.delete(id);
