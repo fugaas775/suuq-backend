@@ -22,7 +22,7 @@ import * as path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { Request as ExpressRequest } from 'express';
 import { User } from '../users/user.entity';
-
+import { UserRole } from '../constants/roles'; // Centralized roles enum
 
 interface AuthenticatedRequest extends ExpressRequest {
   user?: User;
@@ -30,7 +30,7 @@ interface AuthenticatedRequest extends ExpressRequest {
 
 @Controller('suuq/v1/media')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles('VENDOR')
+@Roles(UserRole.VENDOR) // Use enum, not string
 export class MediaController {
   constructor(
     private readonly mediaService: MediaService,
@@ -66,60 +66,57 @@ export class MediaController {
   }
 
   @Post()
-async upload(@Req() req: AuthenticatedRequest): Promise<any> {
-  if (!req.user) throw new UnauthorizedException('User not authenticated');
+  async upload(@Req() req: AuthenticatedRequest): Promise<any> {
+    if (!req.user) throw new UnauthorizedException('User not authenticated');
 
-  const accessKeyId = this.configService.get<string>('DO_SPACES_KEY')!;
-  const secretAccessKey = this.configService.get<string>('DO_SPACES_SECRET')!;
-  const region = this.configService.get<string>('DO_SPACES_REGION')!;
-  const endpoint = this.configService.get<string>('DO_SPACES_ENDPOINT')!;
-  const bucket = this.configService.get<string>('DO_SPACES_BUCKET')!;
+    const accessKeyId = this.configService.get<string>('DO_SPACES_KEY')!;
+    const secretAccessKey = this.configService.get<string>('DO_SPACES_SECRET')!;
+    const region = this.configService.get<string>('DO_SPACES_REGION')!;
+    const endpoint = this.configService.get<string>('DO_SPACES_ENDPOINT')!;
+    const bucket = this.configService.get<string>('DO_SPACES_BUCKET')!;
 
-  console.log('🚨 Runtime Bucket:', bucket); // This must print suuq-media
+    console.log('🚨 Runtime Bucket:', bucket); // This must print suuq-media
 
-  const s3 = new S3Client({
-    region,
-    endpoint,
-    credentials: { accessKeyId, secretAccessKey },
-    forcePathStyle: false,
-  });
+    const s3 = new S3Client({
+      region,
+      endpoint,
+      credentials: { accessKeyId, secretAccessKey },
+      forcePathStyle: false,
+    });
 
-  const upload = multer({
-    storage: multerS3({
-      s3,
-      bucket,
-      acl: 'public-read',
-      contentType: multerS3.AUTO_CONTENT_TYPE,
-      key: (_req, file, cb) => {
-        const ext = path.extname(file.originalname);
-        cb(null, `products/${uuidv4()}${ext}`);
-      },
-    }),
-  }).single('file');
+    const upload = multer({
+      storage: multerS3({
+        s3,
+        bucket,
+        acl: 'public-read',
+        contentType: multerS3.AUTO_CONTENT_TYPE,
+        key: (_req, file, cb) => {
+          const ext = path.extname(file.originalname);
+          cb(null, `products/${uuidv4()}${ext}`);
+        },
+      }),
+    }).single('file');
 
-  return new Promise((resolve, reject) => {
-    upload(req, req.res as any, async (err) => {
-      if (err) return reject(err);
-      if (!req.file) return reject(new BadRequestException('No file uploaded'));
+    return new Promise((resolve, reject) => {
+      upload(req, req.res as any, async (err) => {
+        if (err) return reject(err);
+        if (!req.file) return reject(new BadRequestException('No file uploaded'));
 
-      const media = await this.mediaService.saveFile(req.file, req.user!.id);
-      resolve({
-        id: media.id,
-        src: media.src,
-        key: media.key,
+        const media = await this.mediaService.saveFile(req.file, req.user!.id);
+        resolve({
+          id: media.id,
+          src: media.src,
+          key: media.key,
+        });
       });
     });
-  });
-}
-
+  }
 
   @Delete('delete/:key')
-async delete(@Param('key') key: string, @Req() req: AuthenticatedRequest) {
-  if (!req.user) throw new UnauthorizedException();
-  const decodedKey = decodeURIComponent(key);
-  const deleted = await this.mediaService.deleteByKey(decodedKey, req.user.id);
-  return { deleted };
+  async delete(@Param('key') key: string, @Req() req: AuthenticatedRequest) {
+    if (!req.user) throw new UnauthorizedException();
+    const decodedKey = decodeURIComponent(key);
+    const deleted = await this.mediaService.deleteByKey(decodedKey, req.user.id);
+    return { deleted };
+  }
 }
-
-}
-
