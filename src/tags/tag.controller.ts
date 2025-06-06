@@ -1,4 +1,3 @@
-// src/tags/tag.controller.ts
 import {
   Controller,
   Get,
@@ -8,6 +7,7 @@ import {
   Body,
   ParseIntPipe,
   UseGuards,
+  Query,
 } from '@nestjs/common';
 import { TagService } from './tag.service';
 import { AuthGuard } from '@nestjs/passport';
@@ -19,9 +19,9 @@ export class TagController {
   constructor(private readonly tagService: TagService) {}
 
   @Get('suggest')
-  suggestTags() {
-    return this.tagService.suggestTags();
-    }
+  suggestTags(@Query('q') q: string) {
+    return this.tagService.suggestTags(q);
+  }
 
   @Get()
   findAll() {
