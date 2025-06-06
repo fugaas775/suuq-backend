@@ -1,9 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Between, Repository, ArrayContains } from 'typeorm';
-import { User, UserRole } from '../users/user.entity';
+import { User } from '../users/user.entity';
 import { Order } from '../orders/order.entity';
 import { Withdrawal } from '../withdrawals/entities/withdrawal.entity';
+import { UserRole } from '../auth/roles.enum'; // Unified enum import
 
 @Injectable()
 export class AdminDashboardService {
