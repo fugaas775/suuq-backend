@@ -4,6 +4,7 @@ import { AuthGuard } from '@nestjs/passport';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { OrderStatus } from './order.entity';
+import { UserRole } from '../constants/roles'; // Add this import
 
 @Controller('orders')
 export class OrdersController {
@@ -11,7 +12,7 @@ export class OrdersController {
 
   @Post()
   @UseGuards(AuthGuard('jwt'), RolesGuard)
-  @Roles('CUSTOMER')
+  @Roles(UserRole.CUSTOMER)
   create(@Body() body: any, @Request() req: any) {
     const customerEmail = req.user.email;
     return this.ordersService.create({ ...body, customerEmail });
@@ -19,31 +20,29 @@ export class OrdersController {
 
   @Get('my-orders')
   @UseGuards(AuthGuard('jwt'), RolesGuard)
-  @Roles('CUSTOMER')
+  @Roles(UserRole.CUSTOMER)
   getCustomerOrders(
-   @Req() req: any,
-   @Query('status') status?: OrderStatus
- ) {
+    @Req() req: any,
+    @Query('status') status?: OrderStatus
+  ) {
     return this.ordersService.getCustomerOrders(req.user.email, status);
   }
 
-
   @Get('vendor-orders')
   @UseGuards(AuthGuard('jwt'), RolesGuard)
-  @Roles('VENDOR')
+  @Roles(UserRole.VENDOR)
   getVendorOrders(
     @Req() req: any,
     @Query('status') status?: OrderStatus,
     @Query('from') from?: string,
     @Query('to') to?: string
   ) {
-   return this.ordersService.getVendorOrders(req.user.id, status, from, to);
+    return this.ordersService.getVendorOrders(req.user.id, status, from, to);
   }
-
 
   @Get('vendor-earnings')
   @UseGuards(AuthGuard('jwt'), RolesGuard)
-  @Roles('VENDOR')
+  @Roles(UserRole.VENDOR)
   getVendorEarnings(@Request() req: any) {
     return this.ordersService.getVendorEarnings(req.user.id);
   }
@@ -53,39 +52,29 @@ export class OrdersController {
   getOne(@Param('id') id: string, @Request() req: any) {
     return this.ordersService.findOneByRole(+id, req.user);
   }
- 
+
   @Get('sales/summary')
   @UseGuards(AuthGuard('jwt'), RolesGuard)
-  @Roles('ADMIN')
+  @Roles(UserRole.ADMIN)
   getAdminSummary(@Query('from') from?: string, @Query('to') to?: string) {
     return this.ordersService.getAdminSalesSummary(from, to);
   }
 
-
   @Get('sales/top-products')
   @UseGuards(AuthGuard('jwt'), RolesGuard)
-  @Roles('ADMIN', 'VENDOR')
+  @Roles(UserRole.ADMIN, UserRole.VENDOR)
   getTopProducts(@Request() req: any) {
     return this.ordersService.getTopProducts(req.user);
   }
 
   @Patch(':id/status')
   @UseGuards(AuthGuard('jwt'), RolesGuard)
-  @Roles('VENDOR', 'ADMIN')
+  @Roles(UserRole.VENDOR, UserRole.ADMIN)
   updateOrderStatus(
-   @Param('id') id: number,
-   @Body('status') status: OrderStatus,
-   @Req() req: any
- ) {
-   return this.ordersService.updateStatus(+id, status, req.user);
+    @Param('id') id: number,
+    @Body('status') status: OrderStatus,
+    @Req() req: any
+  ) {
+    return this.ordersService.updateStatus(+id, status, req.user);
   }
-
-
-
-
-
 }
-
-
-
-
