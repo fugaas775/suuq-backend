@@ -17,9 +17,9 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { plainToInstance } from 'class-transformer';
 import { UserResponseDto } from '../users/dto/user-response.dto';
-import { UserRole } from '../users/user.entity';
+import { UserRole } from './roles.enum'; // Unified import for role enum
 import { GoogleAuthDto } from './dto/google-auth.dto';
-import { RefreshTokenDto } from './dto/refresh-token.dto'; // <-- Add this import
+import { RefreshTokenDto } from './dto/refresh-token.dto';
 
 interface AuthenticatedRequest extends Request {
   user: {
