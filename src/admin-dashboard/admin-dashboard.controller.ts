@@ -25,6 +25,7 @@ export class AdminDashboardController {
     @Query('from') from?: string,
     @Query('to') to?: string,
   ) {
+   console.log('=== AdminDashboardController.getAnalytics ===');
     return this.dashboardService.getAnalytics({ from, to });
   }
 }
