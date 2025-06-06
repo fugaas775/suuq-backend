@@ -1,5 +1,5 @@
 import { IsEmail, IsString, MinLength, IsOptional, IsArray, IsEnum, ValidateIf } from 'class-validator';
-import { UserRole } from '../../users/user.entity';
+import { UserRole } from '../../constants/roles'; // Use the centralized enum
 
 export class RegisterDto {
   @IsEmail()
