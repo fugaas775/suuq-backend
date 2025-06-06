@@ -18,7 +18,8 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { plainToInstance } from 'class-transformer';
 import { UserResponseDto } from '../users/dto/user-response.dto';
 import { UserRole } from '../users/user.entity';
-import { GoogleAuthDto } from './dto/google-auth.dto'; // <-- Make sure you create this DTO
+import { GoogleAuthDto } from './dto/google-auth.dto';
+import { RefreshTokenDto } from './dto/refresh-token.dto'; // <-- Add this import
 
 interface AuthenticatedRequest extends Request {
   user: {
@@ -46,7 +47,7 @@ export class AuthController {
   async login(@Body() dto: LoginDto) {
     const { access_token, refreshToken, user } = await this.authService.login(dto);
     return {
-      accessToken: access_token, // Use camelCase for frontend consistency
+      accessToken: access_token,
       refreshToken,
       user: plainToInstance(UserResponseDto, user, { excludeExtraneousValues: true }),
     };
@@ -82,6 +83,17 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   async googleLogin(@Body() dto: GoogleAuthDto) {
     const { access_token, refreshToken, user } = await this.authService.googleLogin(dto);
+    return {
+      accessToken: access_token,
+      refreshToken,
+      user: plainToInstance(UserResponseDto, user, { excludeExtraneousValues: true }),
+    };
+  }
+
+  @Post('refresh')
+  @HttpCode(HttpStatus.OK)
+  async refreshToken(@Body() dto: RefreshTokenDto) {
+    const { access_token, refreshToken, user } = await this.authService.refreshToken(dto.refreshToken);
     return {
       accessToken: access_token,
       refreshToken,
