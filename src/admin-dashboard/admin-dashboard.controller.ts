@@ -1,9 +1,9 @@
-// src/admin-dashboard/admin-dashboard.controller.ts
 import { Controller, Get, Query, UseGuards } from '@nestjs/common';
 import { AdminDashboardService } from './admin-dashboard.service';
 import { AuthGuard } from '@nestjs/passport';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
+import { UserRole } from '../auth/roles.enum'; // Import the enum
 
 @Controller('admin-dashboard')
 @UseGuards(AuthGuard('jwt'), RolesGuard)
@@ -11,7 +11,7 @@ export class AdminDashboardController {
   constructor(private readonly dashboardService: AdminDashboardService) {}
 
   @Get('summary')
-  @Roles('ADMIN')
+  @Roles(UserRole.ADMIN) // Use the enum, not string literal
   getSummary(
     @Query('from') from?: string,
     @Query('to') to?: string,
@@ -20,12 +20,12 @@ export class AdminDashboardController {
   }
 
   @Get('analytics')
-  @Roles('ADMIN')
+  @Roles(UserRole.ADMIN) // Use the enum, not string literal
   getAnalytics(
     @Query('from') from?: string,
     @Query('to') to?: string,
   ) {
-   console.log('=== AdminDashboardController.getAnalytics ===');
+    console.log('=== AdminDashboardController.getAnalytics ===');
     return this.dashboardService.getAnalytics({ from, to });
   }
 }
