@@ -202,4 +202,50 @@ export class AuthService {
       user: userResponse,
     };
   }
+
+  /**
+   * Refreshes the access token using a refresh token.
+   * @param refreshToken string
+   * @returns new access_token, refreshToken, and user info.
+   */
+  async refreshToken(refreshToken: string): Promise<{ access_token: string; refreshToken: string; user: UserResponseDto }> {
+    try {
+      // Verify the refresh token
+      const payload = this.jwtService.verify(refreshToken, {
+        secret: this.configService.get<string>('JWT_REFRESH_SECRET') || process.env.JWT_REFRESH_SECRET || 'refreshSecret',
+      });
+
+      // Find the user by ID from the payload
+      const user = await this.usersService.findById(payload.sub);
+
+      if (!user || !user.isActive) {
+        throw new UnauthorizedException('User not found or inactive');
+      }
+
+      // Create new access token
+      const newPayload = { sub: user.id, email: user.email, roles: user.roles };
+      const access_token = this.jwtService.sign(newPayload, {
+        expiresIn: this.configService.get<string>('JWT_EXPIRES_IN') || '1h',
+      });
+
+      // OPTIONAL: Issue a new refresh token (token rotation)
+      const newRefreshToken = this.jwtService.sign(newPayload, {
+        secret: this.configService.get<string>('JWT_REFRESH_SECRET') || process.env.JWT_REFRESH_SECRET || 'refreshSecret',
+        expiresIn: this.configService.get<string>('JWT_REFRESH_EXPIRES_IN') || '7d',
+      });
+
+      const userResponse = plainToInstance(UserResponseDto, user, {
+        excludeExtraneousValues: true,
+      });
+
+      return {
+        access_token,
+        refreshToken: newRefreshToken,
+        user: userResponse,
+      };
+    } catch (error: any) {
+      this.logger.error(`[refreshToken] Invalid or expired refresh token: ${error.message}`);
+      throw new UnauthorizedException('Invalid or expired refresh token');
+    }
+  }
 }
