@@ -10,7 +10,8 @@ import { JwtService } from '@nestjs/jwt';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { UsersService } from '../users/users.service';
-import { User, UserRole } from '../users/user.entity';
+import { User } from '../users/user.entity';
+import { UserRole } from '../../constants/roles'; // Use the centralized enum
 import { OAuth2Client, TokenPayload } from 'google-auth-library';
 import { ConfigService } from '@nestjs/config';
 import { UserResponseDto } from '../users/dto/user-response.dto';
@@ -57,10 +58,10 @@ export class AuthService {
         roles: userRoles,
         isActive: true,
       };
-      
+
       const createdUser = await this.usersService.create(userToCreateData);
       this.logger.log(`[register] User ${dto.email} created successfully with ID: ${createdUser.id}`);
-      
+
       const userResponse = plainToInstance(UserResponseDto, createdUser, {
         excludeExtraneousValues: true,
       });
@@ -77,7 +78,7 @@ export class AuthService {
 
   async login(dto: LoginDto): Promise<{ access_token: string; refreshToken: string; user: UserResponseDto }> {
     this.logger.log(`[login] Attempting login for user: ${dto.email}`);
-    
+
     const user = await this.usersService.findByEmail(dto.email);
 
     if (!user) {
