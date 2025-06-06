@@ -15,6 +15,7 @@ import { UpdateCategoryDto } from './dto/update-category.dto';
 import { AuthGuard } from '@nestjs/passport';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
+import { UserRole } from '../constants/roles'; // Import the enum
 
 @Controller('categories')
 export class CategoriesController {
@@ -26,14 +27,14 @@ export class CategoriesController {
   }
 
   @UseGuards(AuthGuard('jwt'), RolesGuard)
-  @Roles('ADMIN')
+  @Roles(UserRole.ADMIN) // Use enum, not string
   @Post()
   create(@Body() dto: CreateCategoryDto) {
     return this.categoriesService.create(dto);
   }
 
   @UseGuards(AuthGuard('jwt'), RolesGuard)
-  @Roles('ADMIN')
+  @Roles(UserRole.ADMIN) // Use enum, not string
   @Patch(':id')
   update(
     @Param('id', ParseIntPipe) id: number,
@@ -43,7 +44,7 @@ export class CategoriesController {
   }
 
   @UseGuards(AuthGuard('jwt'), RolesGuard)
-  @Roles('ADMIN')
+  @Roles(UserRole.ADMIN) // Use enum, not string
   @Delete(':id')
   delete(@Param('id', ParseIntPipe) id: number) {
     return this.categoriesService.delete(id);
