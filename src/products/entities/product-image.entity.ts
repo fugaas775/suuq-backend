@@ -7,17 +7,17 @@ export class ProductImage {
   id!: number;
 
   @Column()
-  src!: string; // The actual image URL or path
+  src!: string; // Image URL or path
 
   @Column({ nullable: true })
   alt?: string; // Optional alt text for accessibility/SEO
 
   @Column({ nullable: true })
-  sortOrder?: number; // Optional: for ordering images in the product gallery
+  sortOrder?: number; // For ordering images in the gallery
 
   @ManyToOne(() => Product, product => product.images, { onDelete: 'CASCADE' })
   product!: Product;
 
   @CreateDateColumn()
-  createdAt!: Date; // Optional: track when image was added
+  createdAt!: Date; // When the image was added
 }

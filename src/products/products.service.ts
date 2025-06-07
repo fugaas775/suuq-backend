@@ -3,6 +3,7 @@ import {
   NotFoundException,
   ForbiddenException,
   BadRequestException,
+  Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In } from 'typeorm';
@@ -12,12 +13,13 @@ import { User } from '../users/user.entity';
 import { Order } from '../orders/order.entity';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
-import { plainToInstance } from 'class-transformer';
 import { ProductResponseDto } from './dto/product-response.dto';
 import { ProductImage } from './entities/product-image.entity';
 
 @Injectable()
 export class ProductsService {
+  private readonly logger = new Logger(ProductsService.name);
+
   constructor(
     @InjectRepository(Product) private productRepo: Repository<Product>,
     @InjectRepository(ProductImage) private productImageRepo: Repository<ProductImage>,
@@ -56,16 +58,18 @@ export class ProductsService {
       savedProduct.images = [];
     }
 
-    return this.mapProductToDto(await this.productRepo.findOneOrFail({
-      where: { id: savedProduct.id },
-      relations: ['vendor', 'category', 'tags', 'images'],
-    }));
+    return this.mapProductToDto(
+      await this.productRepo.findOneOrFail({
+        where: { id: savedProduct.id },
+        relations: ['vendor', 'category', 'tags', 'images'],
+      }),
+    );
   }
 
   async updateProduct(
     id: number,
     updateProductDto: UpdateProductDto & { tags?: string[]; images?: string[] },
-    user: any,
+    user: Pick<User, 'id'>,
   ): Promise<ProductResponseDto> {
     const product = await this.productRepo.findOne({
       where: { id },
@@ -102,13 +106,15 @@ export class ProductsService {
 
     const saved = await this.productRepo.save(product);
 
-    return this.mapProductToDto(await this.productRepo.findOneOrFail({
-      where: { id: saved.id },
-      relations: ['vendor', 'category', 'tags', 'images'],
-    }));
+    return this.mapProductToDto(
+      await this.productRepo.findOneOrFail({
+        where: { id: saved.id },
+        relations: ['vendor', 'category', 'tags', 'images'],
+      }),
+    );
   }
 
-  async deleteProduct(id: number, user: any): Promise<{ deleted: boolean }> {
+  async deleteProduct(id: number, user: Pick<User, 'id'>): Promise<{ deleted: boolean }> {
     const product = await this.productRepo.findOne({
       where: { id },
       relations: ['vendor'],
@@ -169,10 +175,9 @@ export class ProductsService {
     totalPages: number;
   }> {
     try {
-      // Add debug log for parameters
-      console.log('[ProductsService] findFiltered params:', {
+      this.logger.debug('findFiltered params: ' + JSON.stringify({
         perPage, page, search, categoryId, categorySlug, featured, sort, priceMin, priceMax, tags
-      });
+      }));
 
       const qb = this.productRepo
         .createQueryBuilder('product')
@@ -241,7 +246,6 @@ export class ProductsService {
 
       const [items, total] = await qb.getManyAndCount();
 
-      // Defensive: ensure items is always an array
       const dtos = Array.isArray(items) ? items.map((product) => this.mapProductToDto(product)) : [];
 
       return {
@@ -252,12 +256,10 @@ export class ProductsService {
         totalPages: Math.ceil(total / perPage),
       };
     } catch (err) {
-      // Log error for debugging
-      console.error('[ProductsService] findFiltered error:', err);
+      this.logger.error('findFiltered error: ' + err?.toString());
       throw err;
     }
   }
-
 
   async findAll(): Promise<ProductResponseDto[]> {
     const products = await this.productRepo.find({
@@ -265,7 +267,6 @@ export class ProductsService {
     });
     return products.map((product) => this.mapProductToDto(product));
   }
-
 
   async findByVendorId(vendorId: number): Promise<ProductResponseDto[]> {
     const products = await this.productRepo.find({
@@ -309,10 +310,12 @@ export class ProductsService {
     product.isBlocked = isBlocked;
     const saved = await this.productRepo.save(product);
 
-    return this.mapProductToDto(await this.productRepo.findOneOrFail({
-      where: { id: saved.id },
-      relations: ['vendor', 'category', 'tags', 'images'],
-    }));
+    return this.mapProductToDto(
+      await this.productRepo.findOneOrFail({
+        where: { id: saved.id },
+        relations: ['vendor', 'category', 'tags', 'images'],
+      }),
+    );
   }
 
   async toggleFeatureStatus(id: number, featured: boolean): Promise<ProductResponseDto> {
@@ -324,10 +327,12 @@ export class ProductsService {
     product.featured = featured;
     const saved = await this.productRepo.save(product);
 
-    return this.mapProductToDto(await this.productRepo.findOneOrFail({
-      where: { id: saved.id },
-      relations: ['vendor', 'category', 'tags', 'images'],
-    }));
+    return this.mapProductToDto(
+      await this.productRepo.findOneOrFail({
+        where: { id: saved.id },
+        relations: ['vendor', 'category', 'tags', 'images'],
+      }),
+    );
   }
 
   private mapProductToDto(product: Product): ProductResponseDto {
@@ -361,4 +366,4 @@ export class ProductsService {
       rating_count: product.rating_count,
     };
   }
-} 
+}

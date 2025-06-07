@@ -14,15 +14,15 @@ export class DeliveriesService {
   async assignToOrder(orderId: number, delivererId: number) {
     const delivery = this.deliveryRepo.create({
       order: { id: orderId },
-      delivererId,
-      status: DeliveryStatus.PENDING,
+      deliverer: { id: delivererId },
+      status: DeliveryStatus.ASSIGNED, // Use ASSIGNED, or add PENDING to enum if you want
     });
     return this.deliveryRepo.save(delivery);
   }
 
   async getMyDeliveries(delivererId: number) {
     return this.deliveryRepo.find({
-      where: { delivererId },
+      where: { deliverer: { id: delivererId } },
       order: { createdAt: 'DESC' },
     });
   }
@@ -35,11 +35,9 @@ export class DeliveriesService {
   }
 
   async getAllDeliveries() {
-   return this.deliveryRepo.find({
-    relations: ['order', 'order.product', 'order.product.vendor'],
-    order: { createdAt: 'DESC' },
+    return this.deliveryRepo.find({
+      relations: ['order', 'order.product', 'order.product.vendor', 'deliverer'],
+      order: { createdAt: 'DESC' },
     });
   }
-
-
 }

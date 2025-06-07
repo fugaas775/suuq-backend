@@ -10,7 +10,8 @@
     "skipLibCheck": true,
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,
-    "types": ["node", "express"]
+    "types": ["node", "express"],
+    "baseUrl": "./src"
   },
   "include": ["src/**/*"]
 }

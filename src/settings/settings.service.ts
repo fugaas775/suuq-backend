@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { UserSettings } from './user-settings.entity';
 import { Repository } from 'typeorm';
@@ -13,7 +13,7 @@ export class SettingsService {
     private usersService: UsersService,
   ) {}
 
-  async getUserSettings(userId: number) {
+  async getUserSettings(userId: number): Promise<{ userId: number; theme: string; notificationsEnabled: boolean }> {
     let settings = await this.settingsRepo.findOne({
       where: { user: { id: userId } },
       relations: ['user'],
@@ -21,7 +21,7 @@ export class SettingsService {
 
     if (!settings) {
       const user = await this.usersService.findOne(userId);
-      if (!user) throw new Error(`User with ID ${userId} not found`);
+      if (!user) throw new NotFoundException(`User with ID ${userId} not found`);
 
       settings = await this.settingsRepo.save(
         this.settingsRepo.create({ user }),
@@ -35,7 +35,10 @@ export class SettingsService {
     };
   }
 
-  async updateUserSettings(userId: number, dto: UpdateSettingsDto) {
+  async updateUserSettings(
+    userId: number,
+    dto: UpdateSettingsDto,
+  ): Promise<{ userId: number; theme: string; notificationsEnabled: boolean }> {
     let settings = await this.settingsRepo.findOne({
       where: { user: { id: userId } },
       relations: ['user'],
@@ -43,13 +46,18 @@ export class SettingsService {
 
     if (!settings) {
       const user = await this.usersService.findOne(userId);
-      if (!user) throw new Error(`User with ID ${userId} not found`);
+      if (!user) throw new NotFoundException(`User with ID ${userId} not found`);
 
-      const newSettings = this.settingsRepo.create({ ...dto, user });
-      return await this.settingsRepo.save(newSettings);
+      settings = this.settingsRepo.create({ ...dto, user });
+    } else {
+      Object.assign(settings, dto);
     }
 
-    Object.assign(settings, dto);
-    return await this.settingsRepo.save(settings);
+    const saved = await this.settingsRepo.save(settings);
+    return {
+      userId,
+      theme: saved.theme,
+      notificationsEnabled: saved.notificationsEnabled,
+    };
   }
 }

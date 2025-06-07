@@ -5,6 +5,8 @@ import {
   OneToMany,
   CreateDateColumn,
   UpdateDateColumn,
+  DeleteDateColumn,
+  Index,
 } from 'typeorm';
 import { DeviceToken } from '../notifications/device-token.entity';
 import { MediaEntity } from '../media/media.entity';
@@ -23,14 +25,16 @@ export class User {
   id!: number;
 
   @Column({ unique: true })
+  @Index()
   email!: string;
 
-  @Column()
-  password!: string;
+  // Password is optional for SSO users
+  @Column({ nullable: true })
+  password?: string;
 
   @Column({
     type: 'simple-array',
-    default: [UserRole.CUSTOMER],
+    default: UserRole.CUSTOMER,
   })
   roles!: UserRole[];
 
@@ -49,15 +53,41 @@ export class User {
   @UpdateDateColumn()
   updatedAt!: Date;
 
+  @DeleteDateColumn({ nullable: true })
+  deletedAt?: Date; // Soft delete field
+
+  // --- Audit fields ---
+  @Column({ nullable: true })
+  createdBy?: string;
+
+  @Column({ nullable: true })
+  updatedBy?: string;
+
+  @Column({ nullable: true })
+  deletedBy?: string;
+
+  // --- Profile fields ---
   @Column({ nullable: true })
   displayName?: string;
 
   @Column({ nullable: true })
   avatarUrl?: string;
 
+  @Column({ nullable: true })
+  storeName?: string;
+
   @Column({ default: true })
   isActive!: boolean;
 
-  @Column({ nullable: true }) // Added based on TS error in AuthService
-  storeName?: string;
+  // --- Google SSO ---
+  @Column({ nullable: true })
+  @Index()
+  googleId?: string;
+
+  // --- Phone Number & Verification ---
+  @Column({ nullable: true, length: 20 })
+  phoneNumber?: string;
+
+  @Column({ default: false })
+  isPhoneVerified!: boolean;
 }

@@ -1,6 +1,7 @@
-import { Expose } from 'class-transformer';
+import { Expose, Exclude } from 'class-transformer';
 import { UserRole } from '../user.entity';
 
+@Exclude()
 export class UserResponseDto {
   @Expose()
   id!: number;
@@ -9,7 +10,7 @@ export class UserResponseDto {
   email!: string;
 
   @Expose()
-  roles!: UserRole[]; // Directly expose the roles array from the entity
+  roles!: UserRole[];
 
   @Expose()
   displayName?: string;
@@ -18,10 +19,12 @@ export class UserResponseDto {
   avatarUrl?: string;
 
   @Expose()
-  storeName?: string; // Assuming User entity might have this, or it's added via transformation
+  storeName?: string;
 
-  // password and isActive are excluded by default due to no @Expose()
-  // If you want to be explicit:
+  // Explicitly exclude sensitive/internal fields:
   // @Exclude() password!: string;
   // @Exclude() isActive!: boolean;
+  // @Exclude() createdAt!: Date;
+  // @Exclude() updatedAt!: Date;
+  // etc.
 }

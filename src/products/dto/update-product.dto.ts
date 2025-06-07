@@ -1,4 +1,5 @@
 import { IsOptional, IsString, IsNumber, IsArray } from 'class-validator';
+import { Type } from 'class-transformer';
 
 export class UpdateProductDto {
   @IsOptional()
@@ -6,6 +7,7 @@ export class UpdateProductDto {
   readonly name?: string;
 
   @IsOptional()
+  @Type(() => Number)
   @IsNumber()
   readonly price?: number;
 
@@ -18,5 +20,3 @@ export class UpdateProductDto {
   @IsString({ each: true })
   readonly tags?: string[];
 }
-
-

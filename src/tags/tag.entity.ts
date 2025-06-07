@@ -1,4 +1,3 @@
-// src/tags/tag.entity.ts
 import { Entity, PrimaryGeneratedColumn, Column, ManyToMany } from 'typeorm';
 import { Product } from '../products/entities/product.entity';
 
@@ -11,5 +10,5 @@ export class Tag {
   name!: string;
 
   @ManyToMany(() => Product, (product) => product.tags)
-  products!: Product[];
+  products!: Product[]; // Optionally: = [];
 }

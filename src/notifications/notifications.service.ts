@@ -1,6 +1,4 @@
-// src/notifications/notifications.service.ts
-
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Notification } from './entities/notification.entity';
 import { Repository } from 'typeorm';
@@ -10,7 +8,6 @@ export class NotificationsService {
   constructor(
     @InjectRepository(Notification)
     private readonly notificationRepo: Repository<Notification>,
-
   ) {}
 
   async create(title: string, message: string) {
@@ -25,11 +22,14 @@ export class NotificationsService {
   }
 
   async findOne(id: number) {
-    return this.notificationRepo.findOne({ where: { id } });
+    const notification = await this.notificationRepo.findOne({ where: { id } });
+    if (!notification) throw new NotFoundException('Notification not found');
+    return notification;
   }
 
   async remove(id: number) {
-    await this.notificationRepo.delete(id);
+    const result = await this.notificationRepo.delete(id);
+    if (result.affected === 0) throw new NotFoundException('Notification not found');
     return { deleted: true };
   }
 }

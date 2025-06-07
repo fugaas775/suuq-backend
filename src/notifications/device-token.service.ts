@@ -12,7 +12,8 @@ export class DeviceTokenService {
   ) {}
 
   async registerToken(user: User, token: string) {
-    const exists = await this.deviceTokenRepo.findOne({ where: { user, token } });
+    // Use user.id to avoid potential TypeORM deep object equality issues
+    const exists = await this.deviceTokenRepo.findOne({ where: { user: { id: user.id }, token } });
     if (!exists) {
       const newToken = this.deviceTokenRepo.create({ user, token });
       await this.deviceTokenRepo.save(newToken);

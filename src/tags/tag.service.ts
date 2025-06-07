@@ -1,6 +1,6 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, ILike } from 'typeorm';
 import { Tag } from './tag.entity';
 
 @Injectable()
@@ -10,8 +10,15 @@ export class TagService {
     private readonly tagRepository: Repository<Tag>,
   ) {}
 
-  async suggestTags(): Promise<string[]> {
-    const tags = await this.tagRepository.find({ take: 20, order: { name: 'ASC' } });
+  async suggestTags(q?: string): Promise<string[]> {
+    const where = q
+      ? { name: ILike(`%${q}%`) }
+      : {};
+    const tags = await this.tagRepository.find({
+      where,
+      take: 20,
+      order: { name: 'ASC' },
+    });
     return tags.map(tag => tag.name);
   }
 
@@ -20,6 +27,11 @@ export class TagService {
   }
 
   async create(name: string): Promise<Tag> {
+    // Optional: Prevent duplicate tag names
+    const existing = await this.tagRepository.findOneBy({ name });
+    if (existing) {
+      throw new ConflictException('Tag name already exists');
+    }
     const tag = this.tagRepository.create({ name });
     return this.tagRepository.save(tag);
   }

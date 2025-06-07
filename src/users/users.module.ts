@@ -15,4 +15,3 @@ import { MediaModule } from '../media/media.module';
   exports: [UsersService],
 })
 export class UsersModule {}
-

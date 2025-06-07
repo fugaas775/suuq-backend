@@ -1,5 +1,3 @@
-// src/admin/deliveries/admin-deliveries.controller.ts
-
 import {
   Controller,
   Get,
@@ -11,13 +9,14 @@ import {
 } from '@nestjs/common';
 import { AdminDeliveriesService } from './deliveries.service';
 import { AuthGuard } from '@nestjs/passport';
-import { Roles } from '../../auth/roles.decorator';
-import { RolesGuard } from '../../auth/roles.guard';
+import { Roles } from '../../common/decorators/roles.decorator';
+import { RolesGuard } from '../../common/guards/roles.guard';
 import { Delivery, DeliveryStatus } from '../../deliveries/entities/delivery.entity';
+import { UserRole } from '../../auth/roles.enum';
 
 @Controller('admin/deliveries')
 @UseGuards(AuthGuard('jwt'), RolesGuard)
-@Roles('ADMIN')
+@Roles(UserRole.ADMIN)
 export class AdminDeliveriesController {
   constructor(private readonly deliveriesService: AdminDeliveriesService) {}
 
@@ -27,7 +26,7 @@ export class AdminDeliveriesController {
   }
 
   @Patch(':id/status')
-  @Roles('ADMIN')
+  @Roles(UserRole.ADMIN)
   updateStatus(
     @Param('id', ParseIntPipe) id: number,
     @Body('status') status: DeliveryStatus

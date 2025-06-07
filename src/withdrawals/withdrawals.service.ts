@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Withdrawal, WithdrawalStatus } from './entities/withdrawal.entity';
@@ -11,77 +11,90 @@ export class WithdrawalsService {
     private readonly withdrawalRepo: Repository<Withdrawal>,
   ) {}
 
-  async getVendorWithdrawals(vendorId: number) {
-  const withdrawals = await this.withdrawalRepo.find({
-    where: { vendor: { id: vendorId } },
-    order: { createdAt: 'DESC' },
-  });
-
-  const [approved, pending, rejected] = await Promise.all([
-    this.withdrawalRepo.count({
-      where: { vendor: { id: vendorId }, status: WithdrawalStatus.APPROVED },
-    }),
-    this.withdrawalRepo.count({
-      where: { vendor: { id: vendorId }, status: WithdrawalStatus.PENDING },
-    }),
-    this.withdrawalRepo.count({
-      where: { vendor: { id: vendorId }, status: WithdrawalStatus.REJECTED },
-    }),
-  ]);
-
-  return {
-    withdrawals,
+  async getVendorWithdrawals(vendorId: number): Promise<{
+    withdrawals: Withdrawal[];
     summary: {
-      totalRequested: withdrawals.length,
-      approved,
-      pending,
-      rejected,
-    },
-   };
- }
+      totalRequested: number;
+      approved: number;
+      pending: number;
+      rejected: number;
+    };
+  }> {
+    const withdrawals = await this.withdrawalRepo.find({
+      where: { vendor: { id: vendorId } },
+      order: { createdAt: 'DESC' },
+    });
 
-  async updateStatus(id: number, status: WithdrawalStatus) {
+    const [approved, pending, rejected] = await Promise.all([
+      this.withdrawalRepo.count({
+        where: { vendor: { id: vendorId }, status: WithdrawalStatus.APPROVED },
+      }),
+      this.withdrawalRepo.count({
+        where: { vendor: { id: vendorId }, status: WithdrawalStatus.PENDING },
+      }),
+      this.withdrawalRepo.count({
+        where: { vendor: { id: vendorId }, status: WithdrawalStatus.REJECTED },
+      }),
+    ]);
+
+    return {
+      withdrawals,
+      summary: {
+        totalRequested: withdrawals.length,
+        approved,
+        pending,
+        rejected,
+      },
+    };
+  }
+
+  async updateStatus(id: number, status: WithdrawalStatus): Promise<Withdrawal> {
     const withdrawal = await this.withdrawalRepo.findOne({ where: { id } });
     if (!withdrawal) throw new NotFoundException('Withdrawal not found');
     withdrawal.status = status;
     return this.withdrawalRepo.save(withdrawal);
   }
 
-  async createWithdrawal(amount: number, mobileMoneyNumber: string, vendorId: number) {
-   const withdrawal = this.withdrawalRepo.create({
-    amount,
-    mobileMoneyNumber,
-    vendor: { id: vendorId } as User,
-    status: WithdrawalStatus.PENDING,
+  async createWithdrawal(
+    amount: number,
+    mobileMoneyNumber: string,
+    vendorId: number,
+  ): Promise<Withdrawal> {
+    const withdrawal = this.withdrawalRepo.create({
+      amount,
+      mobileMoneyNumber,
+      vendor: { id: vendorId } as User,
+      status: WithdrawalStatus.PENDING,
     });
 
-   return this.withdrawalRepo.save(withdrawal);
+    return this.withdrawalRepo.save(withdrawal);
   }
 
-  async getAll() {
-   return this.withdrawalRepo.find({
-     relations: ['vendor'],
-     order: { createdAt: 'DESC' },
-   });
+  async getAll(): Promise<Withdrawal[]> {
+    return this.withdrawalRepo.find({
+      relations: ['vendor'],
+      order: { createdAt: 'DESC' },
+    });
   }
 
-  async getVendorStats(vendorId: number) {
-   const totalApproved = await this.withdrawalRepo
-    .createQueryBuilder('withdrawal')
-    .select('SUM(withdrawal.amount)', 'total')
-    .where('withdrawal.vendorId = :vendorId', { vendorId })
-    .andWhere('withdrawal.status = :status', { status: WithdrawalStatus.APPROVED })
-    .getRawOne();
+  async getVendorStats(vendorId: number): Promise<{
+    totalWithdrawn: number;
+    pendingRequests: number;
+  }> {
+    const totalApproved = await this.withdrawalRepo
+      .createQueryBuilder('withdrawal')
+      .select('SUM(withdrawal.amount)', 'total')
+      .where('withdrawal.vendorId = :vendorId', { vendorId })
+      .andWhere('withdrawal.status = :status', { status: WithdrawalStatus.APPROVED })
+      .getRawOne();
 
-  const pendingCount = await this.withdrawalRepo.count({
-    where: { vendor: { id: vendorId }, status: WithdrawalStatus.PENDING },
-  });
+    const pendingCount = await this.withdrawalRepo.count({
+      where: { vendor: { id: vendorId }, status: WithdrawalStatus.PENDING },
+    });
 
-  return {
-     totalWithdrawn: parseFloat(totalApproved.total || 0),
-     pendingRequests: pendingCount,
+    return {
+      totalWithdrawn: parseFloat(totalApproved.total) || 0,
+      pendingRequests: pendingCount,
     };
   }
-
-
 }

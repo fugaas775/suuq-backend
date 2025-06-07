@@ -1,12 +1,19 @@
 import 'reflect-metadata'; // Needed for TypeORM
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
+// Add this import:
+import { MediaController } from './media/media.controller';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
   app.setGlobalPrefix('api'); // All routes under /api
   app.enableCors();
+
+  // --- Add this block for the MediaController Multer storage fix ---
+  const mediaController = app.get(MediaController);
+  MediaController.setInterceptorStorage(mediaController);
+  // ---------------------------------------------------------------
 
   // Optional: Dev route logger
   if (process.env.NODE_ENV !== 'production') {

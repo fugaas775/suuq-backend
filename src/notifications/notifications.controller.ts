@@ -10,23 +10,22 @@ import {
 } from '@nestjs/common';
 import { NotificationsService } from './notifications.service';
 import { AuthGuard } from '@nestjs/passport';
-import { RolesGuard } from '../auth/roles.guard';
-import { Roles } from '../auth/roles.decorator';
+import { RolesGuard } from '../common/guards/roles.guard';
+import { Roles } from '../common/decorators/roles.decorator';
+import { UserRole } from '../auth/roles.enum';
 
 @Controller('notifications')
 @UseGuards(AuthGuard('jwt'), RolesGuard)
-@Roles('ADMIN')
+@Roles(UserRole.ADMIN)
 export class NotificationsController {
   constructor(private readonly notificationsService: NotificationsService) {}
 
   @Post()
-  @Roles('ADMIN')
   create(@Body() body: { title: string; message: string }) {
     return this.notificationsService.create(body.title, body.message);
   }
 
   @Get()
-  @Roles('ADMIN')
   findAll() {
     return this.notificationsService.findAll();
   }
@@ -41,11 +40,11 @@ export class NotificationsController {
     return this.notificationsService.remove(id);
   }
 
-  @Get('/public')
-  @UseGuards(AuthGuard('jwt'))
-  @Roles('CUSTOMER', 'VENDOR')
+  // Public (for CUSTOMER and VENDOR roles)
+  @Get('public')
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @Roles(UserRole.CUSTOMER, UserRole.VENDOR)
   getPublicNotifications() {
-   return this.notificationsService.findAll();
-   }
-
+    return this.notificationsService.findAll();
+  }
 }

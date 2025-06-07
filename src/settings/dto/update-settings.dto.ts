@@ -1,4 +1,5 @@
 import { IsBoolean, IsIn, IsOptional } from 'class-validator';
+import { Type } from 'class-transformer';
 
 export class UpdateSettingsDto {
   @IsOptional()
@@ -6,6 +7,7 @@ export class UpdateSettingsDto {
   theme?: 'light' | 'dark';
 
   @IsOptional()
+  @Type(() => Boolean)
   @IsBoolean()
   notificationsEnabled?: boolean;
 }

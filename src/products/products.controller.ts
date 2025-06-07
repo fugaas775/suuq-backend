@@ -10,7 +10,9 @@ import {
   Req,
   UseGuards,
   ParseIntPipe,
+  ParseBoolPipe,
   BadRequestException,
+  Logger
 } from '@nestjs/common';
 import { ProductsService } from './products.service';
 import { UpdateProductDto } from './dto/update-product.dto';
@@ -20,18 +22,21 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { plainToInstance } from 'class-transformer';
 import { ProductResponseDto } from './dto/product-response.dto';
 import { CreateProductDto } from './dto/create-product.dto';
+import { UserRole } from '../auth/roles.enum';
 
 @Controller('products')
 export class ProductsController {
+  private readonly logger = new Logger(ProductsController.name);
+
   constructor(private readonly productsService: ProductsService) {}
 
   @Post()
   @UseGuards(AuthGuard('jwt'), RolesGuard)
-  @Roles('VENDOR')
-   create(@Body() createProductDto: CreateProductDto, @Req() req: any) {
-   return this.productsService.create({
-    ...createProductDto,
-    vendorId: req.user.id,
+  @Roles(UserRole.VENDOR)
+  create(@Body() createProductDto: CreateProductDto, @Req() req: any) {
+    return this.productsService.create({
+      ...createProductDto,
+      vendorId: req.user.id,
     });
   }
 
@@ -47,10 +52,9 @@ export class ProductsController {
     @Query('tag') tag?: string,
   ) {
     try {
-      // Log for debugging
-      console.log('[ProductsController] findAll params:', {
+      this.logger.debug(`findAll params: ${JSON.stringify({
         perPageQuery, pageQuery, search, categoryId, featured, sort, categorySlug, tag
-      });
+      })}`);
 
       const perPage = parseInt(perPageQuery || '10', 10);
       const page = parseInt(pageQuery || '1', 10);
@@ -73,9 +77,8 @@ export class ProductsController {
         tags: tag,
       });
 
-      // Defensive: Ensure result/items exist
       if (!result || !Array.isArray(result.items)) {
-        console.error('[ProductsController] findAll: result or result.items missing', result);
+        this.logger.error('findAll: result or result.items missing', result);
         throw new BadRequestException('Product list could not be loaded');
       }
 
@@ -84,20 +87,19 @@ export class ProductsController {
         items: plainToInstance(ProductResponseDto, result.items),
       };
     } catch (err) {
-      // Log the error for backend trace
-      console.error('[ProductsController] findAll error:', err);
-      // Optionally rethrow or wrap in a more specific exception
+      this.logger.error('findAll error:', err);
       throw err;
     }
   }
 
   @Get('suggest')
   async suggest(@Query('q') q: string) {
-    return this.productsService.suggestNames(q); // ✅ now calls service
+    return this.productsService.suggestNames(q);
   }
 
   @Get('/tags/suggest')
   suggestTags(@Query('q') q: string) {
+    // TODO: Replace with actual tag suggestion service if available
     return this.productsService.suggestNames(q);
   }
 
@@ -108,7 +110,7 @@ export class ProductsController {
 
   @Patch(':id')
   @UseGuards(AuthGuard('jwt'), RolesGuard)
-  @Roles('VENDOR')
+  @Roles(UserRole.VENDOR)
   updateProduct(
     @Param('id', ParseIntPipe) id: number,
     @Body() updateProductDto: UpdateProductDto,
@@ -119,7 +121,7 @@ export class ProductsController {
 
   @Delete(':id')
   @UseGuards(AuthGuard('jwt'), RolesGuard)
-  @Roles('VENDOR')
+  @Roles(UserRole.VENDOR)
   deleteProduct(
     @Param('id', ParseIntPipe) id: number,
     @Req() req: any,
@@ -127,26 +129,23 @@ export class ProductsController {
     return this.productsService.deleteProduct(id, req.user);
   }
 
-  @Patch('/admin/products/:id/block')
-@UseGuards(AuthGuard('jwt'), RolesGuard)
-@Roles('ADMIN')
-async toggleBlockProduct(
-  @Param('id', ParseIntPipe) id: number,
-  @Body('isBlocked') isBlocked: boolean
-) {
-  return this.productsService.toggleBlockStatus(id, isBlocked);
-}
+  @Patch(':id/block')
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @Roles(UserRole.ADMIN)
+  async toggleBlockProduct(
+    @Param('id', ParseIntPipe) id: number,
+    @Body('isBlocked', ParseBoolPipe) isBlocked: boolean
+  ) {
+    return this.productsService.toggleBlockStatus(id, isBlocked);
+  }
 
-  @Patch('/admin/products/:id/feature')
-@UseGuards(AuthGuard('jwt'), RolesGuard)
-@Roles('ADMIN')
-async toggleFeatureProduct(
-  @Param('id', ParseIntPipe) id: number,
-  @Body('featured') featured: boolean
-) {
-  return this.productsService.toggleFeatureStatus(id, featured);
-}
- 
-
-
+  @Patch(':id/feature')
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @Roles(UserRole.ADMIN)
+  async toggleFeatureProduct(
+    @Param('id', ParseIntPipe) id: number,
+    @Body('featured', ParseBoolPipe) featured: boolean
+  ) {
+    return this.productsService.toggleFeatureStatus(id, featured);
+  }
 }

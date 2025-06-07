@@ -12,11 +12,13 @@ export class UserSettings {
   @PrimaryGeneratedColumn()
   id!: number;
 
+  // Each user has a single settings record; settings deleted if user is deleted
   @OneToOne(() => User, { onDelete: 'CASCADE' })
   @JoinColumn()
   user!: User;
 
-  @Column({ default: 'light' })
+  // Restrict theme to 'light' or 'dark'
+  @Column({ type: 'enum', enum: ['light', 'dark'], default: 'light' })
   theme!: 'light' | 'dark';
 
   @Column({ default: true })

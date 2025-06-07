@@ -73,11 +73,11 @@ export class CategoriesService {
       where: { slug },
       relations: ['products', 'products.vendor'],
     });
-
     if (!category) throw new NotFoundException('Category not found');
 
+    // Remove password field from vendor in each product (security)
     category.products.forEach(product => {
-      if ('password' in product.vendor) {
+      if (product.vendor && 'password' in product.vendor) {
         delete (product.vendor as any).password;
       }
     });
