@@ -2,7 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Withdrawal, WithdrawalStatus } from './entities/withdrawal.entity';
-import { User } from '../users/user.entity';
+import { User } from '../users/entities/user.entity'; // <-- FIXED IMPORT
 
 @Injectable()
 export class WithdrawalsService {

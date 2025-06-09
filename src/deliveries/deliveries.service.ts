@@ -11,22 +11,33 @@ export class DeliveriesService {
     private readonly deliveryRepo: Repository<Delivery>,
   ) {}
 
+  // ADMIN: Assign a delivery to a deliverer
   async assignToOrder(orderId: number, delivererId: number) {
-    const delivery = this.deliveryRepo.create({
-      order: { id: orderId },
-      deliverer: { id: delivererId },
-      status: DeliveryStatus.ASSIGNED, // Use ASSIGNED, or add PENDING to enum if you want
-    });
+    // If you want to update existing delivery, you can fetch and update
+    let delivery = await this.deliveryRepo.findOne({ where: { order: { id: orderId } } });
+    if (delivery) {
+      delivery.deliverer = { id: delivererId } as any;
+      delivery.status = DeliveryStatus.ASSIGNED;
+    } else {
+      delivery = this.deliveryRepo.create({
+        order: { id: orderId } as any,
+        deliverer: { id: delivererId } as any,
+        status: DeliveryStatus.ASSIGNED,
+      });
+    }
     return this.deliveryRepo.save(delivery);
   }
 
+  // DELIVERER: Get their deliveries
   async getMyDeliveries(delivererId: number) {
     return this.deliveryRepo.find({
       where: { deliverer: { id: delivererId } },
       order: { createdAt: 'DESC' },
+      relations: ['order', 'order.product', 'order.product.vendor'],
     });
   }
 
+  // DELIVERER: Update delivery status
   async updateStatus(id: number, status: Delivery['status']) {
     const delivery = await this.deliveryRepo.findOne({ where: { id } });
     if (!delivery) throw new NotFoundException('Delivery not found');
@@ -34,6 +45,7 @@ export class DeliveriesService {
     return this.deliveryRepo.save(delivery);
   }
 
+  // ADMIN: Get all deliveries
   async getAllDeliveries() {
     return this.deliveryRepo.find({
       relations: ['order', 'order.product', 'order.product.vendor', 'deliverer'],

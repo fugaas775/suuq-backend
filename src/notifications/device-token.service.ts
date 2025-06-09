@@ -1,8 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { DeviceToken } from './device-token.entity';
-import { User } from '../users/user.entity';
+import { DeviceToken } from './entities/device-token.entity'; // <-- FIXED IMPORT
+import { User } from '../users/entities/user.entity';
 
 @Injectable()
 export class DeviceTokenService {

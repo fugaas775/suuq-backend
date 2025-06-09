@@ -1,8 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Between, Repository, ArrayContains } from 'typeorm';
-import { User } from '../users/user.entity';
-import { Order } from '../orders/order.entity';
+import { User } from '../users/entities/user.entity';
+import { Order } from '../orders/entities/order.entity';
 import { Withdrawal } from '../withdrawals/entities/withdrawal.entity';
 import { UserRole } from '../auth/roles.enum'; // Unified enum import
 

@@ -1,0 +1,44 @@
+# Ensure consistent line endings for cross-platform development
+
+# Force LF (Unix-style) for all text/code files
+*.js     text eol=lf
+*.jsx    text eol=lf
+*.ts     text eol=lf
+*.tsx    text eol=lf
+*.json   text eol=lf
+*.md     text eol=lf
+*.yml    text eol=lf
+*.yaml   text eol=lf
+*.css    text eol=lf
+*.scss   text eol=lf
+*.html   text eol=lf
+*.sh     text eol=lf
+*.env    text eol=lf
+*.gitignore text eol=lf
+
+# Treat images and binaries as binary (no eol conversion)
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.gif    binary
+*.ico    binary
+*.svg    binary
+*.mp4    binary
+*.mp3    binary
+*.mov    binary
+*.zip    binary
+*.gz     binary
+*.exe    binary
+*.dll    binary
+*.pdf    binary
+
+# For Windows shell/batch scripts, you may want CRLF:
+*.bat    text eol=crlf
+*.cmd    text eol=crlf
+
+# Optional: treat lock files as text with LF
+package-lock.json text eol=lf
+yarn.lock         text eol=lf
+pnpm-lock.yaml    text eol=lf
+
+# End of .gitattributes

@@ -20,12 +20,14 @@ import { UserRole } from '../auth/roles.enum';
 export class DeliveriesController {
   constructor(private readonly deliveriesService: DeliveriesService) {}
 
+  // Deliverer: get their deliveries
   @Get('my')
   @Roles(UserRole.DELIVERER)
   getMyDeliveries(@Req() req: any) {
     return this.deliveriesService.getMyDeliveries(req.user.id);
   }
 
+  // Deliverer: update status of a delivery
   @Patch(':id/status')
   @Roles(UserRole.DELIVERER)
   updateStatus(
@@ -35,9 +37,20 @@ export class DeliveriesController {
     return this.deliveriesService.updateStatus(id, status);
   }
 
+  // Admin: get all deliveries
   @Get('all')
   @Roles(UserRole.ADMIN)
   getAllDeliveries() {
     return this.deliveriesService.getAllDeliveries();
+  }
+
+  // Admin: assign a delivery to a deliverer (endpoint, if needed)
+  @Patch(':id/assign/:delivererId')
+  @Roles(UserRole.ADMIN)
+  assignDelivery(
+    @Param('id', ParseIntPipe) id: number,
+    @Param('delivererId', ParseIntPipe) delivererId: number
+  ) {
+    return this.deliveriesService.assignToOrder(id, delivererId);
   }
 }

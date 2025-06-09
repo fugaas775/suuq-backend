@@ -1,14 +1,13 @@
-// src/categories/category.entity.ts
-import { 
-  Entity, 
-  PrimaryGeneratedColumn, 
-  Column, 
-  Tree, 
-  TreeChildren, 
-  TreeParent, 
-  OneToMany 
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  Tree,
+  TreeChildren,
+  TreeParent,
+  OneToMany,
 } from 'typeorm';
-import { Product } from '../products/entities/product.entity';
+import { Product } from '../../products/entities/product.entity';
 
 @Entity()
 @Tree('closure-table')
@@ -25,12 +24,15 @@ export class Category {
   @Column({ nullable: true })
   iconUrl?: string;
 
+  @Column({ nullable: true })
+  iconName?: string;
+
   @TreeChildren()
   children?: Category[];
 
   @TreeParent()
   parent?: Category;
 
-  @OneToMany(() => Product, (product) => product.category, { eager: false })
+  @OneToMany(() => Product, (product: Product) => product.category, { eager: false })
   products!: Product[];
 }

@@ -9,8 +9,8 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In } from 'typeorm';
 import { Product } from './entities/product.entity';
 import { Tag } from '../tags/tag.entity';
-import { User } from '../users/user.entity';
-import { Order } from '../orders/order.entity';
+import { User } from '../users/entities/user.entity'; 
+import { Order } from '../orders/entities/order.entity'; 
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { ProductResponseDto } from './dto/product-response.dto';
@@ -29,18 +29,35 @@ export class ProductsService {
   ) {}
 
   async create(data: CreateProductDto & { vendorId: number }): Promise<ProductResponseDto> {
-    const { tags = [], images = [], vendorId, ...rest } = data;
+    const {
+      tags = [],
+      images = [],
+      vendorId,
+      categoryId,
+      ...rest
+    } = data;
 
     const vendor = await this.userRepo.findOneBy({ id: vendorId });
     if (!vendor) throw new NotFoundException('Vendor not found');
 
-    const product = this.productRepo.create({ ...rest, vendor });
+    let category = undefined;
+    if (categoryId) {
+      // If categoryId is provided, set the relation
+      category = { id: categoryId } as any;
+    }
+
+    // rest now includes sku, stock_quantity, manage_stock, status, etc.
+    const product = this.productRepo.create({
+      ...rest,
+      vendor,
+      category,
+    });
 
     if (tags.length) {
       product.tags = await this.assignTags(tags);
     }
 
-    // Save the product to get an ID
+    // Save product to get ID
     const savedProduct = await this.productRepo.save(product);
 
     // Handle images
@@ -68,12 +85,12 @@ export class ProductsService {
 
   async updateProduct(
     id: number,
-    updateProductDto: UpdateProductDto & { tags?: string[]; images?: string[] },
+    updateProductDto: UpdateProductDto & { tags?: string[]; images?: string[]; categoryId?: number },
     user: Pick<User, 'id'>,
   ): Promise<ProductResponseDto> {
     const product = await this.productRepo.findOne({
       where: { id },
-      relations: ['vendor', 'tags', 'images'],
+      relations: ['vendor', 'tags', 'images', 'category'],
     });
 
     if (!product) throw new NotFoundException('Product not found');
@@ -81,6 +98,12 @@ export class ProductsService {
       throw new ForbiddenException('You can only update your own products');
     }
 
+    // If categoryId is present, update the relation
+    if (typeof updateProductDto.categoryId === 'number') {
+      (product as any).category = { id: updateProductDto.categoryId };
+    }
+
+    // Object.assign will now include sku, stock_quantity, manage_stock, status, etc.
     Object.assign(product, updateProductDto);
 
     // Update tags if provided
@@ -364,6 +387,10 @@ export class ProductsService {
       tags: product.tags?.map((t) => t.name) || [],
       average_rating: product.average_rating ? Number(product.average_rating) : undefined,
       rating_count: product.rating_count,
+      sku: product.sku,
+      stock_quantity: product.stock_quantity,
+      manage_stock: product.manage_stock,
+      status: product.status,
     };
   }
 }

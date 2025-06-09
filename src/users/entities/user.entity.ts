@@ -8,9 +8,9 @@ import {
   DeleteDateColumn,
   Index,
 } from 'typeorm';
-import { DeviceToken } from '../notifications/device-token.entity';
-import { MediaEntity } from '../media/media.entity';
-import { Product } from '../products/entities/product.entity';
+import { DeviceToken } from '../../notifications/entities/device-token.entity';
+import { MediaEntity } from '../../media/entities/media.entity'; // <-- FIXED IMPORT
+import { Product } from '../../products/entities/product.entity'; // <-- FIXED IMPORT
 
 export enum UserRole {
   CUSTOMER = 'CUSTOMER',
@@ -38,13 +38,13 @@ export class User {
   })
   roles!: UserRole[];
 
-  @OneToMany(() => DeviceToken, (token) => token.user)
+  @OneToMany(() => DeviceToken, (token: DeviceToken) => token.user)
   deviceTokens!: DeviceToken[];
 
-  @OneToMany(() => MediaEntity, (media) => media.owner)
+  @OneToMany(() => MediaEntity, (media: MediaEntity) => media.owner)
   media!: MediaEntity[];
 
-  @OneToMany(() => Product, (product) => product.vendor)
+  @OneToMany(() => Product, (product: Product) => product.vendor)
   products!: Product[];
 
   @CreateDateColumn()

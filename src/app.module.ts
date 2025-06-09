@@ -13,14 +13,13 @@ import { WithdrawalsModule } from './withdrawals/withdrawals.module';
 import { VendorDashboardModule } from './vendor-dashboard/vendor-dashboard.module';
 import { AdminDashboardModule } from './admin-dashboard/admin-dashboard.module';
 import { NotificationsModule } from './notifications/notifications.module';
-import { AdminModule } from './admin/admin.module';
-import { AdminDeliveriesModule } from './admin/deliveries/deliveries.module';
 import { CategoriesModule } from './categories/categories.module';
 import { MediaModule } from './media/media.module';
 import { SettingsModule } from './settings/settings.module';
 import { SeedsModule } from './seeds/seeds.module';
 import { ContentController } from './content/content.controller';
 import { ContentService } from './content/content.service';
+import { TagModule } from './tags/tag.module';
 
 // Import AppDataSource
 import { AppDataSource } from './data-source'; // Adjust path if necessary
@@ -47,12 +46,11 @@ import { AppDataSource } from './data-source'; // Adjust path if necessary
     VendorDashboardModule,
     AdminDashboardModule,
     NotificationsModule,
-    AdminModule,
-    AdminDeliveriesModule,
     CategoriesModule,
     MediaModule,
     SettingsModule,
     SeedsModule,
+    TagModule
   ],
 
 controllers: [

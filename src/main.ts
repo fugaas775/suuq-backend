@@ -1,46 +1,62 @@
-import 'reflect-metadata'; // Needed for TypeORM
+import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
-// Add this import:
-import { MediaController } from './media/media.controller';
+import { ValidationPipe, Logger } from '@nestjs/common';
+import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+  const logger = new Logger('Bootstrap');
 
-  app.setGlobalPrefix('api'); // All routes under /api
+  app.setGlobalPrefix('api');
   app.enableCors();
+  app.enableShutdownHooks(); // ✅ Graceful shutdown support
 
-  // --- Add this block for the MediaController Multer storage fix ---
-  const mediaController = app.get(MediaController);
-  MediaController.setInterceptorStorage(mediaController);
-  // ---------------------------------------------------------------
+  // ✅ Global validation pipe
+  app.useGlobalPipes(
+    new ValidationPipe({
+      whitelist: true,
+      forbidNonWhitelisted: true,
+      transform: true,
+    }),
+  );
 
-  // Optional: Dev route logger
+  // ✅ Swagger setup
+  const config = new DocumentBuilder()
+    .setTitle('Suuq API')
+    .setDescription('Suuq API documentation')
+    .setVersion('1.0')
+    .addBearerAuth()
+    .build();
+  const document = SwaggerModule.createDocument(app, config);
+  SwaggerModule.setup('api/docs', app, document);
+
+  // ✅ Route logger (for dev)
   if (process.env.NODE_ENV !== 'production') {
     try {
       const server = app.getHttpServer();
       const router = server._events?.request?._router;
       if (router?.stack) {
-        console.log('📡 Available Routes:');
+        logger.log('📡 Available Routes:');
         router.stack
           .filter((r: any) => r.route)
           .forEach((r: any) => {
             const method = Object.keys(r.route.methods)[0].toUpperCase();
             const path = r.route.path;
-            console.log(`${method} /api${path}`);
+            logger.log(`${method} /api${path}`);
           });
       } else {
-        console.log('⚠️  Router not ready yet.');
+        logger.warn('⚠️ Router not ready yet.');
       }
     } catch (error) {
-      console.error(
-        '🔥 Route logger failed:',
-        error instanceof Error ? error.message : error,
-      );
+      logger.error('🔥 Route logger failed:', error instanceof Error ? error.message : error);
     }
   }
 
-  await app.listen(3000, '0.0.0.0');
-  console.log('✅ Server listening on 0.0.0.0:3000');
+  const port = process.env.PORT || 3000;
+  await app.listen(port, '0.0.0.0');
+  logger.log(`✅ Server listening on http://0.0.0.0:${port}`);
+  logger.log(`📘 Swagger UI available at http://localhost:${port}/api/docs`);
 }
+
 bootstrap();

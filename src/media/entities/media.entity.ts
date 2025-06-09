@@ -5,7 +5,7 @@ import {
   ManyToOne,
   JoinColumn,
 } from 'typeorm';
-import { User } from '../users/user.entity';
+import { User } from '../../users/entities/user.entity';
 
 @Entity('media')
 export class MediaEntity {
@@ -26,6 +26,15 @@ export class MediaEntity {
 
   @Column()
   ownerId!: number;
+
+  @Column({ default: 'product' })
+  type!: string;
+
+  @Column({ nullable: true })
+  caption?: string;
+
+  @Column({ nullable: true })
+  altText?: string;
 
   @ManyToOne(() => User, (user) => user.media, { eager: false })
   @JoinColumn({ name: 'ownerId' })

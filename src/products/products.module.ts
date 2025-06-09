@@ -2,8 +2,8 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Product } from './entities/product.entity';
 import { ProductImage } from './entities/product-image.entity';
-import { User } from '../users/user.entity';
-import { Order } from '../orders/order.entity';
+import { User } from '../users/entities/user.entity'; // <-- FIXED IMPORT
+import { Order } from '../orders/entities/order.entity'; // <-- FIXED IMPORT
 import { Tag } from '../tags/tag.entity';
 import { ProductsService } from './products.service';
 import { ProductsController } from './products.controller';

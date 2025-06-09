@@ -1,8 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { Product } from '../products/entities/product.entity';
-import { Order } from '../orders/order.entity';
+import { Product } from '../products/entities/product.entity'; // <-- FIXED IMPORT
+import { Order } from '../orders/entities/order.entity';      // <-- FIXED IMPORT
 import { Withdrawal, WithdrawalStatus } from '../withdrawals/entities/withdrawal.entity';
 
 @Injectable()

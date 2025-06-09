@@ -3,7 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { NotificationsController } from './notifications.controller';
 import { NotificationsService } from './notifications.service';
 import { Notification } from './entities/notification.entity';
-import { DeviceToken } from './device-token.entity';
+import { DeviceToken } from './entities/device-token.entity';
 import { DeviceTokenService } from './device-token.service';
 import { DeviceTokenController } from './device-token.controller';
 

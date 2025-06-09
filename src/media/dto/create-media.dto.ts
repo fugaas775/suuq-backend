@@ -1,28 +1,28 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class CreateMediaDto {
-  @ApiProperty({ example: 'media/file-key-uuid.jpg' })
-  key!: string;
-
-  @ApiProperty({ example: 'https://domain.com/media/file-key-uuid.jpg' })
-  src!: string;
-
   @ApiProperty({ example: 'image/jpeg' })
   mimeType!: string;
 
   @ApiProperty({ example: 'photo.jpg' })
   fileName!: string;
 
-  @ApiProperty({ example: 1 })
-  ownerId!: number;
+  @ApiPropertyOptional({ example: 'product', default: 'product' })
+  type?: string;
+
+  @ApiPropertyOptional({ example: 'Cover photo for profile' })
+  caption?: string;
+
+  @ApiPropertyOptional({ example: 'A smiling person holding a coffee' })
+  altText?: string;
 
   constructor(partial?: Partial<CreateMediaDto>) {
     if (partial) {
-      this.key = partial.key ?? '';
-      this.src = partial.src ?? '';
       this.mimeType = partial.mimeType ?? '';
       this.fileName = partial.fileName ?? '';
-      this.ownerId = partial.ownerId ?? 0;
+      this.type = partial.type;
+      this.caption = partial.caption;
+      this.altText = partial.altText;
     }
   }
 }

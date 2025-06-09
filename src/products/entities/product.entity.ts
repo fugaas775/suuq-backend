@@ -8,8 +8,8 @@ import {
   JoinTable,
   CreateDateColumn,
 } from 'typeorm';
-import { User } from '../../users/user.entity';
-import { Category } from '../../categories/category.entity';
+import { User } from '../../users/entities/user.entity'; 
+import { Category } from '../../categories/entities/category.entity';
 import { Tag } from '../../tags/tag.entity';
 import { ProductImage } from './product-image.entity';
 
@@ -60,4 +60,16 @@ export class Product {
   @ManyToMany(() => Tag, tag => tag.products, { cascade: true })
   @JoinTable()
   tags!: Tag[];
+
+  @Column({ nullable: true })
+  sku?: string;
+
+  @Column('int', { nullable: true })
+  stock_quantity?: number;
+
+  @Column({ default: false })
+  manage_stock?: boolean;
+
+  @Column({ default: 'publish' })
+  status?: 'publish' | 'draft' | 'pending';
 }

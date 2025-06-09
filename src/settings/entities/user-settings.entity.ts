@@ -5,7 +5,7 @@ import {
   OneToOne,
   JoinColumn,
 } from 'typeorm';
-import { User } from '../users/user.entity'; // Adjust path if needed
+import { User } from '../../users/entities/user.entity'; // <-- FIXED IMPORT PATH
 
 @Entity()
 export class UserSettings {

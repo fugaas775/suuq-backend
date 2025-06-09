@@ -1,9 +1,12 @@
-import { PartialType } from '@nestjs/swagger';
-import { CreateMediaDto } from './create-media.dto';
+import { ApiPropertyOptional } from '@nestjs/swagger';
 
-export class UpdateMediaDto extends PartialType(CreateMediaDto) {
-  constructor(partial?: Partial<UpdateMediaDto>) {
-    super(partial);
-    // All fields optional, inherited from CreateMediaDto
-  }
+export class UpdateMediaDto {
+  @ApiPropertyOptional({ example: 'Updated caption' })
+  caption?: string;
+
+  @ApiPropertyOptional({ example: 'Descriptive alt text for accessibility' })
+  altText?: string;
+
+  @ApiPropertyOptional({ example: 'product' })
+  type?: string;
 }

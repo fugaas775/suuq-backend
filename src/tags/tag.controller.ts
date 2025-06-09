@@ -9,7 +9,7 @@ import {
   UseGuards,
   Query,
 } from '@nestjs/common';
-import { UserRole } from 'auth/roles.enum';
+import { UserRole } from '../auth/roles.enum';
 import { TagService } from './tag.service';
 import { AuthGuard } from '@nestjs/passport';
 import { RolesGuard } from '../common/guards/roles.guard';

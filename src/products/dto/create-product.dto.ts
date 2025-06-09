@@ -1,4 +1,4 @@
-import { IsString, IsNumber, IsOptional, IsArray } from 'class-validator';
+import { IsString, IsNumber, IsOptional, IsArray, IsBoolean, IsIn } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class CreateProductDto {
@@ -28,13 +28,20 @@ export class CreateProductDto {
   @IsNumber()
   categoryId?: number;
 
-  // Optionally, add these if supported by your entity/backend
-  // @IsOptional()
-  // @Type(() => Number)
-  // @IsNumber()
-  // sale_price?: number;
+  @IsOptional()
+  @IsString()
+  sku?: string;
 
-  // @IsOptional()
-  // @IsString()
-  // currency?: string;
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  stock_quantity?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  manage_stock?: boolean;
+
+  @IsOptional()
+  @IsIn(['publish', 'draft', 'pending'])
+  status?: 'publish' | 'draft' | 'pending';
 }

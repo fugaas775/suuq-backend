@@ -6,11 +6,10 @@ import {
   ManyToOne,
   UpdateDateColumn,
 } from 'typeorm';
-import { Order } from '../../orders/order.entity';
-import { User } from '../../users/user.entity';
+import { Order } from '../../orders/entities/order.entity';
+import { User } from '../../users/entities/user.entity';
 
 export enum DeliveryStatus {
-  PENDING = 'PENDING',
   ASSIGNED = 'ASSIGNED',
   PICKED_UP = 'PICKED_UP',
   IN_TRANSIT = 'IN_TRANSIT',
@@ -31,7 +30,7 @@ export class Delivery {
   @Column({
     type: 'enum',
     enum: DeliveryStatus,
-    default: DeliveryStatus.PENDING, // default to PENDING for new deliveries
+    default: DeliveryStatus.ASSIGNED,
   })
   status!: DeliveryStatus;
 

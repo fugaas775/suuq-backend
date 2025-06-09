@@ -8,6 +8,7 @@ import {
   Body,
   ParseIntPipe,
   UseGuards,
+  Query,
 } from '@nestjs/common';
 import { CategoriesService } from './categories.service';
 import { CreateCategoryDto } from './dto/create-category.dto';
@@ -15,15 +16,18 @@ import { UpdateCategoryDto } from './dto/update-category.dto';
 import { AuthGuard } from '@nestjs/passport';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
-import { UserRole } from '../auth/roles.enum'; // Updated import!
+import { UserRole } from '../auth/roles.enum';
+import { CategoryResponseDto } from './dto/category-response.dto';
 
 @Controller('categories')
 export class CategoriesController {
   constructor(private readonly categoriesService: CategoriesService) {}
 
   @Get()
-  findAll() {
-    return this.categoriesService.findAll();
+  async findAll(@Query('per_page') perPage?: string): Promise<CategoryResponseDto[]> {
+    const limit = Number(perPage);
+    const take = Number.isInteger(limit) && limit > 0 ? limit : 10;
+    return this.categoriesService.findAll(take);
   }
 
   @Post()

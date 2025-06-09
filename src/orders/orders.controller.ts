@@ -15,7 +15,7 @@ import { AuthGuard } from '@nestjs/passport';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { UserRole } from '../auth/roles.enum';
-import { OrderStatus } from './order.entity';
+import { OrderStatus } from './entities/order.entity'; // <-- FIXED IMPORT
 
 @Controller('orders')
 @UseGuards(AuthGuard('jwt'), RolesGuard)

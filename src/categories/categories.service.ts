@@ -1,11 +1,12 @@
 import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { TreeRepository, Repository } from 'typeorm';
-import { Category } from './category.entity';
+import { Category } from './entities/category.entity';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
 import { Product } from '../products/entities/product.entity';
 import { slugify } from 'transliteration';
+import { CategoryResponseDto } from './dto/category-response.dto';
 
 @Injectable()
 export class CategoriesService {
@@ -29,9 +30,25 @@ export class CategoriesService {
     return this.categoryRepo.findDescendantsTree(category);
   }
 
-  async findAll(): Promise<Category[]> {
-    return this.categoryRepo.find({
+  async findAll(perPage = 10): Promise<CategoryResponseDto[]> {
+    const categories = await this.categoryRepo.find({
       order: { name: 'ASC' },
+      take: perPage,
+    });
+
+    // Map to CategoryResponseDto with icon fallback logic
+    return categories.map((cat) => {
+      let iconName: string | undefined = cat.iconName && cat.iconName.trim() !== '' ? cat.iconName : undefined;
+      let iconUrl: string | undefined = cat.iconUrl && cat.iconUrl.trim() !== '' ? cat.iconUrl : undefined;
+      if (!iconName && !iconUrl) {
+        iconName = 'shape-outline';
+      }
+      return {
+        id: cat.id,
+        name: cat.name,
+        iconName,
+        iconUrl,
+      };
     });
   }
 
@@ -50,6 +67,7 @@ export class CategoriesService {
       name: dto.name,
       slug,
       iconUrl: dto.iconUrl,
+      iconName: dto.iconName,
     });
 
     if (dto.parentId) {

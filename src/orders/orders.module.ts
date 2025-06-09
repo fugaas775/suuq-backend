@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { Order } from './order.entity';
+import { Order } from './entities/order.entity'; // <-- FIXED IMPORT
 import { OrdersController } from './orders.controller';
 import { OrdersService } from './orders.service';
 import { Product } from '../products/entities/product.entity';

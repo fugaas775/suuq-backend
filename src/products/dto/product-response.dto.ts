@@ -3,8 +3,8 @@ export class VendorDto {
   email!: string;
   displayName?: string;
   avatarUrl?: string;
-  store_name?: string; // For frontend compatibility
-  name?: string;       // For frontend compatibility
+  store_name?: string;
+  name?: string;
 }
 
 export class CategoryDto {
@@ -19,13 +19,17 @@ export class ProductResponseDto {
   sale_price?: number;
   currency?: string;
   images!: { src: string }[];
-  imageUrl?: string; // Derived, e.g. images[0]?.src
+  imageUrl?: string;
   description!: string;
   createdAt!: Date;
   featured!: boolean;
   vendor!: VendorDto;
   category?: CategoryDto;
   tags?: string[];
-  average_rating?: number; // Prefer consistent type
+  average_rating?: number;
   rating_count?: number;
+  sku?: string;
+  stock_quantity?: number;
+  manage_stock?: boolean;
+  status?: 'publish' | 'draft' | 'pending';
 }
