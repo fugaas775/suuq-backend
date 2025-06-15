@@ -12,6 +12,7 @@ import { User } from '../../users/entities/user.entity';
 import { Category } from '../../categories/entities/category.entity';
 import { Tag } from '../../tags/tag.entity';
 import { ProductImage } from './product-image.entity';
+import { Review } from '../../reviews/entities/review.entity';
 
 @Entity()
 export class Product {
@@ -72,4 +73,7 @@ export class Product {
 
   @Column({ default: 'publish' })
   status?: 'publish' | 'draft' | 'pending';
+
+  @OneToMany(() => Review, review => review.product)
+  reviews!: Review[];
 }

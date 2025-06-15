@@ -10,7 +10,10 @@ import {
 import { Product } from '../../products/entities/product.entity';
 
 @Entity()
-@Tree('closure-table')
+@Tree('closure-table', {
+  ancestorColumnName: () => 'id_ancestor',
+  descendantColumnName: () => 'id_descendant',
+})
 export class Category {
   @PrimaryGeneratedColumn()
   id!: number;

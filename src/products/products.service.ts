@@ -15,6 +15,7 @@ import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { ProductResponseDto } from './dto/product-response.dto';
 import { ProductImage } from './entities/product-image.entity';
+import { Review } from '../reviews/entities/review.entity'; // <-- Make sure this path is correct
 
 @Injectable()
 export class ProductsService {
@@ -26,6 +27,7 @@ export class ProductsService {
     @InjectRepository(User) private userRepo: Repository<User>,
     @InjectRepository(Order) private orderRepo: Repository<Order>,
     @InjectRepository(Tag) private tagRepo: Repository<Tag>,
+    @InjectRepository(Review) private reviewRepo: Repository<Review>, // <-- Inject Review repository
   ) {}
 
   async create(data: CreateProductDto & { vendorId: number }): Promise<ProductResponseDto> {
@@ -356,6 +358,16 @@ export class ProductsService {
         relations: ['vendor', 'category', 'tags', 'images'],
       }),
     );
+  }
+
+  // --- NEW: Fetch reviews for a product ---
+  async getReviewsForProduct(productId: number) {
+    const reviews = await this.reviewRepo.find({
+      where: { product: { id: productId } },
+      relations: ['user'], // adjust as needed, e.g. ['user']
+      order: { createdAt: 'DESC' }
+    });
+    return reviews;
   }
 
   private mapProductToDto(product: Product): ProductResponseDto {

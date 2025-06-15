@@ -1,6 +1,6 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Between, Repository, ArrayContains } from 'typeorm';
+import { Between, Repository, ArrayContains, DataSource } from 'typeorm';
 import { User } from '../users/entities/user.entity';
 import { Order } from '../orders/entities/order.entity';
 import { Withdrawal } from '../withdrawals/entities/withdrawal.entity';
@@ -8,6 +8,8 @@ import { UserRole } from '../auth/roles.enum'; // Unified enum import
 
 @Injectable()
 export class AdminDashboardService {
+  private readonly logger = new Logger(AdminDashboardService.name);
+
   constructor(
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
@@ -15,9 +17,13 @@ export class AdminDashboardService {
     private readonly orderRepo: Repository<Order>,
     @InjectRepository(Withdrawal)
     private readonly withdrawalRepo: Repository<Withdrawal>,
+    private readonly dataSource: DataSource,
   ) {}
 
   async getSummary({ from, to }: { from?: string; to?: string }) {
+    // Debug: log loaded entities
+    this.logger.debug('Entities loaded: ' + this.dataSource.entityMetadatas.map(e => e.name).join(', '));
+
     const dateFilter = from && to ? {
       createdAt: Between(new Date(from), new Date(to + 'T23:59:59')),
     } : {};
@@ -62,6 +68,9 @@ export class AdminDashboardService {
   }
 
   async getAnalytics({ from, to }: { from?: string; to?: string }) {
+    // Debug: log loaded entities
+    this.logger.debug('Entities loaded: ' + this.dataSource.entityMetadatas.map(e => e.name).join(', '));
+
     const dateFilter = from && to ? {
       createdAt: Between(new Date(from), new Date(to + 'T23:59:59')),
     } : {};

@@ -108,6 +108,12 @@ export class ProductsController {
     return this.productsService.findOne(id);
   }
 
+  // --- NEW: Product Reviews Endpoint ---
+  @Get(':id/reviews')
+  async getProductReviews(@Param('id', ParseIntPipe) id: number) {
+    return this.productsService.getReviewsForProduct(id);
+  }
+
   @Patch(':id')
   @UseGuards(AuthGuard('jwt'), RolesGuard)
   @Roles(UserRole.VENDOR)

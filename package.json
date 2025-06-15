@@ -16,9 +16,10 @@
     "test": "jest",
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
+    "db:rebuild-closure": "ts-node -r tsconfig-paths/register --transpile-only scripts/rebuild-closure.ts",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
-    "typeorm": "ts-node -r tsconfig-paths/register ./node_modules/typeorm/cli.js"
+    "typeorm": "yarn build && node -r ts-node/register/transpile-only -r tsconfig-paths/register ./node_modules/typeorm/cli.js --dataSource dist/ormconfig.js"
   },
   "dependencies": {
     "@nestjs/common": "^11.1.1",
@@ -33,6 +34,7 @@
     "bcrypt": "^6.0.0",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.2",
+    "date-fns": "^4.1.0",
     "dotenv": "^16.5.0",
     "google-auth-library": "^9.15.1",
     "multer-s3": "2.10.0",
@@ -74,13 +76,19 @@
     "typescript": "^5.7.3"
   },
   "jest": {
-    "moduleFileExtensions": ["js", "json", "ts"],
+    "moduleFileExtensions": [
+      "js",
+      "json",
+      "ts"
+    ],
     "rootDir": "src",
     "testRegex": ".*\\.spec\\.ts$",
     "transform": {
       "^.+\\.(t|j)s$": "ts-jest"
     },
-    "collectCoverageFrom": ["**/*.(t|j)s"],
+    "collectCoverageFrom": [
+      "**/*.(t|j)s"
+    ],
     "coverageDirectory": "../coverage",
     "testEnvironment": "node"
   }

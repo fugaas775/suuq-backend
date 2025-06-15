@@ -7,6 +7,7 @@ import { Order } from '../orders/entities/order.entity'; // <-- FIXED IMPORT
 import { Tag } from '../tags/tag.entity';
 import { ProductsService } from './products.service';
 import { ProductsController } from './products.controller';
+import { Review } from '../reviews/entities/review.entity';
 
 @Module({
   imports: [
@@ -15,7 +16,8 @@ import { ProductsController } from './products.controller';
       ProductImage,   // Needed for ProductImageRepository injection
       User,           // Needed for UserRepository injection
       Order,          // Needed for OrderRepository injection
-      Tag,            // Needed for TagRepository injection
+      Tag,
+      Review,            // Needed for TagRepository injection
     ]),
   ],
   providers: [ProductsService],

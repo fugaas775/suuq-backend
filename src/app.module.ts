@@ -1,6 +1,6 @@
 // src/app.module.ts
 import { Module } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
 // Import your application modules
@@ -20,9 +20,11 @@ import { SeedsModule } from './seeds/seeds.module';
 import { ContentController } from './content/content.controller';
 import { ContentService } from './content/content.service';
 import { TagModule } from './tags/tag.module';
-
-// Import AppDataSource
-import { AppDataSource } from './data-source'; // Adjust path if necessary
+import { CartModule } from './cart/cart.module';
+import { VendorPublicModule } from './vendor-public/vendor-public.module';
+import { VendorPublicController } from './vendor-public/vendor-public.controller';
+import { VendorPublicService } from './vendor-public/vendor-public.service';
+import { VendorModule } from './vendor/vendor.module';
 
 @Module({
   imports: [
@@ -30,11 +32,21 @@ import { AppDataSource } from './data-source'; // Adjust path if necessary
       isGlobal: true,
       envFilePath: '.env',
     }),
+    // FIX: Replaced the old useFactory with a standard async factory
     TypeOrmModule.forRootAsync({
-      useFactory: () => ({
-        ...AppDataSource.options,
-        // Ensure entities are auto-loaded if using glob pattern in AppDataSource.options
-        // If not, and you get "metadata for X not found" errors, add entities: [__dirname + '/**/*.entity{.ts,.js}'],
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (configService: ConfigService) => ({
+        type: 'postgres',
+        host: configService.get<string>('DB_HOST'),
+        port: configService.get<number>('DB_PORT'),
+        username: configService.get<string>('DB_USERNAME'),
+        password: configService.get<string>('DB_PASSWORD'),
+        database: configService.get<string>('DB_NAME'),
+        // This setting tells TypeORM to automatically find all files named *.entity.ts
+        autoLoadEntities: true, 
+        // synchronize should always be false for production apps that use migrations
+        synchronize: false,
       }),
     }),
     UsersModule,
@@ -50,15 +62,12 @@ import { AppDataSource } from './data-source'; // Adjust path if necessary
     MediaModule,
     SettingsModule,
     SeedsModule,
-    TagModule
+    TagModule,
+    VendorPublicModule,
+    VendorModule,
+    CartModule,
   ],
-
-controllers: [
-    ContentController,
-  ],
-
-providers: [
-    ContentService,
-  ],
+  controllers: [ContentController, VendorPublicController],
+  providers: [ContentService, VendorPublicService],
 })
 export class AppModule {}

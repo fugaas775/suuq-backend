@@ -11,6 +11,7 @@ import {
 import { DeviceToken } from '../../notifications/entities/device-token.entity';
 import { MediaEntity } from '../../media/entities/media.entity'; // <-- FIXED IMPORT
 import { Product } from '../../products/entities/product.entity'; // <-- FIXED IMPORT
+import { Review } from '../../reviews/entities/review.entity';
 
 export enum UserRole {
   CUSTOMER = 'CUSTOMER',
@@ -90,4 +91,7 @@ export class User {
 
   @Column({ default: false })
   isPhoneVerified!: boolean;
+
+  @OneToMany(() => Review, review => review.user)
+  reviews!: Review[];
 }
