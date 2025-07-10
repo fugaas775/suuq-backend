@@ -1,7 +1,8 @@
 import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import { User, UserRole } from './entities/user.entity'; // <-- FIXED IMPORT
+import { Repository, MoreThan } from 'typeorm';
+import { User } from './entities/user.entity'; 
+import { UserRole } from '../auth/roles.enum';
 import * as bcrypt from 'bcrypt';
 
 @Injectable()
@@ -117,6 +118,15 @@ export class UsersService {
       throw new NotFoundException('User not found');
     }
     return user;
+  }
+
+  async findByResetToken(token: string): Promise<User | null> {
+    return this.userRepository.findOne({
+      where: {
+        passwordResetToken: token,
+        passwordResetExpires: MoreThan(new Date()), // Check that the token is not expired
+      },
+    });
   }
 
   /**

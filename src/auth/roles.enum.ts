@@ -1,4 +1,5 @@
 export enum UserRole {
+  SUPER_ADMIN = 'SUPER_ADMIN', // <-- ADD THIS LINE
   ADMIN = 'ADMIN',
   VENDOR = 'VENDOR',
   CUSTOMER = 'CUSTOMER',

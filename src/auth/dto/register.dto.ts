@@ -6,12 +6,16 @@ import {
   IsArray,
   IsEnum,
   ValidateIf,
-  IsNotEmpty, // <-- Import IsNotEmpty
+  IsNotEmpty,
   Matches,
 } from 'class-validator';
 import { UserRole } from '../../auth/roles.enum';
 
 export class RegisterDto {
+  @IsString()
+  @IsNotEmpty()
+  firebaseUid!: string;
+
   @IsEmail()
   email!: string;
 
@@ -23,7 +27,6 @@ export class RegisterDto {
   @IsString()
   displayName?: string;
 
-  // ... other properties are unchanged ...
   @IsOptional()
   @IsArray()
   @IsEnum(UserRole, { each: true })
@@ -42,18 +45,13 @@ export class RegisterDto {
   @IsString()
   storeName?: string;
   
-  // --- UPDATED PHONE BLOCK ---
-  // The old 'phone' field is removed. We now have two required fields.
-  
   @IsString()
   @IsNotEmpty()
   phoneCountryCode!: string;
 
   @IsString()
   @IsNotEmpty()
-  // This regex checks for 9 digits, common for Ethiopian numbers after the '0' is dropped.
-  // Adjust if other regions have different lengths.
-  @Matches(/^\d{9}$/, { message: 'Phone number must be exactly 9 digits.' })
+  // --- UPDATED VALIDATION LOGIC ---
+  @Matches(/^(\d{9}|0\d{9})$/, { message: 'Phone number must be 9 digits, or 10 digits starting with 0.' })
   phoneNumber!: string;
-  // -------------------------
 }

@@ -17,9 +17,11 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { plainToInstance } from 'class-transformer';
 import { UserResponseDto } from '../users/dto/user-response.dto';
-import { UserRole } from './roles.enum'; // Unified import for role enum
+import { UserRole } from './roles.enum';
 import { GoogleAuthDto } from './dto/google-auth.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
+import { ForgotPasswordDto } from './dto/forgot-password.dto';
+import { ResetPasswordDto } from './dto/reset-password.dto';
 
 interface AuthenticatedRequest extends Request {
   user: {
@@ -33,12 +35,25 @@ interface AuthenticatedRequest extends Request {
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
+  /**
+   * --- UPDATED REGISTER METHOD ---
+   * Creates the user and then immediately logs them in to return access tokens.
+   */
   @Post('register')
+  @HttpCode(HttpStatus.OK) // Return 200 OK since it now logs in
   async register(@Body() dto: RegisterDto) {
-    const result = await this.authService.register(dto);
+    // Step 1: Register the user. This will throw an error if it fails.
+    await this.authService.register(dto);
+
+    // Step 2: If registration is successful, immediately log the new user in.
+    const loginDto: LoginDto = { email: dto.email, password: dto.password };
+    const { access_token, refreshToken, user } = await this.authService.login(loginDto);
+    
+    // Step 3: Return the same response structure as the /login endpoint.
     return {
-      message: result.message,
-      user: plainToInstance(UserResponseDto, result.user, { excludeExtraneousValues: true }),
+      accessToken: access_token,
+      refreshToken,
+      user: plainToInstance(UserResponseDto, user, { excludeExtraneousValues: true }),
     };
   }
 
@@ -53,15 +68,24 @@ export class AuthController {
     };
   }
 
+  // This endpoint can now be simplified or removed, as the main /register handles it.
+  // Kept for legacy purposes if another app uses it.
   @Post('register-deliverer')
-  async registerDeliverer(@Body() dto: Omit<RegisterDto, 'role' | 'roles'>) {
+  async registerDeliverer(@Body() dto: Omit<RegisterDto, 'roles' | 'firebaseUid'>) {
+    const loginDto: LoginDto = { email: dto.email, password: dto.password };
+    // This is a placeholder, as your DTO requires firebaseUid.
+    // This endpoint may need to be re-evaluated or have its DTO adjusted.
     const registerPayload: RegisterDto = {
       ...dto,
+      firebaseUid: 'placeholder-uid-for-deliverer', // You need a strategy for this
       roles: [UserRole.DELIVERER],
     };
-    const { user } = await this.authService.register(registerPayload);
+    
+    await this.authService.register(registerPayload);
+    const { access_token, user } = await this.authService.login(loginDto);
+    
     return {
-      message: 'Deliverer registration successful',
+      accessToken: access_token,
       user: plainToInstance(UserResponseDto, user, { excludeExtraneousValues: true }),
     };
   }
@@ -101,19 +125,22 @@ export class AuthController {
     };
   }
 
-  @Get('vendor-dashboard')
-  @UseGuards(AuthGuard('jwt'), RolesGuard)
-  @Roles(UserRole.VENDOR)
-  getVendorDashboard(@Request() req: AuthenticatedRequest) {
-    return {
-      message: 'Welcome vendor',
-      user: plainToInstance(UserResponseDto, req.user, { excludeExtraneousValues: true }),
-    };
-  }
-
   @Get('profile')
   @UseGuards(AuthGuard('jwt'))
   getProfile(@Request() req: AuthenticatedRequest) {
+    // The user object is attached to the request by the JwtStrategy
     return plainToInstance(UserResponseDto, req.user, { excludeExtraneousValues: true });
+  }
+
+  @Post('forgot-password')
+  @HttpCode(HttpStatus.OK)
+  async forgotPassword(@Body() dto: ForgotPasswordDto) {
+    return this.authService.forgotPassword(dto.email);
+  }
+
+  @Post('reset-password')
+  @HttpCode(HttpStatus.OK)
+  async resetPassword(@Body() dto: ResetPasswordDto) {
+    return this.authService.resetPassword(dto.token, dto.password);
   }
 }
