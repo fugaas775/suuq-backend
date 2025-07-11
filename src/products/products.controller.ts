@@ -22,6 +22,7 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { plainToInstance } from 'class-transformer';
 import { ProductResponseDto } from './dto/product-response.dto';
 import { CreateProductDto } from './dto/create-product.dto';
+import { ProductFilterDto } from './dto/ProductFilterDto';
 import { UserRole } from '../auth/roles.enum';
 
 @Controller('products')
@@ -41,40 +42,22 @@ export class ProductsController {
   }
 
   @Get()
-  async findAll(
-    @Query('per_page') perPageQuery?: string,
-    @Query('page') pageQuery?: string,
-    @Query('search') search?: string,
-    @Query('categoryId') categoryId?: string,
-    @Query('featured') featured?: string,
-    @Query('sort') sort?: string,
-    @Query('categorySlug') categorySlug?: string,
-    @Query('tag') tag?: string,
-  ) {
+  async findAll(@Query() filters: ProductFilterDto) {
     try {
-      this.logger.debug(`findAll params: ${JSON.stringify({
-        perPageQuery, pageQuery, search, categoryId, featured, sort, categorySlug, tag
-      })}`);
+      this.logger.debug(`findAll params: ${JSON.stringify(filters)}`);
 
-      const perPage = parseInt(perPageQuery || '10', 10);
-      const page = parseInt(pageQuery || '1', 10);
-      const catId = categoryId ? parseInt(categoryId, 10) : undefined;
-      const isFeatured =
-        featured === 'true' ? true : featured === 'false' ? false : undefined;
+      // Set defaults
+      const perPage = filters.perPage || 10;
+      const page = filters.page || 1;
 
       if (isNaN(perPage) || isNaN(page)) {
         throw new BadRequestException('Invalid pagination values');
       }
 
       const result = await this.productsService.findFiltered({
+        ...filters,
         perPage,
         page,
-        search,
-        categoryId: catId,
-        featured: isFeatured,
-        sort,
-        categorySlug,
-        tags: tag,
       });
 
       if (!result || !Array.isArray(result.items)) {
