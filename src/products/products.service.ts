@@ -14,6 +14,7 @@ import { Order } from '../orders/entities/order.entity';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { ProductResponseDto } from './dto/product-response.dto';
+import { ProductFilterDto } from './dto/ProductFilterDto';
 import { ProductImage } from './entities/product-image.entity';
 import { Review } from '../reviews/entities/review.entity'; // <-- Make sure this path is correct
 
@@ -170,29 +171,7 @@ export class ProductsService {
     return this.mapProductToDto(product);
   }
 
-  async findFiltered({
-    perPage = 10,
-    page = 1,
-    search,
-    categoryId,
-    categorySlug,
-    featured,
-    sort,
-    priceMin,
-    priceMax,
-    tags,
-  }: {
-    perPage?: number;
-    page?: number;
-    search?: string;
-    categoryId?: number;
-    categorySlug?: string;
-    featured?: boolean;
-    sort?: string;
-    priceMin?: string;
-    priceMax?: string;
-    tags?: string;
-  }): Promise<{
+  async findFiltered(filters: ProductFilterDto): Promise<{
     items: ProductResponseDto[];
     total: number;
     perPage: number;
@@ -200,9 +179,21 @@ export class ProductsService {
     totalPages: number;
   }> {
     try {
-      this.logger.debug('findFiltered params: ' + JSON.stringify({
-        perPage, page, search, categoryId, categorySlug, featured, sort, priceMin, priceMax, tags
-      }));
+      // Destructure the filters object
+      const {
+        perPage = 10,
+        page = 1,
+        search,
+        categoryId,
+        categorySlug,
+        featured,
+        sort,
+        priceMin,
+        priceMax,
+        tags,
+      } = filters;
+
+      this.logger.debug('findFiltered params: ' + JSON.stringify(filters));
 
       const qb = this.productRepo
         .createQueryBuilder('product')
@@ -233,12 +224,12 @@ export class ProductsService {
       }
 
       // Defensive: check if priceMin/priceMax are numbers before filtering
-      const minVal = priceMin ? parseFloat(priceMin) : undefined;
+      const minVal = priceMin ? (typeof priceMin === 'string' ? parseFloat(priceMin) : priceMin) : undefined;
       if (minVal !== undefined && !isNaN(minVal)) {
         qb.andWhere('product.price >= :priceMin', { priceMin: minVal });
       }
 
-      const maxVal = priceMax ? parseFloat(priceMax) : undefined;
+      const maxVal = priceMax ? (typeof priceMax === 'string' ? parseFloat(priceMax) : priceMax) : undefined;
       if (maxVal !== undefined && !isNaN(maxVal)) {
         qb.andWhere('product.price <= :priceMax', { priceMax: maxVal });
       }
