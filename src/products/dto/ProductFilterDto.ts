@@ -41,8 +41,12 @@ export class ProductFilterDto {
   tags?: string;
 
   @IsOptional()
-  priceMin?: string | number;
+  @Type(() => Number)
+  @IsNumber()
+  priceMin?: number;
 
   @IsOptional()
-  priceMax?: string | number;
+  @Type(() => Number)
+  @IsNumber()
+  priceMax?: number;
 }
