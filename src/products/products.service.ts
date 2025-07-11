@@ -229,7 +229,7 @@ export class ProductsService {
         qb.andWhere('product.price >= :priceMin', { priceMin: minVal });
       }
 
-      const maxVal = priceMax ? (typeof priceMax === 'string' ? parseFloat(priceMax) : priceMax) : undefined;
+      const maxVal = priceMax != null ? (typeof priceMax === 'string' ? parseFloat(priceMax) : priceMax) : undefined;
       if (maxVal !== undefined && !isNaN(maxVal)) {
         qb.andWhere('product.price <= :priceMax', { priceMax: maxVal });
       }
