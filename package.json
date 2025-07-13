@@ -19,7 +19,9 @@
     "db:rebuild-closure": "ts-node -r tsconfig-paths/register --transpile-only scripts/rebuild-closure.ts",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
-    "typeorm": "yarn build && node -r ts-node/register/transpile-only -r tsconfig-paths/register ./node_modules/typeorm/cli.js --dataSource dist/ormconfig.js"
+    "seed": "ts-node src/seeds/main.ts",
+    "seed:countries": "ts-node src/seeds/main.ts countries",
+    "typeorm": "ts-node -r tsconfig-paths/register ./node_modules/typeorm/cli.js -d src/data-source.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.1.1",
@@ -40,7 +42,7 @@
     "multer-s3": "2.10.0",
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",
-    "pg": "^8.16.0",
+    "pg": "^8.16.3",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2",
     "sharp": "^0.34.2",
@@ -60,6 +62,7 @@
     "@types/multer-s3": "^3.0.3",
     "@types/node": "^22.10.7",
     "@types/passport-jwt": "^4.0.1",
+    "@types/pg": "^8.15.4",
     "@types/sharp": "^0.32.0",
     "@types/supertest": "^6.0.2",
     "@types/uuid": "^10.0.0",

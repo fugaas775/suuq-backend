@@ -14,7 +14,6 @@ import { Product } from '../../products/entities/product.entity';
 import { Review } from '../../reviews/entities/review.entity';
 import { UserRole } from '../../auth/roles.enum'; // <-- IMPORT the centralized UserRole enum
 
-// The local UserRole enum is removed to avoid duplication.
 
 @Entity('user')
 export class User {
@@ -77,6 +76,10 @@ export class User {
 
   @OneToMany(() => Product, (product: Product) => product.vendor)
   products!: Product[];
+
+  // --- Currency for vendor profile ---
+  @Column({ nullable: true, length: 3 })
+  currency?: string; // e.g., 'ETB', 'KES'
 
   @OneToMany(() => Review, review => review.user)
   reviews!: Review[];

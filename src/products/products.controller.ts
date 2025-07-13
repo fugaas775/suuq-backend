@@ -10,9 +10,8 @@ import {
   Req,
   UseGuards,
   ParseIntPipe,
-  ParseBoolPipe,
   BadRequestException,
-  Logger
+  Logger,
 } from '@nestjs/common';
 import { ProductsService } from './products.service';
 import { UpdateProductDto } from './dto/update-product.dto';
@@ -22,8 +21,8 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { plainToInstance } from 'class-transformer';
 import { ProductResponseDto } from './dto/product-response.dto';
 import { CreateProductDto } from './dto/create-product.dto';
-import { ProductFilterDto } from './dto/ProductFilterDto';
 import { UserRole } from '../auth/roles.enum';
+import { ProductFilterDto } from './dto/ProductFilterDto'; // <-- Import the new DTO
 
 @Controller('products')
 export class ProductsController {
@@ -41,36 +40,41 @@ export class ProductsController {
     });
   }
 
+  // --- UPDATED: This method now uses the ProductFilterDto ---
   @Get()
-  async findAll(@Query() filters: ProductFilterDto) {
+  async findAll(@Query() filters: ProductFilterDto, @Query('currency') currency?: string) {
     try {
-      this.logger.debug(`findAll params: ${JSON.stringify(filters)}`);
+      this.logger.debug(`findAll filters: ${JSON.stringify(filters)}, currency: ${currency}`);
 
-      // Set defaults
-      const perPage = filters.perPage || 10;
-      const page = filters.page || 1;
-
-      if (isNaN(perPage) || isNaN(page)) {
-        throw new BadRequestException('Invalid pagination values');
-      }
-
-      const result = await this.productsService.findFiltered({
-        ...filters,
-        perPage,
-        page,
-      });
+      // Pass the validated and transformed filters object directly to the service
+      const result = await this.productsService.findFiltered(filters);
 
       if (!result || !Array.isArray(result.items)) {
         this.logger.error('findAll: result or result.items missing', result);
         throw new BadRequestException('Product list could not be loaded');
       }
 
+      // Convert prices if currency is requested
+      const items = currency && typeof currency === 'string'
+        ? result.items.map((item) => {
+            const itemCurrency = item.currency || '';
+            if (itemCurrency === currency) return item;
+            if (!itemCurrency) return item;
+            return {
+              ...item,
+              price: this.productsService['currencyService'].convert(Number(item.price), String(itemCurrency), String(currency)),
+              currency: String(currency),
+            };
+          })
+        : result.items;
+
       return {
         ...result,
-        items: plainToInstance(ProductResponseDto, result.items),
+        items: plainToInstance(ProductResponseDto, items),
       };
     } catch (err) {
       this.logger.error('findAll error:', err);
+      // Re-throw the error to be handled by NestJS's global exception filter
       throw err;
     }
   }
@@ -91,7 +95,6 @@ export class ProductsController {
     return this.productsService.findOne(id);
   }
 
-  // --- NEW: Product Reviews Endpoint ---
   @Get(':id/reviews')
   async getProductReviews(@Param('id', ParseIntPipe) id: number) {
     return this.productsService.getReviewsForProduct(id);
@@ -120,20 +123,20 @@ export class ProductsController {
 
   @Patch(':id/block')
   @UseGuards(AuthGuard('jwt'), RolesGuard)
-  @Roles(UserRole.ADMIN)
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN) // Allow Super Admin
   async toggleBlockProduct(
     @Param('id', ParseIntPipe) id: number,
-    @Body('isBlocked', ParseBoolPipe) isBlocked: boolean
+    @Body('isBlocked', ParseIntPipe) isBlocked: boolean, // Use correct pipe
   ) {
     return this.productsService.toggleBlockStatus(id, isBlocked);
   }
 
   @Patch(':id/feature')
   @UseGuards(AuthGuard('jwt'), RolesGuard)
-  @Roles(UserRole.ADMIN)
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN) // Allow Super Admin
   async toggleFeatureProduct(
     @Param('id', ParseIntPipe) id: number,
-    @Body('featured', ParseBoolPipe) featured: boolean
+    @Body('featured', ParseIntPipe) featured: boolean, // Use correct pipe
   ) {
     return this.productsService.toggleFeatureStatus(id, featured);
   }

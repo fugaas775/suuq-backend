@@ -49,4 +49,7 @@ export class ProductFilterDto {
   @Type(() => Number)
   @IsNumber()
   priceMax?: number;
+  @IsOptional()
+  @IsString()
+  currency?: string;
 }

@@ -12,32 +12,35 @@ import { UpdateMediaDto } from './dto/update-media.dto';
 import { BulkMediaDto } from './dto/bulk-media.dto';
 import { v4 as uuidv4 } from 'uuid';
 import sharp from 'sharp'; // ✅ FIXED import
-import { S3 } from 'aws-sdk';
+import { S3Client, DeleteObjectCommand } from '@aws-sdk/client-s3';
 import { ConfigService } from '@nestjs/config';
-import { deleteFromSpaces } from './createMulterStorage';
 
-const config = new ConfigService();
-const s3 = new S3({
-  credentials: {
-    accessKeyId: config.getOrThrow<string>('DO_SPACES_KEY'),
-    secretAccessKey: config.getOrThrow<string>('DO_SPACES_SECRET'), // ✅ FIXED
-  },
-  endpoint: config.getOrThrow<string>('DO_SPACES_ENDPOINT'),
-  region: config.getOrThrow<string>('DO_SPACES_REGION'),
-  signatureVersion: 'v4',
-});
-const BUCKET = config.getOrThrow<string>('DO_SPACES_BUCKET');
+
 
 @Injectable()
 export class MediaService {
+  private readonly s3Client: S3Client;
+  private readonly bucket: string;
+
   constructor(
     @InjectRepository(MediaEntity)
     private readonly mediaRepo: Repository<MediaEntity>,
-  ) {}
+    private readonly configService: ConfigService,
+  ) {
+    this.bucket = this.configService.getOrThrow<string>('DO_SPACES_BUCKET');
+    this.s3Client = new S3Client({
+      credentials: {
+        accessKeyId: this.configService.getOrThrow<string>('DO_SPACES_KEY'),
+        secretAccessKey: this.configService.getOrThrow<string>('DO_SPACES_SECRET'),
+      },
+      endpoint: this.configService.getOrThrow<string>('DO_SPACES_ENDPOINT'),
+      region: this.configService.getOrThrow<string>('DO_SPACES_REGION'),
+    });
+  }
 
-  async saveFile(file: Express.Multer.File, ownerId: number, type: string = 'product'): Promise<MediaEntity> {
-    const key = (file as any)?.key || `${uuidv4()}-${file.originalname}`;
-    const src = (file as any)?.location || `https://suuq-media.ams3.cdn.digitaloceanspaces.com/${key}`;
+  async saveFile(file: Express.MulterS3.File, ownerId: number, type: string = 'product'): Promise<MediaEntity> {
+    const key = file.key || `${uuidv4()}-${file.originalname}`;
+    const src = file.location || `https://suuq-media.ams3.cdn.digitaloceanspaces.com/${key}`;
 
     const media = this.mediaRepo.create({
       key,
@@ -48,30 +51,7 @@ export class MediaService {
       type,
     });
 
-    const saved = await this.mediaRepo.save(media);
-
-    if (file.mimetype.startsWith('image/') && (file as any)?.buffer) {
-      const thumbBuffer = await sharp((file as any).buffer)
-        .resize(300)
-        .webp()
-        .toBuffer();
-
-      const thumbKey = key.replace(/(\.[^.]+)$/, '.thumb.webp');
-
-      await s3
-        .putObject({
-          Bucket: BUCKET,
-          Key: thumbKey,
-          Body: thumbBuffer,
-          ContentType: 'image/webp',
-          ACL: 'public-read',
-        })
-        .promise();
-
-      console.log(`[S3] Thumbnail uploaded: ${thumbKey}`);
-    }
-
-    return saved;
+    return this.mediaRepo.save(media);
   }
 
   async create(dto: CreateMediaDto): Promise<MediaEntity> {
@@ -94,11 +74,18 @@ export class MediaService {
     return this.mediaRepo.save(media);
   }
 
+  private async deleteFromSpaces(key: string): Promise<void> {
+    const deleteCommand = new DeleteObjectCommand({
+      Bucket: this.bucket,
+      Key: key,
+    });
+    await this.s3Client.send(deleteCommand);
+  }
+
   async deleteByKey(key: string, userId: number): Promise<boolean> {
     const media = await this.mediaRepo.findOne({ where: { key, ownerId: userId } });
     if (!media) throw new NotFoundException('Media not found or not owned by user');
-
-    await deleteFromSpaces(media.key);
+    await this.deleteFromSpaces(media.key);
     await this.mediaRepo.remove(media);
     return true;
   }

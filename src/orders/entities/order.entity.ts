@@ -1,25 +1,36 @@
-import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, CreateDateColumn } from 'typeorm';
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  CreateDateColumn,
+  ManyToOne,
+  OneToMany,
+} from 'typeorm';
+import { User } from '../../users/entities/user.entity';
 import { Product } from '../../products/entities/product.entity';
 
 export enum OrderStatus {
   PENDING = 'PENDING',
+  PROCESSING = 'PROCESSING',
   SHIPPED = 'SHIPPED',
   DELIVERED = 'DELIVERED',
+  CANCELLED = 'CANCELLED',
 }
 
-@Entity()
+// Define Order first, because OrderItem depends on it
+@Entity('order')
 export class Order {
   @PrimaryGeneratedColumn()
   id!: number;
 
-  @Column()
-  productId!: number;
+  @ManyToOne(() => User, { eager: true })
+  user!: User;
 
-  @Column()
-  customerEmail!: string;
+  @OneToMany(() => OrderItem, (item) => item.order, { cascade: true, eager: true })
+  items!: OrderItem[];
 
-  @Column()
-  quantity!: number;
+  @Column('decimal', { precision: 10, scale: 2 })
+  total!: number;
 
   @Column({
     type: 'enum',
@@ -28,9 +39,34 @@ export class Order {
   })
   status!: OrderStatus;
 
+  @Column('jsonb')
+  shippingAddress!: {
+    fullName: string;
+    address: string;
+    city: string;
+    country: string;
+    phoneNumber: string;
+  };
+
   @CreateDateColumn()
   createdAt!: Date;
+}
+
+// Define OrderItem second
+@Entity('order_item')
+export class OrderItem {
+  @PrimaryGeneratedColumn()
+  id!: number;
 
   @ManyToOne(() => Product, { eager: true })
   product!: Product;
+
+  @Column()
+  quantity!: number;
+
+  @Column('decimal', { precision: 10, scale: 2 })
+  price!: number; // Price at the time of purchase
+
+  @ManyToOne(() => Order, (order) => order.items, { onDelete: 'CASCADE' })
+  order!: Order;
 }

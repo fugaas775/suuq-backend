@@ -13,12 +13,12 @@ import {
   BadRequestException,
   Body,
 } from '@nestjs/common';
+import type { Express } from 'express';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { MediaService } from './media.service';
 import { MediaResponseDto } from './dto/media-response.dto';
-import { createMulterStorage } from './createMulterStorage';
 import { MediaEntity } from './entities/media.entity';
 import { AuthenticatedRequest } from 'common/interfaces/authenticated-request.interface';
 import { Public } from 'common/decorators/public.decorator';
@@ -32,9 +32,9 @@ export class MediaController {
 
   @Post()
   @Roles(UserRole.VENDOR, UserRole.ADMIN) // ✅ use enum values
-  @UseInterceptors(FileInterceptor('file', createMulterStorage('products')))
+  // @UseInterceptors(FileInterceptor('file', createMulterStorage('products')))
 async upload(
-  @UploadedFile() file: Express.Multer.File,
+  @UploadedFile() file: Express.MulterS3.File,
   @Req() req: AuthenticatedRequest,
   @Query('type') type: string = 'product',
 ): Promise<MediaResponseDto> {

@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, MoreThan } from 'typeorm';
 import { User } from './entities/user.entity'; 
 import { UserRole } from '../auth/roles.enum';
+import { FindUsersQueryDto } from './dto/find-users-query.dto';
 import * as bcrypt from 'bcrypt';
 
 @Injectable()
@@ -32,7 +33,6 @@ export class UsersService {
       select: [
         'id',
         'email',
-        'password',
         'roles',
         'isActive',
         'displayName',
@@ -72,10 +72,27 @@ export class UsersService {
   }
 
   /**
-   * Get all users.
+   * --- UPDATED: Find all users with optional filtering ---
    */
-  async findAll(): Promise<User[]> {
-    return this.userRepository.find();
+  async findAll(filters?: FindUsersQueryDto): Promise<User[]> {
+    const qb = this.userRepository.createQueryBuilder('user');
+
+    if (filters?.role) {
+      // In PostgreSQL, `@>` checks if the array on the left contains the array on the right
+      qb.andWhere('user.roles @> :roles', { roles: [filters.role] });
+    }
+
+    if (filters?.search) {
+      // Search by display name OR store name
+      qb.andWhere('(user.displayName ILIKE :search OR user.storeName ILIKE :search)', {
+        search: `%${filters.search}%`,
+      });
+    }
+
+    // Add pagination later if needed
+    // qb.skip((page - 1) * perPage).take(perPage);
+
+    return qb.getMany();
   }
 
   /**
@@ -83,10 +100,22 @@ export class UsersService {
    * If password is present, hash it before updating.
    */
   async update(id: number, data: Partial<User>): Promise<User> {
-    if (data.password) {
-      data.password = await bcrypt.hash(data.password, 10);
+    // Only allow safe fields to be updated
+    const allowedFields: (keyof User)[] = [
+      'displayName',
+      'avatarUrl',
+      'storeName',
+      'phoneCountryCode',
+      'phoneNumber',
+      'isActive',
+    ];
+    const updateData: Partial<User> = {};
+    for (const key of allowedFields) {
+      if (data[key] !== undefined) {
+        (updateData as any)[key] = data[key];
+      }
     }
-    const result = await this.userRepository.update(id, data);
+    const result = await this.userRepository.update(id, updateData);
     if (result.affected === 0) {
       throw new NotFoundException(`User with ID "${id}" not found`);
     }

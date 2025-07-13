@@ -25,6 +25,9 @@ export class Product {
   @Column('decimal', { precision: 10, scale: 2 })
   price!: number;
 
+  @Column({ length: 3 })
+  currency!: string; // e.g., 'ETB', 'KES'
+
   @Column()
   description!: string;
 
@@ -45,9 +48,6 @@ export class Product {
 
   @Column('decimal', { precision: 10, scale: 2, nullable: true })
   sale_price?: number;
-
-  @Column({ nullable: true })
-  currency?: string;
 
   @OneToMany(() => ProductImage, image => image.product, { cascade: true, eager: true })
   images!: ProductImage[];

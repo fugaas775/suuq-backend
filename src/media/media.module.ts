@@ -1,4 +1,6 @@
 import { Module, forwardRef } from '@nestjs/common';
+import { MulterModule } from '@nestjs/platform-express';
+import { MulterConfigService } from './multer.config.service';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { MediaEntity } from './entities/media.entity';
 import { MediaService } from './media.service';
@@ -8,6 +10,9 @@ import { UsersModule } from '../users/users.module';
 @Module({
   imports: [
     TypeOrmModule.forFeature([MediaEntity]),
+    MulterModule.registerAsync({
+      useClass: MulterConfigService,
+    }),
     forwardRef(() => UsersModule),
   ],
   controllers: [MediaController],

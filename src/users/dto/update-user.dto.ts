@@ -25,4 +25,15 @@ export class UpdateUserDto {
   @IsOptional()
   @IsString()
   storeName?: string;
+
+  @IsOptional()
+  @IsString()
+  phoneCountryCode?: string;
+
+  @IsOptional()
+  @IsString()
+  phoneNumber?: string;
+
+  @IsOptional()
+  isActive?: boolean;
 }

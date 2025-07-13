@@ -1,172 +1,63 @@
-import { Injectable, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { Order, OrderStatus } from './entities/order.entity'; // <-- FIXED IMPORT
-import { Product } from '../products/entities/product.entity';
-import { UserRole } from '../auth/roles.enum'; // Updated import
+import { Order, OrderItem, OrderStatus } from './entities/order.entity';
+import { CreateOrderDto } from './dto/create-order.dto';
+import { CartService } from '../cart/cart.service';
+import { User } from '../users/entities/user.entity';
+
 
 @Injectable()
 export class OrdersService {
+  private readonly logger = new Logger(OrdersService.name);
+
   constructor(
     @InjectRepository(Order)
-    private orderRepo: Repository<Order>,
-
-    @InjectRepository(Product)
-    private productRepo: Repository<Product>,
+    private readonly orderRepository: Repository<Order>,
+    private readonly cartService: CartService,
   ) {}
 
-  async create(data: Partial<Order>) {
-    const order = this.orderRepo.create(data);
-    return this.orderRepo.save(order);
+  async createFromCart(userId: number, createOrderDto: CreateOrderDto): Promise<Order> {
+    const cart = await this.cartService.getCart(userId);
+    if (cart.items.length === 0) {
+      throw new BadRequestException('Cannot create an order from an empty cart.');
+    }
+
+    const orderItems = cart.items.map(item => {
+      const orderItem = new OrderItem();
+      orderItem.product = item.product;
+      orderItem.quantity = item.quantity;
+      orderItem.price = Number(item.product.price);
+      return orderItem;
+    });
+
+    const total = orderItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+
+    const newOrder = this.orderRepository.create({
+      user: { id: userId } as User,
+      items: orderItems,
+      total: total,
+      shippingAddress: createOrderDto.shippingAddress,
+      status: OrderStatus.PENDING,
+    });
+
+    const savedOrder = await this.orderRepository.save(newOrder);
+    await this.cartService.clearCart(userId);
+    return savedOrder;
   }
 
-  async findByCustomerEmail(email: string) {
-    return this.orderRepo.find({
-      where: { customerEmail: email },
+  async findAllForUser(userId: number): Promise<Order[]> {
+    return this.orderRepository.find({
+      where: { user: { id: userId } },
       order: { createdAt: 'DESC' },
     });
   }
 
-  async findByVendorId(vendorId: number) {
-    const raw = await this.orderRepo.query(`
-      SELECT o.*
-      FROM "order" o
-      JOIN "product" p ON o."productId" = p.id
-      WHERE p."vendorId" = $1
-      ORDER BY o."createdAt" DESC
-    `, [vendorId]);
-    return raw;
-  }
-
-  async getVendorEarnings(vendorId: number) {
-    const result = await this.orderRepo.query(`
-      SELECT
-        COUNT(o.id) AS totalOrders,
-        SUM(o.quantity) AS totalQuantity,
-        SUM(o.quantity * p.price) AS totalRevenue
-      FROM "order" o
-      JOIN "product" p ON o."productId" = p.id
-      WHERE p."vendorId" = $1
-    `, [vendorId]);
-    return result[0];
-  }
-
-  async findOneByRole(orderId: number, user: { id: number; email: string; role: UserRole }) {
-    const order = await this.orderRepo.findOneBy({ id: orderId });
-    if (!order) throw new NotFoundException('Order not found');
-
-    if (user.role === UserRole.CUSTOMER && order.customerEmail !== user.email) {
-      throw new ForbiddenException('Not your order');
-    }
-
-    if (user.role === UserRole.VENDOR) {
-      const product = await this.productRepo.findOne({
-        where: { id: order.productId },
-        relations: ['vendor'],
-      });
-      if (!product || product.vendor.id !== user.id) {
-        throw new ForbiddenException('Not your product');
-      }
-    }
-
-    return order;
-  }
-
-  async getAdminSalesSummary(from?: string, to?: string) {
-    const params = [];
-    let where = '';
-
-    if (from && to) {
-      where = `WHERE o."createdAt" BETWEEN $1 AND $2`;
-      params.push(from, to);
-    }
-
-    const result = await this.orderRepo.query(`
-      SELECT
-        COUNT(o.id) AS totalOrders,
-        COUNT(DISTINCT o."customerEmail") AS totalCustomers,
-        SUM(o.quantity * p.price) AS totalRevenue
-      FROM "order" o
-      JOIN "product" p ON o."productId" = p.id
-      ${where}
-    `, params);
-    return result[0];
-  }
-
-  async getTopProducts(user: { id: number; role: UserRole }) {
-    const isAdmin = user.role === UserRole.ADMIN;
-    const params = [];
-    let whereClause = '';
-
-    if (!isAdmin) {
-      whereClause = 'WHERE p."vendorId" = $1';
-      params.push(user.id);
-    }
-
-    const result = await this.orderRepo.query(`
-      SELECT 
-        p.id,
-        p.name,
-        SUM(o.quantity) AS totalSold
-      FROM "order" o
-      JOIN "product" p ON o."productId" = p.id
-      ${whereClause}
-      GROUP BY p.id, p.name
-      ORDER BY totalSold DESC
-      LIMIT 3
-    `, params);
-    return result;
-  }
-
-  async updateStatus(id: number, status: OrderStatus, user: { id: number; role: UserRole }) {
-    const order = await this.orderRepo.findOne({ 
-      where: { id }, 
-      relations: ['product', 'product.vendor'],
-    });
-
+  async findOneForUser(userId: number, orderId: number): Promise<Order> {
+    const order = await this.orderRepository.findOne({ where: { id: orderId, user: { id: userId } } });
     if (!order) {
-      throw new NotFoundException('Order not found');
+      throw new NotFoundException('Order not found or you do not have permission to view it.');
     }
-
-    if (user.role === UserRole.VENDOR && order.product.vendor.id !== user.id) {
-      throw new ForbiddenException('You do not own this order');
-    }
-
-    order.status = status;
-    return this.orderRepo.save(order);
-  }
-
-  async getVendorOrders(vendorId: number, status?: OrderStatus, from?: string, to?: string) {
-    const query = this.orderRepo.createQueryBuilder('order')
-      .innerJoin('order.product', 'product')
-      .where('product.vendorId = :vendorId', { vendorId });
-
-    if (status) {
-      query.andWhere('order.status = :status', { status });
-    }
-
-    if (from) {
-      query.andWhere('order.createdAt >= :from', { from });
-    }
-
-    if (to) {
-      if (to.length === 10) {
-        to += 'T23:59:59';
-      }
-      query.andWhere('order.createdAt <= :to', { to });
-    }
-
-    return query.getMany();
-  }
-
-  async getCustomerOrders(email: string, status?: OrderStatus) {
-    const query = this.orderRepo.createQueryBuilder('order')
-      .where('order.customerEmail = :email', { email });
-
-    if (status) {
-      query.andWhere('order.status = :status', { status });
-    }
-
-    return query.getMany();
+    return order;
   }
 }

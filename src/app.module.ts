@@ -1,9 +1,10 @@
-// src/app.module.ts
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { AppController } from './app.controller';
+import { AppService } from './app.service';
 
-// Import your application modules
+// Import all your feature modules
 import { UsersModule } from './users/users.module';
 import { AuthModule } from './auth/auth.module';
 import { ProductsModule } from './products/products.module';
@@ -25,30 +26,30 @@ import { VendorPublicModule } from './vendor-public/vendor-public.module';
 import { VendorPublicController } from './vendor-public/vendor-public.controller';
 import { VendorPublicService } from './vendor-public/vendor-public.service';
 import { VendorModule } from './vendor/vendor.module';
+import { CountriesModule } from './countries/countries.module';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({
-      isGlobal: true,
-      envFilePath: '.env',
-    }),
-    // FIX: Replaced the old useFactory with a standard async factory
+    ConfigModule.forRoot({ isGlobal: true, envFilePath: '.env' }),
+    
+    // This now becomes the single source of truth for your running application
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => ({
         type: 'postgres',
-        host: configService.get<string>('DB_HOST'),
-        port: configService.get<number>('DB_PORT'),
-        username: configService.get<string>('DB_USERNAME'),
-        password: configService.get<string>('DB_PASSWORD'),
-        database: configService.get<string>('DB_NAME'),
-        // This setting tells TypeORM to automatically find all files named *.entity.ts
-        autoLoadEntities: true, 
-        // synchronize should always be false for production apps that use migrations
-        synchronize: false,
+        ssl: { rejectUnauthorized: false },
+        host: configService.get('DB_HOST'),
+        port: configService.get('DB_PORT'),
+        username: configService.get('DB_USERNAME'),
+        password: configService.get('DB_PASSWORD'),
+        database: configService.get('DB_NAME'),
+        autoLoadEntities: true, // Automatically loads all your @Entity() classes
+        synchronize: false, // Never use true in production
       }),
     }),
+    
+    // List all your feature modules here
     UsersModule,
     AuthModule,
     ProductsModule,
@@ -66,8 +67,9 @@ import { VendorModule } from './vendor/vendor.module';
     VendorPublicModule,
     VendorModule,
     CartModule,
+    CountriesModule,
   ],
-  controllers: [ContentController, VendorPublicController],
-  providers: [ContentService, VendorPublicService],
+  controllers: [AppController, ContentController, VendorPublicController],
+  providers: [AppService, ContentService, VendorPublicService],
 })
 export class AppModule {}

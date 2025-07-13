@@ -1,11 +1,35 @@
 import { Module } from '@nestjs/common';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { Product } from '../products/entities/product.entity';
-import { ProductImage } from '../products/entities/product-image.entity';
 import { SeedService } from './seed.service';
+import { CountriesModule } from '../countries/countries.module';
+import { Country } from '../countries/entities/country.entity';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Product, ProductImage])],
+  imports: [
+    ConfigModule.forRoot({
+      isGlobal: true,
+      envFilePath: '.env',
+    }),
+    // Use the async factory to ensure .env is loaded first
+    TypeOrmModule.forRootAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (configService: ConfigService) => ({
+        type: 'postgres',
+        ssl: { rejectUnauthorized: false },
+        host: configService.get('DB_HOST'),
+        port: configService.get('DB_PORT'),
+        username: configService.get('DB_USERNAME'),
+        password: configService.get('DB_PASSWORD'),
+        database: configService.get('DB_NAME'),
+        entities: [Country], // Only load entities needed for this seed
+        synchronize: false,
+      }),
+    }),
+    // Import modules that provide necessary services (like CountriesService)
+    CountriesModule,
+  ],
   providers: [SeedService],
   exports: [SeedService],
 })

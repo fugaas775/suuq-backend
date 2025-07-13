@@ -92,12 +92,17 @@ export class VendorDashboardService {
   }
 
   async getRecentOrders(vendorId: number, limit: number = 5) {
-    return this.orderRepo.find({
-      where: { product: { vendor: { id: vendorId } } },
-      take: limit,
-      order: { createdAt: 'DESC' },
-      relations: ['product'],
-    });
+    // Find recent orders where any item is for a product of this vendor
+    return this.orderRepo
+      .createQueryBuilder('order')
+      .innerJoin('order.items', 'item')
+      .innerJoin('item.product', 'product')
+      .where('product.vendorId = :vendorId', { vendorId })
+      .orderBy('order.createdAt', 'DESC')
+      .take(limit)
+      .leftJoinAndSelect('order.items', 'items')
+      .leftJoinAndSelect('items.product', 'prod')
+      .getMany();
   }
 
   async getTopProducts(vendorId: number, limit: number = 5) {

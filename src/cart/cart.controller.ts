@@ -1,48 +1,44 @@
-import { Controller, Get, Post, Body, UseGuards, Request, Put, Delete, Param } from '@nestjs/common';
-import { AuthGuard } from '@nestjs/passport';
+import { Controller, Get, Post, Put, Delete, Body, Param, UseGuards, Req, ParseIntPipe } from '@nestjs/common';
 import { CartService } from './cart.service';
-import { SyncCartDto, AddToCartDto, UpdateQuantityDto } from './dto/cart.dto';
+import { AuthenticatedRequest } from '../auth/auth.types';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { AddToCartDto } from './dto/add-to-cart.dto';
+import { UpdateCartItemDto } from './dto/update-cart-item.dto';
 
-@UseGuards(AuthGuard('jwt'))
 @Controller('cart')
+@UseGuards(JwtAuthGuard)
 export class CartController {
   constructor(private readonly cartService: CartService) {}
 
   @Get()
-  async getCart(@Request() req: any) {
-    return this.cartService.findCartForUser(req.user);
+  getCart(@Req() req: AuthenticatedRequest) {
+    return this.cartService.getCart(req.user!.id);
   }
 
-  @Post('sync')
-  async syncCart(@Request() req: any, @Body() syncCartDto: SyncCartDto) {
-    return this.cartService.syncCart(req.user, syncCartDto);
-  }
-
-  // RESTful: Add item
   @Post('items')
-  async addItem(@Request() req: any, @Body() addToCartDto: AddToCartDto) {
-    return this.cartService.addItem(req.user, addToCartDto.productId, addToCartDto.quantity);
+  addItem(@Req() req: AuthenticatedRequest, @Body() addToCartDto: AddToCartDto) {
+    return this.cartService.addItem(req.user!.id, addToCartDto.productId, addToCartDto.quantity);
   }
 
-  // RESTful: Update quantity
   @Put('items/:productId')
-  async updateQuantity(
-    @Request() req: any,
-    @Param('productId') productId: number,
-    @Body() updateQuantityDto: UpdateQuantityDto
+  updateItemQuantity(
+    @Req() req: AuthenticatedRequest,
+    @Param('productId', ParseIntPipe) productId: number,
+    @Body() updateCartItemDto: UpdateCartItemDto,
   ) {
-    return this.cartService.updateQuantity(req.user, Number(productId), updateQuantityDto.quantity);
+    return this.cartService.updateItemQuantity(req.user!.id, productId, updateCartItemDto.quantity);
   }
 
-  // RESTful: Remove item
   @Delete('items/:productId')
-  async removeItem(@Request() req: any, @Param('productId') productId: number) {
-    return this.cartService.removeItem(req.user, Number(productId));
+  removeItem(
+    @Req() req: AuthenticatedRequest,
+    @Param('productId', ParseIntPipe) productId: number,
+  ) {
+    return this.cartService.removeItem(req.user!.id, productId);
   }
 
-  // RESTful: Clear cart
   @Delete()
-  async clearCart(@Request() req: any) {
-    return this.cartService.clearCart(req.user);
+  clearCart(@Req() req: AuthenticatedRequest) {
+    return this.cartService.clearCart(req.user!.id);
   }
 }
