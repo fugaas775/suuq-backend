@@ -1,35 +1,57 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Notification } from './entities/notification.entity';
+import { Injectable, Inject, Logger } from '@nestjs/common';
+import { UsersService } from '../users/users.service';
 import { Repository } from 'typeorm';
+import { InjectRepository } from '@nestjs/typeorm';
+import { DeviceToken } from './entities/device-token.entity';
+import { RegisterDeviceTokenDto } from './dto/register-device-token.dto';
 
 @Injectable()
 export class NotificationsService {
+  private readonly logger = new Logger(NotificationsService.name);
+
   constructor(
-    @InjectRepository(Notification)
-    private readonly notificationRepo: Repository<Notification>,
+    @Inject('FIREBASE_ADMIN') private readonly firebase: any,
+    @InjectRepository(DeviceToken)
+    private readonly deviceTokenRepository: Repository<DeviceToken>,
+    private readonly usersService: UsersService,
   ) {}
 
-  async create(title: string, message: string) {
-    const notification = this.notificationRepo.create({ title, message });
-    return this.notificationRepo.save(notification);
+  /**
+   * Send a push notification to all devices of a user.
+   */
+  async sendToUser({ userId, title, body }: { userId: number; title: string; body: string }) {
+    // Fetch device tokens for the user
+    const tokens = await this.deviceTokenRepository.find({ where: { userId } });
+    const deviceTokens = tokens.map(t => t.token).filter(Boolean);
+    if (!deviceTokens.length) {
+      this.logger.warn(`No device tokens found for user ${userId}`);
+      return { successCount: 0, failureCount: 0 };
+    }
+    const message = {
+      notification: { title, body },
+      tokens: deviceTokens,
+    };
+    const response = await this.firebase.messaging().sendMulticast(message);
+    this.logger.log(`Sent notification to user ${userId}: ${response.successCount} success, ${response.failureCount} failure`);
+    return response;
   }
 
-  async findAll() {
-    return this.notificationRepo.find({
-      order: { createdAt: 'DESC' },
-    });
-  }
-
-  async findOne(id: number) {
-    const notification = await this.notificationRepo.findOne({ where: { id } });
-    if (!notification) throw new NotFoundException('Notification not found');
-    return notification;
-  }
-
-  async remove(id: number) {
-    const result = await this.notificationRepo.delete(id);
-    if (result.affected === 0) throw new NotFoundException('Notification not found');
-    return { deleted: true };
+  /**
+   * Register a device token for a user.
+   */
+  async registerDeviceToken(dto: { userId: number; token: string; platform?: string }) {
+    // Upsert device token for user
+    let device = await this.deviceTokenRepository.findOne({ where: { userId: dto.userId, token: dto.token } });
+    if (!device) {
+      device = this.deviceTokenRepository.create({
+        userId: dto.userId,
+        token: dto.token,
+        platform: dto.platform || 'unknown',
+      });
+    } else {
+      device.platform = dto.platform || device.platform;
+    }
+    await this.deviceTokenRepository.save(device);
+    return { success: true };
   }
 }

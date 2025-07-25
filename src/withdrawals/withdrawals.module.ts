@@ -1,13 +1,15 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { WithdrawalsController } from './withdrawals.controller';
-import { WithdrawalsService } from './withdrawals.service';
 import { Withdrawal } from './entities/withdrawal.entity';
-import { User } from '../users/entities/user.entity'; // <-- FIXED IMPORT
+import { WithdrawalsService } from './withdrawals.service';
+import { WithdrawalsController } from './withdrawals.controller';
+import { NotificationsModule } from '../notifications/notifications.module';
+import { OrdersModule } from '../orders/orders.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Withdrawal, User])],
-  controllers: [WithdrawalsController],
+  imports: [TypeOrmModule.forFeature([Withdrawal]), NotificationsModule, OrdersModule],
   providers: [WithdrawalsService],
+  controllers: [WithdrawalsController],
+  exports: [WithdrawalsService],
 })
 export class WithdrawalsModule {}

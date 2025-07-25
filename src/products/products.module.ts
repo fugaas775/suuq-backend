@@ -1,13 +1,14 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Product } from './entities/product.entity';
 import { ProductImage } from './entities/product-image.entity';
-import { User } from '../users/entities/user.entity'; // <-- FIXED IMPORT
-import { Order } from '../orders/entities/order.entity'; // <-- FIXED IMPORT
+import { UsersModule } from '../users/users.module';
+import { User } from '../users/entities/user.entity';
+import { Order } from '../orders/entities/order.entity'; 
 import { Tag } from '../tags/tag.entity';
 import { ProductsService } from './products.service';
 import { ProductsController } from './products.controller';
-import { Review } from '../reviews/entities/review.entity';
+import { CurrencyModule } from '../common/services/currency.module';
 
 @Module({
   imports: [
@@ -17,8 +18,10 @@ import { Review } from '../reviews/entities/review.entity';
       User,           // Needed for UserRepository injection
       Order,          // Needed for OrderRepository injection
       Tag,
-      Review,            // Needed for TagRepository injection
+      // Review,            // Needed for TagRepository injection
     ]),
+    CurrencyModule,
+    forwardRef(() => UsersModule),
   ],
   providers: [ProductsService],
   controllers: [ProductsController],

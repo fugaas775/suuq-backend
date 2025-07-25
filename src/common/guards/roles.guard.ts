@@ -5,45 +5,39 @@ import {
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { ROLES_KEY } from '../decorators/roles.decorator';
-import { UserRole } from '../../auth/roles.enum'; // Adjust path as needed
+import { UserRole } from '../../auth/roles.enum';
 
 @Injectable()
 export class RolesGuard implements CanActivate {
   constructor(private reflector: Reflector) {}
 
   canActivate(context: ExecutionContext): boolean {
+    // Get the roles required for the specific route handler or controller
     const requiredRoles = this.reflector.getAllAndOverride<UserRole[]>(
       ROLES_KEY,
       [context.getHandler(), context.getClass()],
     );
 
-    // Console log for required roles
-    console.log('RolesGuard: requiredRoles:', requiredRoles);
-
-    if (!requiredRoles) return true;
+    // If no roles are specified for an endpoint, grant access by default.
+    if (!requiredRoles) {
+      return true;
+    }
 
     const { user } = context.switchToHttp().getRequest();
 
-    // Console log for user object
-    console.log('RolesGuard: user:', user);
-
+    // If the request doesn't have a user object or the user has no roles, deny access.
     if (!user || !Array.isArray(user.roles)) {
-      console.log('RolesGuard: Access denied - user or user.roles missing/invalid');
       return false;
     }
 
-    // Console log for user's roles array
-    console.log('RolesGuard: user.roles:', user.roles);
+    // --- ✨ Updated Logic for Role Hierarchy ---
 
-    const hasRole = user.roles.some((role: string) => requiredRoles.includes(role as UserRole));
-
-    // Log the outcome
-    if (hasRole) {
-      console.log('RolesGuard: Access GRANTED');
-    } else {
-      console.log('RolesGuard: Access DENIED - missing required role');
+    // 1. If the user has the SUPER_ADMIN role, grant them access to everything immediately.
+    if (user.roles.includes(UserRole.SUPER_ADMIN)) {
+      return true;
     }
 
-    return hasRole;
+    // 2. For all other users, check if their roles array includes at least one of the required roles.
+    return requiredRoles.some((role) => user.roles.includes(role));
   }
 }

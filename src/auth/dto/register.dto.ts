@@ -12,9 +12,9 @@ import {
 import { UserRole } from '../../auth/roles.enum';
 
 export class RegisterDto {
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  firebaseUid!: string;
+  firebaseUid?: string;
 
   @IsEmail()
   email!: string;
@@ -45,13 +45,12 @@ export class RegisterDto {
   @IsString()
   storeName?: string;
   
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  phoneCountryCode!: string;
+  phoneCountryCode?: string;
 
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  // --- UPDATED VALIDATION LOGIC ---
   @Matches(/^(\d{9}|0\d{9})$/, { message: 'Phone number must be 9 digits, or 10 digits starting with 0.' })
-  phoneNumber!: string;
+  phoneNumber?: string;
 }

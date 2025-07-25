@@ -1,18 +1,19 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { NotificationsController } from './notifications.controller';
 import { NotificationsService } from './notifications.service';
-import { Notification } from './entities/notification.entity';
 import { DeviceToken } from './entities/device-token.entity';
-import { DeviceTokenService } from './device-token.service';
-import { DeviceTokenController } from './device-token.controller';
+import { FirebaseModule } from '../firebase/firebase.module';
+import { NotificationsController } from './notifications.controller';
+import { UsersModule } from '../users/users.module'; // <-- IMPORT THIS
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Notification, DeviceToken]), // ✅ This must be under 'imports'
+    TypeOrmModule.forFeature([DeviceToken]),
+    FirebaseModule,
+    UsersModule, // <-- ADD THIS
   ],
-  providers: [NotificationsService, DeviceTokenService],
-  controllers: [NotificationsController, DeviceTokenController],
+  providers: [NotificationsService],
+  exports: [NotificationsService],
+  controllers: [NotificationsController],
 })
 export class NotificationsModule {}
-

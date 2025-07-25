@@ -1,3 +1,6 @@
+// Debug log for DB_PASSWORD and DB_DATABASE
+console.log('DEBUG DB_PASSWORD:', typeof process.env.DB_PASSWORD, process.env.DB_PASSWORD);
+console.log('DEBUG DB_DATABASE:', typeof process.env.DB_DATABASE, process.env.DB_DATABASE);
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
@@ -22,7 +25,7 @@ import { Country } from '../countries/entities/country.entity';
         port: configService.get('DB_PORT'),
         username: configService.get('DB_USERNAME'),
         password: configService.get('DB_PASSWORD'),
-        database: configService.get('DB_NAME'),
+        database: configService.get('DB_DATABASE'),
         entities: [Country], // Only load entities needed for this seed
         synchronize: false,
       }),

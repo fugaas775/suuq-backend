@@ -1,7 +1,7 @@
 import { Request } from 'express';
 
 // Roles your system supports
-export type AppRole = 'CUSTOMER' | 'VENDOR' | 'ADMIN' | 'DELIVERER';
+export type AppRole = 'CUSTOMER' | 'VENDOR' | 'ADMIN' | 'DELIVERER' | 'SUPER_ADMIN';
 
 // What is stored in the JWT token (decoded from access_token)
 export interface JwtPayload {

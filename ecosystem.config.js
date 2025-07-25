@@ -3,7 +3,8 @@ module.exports = {
     {
       name: 'suuq-api',
       script: 'dist/main.js',
-      exec_mode: 'fork',
+      exec_mode: 'cluster',
+      instances: 'max', 
     },
   ],
 };

@@ -1,7 +1,7 @@
 import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, MoreThan } from 'typeorm';
-import { User } from './entities/user.entity'; 
+import { User, VerificationStatus } from './entities/user.entity'; // Import VerificationStatus enum
 import { UserRole } from '../auth/roles.enum';
 import { FindUsersQueryDto } from './dto/find-users-query.dto';
 import * as bcrypt from 'bcrypt';
@@ -12,6 +12,19 @@ export class UsersService {
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
   ) {}
+
+
+  /**
+   * Update a user's roles (replace the roles array).
+   */
+  async updateUserRoles(userId: number, newRoles: UserRole[]): Promise<User> {
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+    user.roles = newRoles;
+    return this.userRepository.save(user);
+  }
 
   /**
    * Create a new user (local or otherwise), with password hashing.
@@ -30,16 +43,8 @@ export class UsersService {
   async findByEmail(email: string): Promise<User | null> {
     return this.userRepository.findOne({
       where: { email },
-      select: [
-        'id',
-        'email',
-        'roles',
-        'isActive',
-        'displayName',
-        'avatarUrl',
-        'storeName',
-        'googleId',
-      ],
+      // By removing the 'select' clause, TypeORM will fetch all fields
+      // for the User entity, which is what we want.
     });
   }
 
@@ -72,27 +77,45 @@ export class UsersService {
   }
 
   /**
-   * --- UPDATED: Find all users with optional filtering ---
+   * Find all users with optional filtering and pagination for admin panel.
+   * Returns { users, total } for pagination.
    */
-  async findAll(filters?: FindUsersQueryDto): Promise<User[]> {
+  async findAll(filters?: FindUsersQueryDto & { page?: number; pageSize?: number }): Promise<{ users: User[]; total: number }> {
     const qb = this.userRepository.createQueryBuilder('user');
 
     if (filters?.role) {
-      // In PostgreSQL, `@>` checks if the array on the left contains the array on the right
       qb.andWhere('user.roles @> :roles', { roles: [filters.role] });
     }
 
     if (filters?.search) {
-      // Search by display name OR store name
       qb.andWhere('(user.displayName ILIKE :search OR user.storeName ILIKE :search)', {
         search: `%${filters.search}%`,
       });
     }
 
-    // Add pagination later if needed
-    // qb.skip((page - 1) * perPage).take(perPage);
+    // Pagination
+    const page = filters?.page && filters.page > 0 ? filters.page : 1;
+    const pageSize = filters?.pageSize && filters.pageSize > 0 ? filters.pageSize : 20;
+    qb.skip((page - 1) * pageSize).take(pageSize);
 
-    return qb.getMany();
+    const [users, total] = await qb.getManyAndCount();
+    return { users, total };
+  }
+
+  /**
+   * Count all users in the database.
+   */
+  async countAll(): Promise<number> {
+    return this.userRepository.count();
+  }
+
+  /**
+   * Count users by role (checks if roles array contains the given role).
+   */
+  async countByRole(role: UserRole): Promise<number> {
+    return this.userRepository.createQueryBuilder('user')
+      .where('user.roles @> :roles', { roles: [role] })
+      .getCount();
   }
 
   /**
@@ -100,7 +123,7 @@ export class UsersService {
    * If password is present, hash it before updating.
    */
   async update(id: number, data: Partial<User>): Promise<User> {
-    // Only allow safe fields to be updated
+    // Only allow safe fields to be updated by admin
     const allowedFields: (keyof User)[] = [
       'displayName',
       'avatarUrl',
@@ -108,12 +131,20 @@ export class UsersService {
       'phoneCountryCode',
       'phoneNumber',
       'isActive',
+      // Verification fields for admin
+      'verificationStatus',
+      'verificationDocuments',
+      'verified',
     ];
     const updateData: Partial<User> = {};
     for (const key of allowedFields) {
       if (data[key] !== undefined) {
         (updateData as any)[key] = data[key];
       }
+    }
+    // If admin sets verificationStatus to APPROVED, set verified to true
+    if (data.verificationStatus === VerificationStatus.APPROVED) {
+      updateData.verified = true;
     }
     const result = await this.userRepository.update(id, updateData);
     if (result.affected === 0) {
@@ -128,6 +159,13 @@ export class UsersService {
   async deactivate(id: number): Promise<User> {
     await this.userRepository.update(id, { isActive: false });
     return this.findById(id);
+  }
+
+  /**
+   * Deactivate a user (alias for admin controller).
+   */
+  async deactivateUser(id: number): Promise<User> {
+    return this.deactivate(id);
   }
 
   /**

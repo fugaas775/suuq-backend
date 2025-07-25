@@ -4,90 +4,23 @@ import {
   ForbiddenException,
   BadRequestException,
   Logger,
+  InternalServerErrorException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In } from 'typeorm';
 import { Product } from './entities/product.entity';
 import { CurrencyService } from '../common/services/currency.service';
 import { Tag } from '../tags/tag.entity';
-import { User } from '../users/entities/user.entity'; 
-import { Order } from '../orders/entities/order.entity'; 
+import { User } from '../users/entities/user.entity';
+import { Order } from '../orders/entities/order.entity';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
-import { ProductResponseDto } from './dto/product-response.dto';
 import { ProductImage } from './entities/product-image.entity';
-import { Review } from '../reviews/entities/review.entity'; 
 import { ProductFilterDto } from './dto/ProductFilterDto';
-
+import { plainToInstance } from 'class-transformer';
 
 @Injectable()
 export class ProductsService {
-  /**
-   * Converts a product to a ProductResponseDto, converting price if needed.
-   */
-  private toConvertedProductDto(product: Product, targetCurrency?: string): ProductResponseDto {
-    let price = Number(product.price);
-    let currency = product.currency;
-    if (targetCurrency && targetCurrency !== product.currency) {
-      price = this.currencyService.convert(price, product.currency, targetCurrency);
-      currency = targetCurrency;
-    }
-    const dto = this.mapProductToDto(product);
-    return { ...dto, price, currency };
-  }
-  async updateProduct(
-    id: number,
-    updateProductDto: UpdateProductDto & { tags?: string[]; images?: string[]; categoryId?: number },
-    user: Pick<User, 'id'>,
-  ): Promise<ProductResponseDto> {
-    const product = await this.productRepo.findOne({
-      where: { id },
-      relations: ['vendor', 'tags', 'images', 'category'],
-    });
-
-    if (!product) throw new NotFoundException('Product not found');
-    if (product.vendor.id !== user.id) {
-      throw new ForbiddenException('You can only update your own products');
-    }
-
-    // If categoryId is present, update the relation
-    if (typeof updateProductDto.categoryId === 'number') {
-      (product as any).category = { id: updateProductDto.categoryId };
-    }
-
-    // Object.assign will now include sku, stock_quantity, manage_stock, status, etc.
-    Object.assign(product, updateProductDto);
-
-    // Update tags if provided
-    if (updateProductDto.tags?.length) {
-      product.tags = await this.assignTags(updateProductDto.tags);
-    }
-
-    // Update images if provided
-    if (updateProductDto.images) {
-      // Remove old images
-      await this.productImageRepo.delete({ product: { id: product.id } });
-      // Add new images
-      const imageEntities = updateProductDto.images.map((src, idx) =>
-        this.productImageRepo.create({
-          src,
-          sortOrder: idx,
-          product: product,
-        }),
-      );
-      await this.productImageRepo.save(imageEntities);
-      product.images = imageEntities;
-    }
-
-    const saved = await this.productRepo.save(product);
-
-    return this.mapProductToDto(
-      await this.productRepo.findOneOrFail({
-        where: { id: saved.id },
-        relations: ['vendor', 'category', 'tags', 'images'],
-      }),
-    );
-  }
   private readonly logger = new Logger(ProductsService.name);
 
   constructor(
@@ -96,46 +29,39 @@ export class ProductsService {
     @InjectRepository(User) private userRepo: Repository<User>,
     @InjectRepository(Order) private orderRepo: Repository<Order>,
     @InjectRepository(Tag) private tagRepo: Repository<Tag>,
-    @InjectRepository(Review) private reviewRepo: Repository<Review>,
     private readonly currencyService: CurrencyService,
   ) {}
 
-  async create(data: CreateProductDto & { vendorId: number }): Promise<ProductResponseDto> {
-
-    const {
-      tags = [],
-      images = [],
-      vendorId,
-      categoryId,
-      ...rest
-    } = data;
+  async create(data: CreateProductDto & { vendorId: number }): Promise<Product> {
+    const { tags = [], images = [], vendorId, categoryId, ...rest } = data;
 
     const vendor = await this.userRepo.findOneBy({ id: vendorId });
-    if (!vendor) throw new NotFoundException('Vendor not found');
-    if (!vendor.currency) throw new BadRequestException('Vendor profile does not have a currency set.');
-
-    let category = undefined;
-    if (categoryId) {
-      // If categoryId is provided, set the relation
-      category = { id: categoryId } as any;
+    if (!vendor) {
+      throw new NotFoundException('Vendor not found');
     }
 
-    // rest now includes sku, stock_quantity, manage_stock, status, etc.
+    // --- THIS IS THE FIX ---
+    // Use the vendor's currency, or fall back to a default ('USD') if it's not set.
+    const productCurrency = vendor.currency || 'USD';
+    if (!vendor.currency) {
+        this.logger.warn(`Vendor with ID ${vendorId} has no currency set. Defaulting to USD.`);
+    }
+
+    const category = categoryId ? ({ id: categoryId } as any) : undefined;
+
     const product = this.productRepo.create({
       ...rest,
       vendor,
       category,
-      currency: vendor.currency,
+      currency: productCurrency, // Use the safe currency value
     });
 
     if (tags.length) {
       product.tags = await this.assignTags(tags);
     }
 
-    // Save product to get ID
     const savedProduct = await this.productRepo.save(product);
 
-    // Handle images
     if (images.length) {
       const imageEntities = images.map((src, idx) =>
         this.productImageRepo.create({
@@ -145,58 +71,26 @@ export class ProductsService {
         }),
       );
       await this.productImageRepo.save(imageEntities);
-      savedProduct.images = imageEntities;
-    } else {
-      savedProduct.images = [];
     }
-
-    return this.mapProductToDto(
-      await this.productRepo.findOneOrFail({
-        where: { id: savedProduct.id },
-        relations: ['vendor', 'category', 'tags', 'images'],
-      }),
-    );
+    
+    // Return the full entity; the ClassSerializerInterceptor will format it.
+    return this.findOne(savedProduct.id);
   }
 
-
-  async deleteProduct(id: number, user: Pick<User, 'id'>): Promise<{ deleted: boolean }> {
-    const product = await this.productRepo.findOne({
-      where: { id },
-      relations: ['vendor'],
-    });
-
-    if (!product) throw new NotFoundException('Product not found');
-    if (product.vendor.id !== user.id) {
-      throw new ForbiddenException('You can only delete your own products');
-    }
-
-    // Check if any order contains this product in its items
-    const hasOrders = await this.orderRepo
-      .createQueryBuilder('order')
-      .innerJoin('order.items', 'item')
-      .where('item.product = :productId', { productId: id })
-      .getCount();
-    if (hasOrders > 0) {
-      throw new BadRequestException('Cannot delete product with active orders');
-    }
-
-    await this.productRepo.delete(id);
-    return { deleted: true };
-  }
-
-  async findOne(id: number): Promise<ProductResponseDto | null> {
+  async findOne(id: number): Promise<Product> {
     const product = await this.productRepo.findOne({
       where: { id },
       relations: ['vendor', 'category', 'tags', 'images'],
     });
 
-    if (!product) return null;
-
-    return this.mapProductToDto(product);
+    if (!product) {
+      throw new NotFoundException(`Product with ID ${id} not found`);
+    }
+    return product;
   }
-
+  
   async findFiltered(filters: ProductFilterDto): Promise<{
-    items: ProductResponseDto[];
+    items: Product[];
     total: number;
     perPage: number;
     currentPage: number;
@@ -213,107 +107,114 @@ export class ProductsService {
       priceMin,
       priceMax,
       tags,
-      currency: targetCurrency,
     } = filters;
 
-    try {
-      this.logger.debug('findFiltered filters: ' + JSON.stringify(filters));
-
-      const qb = this.productRepo
-        .createQueryBuilder('product')
-        .leftJoinAndSelect('product.vendor', 'vendor')
-        .leftJoinAndSelect('product.category', 'category')
-        .leftJoinAndSelect('product.tags', 'tag')
-        .leftJoinAndSelect('product.images', 'images');
-
-      if (search) {
-        qb.andWhere('product.name ILIKE :search', { search: `%${search}%` });
-      }
-
-      if (categorySlug) {
-        qb.andWhere('category.slug = :categorySlug', { categorySlug });
-      } else if (categoryId) {
-        qb.andWhere('category.id = :categoryId', { categoryId });
-      }
-
-      if (typeof featured === 'boolean') {
-        qb.andWhere('product.featured = :featured', { featured });
-      }
-      
-      if (tags) {
-        const tagList = tags.split(',').map((t) => t.trim());
-        qb.innerJoin('product.tags', 'tagFilter', 'tagFilter.name IN (:...tagList)', {
-          tagList,
-        });
-      }
-
-      if (priceMin !== undefined) {
-        qb.andWhere('product.price >= :priceMin', { priceMin });
-      }
-
-      if (priceMax !== undefined) {
-        qb.andWhere('product.price <= :priceMax', { priceMax });
-      }
-      
-      // ... Sorting logic remains the same ...
-
-      let orderByField: keyof Product = 'createdAt';
-      let orderDirection: 'ASC' | 'DESC' = 'DESC';
-      // ... switch statement for sort ...
-      
-      qb.orderBy(`product.${orderByField}`, orderDirection)
-        .skip((page - 1) * perPage)
-        .take(perPage);
-
-      const [items, total] = await qb.getManyAndCount();
-      const dtos = items.map((product) => this.toConvertedProductDto(product, targetCurrency));
-
-      return {
-        items: dtos,
-        total,
-        perPage,
-        currentPage: page,
-        totalPages: Math.ceil(total / perPage),
-      };
-    } catch (err: any) {
-      this.logger.error('findFiltered error: ' + err?.toString());
-      throw err;
-    }
-  }
-
-  async findAll(targetCurrency?: string): Promise<ProductResponseDto[]> {
-    const products = await this.productRepo.find({
-      relations: ['vendor', 'category', 'tags', 'images'],
-    });
-    return products.map((product) => this.toConvertedProductDto(product, targetCurrency));
-  }
-
-  async findByVendorId(vendorId: number, targetCurrency?: string): Promise<ProductResponseDto[]> {
-    const products = await this.productRepo.find({
-      where: { vendor: { id: vendorId } },
-      relations: ['vendor', 'category', 'tags', 'images'],
-    });
-    return products.map((product) => this.toConvertedProductDto(product, targetCurrency));
-  }
-
-  async suggestNames(query: string): Promise<{ name: string }[]> {
-    return this.productRepo
+    const qb = this.productRepo
       .createQueryBuilder('product')
-      .select(['product.name'])
-      .where('product.name ILIKE :q', { q: `%${query}%` })
-      .limit(5)
-      .getRawMany();
+      .leftJoinAndSelect('product.vendor', 'vendor')
+      .leftJoinAndSelect('product.category', 'category')
+      .leftJoinAndSelect('product.tags', 'tag')
+      .leftJoinAndSelect('product.images', 'images');
+
+    if (search) {
+      qb.andWhere('product.name ILIKE :search', { search: `%${search}%` });
+    }
+    if (categorySlug) {
+      qb.andWhere('category.slug = :categorySlug', { categorySlug });
+    } else if (categoryId) {
+      qb.andWhere('category.id = :categoryId', { categoryId });
+    }
+    if (typeof featured === 'boolean') {
+      qb.andWhere('product.featured = :featured', { featured });
+    }
+    if (tags) {
+      const tagList = tags.split(',').map((t) => t.trim());
+      qb.innerJoin('product.tags', 'tagFilter', 'tagFilter.name IN (:...tagList)', { tagList });
+    }
+    if (priceMin !== undefined) {
+      qb.andWhere('product.price >= :priceMin', { priceMin });
+    }
+    if (priceMax !== undefined) {
+      qb.andWhere('product.price <= :priceMax', { priceMax });
+    }
+
+    // Default sorting
+    qb.orderBy('product.createdAt', 'DESC')
+      .skip((page - 1) * perPage)
+      .take(perPage);
+
+    const [items, total] = await qb.getManyAndCount();
+    
+    return {
+      items,
+      total,
+      perPage,
+      currentPage: page,
+      totalPages: Math.ceil(total / perPage),
+    };
+  }
+
+  async updateProduct(
+    id: number,
+    updateProductDto: UpdateProductDto & { tags?: string[]; images?: string[]; categoryId?: number },
+    user: Pick<User, 'id'>,
+  ): Promise<Product> {
+    const product = await this.productRepo.findOne({
+      where: { id },
+      relations: ['vendor'],
+    });
+
+    if (!product) throw new NotFoundException('Product not found');
+    if (product.vendor.id !== user.id) {
+      throw new ForbiddenException('You can only update your own products');
+    }
+
+    if (typeof updateProductDto.categoryId === 'number') {
+      (product as any).category = { id: updateProductDto.categoryId };
+    }
+
+    Object.assign(product, updateProductDto);
+
+    if (updateProductDto.tags) {
+      product.tags = await this.assignTags(updateProductDto.tags);
+    }
+
+    if (updateProductDto.images) {
+      await this.productImageRepo.delete({ product: { id: product.id } });
+      const imageEntities = updateProductDto.images.map((src, idx) =>
+        this.productImageRepo.create({ src, sortOrder: idx, product }),
+      );
+      await this.productImageRepo.save(imageEntities);
+    }
+
+    await this.productRepo.save(product);
+    return this.findOne(id);
+  }
+
+  async deleteProduct(id: number, user: Pick<User, 'id'>): Promise<{ deleted: boolean }> {
+    const product = await this.productRepo.findOne({
+      where: { id },
+      relations: ['vendor'],
+    });
+
+    if (!product) throw new NotFoundException('Product not found');
+    if (product.vendor.id !== user.id) {
+      throw new ForbiddenException('You can only delete your own products');
+    }
+
+    const hasOrders = await this.orderRepo.count({ where: { items: { product: { id } } } });
+    if (hasOrders > 0) {
+      throw new BadRequestException('Cannot delete product with active orders');
+    }
+
+    await this.productRepo.delete(id);
+    return { deleted: true };
   }
 
   async assignTags(tagNames: string[]): Promise<Tag[]> {
-    const existingTags = await this.tagRepo.find({
-      where: { name: In(tagNames) },
-    });
-
+    const existingTags = await this.tagRepo.find({ where: { name: In(tagNames) } });
     const existingTagNames = existingTags.map((t) => t.name);
-    const newTagNames = tagNames.filter(
-      (name) => !existingTagNames.includes(name),
-    );
+    const newTagNames = tagNames.filter((name) => !existingTagNames.includes(name));
 
     const newTags = this.tagRepo.create(newTagNames.map((name) => ({ name })));
     await this.tagRepo.save(newTags);
@@ -321,83 +222,24 @@ export class ProductsService {
     return [...existingTags, ...newTags];
   }
 
-  async toggleBlockStatus(id: number, isBlocked: boolean): Promise<ProductResponseDto> {
-    const product = await this.productRepo.findOneBy({ id });
-    if (!product) {
-      throw new NotFoundException('Product not found');
-    }
-
-    product.isBlocked = isBlocked;
-    const saved = await this.productRepo.save(product);
-
-    return this.mapProductToDto(
-      await this.productRepo.findOneOrFail({
-        where: { id: saved.id },
-        relations: ['vendor', 'category', 'tags', 'images'],
-      }),
-    );
+  // Admin-specific methods
+  async toggleBlockStatus(id: number, isBlocked: boolean): Promise<Product> {
+    await this.productRepo.update(id, { isBlocked });
+    return this.findOne(id);
   }
 
-  async toggleFeatureStatus(id: number, featured: boolean): Promise<ProductResponseDto> {
-    const product = await this.productRepo.findOneBy({ id });
-    if (!product) {
-      throw new NotFoundException('Product not found');
-    }
-
-    product.featured = featured;
-    const saved = await this.productRepo.save(product);
-
-    return this.mapProductToDto(
-      await this.productRepo.findOneOrFail({
-        where: { id: saved.id },
-        relations: ['vendor', 'category', 'tags', 'images'],
-      }),
-    );
+  async toggleFeatureStatus(id: number, featured: boolean): Promise<Product> {
+    await this.productRepo.update(id, { featured });
+    return this.findOne(id);
   }
-
-  // --- NEW: Fetch reviews for a product ---
-  async getReviewsForProduct(productId: number) {
-    const reviews = await this.reviewRepo.find({
-      where: { product: { id: productId } },
-      relations: ['user'], // adjust as needed, e.g. ['user']
-      order: { createdAt: 'DESC' }
-    });
-    return reviews;
-  }
-
-  private mapProductToDto(product: Product): ProductResponseDto {
-    return {
-      id: product.id,
-      name: product.name,
-      price: Number(product.price),
-      sale_price: product.sale_price ? Number(product.sale_price) : undefined,
-      currency: product.currency,
-      images: product.images?.map(img => ({ src: img.src })) || [],
-      imageUrl: product.images?.length > 0 ? product.images[0].src : undefined,
-      description: product.description,
-      createdAt: product.createdAt,
-      featured: product.featured,
-      vendor: {
-        id: product.vendor?.id,
-        email: product.vendor?.email,
-        displayName: product.vendor?.displayName,
-        avatarUrl: product.vendor?.avatarUrl,
-        store_name: product.vendor?.storeName,
-        name: product.vendor?.displayName || product.vendor?.storeName,
-      },
-      category: product.category
-        ? {
-            id: product.category.id,
-            name: product.category.name,
-          }
-        : undefined,
-      tags: product.tags?.map((t) => t.name) || [],
-      average_rating: product.average_rating ? Number(product.average_rating) : undefined,
-      rating_count: product.rating_count,
-      sku: product.sku,
-      stock_quantity: product.stock_quantity,
-      manage_stock: product.manage_stock,
-      status: product.status,
-    };
+  
+  // Suggestion methods
+  async suggestNames(query: string): Promise<{ name: string }[]> {
+    return this.productRepo
+      .createQueryBuilder('product')
+      .select('product.name', 'name')
+      .where('product.name ILIKE :q', { q: `%${query}%` })
+      .limit(5)
+      .getRawMany();
   }
 }

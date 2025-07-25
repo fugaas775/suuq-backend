@@ -5,14 +5,24 @@ import { OrdersController } from './orders.controller';
 import { OrdersService } from './orders.service';
 import { CartModule } from '../cart/cart.module';
 import { ProductsModule } from '../products/products.module';
+import { TelebirrModule } from '../telebirr/telebirr.module';
+import { MpesaModule } from '../mpesa/mpesa.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([Order, OrderItem]),
     CartModule,
     ProductsModule,
+    TelebirrModule,
+    MpesaModule,
+    NotificationsModule,
   ],
   controllers: [OrdersController],
   providers: [OrdersService],
+  exports: [
+    TypeOrmModule, // Export repositories
+    OrdersService, // Export service
+  ],
 })
 export class OrdersModule {}

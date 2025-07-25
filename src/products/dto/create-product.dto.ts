@@ -1,4 +1,4 @@
-import { IsString, IsNumber, IsOptional, IsArray, IsBoolean, IsIn } from 'class-validator';
+import { IsString, IsNumber, IsOptional, IsArray, IsBoolean, IsIn, IsNotEmpty } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class CreateProductDto {
@@ -27,6 +27,10 @@ export class CreateProductDto {
   @Type(() => Number)
   @IsNumber()
   categoryId?: number;
+
+  @IsNotEmpty()
+  @IsString()
+  currency!: string; // e.g., 'ETB', 'KES'
 
   @IsOptional()
   @IsString()

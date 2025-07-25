@@ -1,100 +1,88 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Withdrawal, WithdrawalStatus } from './entities/withdrawal.entity';
-import { User } from '../users/entities/user.entity'; // <-- FIXED IMPORT
+import { User } from '../users/entities/user.entity';
+import { Order, OrderStatus } from '../orders/entities/order.entity';
+import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class WithdrawalsService {
   constructor(
     @InjectRepository(Withdrawal)
-    private readonly withdrawalRepo: Repository<Withdrawal>,
+    private readonly withdrawalRepository: Repository<Withdrawal>,
+    @InjectRepository(Order)
+    private readonly orderRepository: Repository<Order>,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
-  async getVendorWithdrawals(vendorId: number): Promise<{
-    withdrawals: Withdrawal[];
-    summary: {
-      totalRequested: number;
-      approved: number;
-      pending: number;
-      rejected: number;
-    };
-  }> {
-    const withdrawals = await this.withdrawalRepo.find({
-      where: { vendor: { id: vendorId } },
-      order: { createdAt: 'DESC' },
-    });
+  async calculateVendorBalance(userId: number): Promise<number> {
+    // Total DELIVERED order value for vendor
+    const deliveredOrders = await this.orderRepository.createQueryBuilder('order')
+      .leftJoin('order.items', 'item')
+      .where('item.product.vendorId = :userId', { userId })
+      .andWhere('order.status = :status', { status: OrderStatus.DELIVERED })
+      .select('SUM(item.price * item.quantity)', 'total')
+      .getRawOne();
+    const totalDelivered = Number(deliveredOrders.total) || 0;
 
-    const [approved, pending, rejected] = await Promise.all([
-      this.withdrawalRepo.count({
-        where: { vendor: { id: vendorId }, status: WithdrawalStatus.APPROVED },
-      }),
-      this.withdrawalRepo.count({
-        where: { vendor: { id: vendorId }, status: WithdrawalStatus.PENDING },
-      }),
-      this.withdrawalRepo.count({
-        where: { vendor: { id: vendorId }, status: WithdrawalStatus.REJECTED },
-      }),
-    ]);
+    // Total APPROVED withdrawals
+    const approvedWithdrawals = await this.withdrawalRepository.createQueryBuilder('withdrawal')
+      .where('withdrawal.vendorId = :userId', { userId })
+      .andWhere('withdrawal.status = :status', { status: WithdrawalStatus.APPROVED })
+      .select('SUM(withdrawal.amount)', 'total')
+      .getRawOne();
+    const totalWithdrawn = Number(approvedWithdrawals.total) || 0;
 
-    return {
-      withdrawals,
-      summary: {
-        totalRequested: withdrawals.length,
-        approved,
-        pending,
-        rejected,
-      },
-    };
+    return totalDelivered - totalWithdrawn;
   }
 
-  async updateStatus(id: number, status: WithdrawalStatus): Promise<Withdrawal> {
-    const withdrawal = await this.withdrawalRepo.findOne({ where: { id } });
-    if (!withdrawal) throw new NotFoundException('Withdrawal not found');
-    withdrawal.status = status;
-    return this.withdrawalRepo.save(withdrawal);
-  }
-
-  async createWithdrawal(
-    amount: number,
-    mobileMoneyNumber: string,
-    vendorId: number,
-  ): Promise<Withdrawal> {
-    const withdrawal = this.withdrawalRepo.create({
+  async requestWithdrawal(userId: number, amount: number): Promise<Withdrawal> {
+    const balance = await this.calculateVendorBalance(userId);
+    if (amount > balance) {
+      throw new BadRequestException('Requested amount exceeds available balance');
+    }
+    const withdrawal = this.withdrawalRepository.create({
       amount,
-      mobileMoneyNumber,
-      vendor: { id: vendorId } as User,
+      vendor: { id: userId } as User,
       status: WithdrawalStatus.PENDING,
     });
-
-    return this.withdrawalRepo.save(withdrawal);
+    return this.withdrawalRepository.save(withdrawal);
   }
 
-  async getAll(): Promise<Withdrawal[]> {
-    return this.withdrawalRepo.find({
-      relations: ['vendor'],
-      order: { createdAt: 'DESC' },
-    });
+  async getWithdrawalsForVendor(userId: number): Promise<Withdrawal[]> {
+    return this.withdrawalRepository.find({ where: { vendor: { id: userId } }, order: { createdAt: 'DESC' } });
   }
 
-  async getVendorStats(vendorId: number): Promise<{
-    totalWithdrawn: number;
-    pendingRequests: number;
-  }> {
-    const totalApproved = await this.withdrawalRepo
-      .createQueryBuilder('withdrawal')
-      .select('SUM(withdrawal.amount)', 'total')
-      .where('withdrawal.vendorId = :vendorId', { vendorId })
-      .andWhere('withdrawal.status = :status', { status: WithdrawalStatus.APPROVED })
-      .getRawOne();
-
-    const pendingCount = await this.withdrawalRepo.count({
-      where: { vendor: { id: vendorId }, status: WithdrawalStatus.PENDING },
+  async approveWithdrawal(withdrawalId: number): Promise<Withdrawal> {
+    const withdrawal = await this.withdrawalRepository.findOne({ where: { id: withdrawalId } });
+    if (!withdrawal) throw new NotFoundException('Withdrawal not found');
+    withdrawal.status = WithdrawalStatus.APPROVED;
+    const saved = await this.withdrawalRepository.save(withdrawal);
+    // Send notification to vendor
+    await this.notificationsService.sendToUser({
+      userId: withdrawal.vendor?.id,
+      title: 'Withdrawal Approved',
+      body: `Your withdrawal request #${withdrawalId} has been approved.`,
     });
+    return saved;
+  }
 
-    return {
-      totalWithdrawn: parseFloat(totalApproved.total) || 0,
-      pendingRequests: pendingCount,
-    };
+  async rejectWithdrawal(withdrawalId: number): Promise<Withdrawal> {
+    const withdrawal = await this.withdrawalRepository.findOne({ where: { id: withdrawalId } });
+    if (!withdrawal) throw new NotFoundException('Withdrawal not found');
+    withdrawal.status = WithdrawalStatus.REJECTED;
+    return this.withdrawalRepository.save(withdrawal);
+  }
+
+  async getAllWithdrawals(status?: WithdrawalStatus): Promise<Withdrawal[]> {
+    const where = status ? { status } : {};
+    return this.withdrawalRepository.find({ where, order: { createdAt: 'DESC' } });
+  }
+
+  async countPendingWithdrawals(): Promise<number> {
+    return this.withdrawalRepository.count({ 
+      where: { status: WithdrawalStatus.PENDING } 
+    });
   }
 }

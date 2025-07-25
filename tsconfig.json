@@ -1,19 +1,31 @@
 {
   "compilerOptions": {
     "module": "commonjs",
-    "target": "es2017",
-    "moduleResolution": "node",
-    "outDir": "./dist",
-    "rootDir": "./src",
-    "strict": true,
-    "esModuleInterop": true,
-    "skipLibCheck": true,
-    "experimentalDecorators": true,
+    "declaration": true,
+    "removeComments": true,
     "emitDecoratorMetadata": true,
-    "sourceMap": true,
+    "experimentalDecorators": true,
     "allowSyntheticDefaultImports": true,
-    "types": ["node", "express"],
-    "baseUrl": "./src"
+    "target": "es2017",
+    "sourceMap": true,
+    "outDir": "./dist",
+    "noEmit": false,
+    "baseUrl": "./",
+    "incremental": true,
+    "skipLibCheck": true,
+    "strictNullChecks": false,
+    "noImplicitAny": false,
+    "strictBindCallApply": false,
+    "forceConsistentCasingInFileNames": false,
+    "noFallthroughCasesInSwitch": false,
+    "resolveJsonModule": true,
+    "moduleResolution": "node",
+    "types": ["node"]
   },
-  "include": ["src/**/*"]
+  "include": ["src/**/*"],
+  "ts-node": {
+    "compilerOptions": {
+      "module": "CommonJS"
+    }
+  }
 }

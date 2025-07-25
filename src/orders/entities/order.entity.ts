@@ -9,11 +9,26 @@ import {
 import { User } from '../../users/entities/user.entity';
 import { Product } from '../../products/entities/product.entity';
 
+export enum PaymentMethod {
+  COD = 'COD',
+  STRIPE = 'STRIPE',
+  MPESA = 'MPESA',
+  TELEBIRR = 'TELEBIRR',
+}
+
+export enum PaymentStatus {
+  UNPAID = 'UNPAID',
+  PAID = 'PAID',
+  FAILED = 'FAILED',
+}
+
 export enum OrderStatus {
   PENDING = 'PENDING',
   PROCESSING = 'PROCESSING',
-  SHIPPED = 'SHIPPED',
-  DELIVERED = 'DELIVERED',
+  SHIPPED = 'SHIPPED', // Vendor marks it as ready for pickup
+  OUT_FOR_DELIVERY = 'OUT_FOR_DELIVERY', // Deliverer has picked it up
+  DELIVERED = 'DELIVERED', // Deliverer confirms completion
+  DELIVERY_FAILED = 'DELIVERY_FAILED', // Deliverer reports an issue
   CANCELLED = 'CANCELLED',
 }
 
@@ -26,11 +41,27 @@ export class Order {
   @ManyToOne(() => User, { eager: true })
   user!: User;
 
+  @ManyToOne(() => User, { nullable: true })
+  deliverer?: User;
+
   @OneToMany(() => OrderItem, (item) => item.order, { cascade: true, eager: true })
   items!: OrderItem[];
 
   @Column('decimal', { precision: 10, scale: 2 })
   total!: number;
+
+  @Column({
+    type: 'enum',
+    enum: PaymentMethod,
+  })
+  paymentMethod!: PaymentMethod;
+
+  @Column({
+    type: 'enum',
+    enum: PaymentStatus,
+    default: PaymentStatus.UNPAID,
+  })
+  paymentStatus!: PaymentStatus;
 
   @Column({
     type: 'enum',

@@ -1,16 +1,26 @@
-import { IsOptional, IsString, IsNumber, IsBoolean } from 'class-validator';
-import { Type, Expose } from 'class-transformer';
+
+import { IsOptional, IsString, IsNumber, IsBoolean, IsInt, Min } from 'class-validator';
+import { Type, Expose, Transform } from 'class-transformer';
 
 export class ProductFilterDto {
   @IsOptional()
   @Type(() => Number)
-  @IsNumber()
+  @IsInt()
+  @Min(1)
   @Expose({ name: 'per_page' })
   perPage?: number;
 
   @IsOptional()
   @Type(() => Number)
-  @IsNumber()
+  @IsInt()
+  @Min(1)
+  @Expose({ name: 'limit' })
+  limit?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
   page?: number;
 
   @IsOptional()
@@ -19,7 +29,8 @@ export class ProductFilterDto {
 
   @IsOptional()
   @Type(() => Number)
-  @IsNumber()
+  @IsInt()
+  @Min(1)
   categoryId?: number;
 
   @IsOptional()
@@ -43,11 +54,13 @@ export class ProductFilterDto {
   @IsOptional()
   @Type(() => Number)
   @IsNumber()
+  @Min(0)
   priceMin?: number;
 
   @IsOptional()
   @Type(() => Number)
   @IsNumber()
+  @Min(0)
   priceMax?: number;
   @IsOptional()
   @IsString()

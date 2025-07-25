@@ -1,15 +1,20 @@
-import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, Unique } from 'typeorm';
-import { User } from '../../users/entities/user.entity';
+import { Entity, Column, PrimaryGeneratedColumn, Index } from 'typeorm';
 
-@Entity()
-@Unique(['user', 'token'])
+@Entity('device_tokens')
 export class DeviceToken {
   @PrimaryGeneratedColumn()
-  id!: number;
+  id: number;
 
   @Column()
-  token!: string;
+  @Index()
+  userId: number;
 
-  @ManyToOne(() => User, (user: User) => user.deviceTokens, { onDelete: 'CASCADE' })
-  user!: User;
+  @Column()
+  token: string;
+
+  @Column({ default: 'unknown' })
+  platform: string;
+
+  @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
+  createdAt: Date;
 }

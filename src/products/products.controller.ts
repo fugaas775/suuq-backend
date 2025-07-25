@@ -19,11 +19,13 @@ import { AuthGuard } from '@nestjs/passport';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { plainToInstance } from 'class-transformer';
-import { ProductResponseDto } from './dto/product-response.dto';
+import { ClassSerializerInterceptor } from '@nestjs/common';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UserRole } from '../auth/roles.enum';
-import { ProductFilterDto } from './dto/ProductFilterDto'; // <-- Import the new DTO
+import { ProductFilterDto } from './dto/ProductFilterDto';
+import { UseInterceptors, ParseBoolPipe } from '@nestjs/common';
 
+@UseInterceptors(ClassSerializerInterceptor)
 @Controller('products')
 export class ProductsController {
   private readonly logger = new Logger(ProductsController.name);
@@ -46,7 +48,11 @@ export class ProductsController {
     try {
       this.logger.debug(`findAll filters: ${JSON.stringify(filters)}, currency: ${currency}`);
 
-      // Pass the validated and transformed filters object directly to the service
+      // Support both limit and perPage for pagination
+      if (filters.limit && !filters.perPage) {
+        filters.perPage = filters.limit;
+      }
+
       const result = await this.productsService.findFiltered(filters);
 
       if (!result || !Array.isArray(result.items)) {
@@ -54,27 +60,13 @@ export class ProductsController {
         throw new BadRequestException('Product list could not be loaded');
       }
 
-      // Convert prices if currency is requested
-      const items = currency && typeof currency === 'string'
-        ? result.items.map((item) => {
-            const itemCurrency = item.currency || '';
-            if (itemCurrency === currency) return item;
-            if (!itemCurrency) return item;
-            return {
-              ...item,
-              price: this.productsService['currencyService'].convert(Number(item.price), String(itemCurrency), String(currency)),
-              currency: String(currency),
-            };
-          })
-        : result.items;
-
+      // No manual conversion or DTO mapping; return result.items directly
       return {
         ...result,
-        items: plainToInstance(ProductResponseDto, items),
+        items: result.items,
       };
     } catch (err) {
       this.logger.error('findAll error:', err);
-      // Re-throw the error to be handled by NestJS's global exception filter
       throw err;
     }
   }
@@ -95,10 +87,6 @@ export class ProductsController {
     return this.productsService.findOne(id);
   }
 
-  @Get(':id/reviews')
-  async getProductReviews(@Param('id', ParseIntPipe) id: number) {
-    return this.productsService.getReviewsForProduct(id);
-  }
 
   @Patch(':id')
   @UseGuards(AuthGuard('jwt'), RolesGuard)
@@ -126,7 +114,7 @@ export class ProductsController {
   @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN) // Allow Super Admin
   async toggleBlockProduct(
     @Param('id', ParseIntPipe) id: number,
-    @Body('isBlocked', ParseIntPipe) isBlocked: boolean, // Use correct pipe
+    @Body('isBlocked', ParseBoolPipe) isBlocked: boolean, // Use correct pipe
   ) {
     return this.productsService.toggleBlockStatus(id, isBlocked);
   }
@@ -136,7 +124,7 @@ export class ProductsController {
   @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN) // Allow Super Admin
   async toggleFeatureProduct(
     @Param('id', ParseIntPipe) id: number,
-    @Body('featured', ParseIntPipe) featured: boolean, // Use correct pipe
+    @Body('featured', ParseBoolPipe) featured: boolean, // Use correct pipe
   ) {
     return this.productsService.toggleFeatureStatus(id, featured);
   }

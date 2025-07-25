@@ -35,8 +35,10 @@ export class UsersController {
   @Get()
   @Roles(UserRole.ADMIN)
   async getAllUsers(@Query() filters: FindUsersQueryDto): Promise<UserResponseDto[]> {
-    const users = await this.usersService.findAll(filters);
-    return users.map(user =>
+    const result = await this.usersService.findAll(filters);
+    // If paginated result, return mapped users array
+    const users = Array.isArray(result) ? result : result.users;
+    return users.map((user: any) =>
       plainToInstance(UserResponseDto, user, { excludeExtraneousValues: true })
     );
   }

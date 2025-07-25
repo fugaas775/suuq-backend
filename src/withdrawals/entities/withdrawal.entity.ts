@@ -1,11 +1,5 @@
-import {
-  Entity,
-  PrimaryGeneratedColumn,
-  Column,
-  ManyToOne,
-  CreateDateColumn,
-} from 'typeorm';
-import { User } from '../../users/entities/user.entity'; // <-- FIXED IMPORT
+import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, CreateDateColumn, UpdateDateColumn } from 'typeorm';
+import { User } from '../../users/entities/user.entity';
 
 export enum WithdrawalStatus {
   PENDING = 'PENDING',
@@ -13,7 +7,7 @@ export enum WithdrawalStatus {
   REJECTED = 'REJECTED',
 }
 
-@Entity()
+@Entity('withdrawal')
 export class Withdrawal {
   @PrimaryGeneratedColumn()
   id!: number;
@@ -21,14 +15,7 @@ export class Withdrawal {
   @Column('decimal', { precision: 10, scale: 2 })
   amount!: number;
 
-  @Column({ type: 'varchar' })
-  mobileMoneyNumber!: string;
-
-  @Column({
-    type: 'enum',
-    enum: WithdrawalStatus,
-    default: WithdrawalStatus.PENDING,
-  })
+  @Column({ type: 'enum', enum: WithdrawalStatus, default: WithdrawalStatus.PENDING })
   status!: WithdrawalStatus;
 
   @ManyToOne(() => User, { eager: true })
@@ -36,4 +23,7 @@ export class Withdrawal {
 
   @CreateDateColumn()
   createdAt!: Date;
+
+  @UpdateDateColumn()
+  updatedAt!: Date;
 }

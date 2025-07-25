@@ -1,4 +1,4 @@
-import { IsObject, IsString, IsNotEmpty, ValidateNested, IsOptional } from 'class-validator';
+import { IsObject, IsString, IsNotEmpty, ValidateNested, IsOptional, IsIn } from 'class-validator';
 import { Type } from 'class-transformer';
 
 class ShippingAddressDto {
@@ -15,7 +15,12 @@ export class CreateOrderDto {
   @Type(() => ShippingAddressDto)
   shippingAddress!: ShippingAddressDto;
 
+
   @IsString()
-  @IsOptional()
-  paymentMethodNonce?: string;
+  @IsIn(['COD', 'MPESA', 'TELEBIRR'])
+  paymentMethod!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  phoneNumber!: string;
 }
