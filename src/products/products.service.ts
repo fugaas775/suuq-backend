@@ -30,21 +30,22 @@ export class ProductsService {
     @InjectRepository(Order) private orderRepo: Repository<Order>,
     @InjectRepository(Tag) private tagRepo: Repository<Tag>,
     private readonly currencyService: CurrencyService,
-  ) {}
+  ) {
+    this.logger.log('ProductsService initialized');
+  }
 
   async create(data: CreateProductDto & { vendorId: number }): Promise<Product> {
     const { tags = [], images = [], vendorId, categoryId, ...rest } = data;
+    console.log('Received images:', images);
 
     const vendor = await this.userRepo.findOneBy({ id: vendorId });
     if (!vendor) {
       throw new NotFoundException('Vendor not found');
     }
 
-    // --- THIS IS THE FIX ---
-    // Use the vendor's currency, or fall back to a default ('USD') if it's not set.
     const productCurrency = vendor.currency || 'USD';
     if (!vendor.currency) {
-        this.logger.warn(`Vendor with ID ${vendorId} has no currency set. Defaulting to USD.`);
+        // No logging for clean code
     }
 
     const category = categoryId ? ({ id: categoryId } as any) : undefined;
@@ -53,7 +54,7 @@ export class ProductsService {
       ...rest,
       vendor,
       category,
-      currency: productCurrency, // Use the safe currency value
+      currency: productCurrency,
     });
 
     if (tags.length) {
@@ -62,18 +63,15 @@ export class ProductsService {
 
     const savedProduct = await this.productRepo.save(product);
 
-    if (images.length) {
-      const imageEntities = images.map((src, idx) =>
-        this.productImageRepo.create({
-          src,
-          sortOrder: idx,
+    if (Array.isArray(images) && images.length > 0) {
+      for (const imageUrl of images) {
+        await this.productImageRepo.save({
+          src: imageUrl,
           product: savedProduct,
-        }),
-      );
-      await this.productImageRepo.save(imageEntities);
+        });
+      }
     }
     
-    // Return the full entity; the ClassSerializerInterceptor will format it.
     return this.findOne(savedProduct.id);
   }
 
@@ -96,6 +94,9 @@ export class ProductsService {
     currentPage: number;
     totalPages: number;
   }> {
+    // ✨ ADDED FOR FINAL VERIFICATION
+    this.logger.debug('--- RUNNING PUBLIC PRODUCT LIST QUERY ---');
+
     const {
       page = 1,
       perPage = 10,
@@ -114,7 +115,7 @@ export class ProductsService {
       .leftJoinAndSelect('product.vendor', 'vendor')
       .leftJoinAndSelect('product.category', 'category')
       .leftJoinAndSelect('product.tags', 'tag')
-      .leftJoinAndSelect('product.images', 'images');
+      .leftJoinAndSelect('product.images', 'images'); // <-- This line is correct
 
     if (search) {
       qb.andWhere('product.name ILIKE :search', { search: `%${search}%` });
@@ -138,7 +139,6 @@ export class ProductsService {
       qb.andWhere('product.price <= :priceMax', { priceMax });
     }
 
-    // Default sorting
     qb.orderBy('product.createdAt', 'DESC')
       .skip((page - 1) * perPage)
       .take(perPage);
@@ -222,7 +222,6 @@ export class ProductsService {
     return [...existingTags, ...newTags];
   }
 
-  // Admin-specific methods
   async toggleBlockStatus(id: number, isBlocked: boolean): Promise<Product> {
     await this.productRepo.update(id, { isBlocked });
     return this.findOne(id);
@@ -233,7 +232,6 @@ export class ProductsService {
     return this.findOne(id);
   }
   
-  // Suggestion methods
   async suggestNames(query: string): Promise<{ name: string }[]> {
     return this.productRepo
       .createQueryBuilder('product')

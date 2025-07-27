@@ -1,3 +1,5 @@
+// In src/settings/settings.controller.ts
+
 import {
   Controller,
   Get,
@@ -7,18 +9,21 @@ import {
   UseGuards,
   Request as ReqDecorator,
   Logger,
+  Param,
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { SettingsService } from './settings.service';
 import { UpdateSettingsDto } from './dto/update-settings.dto';
 
+// ✨ FIX: Remove @UseGuards from the controller level
 @Controller('settings')
-@UseGuards(JwtAuthGuard)
 export class SettingsController {
   private readonly logger = new Logger(SettingsController.name);
 
   constructor(private readonly settingsService: SettingsService) {}
 
+  // ✨ FIX: Add @UseGuards ONLY to the routes that need it
+  @UseGuards(JwtAuthGuard)
   @Get('profile')
   async getProfile(@ReqDecorator() req: any) {
     try {
@@ -33,6 +38,8 @@ export class SettingsController {
     }
   }
 
+  // ✨ FIX: Add @UseGuards ONLY to the routes that need it
+  @UseGuards(JwtAuthGuard)
   @Put('profile')
   @Patch('profile')
   async updateProfile(
@@ -49,5 +56,23 @@ export class SettingsController {
       }
       throw err;
     }
+  }
+
+  // This endpoint is now correctly PUBLIC
+  @Get('ui-settings')
+  async getAll() {
+    return this.settingsService.getAllSettings();
+  }
+  
+  // This endpoint for updating should be protected for admins
+  // You would typically add an Admin role guard here
+  @UseGuards(JwtAuthGuard) 
+  @Patch('ui-settings/:key')
+  async updateSetting(@Param('key') key: string, @Body('value') value: any) {
+    const updated = await this.settingsService.updateSetting(key, value);
+    if (!updated) {
+      return { error: 'Setting not found' };
+    }
+    return updated;
   }
 }

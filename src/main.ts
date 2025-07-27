@@ -9,6 +9,8 @@ import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+  // Enable all log levels for better visibility in production
+  app.useLogger(['log', 'error', 'warn', 'debug', 'verbose']);
 
   // --- THIS IS THE CRUCIAL FIX ---
   app.enableCors({

@@ -24,6 +24,11 @@ export class CreateVendorProductDto {
 
   @IsNotEmpty()
   @IsString()
-  currency!: string; // e.g., 'ETB', 'KES'
-  // Add more optional fields as needed
+  currency!: string;
+
+  // ✨ ADD THIS PROPERTY ✨
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  images?: string[];
 }
