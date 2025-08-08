@@ -1,5 +1,25 @@
-import { IsOptional, IsString, IsBoolean, IsEnum } from 'class-validator';
-import { VerificationStatus } from '../../users/entities/user.entity';
+import {
+  IsOptional,
+  IsString,
+  IsBoolean,
+  IsEnum,
+  IsArray,
+  ValidateNested,
+} from 'class-validator';
+import { Type } from 'class-transformer';
+import {
+  VerificationStatus,
+  VerificationDocument,
+} from '../../users/entities/user.entity';
+
+// This DTO can be reused if you have other places where you need to validate this structure.
+class VerificationDocumentDto implements VerificationDocument {
+  @IsString()
+  url: string;
+
+  @IsString()
+  name: string;
+}
 
 export class UpdateUserDto {
   @IsOptional()
@@ -31,8 +51,10 @@ export class UpdateUserDto {
   verificationStatus?: VerificationStatus;
 
   @IsOptional()
-  @IsString({ each: true })
-  verificationDocuments?: string[];
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => VerificationDocumentDto)
+  verificationDocuments?: VerificationDocument[];
 
   @IsOptional()
   @IsBoolean()

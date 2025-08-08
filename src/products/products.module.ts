@@ -6,6 +6,7 @@ import { UsersModule } from '../users/users.module';
 import { User } from '../users/entities/user.entity';
 import { Order } from '../orders/entities/order.entity'; 
 import { Tag } from '../tags/tag.entity';
+import { Category } from '../categories/entities/category.entity'; // 1. Import the Category entity
 import { ProductsService } from './products.service';
 import { ProductsController } from './products.controller';
 import { CurrencyModule } from '../common/services/currency.module';
@@ -14,11 +15,11 @@ import { CurrencyModule } from '../common/services/currency.module';
   imports: [
     TypeOrmModule.forFeature([
       Product,
-      ProductImage,   // Needed for ProductImageRepository injection
-      User,           // Needed for UserRepository injection
-      Order,          // Needed for OrderRepository injection
+      ProductImage,
+      User,
+      Order,
       Tag,
-      // Review,            // Needed for TagRepository injection
+      Category, // ✅ 2. Add the Category entity here
     ]),
     CurrencyModule,
     forwardRef(() => UsersModule),

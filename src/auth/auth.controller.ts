@@ -79,4 +79,10 @@ export class AuthController {
   async resetPassword(@Body() dto: ResetPasswordDto) {
     return this.authService.resetPassword(dto.token, dto.password);
   }
+
+  @Get('verify')
+  @UseGuards(JwtAuthGuard)
+  verify(@Request() req: AuthenticatedRequest) {
+    return plainToInstance(UserResponseDto, req.user, { excludeExtraneousValues: true });
+  }
 }

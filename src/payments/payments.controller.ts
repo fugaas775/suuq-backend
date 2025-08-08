@@ -7,7 +7,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Order, PaymentStatus } from '../orders/entities/order.entity';
 import { TelebirrCallbackDto } from './telebirr-callback.dto';
 
-@Controller('api/payments')
+@Controller('payments')
 export class PaymentsController {
   private readonly logger = new Logger(PaymentsController.name);
 

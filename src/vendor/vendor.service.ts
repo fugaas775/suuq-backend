@@ -1,12 +1,14 @@
-import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { CreateVendorProductDto } from './dto/create-vendor-product.dto';
-import { Injectable } from '@nestjs/common';
+import { FindAllVendorsDto } from './dto/find-all-vendors.dto';
+import { UpdateVendorProductDto } from './dto/update-vendor-product.dto';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Like } from 'typeorm';
+import { Repository, Like, Raw, ArrayContains, ILike } from 'typeorm';
 import { User } from '../users/entities/user.entity';
 import { Product } from '../products/entities/product.entity';
-import { ProductImage } from '../products/entities/product-image.entity'; // <-- 1. IMPORT ADDED
-import { Order, OrderStatus } from '../orders/entities/order.entity';
+import { Category } from '../categories/entities/category.entity';
+import { ProductImage } from '../products/entities/product-image.entity';
+import { Order } from '../orders/entities/order.entity';
 import { UserRole } from '../auth/roles.enum';
 
 @Injectable()
@@ -18,104 +20,176 @@ export class VendorService {
     private readonly productRepository: Repository<Product>,
     @InjectRepository(Order)
     private readonly orderRepository: Repository<Order>,
-    // ✨ 2. REPOSITORY INJECTED
     @InjectRepository(ProductImage)
     private readonly productImageRepository: Repository<ProductImage>,
   ) {}
 
-  async getSalesGraph(userId: number, query: any) {
-    // ... (Your existing code is preserved)
-    return {
-      range: query.range || '30d',
-      data: [
-        { date: '2025-07-01', sales: 10 },
-        { date: '2025-07-02', sales: 12 },
-        { date: '2025-07-03', sales: 8 },
-      ]
-    };
-  }
-
-  async updateOrderStatus(userId: number, orderId: number, newStatus: OrderStatus) {
-    // ... (Your existing code is preserved)
-    const order = await this.orderRepository.findOne({
-      where: { id: orderId },
-      relations: ['items', 'items.product', 'items.product.vendor'],
-    });
-    if (!order) {
-      throw new NotFoundException('Order not found');
-    }
-    const ownsProduct = order.items.some(
-      (item) => item.product && item.product.vendor && item.product.vendor.id === userId
-    );
-    if (!ownsProduct) {
-      throw new ForbiddenException('You do not have permission to update this order');
-    }
-    order.status = newStatus;
-    await this.orderRepository.save(order);
-    return order;
-  }
-
-  // ✨ 3. THIS FUNCTION IS NOW FIXED
+  // ✅ FIX: This function now correctly handles an array of ImageDto objects
   async createMyProduct(userId: number, dto: CreateVendorProductDto): Promise<Product> {
     const vendor = await this.userRepository.findOneBy({ id: userId });
     if (!vendor) {
       throw new NotFoundException(`Vendor with ID ${userId} not found.`);
     }
 
-    const { images, ...productData } = dto;
+    const { images, categoryId, ...productData } = dto;
 
     const newProduct = this.productRepository.create({
       ...productData,
       vendor: vendor,
-      price: Number(productData.price) || 0,
+      category: categoryId ? { id: categoryId } : undefined,
+      imageUrl: images && images.length > 0 ? images[0].src : null, // Set main display image
     });
     
+    // 1. Save the main product to get its ID
     const savedProduct = await this.productRepository.save(newProduct);
 
-    if (images && Array.isArray(images) && images.length > 0) {
-      const imageEntities = images.map((imageUrl) =>
+    // 2. Create and save all associated image entities
+    if (images && images.length > 0) {
+      const imageEntities = images.map((imageObj, index) =>
         this.productImageRepository.create({
-          src: imageUrl,
-          product: savedProduct,
+          src: imageObj.src,
+          thumbnailSrc: imageObj.thumbnailSrc,
+          lowResSrc: imageObj.lowResSrc,
+          product: savedProduct, // Link to the product
+          sortOrder: index,
         }),
       );
       await this.productImageRepository.save(imageEntities);
     }
     
+    // 3. Return the full product with all its new relations
     return this.productRepository.findOneOrFail({
         where: { id: savedProduct.id },
         relations: ['images', 'vendor', 'category', 'tags']
     });
   }
 
-  async deleteMyProduct(userId: number, productId: number) {
-    // ... (Your existing code is preserved)
+  // ✅ FIX: This function is now type-safe and handles image updates
+  async updateMyProduct(userId: number, productId: number, dto: UpdateVendorProductDto): Promise<Product> {
     const product = await this.productRepository.findOne({
-      where: { id: productId },
-      relations: ['vendor'],
+      where: { id: productId, vendor: { id: userId } },
     });
     if (!product) {
-      throw new NotFoundException('Product not found');
+      throw new NotFoundException('Product not found or you do not own it.');
     }
-    if (product.vendor.id !== userId) {
-      throw new ForbiddenException('You do not have permission to delete this product');
+
+    const { images, categoryId, ...productData } = dto;
+
+    // Update simple fields
+    Object.assign(product, productData);
+    
+    // Update category if it was sent
+    if (categoryId !== undefined) {
+      if (categoryId) {
+        // Fetch the category entity from the database
+        const categoryRepo = this.productRepository.manager.getRepository(Category);
+        const category = await categoryRepo.findOne({ where: { id: categoryId } });
+        if (!category) {
+          throw new NotFoundException(`Category with ID ${categoryId} not found.`);
+        }
+        product.category = category;
+      } else {
+        product.category = null;
+      }
+    }
+
+    // Update images if they were sent (delete old ones, add new ones)
+    if (images) {
+      product.imageUrl = images.length > 0 ? images[0].src : null;
+      await this.productImageRepository.delete({ product: { id: productId } });
+
+      const imageEntities = images.map((imageObj, index) => 
+        this.productImageRepository.create({ ...imageObj, product, sortOrder: index })
+      );
+      await this.productImageRepository.save(imageEntities);
+    }
+    
+    await this.productRepository.save(product);
+    return this.productRepository.findOneOrFail({ where: { id: productId }, relations: ['images', 'vendor', 'category', 'tags']});
+  }
+
+  async deleteMyProduct(userId: number, productId: number): Promise<{ deleted: boolean }> {
+    const product = await this.productRepository.findOne({
+      where: { id: productId, vendor: { id: userId } },
+    });
+    if (!product) {
+      throw new NotFoundException('Product not found or not owned by user');
     }
     await this.productRepository.delete(productId);
-    return { success: true };
+    return { deleted: true };
+  }
+  
+  async getSalesGraphData(vendorId: number, range: string) {
+    const startDate = new Date();
+    if (range === '30d') startDate.setDate(startDate.getDate() - 30);
+    else if (range === '7d') startDate.setDate(startDate.getDate() - 7);
+
+    const salesData = await this.orderRepository
+      .createQueryBuilder('o')
+      .innerJoin('o.items', 'orderItem')
+      .innerJoin('orderItem.product', 'product')
+      .where('product.vendorId = :vendorId', { vendorId })
+      .andWhere('o.createdAt >= :startDate', { startDate })
+      .select('DATE(o.createdAt)', 'date')
+      .addSelect('SUM(o.total)', 'total')
+      .groupBy('DATE(o.createdAt)')
+      .orderBy('date', 'ASC')
+      .getRawMany();
+      
+    return salesData.map(point => ({ ...point, total: parseFloat(point.total) || 0 }));
   }
 
-  async findPublicVendors({ page = 1, limit = 20, search = '' }) {
-    // ... (Your existing code is preserved)
-    const qb = this.userRepository.createQueryBuilder('user');
-    qb.where('user.roles @> :roles', { roles: [UserRole.VENDOR] });
+  // Your other public and dashboard methods remain here...
+  async findPublicVendors(
+    findAllVendorsDto: FindAllVendorsDto,
+  ): Promise<{ items: User[]; total: number; currentPage: number; totalPages: number }> {
+    const { page = 1, limit = 10, search } = findAllVendorsDto;
+    const skip = (page - 1) * limit;
+
+    let findOptions: any;
+
     if (search) {
-      qb.andWhere('user.storeName ILIKE :search', { search: `%${search}%` });
+      // If there is a search term, create OR conditions for displayName and storeName
+      findOptions = {
+        where: [
+          {
+            roles: ArrayContains([UserRole.VENDOR]),
+            isActive: true,
+            displayName: ILike(`%${search}%`),
+          },
+          {
+            roles: ArrayContains([UserRole.VENDOR]),
+            isActive: true,
+            storeName: ILike(`%${search}%`),
+          },
+        ],
+      };
+    } else {
+      // If there is no search term, find all vendors
+      findOptions = {
+        where: {
+          roles: ArrayContains([UserRole.VENDOR]),
+          isActive: true,
+        },
+      };
     }
-    qb.skip((page - 1) * limit).take(limit).orderBy('user.id', 'DESC');
-    const [vendors, total] = await qb.getManyAndCount();
-    return { data: vendors, total };
-  }
 
+    const [users, total] = await this.userRepository.findAndCount({
+      ...findOptions,
+      take: limit,
+      skip: skip,
+      order: {
+        createdAt: 'DESC',
+      },
+    });
+
+    return {
+      items: users,
+      total,
+      currentPage: page,
+      totalPages: Math.ceil(total / limit),
+    };
+  }
   async getPublicProfile(userId: number) {
     // ... (Your existing code is preserved)
     const user = await this.userRepository.createQueryBuilder('user')
@@ -128,27 +202,41 @@ export class VendorService {
   }
 
   async getDashboardOverview(userId: number) {
-    // ... (Your existing code is preserved)
-    const [productCount, orderCount] = await Promise.all([
-      this.productRepository.count({ where: { vendor: { id: userId } } }),
-      Promise.resolve(0),
-    ]);
+    const productCount = await this.productRepository.count({
+      where: { vendor: { id: userId } },
+    });
+
+    const orderCount = await this.orderRepository
+      .createQueryBuilder('order')
+      .innerJoin('order.items', 'orderItem')
+      .innerJoin('orderItem.product', 'product')
+      .where('product.vendor.id = :userId', { userId })
+      .getCount();
+
     return { productCount, orderCount };
   }
-
   async getVendorProducts(userId: number) {
-    // ... (Your existing code is preserved)
-    const products = await this.productRepository.find({ where: { vendor: { id: userId } } });
+    // Eagerly load product relations
+    const products = await this.productRepository.find({
+      where: { vendor: { id: userId } },
+      relations: ['images', 'category', 'tags'],
+    });
     return Array.isArray(products) ? products : [];
   }
 
-  async updateMyProduct(userId: number, productId: number, dto: any) {
-    // ... (Your existing code is preserved)
-    const product = await this.productRepository.findOne({
-      where: { id: productId, vendor: { id: userId } },
+  async getSales(vendorId: number) {
+    const sales = await this.orderRepository.find({
+      where: {
+        items: {
+          product: {
+            vendor: {
+              id: vendorId,
+            },
+          },
+        },
+      },
+      relations: ['items', 'items.product', 'user'],
     });
-    if (!product) throw new Error('Product not found or not owned by user');
-    Object.assign(product, dto);
-    return this.productRepository.save(product);
+    return sales;
   }
 }

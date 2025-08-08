@@ -1,4 +1,15 @@
-import { IsOptional, IsString, IsNumber, IsBoolean } from 'class-validator';
+import { IsOptional, IsString, IsNumber, IsBoolean, IsArray, ValidateNested, IsInt } from 'class-validator';
+import { Type } from 'class-transformer';
+
+// Re-using the ImageDto definition for consistency
+class ImageDto {
+  @IsString()
+  src: string;
+  @IsString()
+  thumbnailSrc: string;
+  @IsString()
+  lowResSrc: string;
+}
 
 export class UpdateVendorProductDto {
   @IsOptional()
@@ -10,6 +21,7 @@ export class UpdateVendorProductDto {
   description?: string;
 
   @IsOptional()
+  @Type(() => Number)
   @IsNumber()
   price?: number;
 
@@ -18,8 +30,14 @@ export class UpdateVendorProductDto {
   currency?: string;
 
   @IsOptional()
+  @Type(() => Number)
   @IsNumber()
-  stockQuantity?: number;
+  stock_quantity?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  categoryId?: number;
 
   @IsOptional()
   @IsBoolean()
@@ -28,4 +46,11 @@ export class UpdateVendorProductDto {
   @IsOptional()
   @IsString()
   status?: 'publish' | 'draft' | 'pending';
+
+  // ✅ FIX: Add images property to handle updates
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ImageDto)
+  images?: ImageDto[];
 }

@@ -6,8 +6,15 @@ export class ProductImage {
   @PrimaryGeneratedColumn()
   id!: number;
 
+
   @Column()
-  src!: string; // Image URL or path
+  src!: string; // Full-res image URL or path
+
+  @Column({ nullable: true })
+  thumbnailSrc?: string; // Thumbnail image URL or path
+
+  @Column({ nullable: true })
+  lowResSrc?: string; // Low-res image URL or path
 
   @Column({ nullable: true })
   alt?: string; // Optional alt text for accessibility/SEO

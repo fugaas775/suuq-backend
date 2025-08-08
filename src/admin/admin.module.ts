@@ -1,20 +1,17 @@
 import { Module } from '@nestjs/common';
-import { TypeOrmModule } from '@nestjs/typeorm';
 import { AdminController } from './admin.controller';
-import { UsersService } from '../users/users.service';
-import { OrdersService } from '../orders/orders.service';
-import { User } from '../users/entities/user.entity';
-import { Order } from '../orders/entities/order.entity';
 import { RolesGuard } from '../auth/roles.guard';
 import { WithdrawalsModule } from '../withdrawals/withdrawals.module';
-import { CartModule } from '../cart/cart.module';
-import { MpesaModule } from '../mpesa/mpesa.module';
-import { TelebirrModule } from '../telebirr/telebirr.module';
-import { NotificationsModule } from '../notifications/notifications.module';
+
+// 1. Import the modules that provide the services you need
+import { UsersModule } from '../users/users.module';
+import { OrdersModule } from '../orders/orders.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([User, Order]), WithdrawalsModule, CartModule, MpesaModule, TelebirrModule, NotificationsModule],
+  // 2. Add UsersModule and OrdersModule here
+  imports: [UsersModule, OrdersModule, WithdrawalsModule],
   controllers: [AdminController],
-  providers: [UsersService, OrdersService, RolesGuard],
+  // 3. Remove the services from providers. They are now correctly provided by the imported modules.
+  providers: [RolesGuard], 
 })
 export class AdminModule {}

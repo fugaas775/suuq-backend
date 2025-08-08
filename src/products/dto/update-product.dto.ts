@@ -1,39 +1,60 @@
-import { IsOptional, IsString, IsNumber, IsArray, IsBoolean, IsIn } from 'class-validator';
+import { IsOptional, IsString, IsNumber, IsArray, IsBoolean, IsIn, ValidateNested, IsInt } from 'class-validator';
 import { Type } from 'class-transformer';
+
+class ImageDto {
+  @IsString()
+  src: string;
+  @IsString()
+  thumbnailSrc: string;
+  @IsString()
+  lowResSrc: string;
+}
 
 export class UpdateProductDto {
   @IsOptional()
   @IsString()
-  readonly name?: string;
+  name?: string;
 
   @IsOptional()
   @Type(() => Number)
   @IsNumber()
-  readonly price?: number;
+  price?: number;
 
   @IsOptional()
   @IsString()
-  readonly description?: string;
+  description?: string;
 
   @IsOptional()
   @IsArray()
   @IsString({ each: true })
-  readonly tags?: string[];
+  tags?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ImageDto)
+  images?: ImageDto[];
+
+  // ✨ FINAL FIX: Add the categoryId property with the @Type decorator
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  categoryId?: number;
 
   @IsOptional()
   @IsString()
-  readonly sku?: string;
+  sku?: string;
 
   @IsOptional()
   @Type(() => Number)
   @IsNumber()
-  readonly stock_quantity?: number;
+  stock_quantity?: number;
 
   @IsOptional()
   @IsBoolean()
-  readonly manage_stock?: boolean;
+  manage_stock?: boolean;
 
   @IsOptional()
   @IsIn(['publish', 'draft', 'pending'])
-  readonly status?: 'publish' | 'draft' | 'pending';
+  status?: 'publish' | 'draft' | 'pending';
 }

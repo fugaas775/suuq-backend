@@ -50,7 +50,9 @@ export class CategoriesService {
   async create(dto: CreateCategoryDto): Promise<Category> {
     const slug = dto.slug ? slugify(dto.slug) : slugify(dto.name.toLowerCase().trim());
     const exists = await this.categoryRepo.findOne({ where: { slug } });
-    if (exists) throw new BadRequestException('Slug already exists');
+    if (exists) {
+      throw new BadRequestException(`Slug already exists for category: '${exists.name}'`);
+    }
 
     const category = this.categoryRepo.create({
       name: dto.name,

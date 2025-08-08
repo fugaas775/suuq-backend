@@ -1,13 +1,22 @@
-import { IsString, IsNumber, IsOptional, IsArray, IsBoolean, IsIn, IsNotEmpty } from 'class-validator';
+import { IsString, IsNumber, IsOptional, IsArray, IsBoolean, IsIn, IsNotEmpty, ValidateNested, IsInt } from 'class-validator';
 import { Type } from 'class-transformer';
+
+class ImageDto {
+  @IsString()
+  src: string;
+  @IsString()
+  thumbnailSrc: string;
+  @IsString()
+  lowResSrc: string;
+}
 
 export class CreateProductDto {
   @IsString()
-  name!: string;
+  name: string;
 
   @Type(() => Number)
   @IsNumber()
-  price!: number;
+  price: number;
 
   @IsOptional()
   @IsString()
@@ -20,17 +29,19 @@ export class CreateProductDto {
 
   @IsOptional()
   @IsArray()
-  @IsString({ each: true })
-  images?: string[]; // Accepts image URLs
+  @ValidateNested({ each: true })
+  @Type(() => ImageDto)
+  images?: ImageDto[];
 
+  // ✨ FINAL FIX: Add the @Type decorator here
   @IsOptional()
   @Type(() => Number)
-  @IsNumber()
+  @IsInt()
   categoryId?: number;
 
   @IsNotEmpty()
   @IsString()
-  currency!: string; // e.g., 'ETB', 'KES'
+  currency: string;
 
   @IsOptional()
   @IsString()

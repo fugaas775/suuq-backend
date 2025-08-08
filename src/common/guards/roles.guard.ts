@@ -24,6 +24,8 @@ export class RolesGuard implements CanActivate {
     }
 
     const { user } = context.switchToHttp().getRequest();
+    // Debug log for roles
+    console.debug('[RolesGuard] user.roles:', user?.roles);
 
     // If the request doesn't have a user object or the user has no roles, deny access.
     if (!user || !Array.isArray(user.roles)) {

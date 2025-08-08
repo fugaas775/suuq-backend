@@ -15,11 +15,14 @@ import {
   DeleteDateColumn,
   Index,
 } from 'typeorm';
-
-import { Exclude } from 'class-transformer';
-import { Product } from '../../products/entities/product.entity';
 import { UserRole } from '../../auth/roles.enum';
+import { Product } from '../../products/entities/product.entity';
 import { Review } from '../../reviews/entities/review.entity';
+
+export interface VerificationDocument {
+  url: string;
+  name: string;
+}
 
 @Entity('user')
 export class User {
@@ -35,7 +38,6 @@ export class User {
   @Index()
   email!: string;
 
-  @Exclude()
   @Column({ nullable: true })
   password?: string;
 
@@ -119,10 +121,11 @@ export class User {
   verificationStatus!: VerificationStatus;
 
   @Column({
-    type: 'simple-array',
+    type: 'jsonb',
     nullable: true,
+    default: '[]',
   })
-  verificationDocuments?: string[] | null;
+  verificationDocuments?: VerificationDocument[] | null;
 
   @Column({ default: false })
   verified!: boolean;

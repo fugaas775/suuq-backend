@@ -9,6 +9,8 @@ import { MpesaService } from '../mpesa/mpesa.service';
 import { TelebirrService } from '../telebirr/telebirr.service';
 import { User } from '../users/entities/user.entity';
 import { NotificationsService } from '../notifications/notifications.service';
+import { plainToInstance } from 'class-transformer';
+import { OrderResponseDto, OrderItemResponseDto } from './dto/order-response.dto';
 
 
 @Injectable()
@@ -17,7 +19,7 @@ export class OrdersService {
    * Find all orders for admin with pagination and optional status filter.
    * Returns { orders, total } for pagination.
    */
-  async findAllForAdmin(query: { page?: number; pageSize?: number; status?: string }): Promise<{ orders: Order[]; total: number }> {
+  async findAllForAdmin(query: { page?: number; limit?: number; status?: string }): Promise<{ data: OrderResponseDto[]; total: number }> {
     const qb = this.orderRepository.createQueryBuilder('order')
       .leftJoinAndSelect('order.user', 'user')
       .leftJoinAndSelect('order.items', 'items');
@@ -27,11 +29,21 @@ export class OrdersService {
     }
 
     const page = query.page && query.page > 0 ? query.page : 1;
-    const pageSize = query.pageSize && query.pageSize > 0 ? query.pageSize : 20;
-    qb.skip((page - 1) * pageSize).take(pageSize);
+    const limit = query.limit && query.limit > 0 ? query.limit : 20;
+    qb.skip((page - 1) * limit).take(limit);
 
     const [orders, total] = await qb.getManyAndCount();
-    return { orders, total };
+    const response = orders.map(order => plainToInstance(OrderResponseDto, {
+      ...order,
+      userId: order.user?.id,
+      delivererId: order.deliverer?.id,
+      items: order.items?.map(item => ({
+        productId: item.product?.id,
+        quantity: item.quantity,
+        price: item.price,
+      })) || [],
+    }));
+    return { data: response, total };
   }
 
   /**
@@ -164,11 +176,24 @@ export class OrdersService {
     }
   }
 
-  async findAllForUser(userId: number): Promise<Order[]> {
-    return this.orderRepository.find({
-      where: { user: { id: userId } },
-      order: { createdAt: 'DESC' },
-    });
+  async findAllForUser(userId: number, page: number = 1, limit: number = 10): Promise<{ data: OrderResponseDto[]; total: number }> {
+    const qb = this.orderRepository.createQueryBuilder('order')
+      .where('order.userId = :userId', { userId })
+      .orderBy('order.createdAt', 'DESC')
+      .skip((page - 1) * limit)
+      .take(limit);
+    const [orders, total] = await qb.getManyAndCount();
+    const response = orders.map(order => plainToInstance(OrderResponseDto, {
+      ...order,
+      userId: order.user?.id,
+      delivererId: order.deliverer?.id,
+      items: order.items?.map(item => ({
+        productId: item.product?.id,
+        quantity: item.quantity,
+        price: item.price,
+      })) || [],
+    }));
+    return { data: response, total };
   }
 
   async findOneForUser(userId: number, orderId: number): Promise<Order> {

@@ -1,5 +1,6 @@
 // ...existing imports...
 import { CreateVendorProductDto } from './dto/create-vendor-product.dto';
+import { UpdateVendorProductDto } from './dto/update-vendor-product.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
 import { OrderStatus } from '../orders/entities/order.entity';
 import {
@@ -23,6 +24,14 @@ import { UserRole } from '../auth/roles.enum';
 
 @Controller()
 export class VendorController {
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.VENDOR)
+  @Get('vendor/sales-graph')
+  async getSalesGraph(@Query('range') range: string, @Req() req: any) {
+    const userId = req.user.id;
+    const graphData = await this.vendorService.getSalesGraphData(userId, range);
+    return { points: graphData };
+  }
   constructor(private readonly vendorService: VendorService) {}
 
   @Get('vendors')
@@ -71,9 +80,16 @@ export class VendorController {
   @Patch('vendor/products/:productId')
   async updateMyProduct(
     @Req() req: any,
-    @Param('productId') productId: number,
-    @Body() dto: any, // Replace with UpdateVendorProductDto if available
+    @Param('productId', ParseIntPipe) productId: number,
+    @Body() dto: UpdateVendorProductDto,
   ) {
-    return this.vendorService.updateMyProduct(req.user.id, Number(productId), dto);
+    return this.vendorService.updateMyProduct(req.user.id, productId, dto);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.VENDOR)
+  @Get('vendor/sales')
+  getSales(@Req() req: any) {
+    return this.vendorService.getSales(req.user.id);
   }
 }

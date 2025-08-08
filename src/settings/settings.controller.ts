@@ -60,6 +60,7 @@ export class SettingsController {
 
   // This endpoint is now correctly PUBLIC
   @Get('ui-settings')
+  @Get() // Also handle the root /settings endpoint
   async getAll() {
     return this.settingsService.getAllSettings();
   }

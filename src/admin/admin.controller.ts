@@ -17,14 +17,15 @@ import {
 import { UsersService } from '../users/users.service';
 import { OrdersService } from '../orders/orders.service';
 import { RolesGuard } from '../auth/roles.guard';
-import { AuthGuard } from '@nestjs/passport';
+import { AuthGuard } from '@nestjs/passport'; // Import the built-in guard
 import { WithdrawalsService } from '../withdrawals/withdrawals.service';
 import { WithdrawalStatus } from '../withdrawals/entities/withdrawal.entity';
 import { Roles } from '../common/decorators/roles.decorator';
 import { UserRole } from '../auth/roles.enum';
 import { CreateAdminDto } from './dto/create-admin.dto';
 
-@UseGuards(AuthGuard('jwt'), RolesGuard)
+// ✨ FINAL FIX: Use AuthGuard('jwt') to match your other working controllers
+@UseGuards(AuthGuard('jwt'), RolesGuard) 
 @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
 @Controller('admin')
 export class AdminController {
@@ -35,11 +36,6 @@ export class AdminController {
   ) {}
 
   // ================== USER MANAGEMENT ENDPOINTS ==================
-
-  /**
-   * GET /api/admin/users
-   * Retrieve all users with pagination and optional role filtering
-   */
   @Get('users')
   async getAllUsers(
     @Query('role') role?: string, 
@@ -54,28 +50,16 @@ export class AdminController {
     });
   }
 
-  /**
-   * GET /api/admin/users/:id
-   * Retrieve a specific user by ID
-   */
   @Get('users/:id')
   async getUser(@Param('id', ParseIntPipe) id: number) {
     return this.usersService.findById(id);
   }
 
-  /**
-   * PATCH /api/admin/users/:id
-   * Update user information
-   */
   @Patch('users/:id')
   async updateUser(@Param('id', ParseIntPipe) id: number, @Body() data: UpdateUserDto) {
     return this.usersService.update(id, data);
   }
 
-  /**
-   * POST /api/admin/users
-   * Create a new ADMIN user (SUPER_ADMIN only)
-   */
   @Post('users')
   @Roles(UserRole.SUPER_ADMIN)
   async createAdminUser(@Body() dto: CreateAdminDto) {
@@ -85,10 +69,6 @@ export class AdminController {
     });
   }
 
-  /**
-   * PATCH /api/admin/users/:id/roles
-   * Update user roles (SUPER_ADMIN only)
-   */
   @Patch('users/:id/roles')
   @Roles(UserRole.SUPER_ADMIN)
   async updateUserRoles(
@@ -98,10 +78,6 @@ export class AdminController {
     return this.usersService.updateUserRoles(id, dto.roles);
   }
 
-  /**
-   * PATCH /api/admin/users/:id/deactivate
-   * Deactivate a user account
-   */
   @Patch('users/:id/deactivate')
   @HttpCode(HttpStatus.OK)
   async deactivateUser(@Param('id', ParseIntPipe) id: number) {
@@ -109,31 +85,22 @@ export class AdminController {
   }
 
   // ================== ORDER MANAGEMENT ENDPOINTS ==================
-
-  /**
-   * GET /api/admin/orders
-   * Retrieve all orders with filtering and pagination
-   */
   @Get('orders')
-  async getAllOrders(@Query() query: any) {
+  async getAllOrders(@Query() query: { page?: number; pageSize?: number; status?: string }) {
     return this.ordersService.findAllForAdmin(query);
   }
 
-  /**
-   * PATCH /api/admin/orders/:id/cancel
-   * Cancel an order as admin
-   */
   @Patch('orders/:id/cancel')
   async cancelOrder(@Param('id', ParseIntPipe) id: number) {
     return this.ordersService.cancelOrderForAdmin(id);
   }
 
-  // ================== PLATFORM STATS ENDPOINT ==================
+  @Patch('orders/:id/assign-deliverer')
+  async assignDeliverer(@Param('id', ParseIntPipe) id: number, @Body('delivererId', ParseIntPipe) delivererId: number) {
+    return this.ordersService.assignDeliverer(id, delivererId);
+  }
 
-  /**
-   * GET /api/admin/stats
-   * Get platform statistics and analytics
-   */
+  // ================== PLATFORM STATS ENDPOINT ==================
   @Get('stats')
   async getStats(): Promise<AdminStatsDto> {
     return {
@@ -148,33 +115,16 @@ export class AdminController {
   }
 
   // ================== WITHDRAWAL MANAGEMENT ENDPOINTS ==================
-
-  /**
-   * GET /api/admin/withdrawals
-   * List all withdrawal requests with optional status filtering
-   */
   @Get('withdrawals')
-  async getAllWithdrawals(@Query('status') status?: string) {
-    let withdrawalStatus;
-    if (status && ['PENDING', 'APPROVED', 'REJECTED'].includes(status.toUpperCase())) {
-      withdrawalStatus = status.toUpperCase() as WithdrawalStatus;
-    }
-    return this.withdrawalsService.getAllWithdrawals(withdrawalStatus);
+  async getAllWithdrawals(@Query('status') status?: WithdrawalStatus) {
+    return this.withdrawalsService.getAllWithdrawals(status);
   }
 
-  /**
-   * PATCH /api/admin/withdrawals/:id/approve
-   * Approve a withdrawal request
-   */
   @Patch('withdrawals/:id/approve')
   async approveWithdrawal(@Param('id', ParseIntPipe) id: number) {
     return this.withdrawalsService.approveWithdrawal(id);
   }
 
-  /**
-   * PATCH /api/admin/withdrawals/:id/reject
-   * Reject a withdrawal request
-   */
   @Patch('withdrawals/:id/reject')
   async rejectWithdrawal(@Param('id', ParseIntPipe) id: number) {
     return this.withdrawalsService.rejectWithdrawal(id);

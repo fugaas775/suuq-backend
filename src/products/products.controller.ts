@@ -36,6 +36,8 @@ export class ProductsController {
   @UseGuards(AuthGuard('jwt'), RolesGuard)
   @Roles(UserRole.VENDOR)
   create(@Body() createProductDto: CreateProductDto, @Req() req: any) {
+    console.log('Raw request body:', JSON.stringify(req.body));
+    console.log('Parsed DTO:', JSON.stringify(createProductDto));
     return this.productsService.create({
       ...createProductDto,
       vendorId: req.user.id,

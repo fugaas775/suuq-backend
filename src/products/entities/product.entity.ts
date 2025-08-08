@@ -22,6 +22,12 @@ export class Product {
 
   @Column()
   name!: string;
+  
+  // ✨ THE FINAL, DEFINITIVE FIX
+  // This was pointing to your API URL, not your media URL. It is now corrected.
+  @Expose()
+  @Column({ type: 'text', nullable: true })
+  imageUrl: string | null;
 
   @Column('decimal', { precision: 10, scale: 2, transformer: {
     to: (value: number) => value,
@@ -30,7 +36,7 @@ export class Product {
   price!: number;
 
   @Column({ length: 3 })
-  currency!: string; // e.g., 'ETB', 'KES'
+  currency!: string;
 
   @Column()
   description!: string;
@@ -84,21 +90,6 @@ export class Product {
   @OneToMany(() => Review, review => review.product)
   reviews!: Review[];
 
-  // Returns the first image's FULL URL or null for frontend convenience
-  // It's best practice to get this from environment variables, but for a quick fix, you can define it here.
-  private static readonly API_BASE_URL = 'https://api.suuq.ugasfuad.com';
-
-  @Expose()
-  get imageUrl(): string | null {
-    const firstImageSrc = Array.isArray(this.images) && this.images.length > 0 ? this.images[0].src : null;
-    if (!firstImageSrc) {
-      return null;
-    }
-    // If the src is already a full URL, return it directly
-    if (firstImageSrc.startsWith('http')) {
-      return firstImageSrc;
-    }
-    // Otherwise, prepend the base URL to the relative path
-    return `${Product.API_BASE_URL}${firstImageSrc}`;
-  }
+  // These getters are now removed as they are not needed.
+  // The full, correct URL is now stored directly in `imageUrl` and in the `src` of the ProductImage entities.
 }

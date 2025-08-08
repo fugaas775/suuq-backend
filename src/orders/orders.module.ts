@@ -8,6 +8,7 @@ import { ProductsModule } from '../products/products.module';
 import { TelebirrModule } from '../telebirr/telebirr.module';
 import { MpesaModule } from '../mpesa/mpesa.module';
 import { NotificationsModule } from '../notifications/notifications.module';
+// import { AdminOrdersController } from './admin-orders.controller'; // <-- DELETE THIS LINE
 
 @Module({
   imports: [
@@ -21,8 +22,8 @@ import { NotificationsModule } from '../notifications/notifications.module';
   controllers: [OrdersController],
   providers: [OrdersService],
   exports: [
-    TypeOrmModule, // Export repositories
-    OrdersService, // Export service
+    TypeOrmModule,
+    OrdersService,
   ],
 })
 export class OrdersModule {}

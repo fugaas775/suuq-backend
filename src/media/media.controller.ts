@@ -1,5 +1,3 @@
-// Backend: src/media/media.controller.ts
-
 import {
   Controller,
   Post,
@@ -8,41 +6,61 @@ import {
   UseInterceptors,
   ParseFilePipe,
   MaxFileSizeValidator,
-  FileTypeValidator, // Keep the import, but we won't use it
+  FileTypeValidator,
+  BadRequestException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { DoSpacesService } from './do-spaces.service';
+import * as sharp from 'sharp';
 
 @Controller('media')
 export class MediaController {
+  constructor(private readonly doSpacesService: DoSpacesService) {}
+
   @Post('upload')
   @UseGuards(JwtAuthGuard)
   @UseInterceptors(FileInterceptor('file'))
-  uploadFile(
+  async uploadImage(
     @UploadedFile(
       new ParseFilePipe({
-        // We only validate the size now.
         validators: [
           new MaxFileSizeValidator({ maxSize: 1024 * 1024 * 10 }), // 10MB
-          // The faulty FileTypeValidator has been removed.
+          new FileTypeValidator({ fileType: 'image' }),
         ],
-        // Add this to prevent errors on an empty pipe
         fileIsRequired: true,
       }),
     )
-    file: Express.MulterS3.File,
+    // ✨ FINAL FIX: Update the file type to the standard Multer file
+    file: Express.Multer.File,
   ) {
-    // Your manual safety check is still here, which is great!
-    if (!file.mimetype || !/image\/(jpeg|png|gif)/.test(file.mimetype)) {
-      return {
-        error: true,
-        message: `Invalid file type: ${file.mimetype}. Only image files are allowed.`,
-      };
-    }
-    
+    // Upload full-res
+    const fullUrl = await this.doSpacesService.uploadFile(
+      file.buffer,
+      `full_${Date.now()}_${file.originalname}`,
+      file.mimetype,
+    );
+
+    // Create and upload thumbnail (resize to 200px)
+    const thumbBuffer = await sharp(file.buffer).resize(200).toBuffer();
+    const thumbUrl = await this.doSpacesService.uploadFile(
+      thumbBuffer,
+      `thumb_${Date.now()}_${file.originalname}`,
+      file.mimetype,
+    );
+
+    // Create and upload low-res (resize to 50px)
+    const lowResBuffer = await sharp(file.buffer).resize(50).toBuffer();
+    const lowResUrl = await this.doSpacesService.uploadFile(
+      lowResBuffer,
+      `lowres_${Date.now()}_${file.originalname}`,
+      file.mimetype,
+    );
+
     return {
-      url: file.location,
-      filename: file.key,
+      src: fullUrl,
+      thumbnailSrc: thumbUrl,
+      lowResSrc: lowResUrl,
     };
   }
 }

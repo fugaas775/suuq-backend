@@ -1,8 +1,9 @@
 import 'dotenv/config';
 import 'reflect-metadata';
+const express = require('express');
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
-import { ValidationPipe, Logger, ClassSerializerInterceptor } from '@nestjs/common';
+import { ValidationPipe, Logger, ClassSerializerInterceptor, BadRequestException } from '@nestjs/common';
 import { GlobalExceptionFilter } from './common/global-exception.filter';
 import { Reflector } from '@nestjs/core';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
@@ -24,20 +25,43 @@ async function bootstrap() {
     exposedHeaders: ['Authorization'],
   });
 
-  // Log incoming requests for debugging
+  // Log incoming requests and bodies for debugging
   app.use((req, res, next) => {
-    // eslint-disable-next-line no-console
+    console.log('--- Logging middleware triggered ---');
     console.log(`[${req.method}] ${req.url}`);
+    console.log('Request headers:', req.headers);
+
+    // Do not attempt to log body for multipart/form-data
+    const contentType = req.headers['content-type'];
+    if (contentType && contentType.includes('multipart/form-data')) {
+      console.log('Incoming request body: <multipart/form-data stream>');
+    } else if (typeof req.body !== 'undefined') {
+      // Ensure body is not empty before trying to stringify
+      const bodyString = JSON.stringify(req.body);
+      console.log('Incoming request body:', bodyString === '{}' ? '<empty object>' : bodyString);
+    } else {
+      console.log('Incoming request body: <undefined>');
+    }
+    
     next();
   });
   
   // Set global prefix for all routes
   app.setGlobalPrefix('api');
 
-  // --- Keep your other global configurations ---
+  // Add logger for validation errors
+  const logger = new Logger('ValidationPipe');
+
   app.useGlobalPipes(new ValidationPipe({
     whitelist: true,
     transform: true,
+    exceptionFactory: (errors) => {
+      const messages = errors.map(error =>
+        `${error.property}: ${Object.values(error.constraints).join(', ')}`
+      );
+      logger.warn(`Validation failed: ${messages}`);
+      return new BadRequestException(messages);
+    },
   }));
 
   app.useGlobalInterceptors(new ClassSerializerInterceptor(app.get(Reflector)));
