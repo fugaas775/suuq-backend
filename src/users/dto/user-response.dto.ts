@@ -4,6 +4,11 @@ import { UserRole } from '../../auth/roles.enum';
 @Exclude()
 export class UserResponseDto {
   @Expose()
+  verificationStatus?: string;
+
+  @Expose()
+  verified?: boolean;
+  @Expose()
   id!: number;
 
   @Expose()

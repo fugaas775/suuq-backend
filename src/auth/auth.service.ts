@@ -1,3 +1,4 @@
+  // ...existing code...
 import {
   Injectable,
   UnauthorizedException,
@@ -36,6 +37,10 @@ export class AuthService {
     } else {
       this.logger.warn('GOOGLE_WEB_CLIENT_ID is not configured. Google Sign-In will be disabled.');
     }
+  }
+
+  public getUsersService() {
+    return this.usersService;
   }
 
   async register(dto: RegisterDto): Promise<User> {

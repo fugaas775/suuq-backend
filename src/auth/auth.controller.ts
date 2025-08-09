@@ -64,8 +64,10 @@ export class AuthController {
 
   @Get('profile')
   @UseGuards(JwtAuthGuard)
-  getProfile(@Request() req: AuthenticatedRequest) {
-    return plainToInstance(UserResponseDto, req.user, { excludeExtraneousValues: true });
+  async getProfile(@Request() req: AuthenticatedRequest) {
+    // Fetch the full user from the database to ensure all fields are present
+    const user = await this.authService.getUsersService().findById(req.user.id);
+    return plainToInstance(UserResponseDto, user, { excludeExtraneousValues: true });
   }
 
   @Post('forgot-password')

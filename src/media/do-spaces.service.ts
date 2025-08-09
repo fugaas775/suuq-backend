@@ -35,6 +35,7 @@ export class DoSpacesService {
       Body: buffer,
       ACL: 'public-read',
       ContentType: mimetype,
+      ContentDisposition: 'inline',
     });
 
     await this.s3.send(command);
