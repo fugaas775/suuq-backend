@@ -141,9 +141,13 @@ export class VendorService {
 
   // Your other public and dashboard methods remain here...
   async findPublicVendors(
-    findAllVendorsDto: FindAllVendorsDto,
-  ): Promise<{ items: User[]; total: number; currentPage: number; totalPages: number }> {
-    const { page = 1, limit = 10, search } = findAllVendorsDto;
+    findAllVendorsDto: FindAllVendorsDto & {
+      sort?: 'name' | 'recent' | 'popular' | 'verifiedAt';
+      verificationStatus?: 'APPROVED' | 'PENDING' | 'REJECTED';
+      role?: 'VENDOR';
+    },
+  ): Promise<{ items: any[]; total: number; currentPage: number; totalPages: number }> {
+    const { page = 1, limit = 10, search, sort = 'recent', verificationStatus } = findAllVendorsDto;
     const skip = (page - 1) * limit;
 
     let findOptions: any;
@@ -174,17 +178,45 @@ export class VendorService {
       };
     }
 
+    const order: any = {};
+    if (sort === 'name') order.displayName = 'ASC';
+    else if (sort === 'verifiedAt') order.verifiedAt = 'DESC';
+    else if (sort === 'popular') order.numberOfSales = 'DESC';
+    else order.createdAt = 'DESC';
+
+    // filter by verificationStatus when provided (Home uses APPROVED)
+    if (verificationStatus) {
+      findOptions.where = Array.isArray(findOptions.where) ? findOptions.where.map((w: any) => ({
+        ...w,
+        verificationStatus,
+      })) : { ...findOptions.where, verificationStatus };
+    }
+
     const [users, total] = await this.userRepository.findAndCount({
       ...findOptions,
       take: limit,
-      skip: skip,
-      order: {
-        createdAt: 'DESC',
-      },
+      skip,
+      order,
+      select: [
+        'id', 'displayName', 'storeName', 'avatarUrl', 'verificationStatus', 'verified',
+        'rating', 'numberOfSales', 'verifiedAt', 'createdAt', 'supportedCurrencies', 'registrationCountry', 'registrationCity'
+      ] as any,
     });
 
+    const items = users.map((u) => ({
+      id: u.id,
+      displayName: u.displayName,
+      storeName: u.storeName,
+      avatarUrl: u.avatarUrl,
+      verificationStatus: u.verificationStatus,
+      isVerified: !!u.verified,
+      rating: u.rating ?? 0,
+      productCount: undefined, // placeholder; can join or compute later
+      certificateCount: Array.isArray((u as any).verificationDocuments) ? (u as any).verificationDocuments.length : undefined,
+    }));
+
     return {
-      items: users,
+      items,
       total,
       currentPage: page,
       totalPages: Math.ceil(total / limit),

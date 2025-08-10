@@ -35,8 +35,24 @@ export class VendorController {
   constructor(private readonly vendorService: VendorService) {}
 
   @Get('vendors')
-  async findPublicVendors(@Query() query: any) {
-    return this.vendorService.findPublicVendors(query);
+  async findPublicVendors(
+    @Query('q') q?: string,
+    @Query('page') page: number = 1,
+    @Query('limit') limit: number = 20,
+    @Query('sort') sort: 'name' | 'recent' | 'popular' | 'verifiedAt' = 'recent',
+    @Query('verificationStatus') verificationStatus?: 'APPROVED' | 'PENDING' | 'REJECTED',
+    @Query('role') role?: 'VENDOR',
+  ) {
+    const { items, total, currentPage, totalPages } = await this.vendorService.findPublicVendors({
+      page: Number(page) || 1,
+      limit: Math.min(Number(limit) || 20, 100),
+      search: q,
+      sort,
+      verificationStatus,
+      role,
+    } as any);
+
+    return { items, page: currentPage, limit: Math.min(Number(limit) || 20, 100), total };
   }
 
   @Get('vendors/:id')

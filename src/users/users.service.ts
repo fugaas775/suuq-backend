@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, MoreThan } from 'typeorm';
 import { User, VerificationStatus } from './entities/user.entity'; // Import VerificationStatus enum
@@ -8,6 +8,7 @@ import * as bcrypt from 'bcrypt';
 
 @Injectable()
 export class UsersService {
+  private readonly logger = new Logger(UsersService.name);
   constructor(
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
@@ -154,6 +155,61 @@ export class UsersService {
   }
 
   /**
+   * Normalize verificationDocuments into a standard array of { url, name }.
+   * Handles legacy stringified JSON and null/undefined.
+   */
+  normalizeVerificationDocuments(input: any): { url: string; name: string }[] {
+    if (!input) return [];
+    let docs: any = input;
+    if (typeof input === 'string') {
+      try {
+        docs = JSON.parse(input);
+      } catch (e) {
+        this.logger.warn(`Failed to parse verificationDocuments string: ${e}`);
+        return [];
+      }
+    }
+    if (!Array.isArray(docs)) return [];
+    return docs
+      .filter((d) => d && (d.url || (d.src && typeof d.src === 'string'))) // tolerate {src}
+      .map((d) => ({ url: d.url || d.src, name: d.name || d.filename || 'document' }));
+  }
+
+  /**
+   * Public certificates for a vendor. Returns [] unless APPROVED.
+   */
+  async getPublicCertificates(userId: number): Promise<{ url: string; name: string }[]> {
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+    if (!user) return [];
+    if (user.verificationStatus !== VerificationStatus.APPROVED) return [];
+    return this.normalizeVerificationDocuments(user.verificationDocuments);
+  }
+
+  /**
+   * Admin action: set verification status (APPROVED/REJECTED) and log audit event.
+   * Does not modify verificationDocuments.
+   */
+  async setVerificationStatus(
+    userId: number,
+    status: VerificationStatus.APPROVED | VerificationStatus.REJECTED,
+    actedBy?: string,
+  ): Promise<User> {
+    const user = await this.findById(userId);
+    // Idempotent updates
+    user.verificationStatus = status;
+    if (status === VerificationStatus.APPROVED) {
+      user.verified = true;
+      user.verifiedAt = user.verifiedAt || new Date();
+    }
+    user.updatedBy = actedBy;
+    const saved = await this.userRepository.save(user);
+    this.logger.log(
+      `Verification status changed: userId=${userId} status=${status} by=${actedBy || 'system'}`,
+    );
+    return saved;
+  }
+
+  /**
    * Deactivate a user.
    */
   async deactivate(id: number): Promise<User> {
@@ -174,6 +230,27 @@ export class UsersService {
   async reactivate(id: number): Promise<User> {
     await this.userRepository.update(id, { isActive: true });
     return this.findById(id);
+  }
+
+  /**
+   * Change the password for the given user.
+   * - If a current password exists, verify it before changing.
+   * - If no current password (e.g., social login), allow setting a new one directly.
+   */
+  async changePassword(userId: number, currentPassword: string | undefined, newPassword: string): Promise<void> {
+    const user = await this.findById(userId);
+    if (!newPassword || newPassword.length < 8) {
+      throw new Error('New password must be at least 8 characters long.');
+    }
+    if (user.password) {
+      const ok = await bcrypt.compare(currentPassword || '', user.password);
+      if (!ok) {
+        throw new Error('Current password is incorrect.');
+      }
+    }
+    const hash = await bcrypt.hash(newPassword, 10);
+    user.password = hash;
+    await this.userRepository.save(user);
   }
 
   /**

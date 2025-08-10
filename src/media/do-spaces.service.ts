@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
-import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
+import { getSignedUrl as awsGetSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 @Injectable()
 export class DoSpacesService {
@@ -42,5 +43,36 @@ export class DoSpacesService {
 
     // ✨ THE FINAL FIX: Construct the correct public URL
     return `https://${this.bucket}.${this.region}.digitaloceanspaces.com/${filename}`;
+  }
+
+  /**
+   * Build a short-lived signed URL for private objects.
+   * Allows setting response content type and disposition for inline preview.
+   */
+  async getSignedUrl(
+    key: string,
+    ttlSecs = 300,
+    opts?: { contentType?: string; inlineFilename?: string }
+  ): Promise<string> {
+    const command = new GetObjectCommand({
+      Bucket: this.bucket,
+      Key: key,
+      ResponseContentType: opts?.contentType,
+      ResponseContentDisposition: opts?.inlineFilename
+        ? `inline; filename="${opts.inlineFilename}"`
+        : 'inline',
+    });
+    return awsGetSignedUrl(this.s3 as any, command as any, { expiresIn: ttlSecs });
+  }
+
+  /** Extract the object key from a full Spaces URL. */
+  extractKeyFromUrl(url: string): string | null {
+    try {
+      const u = new URL(url);
+      // URL path starts with '/', strip it
+      return u.pathname.startsWith('/') ? u.pathname.slice(1) : u.pathname;
+    } catch {
+      return null;
+    }
   }
 }

@@ -12,7 +12,7 @@ export const dataSourceOptions: DataSourceOptions = {
   database: process.env.DB_DATABASE,
   entities: [__dirname + '/**/*.entity.{ts,js}'],
   migrations: [__dirname + '/migrations/*.{ts,js}'],
-  synchronize: false, // Should always be false in production
+  synchronize: process.env.NODE_ENV === 'test' ? true : false, // true in tests, false otherwise
   logging: process.env.NODE_ENV === 'development', // Only log queries in development
 };
 

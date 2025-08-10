@@ -5,6 +5,7 @@ import {
   ConflictException,
   Logger,
   InternalServerErrorException,
+  BadRequestException,
 } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
@@ -38,6 +39,18 @@ export class AuthService {
       this.logger.warn('GOOGLE_WEB_CLIENT_ID is not configured. Google Sign-In will be disabled.');
     }
   }
+
+    /** Change password for current user, validating current password if set */
+    async changePassword(userId: number, current: string | undefined, next: string): Promise<void> {
+      const user = await this.usersService.findById(userId);
+      // If user has a password set, require current match
+      if (user.password) {
+        if (!current) throw new BadRequestException('Current password is required');
+        const ok = await bcrypt.compare(current, user.password);
+        if (!ok) throw new UnauthorizedException('Current password is incorrect');
+      }
+  await this.usersService.changePassword(userId, current, next);
+    }
 
   public getUsersService() {
     return this.usersService;

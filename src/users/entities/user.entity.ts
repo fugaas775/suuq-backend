@@ -3,6 +3,7 @@ export enum VerificationStatus {
   PENDING = 'PENDING',
   APPROVED = 'APPROVED',
   REJECTED = 'REJECTED',
+  SUSPENDED = 'SUSPENDED',
 }
 
 import {
@@ -129,6 +130,9 @@ export class User {
 
   @Column({ default: false })
   verified!: boolean;
+
+  @Column({ type: 'timestamp', nullable: true })
+  verifiedAt?: Date | null;
 
   @Column({ default: true })
   isActive!: boolean;

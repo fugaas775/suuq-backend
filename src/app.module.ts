@@ -57,7 +57,7 @@ import { AppService } from './app.service';
     FirebaseModule,
     MediaModule,
     VerificationModule,
-    AdminModule,
+  AdminModule,
   ],
   controllers: [AppController],
   providers: [AppService],

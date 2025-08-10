@@ -1,5 +1,5 @@
 import {
-  Controller, Post, Get, Body, Request, UseGuards, HttpCode, HttpStatus, UnauthorizedException,
+  Controller, Post, Get, Body, Request, UseGuards, HttpCode, HttpStatus, UnauthorizedException, Patch, Put,
 } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
@@ -12,6 +12,8 @@ import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { plainToInstance } from 'class-transformer';
 import { AuthenticatedRequest } from 'src/common/interfaces/authenticated-request.interface';
+import { UpdateUserDto } from '../users/dto/update-user.dto';
+import { ChangePasswordDto } from './dto/change-password.dto';
 
 @Controller('auth')
 export class AuthController {
@@ -68,6 +70,38 @@ export class AuthController {
     // Fetch the full user from the database to ensure all fields are present
     const user = await this.authService.getUsersService().findById(req.user.id);
     return plainToInstance(UserResponseDto, user, { excludeExtraneousValues: true });
+  }
+
+  // Allow PATCH/PUT /api/auth/profile as client fallbacks to update current user
+  @Patch('profile')
+  @Put('profile')
+  @UseGuards(JwtAuthGuard)
+  async updateOwnProfileViaAuth(@Request() req: AuthenticatedRequest, @Body() data: UpdateUserDto) {
+    const usersService = this.authService.getUsersService();
+    const userId = req.user?.id;
+    if (!userId) throw new UnauthorizedException();
+
+    // Sanitize: customers shouldn't modify roles/email/password; keep server-side enforcement minimal here
+    delete data.roles;
+    delete data.email;
+    delete data.password;
+
+    const user = await usersService.update(userId, data);
+    return plainToInstance(UserResponseDto, user, { excludeExtraneousValues: true });
+  }
+
+  // Change password for the current user
+  @Patch('password')
+  @Put('password')
+  @UseGuards(JwtAuthGuard)
+  async changePassword(@Request() req: AuthenticatedRequest, @Body() body: ChangePasswordDto) {
+    const userId = req.user?.id;
+    if (!userId) throw new UnauthorizedException();
+    const current = body.resolveCurrent();
+    const next = body.resolveNext();
+    if (!next) throw new Error('New password is required.');
+    await this.authService.changePassword(userId, current, next);
+    return { success: true };
   }
 
   @Post('forgot-password')

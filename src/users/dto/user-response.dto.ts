@@ -26,6 +26,12 @@ export class UserResponseDto {
   @Expose()
   storeName?: string;
 
+  @Expose()
+  phoneCountryCode?: string;
+
+  @Expose()
+  phoneNumber?: string;
+
   // Explicitly exclude sensitive/internal fields:
   // @Exclude() password!: string;
   // @Exclude() isActive!: boolean;

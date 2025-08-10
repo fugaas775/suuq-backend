@@ -59,10 +59,14 @@ export class CategoriesService {
       slug,
       iconUrl: dto.iconUrl,
       iconName: dto.iconName,
+      sortOrder: dto.sortOrder,
     });
 
     if (dto.parentId) {
       const parent = await this.findOne(dto.parentId);
+      if (parent.parent) {
+        throw new BadRequestException('A category cannot be a sub-category of another sub-category.');
+      }
       category.parent = parent;
     }
 
@@ -81,6 +85,9 @@ export class CategoriesService {
       category.parent = null;
     } else if (dto.parentId) {
       const parent = await this.findOne(dto.parentId);
+      if (parent.parent) {
+        throw new BadRequestException('A category cannot be a sub-category of another sub-category.');
+      }
       category.parent = parent;
     }
 

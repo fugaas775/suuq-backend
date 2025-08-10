@@ -20,4 +20,8 @@ export class CreateCategoryDto {
   @IsInt()
   @IsOptional()
   parentId?: number;
+
+  @IsInt()
+  @IsOptional()
+  sortOrder?: number;
 }

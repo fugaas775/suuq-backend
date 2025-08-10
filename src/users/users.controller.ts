@@ -12,7 +12,7 @@ import {
   Query,
   Patch,
 } from '@nestjs/common';
-import { AuthGuard } from '@nestjs/passport';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { UsersService } from './users.service';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -24,7 +24,7 @@ import { UpdateUserDto } from './dto/update-user.dto';
 import { FindUsersQueryDto } from './dto/find-users-query.dto';
 
 @Controller('users')
-@UseGuards(AuthGuard('jwt'), RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
@@ -59,6 +59,46 @@ export class UsersController {
 
     const user = await this.usersService.update(userId, data);
     return plainToInstance(UserResponseDto, user, { excludeExtraneousValues: true });
+  }
+
+  // Allow clients that use PUT /users/me (alias of PATCH)
+  @Put('me')
+  async putOwnProfile(
+    @Req() req: AuthenticatedRequest,
+    @Body() data: UpdateUserDto
+  ): Promise<UserResponseDto> {
+    const userId = req.user?.id;
+    if (!userId) throw new UnauthorizedException();
+
+    // Prevent changing sensitive fields
+    delete data.roles;
+    delete data.email;
+    delete data.password;
+
+    const user = await this.usersService.update(userId, data);
+    return plainToInstance(UserResponseDto, user, { excludeExtraneousValues: true });
+  }
+
+  // Password change for current user (accept multiple verbs to match clients)
+  @Put('me/password')
+  @Patch('me/password')
+  async changeOwnPassword(@Req() req: AuthenticatedRequest, @Body() body: any) {
+    const userId = req.user?.id;
+    if (!userId) throw new UnauthorizedException();
+    const current = body.currentPassword || body.oldPassword || body.passwordCurrent;
+    const next = body.newPassword || body.password || body.new_password;
+    if (!next) {
+      throw new Error('New password is required.');
+    }
+    await this.usersService.changePassword(userId, current, next);
+    return { success: true } as any;
+  }
+
+  // POST alias for clients using /users/me/change-password
+  @Put('me/change-password')
+  @Patch('me/change-password')
+  async changeOwnPasswordAlias(@Req() req: AuthenticatedRequest, @Body() body: any) {
+    return this.changeOwnPassword(req, body);
   }
 
   @Get(':id')
@@ -96,5 +136,21 @@ export class UsersController {
   @Roles(UserRole.ADMIN)
   async removeUser(@Param('id', ParseIntPipe) id: number): Promise<void> {
     return this.usersService.remove(id);
+  }
+
+  @Patch(':id/verify')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  async verifyUser(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { status: 'APPROVED' | 'REJECTED'; reason?: string },
+    @Req() req: AuthenticatedRequest,
+  ): Promise<UserResponseDto> {
+    const status = body?.status;
+    if (status !== 'APPROVED' && status !== 'REJECTED') {
+      // Consistent error envelope handled by GlobalExceptionFilter
+      throw new Error("Invalid status. Use 'APPROVED' or 'REJECTED'.");
+    }
+    const user = await this.usersService.setVerificationStatus(id, status as any, req.user?.email);
+    return plainToInstance(UserResponseDto, user, { excludeExtraneousValues: true });
   }
 }

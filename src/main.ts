@@ -7,9 +7,12 @@ import { ValidationPipe, Logger, ClassSerializerInterceptor, BadRequestException
 import { GlobalExceptionFilter } from './common/global-exception.filter';
 import { Reflector } from '@nestjs/core';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
+import { json } from 'express';
+import { EtagInterceptor } from './common/interceptors/etag.interceptor';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, { bodyParser: true });
+  app.use(json({ limit: '50mb' }));
   // Enable all log levels for better visibility in production
   app.useLogger(['log', 'error', 'warn', 'debug', 'verbose']);
 
@@ -24,6 +27,8 @@ async function bootstrap() {
     allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
     exposedHeaders: ['Authorization'],
   });
+
+  app.use(json({ limit: '50mb' }));
 
   // Log incoming requests and bodies for debugging
   app.use((req, res, next) => {
@@ -65,6 +70,7 @@ async function bootstrap() {
   }));
 
   app.useGlobalInterceptors(new ClassSerializerInterceptor(app.get(Reflector)));
+  app.useGlobalInterceptors(new EtagInterceptor(300));
   // Register global exception filter for detailed error logging
   app.useGlobalFilters(new GlobalExceptionFilter());
   
