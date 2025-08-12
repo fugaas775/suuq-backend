@@ -144,6 +144,9 @@ export class OrdersService {
       await this.cartService.clearCart(userId);
       return savedOrder;
     } else if (paymentMethod === PaymentMethod.MPESA) {
+      if (!phoneNumber || !phoneNumber.trim()) {
+        throw new BadRequestException('phoneNumber is required for MPESA payments.');
+      }
       newOrder = this.orderRepository.create({
         user: { id: userId } as User,
         items: orderItems,
@@ -158,6 +161,9 @@ export class OrdersService {
       await this.cartService.clearCart(userId);
       return savedOrder;
     } else if (paymentMethod === PaymentMethod.TELEBIRR) {
+      if (!phoneNumber || !phoneNumber.trim()) {
+        throw new BadRequestException('phoneNumber is required for TELEBIRR payments.');
+      }
       newOrder = this.orderRepository.create({
         user: { id: userId } as User,
         items: orderItems,

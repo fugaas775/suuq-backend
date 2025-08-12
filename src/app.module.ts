@@ -13,7 +13,6 @@ import { OrdersModule } from './orders/orders.module';
 import { DelivererModule } from './deliverer/deliverer.module';
 import { CategoriesModule } from './categories/categories.module';
 import { SettingsModule } from './settings/settings.module';
-import { SeedsModule } from './seeds/seeds.module';
 import { TagModule } from './tags/tag.module';
 import { CartModule } from './cart/cart.module';
 import { VendorModule } from './vendor/vendor.module';
@@ -45,7 +44,6 @@ import { AppService } from './app.service';
     DelivererModule,
     CategoriesModule,
     SettingsModule,
-    SeedsModule,
     TagModule,
     VendorModule,
     CartModule,

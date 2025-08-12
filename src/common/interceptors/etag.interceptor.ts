@@ -19,7 +19,9 @@ export class EtagInterceptor implements NestInterceptor {
           const etag = 'W/"' + createHash('sha1').update(body).digest('hex') + '"';
           const ifNoneMatch = req.headers['if-none-match'];
           res.setHeader('ETag', etag);
-          res.setHeader('Last-Modified', new Date().toUTCString());
+          if (!res.getHeader('Last-Modified')) {
+            res.setHeader('Last-Modified', new Date().toUTCString());
+          }
           res.setHeader('Cache-Control', `public, max-age=${this.cacheSeconds}`);
           if (ifNoneMatch && ifNoneMatch === etag) {
             res.status(304).end();

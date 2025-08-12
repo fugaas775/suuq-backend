@@ -37,6 +37,7 @@ export class DoSpacesService {
       ACL: 'public-read',
       ContentType: mimetype,
       ContentDisposition: 'inline',
+  CacheControl: 'public, max-age=31536000, immutable',
     });
 
     await this.s3.send(command);

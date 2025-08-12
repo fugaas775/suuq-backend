@@ -1,4 +1,4 @@
-import { IsString, IsOptional, IsInt } from 'class-validator';
+import { IsString, IsOptional, IsInt, Matches } from 'class-validator';
 
 export class UpdateCategoryDto {
   @IsString()
@@ -15,7 +15,12 @@ export class UpdateCategoryDto {
 
   @IsString()
   @IsOptional()
+  @Matches(/^(mdi:[a-z0-9_\-]+|[a-z0-9_\-]+)$/i, { message: 'iconName must be alphanumeric with dashes/underscores, optional mdi: prefix' })
   iconName?: string;
+  /**
+   * Only send iconName/iconUrl to perform icons-only edits.
+   * When either changes, backend increments iconVersion and appends ?v=.
+   */
 
   @IsInt()
   @IsOptional()

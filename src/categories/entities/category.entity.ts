@@ -21,6 +21,10 @@ export class Category {
 
   @Column({ nullable: true })
   iconName?: string;
+
+  // Optional explicit version to bust CDN cache when icon changes
+  @Column({ type: 'int', default: 0 })
+  iconVersion: number;
   
   @Column({ type: 'int', default: 0 })
   sortOrder: number;

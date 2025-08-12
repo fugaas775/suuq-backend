@@ -51,7 +51,8 @@ describe('Public verification and profile (e2e-lite)', () => {
       .overrideGuard((require('../src/common/guards/roles.guard').RolesGuard)).useClass(AllowGuard as any)
       .compile();
 
-    app = moduleRef.createNestApplication();
+  app = moduleRef.createNestApplication();
+  app.setGlobalPrefix('api');
     await app.init();
   });
 
@@ -67,7 +68,7 @@ describe('Public verification and profile (e2e-lite)', () => {
     ]);
 
     const res = await request(app.getHttpServer())
-      .get('/vendors/42/certificates')
+      .get('/api/vendors/42/certificates')
       .expect(200);
 
     expect(res.headers['cache-control']).toContain('max-age=300');
@@ -92,7 +93,7 @@ describe('Public verification and profile (e2e-lite)', () => {
     (usersServiceMock.getPublicCertificates as any).mockResolvedValueOnce([]);
 
     const res = await request(app.getHttpServer())
-      .get('/vendors/43/certificates')
+      .get('/api/vendors/43/certificates')
       .expect(200);
     expect(res.body.items).toEqual([]);
   });
@@ -107,7 +108,7 @@ describe('Public verification and profile (e2e-lite)', () => {
     });
 
     const res = await request(app.getHttpServer())
-      .get('/auth/profile')
+      .get('/api/auth/profile')
       .expect(200);
 
     const body: UserResponseDto = res.body as any;
@@ -125,7 +126,7 @@ describe('Public verification and profile (e2e-lite)', () => {
     });
 
     const res = await request(app.getHttpServer())
-      .patch('/users/21/verify')
+      .patch('/api/users/21/verify')
       .send({ status: 'APPROVED' })
       .expect(200);
 

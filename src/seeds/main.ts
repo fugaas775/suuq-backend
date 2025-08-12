@@ -14,11 +14,19 @@ async function bootstrap() {
   const args = process.argv.slice(2);
   const seederToRun = args[0];
 
-  if (seederToRun === 'countries') {
-    await seeder.seedCountries();
-  } else {
-    // If no argument is given, run all seeders
-    await seeder.seedAll();
+  switch (seederToRun) {
+    case 'countries':
+      await seeder.seedCountries();
+      break;
+    case 'category-icons':
+      await seeder.seedCategoryIcons();
+      break;
+    case 'categories-json':
+      await seeder.seedCategoriesFromJson();
+      break;
+    default:
+      await seeder.seedAll();
+      break;
   }
 
   await app.close();

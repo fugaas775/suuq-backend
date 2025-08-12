@@ -47,6 +47,11 @@ export class CategoriesService {
     return category;
   }
 
+  /** Find a category by slug or return null */
+  async findBySlug(slug: string): Promise<Category | null> {
+    return this.categoryRepo.findOne({ where: { slug }, relations: ['parent'] });
+  }
+
   async create(dto: CreateCategoryDto): Promise<Category> {
     const slug = dto.slug ? slugify(dto.slug) : slugify(dto.name.toLowerCase().trim());
     const exists = await this.categoryRepo.findOne({ where: { slug } });
@@ -54,12 +59,15 @@ export class CategoriesService {
       throw new BadRequestException(`Slug already exists for category: '${exists.name}'`);
     }
 
+    let iconUrl = dto.iconUrl;
+    const createdAt = new Date();
     const category = this.categoryRepo.create({
       name: dto.name,
       slug,
-      iconUrl: dto.iconUrl,
+      iconUrl,
       iconName: dto.iconName,
       sortOrder: dto.sortOrder,
+      iconVersion: 0,
     });
 
     if (dto.parentId) {
@@ -70,7 +78,13 @@ export class CategoriesService {
       category.parent = parent;
     }
 
-    return this.categoryRepo.save(category);
+    const saved = await this.categoryRepo.save(category);
+    // If iconUrl exists, append version param for cache-busting
+    if (saved.iconUrl) {
+      saved.iconUrl = this.appendIconVersion(saved.iconUrl, saved.iconVersion, saved.updatedAt ?? createdAt);
+      await this.categoryRepo.save(saved);
+    }
+    return saved;
   }
 
   async update(id: number, dto: UpdateCategoryDto): Promise<Category> {
@@ -91,9 +105,21 @@ export class CategoriesService {
       category.parent = parent;
     }
 
+    const wasIconChanged = (typeof dto.iconName !== 'undefined' && dto.iconName !== category.iconName) ||
+      (typeof dto.iconUrl !== 'undefined' && dto.iconUrl !== category.iconUrl);
+
     const updatedCategory = this.categoryRepo.merge(category, dto);
 
-    return this.categoryRepo.save(updatedCategory);
+    if (wasIconChanged) {
+      updatedCategory.iconVersion = (updatedCategory.iconVersion || 0) + 1;
+    }
+
+    const saved = await this.categoryRepo.save(updatedCategory);
+    if (wasIconChanged && saved.iconUrl) {
+      saved.iconUrl = this.appendIconVersion(saved.iconUrl, saved.iconVersion, saved.updatedAt);
+      return this.categoryRepo.save(saved);
+    }
+    return saved;
   }
 
   async delete(id: number): Promise<{ deleted: boolean }> {
@@ -111,4 +137,27 @@ export class CategoriesService {
     const result = await this.categoryRepo.delete(id);
     return { deleted: (result.affected ?? 0) > 0 };
   }
+
+  // Append cache-busting version to icon URL using iconVersion or updatedAt timestamp
+  private appendIconVersion(url: string, iconVersion?: number, updatedAt?: Date): string {
+    const ver = typeof iconVersion === 'number' ? iconVersion : (updatedAt ? updatedAt.getTime() : Date.now());
+    const hasQuery = url.includes('?');
+    const sep = hasQuery ? '&' : '?';
+    // If already has v= param, replace it
+    if (url.match(/[?&]v=\d+/)) {
+      return url.replace(/([?&]v=)\d+/, `$1${ver}`);
+    }
+    return `${url}${sep}v=${ver}`;
+  }
 }
+
+// Helper to append version param
+function hasQuery(url: string): boolean {
+  return url.includes('?');
+}
+
+export function appendQuery(url: string, key: string, value: string | number): string {
+  const sep = hasQuery(url) ? '&' : '?';
+  return `${url}${sep}${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`;
+}
+

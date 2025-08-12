@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { CategoriesService } from '../categories/categories.service';
 import { CountriesService } from '../countries/countries.service';
 import { CreateCountryDto } from '../countries/dto/create-country.dto';
 
@@ -6,13 +7,139 @@ import { CreateCountryDto } from '../countries/dto/create-country.dto';
 export class SeedService {
   private readonly logger = new Logger(SeedService.name);
 
-  constructor(private readonly countriesService: CountriesService) {}
+  constructor(
+    private readonly countriesService: CountriesService,
+    private readonly categoriesService: CategoriesService,
+  ) {}
 
   async seedAll() {
     this.logger.log('Running all seeders...');
     await this.seedCountries();
+    await this.seedCategoryIcons();
     // Call other seed methods here in the future
     this.logger.log('All seeding complete.');
+  }
+
+  /** Backfill iconName for categories, idempotent create/update */
+  async seedCategoryIcons() {
+    this.logger.log('Seeding category icons (iconName backfill)...');
+    // Define desired icon names per slug; extend as needed
+    const iconBySlug: Record<string, string> = {
+      electronics: 'mdi:devices',
+      phones: 'mdi:cellphone',
+      computers: 'mdi:laptop',
+      tvs: 'mdi:television',
+      fashion: 'mdi:tshirt-crew',
+      'mens-fashion': 'mdi:human-male',
+      'womens-fashion': 'mdi:human-female',
+      'home-garden': 'mdi:home',
+      home: 'mdi:home',
+      furniture: 'mdi:sofa',
+      decor: 'mdi:palette',
+      kitchen: 'mdi:stove',
+      'sports-outdoors': 'mdi:tennis',
+      sports: 'mdi:tennis',
+      fitness: 'mdi:dumbbell',
+      camping: 'mdi:campfire',
+      'health-beauty': 'mdi:spa',
+      beauty: 'mdi:spa',
+      skincare: 'mdi:face-woman',
+      supplements: 'mdi:pill',
+      'toys-games': 'mdi:toy-brick',
+      'board-games': 'mdi:chess-knight',
+      'outdoor-toys': 'mdi:gamepad-variant',
+    };
+
+    const slugs = Object.keys(iconBySlug);
+    for (const slug of slugs) {
+      const desiredIcon = iconBySlug[slug];
+      const existing = await this.categoriesService.findBySlug(slug);
+      if (!existing) {
+        try {
+          await this.categoriesService.create({ name: slug.replace(/-/g, ' '), slug, iconName: desiredIcon });
+          this.logger.log(`Created category '${slug}' with icon '${desiredIcon}'.`);
+        } catch (e) {
+          this.logger.warn(`Could not create category '${slug}': ${(e as Error).message}`);
+        }
+      } else if (!existing.iconName) {
+        await this.categoriesService.update(existing.id, { iconName: desiredIcon });
+        this.logger.log(`Backfilled iconName for '${slug}' -> '${desiredIcon}'.`);
+      }
+    }
+
+    this.logger.log('Category icons seeding finished.');
+  }
+
+  /** Seed categories and subcategories with iconName using JSON data */
+  async seedCategoriesFromJson() {
+    this.logger.log('Seeding categories with icons from JSON...');
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const data: Record<string, { iconName: string; subcategories?: { name: string; iconName?: string }[] }> = require('./data/categories_with_icons.json');
+
+    for (const [parentName, meta] of Object.entries(data)) {
+      const parentSlug = this.slugifyName(parentName);
+      let parent = await this.categoriesService.findBySlug(parentSlug);
+      const parentIconUrl = meta.iconName ? this.buildIconUrl(meta.iconName) : undefined;
+      if (!parent) {
+        parent = await this.categoriesService.create({ name: parentName, slug: parentSlug, iconName: meta.iconName, iconUrl: parentIconUrl });
+        this.logger.log(`Created parent '${parentName}' (${parentSlug})`);
+      } else {
+        const patch: any = {};
+        if (!parent.iconName && meta.iconName) patch.iconName = meta.iconName;
+        if (!parent.iconUrl && parentIconUrl) patch.iconUrl = parentIconUrl;
+        if (Object.keys(patch).length) {
+          await this.categoriesService.update(parent.id, patch);
+          this.logger.log(`Backfilled parent '${parentName}' with ${JSON.stringify(patch)}`);
+        }
+      }
+
+      if (meta.subcategories?.length) {
+        for (const sub of meta.subcategories) {
+          const subSlug = this.slugifyName(sub.name);
+          let child = await this.categoriesService.findBySlug(subSlug);
+          const childIconUrl = sub.iconName ? this.buildIconUrl(sub.iconName) : undefined;
+          if (!child) {
+            child = await this.categoriesService.create({ name: sub.name, slug: subSlug, iconName: sub.iconName, iconUrl: childIconUrl, parentId: parent.id });
+            this.logger.log(`Created child '${sub.name}' under '${parentName}'`);
+          } else {
+            const patch: any = {};
+            if (!child.iconName && sub.iconName) patch.iconName = sub.iconName;
+            if (!child.iconUrl && childIconUrl) patch.iconUrl = childIconUrl;
+            if (!child.parent) patch.parentId = parent.id; // attach if orphan
+            if (Object.keys(patch).length) {
+              await this.categoriesService.update(child.id, patch);
+              this.logger.log(`Updated child '${sub.name}' with ${JSON.stringify(patch)}`);
+            }
+          }
+        }
+      }
+    }
+    this.logger.log('Categories with icons seeding from JSON finished.');
+  }
+
+  private slugifyName(name: string): string {
+    return name
+      .toLowerCase()
+      .trim()
+      .replace(/&/g, ' and ')
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '');
+  }
+
+  /** Build an icon URL from env configuration and iconName */
+  // Exported for testability
+  public buildIconUrl(iconName: string | undefined): string | undefined {
+    if (!iconName) return undefined;
+    const template = process.env.ICON_URL_TEMPLATE; // e.g., https://cdn.example/icons/{icon}.svg
+    if (template) {
+      return template.replace('{icon}', iconName);
+    }
+    const base = process.env.ICON_CDN_BASE; // e.g., https://cdn.example/icons
+    if (base) {
+      const ext = process.env.ICON_EXT || 'svg';
+      return `${base.replace(/\/$/, '')}/${iconName}.${ext}`;
+    }
+    return undefined; // no auto-fill configured
   }
 
   async seedCountries() {

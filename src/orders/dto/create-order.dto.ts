@@ -20,7 +20,8 @@ export class CreateOrderDto {
   @IsIn(['COD', 'MPESA', 'TELEBIRR'])
   paymentMethod!: string;
 
+  // Required for MPESA/TELEBIRR, not needed for COD
   @IsString()
-  @IsNotEmpty()
-  phoneNumber!: string;
+  @IsOptional()
+  phoneNumber?: string;
 }

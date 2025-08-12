@@ -1,0 +1,177 @@
+{
+  "Electronics & Appliances": {
+    "iconName": "electrical_services",
+    "subcategories": [
+      { "name": "Mobile Phones & Tablets", "iconName": "phone_iphone" },
+      { "name": "Computers & Laptops", "iconName": "laptop_mac" },
+      { "name": "TV, Audio & Video", "iconName": "live_tv" },
+      { "name": "Cameras & Imaging", "iconName": "photo_camera" },
+      { "name": "Video Games & Consoles", "iconName": "sports_esports" },
+      { "name": "Large Appliances (Fridges, Washers)", "iconName": "kitchen" },
+      { "name": "Small Kitchen Appliances (Blenders, etc.)", "iconName": "blender" },
+      { "name": "Computer Accessories", "iconName": "mouse" },
+      { "name": "Other Electronics", "iconName": "memory" }
+    ]
+  },
+  "Fashion & Apparel": {
+    "iconName": "checkroom",
+    "subcategories": [
+      { "name": "Women's Fashion (Clothing, Shoes)", "iconName": "woman" },
+      { "name": "Men's Fashion (Clothing, Shoes)", "iconName": "man" },
+      { "name": "Kids' & Baby Fashion", "iconName": "child_care" },
+      { "name": "Traditional & Cultural Wear", "iconName": "style" },
+      { "name": "Watches & Jewelry", "iconName": "watch" },
+      { "name": "Bags & Luggage", "iconName": "shopping_bag" },
+      { "name": "Accessories (Belts, Scarves, Hats)", "iconName": "scatter_plot" },
+      { "name": "Other Fashion", "iconName": "sell" }
+    ]
+  },
+  "Home, Furniture & Garden": {
+    "iconName": "chair",
+    "subcategories": [
+      { "name": "Furniture & Home Decor", "iconName": "living" },
+      { "name": "Kitchenware & Dining", "iconName": "dining" },
+      { "name": "Bedding & Bath", "iconName": "bed" },
+      { "name": "Tools & Home Improvement", "iconName": "build" },
+      { "name": "Garden & Outdoor Supplies", "iconName": "yard" },
+      { "name": "Household & Cleaning Supplies", "iconName": "cleaning_services" },
+      { "name": "Other Home & Garden", "iconName": "deck" }
+    ]
+  },
+  "Vehicles": {
+    "iconName": "directions_car",
+    "subcategories": [
+      { "name": "Cars", "iconName": "directions_car_filled" },
+      { "name": "Motorcycles & Scooters", "iconName": "two_wheeler" },
+      { "name": "Bajaj & Rickshaws", "iconName": "mode_of_travel" },
+      { "name": "Buses & Commercial Vehicles", "iconName": "directions_bus" },
+      { "name": "Auto Parts & Accessories", "iconName": "settings" },
+      { "name": "Vehicle Repair & Services", "iconName": "car_repair" },
+      { "name": "Other Vehicles", "iconName": "minor_crash" }
+    ]
+  },
+  "Property & Real Estate": {
+    "iconName": "real_estate_agent",
+    "subcategories": [
+      { "name": "For Rent: Apartment & House", "iconName": "apartment" },
+      { "name": "For Rent: Commercial Space", "iconName": "store" },
+      { "name": "For Sale: Land & Plot", "iconName": "landscape" },
+      { "name": "For Sale: House & Apartment", "iconName": "house" },
+      { "name": "Short-term & Vacation Rentals", "iconName": "holiday_village" },
+      { "name": "Other Property", "iconName": "foundation" }
+    ]
+  },
+  "Health, Beauty & Personal Care": {
+    "iconName": "health_and_safety",
+    "subcategories": [
+      { "name": "Makeup & Cosmetics", "iconName": "face_retouching_natural" },
+      { "name": "Skincare & Haircare", "iconName": "content_cut" },
+      { "name": "Fragrances & Perfumes", "iconName": "air_freshener" },
+      { "name": "Vitamins & Dietary Supplements", "iconName": "medication" },
+      { "name": "Personal Care Appliances", "iconName": "sanitizer" },
+      { "name": "Wellness & Massage", "iconName": "spa" },
+      { "name": "Other Health & Beauty", "iconName": "healing" }
+    ]
+  },
+  "Hobbies, Sports & Kids": {
+    "iconName": "sports_soccer",
+    "subcategories": [
+      { "name": "Sports Equipment", "iconName": "fitness_center" },
+      { "name": "Musical Instruments", "iconName": "music_note" },
+      { "name": "Books, Movies & Music", "iconName": "library_music" },
+      { "name": "Toys & Games", "iconName": "toys" },
+      { "name": "Baby & Kids' Gear", "iconName": "stroller" },
+      { "name": "Arts, Crafts & Collectibles", "iconName": "palette" },
+      { "name": "Other Hobbies & Sports", "iconName": "interests" }
+    ]
+  },
+  "Services (Home & Business)": {
+    "iconName": "construction",
+    "subcategories": [
+      { "name": "Home Services (Cleaning, Plumbing, Electrical)", "iconName": "home_repair_service" },
+      { "name": "Business Services (Marketing, IT, Legal)", "iconName": "business_center" },
+      { "name": "Events & Catering Services", "iconName": "celebration" },
+      { "name": "Repair & Maintenance Services", "iconName": "build_circle" },
+      { "name": "Movers & Hauling", "iconName": "local_shipping" },
+      { "name": "Personal Services (Tailoring, Beauty)", "iconName": "design_services" },
+      { "name": "Other Services", "iconName": "miscellaneous_services" }
+    ]
+  },
+  "Jobs & Careers": {
+    "iconName": "work",
+    "subcategories": [
+      { "name": "Full-time Jobs", "iconName": "work_history" },
+      { "name": "Part-time & Contract", "iconName": "schedule" },
+      { "name": "Remote & Freelance", "iconName": "wifi_protected_setup" },
+      { "name": "Internships & Volunteering", "iconName": "school" },
+      { "name": "Other Jobs", "iconName": "work_outline" }
+    ]
+  },
+  "Animals & Agriculture": {
+    "iconName": "pets",
+    "subcategories": [
+      { "name": "Livestock (Goats, Sheep, Camels)", "iconName": "agriculture" },
+      { "name": "Pets & Animals for Sale", "iconName": "cruelty_free" },
+      { "name": "Pet Supplies & Food", "iconName": "pet_supplies" },
+      { "name": "Farm Machinery & Equipment", "iconName": "precision_manufacturing" },
+      { "name": "Seeds, Feeds & Fertilizer", "iconName": "compost" },
+      { "name": "Veterinary Services", "iconName": "vaccines" },
+      { "name": "Other Agriculture", "iconName": "grass" }
+    ]
+  },
+  "Food & Beverages": {
+    "iconName": "fastfood",
+    "subcategories": [
+      { "name": "Groceries & Essentials", "iconName": "shopping_cart" },
+      { "name": "Fresh Produce (Fruits & Vegetables)", "iconName": "energy_savings_leaf" },
+      { "name": "Meat & Dairy", "iconName": "set_meal" },
+      { "name": "Packaged Food & Drinks", "iconName": "liquor" },
+      { "name": "Restaurant & Catering Deals", "iconName": "restaurant_menu" },
+      { "name": "Other Food & Beverages", "iconName": "brunch_dining" }
+    ]
+  },
+  "Construction & Industrial": {
+    "iconName": "gite",
+    "subcategories": [
+      { "name": "Construction Materials (Cement, Steel)", "iconName": "foundation" },
+      { "name": "Heavy Machinery & Equipment", "iconName": "handyman" },
+      { "name": "Building Tools & Supplies", "iconName": "hardware" },
+      { "name": "Electrical & Plumbing Supplies", "iconName": "plumbing" },
+      { "name": "Industrial Supplies", "iconName": "factory" },
+      { "name": "Other Construction", "iconName": "engineering" }
+    ]
+  },
+  "Education & Training": {
+    "iconName": "school",
+    "subcategories": [
+      { "name": "Courses & Workshops", "iconName": "history_edu" },
+      { "name": "Professional Training & Certification", "iconName": "card_membership" },
+      { "name": "Tutoring & Lessons", "iconName": "cast_for_education" },
+      { "name": "School & Office Supplies", "iconName": "attach_file" },
+      { "name": "Study Abroad Services", "iconName": "flight_takeoff" },
+      { "name": "Other Education", "iconName": "menu_book" }
+    ]
+  },
+  "Community": {
+    "iconName": "groups",
+    "subcategories": [
+      { "name": "Local Events & Meetups", "iconName": "event" },
+      { "name": "Lost & Found", "iconName": "find_in_page" },
+      { "name": "Free Items & Giveaways", "iconName": "redeem" },
+      { "name": "Carpool & Ride Sharing", "iconName": "group_add" },
+      { "name": "Local News & Announcements", "iconName": "campaign" },
+      { "name": "Other Community", "iconName": "forum" }
+    ]
+  },
+  "Digital Products & Tickets": {
+    "iconName": "confirmation_number",
+    "subcategories": [
+      { "name": "Event & Movie Tickets", "iconName": "local_activity" },
+      { "name": "Travel Packages & Tours", "iconName": "map" },
+      { "name": "eBooks & Audiobooks", "iconName": "auto_stories" },
+      { "name": "Software & Apps", "iconName": "apps" },
+      { "name": "Digital Art & Media", "iconName": "image" },
+      { "name": "Other Digital Goods", "iconName": "token" }
+    ]
+  }
+}

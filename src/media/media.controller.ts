@@ -59,6 +59,8 @@ export class MediaController {
 
     return {
       src: fullUrl,
+      url: fullUrl,
+      urls: [fullUrl],
       thumbnailSrc: thumbUrl,
       lowResSrc: lowResUrl,
     };

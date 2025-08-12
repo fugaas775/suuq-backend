@@ -22,10 +22,10 @@ async function bootstrap() {
       'https://suuq.ugasfuad.com',
       'http://localhost:5173',
     ],
-    methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
+  methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
     credentials: true,
-    allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
-    exposedHeaders: ['Authorization'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'If-None-Match', 'If-Modified-Since'],
+  exposedHeaders: ['Authorization', 'ETag', 'Last-Modified', 'Cache-Control'],
   });
 
   app.use(json({ limit: '50mb' }));

@@ -7,6 +7,8 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { SeedService } from './seed.service';
 import { CountriesModule } from '../countries/countries.module';
 import { Country } from '../countries/entities/country.entity';
+import { CategoriesModule } from '../categories/categories.module';
+import { Category } from '../categories/entities/category.entity';
 
 @Module({
   imports: [
@@ -15,7 +17,7 @@ import { Country } from '../countries/entities/country.entity';
       envFilePath: '.env',
     }),
     // Use the async factory to ensure .env is loaded first
-    TypeOrmModule.forRootAsync({
+  TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => ({
@@ -26,12 +28,13 @@ import { Country } from '../countries/entities/country.entity';
         username: configService.get('DB_USERNAME'),
         password: configService.get('DB_PASSWORD'),
         database: configService.get('DB_DATABASE'),
-        entities: [Country], // Only load entities needed for this seed
+    entities: [Country, Category], // Load needed entities for seeding
         synchronize: false,
       }),
     }),
     // Import modules that provide necessary services (like CountriesService)
-    CountriesModule,
+  CountriesModule,
+  CategoriesModule,
   ],
   providers: [SeedService],
   exports: [SeedService],
