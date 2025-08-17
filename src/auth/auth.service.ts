@@ -62,8 +62,25 @@ export class AuthService {
     if (existingUser) {
       throw new ConflictException('Email already in use');
     }
+    // Security: ignore any client-provided roles to prevent escalation; always assign CUSTOMER
+    const userRoles: UserRole[] = [UserRole.CUSTOMER];
 
-    const userRoles: UserRole[] = dto.roles?.length ? dto.roles : [UserRole.CUSTOMER];
+    // Optional domain allow/block lists via env
+    const allowCsv = this.configService.get<string>('SIGNUP_ALLOWLIST_DOMAINS');
+    const blockCsv = this.configService.get<string>('SIGNUP_BLOCKLIST_DOMAINS');
+    const emailDomain = dto.email.split('@')[1]?.toLowerCase();
+    if (blockCsv) {
+      const blocked = blockCsv.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+      if (emailDomain && blocked.includes(emailDomain)) {
+        throw new BadRequestException('Registrations from this email domain are not allowed.');
+      }
+    }
+    if (allowCsv) {
+      const allowed = allowCsv.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+      if (emailDomain && !allowed.includes(emailDomain)) {
+        throw new BadRequestException('Registrations from this email domain are not allowed.');
+      }
+    }
     const firebaseUid = dto.firebaseUid || `local_${crypto.randomUUID()}`;
 
     const userToCreateData: Partial<User> = {

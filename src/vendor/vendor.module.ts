@@ -6,7 +6,7 @@ import { VendorPublicController } from './vendor-public.controller';
 import { VendorDashboardController } from './vendor-dashboard.controller';
 import { User } from '../users/entities/user.entity';
 import { Product } from '../products/entities/product.entity';
-import { Order } from '../orders/entities/order.entity';
+import { Order, OrderItem } from '../orders/entities/order.entity';
 import { ProductImage } from '../products/entities/product-image.entity'; // <-- 1. IMPORT ADDED
 import { UsersModule } from '../users/users.module';
 import { MediaModule } from '../media/media.module';
@@ -14,7 +14,7 @@ import { MediaModule } from '../media/media.module';
 @Module({
   imports: [
     // ✨ 2. PRODUCTIMAGE ENTITY ADDED HERE
-  TypeOrmModule.forFeature([User, Product, Order, ProductImage]),
+  TypeOrmModule.forFeature([User, Product, Order, OrderItem, ProductImage]),
   UsersModule,
   MediaModule,
   ],

@@ -30,10 +30,16 @@ export class NotificationsService {
     const message = {
       notification: { title, body },
       tokens: deviceTokens,
-    };
-    const response = await this.firebase.messaging().sendMulticast(message);
-    this.logger.log(`Sent notification to user ${userId}: ${response.successCount} success, ${response.failureCount} failure`);
-    return response;
+    } as any;
+    // firebase-admin v13 uses sendEachForMulticast
+    try {
+      const response = await this.firebase.messaging().sendEachForMulticast(message);
+      this.logger.log(`Sent notification to user ${userId}: ${response.successCount} success, ${response.failureCount} failure`);
+      return response;
+    } catch (err) {
+      this.logger.error(`Failed to send notification to user ${userId}: ${err?.message || err}`);
+      return { successCount: 0, failureCount: 0 } as any;
+    }
   }
 
   /**

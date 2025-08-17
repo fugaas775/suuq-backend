@@ -108,4 +108,92 @@ export class VendorController {
   getSales(@Req() req: any) {
     return this.vendorService.getSales(req.user.id);
   }
+
+  // ===== Vendor Orders =====
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.VENDOR)
+  @Get('vendor/orders')
+  async getVendorOrders(
+    @Req() req: any,
+    @Query('page') page = 1,
+    @Query('limit') limit = 20,
+    @Query('status') status?: OrderStatus,
+  ) {
+    return this.vendorService.getVendorOrders(req.user.id, {
+      page: Number(page),
+      limit: Number(limit),
+      status,
+    });
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.VENDOR)
+  @Get('vendor/orders/:orderId')
+  async getVendorOrder(
+    @Req() req: any,
+    @Param('orderId', ParseIntPipe) orderId: number,
+  ) {
+    return this.vendorService.getVendorOrder(req.user.id, orderId);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.VENDOR)
+  @Patch('vendor/orders/:orderId/status')
+  async updateOrderStatus(
+    @Req() req: any,
+    @Param('orderId', ParseIntPipe) orderId: number,
+    @Body() dto: UpdateOrderStatusDto,
+  ) {
+    return this.vendorService.updateOrderStatus(req.user.id, orderId, dto.status);
+  }
+
+  // ===== Item-level endpoints =====
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.VENDOR)
+  @Get('vendor/orders/:orderId/items')
+  async getVendorOrderItems(
+    @Req() req: any,
+    @Param('orderId', ParseIntPipe) orderId: number,
+  ) {
+    return this.vendorService.getVendorOrderItems(req.user.id, orderId);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.VENDOR)
+  @Patch('vendor/orders/:orderId/items/:itemId/status')
+  async updateOrderItemStatus(
+    @Req() req: any,
+    @Param('orderId', ParseIntPipe) orderId: number,
+    @Param('itemId', ParseIntPipe) itemId: number,
+    @Body() dto: import('./dto/update-order-item-status.dto').UpdateOrderItemStatusDto,
+  ) {
+    return this.vendorService.updateOrderItemStatus(req.user.id, orderId, itemId, dto.status);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.VENDOR)
+  @Patch('vendor/orders/:orderId/items/:itemId/tracking')
+  async updateOrderItemTracking(
+    @Req() req: any,
+    @Param('orderId', ParseIntPipe) orderId: number,
+    @Param('itemId', ParseIntPipe) itemId: number,
+    @Body() dto: import('./dto/update-order-item-tracking.dto').UpdateOrderItemTrackingDto,
+  ) {
+    return this.vendorService.updateOrderItemTracking(req.user.id, orderId, itemId, dto);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.VENDOR)
+  @Post('vendor/orders/:orderId/shipments')
+  async createShipment(
+    @Req() req: any,
+    @Param('orderId', ParseIntPipe) orderId: number,
+    @Body() dto: import('./dto/create-shipment.dto').CreateShipmentDto,
+  ) {
+    return this.vendorService.createShipment(req.user.id, orderId, dto.items, {
+      trackingCarrier: dto.trackingCarrier,
+      trackingNumber: dto.trackingNumber,
+      trackingUrl: dto.trackingUrl,
+    });
+  }
 }

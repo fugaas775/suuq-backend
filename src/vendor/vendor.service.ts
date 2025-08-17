@@ -8,7 +8,8 @@ import { User } from '../users/entities/user.entity';
 import { Product } from '../products/entities/product.entity';
 import { Category } from '../categories/entities/category.entity';
 import { ProductImage } from '../products/entities/product-image.entity';
-import { Order } from '../orders/entities/order.entity';
+import { Order, OrderItem } from '../orders/entities/order.entity';
+import { OrderStatus } from '../orders/entities/order.entity';
 import { UserRole } from '../auth/roles.enum';
 
 @Injectable()
@@ -18,8 +19,10 @@ export class VendorService {
     private readonly userRepository: Repository<User>,
     @InjectRepository(Product)
     private readonly productRepository: Repository<Product>,
-    @InjectRepository(Order)
-    private readonly orderRepository: Repository<Order>,
+  @InjectRepository(Order)
+  private readonly orderRepository: Repository<Order>,
+  @InjectRepository(OrderItem)
+  private readonly orderItemRepository: Repository<OrderItem>,
     @InjectRepository(ProductImage)
     private readonly productImageRepository: Repository<ProductImage>,
   ) {}
@@ -270,5 +273,280 @@ export class VendorService {
       relations: ['items', 'items.product', 'user'],
     });
     return sales;
+  }
+
+  /**
+   * Get paginated orders that include ONLY this vendor's products.
+   * For safety, we currently restrict updates to orders that are fully owned by the vendor
+   * (i.e., all items belong to this vendor). Listing shows all orders containing vendor items;
+   * details and updates are validated for ownership.
+   */
+  async getVendorOrders(
+    vendorId: number,
+    opts: { page?: number; limit?: number; status?: OrderStatus }
+  ): Promise<{ data: any[]; total: number }> {
+    const page = opts.page && opts.page > 0 ? opts.page : 1;
+    const limit = opts.limit && opts.limit > 0 ? Math.min(opts.limit, 100) : 20;
+
+    const qb = this.orderRepository
+      .createQueryBuilder('o')
+      .innerJoin('o.items', 'oi')
+      .innerJoin('oi.product', 'p')
+      .innerJoin('p.vendor', 'v')
+      .leftJoinAndSelect('o.user', 'user')
+      .leftJoinAndSelect('o.items', 'items')
+      .leftJoinAndSelect('items.product', 'product')
+      .leftJoinAndSelect('product.vendor', 'productVendor')
+      .where('v.id = :vendorId', { vendorId })
+      .orderBy('o.createdAt', 'DESC')
+      .distinct(true)
+      .skip((page - 1) * limit)
+      .take(limit);
+
+    if (opts.status) {
+      qb.andWhere('o.status = :status', { status: opts.status });
+    }
+
+    const [orders, total] = await qb.getManyAndCount();
+
+    // Filter items to only this vendor's products in the response
+    const data = orders.map((o) => ({
+      ...o,
+      items: (o.items || []).filter((it) => (it.product as any)?.vendor?.id === vendorId),
+    }));
+
+    return { data, total };
+  }
+
+  async getVendorOrder(vendorId: number, orderId: number) {
+    const order = await this.orderRepository
+      .createQueryBuilder('o')
+      .leftJoinAndSelect('o.user', 'user')
+      .leftJoinAndSelect('o.items', 'items')
+      .leftJoinAndSelect('items.product', 'product')
+      .leftJoinAndSelect('product.vendor', 'vendor')
+      .where('o.id = :orderId', { orderId })
+      .getOne();
+
+    if (!order) throw new NotFoundException('Order not found');
+
+    const hasVendorItem = (order.items || []).some((it) => (it.product as any)?.vendor?.id === vendorId);
+    if (!hasVendorItem) throw new ForbiddenException('You do not have access to this order');
+
+    return {
+      ...order,
+      items: (order.items || []).filter((it) => (it.product as any)?.vendor?.id === vendorId),
+    };
+  }
+
+  /**
+   * Allow a vendor to move an order through vendor-controlled states.
+   * To avoid cross-vendor interference, we only permit updates when ALL items in the order
+   * belong to this vendor (single-vendor order). Allowed transitions:
+   *   PENDING -> PROCESSING -> SHIPPED
+   */
+  async updateOrderStatus(
+    vendorId: number,
+    orderId: number,
+    status: OrderStatus,
+  ) {
+    const order = await this.orderRepository
+      .createQueryBuilder('o')
+      .leftJoinAndSelect('o.items', 'items')
+      .leftJoinAndSelect('items.product', 'product')
+      .leftJoinAndSelect('product.vendor', 'vendor')
+      .where('o.id = :orderId', { orderId })
+      .getOne();
+
+    if (!order) throw new NotFoundException('Order not found');
+
+    const items = order.items || [];
+    const allFromVendor = items.length > 0 && items.every((it) => (it.product as any)?.vendor?.id === vendorId);
+    if (!allFromVendor) {
+      throw new ForbiddenException('Order contains items from other vendors; cannot update global status');
+    }
+
+    const current = order.status;
+    const allowedNext: Record<OrderStatus, OrderStatus[]> = {
+      [OrderStatus.PENDING]: [OrderStatus.PROCESSING],
+      [OrderStatus.PROCESSING]: [OrderStatus.SHIPPED],
+      [OrderStatus.SHIPPED]: [],
+      [OrderStatus.OUT_FOR_DELIVERY]: [],
+      [OrderStatus.DELIVERED]: [],
+      [OrderStatus.DELIVERY_FAILED]: [],
+      [OrderStatus.CANCELLED]: [],
+    };
+
+    const canGo = allowedNext[current]?.includes(status);
+    if (!canGo) {
+      throw new ForbiddenException(`Invalid status transition from ${current} to ${status}`);
+    }
+
+    // Payment gating: allow moving to SHIPPED only if PAID or COD
+    if (
+      status === OrderStatus.SHIPPED &&
+      order.paymentStatus !== (require('../orders/entities/order.entity') as any).PaymentStatus.PAID &&
+      order.paymentMethod !== (require('../orders/entities/order.entity') as any).PaymentMethod.COD
+    ) {
+      throw new ForbiddenException('Cannot ship unpaid order (non-COD)');
+    }
+
+    order.status = status;
+    await this.orderRepository.save(order);
+    return order;
+  }
+
+  // ===== Item-level operations =====
+  async getVendorOrderItems(
+    vendorId: number,
+    orderId: number,
+  ) {
+    const items = await this.orderItemRepository.find({
+      where: {
+        order: { id: orderId },
+      } as any,
+      relations: ['product', 'product.vendor', 'order'],
+    });
+    const ownItems = items.filter((it) => (it.product as any)?.vendor?.id === vendorId);
+    if (items.length > 0 && ownItems.length === 0) {
+      throw new ForbiddenException('You do not have access to this order');
+    }
+    return ownItems;
+  }
+
+  private computeAggregateStatus(items: OrderItem[]): OrderStatus {
+    const statuses = new Set(items.map((i) => i.status));
+    if (statuses.has(OrderStatus.DELIVERY_FAILED)) return OrderStatus.DELIVERY_FAILED;
+    if (items.length > 0 && items.every((i) => i.status === OrderStatus.DELIVERED)) return OrderStatus.DELIVERED;
+    if (statuses.has(OrderStatus.OUT_FOR_DELIVERY)) return OrderStatus.OUT_FOR_DELIVERY;
+    if (statuses.has(OrderStatus.SHIPPED)) return OrderStatus.SHIPPED;
+    if (statuses.has(OrderStatus.PROCESSING)) return OrderStatus.PROCESSING;
+    return OrderStatus.PENDING;
+  }
+
+  async updateOrderItemStatus(
+    vendorId: number,
+    orderId: number,
+    itemId: number,
+    next: OrderStatus,
+  ) {
+    const item = await this.orderItemRepository.findOne({
+      where: { id: itemId, order: { id: orderId } } as any,
+      relations: ['product', 'product.vendor', 'order', 'order.items'],
+    });
+    if (!item) throw new NotFoundException('Order item not found');
+    if ((item.product as any)?.vendor?.id !== vendorId) {
+      throw new ForbiddenException('You cannot update this item');
+    }
+
+    const allowedNext: Record<OrderStatus, OrderStatus[]> = {
+      [OrderStatus.PENDING]: [OrderStatus.PROCESSING],
+      [OrderStatus.PROCESSING]: [OrderStatus.SHIPPED],
+      [OrderStatus.SHIPPED]: [OrderStatus.OUT_FOR_DELIVERY, OrderStatus.DELIVERED],
+      [OrderStatus.OUT_FOR_DELIVERY]: [OrderStatus.DELIVERED, OrderStatus.DELIVERY_FAILED],
+      [OrderStatus.DELIVERED]: [],
+      [OrderStatus.DELIVERY_FAILED]: [],
+      [OrderStatus.CANCELLED]: [],
+    };
+    if (!allowedNext[item.status]?.includes(next)) {
+      throw new ForbiddenException(`Invalid status transition from ${item.status} to ${next}`);
+    }
+
+    // Payment gating: restrict shipping/delivery on unpaid (non-COD) orders
+    const PaymentStatus = (require('../orders/entities/order.entity') as any).PaymentStatus;
+    const PaymentMethod = (require('../orders/entities/order.entity') as any).PaymentMethod;
+    const isShippingLike = [OrderStatus.SHIPPED, OrderStatus.OUT_FOR_DELIVERY, OrderStatus.DELIVERED].includes(next);
+    if (isShippingLike && item.order.paymentStatus !== PaymentStatus.PAID && item.order.paymentMethod !== PaymentMethod.COD) {
+      throw new ForbiddenException('Cannot progress to shipping/delivery on unpaid order (non-COD)');
+    }
+
+    item.status = next;
+    if (next === OrderStatus.SHIPPED) item.shippedAt = new Date();
+    if (next === OrderStatus.DELIVERED) item.deliveredAt = new Date();
+    await this.orderItemRepository.save(item);
+
+    // Update aggregate order status based on all items
+  const freshItems = await this.orderItemRepository.find({ where: { order: { id: orderId } } as any });
+  const aggregate = this.computeAggregateStatus(freshItems);
+    if (item.order.status !== aggregate) {
+      item.order.status = aggregate;
+      await this.orderRepository.save(item.order);
+    }
+
+    return item;
+  }
+
+  async updateOrderItemTracking(
+    vendorId: number,
+    orderId: number,
+    itemId: number,
+    tracking: { trackingCarrier?: string; trackingNumber?: string; trackingUrl?: string },
+  ) {
+    const item = await this.orderItemRepository.findOne({
+      where: { id: itemId, order: { id: orderId } } as any,
+      relations: ['product', 'product.vendor'],
+    });
+    if (!item) throw new NotFoundException('Order item not found');
+    if ((item.product as any)?.vendor?.id !== vendorId) {
+      throw new ForbiddenException('You cannot update this item');
+    }
+    item.trackingCarrier = tracking.trackingCarrier ?? item.trackingCarrier ?? null;
+    item.trackingNumber = tracking.trackingNumber ?? item.trackingNumber ?? null;
+    item.trackingUrl = tracking.trackingUrl ?? item.trackingUrl ?? null;
+    await this.orderItemRepository.save(item);
+    return item;
+  }
+
+  async createShipment(
+    vendorId: number,
+    orderId: number,
+    items: number[],
+    tracking: { trackingCarrier?: string; trackingNumber?: string; trackingUrl?: string },
+  ) {
+    if (!Array.isArray(items) || items.length === 0) {
+      throw new ForbiddenException('At least one item is required');
+    }
+    const rows = await this.orderItemRepository.find({
+      where: items.map((id) => ({ id, order: { id: orderId } })) as any,
+      relations: ['product', 'product.vendor', 'order', 'order.items'],
+    });
+    if (rows.length !== items.length) {
+      throw new NotFoundException('One or more items were not found');
+    }
+    for (const it of rows) {
+      if ((it.product as any)?.vendor?.id !== vendorId) {
+        throw new ForbiddenException('You cannot update one or more items');
+      }
+    }
+    const allowedFrom = new Set([OrderStatus.PENDING, OrderStatus.PROCESSING]);
+    for (const it of rows) {
+      if (!allowedFrom.has(it.status)) {
+        throw new ForbiddenException(`Item ${it.id} cannot be shipped from status ${it.status}`);
+      }
+    }
+    // Payment gating: restrict shipping on unpaid (non-COD) orders
+    const PaymentStatus = (require('../orders/entities/order.entity') as any).PaymentStatus;
+    const PaymentMethod = (require('../orders/entities/order.entity') as any).PaymentMethod;
+    const order = rows[0].order;
+    if (order.paymentStatus !== PaymentStatus.PAID && order.paymentMethod !== PaymentMethod.COD) {
+      throw new ForbiddenException('Cannot ship items on unpaid order (non-COD)');
+    }
+
+    const now = new Date();
+    for (const it of rows) {
+      it.status = OrderStatus.SHIPPED;
+      it.shippedAt = now;
+      it.trackingCarrier = tracking.trackingCarrier ?? it.trackingCarrier ?? null;
+      it.trackingNumber = tracking.trackingNumber ?? it.trackingNumber ?? null;
+      it.trackingUrl = tracking.trackingUrl ?? it.trackingUrl ?? null;
+    }
+    await this.orderItemRepository.save(rows);
+    const freshItems = await this.orderItemRepository.find({ where: { order: { id: orderId } } as any });
+    const aggregate = this.computeAggregateStatus(freshItems);
+    if (order.status !== aggregate) {
+      order.status = aggregate;
+      await this.orderRepository.save(order);
+    }
+    return rows;
   }
 }

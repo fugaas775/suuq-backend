@@ -13,6 +13,8 @@ import {
   Post,
   HttpCode,
   HttpStatus,
+  Put,
+  BadRequestException,
 } from '@nestjs/common';
 import { UsersService } from '../users/users.service';
 import { OrdersService } from '../orders/orders.service';
@@ -97,6 +99,117 @@ export class AdminController {
 
   @Patch('orders/:id/assign-deliverer')
   async assignDeliverer(@Param('id', ParseIntPipe) id: number, @Body('delivererId', ParseIntPipe) delivererId: number) {
+    return this.ordersService.assignDeliverer(id, delivererId);
+  }
+
+  // ===== Alias routes for frontend compatibility =====
+  @Put('orders/:id/assign')
+  async assignDelivererPut(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: any,
+    @Query() query?: any,
+  ) {
+    const delivererId = Number(
+      body?.delivererId ??
+        body?.userId ??
+        body?.deliverer_id ??
+        body?.assigneeId ??
+        body?.driverId ??
+        body?.courierId ??
+        query?.delivererId ??
+        query?.userId,
+    );
+    if (!delivererId || Number.isNaN(delivererId)) {
+      throw new BadRequestException('delivererId is required');
+    }
+    return this.ordersService.assignDeliverer(id, delivererId);
+  }
+
+  @Patch('orders/:id/assign')
+  async assignDelivererAssignPatch(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: any,
+    @Query() query?: any,
+  ) {
+    const delivererId = Number(
+      body?.delivererId ??
+        body?.userId ??
+        body?.deliverer_id ??
+        body?.assigneeId ??
+        body?.driverId ??
+        body?.courierId ??
+        query?.delivererId ??
+        query?.userId,
+    );
+    if (!delivererId || Number.isNaN(delivererId)) {
+      throw new BadRequestException('delivererId is required');
+    }
+    return this.ordersService.assignDeliverer(id, delivererId);
+  }
+
+  @Post('orders/:id/assign')
+  async assignDelivererAssignPost(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: any,
+    @Query() query?: any,
+  ) {
+    const delivererId = Number(
+      body?.delivererId ??
+        body?.userId ??
+        body?.deliverer_id ??
+        body?.assigneeId ??
+        body?.driverId ??
+        body?.courierId ??
+        query?.delivererId ??
+        query?.userId,
+    );
+    if (!delivererId || Number.isNaN(delivererId)) {
+      throw new BadRequestException('delivererId is required');
+    }
+    return this.ordersService.assignDeliverer(id, delivererId);
+  }
+
+  @Patch('orders/:id/deliverer')
+  async assignDelivererPatch(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: any,
+    @Query() query?: any,
+  ) {
+    const delivererId = Number(
+      body?.delivererId ??
+        body?.userId ??
+        body?.deliverer_id ??
+        body?.assigneeId ??
+        body?.driverId ??
+        body?.courierId ??
+        query?.delivererId ??
+        query?.userId,
+    );
+    if (!delivererId || Number.isNaN(delivererId)) {
+      throw new BadRequestException('delivererId is required');
+    }
+    return this.ordersService.assignDeliverer(id, delivererId);
+  }
+
+  @Post('orders/:id/deliverer')
+  async assignDelivererPost(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: any,
+    @Query() query?: any,
+  ) {
+    const delivererId = Number(
+      body?.delivererId ??
+        body?.userId ??
+        body?.deliverer_id ??
+        body?.assigneeId ??
+        body?.driverId ??
+        body?.courierId ??
+        query?.delivererId ??
+        query?.userId,
+    );
+    if (!delivererId || Number.isNaN(delivererId)) {
+      throw new BadRequestException('delivererId is required');
+    }
     return this.ordersService.assignDeliverer(id, delivererId);
   }
 

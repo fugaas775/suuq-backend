@@ -94,7 +94,7 @@ export class ProductsService {
     currentPage: number;
     totalPages: number;
   }> {
-    const { page = 1, perPage = 20, search, categoryId, categorySlug, featured, tags, priceMin, priceMax } = filters;
+    const { page = 1, perPage = 20, search, categoryId, categorySlug, featured, tags, priceMin, priceMax, sort, country, region, city } = filters;
 
     const qb = this.productRepo.createQueryBuilder('product')
       .leftJoinAndSelect('product.vendor', 'vendor')
@@ -113,9 +113,69 @@ export class ProductsService {
     if (priceMin !== undefined) qb.andWhere('product.price >= :priceMin', { priceMin });
     if (priceMax !== undefined) qb.andWhere('product.price <= :priceMax', { priceMax });
 
-    qb.orderBy('product.createdAt', 'DESC').skip((page - 1) * perPage).take(perPage);
+    // Geo filters using vendor profile fields
+    if (country) qb.andWhere('LOWER(vendor.registrationCountry) = LOWER(:country)', { country });
+    if (region) qb.andWhere('LOWER(vendor.registrationRegion) = LOWER(:region)', { region });
+    if (city) qb.andWhere('LOWER(vendor.registrationCity) = LOWER(:city)', { city });
+
+    // Sorting options
+    // Default: newest first
+    if (!sort) {
+      qb.orderBy('product.createdAt', 'DESC');
+    } else if (sort === 'rating_desc') {
+      qb.orderBy('product.average_rating', 'DESC', 'NULLS LAST')
+        .addOrderBy('product.rating_count', 'DESC', 'NULLS LAST')
+        .addOrderBy('product.createdAt', 'DESC');
+    } else if (sort === 'sales_desc') {
+      // Approximate by vendor.numberOfSales then recent; for exact product sales, a stat table would be better
+      qb.orderBy('vendor.numberOfSales', 'DESC', 'NULLS LAST')
+        .addOrderBy('product.createdAt', 'DESC');
+    } else {
+      // fallback to createdAt desc if unknown
+      qb.orderBy('product.createdAt', 'DESC');
+    }
+
+    qb.skip((page - 1) * perPage).take(perPage);
     const [items, total] = await qb.getManyAndCount();
     
+    return { items, total, perPage, currentPage: page, totalPages: Math.ceil(total / perPage) };
+  }
+
+  // Basic recommendation strategy: 
+  // - If user has reviews, prioritize products in same categories/tags
+  // - Else, return featured + top-rated mix
+  async recommendedForUser(userId: number, page = 1, perPage = 20): Promise<{ items: Product[]; total: number; perPage: number; currentPage: number; totalPages: number }> {
+    // Get categories from user's reviews
+    const reviewed = await this.productRepo.createQueryBuilder('p')
+      .innerJoin('p.reviews', 'r', 'r.userId = :userId', { userId })
+      .leftJoin('p.category', 'c')
+      .leftJoin('p.tags', 't')
+      .select(['p.id', 'c.id', 't.id'])
+      .limit(200)
+      .getMany();
+
+    const categoryIds = Array.from(new Set(reviewed.map(p => p.category?.id).filter(Boolean) as number[]));
+    // We won’t extract tag IDs here deeply; keep it simple
+
+    const qb = this.productRepo.createQueryBuilder('product')
+      .leftJoinAndSelect('product.vendor', 'vendor')
+      .leftJoinAndSelect('product.category', 'category')
+      .leftJoinAndSelect('product.tags', 'tag')
+      .leftJoinAndSelect('product.images', 'images');
+
+    if (categoryIds.length) {
+      qb.andWhere('category.id IN (:...categoryIds)', { categoryIds });
+    } else {
+      qb.andWhere('(product.featured = true OR product.average_rating IS NOT NULL)');
+    }
+
+    qb.orderBy('product.average_rating', 'DESC', 'NULLS LAST')
+      .addOrderBy('product.rating_count', 'DESC', 'NULLS LAST')
+      .addOrderBy('product.createdAt', 'DESC')
+      .skip((page - 1) * perPage)
+      .take(perPage);
+
+    const [items, total] = await qb.getManyAndCount();
     return { items, total, perPage, currentPage: page, totalPages: Math.ceil(total / perPage) };
   }
 

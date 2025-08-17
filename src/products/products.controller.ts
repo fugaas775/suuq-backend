@@ -89,6 +89,19 @@ export class ProductsController {
     return this.productsService.findOne(id);
   }
 
+  // Personalized recommendations for the current user
+  @UseGuards(AuthGuard('jwt'))
+  @Get('recommended')
+  async recommended(
+    @Req() req: any,
+    @Query('page') page = 1,
+    @Query('per_page') perPage = 20,
+  ) {
+    const userId = req.user?.id;
+    if (!userId) throw new BadRequestException('Unauthorized');
+    return this.productsService.recommendedForUser(Number(userId), Number(page) || 1, Number(perPage) || 20);
+  }
+
 
   @Patch(':id')
   @UseGuards(AuthGuard('jwt'), RolesGuard)

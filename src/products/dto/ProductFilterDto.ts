@@ -65,4 +65,33 @@ export class ProductFilterDto {
   @IsOptional()
   @IsString()
   currency?: string;
+
+  // Geo/location filters based on vendor profile fields
+  @IsOptional()
+  @IsString()
+  country?: string;
+
+  @IsOptional()
+  @IsString()
+  region?: string;
+
+  @IsOptional()
+  @IsString()
+  city?: string;
+
+  // Coordinates accepted for forward-compatibility (not used server-side yet)
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  lat?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  lng?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  distanceKm?: number;
 }

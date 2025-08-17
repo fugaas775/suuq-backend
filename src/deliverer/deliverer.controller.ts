@@ -17,6 +17,14 @@ export class DelivererController {
     return this.delivererService.getMyAssignments(req.user.id);
   }
 
+  // Alias for frontend: /deliverer/my-assignments
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.DELIVERER)
+  @Get('deliverer/my-assignments')
+  async getMyAssignmentsAlias(@Req() req: any) {
+    return this.delivererService.getMyAssignments(req.user.id);
+  }
+
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.DELIVERER)
   @Patch('deliverer/orders/:orderId/status')

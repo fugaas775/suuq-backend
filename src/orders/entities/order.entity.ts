@@ -98,6 +98,28 @@ export class OrderItem {
   @Column('decimal', { precision: 10, scale: 2 })
   price!: number; // Price at the time of purchase
 
+  @Column({
+    type: 'enum',
+    enum: OrderStatus,
+    default: OrderStatus.PENDING,
+  })
+  status!: OrderStatus;
+
+  @Column({ type: 'timestamp', nullable: true })
+  shippedAt?: Date | null;
+
+  @Column({ type: 'timestamp', nullable: true })
+  deliveredAt?: Date | null;
+
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  trackingCarrier?: string | null;
+
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  trackingNumber?: string | null;
+
+  @Column({ type: 'varchar', length: 1024, nullable: true })
+  trackingUrl?: string | null;
+
   @ManyToOne(() => Order, (order) => order.items, { onDelete: 'CASCADE' })
   order!: Order;
 }
