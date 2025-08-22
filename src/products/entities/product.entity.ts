@@ -90,6 +90,10 @@ export class Product {
   @OneToMany(() => Review, review => review.product)
   reviews!: Review[];
 
+  // Per-product sales counter used for Best Sellers sorting
+  @Column('int', { default: 0 })
+  sales_count!: number;
+
   // These getters are now removed as they are not needed.
   // The full, correct URL is now stored directly in `imageUrl` and in the `src` of the ProductImage entities.
 }

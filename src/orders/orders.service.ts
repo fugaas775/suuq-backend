@@ -19,30 +19,50 @@ export class OrdersService {
    * Find all orders for admin with pagination and optional status filter.
    * Returns { orders, total } for pagination.
    */
-  async findAllForAdmin(query: { page?: number; limit?: number; status?: string }): Promise<{ data: OrderResponseDto[]; total: number }> {
+  async findAllForAdmin(query: { page?: number; limit?: number; pageSize?: number; status?: string }): Promise<{ data: OrderResponseDto[]; total: number }> {
     const qb = this.orderRepository.createQueryBuilder('order')
       .leftJoinAndSelect('order.user', 'user')
-      .leftJoinAndSelect('order.items', 'items');
+      .leftJoinAndSelect('order.deliverer', 'deliverer')
+      .leftJoinAndSelect('order.items', 'items')
+      .leftJoinAndSelect('items.product', 'product')
+      .leftJoinAndSelect('product.vendor', 'vendor');
 
     if (query.status) {
       qb.andWhere('order.status = :status', { status: query.status });
     }
 
-    const page = query.page && query.page > 0 ? query.page : 1;
-    const limit = query.limit && query.limit > 0 ? query.limit : 20;
+  const page = query.page && query.page > 0 ? query.page : 1;
+  const limitInput = (query.limit ?? query.pageSize);
+  const limit = limitInput && limitInput > 0 ? limitInput : 20;
     qb.skip((page - 1) * limit).take(limit);
 
     const [orders, total] = await qb.getManyAndCount();
-    const response = orders.map(order => plainToInstance(OrderResponseDto, {
-      ...order,
-      userId: order.user?.id,
-      delivererId: order.deliverer?.id,
-      items: order.items?.map(item => ({
-        productId: item.product?.id,
-        quantity: item.quantity,
-        price: item.price,
-      })) || [],
-    }));
+    const response = orders.map(order => {
+      const vendorsMap = new Map<number, { id: number; displayName?: string | null; storeName?: string | null }>();
+      for (const it of order.items || []) {
+        const v = (it as any).product?.vendor as any;
+        if (v?.id && !vendorsMap.has(v.id)) {
+          vendorsMap.set(v.id, { id: v.id, displayName: v.displayName || null, storeName: v.storeName || null });
+        }
+      }
+      const vendors = Array.from(vendorsMap.values());
+      const deliverer = (order as any).deliverer as any;
+      return plainToInstance(OrderResponseDto, {
+        ...order,
+        userId: (order as any).user?.id,
+        delivererId: deliverer?.id,
+        delivererName: deliverer?.displayName || null,
+        delivererEmail: deliverer?.email || null,
+        delivererPhone: deliverer?.phoneNumber || null,
+        vendors,
+        vendorName: vendors.length === 1 ? (vendors[0].storeName || vendors[0].displayName || null) : null,
+        items: (order.items || []).map((item: any) => ({
+          productId: item.product?.id,
+          quantity: item.quantity,
+          price: item.price,
+        })),
+      });
+    });
     return { data: response, total };
   }
 
@@ -184,6 +204,9 @@ export class OrdersService {
 
   async findAllForUser(userId: number, page: number = 1, limit: number = 10): Promise<{ data: OrderResponseDto[]; total: number }> {
     const qb = this.orderRepository.createQueryBuilder('order')
+      .leftJoinAndSelect('order.items', 'items')
+      .leftJoinAndSelect('items.product', 'product')
+      .leftJoinAndSelect('order.deliverer', 'deliverer')
       .where('order.userId = :userId', { userId })
       .orderBy('order.createdAt', 'DESC')
       .skip((page - 1) * limit)
@@ -195,6 +218,8 @@ export class OrdersService {
       delivererId: order.deliverer?.id,
       items: order.items?.map(item => ({
         productId: item.product?.id,
+        productName: item.product?.name,
+        productImageUrl: item.product?.imageUrl ?? null,
         quantity: item.quantity,
         price: item.price,
       })) || [],
@@ -203,10 +228,36 @@ export class OrdersService {
   }
 
   async findOneForUser(userId: number, orderId: number): Promise<Order> {
-    const order = await this.orderRepository.findOne({ where: { id: orderId, user: { id: userId } } });
+    const order = await this.orderRepository.findOne({
+      where: { id: orderId, user: { id: userId } },
+      relations: ['items', 'items.product', 'deliverer'],
+    });
     if (!order) {
       throw new NotFoundException('Order not found or you do not have permission to view it.');
     }
     return order;
+  }
+
+  /**
+   * Hard delete an order and its children. Irreversible.
+   * Ensures FK constraints are satisfied. Returns void (204 No Content at controller).
+   */
+  async hardDelete(id: number): Promise<void> {
+    const existing = await this.orderRepository.findOne({ where: { id } });
+    if (!existing) {
+      throw new NotFoundException('Order not found');
+    }
+    // If relations aren't cascaded, manually delete children first.
+    // OrderItem has onDelete: 'CASCADE', but ensure cleanup explicitly for safety in older rows.
+    await this.orderRepository.manager
+      .createQueryBuilder()
+      .delete()
+      .from(OrderItem)
+      .where('orderId = :id', { id })
+      .execute();
+
+    // If you later add payments/shipments tables, delete them here similarly.
+
+    await this.orderRepository.delete(id);
   }
 }

@@ -9,6 +9,7 @@ import { Product } from '../products/entities/product.entity';
 import { Order, OrderItem } from '../orders/entities/order.entity';
 import { ProductImage } from '../products/entities/product-image.entity'; // <-- 1. IMPORT ADDED
 import { UsersModule } from '../users/users.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 import { MediaModule } from '../media/media.module';
 
 @Module({
@@ -17,6 +18,7 @@ import { MediaModule } from '../media/media.module';
   TypeOrmModule.forFeature([User, Product, Order, OrderItem, ProductImage]),
   UsersModule,
   MediaModule,
+  NotificationsModule,
   ],
   controllers: [
     VendorController,

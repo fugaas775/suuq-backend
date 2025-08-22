@@ -33,6 +33,14 @@ export class ProductFilterDto {
   @Min(1)
   categoryId?: number;
 
+  // Accept frontend alias ?category= as categoryId
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Expose({ name: 'category' })
+  categoryAlias?: number;
+
   @IsOptional()
   @IsString()
   categorySlug?: string;
@@ -78,6 +86,29 @@ export class ProductFilterDto {
   @IsOptional()
   @IsString()
   city?: string;
+
+  // Geo ranking (do not hard filter; just prioritize by these)
+  @IsOptional()
+  @Type(() => Boolean)
+  @IsBoolean()
+  geoPriority?: boolean;
+
+  @IsOptional()
+  @IsString()
+  userCountry?: string;
+
+  @IsOptional()
+  @IsString()
+  userRegion?: string;
+
+  @IsOptional()
+  @IsString()
+  userCity?: string;
+
+  // Optional comma-separated whitelist of countries for the region scope (defaults to ET,SO,KE,DJ)
+  @IsOptional()
+  @IsString()
+  eastAfrica?: string;
 
   // Coordinates accepted for forward-compatibility (not used server-side yet)
   @IsOptional()

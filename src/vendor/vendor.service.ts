@@ -11,6 +11,7 @@ import { ProductImage } from '../products/entities/product-image.entity';
 import { Order, OrderItem } from '../orders/entities/order.entity';
 import { OrderStatus } from '../orders/entities/order.entity';
 import { UserRole } from '../auth/roles.enum';
+import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class VendorService {
@@ -25,6 +26,7 @@ export class VendorService {
   private readonly orderItemRepository: Repository<OrderItem>,
     @InjectRepository(ProductImage)
     private readonly productImageRepository: Repository<ProductImage>,
+  private readonly notificationsService: NotificationsService,
   ) {}
 
   // ✅ FIX: This function now correctly handles an array of ImageDto objects
@@ -276,6 +278,41 @@ export class VendorService {
   }
 
   /**
+   * Search deliverers (users with DELIVERER role). Supports text query on displayName, email, or phone.
+   * Returns normalized items: { id, name, email, phone }
+   */
+  async searchDeliverers(opts: { q?: string; page?: number; limit?: number }): Promise<{ items: Array<{ id: number; name: string | null; email: string | null; phone: string | null }>; total: number }> {
+    const q = (opts.q || '').trim();
+    const page = opts.page && opts.page > 0 ? opts.page : 1;
+    const limit = opts.limit && opts.limit > 0 ? Math.min(opts.limit, 100) : 20;
+
+    const qb = this.userRepository.createQueryBuilder('user')
+      .where(':role = ANY(user.roles)', { role: UserRole.DELIVERER })
+      .andWhere('user.isActive = true')
+      .orderBy('user.displayName', 'ASC')
+      .skip((page - 1) * limit)
+      .take(limit);
+
+    if (q) {
+      qb.andWhere(
+        '(user.displayName ILIKE :q OR user.email ILIKE :q OR user.phoneNumber ILIKE :q)',
+        { q: `%${q}%` },
+      );
+    }
+
+    const [users, total] = await qb.getManyAndCount();
+    const items = users.map((u) => ({
+      id: u.id,
+      name: u.displayName || null,
+      email: u.email || null,
+      phone: (u as any).phoneNumber || null,
+      lat: (u as any).locationLat ?? null,
+      lng: (u as any).locationLng ?? null,
+    }));
+    return { items, total };
+  }
+
+  /**
    * Get paginated orders that include ONLY this vendor's products.
    * For safety, we currently restrict updates to orders that are fully owned by the vendor
    * (i.e., all items belong to this vendor). Listing shows all orders containing vendor items;
@@ -293,6 +330,7 @@ export class VendorService {
       .innerJoin('o.items', 'oi')
       .innerJoin('oi.product', 'p')
       .innerJoin('p.vendor', 'v')
+  .leftJoinAndSelect('o.deliverer', 'deliverer')
       .leftJoinAndSelect('o.user', 'user')
       .leftJoinAndSelect('o.items', 'items')
       .leftJoinAndSelect('items.product', 'product')
@@ -309,11 +347,30 @@ export class VendorService {
 
     const [orders, total] = await qb.getManyAndCount();
 
-    // Filter items to only this vendor's products in the response
-    const data = orders.map((o) => ({
-      ...o,
-      items: (o.items || []).filter((it) => (it.product as any)?.vendor?.id === vendorId),
-    }));
+    // Filter items to only this vendor's products in the response and expose normalized deliverer fields
+    const data = orders.map((o) => {
+      const d: any = (o as any).deliverer || null;
+      const filteredItems = (o.items || []).filter((it) => (it.product as any)?.vendor?.id === vendorId);
+      return {
+        ...o,
+        // Keep the deliverer container for clients that look for it
+        deliverer: d,
+        // Normalized convenience fields for parsers
+        delivererId: d?.id ?? null,
+        delivererName: d?.displayName ?? null,
+        delivererEmail: d?.email ?? null,
+        delivererPhone: (d as any)?.phoneNumber ?? null,
+        // Aliased summary object commonly used by mobile apps
+        assignedDeliverer: d
+          ? { id: d.id, name: d.displayName ?? null, email: d.email ?? null, phone: (d as any)?.phoneNumber ?? null }
+          : null,
+        // Additional alias
+        delivererSummary: d
+          ? { id: d.id, name: d.displayName ?? null, email: d.email ?? null, phone: (d as any)?.phoneNumber ?? null }
+          : null,
+        items: filteredItems,
+      };
+    });
 
     return { data, total };
   }
@@ -321,6 +378,7 @@ export class VendorService {
   async getVendorOrder(vendorId: number, orderId: number) {
     const order = await this.orderRepository
       .createQueryBuilder('o')
+      .leftJoinAndSelect('o.deliverer', 'deliverer')
       .leftJoinAndSelect('o.user', 'user')
       .leftJoinAndSelect('o.items', 'items')
       .leftJoinAndSelect('items.product', 'product')
@@ -333,10 +391,87 @@ export class VendorService {
     const hasVendorItem = (order.items || []).some((it) => (it.product as any)?.vendor?.id === vendorId);
     if (!hasVendorItem) throw new ForbiddenException('You do not have access to this order');
 
+    const d: any = (order as any).deliverer || null;
     return {
       ...order,
+      deliverer: d,
+      delivererId: d?.id ?? null,
+      delivererName: d?.displayName ?? null,
+      delivererEmail: d?.email ?? null,
+      delivererPhone: (d as any)?.phoneNumber ?? null,
+      assignedDeliverer: d
+        ? { id: d.id, name: d.displayName ?? null, email: d.email ?? null, phone: (d as any)?.phoneNumber ?? null }
+        : null,
+      delivererSummary: d
+        ? { id: d.id, name: d.displayName ?? null, email: d.email ?? null, phone: (d as any)?.phoneNumber ?? null }
+        : null,
       items: (order.items || []).filter((it) => (it.product as any)?.vendor?.id === vendorId),
     };
+  }
+
+  /**
+   * Vendor assigns a deliverer to an order, only if all items belong to this vendor.
+   * Sets order.status to SHIPPED and notifies the deliverer.
+   */
+  async assignDelivererByVendor(vendorId: number, orderId: number, delivererId: number) {
+    const order = await this.orderRepository
+      .createQueryBuilder('o')
+      .leftJoinAndSelect('o.items', 'items')
+      .leftJoinAndSelect('items.product', 'product')
+      .leftJoinAndSelect('product.vendor', 'vendor')
+      .leftJoinAndSelect('o.user', 'user')
+      .where('o.id = :orderId', { orderId })
+      .getOne();
+    if (!order) throw new NotFoundException('Order not found');
+    const items = order.items || [];
+    const allFromVendor = items.length > 0 && items.every((it) => (it.product as any)?.vendor?.id === vendorId);
+    if (!allFromVendor) {
+      throw new ForbiddenException('Order contains items from other vendors; cannot assign deliverer');
+    }
+
+    // Validate deliverer role
+    const deliverer = await this.userRepository.findOne({ where: { id: delivererId } });
+    if (!deliverer || !(deliverer.roles || []).includes(UserRole.DELIVERER)) {
+      throw new ForbiddenException('Selected user is not a deliverer');
+    }
+
+    // Set deliverer and advance status to SHIPPED
+    (order as any).deliverer = deliverer as any;
+    order.status = OrderStatus.SHIPPED;
+    await this.orderRepository.save(order);
+
+    // Notify deliverer
+    try {
+      await this.notificationsService.sendToUser({
+        userId: delivererId,
+        title: 'New Delivery Assigned',
+        body: `You have been assigned order #${orderId}`,
+      });
+    } catch (_) {
+      // ignore notification failures
+    }
+
+    // Return enriched payload with deliverer info and common aliases
+    return {
+      ...order,
+      deliverer,
+      delivererId: deliverer.id,
+      delivererName: deliverer.displayName ?? null,
+      delivererEmail: deliverer.email ?? null,
+      delivererPhone: (deliverer as any)?.phoneNumber ?? null,
+      assignedDeliverer: {
+        id: deliverer.id,
+        name: deliverer.displayName ?? null,
+        email: deliverer.email ?? null,
+        phone: (deliverer as any)?.phoneNumber ?? null,
+      },
+      delivererSummary: {
+        id: deliverer.id,
+        name: deliverer.displayName ?? null,
+        email: deliverer.email ?? null,
+        phone: (deliverer as any)?.phoneNumber ?? null,
+      },
+    } as any;
   }
 
   /**

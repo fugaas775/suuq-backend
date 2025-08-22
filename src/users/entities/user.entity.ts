@@ -165,6 +165,13 @@ export class User {
   @Column({ type: 'int', nullable: true, default: 0 })
   numberOfSales?: number | null;
 
+  // --- Optional location for proximity sorting (deliverers/vendors) ---
+  @Column({ type: 'float', nullable: true })
+  locationLat?: number | null;
+
+  @Column({ type: 'float', nullable: true })
+  locationLng?: number | null;
+
   @Column({ type: 'varchar', length: 8, nullable: true })
   preferredLanguage?: string | null;
 

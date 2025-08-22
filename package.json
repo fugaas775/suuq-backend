@@ -24,7 +24,8 @@
     "seed:admin": "node --env-file=.env -r ts-node/register src/seeds/create-admin.ts",
     "typeorm": "node --env-file=.env -r ts-node/register -r tsconfig-paths/register ./node_modules/typeorm/cli.js -d src/data-source.ts",
     "seed:products": "ts-node src/seeds/create-products.ts",
-    "seed:categories": "ts-node src/database/seeds/seed-categories.ts"
+  "seed:categories": "ts-node src/database/seeds/seed-categories.ts",
+  "backfill:sales": "ts-node -r tsconfig-paths/register --transpile-only scripts/backfill-product-sales.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.862.0",

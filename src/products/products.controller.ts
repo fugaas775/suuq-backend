@@ -55,6 +55,11 @@ export class ProductsController {
         filters.perPage = filters.limit;
       }
 
+      // Map category alias to categoryId for frontend query param compatibility
+      if (!filters.categoryId && (filters as any).categoryAlias) {
+        filters.categoryId = (filters as any).categoryAlias as any;
+      }
+
       const result = await this.productsService.findFiltered(filters);
 
       if (!result || !Array.isArray(result.items)) {

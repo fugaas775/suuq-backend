@@ -15,6 +15,7 @@ import {
   HttpStatus,
   Put,
   BadRequestException,
+  Delete,
 } from '@nestjs/common';
 import { UsersService } from '../users/users.service';
 import { OrdersService } from '../orders/orders.service';
@@ -89,11 +90,25 @@ export class AdminController {
   // ================== ORDER MANAGEMENT ENDPOINTS ==================
   @Get('orders')
   async getAllOrders(@Query() query: { page?: number; pageSize?: number; status?: string }) {
-    return this.ordersService.findAllForAdmin(query);
+    const result = await this.ordersService.findAllForAdmin(query as any);
+    return { orders: result.data, total: result.total };
   }
 
   @Patch('orders/:id/cancel')
   async cancelOrder(@Param('id', ParseIntPipe) id: number) {
+    return this.ordersService.cancelOrderForAdmin(id);
+  }
+
+  // TRUE HARD DELETE (irreversible). Used by Admin UI when configured for hard delete.
+  @Delete('orders/:id/hard')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async hardDeleteOrder(@Param('id', ParseIntPipe) id: number): Promise<void> {
+    await this.ordersService.hardDelete(id);
+  }
+
+  // DELETE /api/admin/orders/:id -> soft-delete by cancelling
+  @Delete('orders/:id')
+  async removeOrder(@Param('id', ParseIntPipe) id: number) {
     return this.ordersService.cancelOrderForAdmin(id);
   }
 

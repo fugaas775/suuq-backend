@@ -25,6 +25,17 @@ export class DelivererController {
     return this.delivererService.getMyAssignments(req.user.id);
   }
 
+  // Detail with vendor summary
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.DELIVERER)
+  @Get('deliverer/orders/:orderId')
+  async getAssignmentDetail(
+    @Req() req: any,
+    @Param('orderId', ParseIntPipe) orderId: number,
+  ) {
+    return this.delivererService.getMyAssignmentDetail(req.user.id, orderId);
+  }
+
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.DELIVERER)
   @Patch('deliverer/orders/:orderId/status')

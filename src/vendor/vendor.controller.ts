@@ -109,6 +109,28 @@ export class VendorController {
     return this.vendorService.getSales(req.user.id);
   }
 
+  // Allow vendors to search available deliverers (users with DELIVERER role)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.VENDOR)
+  @Get('vendor/deliverers')
+  async searchDeliverers(
+    @Query('q') q?: string,
+    @Query('page') page: number = 1,
+    @Query('limit') limit: number = 20,
+  ) {
+    const { items, total } = await this.vendorService.searchDeliverers({
+      q: q || '',
+      page: Number(page) || 1,
+      limit: Math.min(Number(limit) || 20, 100),
+    });
+    return {
+      items, // normalized to { id, name, email, phone }
+      total,
+      page: Number(page) || 1,
+      limit: Math.min(Number(limit) || 20, 100),
+    };
+  }
+
   // ===== Vendor Orders =====
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.VENDOR)
@@ -145,6 +167,32 @@ export class VendorController {
     @Body() dto: UpdateOrderStatusDto,
   ) {
     return this.vendorService.updateOrderStatus(req.user.id, orderId, dto.status);
+  }
+
+  // Vendor assigns a deliverer to an order they fully own
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.VENDOR)
+  @Patch('vendor/orders/:orderId/assign-deliverer')
+  async vendorAssignDeliverer(
+    @Req() req: any,
+    @Param('orderId', ParseIntPipe) orderId: number,
+    @Body() body: any,
+    @Query() query?: any,
+  ) {
+    const delivererId = Number(
+      body?.delivererId ??
+      body?.userId ??
+      body?.deliverer_id ??
+      body?.assigneeId ??
+      body?.driverId ??
+      body?.courierId ??
+      query?.delivererId ??
+      query?.userId,
+    );
+    if (!delivererId || Number.isNaN(delivererId)) {
+      throw new (require('@nestjs/common') as any).BadRequestException('delivererId is required');
+    }
+    return this.vendorService.assignDelivererByVendor(req.user.id, orderId, delivererId);
   }
 
   // ===== Item-level endpoints =====

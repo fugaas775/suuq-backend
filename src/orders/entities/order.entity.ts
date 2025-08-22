@@ -47,7 +47,10 @@ export class Order {
   @OneToMany(() => OrderItem, (item) => item.order, { cascade: true, eager: true })
   items!: OrderItem[];
 
-  @Column('decimal', { precision: 10, scale: 2 })
+  @Column('decimal', { precision: 10, scale: 2, transformer: {
+    to: (value: number) => value,
+    from: (value: string | number) => typeof value === 'string' ? parseFloat(value) : value,
+  }})
   total!: number;
 
   @Column({
@@ -95,7 +98,10 @@ export class OrderItem {
   @Column()
   quantity!: number;
 
-  @Column('decimal', { precision: 10, scale: 2 })
+  @Column('decimal', { precision: 10, scale: 2, transformer: {
+    to: (value: number) => value,
+    from: (value: string | number) => typeof value === 'string' ? parseFloat(value) : value,
+  }})
   price!: number; // Price at the time of purchase
 
   @Column({

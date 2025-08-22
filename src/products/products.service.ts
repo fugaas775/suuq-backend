@@ -94,13 +94,17 @@ export class ProductsService {
     currentPage: number;
     totalPages: number;
   }> {
-    const { page = 1, perPage = 20, search, categoryId, categorySlug, featured, tags, priceMin, priceMax, sort, country, region, city } = filters;
+  const { page = 1, perPage = 20, search, categoryId, categorySlug, featured, tags, priceMin, priceMax, sort, country, region, city, geoPriority, userCountry, userRegion, userCity } = filters;
 
     const qb = this.productRepo.createQueryBuilder('product')
       .leftJoinAndSelect('product.vendor', 'vendor')
       .leftJoinAndSelect('product.category', 'category')
       .leftJoinAndSelect('product.tags', 'tag')
       .leftJoinAndSelect('product.images', 'images');
+
+    // Only show published and not blocked products
+    qb.andWhere('product.status = :status', { status: 'publish' })
+      .andWhere('product.isBlocked = false');
 
     if (search) qb.andWhere('product.name ILIKE :search', { search: `%${search}%` });
     if (categorySlug) qb.andWhere('category.slug = :categorySlug', { categorySlug });
@@ -113,26 +117,55 @@ export class ProductsService {
     if (priceMin !== undefined) qb.andWhere('product.price >= :priceMin', { priceMin });
     if (priceMax !== undefined) qb.andWhere('product.price <= :priceMax', { priceMax });
 
-    // Geo filters using vendor profile fields
-    if (country) qb.andWhere('LOWER(vendor.registrationCountry) = LOWER(:country)', { country });
-    if (region) qb.andWhere('LOWER(vendor.registrationRegion) = LOWER(:region)', { region });
-    if (city) qb.andWhere('LOWER(vendor.registrationCity) = LOWER(:city)', { city });
+    // Geo handling
+    // If geoPriority mode is enabled, we DO NOT hard filter; we rank by proximity of vendor profile fields to user provided geo.
+    // Otherwise, we apply strict filters if supplied.
+    let addedGeoRank = false;
+    if (geoPriority) {
+      // Normalize inputs to lowercase for comparison
+      const eaList = (filters as any).eastAfrica ? String((filters as any).eastAfrica).split(',').map((c: string) => c.trim().toUpperCase()) : ['ET','SO','KE','DJ'];
+      const uc = (userCountry || country || '').toLowerCase();
+      const ur = (userRegion || region || '').toLowerCase();
+      const uci = (userCity || city || '').toLowerCase();
+      // Build a CASE expression for geo rank: 4 city match, 3 region match, 2 country match, 1 in East Africa list, else 0
+      const eastAfricaSqlList = eaList.map(c => `'${c}'`).join(',');
+      const geoRankExpr = `CASE 
+        WHEN ${uci ? `LOWER(vendor."registrationCity") = '${uci}'` : '1=0'} THEN 4
+        WHEN ${ur ? `LOWER(vendor."registrationRegion") = '${ur}'` : '1=0'} THEN 3
+        WHEN ${uc ? `LOWER(vendor."registrationCountry") = '${uc}'` : '1=0'} THEN 2
+        WHEN UPPER(COALESCE(vendor."registrationCountry", '')) IN (${eastAfricaSqlList}) THEN 1
+        ELSE 0 END`;
+      qb.addSelect(geoRankExpr, 'geo_rank');
+      addedGeoRank = true;
+    } else {
+      if (country) qb.andWhere('LOWER(vendor.registrationCountry) = LOWER(:country)', { country });
+      if (region) qb.andWhere('LOWER(vendor.registrationRegion) = LOWER(:region)', { region });
+      if (city) qb.andWhere('LOWER(vendor.registrationCity) = LOWER(:city)', { city });
+    }
 
     // Sorting options
     // Default: newest first
-    if (!sort) {
-      qb.orderBy('product.createdAt', 'DESC');
+    if (!sort || sort === 'created_desc' || sort === '') {
+      if (addedGeoRank) qb.orderBy('geo_rank', 'DESC');
+      qb.addOrderBy('product.createdAt', 'DESC');
+    } else if (sort === 'price_asc') {
+      if (addedGeoRank) qb.orderBy('geo_rank', 'DESC');
+      qb.addOrderBy('product.price', 'ASC', 'NULLS LAST');
+    } else if (sort === 'price_desc') {
+      if (addedGeoRank) qb.orderBy('geo_rank', 'DESC');
+      qb.addOrderBy('product.price', 'DESC', 'NULLS LAST');
     } else if (sort === 'rating_desc') {
-      qb.orderBy('product.average_rating', 'DESC', 'NULLS LAST')
+      if (addedGeoRank) qb.orderBy('geo_rank', 'DESC');
+      qb.addOrderBy('product.average_rating', 'DESC', 'NULLS LAST')
         .addOrderBy('product.rating_count', 'DESC', 'NULLS LAST')
         .addOrderBy('product.createdAt', 'DESC');
     } else if (sort === 'sales_desc') {
-      // Approximate by vendor.numberOfSales then recent; for exact product sales, a stat table would be better
-      qb.orderBy('vendor.numberOfSales', 'DESC', 'NULLS LAST')
+      if (addedGeoRank) qb.orderBy('geo_rank', 'DESC');
+      qb.addOrderBy('product.sales_count', 'DESC', 'NULLS LAST')
         .addOrderBy('product.createdAt', 'DESC');
     } else {
-      // fallback to createdAt desc if unknown
-      qb.orderBy('product.createdAt', 'DESC');
+      if (addedGeoRank) qb.orderBy('geo_rank', 'DESC');
+      qb.addOrderBy('product.createdAt', 'DESC');
     }
 
     qb.skip((page - 1) * perPage).take(perPage);
