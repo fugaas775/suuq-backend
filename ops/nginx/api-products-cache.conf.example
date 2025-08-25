@@ -1,0 +1,30 @@
+# Nginx edge cache for GET /api/products to absorb frontend storms.
+# Requires proxy_cache_path configured at http/server level, e.g.:
+# proxy_cache_path /var/cache/nginx/suuq_api levels=1:2 keys_zone=suuq_api_cache:10m max_size=512m inactive=10m use_temp_path=off;
+# proxy_cache_key "$scheme$request_method$host$request_uri";
+
+# Place inside the server block that proxies to the NestJS API.
+location ~* ^/api/products$ {
+  # Only cache GET/HEAD; bypass for authenticated requests
+  set $skip_cache 0;
+  if ($request_method !~ ^(GET|HEAD)$) { set $skip_cache 1; }
+  if ($http_authorization != "") { set $skip_cache 1; }
+
+  proxy_cache suuq_api_cache;
+  proxy_cache_lock on;            # coalesce request storms
+  proxy_cache_lock_timeout 10s;   # avoid long lock waits
+  proxy_cache_valid 200 30s;
+  proxy_cache_valid 304 30s;
+  proxy_cache_use_stale error timeout updating http_500 http_502 http_503 http_504;
+  add_header X-Cache-Status $upstream_cache_status always;
+
+  # Respect upstream ETag/Cache-Control; allow revalidation
+  proxy_ignore_headers Set-Cookie;
+  proxy_hide_header Set-Cookie;
+
+  proxy_pass http://127.0.0.1:3000;
+  proxy_set_header Host $host;
+  proxy_set_header X-Real-IP $remote_addr;
+  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+  proxy_set_header X-Forwarded-Proto $scheme;
+}

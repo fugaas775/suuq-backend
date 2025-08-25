@@ -15,6 +15,11 @@ export class EtagInterceptor implements NestInterceptor {
     return next.handle().pipe(
       tap((data) => {
         try {
+          const routeCache = res.getHeader('Cache-Control');
+          if (routeCache && String(routeCache).toLowerCase().includes('no-store')) {
+            // Respect route opting out of caching/etag
+            return;
+          }
           const body = JSON.stringify(data ?? '');
           const etag = 'W/"' + createHash('sha1').update(body).digest('hex') + '"';
           const ifNoneMatch = req.headers['if-none-match'];

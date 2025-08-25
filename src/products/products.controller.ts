@@ -4,6 +4,7 @@ import {
   Get,
   Patch,
   Delete,
+  Header,
   Param,
   Body,
   Query,
@@ -14,6 +15,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { ProductsService } from './products.service';
+import { HomeService } from '../home/home.service';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { AuthGuard } from '@nestjs/passport';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -30,7 +32,10 @@ import { UseInterceptors, ParseBoolPipe } from '@nestjs/common';
 export class ProductsController {
   private readonly logger = new Logger(ProductsController.name);
 
-  constructor(private readonly productsService: ProductsService) {}
+  constructor(
+    private readonly productsService: ProductsService,
+    private readonly homeService: HomeService,
+  ) {}
 
   @Post()
   @UseGuards(AuthGuard('jwt'), RolesGuard)
@@ -81,6 +86,85 @@ export class ProductsController {
   @Get('suggest')
   async suggest(@Query('q') q: string) {
     return this.productsService.suggestNames(q);
+  }
+
+  // Aggregated home feed: avoid collision with ':id' by defining here
+  @Get('home')
+  @Header('Cache-Control', 'public, max-age=60')
+  async homeFeed(@Query() q: any) {
+    const perSection = Math.min(Number(q.limit || q.per_page) || 10, 20);
+    const v = typeof q.view === 'string' && (q.view === 'grid' || q.view === 'full') ? (q.view as 'grid' | 'full') : 'grid';
+    const city = q.userCity || q.city;
+    const region = q.userRegion || q.region;
+    const country = q.userCountry || q.country;
+  const data = await this.homeService.getHomeFeed({
+      perSection,
+      userCity: city,
+      userRegion: region,
+      userCountry: country,
+      view: v,
+    });
+
+    // Build aliases to help flexible clients
+    const payload = {
+      // canonical keys
+      bestSellers: data.bestSellers,
+      topRated: data.topRated,
+      geoAll: data.geoAll,
+      newArrivals: (data as any).newArrivals ?? [],
+      curatedNew: (data as any).curatedNew ?? [],
+      curatedBest: (data as any).curatedBest ?? [],
+      // common aliases
+      best_sellers: data.bestSellers,
+      bestsellers: data.bestSellers,
+      top_sales: data.bestSellers,
+      top_rated: data.topRated,
+      ratingTop: data.topRated,
+      top: data.topRated,
+      new_arrivals: (data as any).newArrivals ?? [],
+      latest: (data as any).newArrivals ?? [],
+      recent: (data as any).newArrivals ?? [],
+      homeNew: (data as any).curatedNew ?? (data as any).newArrivals ?? [],
+      homeBest: (data as any).curatedBest ?? data.bestSellers,
+      // meta for debugging/analytics
+      meta: {
+        perSection,
+        view: v,
+        geo: { city: city || null, region: region || null, country: country || null },
+        seeAll: {
+          newArrivals: ((data as any).curatedNew?.length ?? 0) > 0 ? { tag: 'home-new', kind: 'curated' } : { tag: 'home-new' },
+          bestSellers: ((data as any).curatedBest?.length ?? 0) > 0 ? { tag: 'home-best', kind: 'curated' } : { sort: 'sales_desc' },
+          // aliases expected by some clients
+          curatedNew: ((data as any).curatedNew?.length ?? 0) > 0 ? { tag: 'home-new', kind: 'curated' } : { tag: 'home-new' },
+          homeNew: ((data as any).curatedNew?.length ?? 0) > 0 ? { tag: 'home-new', kind: 'curated' } : { tag: 'home-new' },
+          curatedBest: ((data as any).curatedBest?.length ?? 0) > 0 ? { tag: 'home-best', kind: 'curated' } : { sort: 'sales_desc' },
+          homeBest: ((data as any).curatedBest?.length ?? 0) > 0 ? { tag: 'home-best', kind: 'curated' } : { sort: 'sales_desc' },
+        },
+      },
+    } as any;
+
+    // Also provide common envelopes expected by some clients
+    return { data: payload, result: payload, payload };
+  }
+
+  // East Africa batch: returns items grouped by country codes in one call
+  @Get('east-africa')
+  async eastAfricaBatch(@Query() q: any) {
+    const countries = String(q.countries || 'ET,SO,KE,DJ')
+      .split(',')
+      .map((c) => c.trim().toUpperCase())
+      .filter(Boolean);
+    const per = Math.min(Number(q.per_country || q.per || q.limit) || 10, 30);
+    const sort = typeof q.sort === 'string' ? q.sort : 'rating_desc';
+    const view = typeof q.view === 'string' && (q.view === 'grid' || q.view === 'full') ? (q.view as 'grid' | 'full') : 'grid';
+
+    const results = await Promise.all(
+      countries.map((code) =>
+        this.productsService.findFiltered({ perPage: per, sort, country: code, view } as any)
+          .then((res) => ({ code, items: res.items }))
+      ),
+    );
+    return { countries: results };
   }
 
   @Get('/tags/suggest')

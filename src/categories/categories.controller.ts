@@ -24,6 +24,7 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { UserRole } from '../auth/roles.enum';
 import { Category } from './entities/category.entity';
 import { Response } from 'express';
+import { ILike } from 'typeorm';
 
 @Controller('categories')
 @UseInterceptors(ClassSerializerInterceptor)
@@ -35,6 +36,16 @@ export class CategoriesController {
     @Query('per_page', new DefaultValuePipe(0), ParseIntPipe) perPage: number,
   ): Promise<Category[]> {
     return this.categoriesService.findAll(perPage);
+  }
+
+  // Suggest categories by name or slug (lightweight for dropdowns)
+  @Get('suggest')
+  async suggest(
+    @Query('q') q?: string,
+    @Query('limit', new DefaultValuePipe(10), ParseIntPipe) limit?: number,
+  ): Promise<Array<{ id: number; name: string; slug: string; parentId: number | null }>> {
+    const lim = Math.min(Math.max(Number(limit) || 10, 1), 50);
+    return this.categoriesService.suggest(q || '', lim);
   }
 
   @Get('tree')

@@ -56,7 +56,7 @@ export class VendorController {
   }
 
   @Get('vendors/:id')
-  async getPublicProfile(@Param('id') id: number) {
+  async getPublicProfile(@Param('id', ParseIntPipe) id: number) {
     return this.vendorService.getPublicProfile(Number(id));
   }
 

@@ -1,0 +1,16 @@
+# Nginx config snippet for suuq.ugasfuad.com to proxy /api to the backend API
+# Place inside the server {} for suuq.ugasfuad.com
+
+location /api/ {
+    # Either proxy directly to Node app
+    # proxy_pass http://127.0.0.1:3000$request_uri;
+
+    # Or forward to the api subdomain
+    proxy_pass https://api.suuq.ugasfuad.com$request_uri;
+
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}

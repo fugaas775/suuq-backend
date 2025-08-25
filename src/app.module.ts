@@ -25,6 +25,8 @@ import { FirebaseModule } from './firebase/firebase.module';
 import { MediaModule } from './media/media.module';
 import { VerificationModule } from './verification/verification.module';
 import { AdminModule } from './admin/admin.module';
+import { HomeModule } from './home/home.module';
+import { CurationModule } from './curation/curation.module';
 
 import { EmailModule } from './email/email.module';
 import { AppController } from './app.controller';
@@ -56,6 +58,8 @@ import { AppService } from './app.service';
     MediaModule,
     VerificationModule,
   AdminModule,
+  HomeModule,
+  CurationModule,
   ],
   controllers: [AppController],
   providers: [AppService],

@@ -1,0 +1,39 @@
+# Nginx config snippet to fix CORS preflight (OPTIONS 503) for the API
+
+# Usage:
+# - Include this location block in the server {} that serves api.suuq.ugasfuad.com
+# - Adjust upstream as needed (here it proxies to NestJS on localhost:3000)
+# - Reload Nginx after applying
+
+# Optional: if you prefer to reflect only specific origins
+# set $cors_origin "";
+# if ($http_origin ~* ^https://(admin\.)?suuq\.ugasfuad\.com$) {
+#     set $cors_origin $http_origin;
+# }
+
+location /api/ {
+    # Handle CORS preflight directly at the edge to avoid 503s
+    if ($request_method = OPTIONS) {
+        # If you set $cors_origin above, replace $http_origin with $cors_origin
+        add_header 'Access-Control-Allow-Origin' $http_origin always;
+        add_header 'Access-Control-Allow-Credentials' 'true' always;
+        add_header 'Access-Control-Allow-Methods' 'GET, POST, PUT, PATCH, DELETE, OPTIONS' always;
+        add_header 'Access-Control-Allow-Headers' 'Origin, X-Requested-With, Content-Type, Accept, Authorization, Cache-Control, Pragma, If-None-Match, If-Modified-Since' always;
+        add_header 'Access-Control-Max-Age' 86400 always;
+        add_header 'Vary' 'Origin' always;
+        return 204;
+    }
+
+    # For actual requests, proxy to the Node app and also expose CORS headers
+    proxy_pass http://127.0.0.1:3000$request_uri;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+
+    # CORS headers on responses
+    add_header 'Access-Control-Allow-Origin' $http_origin always;
+    add_header 'Access-Control-Allow-Credentials' 'true' always;
+    add_header 'Vary' 'Origin' always;
+}

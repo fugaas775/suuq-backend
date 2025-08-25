@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { VendorService } from './vendor.service';
 import { VendorController } from './vendor.controller';
@@ -11,12 +11,14 @@ import { ProductImage } from '../products/entities/product-image.entity'; // <--
 import { UsersModule } from '../users/users.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { MediaModule } from '../media/media.module';
+import { ProductsModule } from '../products/products.module';
 
 @Module({
   imports: [
     // ✨ 2. PRODUCTIMAGE ENTITY ADDED HERE
   TypeOrmModule.forFeature([User, Product, Order, OrderItem, ProductImage]),
   UsersModule,
+  forwardRef(() => ProductsModule),
   MediaModule,
   NotificationsModule,
   ],
@@ -26,5 +28,6 @@ import { MediaModule } from '../media/media.module';
     VendorDashboardController,
   ],
   providers: [VendorService],
+  exports: [VendorService],
 })
 export class VendorModule {}

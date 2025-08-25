@@ -1,19 +1,79 @@
-import { Controller, Get, Header, Param, ParseIntPipe, Optional, NotFoundException } from '@nestjs/common';
+import { Controller, Get, Header, Param, ParseIntPipe, Optional, NotFoundException, Query } from '@nestjs/common';
 import { VendorService } from './vendor.service';
 import { UsersService } from '../users/users.service';
 import { DoSpacesService } from '../media/do-spaces.service';
+import { ProductsService } from '../products/products.service';
 
 @Controller('vendors')
 export class VendorPublicController {
   constructor(
     private readonly vendorService: VendorService,
     private readonly usersService: UsersService,
+  private readonly productsService: ProductsService,
     @Optional() private readonly doSpacesService?: DoSpacesService,
   ) {}
+
+  // Batch products for multiple vendors in one call
+  @Get('products')
+  async batchVendorProducts(
+    @Query('vendorIds') vendorIdsParam: string,
+    @Query('per_vendor') perVendor?: string,
+    @Query('sort') sort?: string,
+    @Query('view') view?: 'grid' | 'full',
+  ) {
+    const vendorIds = String(vendorIdsParam || '')
+      .split(',')
+      .map((v) => Number(v.trim()))
+      .filter((n) => Number.isInteger(n) && n > 0);
+    if (!vendorIds.length) return { vendors: [] };
+    const per = Math.min(Number(perVendor) || 10, 30);
+    const v = view === 'full' ? 'full' : 'grid';
+
+    const results = await Promise.all(
+      vendorIds.map(async (vendorId) => {
+  const res = await this.productsService.findFiltered({ perPage: per, sort: sort || 'created_desc', vendorId, view: v } as any);
+        return { vendorId, items: res.items };
+      }),
+    );
+    return { vendors: results };
+  }
+
+  // Safer path to avoid conflicts with dynamic ':id' routes across controllers
+  // Prefer using this endpoint going forward: /api/vendors/products/batch
+  @Get('products/batch')
+  async batchVendorProductsSafe(
+    @Query('vendorIds') vendorIdsParam: string,
+    @Query('per_vendor') perVendor?: string,
+    @Query('sort') sort?: string,
+    @Query('view') view?: 'grid' | 'full',
+  ) {
+    const vendorIds = String(vendorIdsParam || '')
+      .split(',')
+      .map((v) => Number(v.trim()))
+      .filter((n) => Number.isInteger(n) && n > 0);
+    if (!vendorIds.length) return { vendors: [] };
+    const per = Math.min(Number(perVendor) || 10, 30);
+    const v = view === 'full' ? 'full' : 'grid';
+
+    const results = await Promise.all(
+      vendorIds.map(async (vendorId) => {
+        const res = await this.productsService.findFiltered({ perPage: per, sort: sort || 'created_desc', vendorId, view: v } as any);
+        return { vendorId, items: res.items };
+      }),
+    );
+    return { vendors: results };
+  }
 
   @Get(':id')
   async getPublicProfile(@Param('id') id: number) {
     return this.vendorService.getPublicProfile(id);
+  }
+
+  // Simple vendor suggestion for admin dropdowns and client search
+  @Get('suggest')
+  async suggestVendors(@Query('q') q?: string, @Query('limit') limit?: string) {
+    const lim = Math.min(Number(limit) || 10, 50);
+    return this.vendorService.suggestVendors(q, lim);
   }
 
   // Public endpoint to fetch approved verification certificates for a vendor
@@ -58,4 +118,5 @@ export class VendorPublicController {
     );
     return { items: signed };
   }
+
 }

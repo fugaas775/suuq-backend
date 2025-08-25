@@ -54,6 +54,18 @@ export class ProductFilterDto {
   @IsString()
   sort?: string;
 
+  // Optional lean projection for grids
+  @IsOptional()
+  @IsString()
+  view?: 'grid' | 'full';
+
+  // Optional vendor filter for batch vendor products
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  vendorId?: number;
+
   @IsOptional()
   @IsString()
   @Expose({ name: 'tag' })

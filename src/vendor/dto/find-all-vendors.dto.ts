@@ -17,4 +17,26 @@ export class FindAllVendorsDto {
   @IsOptional()
   @IsString()
   search?: string;
+  
+  @IsOptional()
+  @IsString()
+  country?: string;
+
+  @IsOptional()
+  @IsString()
+  region?: string;
+
+  @IsOptional()
+  @IsString()
+  city?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  minSales?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  minRating?: number;
 }

@@ -4,7 +4,7 @@ import { FindAllVendorsDto } from './dto/find-all-vendors.dto';
 import { UpdateVendorProductDto } from './dto/update-vendor-product.dto';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Like, Raw, ArrayContains, ILike } from 'typeorm';
-import { User } from '../users/entities/user.entity';
+import { User, VerificationStatus } from '../users/entities/user.entity';
 import { Product } from '../products/entities/product.entity';
 import { Category } from '../categories/entities/category.entity';
 import { ProductImage } from '../products/entities/product-image.entity';
@@ -150,9 +150,14 @@ export class VendorService {
       sort?: 'name' | 'recent' | 'popular' | 'verifiedAt';
       verificationStatus?: 'APPROVED' | 'PENDING' | 'REJECTED';
       role?: 'VENDOR';
+      country?: string;
+      region?: string;
+      city?: string;
+      minSales?: number;
+      minRating?: number;
     },
   ): Promise<{ items: any[]; total: number; currentPage: number; totalPages: number }> {
-    const { page = 1, limit = 10, search, sort = 'recent', verificationStatus } = findAllVendorsDto;
+    const { page = 1, limit = 10, search, sort = 'recent', verificationStatus, country, region, city, minSales, minRating } = findAllVendorsDto;
     const skip = (page - 1) * limit;
 
     let findOptions: any;
@@ -197,12 +202,38 @@ export class VendorService {
       })) : { ...findOptions.where, verificationStatus };
     }
 
+    // Apply geo filters (case-insensitive equals) when provided
+    const geoFilters: any = {};
+    if (country) geoFilters.registrationCountry = Raw((alias) => `LOWER(${alias}) = LOWER(:country)`, { country });
+    if (region) geoFilters.registrationRegion = Raw((alias) => `LOWER(${alias}) = LOWER(:region)`, { region });
+    if (city) geoFilters.registrationCity = Raw((alias) => `LOWER(${alias}) = LOWER(:city)`, { city });
+
+    if (Object.keys(geoFilters).length) {
+      findOptions.where = Array.isArray(findOptions.where)
+        ? findOptions.where.map((w: any) => ({ ...w, ...geoFilters }))
+        : { ...findOptions.where, ...geoFilters };
+    }
+
+    // Apply minimum thresholds
+    const minFilters: any = {};
+    if (typeof minSales === 'number' && !Number.isNaN(minSales)) {
+      minFilters.numberOfSales = Raw((alias) => `${alias} >= :minSales`, { minSales: Number(minSales) });
+    }
+    if (typeof minRating === 'number' && !Number.isNaN(minRating)) {
+      minFilters.rating = Raw((alias) => `${alias} >= :minRating`, { minRating: Number(minRating) });
+    }
+    if (Object.keys(minFilters).length) {
+      findOptions.where = Array.isArray(findOptions.where)
+        ? findOptions.where.map((w: any) => ({ ...w, ...minFilters }))
+        : { ...findOptions.where, ...minFilters };
+    }
+
     const [users, total] = await this.userRepository.findAndCount({
       ...findOptions,
       take: limit,
       skip,
       order,
-      select: [
+  select: [
         'id', 'displayName', 'storeName', 'avatarUrl', 'verificationStatus', 'verified',
         'rating', 'numberOfSales', 'verifiedAt', 'createdAt', 'supportedCurrencies', 'registrationCountry', 'registrationCity'
       ] as any,
@@ -277,6 +308,121 @@ export class VendorService {
     return sales;
   }
 
+  // Admin detail: profile + stats + recent orders
+  async getAdminVendorDetail(userId: number): Promise<{
+    profile: any;
+    stats: {
+      productCount: number;
+      orderCount: number;
+      salesLast30Total: number;
+      salesGraphLast30: Array<{ date: string; total: number }>;
+    };
+    recentOrders: Array<{
+      id: number;
+      total: number;
+      status: string;
+      createdAt: Date;
+      items: Array<{ id: number; productId: number; productName: string; quantity: number; price: number; status: string }>;
+      buyer: { id: number; email?: string | null; displayName?: string | null } | null;
+    }>;
+  }> {
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+    if (!user) throw new NotFoundException('Vendor not found');
+    if (!Array.isArray(user.roles) || !user.roles.includes(UserRole.VENDOR)) {
+      throw new ForbiddenException('User is not a vendor');
+    }
+
+    const productCount = await this.productRepository.count({ where: { vendor: { id: userId } } });
+
+    const orderCount = await this.orderRepository
+      .createQueryBuilder('order')
+      .innerJoin('order.items', 'orderItem')
+      .innerJoin('orderItem.product', 'product')
+      .where('product.vendor.id = :userId', { userId })
+      .getCount();
+
+    const salesGraphLast30 = await this.getSalesGraphData(userId, '30d');
+    const salesLast30Total = salesGraphLast30.reduce((sum, d: any) => sum + (Number(d.total) || 0), 0);
+
+    const { data: recentOrdersRaw } = await this.getVendorOrders(userId, { page: 1, limit: 5 });
+    const recentOrders = (recentOrdersRaw || []).map((o: any) => ({
+      id: o.id,
+      total: Number(o.total) || 0,
+      status: o.status,
+      createdAt: o.createdAt,
+      items: (o.items || []).map((it: any) => ({
+        id: it.id,
+        productId: it.product?.id,
+        productName: it.product?.name,
+        quantity: it.quantity,
+        price: Number(it.price) || 0,
+        status: it.status,
+      })),
+      buyer: o.user ? { id: o.user.id, email: o.user.email || null, displayName: o.user.displayName || null } : null,
+    }));
+
+    const profile = {
+      id: user.id,
+      displayName: user.displayName || null,
+      storeName: user.storeName || null,
+      avatarUrl: user.avatarUrl || null,
+      verificationStatus: user.verificationStatus,
+      verified: !!user.verified,
+      verifiedAt: user.verifiedAt || null,
+      isActive: user.isActive,
+      rating: user.rating ?? 0,
+      numberOfSales: user.numberOfSales ?? 0,
+  currency: user.currency || null,
+      registrationCountry: user.registrationCountry || null,
+      registrationRegion: user.registrationRegion || null,
+      registrationCity: user.registrationCity || null,
+      createdAt: user.createdAt,
+      supportedCurrencies: user.supportedCurrencies || [],
+    };
+
+    return {
+      profile,
+      stats: { productCount, orderCount, salesLast30Total, salesGraphLast30 },
+      recentOrders,
+    };
+  }
+
+  // Admin: set vendor verification status and toggle verified/verifiedAt fields
+  async setVendorVerificationStatus(userId: number, status: VerificationStatus, reason?: string): Promise<User> {
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+    if (!user) {
+      throw new NotFoundException(`Vendor with ID ${userId} not found.`);
+    }
+    // Optional: ensure user has VENDOR role
+    if (!Array.isArray(user.roles) || !user.roles.includes(UserRole.VENDOR)) {
+      throw new ForbiddenException('User is not a vendor.');
+    }
+    user.verificationStatus = status;
+    if (status === VerificationStatus.APPROVED) {
+      user.verified = true;
+      user.verifiedAt = new Date();
+    } else {
+      user.verified = false;
+      // Clear verifiedAt for non-approved statuses
+      user.verifiedAt = null;
+    }
+  // Note: reason is currently not persisted; could be logged or stored if schema adds a field.
+    return await this.userRepository.save(user);
+  }
+
+  // Admin: activate/deactivate a vendor
+  async setVendorActiveState(userId: number, isActive: boolean): Promise<User> {
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+    if (!user) {
+      throw new NotFoundException(`Vendor with ID ${userId} not found.`);
+    }
+    if (!Array.isArray(user.roles) || !user.roles.includes(UserRole.VENDOR)) {
+      throw new ForbiddenException('User is not a vendor.');
+    }
+    user.isActive = !!isActive;
+    return await this.userRepository.save(user);
+  }
+
   /**
    * Search deliverers (users with DELIVERER role). Supports text query on displayName, email, or phone.
    * Returns normalized items: { id, name, email, phone }
@@ -310,6 +456,28 @@ export class VendorService {
       lng: (u as any).locationLng ?? null,
     }));
     return { items, total };
+  }
+
+  // Lightweight vendor suggestions for dropdowns/search-as-you-type
+  async suggestVendors(q?: string, limit = 10): Promise<Array<{ id: number; displayName: string | null; storeName: string | null; avatarUrl: string | null }>> {
+    const qb = this.userRepository.createQueryBuilder('user')
+      .where(':role = ANY(user.roles)', { role: UserRole.VENDOR })
+      .andWhere('user.isActive = true')
+      .orderBy('user.displayName', 'ASC')
+      .take(Math.min(Math.max(Number(limit) || 10, 1), 50));
+
+    const term = (q || '').trim();
+    if (term) {
+      qb.andWhere('(user.displayName ILIKE :q OR user.storeName ILIKE :q)', { q: `%${term}%` });
+    }
+
+    const users = await qb.getMany();
+    return users.map((u) => ({
+      id: u.id,
+      displayName: u.displayName || null,
+      storeName: (u as any).storeName || null,
+      avatarUrl: u.avatarUrl || null,
+    }));
   }
 
   /**

@@ -10,6 +10,7 @@ import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
 import { slugify } from 'transliteration';
 import { Product } from '../products/entities/product.entity';
+import { ILike } from 'typeorm';
 
 @Injectable()
 export class CategoriesService {
@@ -36,6 +37,19 @@ export class CategoriesService {
       take: perPage && perPage > 0 ? perPage : undefined,
       relations: ['parent'],
     });
+  }
+
+  async suggest(q: string, limit: number): Promise<Array<{ id: number; name: string; slug: string; parentId: number | null }>> {
+    const term = (q || '').trim();
+    const take = Math.min(Math.max(Number(limit) || 10, 1), 50);
+    const where: any = term
+      ? [
+          { name: ILike(`%${term}%`) },
+          { slug: ILike(`%${term}%`) },
+        ]
+      : {};
+    const cats = await this.categoryRepo.find({ where, take, order: { name: 'ASC' } });
+    return cats.map((c) => ({ id: c.id, name: c.name, slug: c.slug, parentId: c.parent ? c.parent.id : null }));
   }
 
   async findOne(id: number): Promise<Category> {

@@ -10,6 +10,7 @@ import { Category } from '../categories/entities/category.entity'; // 1. Import 
 import { ProductsService } from './products.service';
 import { ProductsController } from './products.controller';
 import { CurrencyModule } from '../common/services/currency.module';
+import { HomeModule } from '../home/home.module';
 
 @Module({
   imports: [
@@ -22,7 +23,8 @@ import { CurrencyModule } from '../common/services/currency.module';
       Category, // ✅ 2. Add the Category entity here
     ]),
     CurrencyModule,
-    forwardRef(() => UsersModule),
+  forwardRef(() => UsersModule),
+  forwardRef(() => HomeModule),
   ],
   providers: [ProductsService],
   controllers: [ProductsController],

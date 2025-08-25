@@ -94,21 +94,44 @@ export class ProductsService {
     currentPage: number;
     totalPages: number;
   }> {
-  const { page = 1, perPage = 20, search, categoryId, categorySlug, featured, tags, priceMin, priceMax, sort, country, region, city, geoPriority, userCountry, userRegion, userCity } = filters;
+  const { page = 1, perPage: rawPerPage = 20, search, categoryId, categorySlug, featured, tags, priceMin, priceMax, sort, country, region, city, geoPriority, userCountry, userRegion, userCity, view, vendorId } = filters;
+
+    // Clamp perPage to protect backend
+    const perPage = Math.min(Math.max(Number(rawPerPage) || 20, 1), 50);
 
     const qb = this.productRepo.createQueryBuilder('product')
       .leftJoinAndSelect('product.vendor', 'vendor')
-      .leftJoinAndSelect('product.category', 'category')
-      .leftJoinAndSelect('product.tags', 'tag')
-      .leftJoinAndSelect('product.images', 'images');
+      .leftJoinAndSelect('product.category', 'category');
+
+    // Lean projection for grid views: limit selected columns
+    if (view === 'grid') {
+      qb.select([
+        'product.id',
+        'product.name',
+        'product.price',
+        'product.currency',
+        'product.imageUrl',
+        'product.average_rating',
+        'product.rating_count',
+        'product.sales_count',
+        'product.createdAt',
+        'vendor.id',
+        'category.id',
+        'category.slug',
+      ]);
+    } else {
+      qb.leftJoinAndSelect('product.tags', 'tag')
+        .leftJoinAndSelect('product.images', 'images');
+    }
 
     // Only show published and not blocked products
     qb.andWhere('product.status = :status', { status: 'publish' })
       .andWhere('product.isBlocked = false');
 
     if (search) qb.andWhere('product.name ILIKE :search', { search: `%${search}%` });
-    if (categorySlug) qb.andWhere('category.slug = :categorySlug', { categorySlug });
+  if (categorySlug) qb.andWhere('category.slug = :categorySlug', { categorySlug });
     else if (categoryId) qb.andWhere('category.id = :categoryId', { categoryId });
+  if (vendorId) qb.andWhere('vendor.id = :vendorId', { vendorId });
     if (typeof featured === 'boolean') qb.andWhere('product.featured = :featured', { featured });
     if (tags) {
       const tagList = tags.split(',').map((t) => t.trim());
@@ -168,7 +191,7 @@ export class ProductsService {
       qb.addOrderBy('product.createdAt', 'DESC');
     }
 
-    qb.skip((page - 1) * perPage).take(perPage);
+  qb.skip((page - 1) * perPage).take(perPage);
     const [items, total] = await qb.getManyAndCount();
     
     return { items, total, perPage, currentPage: page, totalPages: Math.ceil(total / perPage) };
@@ -292,6 +315,7 @@ export class ProductsService {
   }
   
   async suggestNames(query: string): Promise<{ name: string }[]> {
+    if (!query || query.trim().length < 2) return [];
     return this.productRepo
       .createQueryBuilder('product')
       .select('product.name', 'name')
