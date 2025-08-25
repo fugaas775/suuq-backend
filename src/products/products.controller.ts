@@ -26,6 +26,7 @@ import { CreateProductDto } from './dto/create-product.dto';
 import { UserRole } from '../auth/roles.enum';
 import { ProductFilterDto } from './dto/ProductFilterDto';
 import { UseInterceptors, ParseBoolPipe } from '@nestjs/common';
+import { RecordImpressionsDto } from './dto/record-impressions.dto';
 
 @UseInterceptors(ClassSerializerInterceptor)
 @Controller('products')
@@ -47,6 +48,22 @@ export class ProductsController {
       ...createProductDto,
       vendorId: req.user.id,
     });
+  }
+  // Batched impressions for list views (idempotent per session/window)
+  @Post('impressions')
+  async recordImpressions(@Req() req: any, @Body() dto: RecordImpressionsDto) {
+    // If authenticated vendor, ignore to prevent inflating their own stats
+    const role = req.user?.role || req.user?.roles?.[0];
+    if (role && String(role).toUpperCase().includes('VENDOR')) {
+      return { recorded: 0, ignored: dto.productIds.length };
+    }
+    const ip = (req.headers['x-real-ip'] || req.headers['x-forwarded-for'] || req.ip || '').toString();
+    const ua = (req.headers['user-agent'] || '').toString();
+    const sessionId = dto.sessionId || '';
+    const windowSeconds = Math.max(60, Number(dto.windowSeconds || 300));
+    const sessionKey = await this.productsService.deriveImpressionSessionKey(ip, ua, sessionId);
+    const { recorded, ignored } = await this.productsService.recordImpressions(dto.productIds, sessionKey, windowSeconds);
+    return { recorded, ignored, windowSeconds };
   }
 
   // --- UPDATED: This method now uses the ProductFilterDto ---

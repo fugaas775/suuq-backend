@@ -6,7 +6,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, In } from 'typeorm';
+import { Repository, In, MoreThan } from 'typeorm';
 import { Product } from './entities/product.entity';
 import { User } from '../users/entities/user.entity';
 import { Order } from '../orders/entities/order.entity';
@@ -15,6 +15,8 @@ import { UpdateProductDto } from './dto/update-product.dto';
 import { ProductImage } from './entities/product-image.entity';
 import { ProductFilterDto } from './dto/ProductFilterDto';
 import { Tag } from '../tags/tag.entity';
+import { ProductImpression } from './entities/product-impression.entity';
+import { createHash } from 'crypto';
 
 @Injectable()
 export class ProductsService {
@@ -27,6 +29,7 @@ export class ProductsService {
     @InjectRepository(Order) private orderRepo: Repository<Order>,
     @InjectRepository(Tag) private tagRepo: Repository<Tag>,
     @InjectRepository(require('../categories/entities/category.entity').Category) private categoryRepo: Repository<any>,
+  @InjectRepository(ProductImpression) private impressionRepo: Repository<ProductImpression>,
   ) {}
 
   // ✅ NEW create method
@@ -96,6 +99,36 @@ export class ProductsService {
       .set({ viewCount: () => 'COALESCE(view_count, 0) + 1' as any })
       .where('id = :id', { id })
       .execute();
+  }
+
+  async deriveImpressionSessionKey(ip: string, ua: string, sessionId?: string): Promise<string> {
+    const base = `${ip || ''}|${ua || ''}|${sessionId || ''}`;
+    return createHash('sha1').update(base).digest('hex').slice(0, 40);
+  }
+
+  // Idempotent within a rolling window: if an impression exists for (productId, sessionKey) within window, skip increment
+  async recordImpressions(productIds: number[], sessionKey: string, windowSeconds = 300): Promise<{ recorded: number; ignored: number }> {
+    const cutoff = new Date(Date.now() - windowSeconds * 1000);
+    let recorded = 0;
+    let ignored = 0;
+    // Fetch existing recent impressions for these products and session
+    const existing = await this.impressionRepo.find({ where: { sessionKey, productId: In(productIds), createdAt: MoreThan(cutoff) } as any });
+    const existingSet = new Set(existing.map((e) => e.productId));
+    const toInsert = productIds.filter((id) => !existingSet.has(id));
+    if (toInsert.length) {
+      const rows = toInsert.map((productId) => this.impressionRepo.create({ productId, sessionKey }));
+      await this.impressionRepo.save(rows);
+      // Bulk increment view_count for new ones
+      await this.productRepo
+        .createQueryBuilder()
+        .update(Product)
+        .set({ viewCount: () => 'COALESCE(view_count, 0) + 1' as any })
+        .where('id IN (:...ids)', { ids: toInsert })
+        .execute();
+      recorded = toInsert.length;
+    }
+    ignored = productIds.length - recorded;
+    return { recorded, ignored };
   }
   
   async findFiltered(filters: ProductFilterDto): Promise<{
