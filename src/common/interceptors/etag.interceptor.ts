@@ -15,6 +15,16 @@ export class EtagInterceptor implements NestInterceptor {
     return next.handle().pipe(
       tap((data) => {
         try {
+          // Bypass ETag/Cache for curation endpoints entirely
+          const originalUrl: string = (req?.originalUrl || req?.url || '').toString();
+          if (originalUrl.includes('/curation/')) {
+            // Force no-store and suppress ETag generation by Express
+            if (!res.getHeader('Cache-Control')) {
+              res.setHeader('Cache-Control', 'no-store');
+            }
+            res.setHeader('ETag', '');
+            return;
+          }
           const routeCache = res.getHeader('Cache-Control');
           if (routeCache && String(routeCache).toLowerCase().includes('no-store')) {
             // Respect route opting out of caching/etag

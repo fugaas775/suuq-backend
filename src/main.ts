@@ -12,6 +12,11 @@ import { EtagInterceptor } from './common/interceptors/etag.interceptor';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, { bodyParser: true });
+  // Disable Express automatic ETag; we'll manage ETag via interceptor selectively
+  const expressApp = app.getHttpAdapter().getInstance();
+  if (expressApp?.set) {
+    expressApp.set('etag', false);
+  }
     // Accept both JSON and application/x-www-form-urlencoded payloads
     app.use(urlencoded({ extended: true, limit: '50mb' }));
     app.use(json({ limit: '50mb' }));
@@ -123,24 +128,7 @@ async function bootstrap() {
   app.useGlobalInterceptors(new EtagInterceptor(300));
   // Register global exception filter for detailed error logging
   app.useGlobalFilters(new GlobalExceptionFilter());
-  // Temporary route introspection to debug missing routes (e.g., /api/curation/*)
-  try {
-    const httpServer: any = app.getHttpServer();
-    const stack = httpServer?._events?.request?._router?.stack || [];
-    const collectPaths = (arr: any[]): string[] => {
-      const out: string[] = [];
-      for (const layer of arr) {
-        if (layer?.route?.path) out.push(layer.route.path);
-        if (layer?.handle?.stack) out.push(...collectPaths(layer.handle.stack));
-      }
-      return out;
-    };
-    const paths = collectPaths(stack);
-    const curationPaths = paths.filter((p) => String(p).includes('curation'));
-    console.log('ROUTES registered (curation subset):', curationPaths);
-  } catch (e: any) {
-    console.log('Route inspection failed:', e?.message || e);
-  }
+  // (removed temporary route introspection)
   
   await app.listen(3000, '0.0.0.0');
   console.log(`Application is running on: ${await app.getUrl()}`);
