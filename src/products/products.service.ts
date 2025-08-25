@@ -6,7 +6,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, In, MoreThan } from 'typeorm';
+import { Repository, In, MoreThan, TreeRepository } from 'typeorm';
 import { Product } from './entities/product.entity';
 import { User } from '../users/entities/user.entity';
 import { Order } from '../orders/entities/order.entity';
@@ -28,7 +28,7 @@ export class ProductsService {
     @InjectRepository(User) private userRepo: Repository<User>,
     @InjectRepository(Order) private orderRepo: Repository<Order>,
     @InjectRepository(Tag) private tagRepo: Repository<Tag>,
-    @InjectRepository(require('../categories/entities/category.entity').Category) private categoryRepo: Repository<any>,
+  @InjectRepository(require('../categories/entities/category.entity').Category) private categoryRepo: TreeRepository<any>,
   @InjectRepository(ProductImpression) private impressionRepo: Repository<ProductImpression>,
   ) {}
 
@@ -138,7 +138,7 @@ export class ProductsService {
     currentPage: number;
     totalPages: number;
   }> {
-  const { page = 1, perPage: rawPerPage = 20, search, categoryId, categorySlug, featured, tags, priceMin, priceMax, sort, country, region, city, geoPriority, userCountry, userRegion, userCity, view, vendorId } = filters;
+  const { page = 1, perPage: rawPerPage = 20, search, categoryId, categorySlug, featured, tags, priceMin, priceMax, sort, country, region, city, geoPriority, userCountry, userRegion, userCity, view, vendorId, includeDescendants, categoryFirst } = filters;
 
     // Clamp perPage to protect backend
     const perPage = Math.min(Math.max(Number(rawPerPage) || 20, 1), 50);
@@ -175,7 +175,7 @@ export class ProductsService {
 
     if (search) qb.andWhere('product.name ILIKE :search', { search: `%${search}%` });
   if (categorySlug) qb.andWhere('category.slug = :categorySlug', { categorySlug });
-    else if (categoryId) qb.andWhere('category.id = :categoryId', { categoryId });
+    else if (categoryId && !includeDescendants && !categoryFirst) qb.andWhere('category.id = :categoryId', { categoryId });
   if (vendorId) qb.andWhere('vendor.id = :vendorId', { vendorId });
     if (typeof featured === 'boolean') qb.andWhere('product.featured = :featured', { featured });
     if (tags) {
@@ -211,6 +211,26 @@ export class ProductsService {
       if (city) qb.andWhere('LOWER(vendor.registrationCity) = LOWER(:city)', { city });
     }
 
+    // If includeDescendants is true, expand filter to include all descendant category IDs
+    let subtreeIds: number[] | null = null;
+    if ((includeDescendants || categoryFirst) && (categoryId || categorySlug)) {
+      // Resolve base category id via slug if needed
+      const baseCategoryId = categoryId || (categorySlug ? (await this.categoryRepo.findOne({ where: { slug: categorySlug } }))?.id : undefined);
+      if (baseCategoryId) {
+        // Using closure table categories_category_closure table name pattern
+        // TypeORM default: category_closure (root/ancestor/descendant); but we’ll use repository to get descendants ids
+        const cat = await this.categoryRepo.findOne({ where: { id: baseCategoryId } });
+        if (cat) {
+          const descs = await this.categoryRepo.findDescendants(cat);
+          const ids = Array.from(new Set(descs.map((c: any) => c.id)));
+          subtreeIds = ids;
+          if (ids.length && !categoryFirst) {
+            qb.andWhere('category.id IN (:...catIds)', { catIds: ids });
+          }
+        }
+      }
+    }
+
     // Sorting options
     // Default: newest first
     if (!sort || sort === 'created_desc' || sort === '') {
@@ -238,6 +258,125 @@ export class ProductsService {
     } else {
       if (addedGeoRank) qb.orderBy('geo_rank', 'DESC');
       qb.addOrderBy('product.createdAt', 'DESC');
+    }
+
+    // If asked to prioritize category subtree first, perform union-like pagination
+    if (categoryFirst && subtreeIds && subtreeIds.length) {
+      // Helper to build a base QB with all filters except the category constraint
+      const buildBase = () => {
+        const q = this.productRepo.createQueryBuilder('product')
+          .leftJoinAndSelect('product.vendor', 'vendor')
+          .leftJoinAndSelect('product.category', 'category');
+        if (view === 'grid') {
+          q.select([
+            'product.id',
+            'product.name',
+            'product.price',
+            'product.currency',
+            'product.imageUrl',
+            'product.average_rating',
+            'product.rating_count',
+            'product.sales_count',
+            'product.viewCount',
+            'product.createdAt',
+            'vendor.id',
+            'category.id',
+            'category.slug',
+          ]);
+        } else {
+          q.leftJoinAndSelect('product.tags', 'tag')
+            .leftJoinAndSelect('product.images', 'images');
+        }
+        q.andWhere('product.status = :status', { status: 'publish' })
+          .andWhere('product.isBlocked = false');
+        if (search) q.andWhere('product.name ILIKE :search', { search: `%${search}%` });
+        if (vendorId) q.andWhere('vendor.id = :vendorId', { vendorId });
+        if (typeof featured === 'boolean') q.andWhere('product.featured = :featured', { featured });
+        if (tags) {
+          const tagList = tags.split(',').map((t) => t.trim());
+          q.innerJoin('product.tags', 'tagFilter', 'tagFilter.name IN (:...tagList)', { tagList });
+        }
+        if (priceMin !== undefined) q.andWhere('product.price >= :priceMin', { priceMin });
+        if (priceMax !== undefined) q.andWhere('product.price <= :priceMax', { priceMax });
+
+        // Geo handling
+        let addedGeoRankLocal = false;
+        if (geoPriority) {
+          const eaList = (filters as any).eastAfrica ? String((filters as any).eastAfrica).split(',').map((c: string) => c.trim().toUpperCase()) : ['ET','SO','KE','DJ'];
+          const uc = (userCountry || country || '').toLowerCase();
+          const ur = (userRegion || region || '').toLowerCase();
+          const uci = (userCity || city || '').toLowerCase();
+          const eastAfricaSqlList = eaList.map(c => `'${c}'`).join(',');
+          const geoRankExpr = `CASE 
+        WHEN ${uci ? `LOWER(vendor."registrationCity") = '${uci}'` : '1=0'} THEN 4
+        WHEN ${ur ? `LOWER(vendor."registrationRegion") = '${ur}'` : '1=0'} THEN 3
+        WHEN ${uc ? `LOWER(vendor."registrationCountry") = '${uc}'` : '1=0'} THEN 2
+        WHEN UPPER(COALESCE(vendor."registrationCountry", '')) IN (${eastAfricaSqlList}) THEN 1
+        ELSE 0 END`;
+          q.addSelect(geoRankExpr, 'geo_rank');
+          addedGeoRankLocal = true;
+        } else {
+          if (country) q.andWhere('LOWER(vendor.registrationCountry) = LOWER(:country)', { country });
+          if (region) q.andWhere('LOWER(vendor.registrationRegion) = LOWER(:region)', { region });
+          if (city) q.andWhere('LOWER(vendor.registrationCity) = LOWER(:city)', { city });
+        }
+
+        // Sorting
+        if (!sort || sort === 'created_desc' || sort === '') {
+          if (addedGeoRankLocal) q.orderBy('geo_rank', 'DESC');
+          q.addOrderBy('product.createdAt', 'DESC');
+        } else if (sort === 'price_asc') {
+          if (addedGeoRankLocal) q.orderBy('geo_rank', 'DESC');
+          q.addOrderBy('product.price', 'ASC', 'NULLS LAST');
+        } else if (sort === 'price_desc') {
+          if (addedGeoRankLocal) q.orderBy('geo_rank', 'DESC');
+          q.addOrderBy('product.price', 'DESC', 'NULLS LAST');
+        } else if (sort === 'rating_desc') {
+          if (addedGeoRankLocal) q.orderBy('geo_rank', 'DESC');
+          q.addOrderBy('product.average_rating', 'DESC', 'NULLS LAST')
+            .addOrderBy('product.rating_count', 'DESC', 'NULLS LAST')
+            .addOrderBy('product.createdAt', 'DESC');
+        } else if (sort === 'sales_desc') {
+          if (addedGeoRankLocal) q.orderBy('geo_rank', 'DESC');
+          q.addOrderBy('product.sales_count', 'DESC', 'NULLS LAST')
+            .addOrderBy('product.createdAt', 'DESC');
+        } else if (sort === 'views_desc') {
+          if (addedGeoRankLocal) q.orderBy('geo_rank', 'DESC');
+          q.addOrderBy('product.viewCount', 'DESC', 'NULLS LAST')
+            .addOrderBy('product.createdAt', 'DESC');
+        } else {
+          if (addedGeoRankLocal) q.orderBy('geo_rank', 'DESC');
+          q.addOrderBy('product.createdAt', 'DESC');
+        }
+        return q;
+      };
+
+      const perPage = Math.min(Math.max(Number(rawPerPage) || 20, 1), 50);
+      const startIndex = (page - 1) * perPage;
+
+      const primaryQb = buildBase().andWhere('category.id IN (:...catIds)', { catIds: subtreeIds });
+      const othersQb = buildBase().andWhere('category.id NOT IN (:...catIds)', { catIds: subtreeIds });
+
+      const primaryTotal = await primaryQb.getCount();
+      const othersTotal = await othersQb.getCount();
+
+      let items: Product[] = [];
+      if (startIndex < primaryTotal) {
+        const primaryItems = await primaryQb.skip(startIndex).take(perPage).getMany();
+        if (primaryItems.length < perPage) {
+          const remain = perPage - primaryItems.length;
+          const otherItems = await othersQb.skip(0).take(remain).getMany();
+          items = primaryItems.concat(otherItems);
+        } else {
+          items = primaryItems;
+        }
+      } else {
+        const othersStart = startIndex - primaryTotal;
+        items = await othersQb.skip(othersStart).take(perPage).getMany();
+      }
+
+      const total = primaryTotal + othersTotal;
+      return { items, total, perPage, currentPage: page, totalPages: Math.ceil(total / perPage) };
     }
 
   qb.skip((page - 1) * perPage).take(perPage);

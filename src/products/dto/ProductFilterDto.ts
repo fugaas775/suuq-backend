@@ -59,6 +59,18 @@ export class ProductFilterDto {
   @IsString()
   view?: 'grid' | 'full';
 
+  // Include products from descendant subcategories when filtering by a parent category
+  @IsOptional()
+  @Type(() => Boolean)
+  @Expose({ name: 'include_descendants' })
+  includeDescendants?: boolean;
+
+  // Do not filter by category; instead, prioritize category and its descendants first, then others
+  @IsOptional()
+  @Type(() => Boolean)
+  @Expose({ name: 'category_first' })
+  categoryFirst?: boolean;
+
   // Optional vendor filter for batch vendor products
   @IsOptional()
   @Type(() => Number)
