@@ -84,7 +84,18 @@ export class ProductsService {
     if (!product) {
       throw new NotFoundException(`Product with ID ${id} not found`);
     }
+    // Increment view counter in the background; ignore failures
+    this.incrementViewCount(id).catch(() => {});
     return product;
+  }
+  
+  async incrementViewCount(id: number): Promise<void> {
+    await this.productRepo
+      .createQueryBuilder()
+      .update(Product)
+      .set({ viewCount: () => 'COALESCE(view_count, 0) + 1' as any })
+      .where('id = :id', { id })
+      .execute();
   }
   
   async findFiltered(filters: ProductFilterDto): Promise<{
@@ -104,7 +115,7 @@ export class ProductsService {
       .leftJoinAndSelect('product.category', 'category');
 
     // Lean projection for grid views: limit selected columns
-    if (view === 'grid') {
+  if (view === 'grid') {
       qb.select([
         'product.id',
         'product.name',
@@ -114,6 +125,7 @@ export class ProductsService {
         'product.average_rating',
         'product.rating_count',
         'product.sales_count',
+        'product.viewCount',
         'product.createdAt',
         'vendor.id',
         'category.id',
@@ -185,6 +197,10 @@ export class ProductsService {
     } else if (sort === 'sales_desc') {
       if (addedGeoRank) qb.orderBy('geo_rank', 'DESC');
       qb.addOrderBy('product.sales_count', 'DESC', 'NULLS LAST')
+        .addOrderBy('product.createdAt', 'DESC');
+    } else if (sort === 'views_desc') {
+      if (addedGeoRank) qb.orderBy('geo_rank', 'DESC');
+      qb.addOrderBy('product.viewCount', 'DESC', 'NULLS LAST')
         .addOrderBy('product.createdAt', 'DESC');
     } else {
       if (addedGeoRank) qb.orderBy('geo_rank', 'DESC');

@@ -94,6 +94,32 @@ export class Product {
   @Column('int', { default: 0 })
   sales_count!: number;
 
+  // Viewers counter for vendor analytics (DB column: view_count)
+  @Column('int', { default: 0, name: 'view_count' })
+  viewCount!: number;
+
+  // --- Common API aliases for clients ---
+  @Expose({ name: 'view_count' })
+  get view_count(): number {
+    return this.viewCount;
+  }
+  @Expose({ name: 'views' })
+  get views(): number {
+    return this.viewCount;
+  }
+  @Expose({ name: 'views_count' })
+  get views_count(): number {
+    return this.viewCount;
+  }
+  @Expose({ name: 'impressions' })
+  get impressions(): number {
+    return this.viewCount;
+  }
+  @Expose({ name: 'hits' })
+  get hits(): number {
+    return this.viewCount;
+  }
+
   // These getters are now removed as they are not needed.
   // The full, correct URL is now stored directly in `imageUrl` and in the `src` of the ProductImage entities.
 }
