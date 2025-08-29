@@ -20,7 +20,7 @@
     "noFallthroughCasesInSwitch": false,
     "resolveJsonModule": true,
     "moduleResolution": "node",
-    "types": ["node"]
+  "types": ["node", "jest"]
   },
   "include": ["src/**/*"],
   "ts-node": {

@@ -3,6 +3,7 @@ import { VendorService } from './vendor.service';
 import { UsersService } from '../users/users.service';
 import { DoSpacesService } from '../media/do-spaces.service';
 import { ProductsService } from '../products/products.service';
+import { normalizeProductMedia } from '../common/utils/media-url.util';
 
 @Controller('vendors')
 export class VendorPublicController {
@@ -26,13 +27,15 @@ export class VendorPublicController {
       .map((v) => Number(v.trim()))
       .filter((n) => Number.isInteger(n) && n > 0);
     if (!vendorIds.length) return { vendors: [] };
-    const per = Math.min(Number(perVendor) || 10, 30);
-    const v = view === 'full' ? 'full' : 'grid';
+  const per = Math.min(Number(perVendor) || 10, 30);
+  // Default to 'full' so images relation is loaded and thumbnails are reliable
+  const v = view === 'grid' ? 'grid' : 'full';
 
     const results = await Promise.all(
       vendorIds.map(async (vendorId) => {
   const res = await this.productsService.findFiltered({ perPage: per, sort: sort || 'created_desc', vendorId, view: v } as any);
-        return { vendorId, items: res.items };
+        const items = Array.isArray((res as any).items) ? (res as any).items.map(normalizeProductMedia) : [];
+        return { vendorId, items };
       }),
     );
     return { vendors: results };
@@ -52,13 +55,15 @@ export class VendorPublicController {
       .map((v) => Number(v.trim()))
       .filter((n) => Number.isInteger(n) && n > 0);
     if (!vendorIds.length) return { vendors: [] };
-    const per = Math.min(Number(perVendor) || 10, 30);
-    const v = view === 'full' ? 'full' : 'grid';
+  const per = Math.min(Number(perVendor) || 10, 30);
+  // Default to 'full' so images relation is loaded and thumbnails are reliable
+  const v = view === 'grid' ? 'grid' : 'full';
 
-    const results = await Promise.all(
+  const results = await Promise.all(
       vendorIds.map(async (vendorId) => {
         const res = await this.productsService.findFiltered({ perPage: per, sort: sort || 'created_desc', vendorId, view: v } as any);
-        return { vendorId, items: res.items };
+    const items = Array.isArray((res as any).items) ? (res as any).items.map(normalizeProductMedia) : [];
+    return { vendorId, items };
       }),
     );
     return { vendors: results };

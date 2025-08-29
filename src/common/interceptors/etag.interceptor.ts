@@ -13,7 +13,7 @@ export class EtagInterceptor implements NestInterceptor {
     const req = ctx.getRequest();
 
     return next.handle().pipe(
-      tap((data) => {
+  tap((data) => {
         try {
           // Bypass ETag/Cache for curation endpoints entirely
           const originalUrl: string = (req?.originalUrl || req?.url || '').toString();
@@ -28,6 +28,10 @@ export class EtagInterceptor implements NestInterceptor {
           const routeCache = res.getHeader('Cache-Control');
           if (routeCache && String(routeCache).toLowerCase().includes('no-store')) {
             // Respect route opting out of caching/etag
+            return;
+          }
+          // If controller already set an ETag, respect it and skip.
+          if (res.getHeader('ETag')) {
             return;
           }
           const body = JSON.stringify(data ?? '');

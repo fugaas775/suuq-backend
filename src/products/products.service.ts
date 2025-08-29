@@ -16,6 +16,7 @@ import { ProductImage } from './entities/product-image.entity';
 import { ProductFilterDto } from './dto/ProductFilterDto';
 import { Tag } from '../tags/tag.entity';
 import { ProductImpression } from './entities/product-impression.entity';
+import { SearchKeyword } from './entities/search-keyword.entity';
 import { createHash } from 'crypto';
 
 @Injectable()
@@ -30,11 +31,72 @@ export class ProductsService {
     @InjectRepository(Tag) private tagRepo: Repository<Tag>,
   @InjectRepository(require('../categories/entities/category.entity').Category) private categoryRepo: TreeRepository<any>,
   @InjectRepository(ProductImpression) private impressionRepo: Repository<ProductImpression>,
+  @InjectRepository(SearchKeyword) private searchKeywordRepo: Repository<SearchKeyword>,
   ) {}
+
+  // Simple in-memory cache for Property & Real Estate subtree ids
+  private propertyIdsCache: { ids: number[]; at: number } | null = null;
+
+  private async getPropertySubtreeIds(): Promise<number[]> {
+    const now = Date.now();
+    if (this.propertyIdsCache && now - this.propertyIdsCache.at < 5 * 60 * 1000) {
+      return this.propertyIdsCache.ids;
+    }
+    // Find categories whose slug looks like property/real-estate
+    const roots = await this.categoryRepo
+      .createQueryBuilder('c')
+      .where('c.slug ILIKE :p1 OR c.slug ~* :p2', { p1: '%property%', p2: 'real[-_ ]?estate' })
+      .getMany()
+      .catch(() => []);
+
+    const idSet = new Set<number>();
+    for (const root of roots || []) {
+      try {
+        const descs = await this.categoryRepo.findDescendants(root);
+        for (const d of descs) idSet.add(d.id);
+      } catch {
+        if (root?.id) idSet.add(root.id);
+      }
+    }
+    const ids = Array.from(idSet);
+    this.propertyIdsCache = { ids, at: now };
+    return ids;
+  }
+
+  private isPropertyCategory(category?: any): boolean {
+    const slug = (category && (category.slug || category?.['slug'])) || '';
+    return typeof slug === 'string' && /(property|real[-_ ]?estate)/i.test(slug);
+  }
+
+  private sanitizeAttributes(attrs: any): Record<string, any> | null {
+    if (!attrs || typeof attrs !== 'object') return attrs ?? null;
+    const out: Record<string, any> = { ...attrs };
+    try {
+      const v = out.videoUrl ?? out.videourl ?? out.video_url;
+      if (typeof v === 'string' && v.trim().length) {
+        // Basic safety: enforce http/https and a reasonable length
+        const url = new URL(v.trim());
+        if (!['http:', 'https:'].includes(url.protocol) || v.length > 2048) {
+          delete out.videoUrl;
+          delete out.videourl;
+          delete out.video_url;
+        } else {
+          out.videoUrl = url.toString();
+          delete out.videourl;
+          delete out.video_url;
+        }
+      }
+    } catch {
+      delete out.videoUrl;
+      delete out.videourl;
+      delete out.video_url;
+    }
+    return out;
+  }
 
   // ✅ NEW create method
   async create(data: CreateProductDto & { vendorId: number }): Promise<Product> {
-    const { tags = [], images = [], vendorId, categoryId, ...rest } = data;
+  const { tags = [], images = [], vendorId, categoryId, listingType, bedrooms, listingCity, bathrooms, sizeSqm, furnished, rentPeriod, attributes, ...rest } = data;
 
     const vendor = await this.userRepo.findOneBy({ id: vendorId });
     if (!vendor) {
@@ -46,11 +108,29 @@ export class ProductsService {
       category = await this.categoryRepo.findOneBy({ id: categoryId });
       if (!category) throw new NotFoundException('Category not found');
     }
+    // Property validations
+    if (category && this.isPropertyCategory(category)) {
+      if (!listingCity || !String(listingCity).trim()) {
+        throw new BadRequestException('listingCity is required for Property & Real Estate listings');
+      }
+      if (listingType === 'rent' && (!rentPeriod || !String(rentPeriod).trim())) {
+        throw new BadRequestException('rentPeriod is required when listing_type is rent');
+      }
+    }
+
     const product = this.productRepo.create({
       ...rest,
       vendor,
       category,
-      currency: rest.currency || vendor.currency || 'USD',
+  currency: rest.currency || vendor.currency || 'USD',
+  listingType: listingType ?? null,
+  bedrooms: bedrooms ?? null,
+  listingCity: listingCity ?? null,
+  bathrooms: bathrooms ?? null,
+  sizeSqm: sizeSqm ?? null,
+  furnished: furnished ?? null,
+  rentPeriod: rentPeriod ?? null,
+  attributes: this.sanitizeAttributes(attributes) ?? {},
       imageUrl: images.length > 0 ? images[0].src : null,
     });
 
@@ -89,7 +169,24 @@ export class ProductsService {
     }
     // Increment view counter in the background; ignore failures
     this.incrementViewCount(id).catch(() => {});
-    return product;
+    try {
+      const { normalizeProductMedia } = require('../common/utils/media-url.util');
+      return normalizeProductMedia(product);
+    } catch {
+      return product;
+    }
+  }
+
+  // Helper: get a presentable vendor name by id
+  async getVendorDisplayName(vendorId: number): Promise<string | null> {
+    try {
+      const vendor = await this.userRepo.findOne({ where: { id: vendorId } });
+      if (!vendor) return null;
+      const name = (vendor as any).storeName || (vendor as any).displayName || (vendor as any).name || '';
+      return name ? String(name) : null;
+    } catch {
+      return null;
+    }
   }
   
   async incrementViewCount(id: number): Promise<void> {
@@ -104,6 +201,54 @@ export class ProductsService {
   async deriveImpressionSessionKey(ip: string, ua: string, sessionId?: string): Promise<string> {
     const base = `${ip || ''}|${ua || ''}|${sessionId || ''}`;
     return createHash('sha1').update(base).digest('hex').slice(0, 40);
+  }
+
+  private normalizeQuery(q: string): string {
+    return (q || '').trim().toLowerCase().replace(/\s+/g, ' ').slice(0, 256);
+  }
+
+  // Upsert a search keyword metric row; kind can be 'suggest' or 'submit'
+  async recordSearchKeyword(
+    q: string,
+    kind: 'suggest' | 'submit',
+    meta?: { ip?: string; ua?: string; results?: number; city?: string; vendorName?: string; country?: string; vendorHits?: Array<{ name: string; id?: number; country?: string; count: number }> },
+  ): Promise<void> {
+    const qNorm = this.normalizeQuery(q);
+    if (!qNorm || qNorm.length < 2) return;
+    try {
+      const existing = await this.searchKeywordRepo.findOne({ where: { qNorm } });
+      if (existing) {
+        existing.totalCount = (existing.totalCount || 0) + 1;
+        if (kind === 'suggest') existing.suggestCount = (existing.suggestCount || 0) + 1;
+        if (kind === 'submit') existing.submitCount = (existing.submitCount || 0) + 1;
+  if (meta?.results !== undefined) existing.lastResults = meta.results;
+        if (meta?.ip) existing.lastIp = meta.ip.slice(0, 64);
+  if (meta?.ua) existing.lastUa = meta.ua.slice(0, 256);
+  if (meta?.city) existing.lastCity = meta.city.slice(0, 128);
+  if (meta?.vendorName) existing.lastVendorName = meta.vendorName.slice(0, 256);
+  if (meta?.country) existing.lastCountry = meta.country.slice(0, 2).toUpperCase();
+  if (meta?.vendorHits) (existing as any).vendorHits = Array.isArray(meta.vendorHits) ? meta.vendorHits : null;
+        await this.searchKeywordRepo.save(existing);
+      } else {
+        const row = this.searchKeywordRepo.create({
+          q: q.slice(0, 256),
+          qNorm,
+          totalCount: 1,
+          suggestCount: kind === 'suggest' ? 1 : 0,
+          submitCount: kind === 'submit' ? 1 : 0,
+          lastResults: meta?.results ?? null,
+          lastIp: meta?.ip?.slice(0, 64) || null,
+          lastUa: meta?.ua?.slice(0, 256) || null,
+          lastCity: meta?.city ? meta.city.slice(0, 128) : null,
+          lastVendorName: meta?.vendorName ? meta.vendorName.slice(0, 256) : null,
+          lastCountry: meta?.country ? meta.country.slice(0, 2).toUpperCase() : null,
+          vendorHits: meta?.vendorHits && Array.isArray(meta.vendorHits) ? meta.vendorHits : null,
+        });
+        await this.searchKeywordRepo.save(row);
+      }
+    } catch (e) {
+      this.logger.warn(`recordSearchKeyword failed: ${e?.message || e}`);
+    }
   }
 
   // Idempotent within a rolling window: if an impression exists for (productId, sessionKey) within window, skip increment
@@ -138,7 +283,8 @@ export class ProductsService {
     currentPage: number;
     totalPages: number;
   }> {
-  const { page = 1, perPage: rawPerPage = 20, search, categoryId, categorySlug, featured, tags, priceMin, priceMax, sort, country, region, city, geoPriority, userCountry, userRegion, userCity, view, vendorId, includeDescendants, categoryFirst } = filters;
+  const { page = 1, perPage: rawPerPage = 20, search, categoryId: rawCategoryId, categoryAlias, categorySlug, featured, tags, priceMin, priceMax, sort, country, region, city, geoPriority, userCountry, userRegion, userCity, view, vendorId, includeDescendants, categoryFirst, geoAppend, listing_type, listingType, bedrooms, bedrooms_min, bedrooms_max, bedroomsMin, bedroomsMax } = filters as any;
+  const categoryId = rawCategoryId || categoryAlias;
 
     // Clamp perPage to protect backend
     const perPage = Math.min(Math.max(Number(rawPerPage) || 20, 1), 50);
@@ -159,6 +305,14 @@ export class ProductsService {
         'product.rating_count',
         'product.sales_count',
         'product.viewCount',
+  'product.listingType',
+  'product.bedrooms',
+  'product.listingCity',
+  'product.bathrooms',
+  'product.sizeSqm',
+  'product.furnished',
+  'product.rentPeriod',
+  'product.attributes',
         'product.createdAt',
         'vendor.id',
         'category.id',
@@ -183,27 +337,48 @@ export class ProductsService {
       qb.innerJoin('product.tags', 'tagFilter', 'tagFilter.name IN (:...tagList)', { tagList });
     }
     if (priceMin !== undefined) qb.andWhere('product.price >= :priceMin', { priceMin });
-    if (priceMax !== undefined) qb.andWhere('product.price <= :priceMax', { priceMax });
+  if (priceMax !== undefined) qb.andWhere('product.price <= :priceMax', { priceMax });
+  const listingTypeFilter = listing_type || listingType;
+  if (listingTypeFilter) qb.andWhere('product.listing_type = :lt', { lt: listingTypeFilter });
+  // Bedrooms filter: exact or range
+  const brExact = bedrooms;
+  const brMin = bedrooms_min ?? bedroomsMin;
+  const brMax = bedrooms_max ?? bedroomsMax;
+  if (brExact !== undefined) qb.andWhere('product.bedrooms = :br', { br: brExact });
+  if (brMin !== undefined) qb.andWhere('product.bedrooms >= :brMin', { brMin });
+  if (brMax !== undefined) qb.andWhere('product.bedrooms <= :brMax', { brMax });
+
+  // Property city filter (from userCity or listing_city alias)
+  const listingCityFilter = (filters as any).listing_city || (filters as any).userCity;
+  if (listingCityFilter) qb.andWhere('LOWER(product.listing_city) = LOWER(:lc)', { lc: listingCityFilter });
+
+  // Bathrooms range (optional)
+  const baths = (filters as any).bathrooms;
+  const bathsMin = (filters as any).bathrooms_min;
+  const bathsMax = (filters as any).bathrooms_max;
+  if (baths !== undefined) qb.andWhere('product.bathrooms = :baths', { baths });
+  if (bathsMin !== undefined) qb.andWhere('product.bathrooms >= :bathsMin', { bathsMin });
+  if (bathsMax !== undefined) qb.andWhere('product.bathrooms <= :bathsMax', { bathsMax });
 
     // Geo handling
     // If geoPriority mode is enabled, we DO NOT hard filter; we rank by proximity of vendor profile fields to user provided geo.
     // Otherwise, we apply strict filters if supplied.
     let addedGeoRank = false;
     if (geoPriority) {
-      // Normalize inputs to lowercase for comparison
+      // Normalize inputs and parameterize to avoid SQL injection
       const eaList = (filters as any).eastAfrica ? String((filters as any).eastAfrica).split(',').map((c: string) => c.trim().toUpperCase()) : ['ET','SO','KE','DJ'];
-      const uc = (userCountry || country || '').toLowerCase();
-      const ur = (userRegion || region || '').toLowerCase();
-      const uci = (userCity || city || '').toLowerCase();
-      // Build a CASE expression for geo rank: 4 city match, 3 region match, 2 country match, 1 in East Africa list, else 0
-      const eastAfricaSqlList = eaList.map(c => `'${c}'`).join(',');
+      const uc = (userCountry || country || '');
+      const ur = (userRegion || region || '');
+      const uci = (userCity || city || '');
+      const eastAfricaSqlList = eaList.map((_, i) => `:ea${i}`).join(',');
       const geoRankExpr = `CASE 
-        WHEN ${uci ? `LOWER(vendor."registrationCity") = '${uci}'` : '1=0'} THEN 4
-        WHEN ${ur ? `LOWER(vendor."registrationRegion") = '${ur}'` : '1=0'} THEN 3
-        WHEN ${uc ? `LOWER(vendor."registrationCountry") = '${uc}'` : '1=0'} THEN 2
+        WHEN (:uci <> '' AND LOWER(vendor."registrationCity") = LOWER(:uci)) THEN 4
+        WHEN (:ur <> '' AND LOWER(vendor."registrationRegion") = LOWER(:ur)) THEN 3
+        WHEN (:uc <> '' AND LOWER(vendor."registrationCountry") = LOWER(:uc)) THEN 2
         WHEN UPPER(COALESCE(vendor."registrationCountry", '')) IN (${eastAfricaSqlList}) THEN 1
         ELSE 0 END`;
-      qb.addSelect(geoRankExpr, 'geo_rank');
+      qb.addSelect(geoRankExpr, 'geo_rank')
+        .setParameters({ uci, ur, uc, ...Object.fromEntries(eaList.map((v, i) => [`ea${i}`, v])) });
       addedGeoRank = true;
     } else {
       if (country) qb.andWhere('LOWER(vendor.registrationCountry) = LOWER(:country)', { country });
@@ -278,6 +453,13 @@ export class ProductsService {
             'product.rating_count',
             'product.sales_count',
             'product.viewCount',
+            'product.listingType',
+            'product.bedrooms',
+            'product.listingCity',
+            'product.bathrooms',
+            'product.sizeSqm',
+            'product.furnished',
+            'product.rentPeriod',
             'product.createdAt',
             'vendor.id',
             'category.id',
@@ -299,21 +481,41 @@ export class ProductsService {
         if (priceMin !== undefined) q.andWhere('product.price >= :priceMin', { priceMin });
         if (priceMax !== undefined) q.andWhere('product.price <= :priceMax', { priceMax });
 
+  const listingTypeFilterLocal = listing_type || listingType;
+  if (listingTypeFilterLocal) q.andWhere('product.listing_type = :ltLocal', { ltLocal: listingTypeFilterLocal });
+  const brExactLocal = bedrooms;
+  const brMinLocal = bedrooms_min ?? bedroomsMin;
+  const brMaxLocal = bedrooms_max ?? bedroomsMax;
+  if (brExactLocal !== undefined) q.andWhere('product.bedrooms = :brLocal', { brLocal: brExactLocal });
+  if (brMinLocal !== undefined) q.andWhere('product.bedrooms >= :brMinLocal', { brMinLocal });
+  if (brMaxLocal !== undefined) q.andWhere('product.bedrooms <= :brMaxLocal', { brMaxLocal });
+
+  const listingCityFilterLocal = (filters as any).listing_city || (filters as any).userCity;
+  if (listingCityFilterLocal) q.andWhere('LOWER(product.listing_city) = LOWER(:lcLocal)', { lcLocal: listingCityFilterLocal });
+
+  const bathsLocal = (filters as any).bathrooms;
+  const bathsMinLocal = (filters as any).bathrooms_min;
+  const bathsMaxLocal = (filters as any).bathrooms_max;
+  if (bathsLocal !== undefined) q.andWhere('product.bathrooms = :bathsLocal', { bathsLocal });
+  if (bathsMinLocal !== undefined) q.andWhere('product.bathrooms >= :bathsMinLocal', { bathsMinLocal });
+  if (bathsMaxLocal !== undefined) q.andWhere('product.bathrooms <= :bathsMaxLocal', { bathsMaxLocal });
+
         // Geo handling
         let addedGeoRankLocal = false;
         if (geoPriority) {
           const eaList = (filters as any).eastAfrica ? String((filters as any).eastAfrica).split(',').map((c: string) => c.trim().toUpperCase()) : ['ET','SO','KE','DJ'];
-          const uc = (userCountry || country || '').toLowerCase();
-          const ur = (userRegion || region || '').toLowerCase();
-          const uci = (userCity || city || '').toLowerCase();
-          const eastAfricaSqlList = eaList.map(c => `'${c}'`).join(',');
+          const uc = (userCountry || country || '');
+          const ur = (userRegion || region || '');
+          const uci = (userCity || city || '');
+          const eastAfricaSqlList = eaList.map((_, i) => `:ea_local_${i}`).join(',');
           const geoRankExpr = `CASE 
-        WHEN ${uci ? `LOWER(vendor."registrationCity") = '${uci}'` : '1=0'} THEN 4
-        WHEN ${ur ? `LOWER(vendor."registrationRegion") = '${ur}'` : '1=0'} THEN 3
-        WHEN ${uc ? `LOWER(vendor."registrationCountry") = '${uc}'` : '1=0'} THEN 2
+        WHEN (:uci_local <> '' AND LOWER(vendor."registrationCity") = LOWER(:uci_local)) THEN 4
+        WHEN (:ur_local <> '' AND LOWER(vendor."registrationRegion") = LOWER(:ur_local)) THEN 3
+        WHEN (:uc_local <> '' AND LOWER(vendor."registrationCountry") = LOWER(:uc_local)) THEN 2
         WHEN UPPER(COALESCE(vendor."registrationCountry", '')) IN (${eastAfricaSqlList}) THEN 1
         ELSE 0 END`;
-          q.addSelect(geoRankExpr, 'geo_rank');
+          q.addSelect(geoRankExpr, 'geo_rank')
+            .setParameters({ uci_local: uci, ur_local: ur, uc_local: uc, ...Object.fromEntries(eaList.map((v, i) => [`ea_local_${i}`, v])) });
           addedGeoRankLocal = true;
         } else {
           if (country) q.andWhere('LOWER(vendor.registrationCountry) = LOWER(:country)', { country });
@@ -357,8 +559,8 @@ export class ProductsService {
       const primaryQb = buildBase().andWhere('category.id IN (:...catIds)', { catIds: subtreeIds });
       const othersQb = buildBase().andWhere('category.id NOT IN (:...catIds)', { catIds: subtreeIds });
 
-      const primaryTotal = await primaryQb.getCount();
-      const othersTotal = await othersQb.getCount();
+  const primaryTotal = await primaryQb.getCount();
+  const othersTotal = await othersQb.getCount();
 
       let items: Product[] = [];
       if (startIndex < primaryTotal) {
@@ -375,8 +577,29 @@ export class ProductsService {
         items = await othersQb.skip(othersStart).take(perPage).getMany();
       }
 
+      // Optional geo append: if page underfilled, top up with geo-ranked items from outside the union (keep total unchanged)
+      let geoAppended = 0;
+      if (geoAppend && items.length < perPage) {
+        const excludeIds = new Set(items.map(i => i.id));
+        const fillQb = buildBase();
+        // Drop category constraints and exclude already included ids
+        fillQb.andWhere('product.id NOT IN (:...exclude)', { exclude: Array.from(excludeIds).length ? Array.from(excludeIds) : [0] });
+        // Favor geo rank if available
+        if (!geoPriority) {
+          // If geoPriority isn’t on, adding geoAppend should not silently change ranking; we’ll only use existing sort
+        }
+        const need = perPage - items.length;
+        const fillItems = await fillQb.take(need).getMany();
+        // Concatenate while preserving order
+        for (const it of fillItems) {
+          if (items.length >= perPage) break;
+          if (!excludeIds.has(it.id)) items.push(it);
+        }
+        geoAppended = Math.max(0, items.length - (perPage - need));
+      }
+
       const total = primaryTotal + othersTotal;
-      return { items, total, perPage, currentPage: page, totalPages: Math.ceil(total / perPage) };
+      return { items, total, perPage, currentPage: page, totalPages: Math.ceil(total / perPage), meta: { union: { primaryTotal, othersTotal, geoAppended } } } as any;
     }
 
   qb.skip((page - 1) * perPage).take(perPage);
@@ -437,7 +660,7 @@ export class ProductsService {
       throw new ForbiddenException('You can only update your own products.');
     }
 
-    const { tags, images, categoryId, ...rest } = updateData;
+  const { tags, images, categoryId, listingType, bedrooms, listingCity, bathrooms, sizeSqm, furnished, rentPeriod, attributes, ...rest } = updateData;
     // Update simple properties
     Object.assign(product, rest);
 
@@ -465,6 +688,32 @@ export class ProductsService {
         this.productImageRepo.create({ ...img, product, sortOrder: index })
       );
       await this.productImageRepo.save(imageEntities); // Save new images
+    }
+
+    if (listingType !== undefined) {
+      product.listingType = listingType as any;
+    }
+    if (bedrooms !== undefined) {
+      product.bedrooms = (bedrooms as any) ?? null;
+    }
+  if (listingCity !== undefined) product.listingCity = (listingCity as any) ?? null;
+  if (bathrooms !== undefined) product.bathrooms = (bathrooms as any) ?? null;
+  if (sizeSqm !== undefined) product.sizeSqm = (sizeSqm as any) ?? null;
+  if (typeof furnished !== 'undefined') product.furnished = (furnished as any);
+  if (rentPeriod !== undefined) product.rentPeriod = (rentPeriod as any) ?? null;
+  if (attributes !== undefined) product.attributes = this.sanitizeAttributes(attributes) as any;
+    // Property validations using resulting state
+    const finalCategory = product.category;
+    const finalListingCity = listingCity !== undefined ? listingCity : product.listingCity;
+    const finalListingType = listingType !== undefined ? listingType : product.listingType;
+    const finalRentPeriod = rentPeriod !== undefined ? rentPeriod : product.rentPeriod;
+    if (finalCategory && this.isPropertyCategory(finalCategory)) {
+      if (!finalListingCity || !String(finalListingCity).trim()) {
+        throw new BadRequestException('listingCity is required for Property & Real Estate listings');
+      }
+      if (finalListingType === 'rent' && (!finalRentPeriod || !String(finalRentPeriod).trim())) {
+        throw new BadRequestException('rentPeriod is required when listing_type is rent');
+      }
     }
 
     await this.productRepo.save(product);
@@ -502,14 +751,69 @@ export class ProductsService {
     return this.findOne(id);
   }
   
-  async suggestNames(query: string): Promise<{ name: string }[]> {
-    if (!query || query.trim().length < 2) return [];
-    return this.productRepo
-      .createQueryBuilder('product')
-      .select('product.name', 'name')
-      .where('product.name ILIKE :q', { q: `%${query}%` })
-      .distinct(true)
-      .limit(10)
-      .getRawMany();
+  async suggestNames(query: string, limit = 8): Promise<{ name: string }[]> {
+    const q = (query || '').trim();
+    // Allow 1-character inputs; only block truly empty
+    if (q.length === 0) return [];
+    const lim = Math.min(Math.max(Number(limit) || 8, 1), 10);
+    const propIds = await this.getPropertySubtreeIds();
+    const hasProp = propIds.length > 0 ? 1 : 0;
+
+    // Pre-fetch sizes to keep the query cheap
+    const prePrefix = Math.min(lim * 4, 40);
+    const preContain = Math.min(lim * 6, 60);
+
+    // Use raw SQL for UNION + DISTINCT ON ordering
+    const sql = `
+      WITH candidates AS (
+        (
+          SELECT p.name AS name,
+                 LOWER(p.name) AS lower_name,
+                 1 AS prefix_boost,
+                 CASE WHEN $1 = 1 AND p."categoryId" = ANY($4::int[]) THEN 1 ELSE 0 END AS property_boost,
+                 (COALESCE(p.sales_count, 0) * 3 + COALESCE(p."view_count", 0))::bigint AS popularity,
+                 p."createdAt" AS created_at
+          FROM "product" p
+          WHERE p.status = 'publish' AND p."isBlocked" = false AND p.name ILIKE $2
+          LIMIT ${prePrefix}
+        )
+        UNION ALL
+        (
+          SELECT p.name AS name,
+                 LOWER(p.name) AS lower_name,
+                 0 AS prefix_boost,
+                 CASE WHEN $1 = 1 AND p."categoryId" = ANY($4::int[]) THEN 1 ELSE 0 END AS property_boost,
+                 (COALESCE(p.sales_count, 0) * 3 + COALESCE(p."view_count", 0))::bigint AS popularity,
+                 p."createdAt" AS created_at
+          FROM "product" p
+          WHERE p.status = 'publish' AND p."isBlocked" = false AND p.name ILIKE $3
+          LIMIT ${preContain}
+        )
+      )
+      SELECT DISTINCT ON (lower_name) name
+      FROM candidates
+      ORDER BY lower_name, prefix_boost DESC, property_boost DESC, popularity DESC, created_at DESC
+      LIMIT ${lim}
+    `;
+
+    const rows: Array<{ name: string }> = await this.productRepo.query(sql, [
+      hasProp,
+      `${q}%`,
+      `%${q}%`,
+      propIds.length ? propIds : [0],
+    ]);
+
+    const seen = new Set<string>();
+    const out: { name: string }[] = [];
+    for (const r of rows) {
+      const name = (r?.name || '').trim();
+      if (!name) continue;
+      const key = name.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ name });
+      if (out.length >= lim) break;
+    }
+    return out;
   }
 }

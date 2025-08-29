@@ -59,4 +59,39 @@ export class CreateProductDto {
   @IsOptional()
   @IsIn(['publish', 'draft', 'pending'])
   status?: 'publish' | 'draft' | 'pending';
+
+  // Property vertical: 'sale' | 'rent'
+  @IsOptional()
+  @IsIn(['sale', 'rent'])
+  listingType?: 'sale' | 'rent';
+
+  // Property attributes
+  @IsOptional()
+  @Type(() => Number)
+  bedrooms?: number;
+
+  @IsOptional()
+  @IsString()
+  listingCity?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  bathrooms?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  sizeSqm?: number;
+
+  @IsOptional()
+  @Type(() => Boolean)
+  furnished?: boolean;
+
+  @IsOptional()
+  @IsIn(['day', 'week', 'month', 'year'])
+  rentPeriod?: 'day' | 'week' | 'month' | 'year';
+
+  // Free-form attributes bag for extensibility (e.g., videoUrl)
+  @IsOptional()
+  // Note: kept untyped here for flexibility; validate specific keys server-side if needed
+  attributes?: Record<string, any>;
 }

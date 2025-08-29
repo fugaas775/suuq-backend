@@ -31,6 +31,7 @@ import { CurationModule } from './curation/curation.module';
 import { EmailModule } from './email/email.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
+import { FavoritesModule } from './favorites/favorites.module';
 
 @Module({
   imports: [
@@ -60,6 +61,7 @@ import { AppService } from './app.service';
   AdminModule,
   HomeModule,
   CurationModule,
+  FavoritesModule,
   ],
   controllers: [AppController],
   providers: [AppService],

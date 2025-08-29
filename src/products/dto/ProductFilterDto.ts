@@ -134,6 +134,32 @@ export class ProductFilterDto {
   @IsString()
   eastAfrica?: string;
 
+  // Optional: when category_first is true, top up page with geo-ranked items from outside the union (do not change total)
+  @IsOptional()
+  @Type(() => Boolean)
+  @IsBoolean()
+  @Expose({ name: 'geo_append' })
+  geoAppend?: boolean;
+
+  // Property: bedrooms exact or ranges
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Expose({ name: 'bedrooms' })
+  bedrooms?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Expose({ name: 'bedrooms_min' })
+  bedroomsMin?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Expose({ name: 'bedrooms_max' })
+  bedroomsMax?: number;
+
   // Coordinates accepted for forward-compatibility (not used server-side yet)
   @IsOptional()
   @Type(() => Number)

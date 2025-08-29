@@ -57,4 +57,36 @@ export class UpdateProductDto {
   @IsOptional()
   @IsIn(['publish', 'draft', 'pending'])
   status?: 'publish' | 'draft' | 'pending';
+
+  // Property vertical: 'sale' | 'rent'
+  @IsOptional()
+  @IsIn(['sale', 'rent'])
+  listingType?: 'sale' | 'rent';
+
+  @IsOptional()
+  @Type(() => Number)
+  bedrooms?: number;
+
+  @IsOptional()
+  @IsString()
+  listingCity?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  bathrooms?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  sizeSqm?: number;
+
+  @IsOptional()
+  @Type(() => Boolean)
+  furnished?: boolean;
+
+  @IsOptional()
+  @IsIn(['day', 'week', 'month', 'year'])
+  rentPeriod?: 'day' | 'week' | 'month' | 'year';
+
+  @IsOptional()
+  attributes?: Record<string, any>;
 }

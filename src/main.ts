@@ -2,6 +2,7 @@ import 'dotenv/config';
 import 'reflect-metadata';
 const express = require('express');
 import { NestFactory } from '@nestjs/core';
+import { DataSource } from 'typeorm';
 import { AppModule } from './app.module';
 import { ValidationPipe, Logger, ClassSerializerInterceptor, BadRequestException } from '@nestjs/common';
 import { GlobalExceptionFilter } from './common/global-exception.filter';
@@ -49,6 +50,10 @@ async function bootstrap() {
       'origin',
       'X-Requested-With',
       'x-requested-with',
+      'X-App-Version',
+      'x-app-version',
+      'X-Platform',
+      'x-platform',
       'Content-Type',
       'content-type',
       'Accept',
@@ -61,6 +66,8 @@ async function bootstrap() {
       'pragma',
       'If-None-Match',
       'if-none-match',
+      'If-Match',
+      'if-match',
       'If-Modified-Since',
       'if-modified-since',
     ],
@@ -69,6 +76,7 @@ async function bootstrap() {
       'ETag',
       'Last-Modified',
       'Cache-Control',
+      'Retry-After',
       // For admin UIs like React Admin that read totals from headers
       'Content-Range',
       'X-Total-Count',
@@ -129,6 +137,17 @@ async function bootstrap() {
   // Register global exception filter for detailed error logging
   app.useGlobalFilters(new GlobalExceptionFilter());
   // (removed temporary route introspection)
+  // Auto-run DB migrations unless disabled
+  try {
+    const ds = app.get(DataSource);
+    const allowAuto = (process.env.AUTO_MIGRATE ?? 'true') !== 'false' && process.env.NODE_ENV !== 'test';
+    if (allowAuto && ds && typeof ds.runMigrations === 'function') {
+      await ds.runMigrations();
+      Logger.log('Database migrations executed on startup', 'Bootstrap');
+    }
+  } catch (e: any) {
+    Logger.warn(`Auto migration skipped/failed: ${e?.message || e}`, 'Bootstrap');
+  }
   
   await app.listen(3000, '0.0.0.0');
   console.log(`Application is running on: ${await app.getUrl()}`);

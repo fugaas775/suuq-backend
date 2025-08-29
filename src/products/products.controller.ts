@@ -27,6 +27,7 @@ import { UserRole } from '../auth/roles.enum';
 import { ProductFilterDto } from './dto/ProductFilterDto';
 import { UseInterceptors, ParseBoolPipe } from '@nestjs/common';
 import { RecordImpressionsDto } from './dto/record-impressions.dto';
+import { normalizeProductMedia } from '../common/utils/media-url.util';
 
 @UseInterceptors(ClassSerializerInterceptor)
 @Controller('products')
@@ -68,7 +69,7 @@ export class ProductsController {
 
   // --- UPDATED: This method now uses the ProductFilterDto ---
   @Get()
-  async findAll(@Query() filters: ProductFilterDto, @Query('currency') currency?: string) {
+  async findAll(@Query() filters: ProductFilterDto, @Query('currency') currency?: string, @Req() req?: any) {
     try {
       this.logger.debug(`findAll filters: ${JSON.stringify(filters)}, currency: ${currency}`);
 
@@ -84,6 +85,66 @@ export class ProductsController {
 
       const result = await this.productsService.findFiltered(filters);
 
+      // Derive vendorHits (distribution of vendors in the current result set)
+      let vendorHits: Array<{ name: string; id?: number; country?: string; count: number }> | undefined;
+      try {
+        const counts = new Map<string, { name: string; id?: number; country?: string; count: number }>();
+        for (const it of result.items || []) {
+          const vendor: any = (it as any).vendor;
+          if (!vendor) continue;
+          const vid = vendor.id as number | undefined;
+          const vname = (vendor.storeName || vendor.displayName || vendor.name || '').toString();
+          const vcountry = (vendor.registrationCountry || vendor.country || '').toString().toUpperCase();
+          const key = `${vid || ''}|${vname}`;
+          if (!counts.has(key)) counts.set(key, { name: vname, id: vid, country: vcountry || undefined, count: 0 });
+          counts.get(key)!.count += 1;
+        }
+        vendorHits = Array.from(counts.values()).sort((a, b) => b.count - a.count).slice(0, 50);
+      } catch {
+        vendorHits = undefined;
+      }
+
+      // Record submitted searches (typed then submitted)
+      if (filters.search && typeof filters.search === 'string') {
+        const ip = (req?.headers?.['x-real-ip'] || req?.headers?.['x-forwarded-for'] || req?.ip || '').toString();
+        const ua = (req?.headers?.['user-agent'] || '').toString();
+        let vendorName = (req?.user?.storeName || req?.user?.displayName || req?.user?.name || '').toString();
+        // If the request is filtering for a vendor, derive a display name even if the request is anonymous
+        const vendorIdFilter = (filters as any).vendorId || (filters as any).vendor_id;
+        if (!vendorName && vendorIdFilter) {
+          const vn = await this.productsService.getVendorDisplayName(Number(vendorIdFilter));
+          vendorName = vn || '';
+        }
+        const cityHeader = (req?.headers?.['x-user-city'] || req?.headers?.['x-city'] || '').toString();
+        const countryHeader = (req?.headers?.['x-user-country'] || req?.headers?.['x-country'] || req?.headers?.['cf-ipcountry'] || req?.headers?.['x-vercel-ip-country'] || req?.headers?.['x-country-code'] || '').toString();
+        // Accept-Language fallback: e.g., en-US -> US
+        let alCountry = '';
+        const al = (req?.headers?.['accept-language'] || '').toString();
+        if (al) {
+          const m = String(al).match(/^[a-z]{2,3}-([A-Z]{2})/);
+          if (m && m[1]) alCountry = m[1];
+        }
+        // Authenticated user country fallback
+        const userCountry = (req?.user?.registrationCountry || req?.user?.country || '').toString();
+        const city = (filters as any).userCity || (filters as any).city || cityHeader || '';
+        const country = ((filters as any).userCountry || (filters as any).country || countryHeader || userCountry || alCountry || '').toString();
+        this.productsService
+          .recordSearchKeyword(
+            filters.search,
+            'submit',
+            {
+              results: Array.isArray(result.items) ? result.items.length : undefined,
+              ip,
+              ua,
+              vendorName: vendorName || undefined,
+              city: city || undefined,
+      country: country || undefined,
+              vendorHits,
+            },
+          )
+          .catch(() => {});
+      }
+
       if (!result || !Array.isArray(result.items)) {
         this.logger.error('findAll: result or result.items missing', result);
         throw new BadRequestException('Product list could not be loaded');
@@ -92,7 +153,7 @@ export class ProductsController {
       // No manual conversion or DTO mapping; return result.items directly
       return {
         ...result,
-        items: result.items,
+        items: (result.items || []).map(normalizeProductMedia),
       };
     } catch (err) {
       this.logger.error('findAll error:', err);
@@ -101,8 +162,24 @@ export class ProductsController {
   }
 
   @Get('suggest')
-  async suggest(@Query('q') q: string) {
-    return this.productsService.suggestNames(q);
+  @Header('Cache-Control', 'public, s-maxage=30, stale-while-revalidate=60')
+  async suggest(@Query('q') q: string, @Query('limit') limit?: string, @Req() req?: any) {
+    const lim = Math.min(Math.max(Number(limit) || 8, 1), 10);
+  // Fire-and-forget capture of suggest keyword
+  const ip = (req?.headers?.['x-real-ip'] || req?.headers?.['x-forwarded-for'] || req?.ip || '').toString();
+  const ua = (req?.headers?.['user-agent'] || '').toString();
+  const cityHeader = (req?.headers?.['x-user-city'] || req?.headers?.['x-city'] || '').toString();
+  const countryHeader = (req?.headers?.['x-user-country'] || req?.headers?.['x-country'] || req?.headers?.['cf-ipcountry'] || req?.headers?.['x-vercel-ip-country'] || req?.headers?.['x-country-code'] || '').toString();
+  let alCountry = '';
+  const al = (req?.headers?.['accept-language'] || '').toString();
+  if (al) {
+    const m = String(al).match(/^[a-z]{2,3}-([A-Z]{2})/);
+    if (m && m[1]) alCountry = m[1];
+  }
+  const city = ((req as any)?.query?.userCity || (req as any)?.query?.city || cityHeader || '').toString();
+  const country = (((req as any)?.query?.userCountry) || ((req as any)?.query?.country) || countryHeader || alCountry || '').toString();
+  this.productsService.recordSearchKeyword(q, 'suggest', { ip, ua, city: city || undefined, country: country || undefined }).catch(() => {});
+  return this.productsService.suggestNames(q, lim);
   }
 
   // Aggregated home feed: avoid collision with ':id' by defining here
