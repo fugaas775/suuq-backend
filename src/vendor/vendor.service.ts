@@ -301,7 +301,7 @@ export class VendorService {
   async getVendorProductsManage(
     userId: number,
     q: import('./dto/vendor-products-query.dto').VendorProductsQueryDto,
-  ): Promise<{ items: Product[]; total: number; page: number; limit: number }> {
+  ): Promise<{ items: Product[]; total: number; page: number; limit: number; totalPages: number }> {
     const page = Math.max(1, Number(q.page) || 1);
     const limit = Math.min(Math.max(Number(q.limit) || 20, 1), 100);
     const qb = this.productRepository.createQueryBuilder('product')
@@ -309,9 +309,35 @@ export class VendorService {
       .leftJoinAndSelect('product.category', 'category')
       .leftJoinAndSelect('product.tags', 'tags')
       .where('product.vendorId = :userId', { userId })
-      .orderBy('product.createdAt', (q.sort === 'created_asc' ? 'ASC' : 'DESC'))
       .skip((page - 1) * limit)
       .take(limit);
+
+    // Sorting
+    switch (q.sort) {
+      case 'created_asc':
+        qb.orderBy('product.createdAt', 'ASC');
+        break;
+      case 'views_desc':
+        qb.orderBy('product.view_count', 'DESC', 'NULLS LAST');
+        break;
+      case 'views_asc':
+        qb.orderBy('product.view_count', 'ASC', 'NULLS LAST');
+        break;
+      case 'price_asc':
+        qb.orderBy('product.price', 'ASC', 'NULLS LAST');
+        break;
+      case 'price_desc':
+        qb.orderBy('product.price', 'DESC', 'NULLS LAST');
+        break;
+      case 'name_asc':
+        qb.orderBy('product.name', 'ASC');
+        break;
+      case 'name_desc':
+        qb.orderBy('product.name', 'DESC');
+        break;
+      default:
+        qb.orderBy('product.createdAt', 'DESC');
+    }
 
     if (q.search) {
       qb.andWhere('product.name ILIKE :search', { search: `%${q.search}%` });
@@ -319,13 +345,14 @@ export class VendorService {
     if (q.status === 'published') qb.andWhere('product.status = :statusPub', { statusPub: 'publish' });
     if (q.status === 'unpublished') qb.andWhere("product.status <> 'publish'");
 
-    const [raw, total] = await qb.getManyAndCount();
+  const [raw, total] = await qb.getManyAndCount();
     let items = raw;
     try {
       const { normalizeProductMedia } = require('../common/utils/media-url.util');
       items = raw.map(normalizeProductMedia);
     } catch {}
-    return { items, total, page, limit };
+  const totalPages = Math.ceil(total / limit) || 1;
+  return { items, total, page, limit, totalPages };
   }
 
   async getSales(vendorId: number) {
