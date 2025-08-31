@@ -10,9 +10,25 @@ import { Reflector } from '@nestjs/core';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { json, urlencoded } from 'express';
 import { EtagInterceptor } from './common/interceptors/etag.interceptor';
+import helmet from 'helmet';
+import { v4 as uuidv4 } from 'uuid';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, { bodyParser: true });
+  
+  // Apply security headers with helmet
+  app.use(helmet({
+    contentSecurityPolicy: process.env.NODE_ENV === 'production' ? undefined : false,
+    crossOriginEmbedderPolicy: false, // Allow embedding for Swagger UI
+  }));
+
+  // Add request ID middleware
+  app.use((req: any, res: any, next: any) => {
+    req.id = req.headers['x-request-id'] || uuidv4();
+    res.setHeader('x-request-id', req.id);
+    next();
+  });
+  
   // Disable Express automatic ETag; we'll manage ETag via interceptor selectively
   const expressApp = app.getHttpAdapter().getInstance();
   if (expressApp?.set) {
@@ -93,22 +109,52 @@ async function bootstrap() {
     next();
   });
 
-  // Log incoming requests and bodies for debugging
-  app.use((req, res, next) => {
-    console.log('--- Logging middleware triggered ---');
-    console.log(`[${req.method}] ${req.url}`);
-    console.log('Request headers:', req.headers);
-
-    // Do not attempt to log body for multipart/form-data
-    const contentType = req.headers['content-type'];
-    if (contentType && contentType.includes('multipart/form-data')) {
-      console.log('Incoming request body: <multipart/form-data stream>');
-    } else if (typeof req.body !== 'undefined') {
-      // Ensure body is not empty before trying to stringify
-      const bodyString = JSON.stringify(req.body);
-      console.log('Incoming request body:', bodyString === '{}' ? '<empty object>' : bodyString);
+  // Improved logging with sanitization
+  app.use((req: any, res: any, next: any) => {
+    const requestId = req.id;
+    const isProduction = process.env.NODE_ENV === 'production';
+    
+    if (isProduction) {
+      // Structured logging in production
+      const logData = {
+        requestId,
+        method: req.method,
+        url: req.url,
+        userAgent: req.headers['user-agent'],
+        timestamp: new Date().toISOString(),
+      };
+      
+      // Sanitize body in production - redact sensitive fields
+      if (req.body && typeof req.body === 'object') {
+        const sanitizedBody = { ...req.body };
+        const sensitiveFields = ['password', 'token', 'secret', 'authorization', 'jwt'];
+        
+        for (const field of sensitiveFields) {
+          if (sanitizedBody[field]) {
+            sanitizedBody[field] = '[REDACTED]';
+          }
+        }
+        
+        logData['body'] = sanitizedBody;
+      }
+      
+      console.log(JSON.stringify(logData));
     } else {
-      console.log('Incoming request body: <undefined>');
+      // Verbose logging in development
+      console.log('--- Logging middleware triggered ---');
+      console.log(`[${req.method}] ${req.url} (ID: ${requestId})`);
+      console.log('Request headers:', req.headers);
+
+      // Do not attempt to log body for multipart/form-data
+      const contentType = req.headers['content-type'];
+      if (contentType && contentType.includes('multipart/form-data')) {
+        console.log('Incoming request body: <multipart/form-data stream>');
+      } else if (typeof req.body !== 'undefined') {
+        const bodyString = JSON.stringify(req.body);
+        console.log('Incoming request body:', bodyString === '{}' ? '<empty object>' : bodyString);
+      } else {
+        console.log('Incoming request body: <undefined>');
+      }
     }
     
     next();
@@ -136,6 +182,42 @@ async function bootstrap() {
   app.useGlobalInterceptors(new EtagInterceptor(300));
   // Register global exception filter for detailed error logging
   app.useGlobalFilters(new GlobalExceptionFilter());
+
+  // Setup Swagger Documentation
+  if (process.env.SWAGGER_ENABLED === 'true') {
+    const config = new DocumentBuilder()
+      .setTitle('Suuq Backend API')
+      .setDescription('The Suuq marketplace backend API documentation')
+      .setVersion('1.0')
+      .addBearerAuth(
+        {
+          type: 'http',
+          scheme: 'bearer',
+          bearerFormat: 'JWT',
+          name: 'JWT',
+          description: 'Enter JWT token',
+          in: 'header',
+        },
+        'JWT-auth',
+      )
+      .addTag('auth', 'Authentication endpoints')
+      .addTag('users', 'User management')
+      .addTag('products', 'Product management')
+      .addTag('orders', 'Order management')
+      .addTag('categories', 'Category management')
+      .addTag('health', 'Health and readiness checks')
+      .addTag('admin', 'Admin endpoints')
+      .build();
+
+    const document = SwaggerModule.createDocument(app, config);
+    SwaggerModule.setup('api/docs', app, document, {
+      swaggerOptions: {
+        persistAuthorization: true,
+      },
+    });
+
+    Logger.log('Swagger documentation available at /api/docs', 'Bootstrap');
+  }
   // (removed temporary route introspection)
   // Auto-run DB migrations unless disabled
   try {
@@ -149,7 +231,8 @@ async function bootstrap() {
     Logger.warn(`Auto migration skipped/failed: ${e?.message || e}`, 'Bootstrap');
   }
   
-  await app.listen(3000, '0.0.0.0');
+  const port = process.env.PORT || 3000;
+  await app.listen(port, '0.0.0.0');
   console.log(`Application is running on: ${await app.getUrl()}`);
 }
 bootstrap();
