@@ -289,7 +289,43 @@ export class VendorService {
       where: { vendor: { id: userId } },
       relations: ['images', 'category', 'tags'],
     });
-    return Array.isArray(products) ? products : [];
+    try {
+      const { normalizeProductMedia } = require('../common/utils/media-url.util');
+      return Array.isArray(products) ? products.map(normalizeProductMedia) : [];
+    } catch {
+      return Array.isArray(products) ? products : [];
+    }
+  }
+
+  // Managed list with filters for MyProductsScreen
+  async getVendorProductsManage(
+    userId: number,
+    q: import('./dto/vendor-products-query.dto').VendorProductsQueryDto,
+  ): Promise<{ items: Product[]; total: number; page: number; limit: number }> {
+    const page = Math.max(1, Number(q.page) || 1);
+    const limit = Math.min(Math.max(Number(q.limit) || 20, 1), 100);
+    const qb = this.productRepository.createQueryBuilder('product')
+      .leftJoinAndSelect('product.images', 'images')
+      .leftJoinAndSelect('product.category', 'category')
+      .leftJoinAndSelect('product.tags', 'tags')
+      .where('product.vendorId = :userId', { userId })
+      .orderBy('product.createdAt', (q.sort === 'created_asc' ? 'ASC' : 'DESC'))
+      .skip((page - 1) * limit)
+      .take(limit);
+
+    if (q.search) {
+      qb.andWhere('product.name ILIKE :search', { search: `%${q.search}%` });
+    }
+    if (q.status === 'published') qb.andWhere('product.status = :statusPub', { statusPub: 'publish' });
+    if (q.status === 'unpublished') qb.andWhere("product.status <> 'publish'");
+
+    const [raw, total] = await qb.getManyAndCount();
+    let items = raw;
+    try {
+      const { normalizeProductMedia } = require('../common/utils/media-url.util');
+      items = raw.map(normalizeProductMedia);
+    } catch {}
+    return { items, total, page, limit };
   }
 
   async getSales(vendorId: number) {
@@ -851,5 +887,26 @@ export class VendorService {
       await this.orderRepository.save(order);
     }
     return rows;
+  }
+
+  // Quick publish/unpublish for vendor
+  async setPublishStatus(
+    userId: number,
+    productId: number,
+    status: 'publish' | 'draft',
+  ): Promise<Product> {
+    const product = await this.productRepository.findOne({ where: { id: productId }, relations: ['vendor'] });
+    if (!product) throw new NotFoundException('Product not found');
+    if (product.vendor.id !== userId) throw new ForbiddenException('You can only update your own products');
+    product.status = status;
+    await this.productRepository.save(product);
+    // Return enriched version with relations for UI refresh
+    const full = await this.productRepository.findOne({ where: { id: productId }, relations: ['images', 'category', 'tags', 'vendor'] });
+    try {
+      const { normalizeProductMedia } = require('../common/utils/media-url.util');
+      return normalizeProductMedia(full);
+    } catch {
+      return full!;
+    }
   }
 }

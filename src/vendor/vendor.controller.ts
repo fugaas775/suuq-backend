@@ -74,6 +74,17 @@ export class VendorController {
     return this.vendorService.getVendorProducts(req.user.id);
   }
 
+  // New: managed listing with search + publish status filters and pagination
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.VENDOR)
+  @Get('vendor/products/manage')
+  async getVendorProductsManage(
+    @Req() req: any,
+    @Query() q: import('./dto/vendor-products-query.dto').VendorProductsQueryDto,
+  ) {
+    return this.vendorService.getVendorProductsManage(req.user.id, q);
+  }
+
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.VENDOR)
   @Post('vendor/products')
@@ -100,6 +111,19 @@ export class VendorController {
     @Body() dto: UpdateVendorProductDto,
   ) {
     return this.vendorService.updateMyProduct(req.user.id, productId, dto);
+  }
+
+  // Quick publish/unpublish toggle
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.VENDOR)
+  @Patch('vendor/products/:productId/publish')
+  async togglePublish(
+    @Req() req: any,
+    @Param('productId', ParseIntPipe) productId: number,
+    @Body() body: { publish?: boolean; status?: 'publish' | 'draft' },
+  ) {
+    const desired = typeof body?.publish === 'boolean' ? (body.publish ? 'publish' : 'draft') : (body?.status || 'publish');
+    return this.vendorService.setPublishStatus(req.user.id, productId, desired);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
