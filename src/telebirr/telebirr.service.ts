@@ -15,12 +15,16 @@ export class TelebirrService {
         key: telebirrConfig.publicKey,
         padding: crypto.constants.RSA_PKCS1_PADDING,
       },
-      buffer
+      buffer,
     );
     return encrypted.toString('base64');
   }
 
-  async createPayment(amount: number, orderId: number, phoneNumber: string): Promise<string> {
+  async createPayment(
+    amount: number,
+    orderId: number,
+    phoneNumber: string,
+  ): Promise<string> {
     const { appKey, appId, notifyUrl, apiUrl } = telebirrConfig;
     const payload = {
       appId,

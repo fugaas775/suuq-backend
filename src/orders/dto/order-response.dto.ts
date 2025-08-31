@@ -1,5 +1,9 @@
 import { Expose, Type } from 'class-transformer';
-import { OrderStatus, PaymentMethod, PaymentStatus } from '../entities/order.entity';
+import {
+  OrderStatus,
+  PaymentMethod,
+  PaymentStatus,
+} from '../entities/order.entity';
 
 export class OrderItemResponseDto {
   @Expose() productId: number;
@@ -23,7 +27,11 @@ export class OrderResponseDto {
   @Expose() delivererPhone?: string;
   @Expose() userId: number;
   // For admin tables: vendors involved in this order
-  @Expose() vendors?: Array<{ id: number; displayName?: string | null; storeName?: string | null }>;
+  @Expose() vendors?: Array<{
+    id: number;
+    displayName?: string | null;
+    storeName?: string | null;
+  }>;
   // Convenience for single-vendor orders
   @Expose() vendorName?: string | null;
   @Expose() @Type(() => OrderItemResponseDto) items: OrderItemResponseDto[];

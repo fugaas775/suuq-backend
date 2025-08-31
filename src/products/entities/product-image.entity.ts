@@ -1,11 +1,16 @@
-import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, CreateDateColumn } from 'typeorm';
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  ManyToOne,
+  CreateDateColumn,
+} from 'typeorm';
 import { Product } from './product.entity';
 
 @Entity()
 export class ProductImage {
   @PrimaryGeneratedColumn()
   id!: number;
-
 
   @Column()
   src!: string; // Full-res image URL or path
@@ -22,7 +27,9 @@ export class ProductImage {
   @Column({ nullable: true })
   sortOrder?: number; // For ordering images in the gallery
 
-  @ManyToOne(() => Product, product => product.images, { onDelete: 'CASCADE' })
+  @ManyToOne(() => Product, (product) => product.images, {
+    onDelete: 'CASCADE',
+  })
   product!: Product;
 
   @CreateDateColumn()

@@ -19,10 +19,18 @@ export class NotificationsService {
   /**
    * Send a push notification to all devices of a user.
    */
-  async sendToUser({ userId, title, body }: { userId: number; title: string; body: string }) {
+  async sendToUser({
+    userId,
+    title,
+    body,
+  }: {
+    userId: number;
+    title: string;
+    body: string;
+  }) {
     // Fetch device tokens for the user
     const tokens = await this.deviceTokenRepository.find({ where: { userId } });
-    const deviceTokens = tokens.map(t => t.token).filter(Boolean);
+    const deviceTokens = tokens.map((t) => t.token).filter(Boolean);
     if (!deviceTokens.length) {
       this.logger.warn(`No device tokens found for user ${userId}`);
       return { successCount: 0, failureCount: 0 };
@@ -33,11 +41,17 @@ export class NotificationsService {
     } as any;
     // firebase-admin v13 uses sendEachForMulticast
     try {
-      const response = await this.firebase.messaging().sendEachForMulticast(message);
-      this.logger.log(`Sent notification to user ${userId}: ${response.successCount} success, ${response.failureCount} failure`);
+      const response = await this.firebase
+        .messaging()
+        .sendEachForMulticast(message);
+      this.logger.log(
+        `Sent notification to user ${userId}: ${response.successCount} success, ${response.failureCount} failure`,
+      );
       return response;
     } catch (err) {
-      this.logger.error(`Failed to send notification to user ${userId}: ${err?.message || err}`);
+      this.logger.error(
+        `Failed to send notification to user ${userId}: ${err?.message || err}`,
+      );
       return { successCount: 0, failureCount: 0 } as any;
     }
   }
@@ -45,9 +59,15 @@ export class NotificationsService {
   /**
    * Register a device token for a user.
    */
-  async registerDeviceToken(dto: { userId: number; token: string; platform?: string }) {
+  async registerDeviceToken(dto: {
+    userId: number;
+    token: string;
+    platform?: string;
+  }) {
     // Upsert device token for user
-    let device = await this.deviceTokenRepository.findOne({ where: { userId: dto.userId, token: dto.token } });
+    let device = await this.deviceTokenRepository.findOne({
+      where: { userId: dto.userId, token: dto.token },
+    });
     if (!device) {
       device = this.deviceTokenRepository.create({
         userId: dto.userId,

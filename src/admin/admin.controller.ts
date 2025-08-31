@@ -28,7 +28,7 @@ import { UserRole } from '../auth/roles.enum';
 import { CreateAdminDto } from './dto/create-admin.dto';
 
 // ✨ FINAL FIX: Use AuthGuard('jwt') to match your other working controllers
-@UseGuards(AuthGuard('jwt'), RolesGuard) 
+@UseGuards(AuthGuard('jwt'), RolesGuard)
 @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
 @Controller('admin')
 export class AdminController {
@@ -41,15 +41,15 @@ export class AdminController {
   // ================== USER MANAGEMENT ENDPOINTS ==================
   @Get('users')
   async getAllUsers(
-    @Query('role') role?: string, 
-    @Query('page') page = 1, 
-    @Query('pageSize') pageSize = 20
+    @Query('role') role?: string,
+    @Query('page') page = 1,
+    @Query('pageSize') pageSize = 20,
   ) {
-    const userRole = role ? (UserRole[role as keyof typeof UserRole]) : undefined;
-    return this.usersService.findAll({ 
-      role: userRole, 
-      page: Number(page), 
-      pageSize: Number(pageSize) 
+    const userRole = role ? UserRole[role as keyof typeof UserRole] : undefined;
+    return this.usersService.findAll({
+      role: userRole,
+      page: Number(page),
+      pageSize: Number(pageSize),
     });
   }
 
@@ -59,7 +59,10 @@ export class AdminController {
   }
 
   @Patch('users/:id')
-  async updateUser(@Param('id', ParseIntPipe) id: number, @Body() data: UpdateUserDto) {
+  async updateUser(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() data: UpdateUserDto,
+  ) {
     return this.usersService.update(id, data);
   }
 
@@ -76,7 +79,7 @@ export class AdminController {
   @Roles(UserRole.SUPER_ADMIN)
   async updateUserRoles(
     @Param('id', ParseIntPipe) id: number,
-    @Body() dto: UpdateUserRolesDto
+    @Body() dto: UpdateUserRolesDto,
   ) {
     return this.usersService.updateUserRoles(id, dto.roles);
   }
@@ -89,7 +92,9 @@ export class AdminController {
 
   // ================== ORDER MANAGEMENT ENDPOINTS ==================
   @Get('orders')
-  async getAllOrders(@Query() query: { page?: number; pageSize?: number; status?: string }) {
+  async getAllOrders(
+    @Query() query: { page?: number; pageSize?: number; status?: string },
+  ) {
     const result = await this.ordersService.findAllForAdmin(query as any);
     return { orders: result.data, total: result.total };
   }
@@ -113,7 +118,10 @@ export class AdminController {
   }
 
   @Patch('orders/:id/assign-deliverer')
-  async assignDeliverer(@Param('id', ParseIntPipe) id: number, @Body('delivererId', ParseIntPipe) delivererId: number) {
+  async assignDeliverer(
+    @Param('id', ParseIntPipe) id: number,
+    @Body('delivererId', ParseIntPipe) delivererId: number,
+  ) {
     return this.ordersService.assignDeliverer(id, delivererId);
   }
 
@@ -238,7 +246,8 @@ export class AdminController {
       totalAdmins: await this.usersService.countByRole(UserRole.ADMIN),
       totalRevenue: await this.ordersService.getTotalRevenue(),
       totalOrders: await this.ordersService.countAll(),
-      pendingWithdrawals: await this.withdrawalsService.countPendingWithdrawals(),
+      pendingWithdrawals:
+        await this.withdrawalsService.countPendingWithdrawals(),
     };
   }
 

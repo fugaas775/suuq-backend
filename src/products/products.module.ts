@@ -4,7 +4,7 @@ import { Product } from './entities/product.entity';
 import { ProductImage } from './entities/product-image.entity';
 import { UsersModule } from '../users/users.module';
 import { User } from '../users/entities/user.entity';
-import { Order } from '../orders/entities/order.entity'; 
+import { Order } from '../orders/entities/order.entity';
 import { Tag } from '../tags/tag.entity';
 import { Category } from '../categories/entities/category.entity'; // 1. Import the Category entity
 import { ProductImpression } from './entities/product-impression.entity';
@@ -27,8 +27,8 @@ import { HomeModule } from '../home/home.module';
       SearchKeyword,
     ]),
     CurrencyModule,
-  forwardRef(() => UsersModule),
-  forwardRef(() => HomeModule),
+    forwardRef(() => UsersModule),
+    forwardRef(() => HomeModule),
   ],
   providers: [ProductsService],
   controllers: [ProductsController],

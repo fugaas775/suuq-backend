@@ -1,4 +1,15 @@
-import { Controller, Get, Post, Body, Patch, Param, Query, UseGuards, ParseIntPipe, Req } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Patch,
+  Param,
+  Query,
+  UseGuards,
+  ParseIntPipe,
+  Req,
+} from '@nestjs/common';
 import { WithdrawalsService } from './withdrawals.service';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -13,7 +24,11 @@ export class WithdrawalsController {
   @Roles(UserRole.VENDOR)
   @Get('balance')
   async getBalance(@Req() req) {
-    return { balance: await this.withdrawalsService.calculateVendorBalance(req.user.id) };
+    return {
+      balance: await this.withdrawalsService.calculateVendorBalance(
+        req.user.id,
+      ),
+    };
   }
 
   @Roles(UserRole.VENDOR)

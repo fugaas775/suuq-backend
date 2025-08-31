@@ -1,4 +1,8 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { CreateVendorProductDto } from './dto/create-vendor-product.dto';
 import { FindAllVendorsDto } from './dto/find-all-vendors.dto';
 import { UpdateVendorProductDto } from './dto/update-vendor-product.dto';
@@ -20,17 +24,20 @@ export class VendorService {
     private readonly userRepository: Repository<User>,
     @InjectRepository(Product)
     private readonly productRepository: Repository<Product>,
-  @InjectRepository(Order)
-  private readonly orderRepository: Repository<Order>,
-  @InjectRepository(OrderItem)
-  private readonly orderItemRepository: Repository<OrderItem>,
+    @InjectRepository(Order)
+    private readonly orderRepository: Repository<Order>,
+    @InjectRepository(OrderItem)
+    private readonly orderItemRepository: Repository<OrderItem>,
     @InjectRepository(ProductImage)
     private readonly productImageRepository: Repository<ProductImage>,
-  private readonly notificationsService: NotificationsService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   // ✅ FIX: This function now correctly handles an array of ImageDto objects
-  async createMyProduct(userId: number, dto: CreateVendorProductDto): Promise<Product> {
+  async createMyProduct(
+    userId: number,
+    dto: CreateVendorProductDto,
+  ): Promise<Product> {
     const vendor = await this.userRepository.findOneBy({ id: userId });
     if (!vendor) {
       throw new NotFoundException(`Vendor with ID ${userId} not found.`);
@@ -44,7 +51,7 @@ export class VendorService {
       category: categoryId ? { id: categoryId } : undefined,
       imageUrl: images && images.length > 0 ? images[0].src : null, // Set main display image
     });
-    
+
     // 1. Save the main product to get its ID
     const savedProduct = await this.productRepository.save(newProduct);
 
@@ -61,16 +68,20 @@ export class VendorService {
       );
       await this.productImageRepository.save(imageEntities);
     }
-    
+
     // 3. Return the full product with all its new relations
     return this.productRepository.findOneOrFail({
-        where: { id: savedProduct.id },
-        relations: ['images', 'vendor', 'category', 'tags']
+      where: { id: savedProduct.id },
+      relations: ['images', 'vendor', 'category', 'tags'],
     });
   }
 
   // ✅ FIX: This function is now type-safe and handles image updates
-  async updateMyProduct(userId: number, productId: number, dto: UpdateVendorProductDto): Promise<Product> {
+  async updateMyProduct(
+    userId: number,
+    productId: number,
+    dto: UpdateVendorProductDto,
+  ): Promise<Product> {
     const product = await this.productRepository.findOne({
       where: { id: productId, vendor: { id: userId } },
     });
@@ -82,15 +93,20 @@ export class VendorService {
 
     // Update simple fields
     Object.assign(product, productData);
-    
+
     // Update category if it was sent
     if (categoryId !== undefined) {
       if (categoryId) {
         // Fetch the category entity from the database
-        const categoryRepo = this.productRepository.manager.getRepository(Category);
-        const category = await categoryRepo.findOne({ where: { id: categoryId } });
+        const categoryRepo =
+          this.productRepository.manager.getRepository(Category);
+        const category = await categoryRepo.findOne({
+          where: { id: categoryId },
+        });
         if (!category) {
-          throw new NotFoundException(`Category with ID ${categoryId} not found.`);
+          throw new NotFoundException(
+            `Category with ID ${categoryId} not found.`,
+          );
         }
         product.category = category;
       } else {
@@ -103,17 +119,27 @@ export class VendorService {
       product.imageUrl = images.length > 0 ? images[0].src : null;
       await this.productImageRepository.delete({ product: { id: productId } });
 
-      const imageEntities = images.map((imageObj, index) => 
-        this.productImageRepository.create({ ...imageObj, product, sortOrder: index })
+      const imageEntities = images.map((imageObj, index) =>
+        this.productImageRepository.create({
+          ...imageObj,
+          product,
+          sortOrder: index,
+        }),
       );
       await this.productImageRepository.save(imageEntities);
     }
-    
+
     await this.productRepository.save(product);
-    return this.productRepository.findOneOrFail({ where: { id: productId }, relations: ['images', 'vendor', 'category', 'tags']});
+    return this.productRepository.findOneOrFail({
+      where: { id: productId },
+      relations: ['images', 'vendor', 'category', 'tags'],
+    });
   }
 
-  async deleteMyProduct(userId: number, productId: number): Promise<{ deleted: boolean }> {
+  async deleteMyProduct(
+    userId: number,
+    productId: number,
+  ): Promise<{ deleted: boolean }> {
     const product = await this.productRepository.findOne({
       where: { id: productId, vendor: { id: userId } },
     });
@@ -123,7 +149,7 @@ export class VendorService {
     await this.productRepository.delete(productId);
     return { deleted: true };
   }
-  
+
   async getSalesGraphData(vendorId: number, range: string) {
     const startDate = new Date();
     if (range === '30d') startDate.setDate(startDate.getDate() - 30);
@@ -140,8 +166,11 @@ export class VendorService {
       .groupBy('DATE(o.createdAt)')
       .orderBy('date', 'ASC')
       .getRawMany();
-      
-    return salesData.map(point => ({ ...point, total: parseFloat(point.total) || 0 }));
+
+    return salesData.map((point) => ({
+      ...point,
+      total: parseFloat(point.total) || 0,
+    }));
   }
 
   // Your other public and dashboard methods remain here...
@@ -156,8 +185,24 @@ export class VendorService {
       minSales?: number;
       minRating?: number;
     },
-  ): Promise<{ items: any[]; total: number; currentPage: number; totalPages: number }> {
-    const { page = 1, limit = 10, search, sort = 'recent', verificationStatus, country, region, city, minSales, minRating } = findAllVendorsDto;
+  ): Promise<{
+    items: any[];
+    total: number;
+    currentPage: number;
+    totalPages: number;
+  }> {
+    const {
+      page = 1,
+      limit = 10,
+      search,
+      sort = 'recent',
+      verificationStatus,
+      country,
+      region,
+      city,
+      minSales,
+      minRating,
+    } = findAllVendorsDto;
     const skip = (page - 1) * limit;
 
     let findOptions: any;
@@ -196,17 +241,31 @@ export class VendorService {
 
     // filter by verificationStatus when provided (Home uses APPROVED)
     if (verificationStatus) {
-      findOptions.where = Array.isArray(findOptions.where) ? findOptions.where.map((w: any) => ({
-        ...w,
-        verificationStatus,
-      })) : { ...findOptions.where, verificationStatus };
+      findOptions.where = Array.isArray(findOptions.where)
+        ? findOptions.where.map((w: any) => ({
+            ...w,
+            verificationStatus,
+          }))
+        : { ...findOptions.where, verificationStatus };
     }
 
     // Apply geo filters (case-insensitive equals) when provided
     const geoFilters: any = {};
-    if (country) geoFilters.registrationCountry = Raw((alias) => `LOWER(${alias}) = LOWER(:country)`, { country });
-    if (region) geoFilters.registrationRegion = Raw((alias) => `LOWER(${alias}) = LOWER(:region)`, { region });
-    if (city) geoFilters.registrationCity = Raw((alias) => `LOWER(${alias}) = LOWER(:city)`, { city });
+    if (country)
+      geoFilters.registrationCountry = Raw(
+        (alias) => `LOWER(${alias}) = LOWER(:country)`,
+        { country },
+      );
+    if (region)
+      geoFilters.registrationRegion = Raw(
+        (alias) => `LOWER(${alias}) = LOWER(:region)`,
+        { region },
+      );
+    if (city)
+      geoFilters.registrationCity = Raw(
+        (alias) => `LOWER(${alias}) = LOWER(:city)`,
+        { city },
+      );
 
     if (Object.keys(geoFilters).length) {
       findOptions.where = Array.isArray(findOptions.where)
@@ -217,10 +276,14 @@ export class VendorService {
     // Apply minimum thresholds
     const minFilters: any = {};
     if (typeof minSales === 'number' && !Number.isNaN(minSales)) {
-      minFilters.numberOfSales = Raw((alias) => `${alias} >= :minSales`, { minSales: Number(minSales) });
+      minFilters.numberOfSales = Raw((alias) => `${alias} >= :minSales`, {
+        minSales: Number(minSales),
+      });
     }
     if (typeof minRating === 'number' && !Number.isNaN(minRating)) {
-      minFilters.rating = Raw((alias) => `${alias} >= :minRating`, { minRating: Number(minRating) });
+      minFilters.rating = Raw((alias) => `${alias} >= :minRating`, {
+        minRating: Number(minRating),
+      });
     }
     if (Object.keys(minFilters).length) {
       findOptions.where = Array.isArray(findOptions.where)
@@ -233,9 +296,20 @@ export class VendorService {
       take: limit,
       skip,
       order,
-  select: [
-        'id', 'displayName', 'storeName', 'avatarUrl', 'verificationStatus', 'verified',
-        'rating', 'numberOfSales', 'verifiedAt', 'createdAt', 'supportedCurrencies', 'registrationCountry', 'registrationCity'
+      select: [
+        'id',
+        'displayName',
+        'storeName',
+        'avatarUrl',
+        'verificationStatus',
+        'verified',
+        'rating',
+        'numberOfSales',
+        'verifiedAt',
+        'createdAt',
+        'supportedCurrencies',
+        'registrationCountry',
+        'registrationCity',
       ] as any,
     });
 
@@ -248,7 +322,9 @@ export class VendorService {
       isVerified: !!u.verified,
       rating: u.rating ?? 0,
       productCount: undefined, // placeholder; can join or compute later
-      certificateCount: Array.isArray((u as any).verificationDocuments) ? (u as any).verificationDocuments.length : undefined,
+      certificateCount: Array.isArray((u as any).verificationDocuments)
+        ? (u as any).verificationDocuments.length
+        : undefined,
     }));
 
     return {
@@ -260,7 +336,8 @@ export class VendorService {
   }
   async getPublicProfile(userId: number) {
     // ... (Your existing code is preserved)
-    const user = await this.userRepository.createQueryBuilder('user')
+    const user = await this.userRepository
+      .createQueryBuilder('user')
       .where('user.id = :id', { id: userId })
       .andWhere(':role = ANY(user.roles)', { role: UserRole.VENDOR })
       .getOne();
@@ -290,7 +367,9 @@ export class VendorService {
       relations: ['images', 'category', 'tags'],
     });
     try {
-      const { normalizeProductMedia } = require('../common/utils/media-url.util');
+      const {
+        normalizeProductMedia,
+      } = require('../common/utils/media-url.util');
       return Array.isArray(products) ? products.map(normalizeProductMedia) : [];
     } catch {
       return Array.isArray(products) ? products : [];
@@ -301,10 +380,17 @@ export class VendorService {
   async getVendorProductsManage(
     userId: number,
     q: import('./dto/vendor-products-query.dto').VendorProductsQueryDto,
-  ): Promise<{ items: Product[]; total: number; page: number; limit: number; totalPages: number }> {
+  ): Promise<{
+    items: Product[];
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+  }> {
     const page = Math.max(1, Number(q.page) || 1);
     const limit = Math.min(Math.max(Number(q.limit) || 20, 1), 100);
-    const qb = this.productRepository.createQueryBuilder('product')
+    const qb = this.productRepository
+      .createQueryBuilder('product')
       .leftJoinAndSelect('product.images', 'images')
       .leftJoinAndSelect('product.category', 'category')
       .leftJoinAndSelect('product.tags', 'tags')
@@ -342,17 +428,20 @@ export class VendorService {
     if (q.search) {
       qb.andWhere('product.name ILIKE :search', { search: `%${q.search}%` });
     }
-    if (q.status === 'published') qb.andWhere('product.status = :statusPub', { statusPub: 'publish' });
+    if (q.status === 'published')
+      qb.andWhere('product.status = :statusPub', { statusPub: 'publish' });
     if (q.status === 'unpublished') qb.andWhere("product.status <> 'publish'");
 
-  const [raw, total] = await qb.getManyAndCount();
+    const [raw, total] = await qb.getManyAndCount();
     let items = raw;
     try {
-      const { normalizeProductMedia } = require('../common/utils/media-url.util');
+      const {
+        normalizeProductMedia,
+      } = require('../common/utils/media-url.util');
       items = raw.map(normalizeProductMedia);
     } catch {}
-  const totalPages = Math.ceil(total / limit) || 1;
-  return { items, total, page, limit, totalPages };
+    const totalPages = Math.ceil(total / limit) || 1;
+    return { items, total, page, limit, totalPages };
   }
 
   async getSales(vendorId: number) {
@@ -385,8 +474,19 @@ export class VendorService {
       total: number;
       status: string;
       createdAt: Date;
-      items: Array<{ id: number; productId: number; productName: string; quantity: number; price: number; status: string }>;
-      buyer: { id: number; email?: string | null; displayName?: string | null } | null;
+      items: Array<{
+        id: number;
+        productId: number;
+        productName: string;
+        quantity: number;
+        price: number;
+        status: string;
+      }>;
+      buyer: {
+        id: number;
+        email?: string | null;
+        displayName?: string | null;
+      } | null;
     }>;
   }> {
     const user = await this.userRepository.findOne({ where: { id: userId } });
@@ -395,7 +495,9 @@ export class VendorService {
       throw new ForbiddenException('User is not a vendor');
     }
 
-    const productCount = await this.productRepository.count({ where: { vendor: { id: userId } } });
+    const productCount = await this.productRepository.count({
+      where: { vendor: { id: userId } },
+    });
 
     const orderCount = await this.orderRepository
       .createQueryBuilder('order')
@@ -405,9 +507,15 @@ export class VendorService {
       .getCount();
 
     const salesGraphLast30 = await this.getSalesGraphData(userId, '30d');
-    const salesLast30Total = salesGraphLast30.reduce((sum, d: any) => sum + (Number(d.total) || 0), 0);
+    const salesLast30Total = salesGraphLast30.reduce(
+      (sum, d: any) => sum + (Number(d.total) || 0),
+      0,
+    );
 
-    const { data: recentOrdersRaw } = await this.getVendorOrders(userId, { page: 1, limit: 5 });
+    const { data: recentOrdersRaw } = await this.getVendorOrders(userId, {
+      page: 1,
+      limit: 5,
+    });
     const recentOrders = (recentOrdersRaw || []).map((o: any) => ({
       id: o.id,
       total: Number(o.total) || 0,
@@ -421,7 +529,13 @@ export class VendorService {
         price: Number(it.price) || 0,
         status: it.status,
       })),
-      buyer: o.user ? { id: o.user.id, email: o.user.email || null, displayName: o.user.displayName || null } : null,
+      buyer: o.user
+        ? {
+            id: o.user.id,
+            email: o.user.email || null,
+            displayName: o.user.displayName || null,
+          }
+        : null,
     }));
 
     const profile = {
@@ -435,7 +549,7 @@ export class VendorService {
       isActive: user.isActive,
       rating: user.rating ?? 0,
       numberOfSales: user.numberOfSales ?? 0,
-  currency: user.currency || null,
+      currency: user.currency || null,
       registrationCountry: user.registrationCountry || null,
       registrationRegion: user.registrationRegion || null,
       registrationCity: user.registrationCity || null,
@@ -451,7 +565,11 @@ export class VendorService {
   }
 
   // Admin: set vendor verification status and toggle verified/verifiedAt fields
-  async setVendorVerificationStatus(userId: number, status: VerificationStatus, reason?: string): Promise<User> {
+  async setVendorVerificationStatus(
+    userId: number,
+    status: VerificationStatus,
+    reason?: string,
+  ): Promise<User> {
     const user = await this.userRepository.findOne({ where: { id: userId } });
     if (!user) {
       throw new NotFoundException(`Vendor with ID ${userId} not found.`);
@@ -469,7 +587,7 @@ export class VendorService {
       // Clear verifiedAt for non-approved statuses
       user.verifiedAt = null;
     }
-  // Note: reason is currently not persisted; could be logged or stored if schema adds a field.
+    // Note: reason is currently not persisted; could be logged or stored if schema adds a field.
     return await this.userRepository.save(user);
   }
 
@@ -490,12 +608,25 @@ export class VendorService {
    * Search deliverers (users with DELIVERER role). Supports text query on displayName, email, or phone.
    * Returns normalized items: { id, name, email, phone }
    */
-  async searchDeliverers(opts: { q?: string; page?: number; limit?: number }): Promise<{ items: Array<{ id: number; name: string | null; email: string | null; phone: string | null }>; total: number }> {
+  async searchDeliverers(opts: {
+    q?: string;
+    page?: number;
+    limit?: number;
+  }): Promise<{
+    items: Array<{
+      id: number;
+      name: string | null;
+      email: string | null;
+      phone: string | null;
+    }>;
+    total: number;
+  }> {
     const q = (opts.q || '').trim();
     const page = opts.page && opts.page > 0 ? opts.page : 1;
     const limit = opts.limit && opts.limit > 0 ? Math.min(opts.limit, 100) : 20;
 
-    const qb = this.userRepository.createQueryBuilder('user')
+    const qb = this.userRepository
+      .createQueryBuilder('user')
       .where(':role = ANY(user.roles)', { role: UserRole.DELIVERER })
       .andWhere('user.isActive = true')
       .orderBy('user.displayName', 'ASC')
@@ -522,8 +653,19 @@ export class VendorService {
   }
 
   // Lightweight vendor suggestions for dropdowns/search-as-you-type
-  async suggestVendors(q?: string, limit = 10): Promise<Array<{ id: number; displayName: string | null; storeName: string | null; avatarUrl: string | null }>> {
-    const qb = this.userRepository.createQueryBuilder('user')
+  async suggestVendors(
+    q?: string,
+    limit = 10,
+  ): Promise<
+    Array<{
+      id: number;
+      displayName: string | null;
+      storeName: string | null;
+      avatarUrl: string | null;
+    }>
+  > {
+    const qb = this.userRepository
+      .createQueryBuilder('user')
       .where(':role = ANY(user.roles)', { role: UserRole.VENDOR })
       .andWhere('user.isActive = true')
       .orderBy('user.displayName', 'ASC')
@@ -531,7 +673,9 @@ export class VendorService {
 
     const term = (q || '').trim();
     if (term) {
-      qb.andWhere('(user.displayName ILIKE :q OR user.storeName ILIKE :q)', { q: `%${term}%` });
+      qb.andWhere('(user.displayName ILIKE :q OR user.storeName ILIKE :q)', {
+        q: `%${term}%`,
+      });
     }
 
     const users = await qb.getMany();
@@ -551,7 +695,7 @@ export class VendorService {
    */
   async getVendorOrders(
     vendorId: number,
-    opts: { page?: number; limit?: number; status?: OrderStatus }
+    opts: { page?: number; limit?: number; status?: OrderStatus },
   ): Promise<{ data: any[]; total: number }> {
     const page = opts.page && opts.page > 0 ? opts.page : 1;
     const limit = opts.limit && opts.limit > 0 ? Math.min(opts.limit, 100) : 20;
@@ -561,7 +705,7 @@ export class VendorService {
       .innerJoin('o.items', 'oi')
       .innerJoin('oi.product', 'p')
       .innerJoin('p.vendor', 'v')
-  .leftJoinAndSelect('o.deliverer', 'deliverer')
+      .leftJoinAndSelect('o.deliverer', 'deliverer')
       .leftJoinAndSelect('o.user', 'user')
       .leftJoinAndSelect('o.items', 'items')
       .leftJoinAndSelect('items.product', 'product')
@@ -581,7 +725,9 @@ export class VendorService {
     // Filter items to only this vendor's products in the response and expose normalized deliverer fields
     const data = orders.map((o) => {
       const d: any = (o as any).deliverer || null;
-      const filteredItems = (o.items || []).filter((it) => (it.product as any)?.vendor?.id === vendorId);
+      const filteredItems = (o.items || []).filter(
+        (it) => (it.product as any)?.vendor?.id === vendorId,
+      );
       return {
         ...o,
         // Keep the deliverer container for clients that look for it
@@ -590,14 +736,24 @@ export class VendorService {
         delivererId: d?.id ?? null,
         delivererName: d?.displayName ?? null,
         delivererEmail: d?.email ?? null,
-        delivererPhone: (d as any)?.phoneNumber ?? null,
+        delivererPhone: d?.phoneNumber ?? null,
         // Aliased summary object commonly used by mobile apps
         assignedDeliverer: d
-          ? { id: d.id, name: d.displayName ?? null, email: d.email ?? null, phone: (d as any)?.phoneNumber ?? null }
+          ? {
+              id: d.id,
+              name: d.displayName ?? null,
+              email: d.email ?? null,
+              phone: d?.phoneNumber ?? null,
+            }
           : null,
         // Additional alias
         delivererSummary: d
-          ? { id: d.id, name: d.displayName ?? null, email: d.email ?? null, phone: (d as any)?.phoneNumber ?? null }
+          ? {
+              id: d.id,
+              name: d.displayName ?? null,
+              email: d.email ?? null,
+              phone: d?.phoneNumber ?? null,
+            }
           : null,
         items: filteredItems,
       };
@@ -619,8 +775,11 @@ export class VendorService {
 
     if (!order) throw new NotFoundException('Order not found');
 
-    const hasVendorItem = (order.items || []).some((it) => (it.product as any)?.vendor?.id === vendorId);
-    if (!hasVendorItem) throw new ForbiddenException('You do not have access to this order');
+    const hasVendorItem = (order.items || []).some(
+      (it) => (it.product as any)?.vendor?.id === vendorId,
+    );
+    if (!hasVendorItem)
+      throw new ForbiddenException('You do not have access to this order');
 
     const d: any = (order as any).deliverer || null;
     return {
@@ -629,14 +788,26 @@ export class VendorService {
       delivererId: d?.id ?? null,
       delivererName: d?.displayName ?? null,
       delivererEmail: d?.email ?? null,
-      delivererPhone: (d as any)?.phoneNumber ?? null,
+      delivererPhone: d?.phoneNumber ?? null,
       assignedDeliverer: d
-        ? { id: d.id, name: d.displayName ?? null, email: d.email ?? null, phone: (d as any)?.phoneNumber ?? null }
+        ? {
+            id: d.id,
+            name: d.displayName ?? null,
+            email: d.email ?? null,
+            phone: d?.phoneNumber ?? null,
+          }
         : null,
       delivererSummary: d
-        ? { id: d.id, name: d.displayName ?? null, email: d.email ?? null, phone: (d as any)?.phoneNumber ?? null }
+        ? {
+            id: d.id,
+            name: d.displayName ?? null,
+            email: d.email ?? null,
+            phone: d?.phoneNumber ?? null,
+          }
         : null,
-      items: (order.items || []).filter((it) => (it.product as any)?.vendor?.id === vendorId),
+      items: (order.items || []).filter(
+        (it) => (it.product as any)?.vendor?.id === vendorId,
+      ),
     };
   }
 
@@ -644,7 +815,11 @@ export class VendorService {
    * Vendor assigns a deliverer to an order, only if all items belong to this vendor.
    * Sets order.status to SHIPPED and notifies the deliverer.
    */
-  async assignDelivererByVendor(vendorId: number, orderId: number, delivererId: number) {
+  async assignDelivererByVendor(
+    vendorId: number,
+    orderId: number,
+    delivererId: number,
+  ) {
     const order = await this.orderRepository
       .createQueryBuilder('o')
       .leftJoinAndSelect('o.items', 'items')
@@ -655,13 +830,19 @@ export class VendorService {
       .getOne();
     if (!order) throw new NotFoundException('Order not found');
     const items = order.items || [];
-    const allFromVendor = items.length > 0 && items.every((it) => (it.product as any)?.vendor?.id === vendorId);
+    const allFromVendor =
+      items.length > 0 &&
+      items.every((it) => (it.product as any)?.vendor?.id === vendorId);
     if (!allFromVendor) {
-      throw new ForbiddenException('Order contains items from other vendors; cannot assign deliverer');
+      throw new ForbiddenException(
+        'Order contains items from other vendors; cannot assign deliverer',
+      );
     }
 
     // Validate deliverer role
-    const deliverer = await this.userRepository.findOne({ where: { id: delivererId } });
+    const deliverer = await this.userRepository.findOne({
+      where: { id: delivererId },
+    });
     if (!deliverer || !(deliverer.roles || []).includes(UserRole.DELIVERER)) {
       throw new ForbiddenException('Selected user is not a deliverer');
     }
@@ -727,9 +908,13 @@ export class VendorService {
     if (!order) throw new NotFoundException('Order not found');
 
     const items = order.items || [];
-    const allFromVendor = items.length > 0 && items.every((it) => (it.product as any)?.vendor?.id === vendorId);
+    const allFromVendor =
+      items.length > 0 &&
+      items.every((it) => (it.product as any)?.vendor?.id === vendorId);
     if (!allFromVendor) {
-      throw new ForbiddenException('Order contains items from other vendors; cannot update global status');
+      throw new ForbiddenException(
+        'Order contains items from other vendors; cannot update global status',
+      );
     }
 
     const current = order.status;
@@ -745,14 +930,18 @@ export class VendorService {
 
     const canGo = allowedNext[current]?.includes(status);
     if (!canGo) {
-      throw new ForbiddenException(`Invalid status transition from ${current} to ${status}`);
+      throw new ForbiddenException(
+        `Invalid status transition from ${current} to ${status}`,
+      );
     }
 
     // Payment gating: allow moving to SHIPPED only if PAID or COD
     if (
       status === OrderStatus.SHIPPED &&
-      order.paymentStatus !== (require('../orders/entities/order.entity') as any).PaymentStatus.PAID &&
-      order.paymentMethod !== (require('../orders/entities/order.entity') as any).PaymentMethod.COD
+      order.paymentStatus !==
+        require('../orders/entities/order.entity').PaymentStatus.PAID &&
+      order.paymentMethod !==
+        require('../orders/entities/order.entity').PaymentMethod.COD
     ) {
       throw new ForbiddenException('Cannot ship unpaid order (non-COD)');
     }
@@ -763,17 +952,16 @@ export class VendorService {
   }
 
   // ===== Item-level operations =====
-  async getVendorOrderItems(
-    vendorId: number,
-    orderId: number,
-  ) {
+  async getVendorOrderItems(vendorId: number, orderId: number) {
     const items = await this.orderItemRepository.find({
       where: {
         order: { id: orderId },
       } as any,
       relations: ['product', 'product.vendor', 'order'],
     });
-    const ownItems = items.filter((it) => (it.product as any)?.vendor?.id === vendorId);
+    const ownItems = items.filter(
+      (it) => (it.product as any)?.vendor?.id === vendorId,
+    );
     if (items.length > 0 && ownItems.length === 0) {
       throw new ForbiddenException('You do not have access to this order');
     }
@@ -782,9 +970,15 @@ export class VendorService {
 
   private computeAggregateStatus(items: OrderItem[]): OrderStatus {
     const statuses = new Set(items.map((i) => i.status));
-    if (statuses.has(OrderStatus.DELIVERY_FAILED)) return OrderStatus.DELIVERY_FAILED;
-    if (items.length > 0 && items.every((i) => i.status === OrderStatus.DELIVERED)) return OrderStatus.DELIVERED;
-    if (statuses.has(OrderStatus.OUT_FOR_DELIVERY)) return OrderStatus.OUT_FOR_DELIVERY;
+    if (statuses.has(OrderStatus.DELIVERY_FAILED))
+      return OrderStatus.DELIVERY_FAILED;
+    if (
+      items.length > 0 &&
+      items.every((i) => i.status === OrderStatus.DELIVERED)
+    )
+      return OrderStatus.DELIVERED;
+    if (statuses.has(OrderStatus.OUT_FOR_DELIVERY))
+      return OrderStatus.OUT_FOR_DELIVERY;
     if (statuses.has(OrderStatus.SHIPPED)) return OrderStatus.SHIPPED;
     if (statuses.has(OrderStatus.PROCESSING)) return OrderStatus.PROCESSING;
     return OrderStatus.PENDING;
@@ -808,22 +1002,42 @@ export class VendorService {
     const allowedNext: Record<OrderStatus, OrderStatus[]> = {
       [OrderStatus.PENDING]: [OrderStatus.PROCESSING],
       [OrderStatus.PROCESSING]: [OrderStatus.SHIPPED],
-      [OrderStatus.SHIPPED]: [OrderStatus.OUT_FOR_DELIVERY, OrderStatus.DELIVERED],
-      [OrderStatus.OUT_FOR_DELIVERY]: [OrderStatus.DELIVERED, OrderStatus.DELIVERY_FAILED],
+      [OrderStatus.SHIPPED]: [
+        OrderStatus.OUT_FOR_DELIVERY,
+        OrderStatus.DELIVERED,
+      ],
+      [OrderStatus.OUT_FOR_DELIVERY]: [
+        OrderStatus.DELIVERED,
+        OrderStatus.DELIVERY_FAILED,
+      ],
       [OrderStatus.DELIVERED]: [],
       [OrderStatus.DELIVERY_FAILED]: [],
       [OrderStatus.CANCELLED]: [],
     };
     if (!allowedNext[item.status]?.includes(next)) {
-      throw new ForbiddenException(`Invalid status transition from ${item.status} to ${next}`);
+      throw new ForbiddenException(
+        `Invalid status transition from ${item.status} to ${next}`,
+      );
     }
 
     // Payment gating: restrict shipping/delivery on unpaid (non-COD) orders
-    const PaymentStatus = (require('../orders/entities/order.entity') as any).PaymentStatus;
-    const PaymentMethod = (require('../orders/entities/order.entity') as any).PaymentMethod;
-    const isShippingLike = [OrderStatus.SHIPPED, OrderStatus.OUT_FOR_DELIVERY, OrderStatus.DELIVERED].includes(next);
-    if (isShippingLike && item.order.paymentStatus !== PaymentStatus.PAID && item.order.paymentMethod !== PaymentMethod.COD) {
-      throw new ForbiddenException('Cannot progress to shipping/delivery on unpaid order (non-COD)');
+    const PaymentStatus =
+      require('../orders/entities/order.entity').PaymentStatus;
+    const PaymentMethod =
+      require('../orders/entities/order.entity').PaymentMethod;
+    const isShippingLike = [
+      OrderStatus.SHIPPED,
+      OrderStatus.OUT_FOR_DELIVERY,
+      OrderStatus.DELIVERED,
+    ].includes(next);
+    if (
+      isShippingLike &&
+      item.order.paymentStatus !== PaymentStatus.PAID &&
+      item.order.paymentMethod !== PaymentMethod.COD
+    ) {
+      throw new ForbiddenException(
+        'Cannot progress to shipping/delivery on unpaid order (non-COD)',
+      );
     }
 
     item.status = next;
@@ -832,8 +1046,10 @@ export class VendorService {
     await this.orderItemRepository.save(item);
 
     // Update aggregate order status based on all items
-  const freshItems = await this.orderItemRepository.find({ where: { order: { id: orderId } } as any });
-  const aggregate = this.computeAggregateStatus(freshItems);
+    const freshItems = await this.orderItemRepository.find({
+      where: { order: { id: orderId } } as any,
+    });
+    const aggregate = this.computeAggregateStatus(freshItems);
     if (item.order.status !== aggregate) {
       item.order.status = aggregate;
       await this.orderRepository.save(item.order);
@@ -846,7 +1062,11 @@ export class VendorService {
     vendorId: number,
     orderId: number,
     itemId: number,
-    tracking: { trackingCarrier?: string; trackingNumber?: string; trackingUrl?: string },
+    tracking: {
+      trackingCarrier?: string;
+      trackingNumber?: string;
+      trackingUrl?: string;
+    },
   ) {
     const item = await this.orderItemRepository.findOne({
       where: { id: itemId, order: { id: orderId } } as any,
@@ -856,8 +1076,10 @@ export class VendorService {
     if ((item.product as any)?.vendor?.id !== vendorId) {
       throw new ForbiddenException('You cannot update this item');
     }
-    item.trackingCarrier = tracking.trackingCarrier ?? item.trackingCarrier ?? null;
-    item.trackingNumber = tracking.trackingNumber ?? item.trackingNumber ?? null;
+    item.trackingCarrier =
+      tracking.trackingCarrier ?? item.trackingCarrier ?? null;
+    item.trackingNumber =
+      tracking.trackingNumber ?? item.trackingNumber ?? null;
     item.trackingUrl = tracking.trackingUrl ?? item.trackingUrl ?? null;
     await this.orderItemRepository.save(item);
     return item;
@@ -867,7 +1089,11 @@ export class VendorService {
     vendorId: number,
     orderId: number,
     items: number[],
-    tracking: { trackingCarrier?: string; trackingNumber?: string; trackingUrl?: string },
+    tracking: {
+      trackingCarrier?: string;
+      trackingNumber?: string;
+      trackingUrl?: string;
+    },
   ) {
     if (!Array.isArray(items) || items.length === 0) {
       throw new ForbiddenException('At least one item is required');
@@ -887,27 +1113,39 @@ export class VendorService {
     const allowedFrom = new Set([OrderStatus.PENDING, OrderStatus.PROCESSING]);
     for (const it of rows) {
       if (!allowedFrom.has(it.status)) {
-        throw new ForbiddenException(`Item ${it.id} cannot be shipped from status ${it.status}`);
+        throw new ForbiddenException(
+          `Item ${it.id} cannot be shipped from status ${it.status}`,
+        );
       }
     }
     // Payment gating: restrict shipping on unpaid (non-COD) orders
-    const PaymentStatus = (require('../orders/entities/order.entity') as any).PaymentStatus;
-    const PaymentMethod = (require('../orders/entities/order.entity') as any).PaymentMethod;
+    const PaymentStatus =
+      require('../orders/entities/order.entity').PaymentStatus;
+    const PaymentMethod =
+      require('../orders/entities/order.entity').PaymentMethod;
     const order = rows[0].order;
-    if (order.paymentStatus !== PaymentStatus.PAID && order.paymentMethod !== PaymentMethod.COD) {
-      throw new ForbiddenException('Cannot ship items on unpaid order (non-COD)');
+    if (
+      order.paymentStatus !== PaymentStatus.PAID &&
+      order.paymentMethod !== PaymentMethod.COD
+    ) {
+      throw new ForbiddenException(
+        'Cannot ship items on unpaid order (non-COD)',
+      );
     }
 
     const now = new Date();
     for (const it of rows) {
       it.status = OrderStatus.SHIPPED;
       it.shippedAt = now;
-      it.trackingCarrier = tracking.trackingCarrier ?? it.trackingCarrier ?? null;
+      it.trackingCarrier =
+        tracking.trackingCarrier ?? it.trackingCarrier ?? null;
       it.trackingNumber = tracking.trackingNumber ?? it.trackingNumber ?? null;
       it.trackingUrl = tracking.trackingUrl ?? it.trackingUrl ?? null;
     }
     await this.orderItemRepository.save(rows);
-    const freshItems = await this.orderItemRepository.find({ where: { order: { id: orderId } } as any });
+    const freshItems = await this.orderItemRepository.find({
+      where: { order: { id: orderId } } as any,
+    });
     const aggregate = this.computeAggregateStatus(freshItems);
     if (order.status !== aggregate) {
       order.status = aggregate;
@@ -922,18 +1160,27 @@ export class VendorService {
     productId: number,
     status: 'publish' | 'draft',
   ): Promise<Product> {
-    const product = await this.productRepository.findOne({ where: { id: productId }, relations: ['vendor'] });
+    const product = await this.productRepository.findOne({
+      where: { id: productId },
+      relations: ['vendor'],
+    });
     if (!product) throw new NotFoundException('Product not found');
-    if (product.vendor.id !== userId) throw new ForbiddenException('You can only update your own products');
+    if (product.vendor.id !== userId)
+      throw new ForbiddenException('You can only update your own products');
     product.status = status;
     await this.productRepository.save(product);
     // Return enriched version with relations for UI refresh
-    const full = await this.productRepository.findOne({ where: { id: productId }, relations: ['images', 'category', 'tags', 'vendor'] });
+    const full = await this.productRepository.findOne({
+      where: { id: productId },
+      relations: ['images', 'category', 'tags', 'vendor'],
+    });
     try {
-      const { normalizeProductMedia } = require('../common/utils/media-url.util');
+      const {
+        normalizeProductMedia,
+      } = require('../common/utils/media-url.util');
       return normalizeProductMedia(full);
     } catch {
-      return full!;
+      return full;
     }
   }
 }

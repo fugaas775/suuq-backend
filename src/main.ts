@@ -4,7 +4,12 @@ const express = require('express');
 import { NestFactory } from '@nestjs/core';
 import { DataSource } from 'typeorm';
 import { AppModule } from './app.module';
-import { ValidationPipe, Logger, ClassSerializerInterceptor, BadRequestException } from '@nestjs/common';
+import {
+  ValidationPipe,
+  Logger,
+  ClassSerializerInterceptor,
+  BadRequestException,
+} from '@nestjs/common';
 import { GlobalExceptionFilter } from './common/global-exception.filter';
 import { Reflector } from '@nestjs/core';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
@@ -15,12 +20,15 @@ import { v4 as uuidv4 } from 'uuid';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, { bodyParser: true });
-  
+
   // Apply security headers with helmet
-  app.use(helmet({
-    contentSecurityPolicy: process.env.NODE_ENV === 'production' ? undefined : false,
-    crossOriginEmbedderPolicy: false, // Allow embedding for Swagger UI
-  }));
+  app.use(
+    helmet({
+      contentSecurityPolicy:
+        process.env.NODE_ENV === 'production' ? undefined : false,
+      crossOriginEmbedderPolicy: false, // Allow embedding for Swagger UI
+    }),
+  );
 
   // Add request ID middleware
   app.use((req: any, res: any, next: any) => {
@@ -28,15 +36,15 @@ async function bootstrap() {
     res.setHeader('x-request-id', req.id);
     next();
   });
-  
+
   // Disable Express automatic ETag; we'll manage ETag via interceptor selectively
   const expressApp = app.getHttpAdapter().getInstance();
   if (expressApp?.set) {
     expressApp.set('etag', false);
   }
-    // Accept both JSON and application/x-www-form-urlencoded payloads
-    app.use(urlencoded({ extended: true, limit: '50mb' }));
-    app.use(json({ limit: '50mb' }));
+  // Accept both JSON and application/x-www-form-urlencoded payloads
+  app.use(urlencoded({ extended: true, limit: '50mb' }));
+  app.use(json({ limit: '50mb' }));
   // Enable all log levels for better visibility in production
   app.useLogger(['log', 'error', 'warn', 'debug', 'verbose']);
 
@@ -48,9 +56,11 @@ async function bootstrap() {
     'http://localhost:3000',
     'http://localhost:3001',
   ];
-  const allowedOrigins = (process.env.ALLOWED_ORIGINS
-    ? process.env.ALLOWED_ORIGINS.split(',')
-    : defaultAllowedOrigins).map((o) => o.trim());
+  const allowedOrigins = (
+    process.env.ALLOWED_ORIGINS
+      ? process.env.ALLOWED_ORIGINS.split(',')
+      : defaultAllowedOrigins
+  ).map((o) => o.trim());
 
   app.enableCors({
     origin: (origin, callback) => {
@@ -113,7 +123,7 @@ async function bootstrap() {
   app.use((req: any, res: any, next: any) => {
     const requestId = req.id;
     const isProduction = process.env.NODE_ENV === 'production';
-    
+
     if (isProduction) {
       // Structured logging in production
       const logData = {
@@ -123,21 +133,27 @@ async function bootstrap() {
         userAgent: req.headers['user-agent'],
         timestamp: new Date().toISOString(),
       };
-      
+
       // Sanitize body in production - redact sensitive fields
       if (req.body && typeof req.body === 'object') {
         const sanitizedBody = { ...req.body };
-        const sensitiveFields = ['password', 'token', 'secret', 'authorization', 'jwt'];
-        
+        const sensitiveFields = [
+          'password',
+          'token',
+          'secret',
+          'authorization',
+          'jwt',
+        ];
+
         for (const field of sensitiveFields) {
           if (sanitizedBody[field]) {
             sanitizedBody[field] = '[REDACTED]';
           }
         }
-        
+
         logData['body'] = sanitizedBody;
       }
-      
+
       console.log(JSON.stringify(logData));
     } else {
       // Verbose logging in development
@@ -151,32 +167,38 @@ async function bootstrap() {
         console.log('Incoming request body: <multipart/form-data stream>');
       } else if (typeof req.body !== 'undefined') {
         const bodyString = JSON.stringify(req.body);
-        console.log('Incoming request body:', bodyString === '{}' ? '<empty object>' : bodyString);
+        console.log(
+          'Incoming request body:',
+          bodyString === '{}' ? '<empty object>' : bodyString,
+        );
       } else {
         console.log('Incoming request body: <undefined>');
       }
     }
-    
+
     next();
   });
-  
+
   // Set global prefix for all routes
   app.setGlobalPrefix('api');
 
   // Add logger for validation errors
   const logger = new Logger('ValidationPipe');
 
-  app.useGlobalPipes(new ValidationPipe({
-    whitelist: true,
-    transform: true,
-    exceptionFactory: (errors) => {
-      const messages = errors.map(error =>
-        `${error.property}: ${Object.values(error.constraints).join(', ')}`
-      );
-      logger.warn(`Validation failed: ${messages}`);
-      return new BadRequestException(messages);
-    },
-  }));
+  app.useGlobalPipes(
+    new ValidationPipe({
+      whitelist: true,
+      transform: true,
+      exceptionFactory: (errors) => {
+        const messages = errors.map(
+          (error) =>
+            `${error.property}: ${Object.values(error.constraints).join(', ')}`,
+        );
+        logger.warn(`Validation failed: ${messages}`);
+        return new BadRequestException(messages);
+      },
+    }),
+  );
 
   app.useGlobalInterceptors(new ClassSerializerInterceptor(app.get(Reflector)));
   app.useGlobalInterceptors(new EtagInterceptor(300));
@@ -222,15 +244,20 @@ async function bootstrap() {
   // Auto-run DB migrations unless disabled
   try {
     const ds = app.get(DataSource);
-    const allowAuto = (process.env.AUTO_MIGRATE ?? 'true') !== 'false' && process.env.NODE_ENV !== 'test';
+    const allowAuto =
+      (process.env.AUTO_MIGRATE ?? 'true') !== 'false' &&
+      process.env.NODE_ENV !== 'test';
     if (allowAuto && ds && typeof ds.runMigrations === 'function') {
       await ds.runMigrations();
       Logger.log('Database migrations executed on startup', 'Bootstrap');
     }
   } catch (e: any) {
-    Logger.warn(`Auto migration skipped/failed: ${e?.message || e}`, 'Bootstrap');
+    Logger.warn(
+      `Auto migration skipped/failed: ${e?.message || e}`,
+      'Bootstrap',
+    );
   }
-  
+
   const port = process.env.PORT || 3000;
   await app.listen(port, '0.0.0.0');
   console.log(`Application is running on: ${await app.getUrl()}`);

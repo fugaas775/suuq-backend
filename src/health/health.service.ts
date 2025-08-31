@@ -21,8 +21,10 @@ export class HealthService {
       database: await this.checkDatabase(),
     };
 
-    const isReady = Object.values(checks).every(check => check.status === 'ok');
-    
+    const isReady = Object.values(checks).every(
+      (check) => check.status === 'ok',
+    );
+
     return {
       status: isReady ? 'ok' : 'error',
       timestamp: new Date().toISOString(),
@@ -37,9 +39,9 @@ export class HealthService {
       return { status: 'ok' };
     } catch (error) {
       this.logger.error('Database health check failed', error);
-      return { 
-        status: 'error', 
-        message: 'Database connection failed' 
+      return {
+        status: 'error',
+        message: 'Database connection failed',
       };
     }
   }

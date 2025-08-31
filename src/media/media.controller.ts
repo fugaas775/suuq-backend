@@ -30,8 +30,7 @@ export class MediaController {
         ],
         fileIsRequired: true,
       }),
-    )
-    // ✨ FINAL FIX: Update the file type to the standard Multer file
+    ) // ✨ FINAL FIX: Update the file type to the standard Multer file
     file: Express.Multer.File,
   ) {
     // Upload full-res

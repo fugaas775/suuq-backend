@@ -1,5 +1,11 @@
-
-import { IsOptional, IsString, IsNumber, IsBoolean, IsInt, Min } from 'class-validator';
+import {
+  IsOptional,
+  IsString,
+  IsNumber,
+  IsBoolean,
+  IsInt,
+  Min,
+} from 'class-validator';
 import { Type, Expose, Transform } from 'class-transformer';
 
 export class ProductFilterDto {

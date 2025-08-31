@@ -1,4 +1,11 @@
-import { IsArray, IsBoolean, IsInt, IsOptional, ArrayMaxSize, ArrayUnique } from 'class-validator';
+import {
+  IsArray,
+  IsBoolean,
+  IsInt,
+  IsOptional,
+  ArrayMaxSize,
+  ArrayUnique,
+} from 'class-validator';
 
 export class PatchFavoritesDto {
   @IsOptional()

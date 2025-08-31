@@ -1,4 +1,4 @@
-  // ...existing code...
+// ...existing code...
 import {
   Injectable,
   UnauthorizedException,
@@ -32,25 +32,34 @@ export class AuthService {
     private readonly configService: ConfigService,
     private readonly emailService: EmailService,
   ) {
-    const googleClientId = this.configService.get<string>('GOOGLE_WEB_CLIENT_ID');
+    const googleClientId = this.configService.get<string>(
+      'GOOGLE_WEB_CLIENT_ID',
+    );
     if (googleClientId) {
       this.oauthClient = new OAuth2Client(googleClientId);
     } else {
-      this.logger.warn('GOOGLE_WEB_CLIENT_ID is not configured. Google Sign-In will be disabled.');
+      this.logger.warn(
+        'GOOGLE_WEB_CLIENT_ID is not configured. Google Sign-In will be disabled.',
+      );
     }
   }
 
-    /** Change password for current user, validating current password if set */
-    async changePassword(userId: number, current: string | undefined, next: string): Promise<void> {
-      const user = await this.usersService.findById(userId);
-      // If user has a password set, require current match
-      if (user.password) {
-        if (!current) throw new BadRequestException('Current password is required');
-        const ok = await bcrypt.compare(current, user.password);
-        if (!ok) throw new UnauthorizedException('Current password is incorrect');
-      }
-  await this.usersService.changePassword(userId, current, next);
+  /** Change password for current user, validating current password if set */
+  async changePassword(
+    userId: number,
+    current: string | undefined,
+    next: string,
+  ): Promise<void> {
+    const user = await this.usersService.findById(userId);
+    // If user has a password set, require current match
+    if (user.password) {
+      if (!current)
+        throw new BadRequestException('Current password is required');
+      const ok = await bcrypt.compare(current, user.password);
+      if (!ok) throw new UnauthorizedException('Current password is incorrect');
     }
+    await this.usersService.changePassword(userId, current, next);
+  }
 
   public getUsersService() {
     return this.usersService;
@@ -70,15 +79,25 @@ export class AuthService {
     const blockCsv = this.configService.get<string>('SIGNUP_BLOCKLIST_DOMAINS');
     const emailDomain = dto.email.split('@')[1]?.toLowerCase();
     if (blockCsv) {
-      const blocked = blockCsv.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+      const blocked = blockCsv
+        .split(',')
+        .map((s) => s.trim().toLowerCase())
+        .filter(Boolean);
       if (emailDomain && blocked.includes(emailDomain)) {
-        throw new BadRequestException('Registrations from this email domain are not allowed.');
+        throw new BadRequestException(
+          'Registrations from this email domain are not allowed.',
+        );
       }
     }
     if (allowCsv) {
-      const allowed = allowCsv.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+      const allowed = allowCsv
+        .split(',')
+        .map((s) => s.trim().toLowerCase())
+        .filter(Boolean);
       if (emailDomain && !allowed.includes(emailDomain)) {
-        throw new BadRequestException('Registrations from this email domain are not allowed.');
+        throw new BadRequestException(
+          'Registrations from this email domain are not allowed.',
+        );
       }
     }
     const firebaseUid = dto.firebaseUid || `local_${crypto.randomUUID()}`;
@@ -99,7 +118,9 @@ export class AuthService {
     return this.usersService.create(userToCreateData);
   }
 
-  async login(dto: LoginDto): Promise<{ accessToken: string; refreshToken: string; user: User }> {
+  async login(
+    dto: LoginDto,
+  ): Promise<{ accessToken: string; refreshToken: string; user: User }> {
     this.logger.log(`[login] Attempting login for user: ${dto.email}`);
     const user = await this.usersService.findByEmail(dto.email);
 
@@ -115,11 +136,15 @@ export class AuthService {
     return this.generateTokens(user);
   }
 
-  async googleLogin(dto: { idToken: string }): Promise<{ accessToken: string; refreshToken: string; user: User }> {
+  async googleLogin(dto: {
+    idToken: string;
+  }): Promise<{ accessToken: string; refreshToken: string; user: User }> {
     const idToken = dto.idToken;
     this.logger.log(`[googleLogin] Attempting Google login`);
     if (!this.oauthClient) {
-      throw new InternalServerErrorException('Google Sign-In is not configured on the server.');
+      throw new InternalServerErrorException(
+        'Google Sign-In is not configured on the server.',
+      );
     }
 
     let googlePayload: TokenPayload | undefined;
@@ -127,10 +152,10 @@ export class AuthService {
       const ticket = await this.oauthClient.verifyIdToken({
         idToken: idToken,
         audience: [
-          this.configService.get<string>('GOOGLE_WEB_CLIENT_ID')!,
-          this.configService.get<string>('GOOGLE_ANDROID_CLIENT_ID')!,
-          this.configService.get<string>('GOOGLE_IOS_CLIENT_ID')!,
-        ].filter(id => !!id),
+          this.configService.get<string>('GOOGLE_WEB_CLIENT_ID'),
+          this.configService.get<string>('GOOGLE_ANDROID_CLIENT_ID'),
+          this.configService.get<string>('GOOGLE_IOS_CLIENT_ID'),
+        ].filter((id) => !!id),
       });
       googlePayload = ticket.getPayload();
     } catch (error: any) {
@@ -138,13 +163,17 @@ export class AuthService {
     }
 
     if (!googlePayload?.email) {
-      throw new UnauthorizedException('Google account email not found in token');
+      throw new UnauthorizedException(
+        'Google account email not found in token',
+      );
     }
-    
+
     let user = await this.usersService.findByEmail(googlePayload.email);
 
     if (!user) {
-      this.logger.log(`[googleLogin] User ${googlePayload.email} not found. Creating new user.`);
+      this.logger.log(
+        `[googleLogin] User ${googlePayload.email} not found. Creating new user.`,
+      );
       user = await this.usersService.createWithGoogle({
         email: googlePayload.email,
         name: googlePayload.name,
@@ -159,7 +188,9 @@ export class AuthService {
     return this.generateTokens(user);
   }
 
-  async refreshToken(refreshToken: string): Promise<{ accessToken: string; refreshToken: string; user: User }> {
+  async refreshToken(
+    refreshToken: string,
+  ): Promise<{ accessToken: string; refreshToken: string; user: User }> {
     try {
       const payload = this.jwtService.verify(refreshToken, {
         secret: this.configService.get<string>('JWT_REFRESH_SECRET'),
@@ -175,10 +206,12 @@ export class AuthService {
       throw new UnauthorizedException('Invalid or expired refresh token');
     }
   }
-  
-  private async generateTokens(user: User): Promise<{ accessToken: string; refreshToken: string; user: User }> {
+
+  private async generateTokens(
+    user: User,
+  ): Promise<{ accessToken: string; refreshToken: string; user: User }> {
     const payload = { sub: user.id, email: user.email, roles: user.roles };
-    
+
     const [accessToken, refreshToken] = await Promise.all([
       this.jwtService.signAsync(payload, {
         secret: this.configService.get<string>('JWT_SECRET'),
@@ -189,35 +222,49 @@ export class AuthService {
         expiresIn: this.configService.get<string>('JWT_REFRESH_EXPIRES_IN'),
       }),
     ]);
-    
+
     return { accessToken, refreshToken, user };
   }
 
   async forgotPassword(email: string): Promise<{ message: string }> {
     const user = await this.usersService.findByEmail(email);
     if (!user) {
-      return { message: 'If an account with that email exists, a password reset link has been sent.' };
+      return {
+        message:
+          'If an account with that email exists, a password reset link has been sent.',
+      };
     }
 
     const resetToken = crypto.randomBytes(32).toString('hex');
-    const passwordResetToken = crypto.createHash('sha256').update(resetToken).digest('hex');
+    const passwordResetToken = crypto
+      .createHash('sha256')
+      .update(resetToken)
+      .digest('hex');
     const passwordResetExpires = new Date(Date.now() + 3600000); // 1 hour
 
     await this.usersService.update(user.id, {
       passwordResetToken,
       passwordResetExpires,
     });
-    
+
     await this.emailService.sendPasswordResetEmail(user.email, resetToken);
-    return { message: 'If an account with that email exists, a password reset link has been sent.' };
+    return {
+      message:
+        'If an account with that email exists, a password reset link has been sent.',
+    };
   }
 
-  async resetPassword(token: string, newPassword: string): Promise<{ message: string }> {
+  async resetPassword(
+    token: string,
+    newPassword: string,
+  ): Promise<{ message: string }> {
     const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
     const user = await this.usersService.findByResetToken(hashedToken);
 
     if (!user) {
-      throw new UnauthorizedException('Password reset token is invalid or has expired.');
+      throw new UnauthorizedException(
+        'Password reset token is invalid or has expired.',
+      );
     }
 
     await this.usersService.update(user.id, {

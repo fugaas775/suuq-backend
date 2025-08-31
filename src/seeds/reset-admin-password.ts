@@ -23,9 +23,15 @@ async function run() {
       });
       console.log(`Created admin id=${created.id}`);
     } else {
-      console.log(`Found admin id=${user.id}. Forcing password reset and role sync...`);
+      console.log(
+        `Found admin id=${user.id}. Forcing password reset and role sync...`,
+      );
       user.password = await bcrypt.hash(newPassword, 10);
-      const roles = new Set([...(user.roles || []), UserRole.ADMIN, UserRole.SUPER_ADMIN]);
+      const roles = new Set([
+        ...(user.roles || []),
+        UserRole.ADMIN,
+        UserRole.SUPER_ADMIN,
+      ]);
       (user as any).roles = Array.from(roles);
       (user as any).isActive = true;
       await (users as any).userRepository.save(user);

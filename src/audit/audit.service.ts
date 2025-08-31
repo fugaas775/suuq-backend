@@ -39,12 +39,21 @@ export class AuditService {
     });
   }
 
-  async listForTargetPaged(targetType: string, targetId: number, page = 1, limit = 20) {
+  async listForTargetPaged(
+    targetType: string,
+    targetId: number,
+    page = 1,
+    limit = 20,
+  ) {
     const p = Math.max(Number(page) || 1, 1);
     const l = Math.min(Math.max(Number(limit) || 20, 1), 100);
     const skip = (p - 1) * l;
-    const qb = this.repo.createQueryBuilder('a')
-      .where('a.targetType = :targetType AND a.targetId = :targetId', { targetType, targetId })
+    const qb = this.repo
+      .createQueryBuilder('a')
+      .where('a.targetType = :targetType AND a.targetId = :targetId', {
+        targetType,
+        targetId,
+      })
       .orderBy('a.createdAt', 'DESC')
       .addOrderBy('a.id', 'DESC')
       .skip(skip)
@@ -61,13 +70,17 @@ export class AuditService {
 
   // Cursor pagination: createdAt DESC, id DESC for tie-breaker
   encodeCursor(row: AuditLog) {
-    return Buffer.from(`${row.createdAt?.toISOString() || ''}|${row.id}`).toString('base64url');
+    return Buffer.from(
+      `${row.createdAt?.toISOString() || ''}|${row.id}`,
+    ).toString('base64url');
   }
 
   decodeCursor(cursor?: string): { createdAt?: Date; id?: number } {
     if (!cursor) return {};
     try {
-      const [iso, idStr] = Buffer.from(cursor, 'base64url').toString('utf8').split('|');
+      const [iso, idStr] = Buffer.from(cursor, 'base64url')
+        .toString('utf8')
+        .split('|');
       const createdAt = iso ? new Date(iso) : undefined;
       const id = idStr ? Number(idStr) : undefined;
       return { createdAt, id };
@@ -83,36 +96,49 @@ export class AuditService {
   ) {
     const l = Math.min(Math.max(Number(opts.limit) || 20, 1), 100);
     const { createdAt, id } = this.decodeCursor(opts.after);
-    const qb = this.repo.createQueryBuilder('a')
-      .where('a.targetType = :targetType AND a.targetId = :targetId', { targetType, targetId })
+    const qb = this.repo
+      .createQueryBuilder('a')
+      .where('a.targetType = :targetType AND a.targetId = :targetId', {
+        targetType,
+        targetId,
+      })
       .orderBy('a.createdAt', 'DESC')
       .addOrderBy('a.id', 'DESC')
       .take(l + 1); // fetch one extra to detect next
 
     if (createdAt && id) {
-      qb.andWhere('(a.createdAt < :createdAt OR (a.createdAt = :createdAt AND a.id < :id))', { createdAt, id });
+      qb.andWhere(
+        '(a.createdAt < :createdAt OR (a.createdAt = :createdAt AND a.id < :id))',
+        { createdAt, id },
+      );
     }
 
     const rows = await qb.getMany();
     const items = rows.slice(0, l);
-    const nextCursor = rows.length > l ? this.encodeCursor(items[items.length - 1]) : null;
+    const nextCursor =
+      rows.length > l ? this.encodeCursor(items[items.length - 1]) : null;
     return { items, nextCursor };
   }
 
   // Apply filters helper used by controller via query builder chaining
-  applyFilters(qb: ReturnType<Repository<AuditLog>['createQueryBuilder']>, filters?: {
-    actions?: string[];
-    actorEmail?: string;
-    actorId?: number;
-    from?: Date;
-    to?: Date;
-  }) {
+  applyFilters(
+    qb: ReturnType<Repository<AuditLog>['createQueryBuilder']>,
+    filters?: {
+      actions?: string[];
+      actorEmail?: string;
+      actorId?: number;
+      from?: Date;
+      to?: Date;
+    },
+  ) {
     if (!filters) return qb;
     if (filters.actions && filters.actions.length) {
       qb.andWhere('a.action IN (:...actions)', { actions: filters.actions });
     }
     if (filters.actorEmail) {
-      qb.andWhere('a.actorEmail ILIKE :actorEmail', { actorEmail: `%${filters.actorEmail}%` });
+      qb.andWhere('a.actorEmail ILIKE :actorEmail', {
+        actorEmail: `%${filters.actorEmail}%`,
+      });
     }
     if (filters.actorId) {
       qb.andWhere('a.actorId = :actorId', { actorId: filters.actorId });

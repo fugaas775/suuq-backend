@@ -1,4 +1,15 @@
-import { Controller, Get, Post, Put, Delete, Body, Param, UseGuards, Req, ParseIntPipe } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Put,
+  Delete,
+  Body,
+  Param,
+  UseGuards,
+  Req,
+  ParseIntPipe,
+} from '@nestjs/common';
 import { CartService } from './cart.service';
 import { AuthenticatedRequest } from '../auth/auth.types';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -12,12 +23,19 @@ export class CartController {
 
   @Get()
   getCart(@Req() req: AuthenticatedRequest) {
-    return this.cartService.getCart(req.user!.id);
+    return this.cartService.getCart(req.user.id);
   }
 
   @Post('items')
-  addItem(@Req() req: AuthenticatedRequest, @Body() addToCartDto: AddToCartDto) {
-    return this.cartService.addItem(req.user!.id, addToCartDto.productId, addToCartDto.quantity);
+  addItem(
+    @Req() req: AuthenticatedRequest,
+    @Body() addToCartDto: AddToCartDto,
+  ) {
+    return this.cartService.addItem(
+      req.user.id,
+      addToCartDto.productId,
+      addToCartDto.quantity,
+    );
   }
 
   @Put('items/:productId')
@@ -26,7 +44,11 @@ export class CartController {
     @Param('productId', ParseIntPipe) productId: number,
     @Body() updateCartItemDto: UpdateCartItemDto,
   ) {
-    return this.cartService.updateItemQuantity(req.user!.id, productId, updateCartItemDto.quantity);
+    return this.cartService.updateItemQuantity(
+      req.user.id,
+      productId,
+      updateCartItemDto.quantity,
+    );
   }
 
   @Delete('items/:productId')
@@ -34,11 +56,11 @@ export class CartController {
     @Req() req: AuthenticatedRequest,
     @Param('productId', ParseIntPipe) productId: number,
   ) {
-    return this.cartService.removeItem(req.user!.id, productId);
+    return this.cartService.removeItem(req.user.id, productId);
   }
 
   @Delete()
   clearCart(@Req() req: AuthenticatedRequest) {
-    return this.cartService.clearCart(req.user!.id);
+    return this.cartService.clearCart(req.user.id);
   }
 }

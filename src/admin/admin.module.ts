@@ -20,9 +20,22 @@ import { GeoResolverService } from '../common/services/geo-resolver.service';
 
 @Module({
   // 2. Add UsersModule and OrdersModule here
-  imports: [UsersModule, OrdersModule, WithdrawalsModule, ProductsModule, VendorModule, AuditModule, TypeOrmModule.forFeature([Product, Tag, SearchKeyword])],
-  controllers: [AdminController, AdminCurationController, AdminVendorsController, AdminAnalyticsController],
+  imports: [
+    UsersModule,
+    OrdersModule,
+    WithdrawalsModule,
+    ProductsModule,
+    VendorModule,
+    AuditModule,
+    TypeOrmModule.forFeature([Product, Tag, SearchKeyword]),
+  ],
+  controllers: [
+    AdminController,
+    AdminCurationController,
+    AdminVendorsController,
+    AdminAnalyticsController,
+  ],
   // 3. Remove the services from providers. They are now correctly provided by the imported modules.
-  providers: [RolesGuard, GeoResolverService], 
+  providers: [RolesGuard, GeoResolverService],
 })
 export class AdminModule {}

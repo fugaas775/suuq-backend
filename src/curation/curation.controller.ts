@@ -19,14 +19,24 @@ export class CurationController {
     const per = Math.min(Number(limit) || 10, 20);
     const v = view === 'full' ? 'full' : 'grid';
     const [newSec, bestSec] = await Promise.all([
-      this.curation.getSection('home-new', { limit: per, cursor: null, view: v }),
-      this.curation.getSection('home-best', { limit: per, cursor: null, view: v }),
+      this.curation.getSection('home-new', {
+        limit: per,
+        cursor: null,
+        view: v,
+      }),
+      this.curation.getSection('home-best', {
+        limit: per,
+        cursor: null,
+        view: v,
+      }),
     ]);
 
     const newItems = newSec.items.map(normalizeProductImage);
     const bestItems = bestSec.items.map(normalizeProductImage);
 
-    this.logger.log(`home counts newArrivals=${newItems.length} bestSellers=${bestItems.length} limit=${per}`);
+    this.logger.log(
+      `home counts newArrivals=${newItems.length} bestSellers=${bestItems.length} limit=${per}`,
+    );
 
     return {
       newArrivals: {
@@ -55,9 +65,15 @@ export class CurationController {
     @Query('view') view?: 'grid' | 'full',
   ) {
     const v = view === 'full' ? 'full' : 'grid';
-    const res = await this.curation.getSection(key, { limit: Number(limit) || 20, cursor, view: v });
+    const res = await this.curation.getSection(key, {
+      limit: Number(limit) || 20,
+      cursor,
+      view: v,
+    });
     const items = res.items.map(normalizeProductImage);
-    this.logger.log(`section=${key} count=${items.length} limit=${limit ?? ''} cursor=${cursor ?? ''}`);
+    this.logger.log(
+      `section=${key} count=${items.length} limit=${limit ?? ''} cursor=${cursor ?? ''}`,
+    );
     return { ...res, items };
   }
 }
@@ -65,8 +81,13 @@ export class CurationController {
 function normalizeProductImage(p: any) {
   // pick: thumbnailSrc || images[0].src || product.imageUrl
   let url: string | null = null;
-  const firstImage = Array.isArray(p.images) && p.images.length ? p.images[0] : null;
-  url = (firstImage?.thumbnailSrc as string) || (firstImage?.src as string) || (p.imageUrl as string) || null;
+  const firstImage =
+    Array.isArray(p.images) && p.images.length ? p.images[0] : null;
+  url =
+    (firstImage?.thumbnailSrc as string) ||
+    (firstImage?.src as string) ||
+    (p.imageUrl as string) ||
+    null;
   if (url) {
     p.imageUrl = absolutize(url);
   }

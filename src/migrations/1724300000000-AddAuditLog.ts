@@ -1,10 +1,10 @@
-import { MigrationInterface, QueryRunner } from "typeorm";
+import { MigrationInterface, QueryRunner } from 'typeorm';
 
 export class AddAuditLog1724300000000 implements MigrationInterface {
-    name = 'AddAuditLog1724300000000'
+  name = 'AddAuditLog1724300000000';
 
-    public async up(queryRunner: QueryRunner): Promise<void> {
-        await queryRunner.query(`CREATE TABLE IF NOT EXISTS "audit_log" (
+  public async up(queryRunner: QueryRunner): Promise<void> {
+    await queryRunner.query(`CREATE TABLE IF NOT EXISTS "audit_log" (
           "id" SERIAL PRIMARY KEY,
           "actorId" integer NULL,
           "actorEmail" varchar(255) NULL,
@@ -15,11 +15,15 @@ export class AddAuditLog1724300000000 implements MigrationInterface {
           "meta" jsonb NULL,
           "createdAt" TIMESTAMP NOT NULL DEFAULT now()
         )`);
-        await queryRunner.query(`CREATE INDEX IF NOT EXISTS "IDX_audit_log_target" ON "audit_log" ("targetType", "targetId")`);
-        await queryRunner.query(`CREATE INDEX IF NOT EXISTS "IDX_audit_log_action" ON "audit_log" ("action")`);
-    }
+    await queryRunner.query(
+      `CREATE INDEX IF NOT EXISTS "IDX_audit_log_target" ON "audit_log" ("targetType", "targetId")`,
+    );
+    await queryRunner.query(
+      `CREATE INDEX IF NOT EXISTS "IDX_audit_log_action" ON "audit_log" ("action")`,
+    );
+  }
 
-    public async down(queryRunner: QueryRunner): Promise<void> {
-        await queryRunner.query(`DROP TABLE IF EXISTS "audit_log"`);
-    }
+  public async down(queryRunner: QueryRunner): Promise<void> {
+    await queryRunner.query(`DROP TABLE IF EXISTS "audit_log"`);
+  }
 }

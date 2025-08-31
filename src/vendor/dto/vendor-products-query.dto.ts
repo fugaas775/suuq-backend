@@ -26,5 +26,13 @@ export class VendorProductsQueryDto {
   // sort by created date by default; supports price/views/name
   @IsOptional()
   @IsString()
-  sort?: 'created_desc' | 'created_asc' | 'views_desc' | 'views_asc' | 'price_asc' | 'price_desc' | 'name_asc' | 'name_desc';
+  sort?:
+    | 'created_desc'
+    | 'created_asc'
+    | 'views_desc'
+    | 'views_asc'
+    | 'price_asc'
+    | 'price_desc'
+    | 'name_asc'
+    | 'name_desc';
 }

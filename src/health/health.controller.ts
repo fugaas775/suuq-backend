@@ -9,8 +9,8 @@ export class HealthController {
 
   @Get()
   @ApiOperation({ summary: 'Get application health status' })
-  @ApiResponse({ 
-    status: 200, 
+  @ApiResponse({
+    status: 200,
     description: 'Application health status',
     schema: {
       type: 'object',
@@ -28,8 +28,8 @@ export class HealthController {
 
   @Get('ready')
   @ApiOperation({ summary: 'Get application readiness status' })
-  @ApiResponse({ 
-    status: 200, 
+  @ApiResponse({
+    status: 200,
     description: 'Application readiness status',
     schema: {
       type: 'object',

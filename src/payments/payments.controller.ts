@@ -33,7 +33,9 @@ export class PaymentsController {
     this.logger.log('Received Telebirr callback', JSON.stringify(body));
     const orderId = parseInt((body.outTradeNo || '').replace('ORDER-', ''));
     if (!orderId || isNaN(orderId)) return { status: 'order not found' };
-    const order = await this.orderRepository.findOne({ where: { id: orderId } });
+    const order = await this.orderRepository.findOne({
+      where: { id: orderId },
+    });
     if (!order) return { status: 'order not found' };
     if (body.tradeStatus === 'SUCCESS') {
       order.paymentStatus = PaymentStatus.PAID;
@@ -57,7 +59,9 @@ export class PaymentsController {
     const accountRef = callback?.AccountReference || '';
     const orderId = parseInt((accountRef || '').replace('ORDER-', ''));
     if (!orderId || isNaN(orderId)) return { status: 'order not found' };
-    const order = await this.orderRepository.findOne({ where: { id: orderId } });
+    const order = await this.orderRepository.findOne({
+      where: { id: orderId },
+    });
     if (!order) return { status: 'order not found' };
     if (resultCode === 0) {
       order.paymentStatus = PaymentStatus.PAID;

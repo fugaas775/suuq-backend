@@ -1,4 +1,10 @@
-import { IsString, IsNotEmpty, IsOptional, IsInt, Matches } from 'class-validator';
+import {
+  IsString,
+  IsNotEmpty,
+  IsOptional,
+  IsInt,
+  Matches,
+} from 'class-validator';
 
 export class CreateCategoryDto {
   @IsString()
@@ -15,7 +21,10 @@ export class CreateCategoryDto {
 
   @IsString()
   @IsOptional()
-  @Matches(/^(mdi:[a-z0-9_\-]+|[a-z0-9_\-]+)$/i, { message: 'iconName must be alphanumeric with dashes/underscores, optional mdi: prefix' })
+  @Matches(/^(mdi:[a-z0-9_\-]+|[a-z0-9_\-]+)$/i, {
+    message:
+      'iconName must be alphanumeric with dashes/underscores, optional mdi: prefix',
+  })
   iconName?: string;
   /**
    * icon fields: clients prefer iconUrl and fall back to iconName.

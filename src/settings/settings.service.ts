@@ -16,7 +16,9 @@ export class SettingsService {
     private readonly uiSettingRepo: Repository<UiSetting>,
   ) {}
 
-  async getUserSettings(userId: number): Promise<{ userId: number; theme: string; notificationsEnabled: boolean }> {
+  async getUserSettings(
+    userId: number,
+  ): Promise<{ userId: number; theme: string; notificationsEnabled: boolean }> {
     let settings = await this.settingsRepo.findOne({
       where: { user: { id: userId } },
       relations: ['user'],
@@ -24,7 +26,8 @@ export class SettingsService {
 
     if (!settings) {
       const user = await this.usersService.findOne(userId);
-      if (!user) throw new NotFoundException(`User with ID ${userId} not found`);
+      if (!user)
+        throw new NotFoundException(`User with ID ${userId} not found`);
 
       settings = await this.settingsRepo.save(
         this.settingsRepo.create({ user }),
@@ -49,7 +52,8 @@ export class SettingsService {
 
     if (!settings) {
       const user = await this.usersService.findOne(userId);
-      if (!user) throw new NotFoundException(`User with ID ${userId} not found`);
+      if (!user)
+        throw new NotFoundException(`User with ID ${userId} not found`);
 
       settings = this.settingsRepo.create({ ...dto, user });
     } else {
@@ -67,30 +71,33 @@ export class SettingsService {
   async getAllSettings(): Promise<Record<string, any>> {
     const settings = await this.uiSettingRepo.find();
     const result: Record<string, any> = {};
-    settings.forEach(s => {
+    settings.forEach((s) => {
       result[s.key] = s.value;
     });
     return result;
   }
 
   async updateSetting(key: string, value: any): Promise<UiSetting | null> {
-  const setting = await this.uiSettingRepo.findOne({ where: { key } });
-  if (!setting) {
-    throw new NotFoundException(`Setting with key '${key}' not found.`);
+    const setting = await this.uiSettingRepo.findOne({ where: { key } });
+    if (!setting) {
+      throw new NotFoundException(`Setting with key '${key}' not found.`);
+    }
+
+    // ✨ ADD THIS LOGIC ✨
+    // Keys that should be stored as an array of strings
+    const arrayKeys = ['home_search_placeholders', 'product_card_promos'];
+
+    // If the incoming value is a string for one of our array keys, split it.
+    if (arrayKeys.includes(key) && typeof value === 'string') {
+      // Split by comma, trim whitespace from each item, and filter out any empty strings
+      setting.value = value
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+    } else {
+      setting.value = value;
+    }
+
+    return this.uiSettingRepo.save(setting);
   }
-
-  // ✨ ADD THIS LOGIC ✨
-  // Keys that should be stored as an array of strings
-  const arrayKeys = ['home_search_placeholders', 'product_card_promos'];
-
-  // If the incoming value is a string for one of our array keys, split it.
-  if (arrayKeys.includes(key) && typeof value === 'string') {
-    // Split by comma, trim whitespace from each item, and filter out any empty strings
-    setting.value = value.split(',').map(s => s.trim()).filter(Boolean);
-  } else {
-    setting.value = value;
-  }
-
-  return this.uiSettingRepo.save(setting);
-}
 }

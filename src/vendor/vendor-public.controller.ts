@@ -1,4 +1,13 @@
-import { Controller, Get, Header, Param, ParseIntPipe, Optional, NotFoundException, Query } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Header,
+  Param,
+  ParseIntPipe,
+  Optional,
+  NotFoundException,
+  Query,
+} from '@nestjs/common';
 import { VendorService } from './vendor.service';
 import { UsersService } from '../users/users.service';
 import { DoSpacesService } from '../media/do-spaces.service';
@@ -10,7 +19,7 @@ export class VendorPublicController {
   constructor(
     private readonly vendorService: VendorService,
     private readonly usersService: UsersService,
-  private readonly productsService: ProductsService,
+    private readonly productsService: ProductsService,
     @Optional() private readonly doSpacesService?: DoSpacesService,
   ) {}
 
@@ -27,14 +36,21 @@ export class VendorPublicController {
       .map((v) => Number(v.trim()))
       .filter((n) => Number.isInteger(n) && n > 0);
     if (!vendorIds.length) return { vendors: [] };
-  const per = Math.min(Number(perVendor) || 10, 30);
-  // Default to 'full' so images relation is loaded and thumbnails are reliable
-  const v = view === 'grid' ? 'grid' : 'full';
+    const per = Math.min(Number(perVendor) || 10, 30);
+    // Default to 'full' so images relation is loaded and thumbnails are reliable
+    const v = view === 'grid' ? 'grid' : 'full';
 
     const results = await Promise.all(
       vendorIds.map(async (vendorId) => {
-  const res = await this.productsService.findFiltered({ perPage: per, sort: sort || 'created_desc', vendorId, view: v } as any);
-        const items = Array.isArray((res as any).items) ? (res as any).items.map(normalizeProductMedia) : [];
+        const res = await this.productsService.findFiltered({
+          perPage: per,
+          sort: sort || 'created_desc',
+          vendorId,
+          view: v,
+        } as any);
+        const items = Array.isArray((res as any).items)
+          ? (res as any).items.map(normalizeProductMedia)
+          : [];
         return { vendorId, items };
       }),
     );
@@ -55,15 +71,22 @@ export class VendorPublicController {
       .map((v) => Number(v.trim()))
       .filter((n) => Number.isInteger(n) && n > 0);
     if (!vendorIds.length) return { vendors: [] };
-  const per = Math.min(Number(perVendor) || 10, 30);
-  // Default to 'full' so images relation is loaded and thumbnails are reliable
-  const v = view === 'grid' ? 'grid' : 'full';
+    const per = Math.min(Number(perVendor) || 10, 30);
+    // Default to 'full' so images relation is loaded and thumbnails are reliable
+    const v = view === 'grid' ? 'grid' : 'full';
 
-  const results = await Promise.all(
+    const results = await Promise.all(
       vendorIds.map(async (vendorId) => {
-        const res = await this.productsService.findFiltered({ perPage: per, sort: sort || 'created_desc', vendorId, view: v } as any);
-    const items = Array.isArray((res as any).items) ? (res as any).items.map(normalizeProductMedia) : [];
-    return { vendorId, items };
+        const res = await this.productsService.findFiltered({
+          perPage: per,
+          sort: sort || 'created_desc',
+          vendorId,
+          view: v,
+        } as any);
+        const items = Array.isArray((res as any).items)
+          ? (res as any).items.map(normalizeProductMedia)
+          : [];
+        return { vendorId, items };
       }),
     );
     return { vendors: results };
@@ -87,7 +110,10 @@ export class VendorPublicController {
   async getCertificates(@Param('id', ParseIntPipe) id: number) {
     const user = await this.vendorService.getPublicProfile(id);
     if (!user) {
-      throw new NotFoundException({ code: 'VENDOR_NOT_FOUND', message: 'Vendor not found' });
+      throw new NotFoundException({
+        code: 'VENDOR_NOT_FOUND',
+        message: 'Vendor not found',
+      });
     }
     const items = await this.usersService.getPublicCertificates(id);
     const mapped = items.map((it) => ({
@@ -103,16 +129,16 @@ export class VendorPublicController {
       expiryDate: undefined,
       uploadedAt: undefined,
     }));
-  const shouldSign = process.env.DO_SPACES_SIGN_PUBLIC === 'true';
-  if (!shouldSign || !this.doSpacesService) return { items: mapped };
+    const shouldSign = process.env.DO_SPACES_SIGN_PUBLIC === 'true';
+    if (!shouldSign || !this.doSpacesService) return { items: mapped };
 
     const ttl = parseInt(process.env.DO_SPACES_PUBLIC_SIGN_TTL || '300', 10);
     const signed = await Promise.all(
       mapped.map(async (it) => {
-        const key = this.doSpacesService!.extractKeyFromUrl(it.url);
+        const key = this.doSpacesService.extractKeyFromUrl(it.url);
         if (!key) return it;
         try {
-          const url = await this.doSpacesService!.getSignedUrl(key, ttl, {
+          const url = await this.doSpacesService.getSignedUrl(key, ttl, {
             inlineFilename: it.name,
           });
           return { ...it, url };
@@ -123,5 +149,4 @@ export class VendorPublicController {
     );
     return { items: signed };
   }
-
 }

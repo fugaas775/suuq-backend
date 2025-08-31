@@ -25,13 +25,19 @@ export class ProductsService {
 
   constructor(
     @InjectRepository(Product) private productRepo: Repository<Product>,
-    @InjectRepository(ProductImage) private productImageRepo: Repository<ProductImage>,
+    @InjectRepository(ProductImage)
+    private productImageRepo: Repository<ProductImage>,
     @InjectRepository(User) private userRepo: Repository<User>,
     @InjectRepository(Order) private orderRepo: Repository<Order>,
     @InjectRepository(Tag) private tagRepo: Repository<Tag>,
-  @InjectRepository(require('../categories/entities/category.entity').Category) private categoryRepo: TreeRepository<any>,
-  @InjectRepository(ProductImpression) private impressionRepo: Repository<ProductImpression>,
-  @InjectRepository(SearchKeyword) private searchKeywordRepo: Repository<SearchKeyword>,
+    @InjectRepository(
+      require('../categories/entities/category.entity').Category,
+    )
+    private categoryRepo: TreeRepository<any>,
+    @InjectRepository(ProductImpression)
+    private impressionRepo: Repository<ProductImpression>,
+    @InjectRepository(SearchKeyword)
+    private searchKeywordRepo: Repository<SearchKeyword>,
   ) {}
 
   // Simple in-memory cache for Property & Real Estate subtree ids
@@ -39,13 +45,19 @@ export class ProductsService {
 
   private async getPropertySubtreeIds(): Promise<number[]> {
     const now = Date.now();
-    if (this.propertyIdsCache && now - this.propertyIdsCache.at < 5 * 60 * 1000) {
+    if (
+      this.propertyIdsCache &&
+      now - this.propertyIdsCache.at < 5 * 60 * 1000
+    ) {
       return this.propertyIdsCache.ids;
     }
     // Find categories whose slug looks like property/real-estate
     const roots = await this.categoryRepo
       .createQueryBuilder('c')
-      .where('c.slug ILIKE :p1 OR c.slug ~* :p2', { p1: '%property%', p2: 'real[-_ ]?estate' })
+      .where('c.slug ILIKE :p1 OR c.slug ~* :p2', {
+        p1: '%property%',
+        p2: 'real[-_ ]?estate',
+      })
       .getMany()
       .catch(() => []);
 
@@ -65,7 +77,9 @@ export class ProductsService {
 
   private isPropertyCategory(category?: any): boolean {
     const slug = (category && (category.slug || category?.['slug'])) || '';
-    return typeof slug === 'string' && /(property|real[-_ ]?estate)/i.test(slug);
+    return (
+      typeof slug === 'string' && /(property|real[-_ ]?estate)/i.test(slug)
+    );
   }
 
   private sanitizeAttributes(attrs: any): Record<string, any> | null {
@@ -95,8 +109,24 @@ export class ProductsService {
   }
 
   // ✅ NEW create method
-  async create(data: CreateProductDto & { vendorId: number }): Promise<Product> {
-  const { tags = [], images = [], vendorId, categoryId, listingType, bedrooms, listingCity, bathrooms, sizeSqm, furnished, rentPeriod, attributes, ...rest } = data;
+  async create(
+    data: CreateProductDto & { vendorId: number },
+  ): Promise<Product> {
+    const {
+      tags = [],
+      images = [],
+      vendorId,
+      categoryId,
+      listingType,
+      bedrooms,
+      listingCity,
+      bathrooms,
+      sizeSqm,
+      furnished,
+      rentPeriod,
+      attributes,
+      ...rest
+    } = data;
 
     const vendor = await this.userRepo.findOneBy({ id: vendorId });
     if (!vendor) {
@@ -111,10 +141,17 @@ export class ProductsService {
     // Property validations
     if (category && this.isPropertyCategory(category)) {
       if (!listingCity || !String(listingCity).trim()) {
-        throw new BadRequestException('listingCity is required for Property & Real Estate listings');
+        throw new BadRequestException(
+          'listingCity is required for Property & Real Estate listings',
+        );
       }
-      if (listingType === 'rent' && (!rentPeriod || !String(rentPeriod).trim())) {
-        throw new BadRequestException('rentPeriod is required when listing_type is rent');
+      if (
+        listingType === 'rent' &&
+        (!rentPeriod || !String(rentPeriod).trim())
+      ) {
+        throw new BadRequestException(
+          'rentPeriod is required when listing_type is rent',
+        );
       }
     }
 
@@ -122,15 +159,15 @@ export class ProductsService {
       ...rest,
       vendor,
       category,
-  currency: rest.currency || vendor.currency || 'USD',
-  listingType: listingType ?? null,
-  bedrooms: bedrooms ?? null,
-  listingCity: listingCity ?? null,
-  bathrooms: bathrooms ?? null,
-  sizeSqm: sizeSqm ?? null,
-  furnished: furnished ?? null,
-  rentPeriod: rentPeriod ?? null,
-  attributes: this.sanitizeAttributes(attributes) ?? {},
+      currency: rest.currency || vendor.currency || 'USD',
+      listingType: listingType ?? null,
+      bedrooms: bedrooms ?? null,
+      listingCity: listingCity ?? null,
+      bathrooms: bathrooms ?? null,
+      sizeSqm: sizeSqm ?? null,
+      furnished: furnished ?? null,
+      rentPeriod: rentPeriod ?? null,
+      attributes: this.sanitizeAttributes(attributes) ?? {},
       imageUrl: images.length > 0 ? images[0].src : null,
     });
 
@@ -170,7 +207,9 @@ export class ProductsService {
     // Increment view counter in the background; ignore failures
     this.incrementViewCount(id).catch(() => {});
     try {
-      const { normalizeProductMedia } = require('../common/utils/media-url.util');
+      const {
+        normalizeProductMedia,
+      } = require('../common/utils/media-url.util');
       return normalizeProductMedia(product);
     } catch {
       return product;
@@ -182,13 +221,17 @@ export class ProductsService {
     try {
       const vendor = await this.userRepo.findOne({ where: { id: vendorId } });
       if (!vendor) return null;
-      const name = (vendor as any).storeName || (vendor as any).displayName || (vendor as any).name || '';
+      const name =
+        (vendor as any).storeName ||
+        (vendor as any).displayName ||
+        (vendor as any).name ||
+        '';
       return name ? String(name) : null;
     } catch {
       return null;
     }
   }
-  
+
   async incrementViewCount(id: number): Promise<void> {
     await this.productRepo
       .createQueryBuilder()
@@ -198,7 +241,11 @@ export class ProductsService {
       .execute();
   }
 
-  async deriveImpressionSessionKey(ip: string, ua: string, sessionId?: string): Promise<string> {
+  async deriveImpressionSessionKey(
+    ip: string,
+    ua: string,
+    sessionId?: string,
+  ): Promise<string> {
     const base = `${ip || ''}|${ua || ''}|${sessionId || ''}`;
     return createHash('sha1').update(base).digest('hex').slice(0, 40);
   }
@@ -211,23 +258,45 @@ export class ProductsService {
   async recordSearchKeyword(
     q: string,
     kind: 'suggest' | 'submit',
-    meta?: { ip?: string; ua?: string; results?: number; city?: string; vendorName?: string; country?: string; vendorHits?: Array<{ name: string; id?: number; country?: string; count: number }> },
+    meta?: {
+      ip?: string;
+      ua?: string;
+      results?: number;
+      city?: string;
+      vendorName?: string;
+      country?: string;
+      vendorHits?: Array<{
+        name: string;
+        id?: number;
+        country?: string;
+        count: number;
+      }>;
+    },
   ): Promise<void> {
     const qNorm = this.normalizeQuery(q);
     if (!qNorm || qNorm.length < 2) return;
     try {
-      const existing = await this.searchKeywordRepo.findOne({ where: { qNorm } });
+      const existing = await this.searchKeywordRepo.findOne({
+        where: { qNorm },
+      });
       if (existing) {
         existing.totalCount = (existing.totalCount || 0) + 1;
-        if (kind === 'suggest') existing.suggestCount = (existing.suggestCount || 0) + 1;
-        if (kind === 'submit') existing.submitCount = (existing.submitCount || 0) + 1;
-  if (meta?.results !== undefined) existing.lastResults = meta.results;
+        if (kind === 'suggest')
+          existing.suggestCount = (existing.suggestCount || 0) + 1;
+        if (kind === 'submit')
+          existing.submitCount = (existing.submitCount || 0) + 1;
+        if (meta?.results !== undefined) existing.lastResults = meta.results;
         if (meta?.ip) existing.lastIp = meta.ip.slice(0, 64);
-  if (meta?.ua) existing.lastUa = meta.ua.slice(0, 256);
-  if (meta?.city) existing.lastCity = meta.city.slice(0, 128);
-  if (meta?.vendorName) existing.lastVendorName = meta.vendorName.slice(0, 256);
-  if (meta?.country) existing.lastCountry = meta.country.slice(0, 2).toUpperCase();
-  if (meta?.vendorHits) (existing as any).vendorHits = Array.isArray(meta.vendorHits) ? meta.vendorHits : null;
+        if (meta?.ua) existing.lastUa = meta.ua.slice(0, 256);
+        if (meta?.city) existing.lastCity = meta.city.slice(0, 128);
+        if (meta?.vendorName)
+          existing.lastVendorName = meta.vendorName.slice(0, 256);
+        if (meta?.country)
+          existing.lastCountry = meta.country.slice(0, 2).toUpperCase();
+        if (meta?.vendorHits)
+          (existing as any).vendorHits = Array.isArray(meta.vendorHits)
+            ? meta.vendorHits
+            : null;
         await this.searchKeywordRepo.save(existing);
       } else {
         const row = this.searchKeywordRepo.create({
@@ -240,9 +309,16 @@ export class ProductsService {
           lastIp: meta?.ip?.slice(0, 64) || null,
           lastUa: meta?.ua?.slice(0, 256) || null,
           lastCity: meta?.city ? meta.city.slice(0, 128) : null,
-          lastVendorName: meta?.vendorName ? meta.vendorName.slice(0, 256) : null,
-          lastCountry: meta?.country ? meta.country.slice(0, 2).toUpperCase() : null,
-          vendorHits: meta?.vendorHits && Array.isArray(meta.vendorHits) ? meta.vendorHits : null,
+          lastVendorName: meta?.vendorName
+            ? meta.vendorName.slice(0, 256)
+            : null,
+          lastCountry: meta?.country
+            ? meta.country.slice(0, 2).toUpperCase()
+            : null,
+          vendorHits:
+            meta?.vendorHits && Array.isArray(meta.vendorHits)
+              ? meta.vendorHits
+              : null,
         });
         await this.searchKeywordRepo.save(row);
       }
@@ -252,16 +328,28 @@ export class ProductsService {
   }
 
   // Idempotent within a rolling window: if an impression exists for (productId, sessionKey) within window, skip increment
-  async recordImpressions(productIds: number[], sessionKey: string, windowSeconds = 300): Promise<{ recorded: number; ignored: number }> {
+  async recordImpressions(
+    productIds: number[],
+    sessionKey: string,
+    windowSeconds = 300,
+  ): Promise<{ recorded: number; ignored: number }> {
     const cutoff = new Date(Date.now() - windowSeconds * 1000);
     let recorded = 0;
     let ignored = 0;
     // Fetch existing recent impressions for these products and session
-    const existing = await this.impressionRepo.find({ where: { sessionKey, productId: In(productIds), createdAt: MoreThan(cutoff) } as any });
+    const existing = await this.impressionRepo.find({
+      where: {
+        sessionKey,
+        productId: In(productIds),
+        createdAt: MoreThan(cutoff),
+      } as any,
+    });
     const existingSet = new Set(existing.map((e) => e.productId));
     const toInsert = productIds.filter((id) => !existingSet.has(id));
     if (toInsert.length) {
-      const rows = toInsert.map((productId) => this.impressionRepo.create({ productId, sessionKey }));
+      const rows = toInsert.map((productId) =>
+        this.impressionRepo.create({ productId, sessionKey }),
+      );
       await this.impressionRepo.save(rows);
       // Bulk increment view_count for new ones
       await this.productRepo
@@ -275,7 +363,7 @@ export class ProductsService {
     ignored = productIds.length - recorded;
     return { recorded, ignored };
   }
-  
+
   async findFiltered(filters: ProductFilterDto): Promise<{
     items: Product[];
     total: number;
@@ -283,18 +371,50 @@ export class ProductsService {
     currentPage: number;
     totalPages: number;
   }> {
-  const { page = 1, perPage: rawPerPage = 20, search, categoryId: rawCategoryId, categoryAlias, categorySlug, featured, tags, priceMin, priceMax, sort, country, region, city, geoPriority, userCountry, userRegion, userCity, view, vendorId, includeDescendants, categoryFirst, geoAppend, listing_type, listingType, bedrooms, bedrooms_min, bedrooms_max, bedroomsMin, bedroomsMax } = filters as any;
-  const categoryId = rawCategoryId || categoryAlias;
+    const {
+      page = 1,
+      perPage: rawPerPage = 20,
+      search,
+      categoryId: rawCategoryId,
+      categoryAlias,
+      categorySlug,
+      featured,
+      tags,
+      priceMin,
+      priceMax,
+      sort,
+      country,
+      region,
+      city,
+      geoPriority,
+      userCountry,
+      userRegion,
+      userCity,
+      view,
+      vendorId,
+      includeDescendants,
+      categoryFirst,
+      geoAppend,
+      listing_type,
+      listingType,
+      bedrooms,
+      bedrooms_min,
+      bedrooms_max,
+      bedroomsMin,
+      bedroomsMax,
+    } = filters as any;
+    const categoryId = rawCategoryId || categoryAlias;
 
     // Clamp perPage to protect backend
     const perPage = Math.min(Math.max(Number(rawPerPage) || 20, 1), 50);
 
-    const qb = this.productRepo.createQueryBuilder('product')
+    const qb = this.productRepo
+      .createQueryBuilder('product')
       .leftJoinAndSelect('product.vendor', 'vendor')
       .leftJoinAndSelect('product.category', 'category');
 
     // Lean projection for grid views: limit selected columns
-  if (view === 'grid') {
+    if (view === 'grid') {
       qb.select([
         'product.id',
         'product.name',
@@ -305,60 +425,85 @@ export class ProductsService {
         'product.rating_count',
         'product.sales_count',
         'product.viewCount',
-  'product.listingType',
-  'product.bedrooms',
-  'product.listingCity',
-  'product.bathrooms',
-  'product.sizeSqm',
-  'product.furnished',
-  'product.rentPeriod',
-  'product.attributes',
+        'product.listingType',
+        'product.bedrooms',
+        'product.listingCity',
+        'product.bathrooms',
+        'product.sizeSqm',
+        'product.furnished',
+        'product.rentPeriod',
+        'product.attributes',
         'product.createdAt',
         'vendor.id',
         'category.id',
         'category.slug',
       ]);
     } else {
-      qb.leftJoinAndSelect('product.tags', 'tag')
-        .leftJoinAndSelect('product.images', 'images');
+      qb.leftJoinAndSelect('product.tags', 'tag').leftJoinAndSelect(
+        'product.images',
+        'images',
+      );
     }
 
     // Only show published and not blocked products
-    qb.andWhere('product.status = :status', { status: 'publish' })
-      .andWhere('product.isBlocked = false');
+    qb.andWhere('product.status = :status', { status: 'publish' }).andWhere(
+      'product.isBlocked = false',
+    );
 
-    if (search) qb.andWhere('product.name ILIKE :search', { search: `%${search}%` });
-  if (categorySlug) qb.andWhere('category.slug = :categorySlug', { categorySlug });
-    else if (categoryId && !includeDescendants && !categoryFirst) qb.andWhere('category.id = :categoryId', { categoryId });
-  if (vendorId) qb.andWhere('vendor.id = :vendorId', { vendorId });
-    if (typeof featured === 'boolean') qb.andWhere('product.featured = :featured', { featured });
+    if (search)
+      qb.andWhere('product.name ILIKE :search', { search: `%${search}%` });
+    if (categorySlug)
+      qb.andWhere('category.slug = :categorySlug', { categorySlug });
+    else if (categoryId && !includeDescendants && !categoryFirst)
+      qb.andWhere('category.id = :categoryId', { categoryId });
+    if (vendorId) qb.andWhere('vendor.id = :vendorId', { vendorId });
+    if (typeof featured === 'boolean')
+      qb.andWhere('product.featured = :featured', { featured });
     if (tags) {
       const tagList = tags.split(',').map((t) => t.trim());
-      qb.innerJoin('product.tags', 'tagFilter', 'tagFilter.name IN (:...tagList)', { tagList });
+      qb.innerJoin(
+        'product.tags',
+        'tagFilter',
+        'tagFilter.name IN (:...tagList)',
+        { tagList },
+      );
     }
-    if (priceMin !== undefined) qb.andWhere('product.price >= :priceMin', { priceMin });
-  if (priceMax !== undefined) qb.andWhere('product.price <= :priceMax', { priceMax });
-  const listingTypeFilter = listing_type || listingType;
-  if (listingTypeFilter) qb.andWhere('product.listing_type = :lt', { lt: listingTypeFilter });
-  // Bedrooms filter: exact or range
-  const brExact = bedrooms;
-  const brMin = bedrooms_min ?? bedroomsMin;
-  const brMax = bedrooms_max ?? bedroomsMax;
-  if (brExact !== undefined) qb.andWhere('product.bedrooms = :br', { br: brExact });
-  if (brMin !== undefined) qb.andWhere('product.bedrooms >= :brMin', { brMin });
-  if (brMax !== undefined) qb.andWhere('product.bedrooms <= :brMax', { brMax });
+    if (priceMin !== undefined)
+      qb.andWhere('product.price >= :priceMin', { priceMin });
+    if (priceMax !== undefined)
+      qb.andWhere('product.price <= :priceMax', { priceMax });
+    const listingTypeFilter = listing_type || listingType;
+    if (listingTypeFilter)
+      qb.andWhere('product.listing_type = :lt', { lt: listingTypeFilter });
+    // Bedrooms filter: exact or range
+    const brExact = bedrooms;
+    const brMin = bedrooms_min ?? bedroomsMin;
+    const brMax = bedrooms_max ?? bedroomsMax;
+    if (brExact !== undefined)
+      qb.andWhere('product.bedrooms = :br', { br: brExact });
+    if (brMin !== undefined)
+      qb.andWhere('product.bedrooms >= :brMin', { brMin });
+    if (brMax !== undefined)
+      qb.andWhere('product.bedrooms <= :brMax', { brMax });
 
-  // Property city filter (from userCity or listing_city alias)
-  const listingCityFilter = (filters as any).listing_city || (filters as any).userCity;
-  if (listingCityFilter) qb.andWhere('LOWER(product.listing_city) = LOWER(:lc)', { lc: listingCityFilter });
+    // Property city filter (from userCity or listing_city alias)
+    const listingCityFilter =
+      (filters as any).listing_city || (filters as any).userCity;
+    if (listingCityFilter)
+      qb.andWhere('LOWER(product.listing_city) = LOWER(:lc)', {
+        lc: listingCityFilter,
+      });
 
-  // Bathrooms range (optional)
-  const baths = (filters as any).bathrooms;
-  const bathsMin = (filters as any).bathrooms_min;
-  const bathsMax = (filters as any).bathrooms_max;
-  if (baths !== undefined) qb.andWhere('product.bathrooms = :baths', { baths });
-  if (bathsMin !== undefined) qb.andWhere('product.bathrooms >= :bathsMin', { bathsMin });
-  if (bathsMax !== undefined) qb.andWhere('product.bathrooms <= :bathsMax', { bathsMax });
+    // Bathrooms range (optional)
+    const baths = (filters as any).bathrooms;
+    const bathsMin = (filters as any).bathrooms_min;
+    const bathsMax = (filters as any).bathrooms_max;
+    if (baths !== undefined)
+      qb.andWhere('product.bathrooms = :baths', { baths });
+    if (bathsMin !== undefined)
+      qb.andWhere('product.bathrooms >= :bathsMin', { bathsMin });
+    if (bathsMax !== undefined)
+      qb.andWhere('product.bathrooms <= :bathsMax', { bathsMax });
 
     // Geo handling
     // If geoPriority mode is enabled, we DO NOT hard filter; we rank by proximity of vendor profile fields to user provided geo.
@@ -366,10 +511,14 @@ export class ProductsService {
     let addedGeoRank = false;
     if (geoPriority) {
       // Normalize inputs and parameterize to avoid SQL injection
-      const eaList = (filters as any).eastAfrica ? String((filters as any).eastAfrica).split(',').map((c: string) => c.trim().toUpperCase()) : ['ET','SO','KE','DJ'];
-      const uc = (userCountry || country || '');
-      const ur = (userRegion || region || '');
-      const uci = (userCity || city || '');
+      const eaList = (filters as any).eastAfrica
+        ? String((filters as any).eastAfrica)
+            .split(',')
+            .map((c: string) => c.trim().toUpperCase())
+        : ['ET', 'SO', 'KE', 'DJ'];
+      const uc = userCountry || country || '';
+      const ur = userRegion || region || '';
+      const uci = userCity || city || '';
       const eastAfricaSqlList = eaList.map((_, i) => `:ea${i}`).join(',');
       const geoRankExpr = `CASE 
         WHEN (:uci <> '' AND LOWER(vendor."registrationCity") = LOWER(:uci)) THEN 4
@@ -377,24 +526,42 @@ export class ProductsService {
         WHEN (:uc <> '' AND LOWER(vendor."registrationCountry") = LOWER(:uc)) THEN 2
         WHEN UPPER(COALESCE(vendor."registrationCountry", '')) IN (${eastAfricaSqlList}) THEN 1
         ELSE 0 END`;
-      qb.addSelect(geoRankExpr, 'geo_rank')
-        .setParameters({ uci, ur, uc, ...Object.fromEntries(eaList.map((v, i) => [`ea${i}`, v])) });
+      qb.addSelect(geoRankExpr, 'geo_rank').setParameters({
+        uci,
+        ur,
+        uc,
+        ...Object.fromEntries(eaList.map((v, i) => [`ea${i}`, v])),
+      });
       addedGeoRank = true;
     } else {
-      if (country) qb.andWhere('LOWER(vendor.registrationCountry) = LOWER(:country)', { country });
-      if (region) qb.andWhere('LOWER(vendor.registrationRegion) = LOWER(:region)', { region });
-      if (city) qb.andWhere('LOWER(vendor.registrationCity) = LOWER(:city)', { city });
+      if (country)
+        qb.andWhere('LOWER(vendor.registrationCountry) = LOWER(:country)', {
+          country,
+        });
+      if (region)
+        qb.andWhere('LOWER(vendor.registrationRegion) = LOWER(:region)', {
+          region,
+        });
+      if (city)
+        qb.andWhere('LOWER(vendor.registrationCity) = LOWER(:city)', { city });
     }
 
     // If includeDescendants is true, expand filter to include all descendant category IDs
     let subtreeIds: number[] | null = null;
     if ((includeDescendants || categoryFirst) && (categoryId || categorySlug)) {
       // Resolve base category id via slug if needed
-      const baseCategoryId = categoryId || (categorySlug ? (await this.categoryRepo.findOne({ where: { slug: categorySlug } }))?.id : undefined);
+      const baseCategoryId =
+        categoryId ||
+        (categorySlug
+          ? (await this.categoryRepo.findOne({ where: { slug: categorySlug } }))
+              ?.id
+          : undefined);
       if (baseCategoryId) {
         // Using closure table categories_category_closure table name pattern
         // TypeORM default: category_closure (root/ancestor/descendant); but we’ll use repository to get descendants ids
-        const cat = await this.categoryRepo.findOne({ where: { id: baseCategoryId } });
+        const cat = await this.categoryRepo.findOne({
+          where: { id: baseCategoryId },
+        });
         if (cat) {
           const descs = await this.categoryRepo.findDescendants(cat);
           const ids = Array.from(new Set(descs.map((c: any) => c.id)));
@@ -424,12 +591,16 @@ export class ProductsService {
         .addOrderBy('product.createdAt', 'DESC');
     } else if (sort === 'sales_desc') {
       if (addedGeoRank) qb.orderBy('geo_rank', 'DESC');
-      qb.addOrderBy('product.sales_count', 'DESC', 'NULLS LAST')
-        .addOrderBy('product.createdAt', 'DESC');
+      qb.addOrderBy('product.sales_count', 'DESC', 'NULLS LAST').addOrderBy(
+        'product.createdAt',
+        'DESC',
+      );
     } else if (sort === 'views_desc') {
       if (addedGeoRank) qb.orderBy('geo_rank', 'DESC');
-      qb.addOrderBy('product.viewCount', 'DESC', 'NULLS LAST')
-        .addOrderBy('product.createdAt', 'DESC');
+      qb.addOrderBy('product.viewCount', 'DESC', 'NULLS LAST').addOrderBy(
+        'product.createdAt',
+        'DESC',
+      );
     } else {
       if (addedGeoRank) qb.orderBy('geo_rank', 'DESC');
       qb.addOrderBy('product.createdAt', 'DESC');
@@ -439,7 +610,8 @@ export class ProductsService {
     if (categoryFirst && subtreeIds && subtreeIds.length) {
       // Helper to build a base QB with all filters except the category constraint
       const buildBase = () => {
-        const q = this.productRepo.createQueryBuilder('product')
+        const q = this.productRepo
+          .createQueryBuilder('product')
           .leftJoinAndSelect('product.vendor', 'vendor')
           .leftJoinAndSelect('product.category', 'category');
         if (view === 'grid') {
@@ -466,61 +638,105 @@ export class ProductsService {
             'category.slug',
           ]);
         } else {
-          q.leftJoinAndSelect('product.tags', 'tag')
-            .leftJoinAndSelect('product.images', 'images');
+          q.leftJoinAndSelect('product.tags', 'tag').leftJoinAndSelect(
+            'product.images',
+            'images',
+          );
         }
-        q.andWhere('product.status = :status', { status: 'publish' })
-          .andWhere('product.isBlocked = false');
-        if (search) q.andWhere('product.name ILIKE :search', { search: `%${search}%` });
+        q.andWhere('product.status = :status', { status: 'publish' }).andWhere(
+          'product.isBlocked = false',
+        );
+        if (search)
+          q.andWhere('product.name ILIKE :search', { search: `%${search}%` });
         if (vendorId) q.andWhere('vendor.id = :vendorId', { vendorId });
-        if (typeof featured === 'boolean') q.andWhere('product.featured = :featured', { featured });
+        if (typeof featured === 'boolean')
+          q.andWhere('product.featured = :featured', { featured });
         if (tags) {
           const tagList = tags.split(',').map((t) => t.trim());
-          q.innerJoin('product.tags', 'tagFilter', 'tagFilter.name IN (:...tagList)', { tagList });
+          q.innerJoin(
+            'product.tags',
+            'tagFilter',
+            'tagFilter.name IN (:...tagList)',
+            { tagList },
+          );
         }
-        if (priceMin !== undefined) q.andWhere('product.price >= :priceMin', { priceMin });
-        if (priceMax !== undefined) q.andWhere('product.price <= :priceMax', { priceMax });
+        if (priceMin !== undefined)
+          q.andWhere('product.price >= :priceMin', { priceMin });
+        if (priceMax !== undefined)
+          q.andWhere('product.price <= :priceMax', { priceMax });
 
-  const listingTypeFilterLocal = listing_type || listingType;
-  if (listingTypeFilterLocal) q.andWhere('product.listing_type = :ltLocal', { ltLocal: listingTypeFilterLocal });
-  const brExactLocal = bedrooms;
-  const brMinLocal = bedrooms_min ?? bedroomsMin;
-  const brMaxLocal = bedrooms_max ?? bedroomsMax;
-  if (brExactLocal !== undefined) q.andWhere('product.bedrooms = :brLocal', { brLocal: brExactLocal });
-  if (brMinLocal !== undefined) q.andWhere('product.bedrooms >= :brMinLocal', { brMinLocal });
-  if (brMaxLocal !== undefined) q.andWhere('product.bedrooms <= :brMaxLocal', { brMaxLocal });
+        const listingTypeFilterLocal = listing_type || listingType;
+        if (listingTypeFilterLocal)
+          q.andWhere('product.listing_type = :ltLocal', {
+            ltLocal: listingTypeFilterLocal,
+          });
+        const brExactLocal = bedrooms;
+        const brMinLocal = bedrooms_min ?? bedroomsMin;
+        const brMaxLocal = bedrooms_max ?? bedroomsMax;
+        if (brExactLocal !== undefined)
+          q.andWhere('product.bedrooms = :brLocal', { brLocal: brExactLocal });
+        if (brMinLocal !== undefined)
+          q.andWhere('product.bedrooms >= :brMinLocal', { brMinLocal });
+        if (brMaxLocal !== undefined)
+          q.andWhere('product.bedrooms <= :brMaxLocal', { brMaxLocal });
 
-  const listingCityFilterLocal = (filters as any).listing_city || (filters as any).userCity;
-  if (listingCityFilterLocal) q.andWhere('LOWER(product.listing_city) = LOWER(:lcLocal)', { lcLocal: listingCityFilterLocal });
+        const listingCityFilterLocal =
+          (filters as any).listing_city || (filters as any).userCity;
+        if (listingCityFilterLocal)
+          q.andWhere('LOWER(product.listing_city) = LOWER(:lcLocal)', {
+            lcLocal: listingCityFilterLocal,
+          });
 
-  const bathsLocal = (filters as any).bathrooms;
-  const bathsMinLocal = (filters as any).bathrooms_min;
-  const bathsMaxLocal = (filters as any).bathrooms_max;
-  if (bathsLocal !== undefined) q.andWhere('product.bathrooms = :bathsLocal', { bathsLocal });
-  if (bathsMinLocal !== undefined) q.andWhere('product.bathrooms >= :bathsMinLocal', { bathsMinLocal });
-  if (bathsMaxLocal !== undefined) q.andWhere('product.bathrooms <= :bathsMaxLocal', { bathsMaxLocal });
+        const bathsLocal = (filters as any).bathrooms;
+        const bathsMinLocal = (filters as any).bathrooms_min;
+        const bathsMaxLocal = (filters as any).bathrooms_max;
+        if (bathsLocal !== undefined)
+          q.andWhere('product.bathrooms = :bathsLocal', { bathsLocal });
+        if (bathsMinLocal !== undefined)
+          q.andWhere('product.bathrooms >= :bathsMinLocal', { bathsMinLocal });
+        if (bathsMaxLocal !== undefined)
+          q.andWhere('product.bathrooms <= :bathsMaxLocal', { bathsMaxLocal });
 
         // Geo handling
         let addedGeoRankLocal = false;
         if (geoPriority) {
-          const eaList = (filters as any).eastAfrica ? String((filters as any).eastAfrica).split(',').map((c: string) => c.trim().toUpperCase()) : ['ET','SO','KE','DJ'];
-          const uc = (userCountry || country || '');
-          const ur = (userRegion || region || '');
-          const uci = (userCity || city || '');
-          const eastAfricaSqlList = eaList.map((_, i) => `:ea_local_${i}`).join(',');
+          const eaList = (filters as any).eastAfrica
+            ? String((filters as any).eastAfrica)
+                .split(',')
+                .map((c: string) => c.trim().toUpperCase())
+            : ['ET', 'SO', 'KE', 'DJ'];
+          const uc = userCountry || country || '';
+          const ur = userRegion || region || '';
+          const uci = userCity || city || '';
+          const eastAfricaSqlList = eaList
+            .map((_, i) => `:ea_local_${i}`)
+            .join(',');
           const geoRankExpr = `CASE 
         WHEN (:uci_local <> '' AND LOWER(vendor."registrationCity") = LOWER(:uci_local)) THEN 4
         WHEN (:ur_local <> '' AND LOWER(vendor."registrationRegion") = LOWER(:ur_local)) THEN 3
         WHEN (:uc_local <> '' AND LOWER(vendor."registrationCountry") = LOWER(:uc_local)) THEN 2
         WHEN UPPER(COALESCE(vendor."registrationCountry", '')) IN (${eastAfricaSqlList}) THEN 1
         ELSE 0 END`;
-          q.addSelect(geoRankExpr, 'geo_rank')
-            .setParameters({ uci_local: uci, ur_local: ur, uc_local: uc, ...Object.fromEntries(eaList.map((v, i) => [`ea_local_${i}`, v])) });
+          q.addSelect(geoRankExpr, 'geo_rank').setParameters({
+            uci_local: uci,
+            ur_local: ur,
+            uc_local: uc,
+            ...Object.fromEntries(eaList.map((v, i) => [`ea_local_${i}`, v])),
+          });
           addedGeoRankLocal = true;
         } else {
-          if (country) q.andWhere('LOWER(vendor.registrationCountry) = LOWER(:country)', { country });
-          if (region) q.andWhere('LOWER(vendor.registrationRegion) = LOWER(:region)', { region });
-          if (city) q.andWhere('LOWER(vendor.registrationCity) = LOWER(:city)', { city });
+          if (country)
+            q.andWhere('LOWER(vendor.registrationCountry) = LOWER(:country)', {
+              country,
+            });
+          if (region)
+            q.andWhere('LOWER(vendor.registrationRegion) = LOWER(:region)', {
+              region,
+            });
+          if (city)
+            q.andWhere('LOWER(vendor.registrationCity) = LOWER(:city)', {
+              city,
+            });
         }
 
         // Sorting
@@ -540,12 +756,16 @@ export class ProductsService {
             .addOrderBy('product.createdAt', 'DESC');
         } else if (sort === 'sales_desc') {
           if (addedGeoRankLocal) q.orderBy('geo_rank', 'DESC');
-          q.addOrderBy('product.sales_count', 'DESC', 'NULLS LAST')
-            .addOrderBy('product.createdAt', 'DESC');
+          q.addOrderBy('product.sales_count', 'DESC', 'NULLS LAST').addOrderBy(
+            'product.createdAt',
+            'DESC',
+          );
         } else if (sort === 'views_desc') {
           if (addedGeoRankLocal) q.orderBy('geo_rank', 'DESC');
-          q.addOrderBy('product.viewCount', 'DESC', 'NULLS LAST')
-            .addOrderBy('product.createdAt', 'DESC');
+          q.addOrderBy('product.viewCount', 'DESC', 'NULLS LAST').addOrderBy(
+            'product.createdAt',
+            'DESC',
+          );
         } else {
           if (addedGeoRankLocal) q.orderBy('geo_rank', 'DESC');
           q.addOrderBy('product.createdAt', 'DESC');
@@ -556,15 +776,22 @@ export class ProductsService {
       const perPage = Math.min(Math.max(Number(rawPerPage) || 20, 1), 50);
       const startIndex = (page - 1) * perPage;
 
-      const primaryQb = buildBase().andWhere('category.id IN (:...catIds)', { catIds: subtreeIds });
-      const othersQb = buildBase().andWhere('category.id NOT IN (:...catIds)', { catIds: subtreeIds });
+      const primaryQb = buildBase().andWhere('category.id IN (:...catIds)', {
+        catIds: subtreeIds,
+      });
+      const othersQb = buildBase().andWhere('category.id NOT IN (:...catIds)', {
+        catIds: subtreeIds,
+      });
 
-  const primaryTotal = await primaryQb.getCount();
-  const othersTotal = await othersQb.getCount();
+      const primaryTotal = await primaryQb.getCount();
+      const othersTotal = await othersQb.getCount();
 
       let items: Product[] = [];
       if (startIndex < primaryTotal) {
-        const primaryItems = await primaryQb.skip(startIndex).take(perPage).getMany();
+        const primaryItems = await primaryQb
+          .skip(startIndex)
+          .take(perPage)
+          .getMany();
         if (primaryItems.length < perPage) {
           const remain = perPage - primaryItems.length;
           const otherItems = await othersQb.skip(0).take(remain).getMany();
@@ -580,10 +807,12 @@ export class ProductsService {
       // Optional geo append: if page underfilled, top up with geo-ranked items from outside the union (keep total unchanged)
       let geoAppended = 0;
       if (geoAppend && items.length < perPage) {
-        const excludeIds = new Set(items.map(i => i.id));
+        const excludeIds = new Set(items.map((i) => i.id));
         const fillQb = buildBase();
         // Drop category constraints and exclude already included ids
-        fillQb.andWhere('product.id NOT IN (:...exclude)', { exclude: Array.from(excludeIds).length ? Array.from(excludeIds) : [0] });
+        fillQb.andWhere('product.id NOT IN (:...exclude)', {
+          exclude: Array.from(excludeIds).length ? Array.from(excludeIds) : [0],
+        });
         // Favor geo rank if available
         if (!geoPriority) {
           // If geoPriority isn’t on, adding geoAppend should not silently change ranking; we’ll only use existing sort
@@ -599,21 +828,45 @@ export class ProductsService {
       }
 
       const total = primaryTotal + othersTotal;
-      return { items, total, perPage, currentPage: page, totalPages: Math.ceil(total / perPage), meta: { union: { primaryTotal, othersTotal, geoAppended } } } as any;
+      return {
+        items,
+        total,
+        perPage,
+        currentPage: page,
+        totalPages: Math.ceil(total / perPage),
+        meta: { union: { primaryTotal, othersTotal, geoAppended } },
+      } as any;
     }
 
-  qb.skip((page - 1) * perPage).take(perPage);
+    qb.skip((page - 1) * perPage).take(perPage);
     const [items, total] = await qb.getManyAndCount();
-    
-    return { items, total, perPage, currentPage: page, totalPages: Math.ceil(total / perPage) };
+
+    return {
+      items,
+      total,
+      perPage,
+      currentPage: page,
+      totalPages: Math.ceil(total / perPage),
+    };
   }
 
-  // Basic recommendation strategy: 
+  // Basic recommendation strategy:
   // - If user has reviews, prioritize products in same categories/tags
   // - Else, return featured + top-rated mix
-  async recommendedForUser(userId: number, page = 1, perPage = 20): Promise<{ items: Product[]; total: number; perPage: number; currentPage: number; totalPages: number }> {
+  async recommendedForUser(
+    userId: number,
+    page = 1,
+    perPage = 20,
+  ): Promise<{
+    items: Product[];
+    total: number;
+    perPage: number;
+    currentPage: number;
+    totalPages: number;
+  }> {
     // Get categories from user's reviews
-    const reviewed = await this.productRepo.createQueryBuilder('p')
+    const reviewed = await this.productRepo
+      .createQueryBuilder('p')
       .innerJoin('p.reviews', 'r', 'r.userId = :userId', { userId })
       .leftJoin('p.category', 'c')
       .leftJoin('p.tags', 't')
@@ -621,10 +874,13 @@ export class ProductsService {
       .limit(200)
       .getMany();
 
-    const categoryIds = Array.from(new Set(reviewed.map(p => p.category?.id).filter(Boolean) as number[]));
+    const categoryIds = Array.from(
+      new Set(reviewed.map((p) => p.category?.id).filter(Boolean)),
+    );
     // We won’t extract tag IDs here deeply; keep it simple
 
-    const qb = this.productRepo.createQueryBuilder('product')
+    const qb = this.productRepo
+      .createQueryBuilder('product')
       .leftJoinAndSelect('product.vendor', 'vendor')
       .leftJoinAndSelect('product.category', 'category')
       .leftJoinAndSelect('product.tags', 'tag')
@@ -633,7 +889,9 @@ export class ProductsService {
     if (categoryIds.length) {
       qb.andWhere('category.id IN (:...categoryIds)', { categoryIds });
     } else {
-      qb.andWhere('(product.featured = true OR product.average_rating IS NOT NULL)');
+      qb.andWhere(
+        '(product.featured = true OR product.average_rating IS NOT NULL)',
+      );
     }
 
     qb.orderBy('product.average_rating', 'DESC', 'NULLS LAST')
@@ -643,11 +901,21 @@ export class ProductsService {
       .take(perPage);
 
     const [items, total] = await qb.getManyAndCount();
-    return { items, total, perPage, currentPage: page, totalPages: Math.ceil(total / perPage) };
+    return {
+      items,
+      total,
+      perPage,
+      currentPage: page,
+      totalPages: Math.ceil(total / perPage),
+    };
   }
 
   // ✅ NEW updateProduct method
-  async updateProduct(id: number, updateData: UpdateProductDto, user: User): Promise<Product> {
+  async updateProduct(
+    id: number,
+    updateData: UpdateProductDto,
+    user: User,
+  ): Promise<Product> {
     const product = await this.productRepo.findOne({
       where: { id },
       relations: ['vendor'],
@@ -660,7 +928,20 @@ export class ProductsService {
       throw new ForbiddenException('You can only update your own products.');
     }
 
-  const { tags, images, categoryId, listingType, bedrooms, listingCity, bathrooms, sizeSqm, furnished, rentPeriod, attributes, ...rest } = updateData;
+    const {
+      tags,
+      images,
+      categoryId,
+      listingType,
+      bedrooms,
+      listingCity,
+      bathrooms,
+      sizeSqm,
+      furnished,
+      rentPeriod,
+      attributes,
+      ...rest
+    } = updateData;
     // Update simple properties
     Object.assign(product, rest);
 
@@ -684,8 +965,8 @@ export class ProductsService {
     if (images) {
       product.imageUrl = images.length > 0 ? images[0].src : null;
       await this.productImageRepo.delete({ product: { id } }); // Delete old images
-      const imageEntities = images.map((img, index) => 
-        this.productImageRepo.create({ ...img, product, sortOrder: index })
+      const imageEntities = images.map((img, index) =>
+        this.productImageRepo.create({ ...img, product, sortOrder: index }),
       );
       await this.productImageRepo.save(imageEntities); // Save new images
     }
@@ -696,23 +977,36 @@ export class ProductsService {
     if (bedrooms !== undefined) {
       product.bedrooms = (bedrooms as any) ?? null;
     }
-  if (listingCity !== undefined) product.listingCity = (listingCity as any) ?? null;
-  if (bathrooms !== undefined) product.bathrooms = (bathrooms as any) ?? null;
-  if (sizeSqm !== undefined) product.sizeSqm = (sizeSqm as any) ?? null;
-  if (typeof furnished !== 'undefined') product.furnished = (furnished as any);
-  if (rentPeriod !== undefined) product.rentPeriod = (rentPeriod as any) ?? null;
-  if (attributes !== undefined) product.attributes = this.sanitizeAttributes(attributes) as any;
+    if (listingCity !== undefined)
+      product.listingCity = (listingCity as any) ?? null;
+    if (bathrooms !== undefined) product.bathrooms = (bathrooms as any) ?? null;
+    if (sizeSqm !== undefined) product.sizeSqm = (sizeSqm as any) ?? null;
+    if (typeof furnished !== 'undefined') product.furnished = furnished as any;
+    if (rentPeriod !== undefined)
+      product.rentPeriod = (rentPeriod as any) ?? null;
+    if (attributes !== undefined)
+      product.attributes = this.sanitizeAttributes(attributes) as any;
     // Property validations using resulting state
     const finalCategory = product.category;
-    const finalListingCity = listingCity !== undefined ? listingCity : product.listingCity;
-    const finalListingType = listingType !== undefined ? listingType : product.listingType;
-    const finalRentPeriod = rentPeriod !== undefined ? rentPeriod : product.rentPeriod;
+    const finalListingCity =
+      listingCity !== undefined ? listingCity : product.listingCity;
+    const finalListingType =
+      listingType !== undefined ? listingType : product.listingType;
+    const finalRentPeriod =
+      rentPeriod !== undefined ? rentPeriod : product.rentPeriod;
     if (finalCategory && this.isPropertyCategory(finalCategory)) {
       if (!finalListingCity || !String(finalListingCity).trim()) {
-        throw new BadRequestException('listingCity is required for Property & Real Estate listings');
+        throw new BadRequestException(
+          'listingCity is required for Property & Real Estate listings',
+        );
       }
-      if (finalListingType === 'rent' && (!finalRentPeriod || !String(finalRentPeriod).trim())) {
-        throw new BadRequestException('rentPeriod is required when listing_type is rent');
+      if (
+        finalListingType === 'rent' &&
+        (!finalRentPeriod || !String(finalRentPeriod).trim())
+      ) {
+        throw new BadRequestException(
+          'rentPeriod is required when listing_type is rent',
+        );
       }
     }
 
@@ -720,27 +1014,41 @@ export class ProductsService {
     return this.findOne(id);
   }
 
-  async deleteProduct(id: number, user: Pick<User, 'id'>): Promise<{ deleted: boolean }> {
-    const product = await this.productRepo.findOne({ where: { id }, relations: ['vendor'] });
+  async deleteProduct(
+    id: number,
+    user: Pick<User, 'id'>,
+  ): Promise<{ deleted: boolean }> {
+    const product = await this.productRepo.findOne({
+      where: { id },
+      relations: ['vendor'],
+    });
     if (!product) throw new NotFoundException('Product not found');
-    if (product.vendor.id !== user.id) throw new ForbiddenException('You can only delete your own products');
-    const hasOrders = await this.orderRepo.count({ where: { items: { product: { id } } } });
-    if (hasOrders > 0) throw new BadRequestException('Cannot delete product with active orders');
+    if (product.vendor.id !== user.id)
+      throw new ForbiddenException('You can only delete your own products');
+    const hasOrders = await this.orderRepo.count({
+      where: { items: { product: { id } } },
+    });
+    if (hasOrders > 0)
+      throw new BadRequestException('Cannot delete product with active orders');
     await this.productRepo.delete(id);
     return { deleted: true };
   }
 
   async assignTags(tagNames: string[]): Promise<Tag[]> {
-    const existingTags = await this.tagRepo.find({ where: { name: In(tagNames) } });
+    const existingTags = await this.tagRepo.find({
+      where: { name: In(tagNames) },
+    });
     const existingTagNames = existingTags.map((t) => t.name);
-    const newTagNames = tagNames.filter((name) => !existingTagNames.includes(name));
+    const newTagNames = tagNames.filter(
+      (name) => !existingTagNames.includes(name),
+    );
     const newTags = this.tagRepo.create(newTagNames.map((name) => ({ name })));
     await this.tagRepo.save(newTags);
     return [...existingTags, ...newTags];
   }
 
   // ✨ FIX: ADDED MISSING METHODS
-  
+
   async toggleBlockStatus(id: number, isBlocked: boolean): Promise<Product> {
     await this.productRepo.update(id, { isBlocked });
     return this.findOne(id);
@@ -750,7 +1058,7 @@ export class ProductsService {
     await this.productRepo.update(id, { featured });
     return this.findOne(id);
   }
-  
+
   async suggestNames(query: string, limit = 8): Promise<{ name: string }[]> {
     const q = (query || '').trim();
     // Allow 1-character inputs; only block truly empty

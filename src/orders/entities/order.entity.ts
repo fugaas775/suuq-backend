@@ -44,13 +44,21 @@ export class Order {
   @ManyToOne(() => User, { nullable: true })
   deliverer?: User;
 
-  @OneToMany(() => OrderItem, (item) => item.order, { cascade: true, eager: true })
+  @OneToMany(() => OrderItem, (item) => item.order, {
+    cascade: true,
+    eager: true,
+  })
   items!: OrderItem[];
 
-  @Column('decimal', { precision: 10, scale: 2, transformer: {
-    to: (value: number) => value,
-    from: (value: string | number) => typeof value === 'string' ? parseFloat(value) : value,
-  }})
+  @Column('decimal', {
+    precision: 10,
+    scale: 2,
+    transformer: {
+      to: (value: number) => value,
+      from: (value: string | number) =>
+        typeof value === 'string' ? parseFloat(value) : value,
+    },
+  })
   total!: number;
 
   @Column({
@@ -98,10 +106,15 @@ export class OrderItem {
   @Column()
   quantity!: number;
 
-  @Column('decimal', { precision: 10, scale: 2, transformer: {
-    to: (value: number) => value,
-    from: (value: string | number) => typeof value === 'string' ? parseFloat(value) : value,
-  }})
+  @Column('decimal', {
+    precision: 10,
+    scale: 2,
+    transformer: {
+      to: (value: number) => value,
+      from: (value: string | number) =>
+        typeof value === 'string' ? parseFloat(value) : value,
+    },
+  })
   price!: number; // Price at the time of purchase
 
   @Column({

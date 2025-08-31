@@ -39,11 +39,13 @@ import { FavoritesModule } from './favorites/favorites.module';
   imports: [
     ConfigModule.forRoot({ isGlobal: true, envFilePath: '.env' }),
     TypeOrmModule.forRoot(dataSourceOptions), // Use the simplified, direct config
-    ThrottlerModule.forRoot([{
-      ttl: parseInt(process.env.THROTTLE_TTL, 10) || 60000, // 1 minute default
-      limit: parseInt(process.env.THROTTLE_LIMIT, 10) || 60, // 60 requests per minute default
-    }]),
-    
+    ThrottlerModule.forRoot([
+      {
+        ttl: parseInt(process.env.THROTTLE_TTL, 10) || 60000, // 1 minute default
+        limit: parseInt(process.env.THROTTLE_LIMIT, 10) || 60, // 60 requests per minute default
+      },
+    ]),
+
     // List all your feature modules
     UsersModule,
     AuthModule,
@@ -64,11 +66,11 @@ import { FavoritesModule } from './favorites/favorites.module';
     FirebaseModule,
     MediaModule,
     VerificationModule,
-  AdminModule,
-  HomeModule,
-  CurationModule,
-  FavoritesModule,
-  HealthModule,
+    AdminModule,
+    HomeModule,
+    CurationModule,
+    FavoritesModule,
+    HealthModule,
   ],
   controllers: [AppController],
   providers: [AppService],

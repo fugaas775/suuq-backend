@@ -9,22 +9,37 @@ import { SearchKeyword } from '../products/entities/search-keyword.entity';
 import { Product } from '../products/entities/product.entity';
 import { GeoResolverService } from '../common/services/geo-resolver.service';
 
-type SortKey = 'submit_desc' | 'submit_asc' | 'total_desc' | 'total_asc' | 'last_desc' | 'last_asc' | 'noresult_desc' | 'noresult_asc';
+type SortKey =
+  | 'submit_desc'
+  | 'submit_asc'
+  | 'total_desc'
+  | 'total_asc'
+  | 'last_desc'
+  | 'last_asc'
+  | 'noresult_desc'
+  | 'noresult_asc';
 
 @UseGuards(AuthGuard('jwt'), RolesGuard)
 @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
 @Controller()
 export class AdminAnalyticsController {
   constructor(
-    @InjectRepository(SearchKeyword) private readonly keywordRepo: Repository<SearchKeyword>,
-    @InjectRepository(Product) private readonly productRepo: Repository<Product>,
+    @InjectRepository(SearchKeyword)
+    private readonly keywordRepo: Repository<SearchKeyword>,
+    @InjectRepository(Product)
+    private readonly productRepo: Repository<Product>,
     private readonly geo: GeoResolverService,
   ) {}
 
   private countryName(code?: string | null): string | null {
     const c = (code || '').toUpperCase();
     if (!c) return null;
-    const map: Record<string, string> = { ET: 'Ethiopia', SO: 'Somalia', KE: 'Kenya', DJ: 'Djibouti' };
+    const map: Record<string, string> = {
+      ET: 'Ethiopia',
+      SO: 'Somalia',
+      KE: 'Kenya',
+      DJ: 'Djibouti',
+    };
     return map[c] || null;
   }
   private cityToCountry(city?: string | null): string | null {
@@ -38,14 +53,25 @@ export class AdminAnalyticsController {
     @Query('perPage') perPage = 20,
     @Query('from') from?: string,
     @Query('to') to?: string,
-  @Query('minSubmits') minSubmits: string = '1',
+    @Query('minSubmits') minSubmits: string = '1',
     @Query('q') q?: string,
     @Query('sort') sort: SortKey = 'submit_desc',
-  @Query('city') city?: string,
-  @Query('country') country?: string,
-  @Query('vendor') vendor?: string,
+    @Query('city') city?: string,
+    @Query('country') country?: string,
+    @Query('vendor') vendor?: string,
   ) {
-  return this.listKeywords(page, perPage, from, to, minSubmits, q, sort, city, country, vendor);
+    return this.listKeywords(
+      page,
+      perPage,
+      from,
+      to,
+      minSubmits,
+      q,
+      sort,
+      city,
+      country,
+      vendor,
+    );
   }
 
   // Aliases to be resilient with the admin client
@@ -55,14 +81,25 @@ export class AdminAnalyticsController {
     @Query('perPage') perPage = 20,
     @Query('from') from?: string,
     @Query('to') to?: string,
-  @Query('minSubmits') minSubmits: string = '1',
+    @Query('minSubmits') minSubmits: string = '1',
     @Query('q') q?: string,
     @Query('sort') sort: SortKey = 'submit_desc',
-  @Query('city') city?: string,
-  @Query('country') country?: string,
-  @Query('vendor') vendor?: string,
+    @Query('city') city?: string,
+    @Query('country') country?: string,
+    @Query('vendor') vendor?: string,
   ) {
-  return this.listKeywords(page, perPage, from, to, minSubmits, q, sort, city, country, vendor);
+    return this.listKeywords(
+      page,
+      perPage,
+      from,
+      to,
+      minSubmits,
+      q,
+      sort,
+      city,
+      country,
+      vendor,
+    );
   }
 
   @Get('admin/search/keywords')
@@ -71,14 +108,25 @@ export class AdminAnalyticsController {
     @Query('perPage') perPage = 20,
     @Query('from') from?: string,
     @Query('to') to?: string,
-  @Query('minSubmits') minSubmits: string = '1',
+    @Query('minSubmits') minSubmits: string = '1',
     @Query('q') q?: string,
     @Query('sort') sort: SortKey = 'submit_desc',
-  @Query('city') city?: string,
-  @Query('country') country?: string,
-  @Query('vendor') vendor?: string,
+    @Query('city') city?: string,
+    @Query('country') country?: string,
+    @Query('vendor') vendor?: string,
   ) {
-  return this.listKeywords(page, perPage, from, to, minSubmits, q, sort, city, country, vendor);
+    return this.listKeywords(
+      page,
+      perPage,
+      from,
+      to,
+      minSubmits,
+      q,
+      sort,
+      city,
+      country,
+      vendor,
+    );
   }
 
   // Additional aliases without the 'admin' segment to match some clients
@@ -88,14 +136,25 @@ export class AdminAnalyticsController {
     @Query('perPage') perPage = 20,
     @Query('from') from?: string,
     @Query('to') to?: string,
-  @Query('minSubmits') minSubmits: string = '1',
+    @Query('minSubmits') minSubmits: string = '1',
     @Query('q') q?: string,
     @Query('sort') sort: SortKey = 'submit_desc',
-  @Query('city') city?: string,
-  @Query('country') country?: string,
-  @Query('vendor') vendor?: string,
+    @Query('city') city?: string,
+    @Query('country') country?: string,
+    @Query('vendor') vendor?: string,
   ) {
-  return this.listKeywords(page, perPage, from, to, minSubmits, q, sort, city, country, vendor);
+    return this.listKeywords(
+      page,
+      perPage,
+      from,
+      to,
+      minSubmits,
+      q,
+      sort,
+      city,
+      country,
+      vendor,
+    );
   }
 
   @Get('analytics/search/keywords')
@@ -107,18 +166,30 @@ export class AdminAnalyticsController {
     @Query('minSubmits') minSubmits?: string,
     @Query('q') q?: string,
     @Query('sort') sort: SortKey = 'submit_desc',
-  @Query('city') city?: string,
-  @Query('country') country?: string,
-  @Query('vendor') vendor?: string,
+    @Query('city') city?: string,
+    @Query('country') country?: string,
+    @Query('vendor') vendor?: string,
   ) {
-  return this.listKeywords(page, perPage, from, to, minSubmits || '1', q, sort, city, country, vendor);
+    return this.listKeywords(
+      page,
+      perPage,
+      from,
+      to,
+      minSubmits || '1',
+      q,
+      sort,
+      city,
+      country,
+      vendor,
+    );
   }
 
   // --- Top keywords by recent activity window ---
   private windowStart(window: 'day' | 'week' | 'month'): Date {
     const now = new Date();
     if (window === 'day') return new Date(now.getTime() - 24 * 60 * 60 * 1000);
-    if (window === 'week') return new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    if (window === 'week')
+      return new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
     return new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
   }
 
@@ -150,7 +221,10 @@ export class AdminAnalyticsController {
       .getMany();
     const vendorMap = new Map<string, { name: string; submitCount: number }>();
     for (const row of recent) {
-      const hits = (row as any).vendorHits as Array<{ name: string; count: number }> | null;
+      const hits = (row as any).vendorHits as Array<{
+        name: string;
+        count: number;
+      }> | null;
       if (!Array.isArray(hits)) continue;
       for (const h of hits) {
         const key = (h.name || '').toString();
@@ -160,8 +234,15 @@ export class AdminAnalyticsController {
         vendorMap.set(key, prev);
       }
     }
-  let vendors = Array.from(vendorMap.values()).sort((a, b) => b.submitCount - a.submitCount).slice(0, take)
-      .map((v) => ({ name: v.name, vendorName: v.name, submitCount: v.submitCount, submits: v.submitCount }));
+    let vendors = Array.from(vendorMap.values())
+      .sort((a, b) => b.submitCount - a.submitCount)
+      .slice(0, take)
+      .map((v) => ({
+        name: v.name,
+        vendorName: v.name,
+        submitCount: v.submitCount,
+        submits: v.submitCount,
+      }));
     if (!vendors.length) {
       // Fallback: derive vendors by scanning products for top keywords in the window
       const topKw = await this.keywordRepo
@@ -179,13 +260,15 @@ export class AdminAnalyticsController {
           .createQueryBuilder('p')
           .leftJoin('p.vendor', 'vendor')
           .select([
-            "COALESCE(vendor.storeName, vendor.displayName, vendor.legalName, vendor.email) AS name",
+            'COALESCE(vendor.storeName, vendor.displayName, vendor.legalName, vendor.email) AS name',
             'COUNT(*) AS c',
           ])
           .where('p.status = :st', { st: 'publish' })
           .andWhere('p.isBlocked = false')
           .andWhere('p.name ILIKE :q', { q: `%${qv}%` })
-          .groupBy("COALESCE(vendor.storeName, vendor.displayName, vendor.legalName, vendor.email)")
+          .groupBy(
+            'COALESCE(vendor.storeName, vendor.displayName, vendor.legalName, vendor.email)',
+          )
           .orderBy('c', 'DESC')
           .limit(20)
           .getRawMany();
@@ -197,7 +280,12 @@ export class AdminAnalyticsController {
         }
       }
       vendors = Array.from(agg.entries())
-        .map(([name, c]) => ({ name, vendorName: name, submitCount: c, submits: c }))
+        .map(([name, c]) => ({
+          name,
+          vendorName: name,
+          submitCount: c,
+          submits: c,
+        }))
         .sort((a, b) => b.submitCount - a.submitCount)
         .slice(0, take);
     }
@@ -230,14 +318,25 @@ export class AdminAnalyticsController {
     // Compute vendor counts per country from vendorHits (distinct vendors across the window)
     const vendorSetsByCountry = new Map<string, Set<string>>();
     for (const row of recent) {
-      const hits = (row as any).vendorHits as Array<{ id?: number; name?: string; country?: string; count: number }> | null;
+      const hits = (row as any).vendorHits as Array<{
+        id?: number;
+        name?: string;
+        country?: string;
+        count: number;
+      }> | null;
       if (!Array.isArray(hits)) continue;
       for (const h of hits) {
         const cc = (h.country || '').toString().toUpperCase();
         if (!cc) continue;
-        if (!vendorSetsByCountry.has(cc)) vendorSetsByCountry.set(cc, new Set());
-        const key = (h.id != null && !Number.isNaN(Number(h.id))) ? `id:${h.id}` : (h.name ? `name:${h.name}` : null);
-        if (key) vendorSetsByCountry.get(cc)!.add(key);
+        if (!vendorSetsByCountry.has(cc))
+          vendorSetsByCountry.set(cc, new Set());
+        const key =
+          h.id != null && !Number.isNaN(Number(h.id))
+            ? `id:${h.id}`
+            : h.name
+              ? `name:${h.name}`
+              : null;
+        if (key) vendorSetsByCountry.get(cc).add(key);
       }
     }
     // Rule: Country totals are the sum of city totals in the window (no double counting, no limit cut-off)
@@ -251,7 +350,7 @@ export class AdminAnalyticsController {
       .groupBy('k.lastCity')
       .getRawMany();
     const cmap = new Map<string, number>();
-    for (const r of citiesRawAll as any[]) {
+    for (const r of citiesRawAll) {
       const code = this.cityToCountry(r.name);
       if (!code || !allowed.has(code)) continue;
       const cnt = Number(r.submits) || 0;
@@ -260,7 +359,14 @@ export class AdminAnalyticsController {
     // Ensure all allowed codes appear even if 0
     for (const code of allowed) if (!cmap.has(code)) cmap.set(code, 0);
     const countries = Array.from(cmap.entries())
-      .map(([code, cnt]) => ({ code, name: this.countryName(code) || code, submitCount: cnt, submits: cnt, country: code, vendorCount: vendorSetsByCountry.get(code)?.size || 0 }))
+      .map(([code, cnt]) => ({
+        code,
+        name: this.countryName(code) || code,
+        submitCount: cnt,
+        submits: cnt,
+        country: code,
+        vendorCount: vendorSetsByCountry.get(code)?.size || 0,
+      }))
       .sort((a, b) => b.submitCount - a.submitCount)
       .slice(0, 4);
 
@@ -277,9 +383,7 @@ export class AdminAnalyticsController {
   }
 
   @Get('admin/search-keywords/top/summary')
-  async topKeywordsSummary(
-    @Query('limit') limit = 100,
-  ) {
+  async topKeywordsSummary(@Query('limit') limit = 100) {
     const take = Math.min(Math.max(Number(limit) || 100, 1), 200);
     const [day, week, month, aggDay, aggWeek, aggMonth] = await Promise.all([
       this.topKeywords('day', take),
@@ -289,7 +393,13 @@ export class AdminAnalyticsController {
       this.topAggregations('week', Math.min(10, take)),
       this.topAggregations('month', Math.min(10, take)),
     ]);
-    return { limit: take, day, week, month, aggregations: { day: aggDay, week: aggWeek, month: aggMonth } };
+    return {
+      limit: take,
+      day,
+      week,
+      month,
+      aggregations: { day: aggDay, week: aggWeek, month: aggMonth },
+    };
   }
 
   // Aliases to be resilient with the admin client
@@ -357,7 +467,7 @@ export class AdminAnalyticsController {
     perPage = 20,
     from?: string,
     to?: string,
-  minSubmits: string = '1',
+    minSubmits: string = '1',
     q?: string,
     sort: SortKey = 'submit_desc',
     city?: string,
@@ -380,14 +490,21 @@ export class AdminAnalyticsController {
       qb.andWhere('k.submitCount >= :minSub', { minSub });
     }
 
-  // Keyword contains
+    // Keyword contains
     if (q && q.trim()) {
-      qb.andWhere('(k.q ILIKE :kw OR k.qNorm ILIKE :kw)', { kw: `%${q.trim()}%` });
+      qb.andWhere('(k.q ILIKE :kw OR k.qNorm ILIKE :kw)', {
+        kw: `%${q.trim()}%`,
+      });
     }
-  // Filters: city, country, vendor
-  if (city && city.trim()) qb.andWhere('k.lastCity ILIKE :city', { city: `%${city.trim()}%` });
-  if (country && country.trim()) qb.andWhere('UPPER(k.lastCountry) = :ct', { ct: country.trim().toUpperCase() });
-  if (vendor && vendor.trim()) qb.andWhere('k.lastVendorName ILIKE :vn', { vn: `%${vendor.trim()}%` });
+    // Filters: city, country, vendor
+    if (city && city.trim())
+      qb.andWhere('k.lastCity ILIKE :city', { city: `%${city.trim()}%` });
+    if (country && country.trim())
+      qb.andWhere('UPPER(k.lastCountry) = :ct', {
+        ct: country.trim().toUpperCase(),
+      });
+    if (vendor && vendor.trim())
+      qb.andWhere('k.lastVendorName ILIKE :vn', { vn: `%${vendor.trim()}%` });
 
     // Derive a “no-result rate” via lastResults only as a proxy for now
     // Sorting
@@ -402,7 +519,9 @@ export class AdminAnalyticsController {
     const [rows, total] = await qb.getManyAndCount();
     const items = rows.map((r) => {
       const allowed = new Set(['ET', 'SO', 'KE', 'DJ']);
-      const lastCountry = ((r as any).lastCountry || '').toString().toUpperCase();
+      const lastCountry = ((r as any).lastCountry || '')
+        .toString()
+        .toUpperCase();
       let code = lastCountry && allowed.has(lastCountry) ? lastCountry : null;
       if (!code) {
         const fromCity = this.cityToCountry((r as any).lastCity);

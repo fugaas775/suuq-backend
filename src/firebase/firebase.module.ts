@@ -22,7 +22,10 @@ import * as fs from 'fs'; // Import the File System module
 
         try {
           // Read the file's contents as a string
-          const serviceAccountFile = fs.readFileSync(serviceAccountPath, 'utf8');
+          const serviceAccountFile = fs.readFileSync(
+            serviceAccountPath,
+            'utf8',
+          );
           // Parse the string into a JSON object
           const serviceAccount = JSON.parse(serviceAccountFile);
 

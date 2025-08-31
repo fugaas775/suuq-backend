@@ -1,9 +1,12 @@
-export function absolutize(url: string | null | undefined): string | null | undefined {
+export function absolutize(
+  url: string | null | undefined,
+): string | null | undefined {
   if (!url || typeof url !== 'string') return url;
   if (url.startsWith('http://') || url.startsWith('https://')) return url;
   if (url.startsWith('//')) {
     // Prefer PUBLIC_BASE_URL scheme if set, else default to https
-    const base = process.env.PUBLIC_BASE_URL || process.env.MEDIA_BASE_URL || '';
+    const base =
+      process.env.PUBLIC_BASE_URL || process.env.MEDIA_BASE_URL || '';
     let scheme = 'https:';
     try {
       if (base) {
@@ -31,14 +34,22 @@ export function normalizeProductMedia<T extends Record<string, any>>(p: T): T {
       if (!img || typeof img !== 'object') return img;
       const o: any = { ...img };
       if (typeof o.src === 'string') o.src = absolutize(o.src);
-      if (typeof o.thumbnailSrc === 'string') o.thumbnailSrc = absolutize(o.thumbnailSrc);
-      if (typeof o.lowResSrc === 'string') o.lowResSrc = absolutize(o.lowResSrc);
+      if (typeof o.thumbnailSrc === 'string')
+        o.thumbnailSrc = absolutize(o.thumbnailSrc);
+      if (typeof o.lowResSrc === 'string')
+        o.lowResSrc = absolutize(o.lowResSrc);
       return o;
     });
   }
-  const first = Array.isArray(out.images) && out.images.length ? out.images[0] : null;
-  const candidate = (first?.thumbnailSrc as string) || (first?.lowResSrc as string) || (first?.src as string) || (out.imageUrl as string);
+  const first =
+    Array.isArray(out.images) && out.images.length ? out.images[0] : null;
+  const candidate =
+    (first?.thumbnailSrc as string) ||
+    (first?.lowResSrc as string) ||
+    (first?.src as string) ||
+    (out.imageUrl as string);
   if (candidate) out.imageUrl = absolutize(candidate);
-  else if (typeof out.imageUrl === 'string') out.imageUrl = absolutize(out.imageUrl);
+  else if (typeof out.imageUrl === 'string')
+    out.imageUrl = absolutize(out.imageUrl);
   return out as T;
 }

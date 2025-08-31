@@ -32,7 +32,7 @@ describe('HealthService', () => {
   describe('checkHealth', () => {
     it('should return basic health status', async () => {
       const result = await service.checkHealth();
-      
+
       expect(result).toHaveProperty('status', 'ok');
       expect(result).toHaveProperty('timestamp');
       expect(result).toHaveProperty('uptime');
@@ -45,7 +45,7 @@ describe('HealthService', () => {
       mockDataSource.query.mockResolvedValue([{ '?column?': 1 }]);
 
       const result = await service.checkReadiness();
-      
+
       expect(result.status).toBe('ok');
       expect(result.checks.database.status).toBe('ok');
       expect(mockDataSource.query).toHaveBeenCalledWith('SELECT 1');
@@ -55,7 +55,7 @@ describe('HealthService', () => {
       mockDataSource.query.mockRejectedValue(new Error('Connection failed'));
 
       const result = await service.checkReadiness();
-      
+
       expect(result.status).toBe('error');
       expect(result.checks.database.status).toBe('error');
       expect(result.checks.database.message).toBe('Database connection failed');

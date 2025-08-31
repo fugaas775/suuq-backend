@@ -1,4 +1,12 @@
-import { IsOptional, IsString, IsNumber, IsBoolean, IsArray, ValidateNested, IsInt } from 'class-validator';
+import {
+  IsOptional,
+  IsString,
+  IsNumber,
+  IsBoolean,
+  IsArray,
+  ValidateNested,
+  IsInt,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 
 // Re-using the ImageDto definition for consistency

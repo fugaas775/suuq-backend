@@ -1,4 +1,12 @@
-import { IsNotEmpty, IsOptional, IsString, IsNumber, IsArray, ValidateNested, IsInt } from 'class-validator';
+import {
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  IsNumber,
+  IsArray,
+  ValidateNested,
+  IsInt,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 
 // A new class to define the structure of each image object
@@ -24,7 +32,7 @@ export class CreateVendorProductDto {
   @IsOptional()
   @IsString()
   description?: string;
-  
+
   @IsOptional()
   @Type(() => Number)
   @IsNumber()

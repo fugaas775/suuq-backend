@@ -1,4 +1,9 @@
-import { Injectable, NotFoundException, ConflictException, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ConflictException,
+  Logger,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, MoreThan } from 'typeorm';
 import { User, VerificationStatus } from './entities/user.entity'; // Import VerificationStatus enum
@@ -13,7 +18,6 @@ export class UsersService {
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
   ) {}
-
 
   /**
    * Update a user's roles (replace the roles array).
@@ -81,7 +85,9 @@ export class UsersService {
    * Find all users with optional filtering and pagination for admin panel.
    * Returns { users, total } for pagination.
    */
-  async findAll(filters?: FindUsersQueryDto & { page?: number; pageSize?: number }): Promise<{ users: User[]; total: number }> {
+  async findAll(
+    filters?: FindUsersQueryDto & { page?: number; pageSize?: number },
+  ): Promise<{ users: User[]; total: number }> {
     const qb = this.userRepository.createQueryBuilder('user');
 
     if (filters?.role) {
@@ -89,14 +95,18 @@ export class UsersService {
     }
 
     if (filters?.search) {
-      qb.andWhere('(user.displayName ILIKE :search OR user.storeName ILIKE :search)', {
-        search: `%${filters.search}%`,
-      });
+      qb.andWhere(
+        '(user.displayName ILIKE :search OR user.storeName ILIKE :search)',
+        {
+          search: `%${filters.search}%`,
+        },
+      );
     }
 
     // Pagination
     const page = filters?.page && filters.page > 0 ? filters.page : 1;
-    const pageSize = filters?.pageSize && filters.pageSize > 0 ? filters.pageSize : 20;
+    const pageSize =
+      filters?.pageSize && filters.pageSize > 0 ? filters.pageSize : 20;
     qb.skip((page - 1) * pageSize).take(pageSize);
 
     const [users, total] = await qb.getManyAndCount();
@@ -114,7 +124,8 @@ export class UsersService {
    * Count users by role (checks if roles array contains the given role).
    */
   async countByRole(role: UserRole): Promise<number> {
-    return this.userRepository.createQueryBuilder('user')
+    return this.userRepository
+      .createQueryBuilder('user')
       .where('user.roles @> :roles', { roles: [role] })
       .getCount();
   }
@@ -172,13 +183,18 @@ export class UsersService {
     if (!Array.isArray(docs)) return [];
     return docs
       .filter((d) => d && (d.url || (d.src && typeof d.src === 'string'))) // tolerate {src}
-      .map((d) => ({ url: d.url || d.src, name: d.name || d.filename || 'document' }));
+      .map((d) => ({
+        url: d.url || d.src,
+        name: d.name || d.filename || 'document',
+      }));
   }
 
   /**
    * Public certificates for a vendor. Returns [] unless APPROVED.
    */
-  async getPublicCertificates(userId: number): Promise<{ url: string; name: string }[]> {
+  async getPublicCertificates(
+    userId: number,
+  ): Promise<{ url: string; name: string }[]> {
     const user = await this.userRepository.findOne({ where: { id: userId } });
     if (!user) return [];
     if (user.verificationStatus !== VerificationStatus.APPROVED) return [];
@@ -237,7 +253,11 @@ export class UsersService {
    * - If a current password exists, verify it before changing.
    * - If no current password (e.g., social login), allow setting a new one directly.
    */
-  async changePassword(userId: number, currentPassword: string | undefined, newPassword: string): Promise<void> {
+  async changePassword(
+    userId: number,
+    currentPassword: string | undefined,
+    newPassword: string,
+  ): Promise<void> {
     const user = await this.findById(userId);
     if (!newPassword || newPassword.length < 8) {
       throw new Error('New password must be at least 8 characters long.');
@@ -277,7 +297,7 @@ export class UsersService {
    * Create a user using Google profile payload.
    * Prevents duplicate emails, sets defaults, and omits password.
    */
-   async createWithGoogle(payload: {
+  async createWithGoogle(payload: {
     email: string;
     name?: string;
     picture?: string;
@@ -287,16 +307,23 @@ export class UsersService {
     roles?: UserRole[];
   }): Promise<User> {
     // Prevent duplicate emails
-    const existing = await this.userRepository.findOne({ where: { email: payload.email } });
+    const existing = await this.userRepository.findOne({
+      where: { email: payload.email },
+    });
     if (existing) {
       throw new ConflictException('A user with this email already exists.');
     }
     const user = this.userRepository.create({
       email: payload.email,
-      displayName: payload.name || `${payload.given_name || ''} ${payload.family_name || ''}`.trim(),
+      displayName:
+        payload.name ||
+        `${payload.given_name || ''} ${payload.family_name || ''}`.trim(),
       avatarUrl: payload.picture,
       googleId: payload.sub,
-      roles: payload.roles && payload.roles.length > 0 ? payload.roles : [UserRole.CUSTOMER],
+      roles:
+        payload.roles && payload.roles.length > 0
+          ? payload.roles
+          : [UserRole.CUSTOMER],
       // password is omitted rather than set to null
       isActive: true,
     });

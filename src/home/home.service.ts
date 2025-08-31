@@ -8,10 +8,17 @@ import { Category } from '../categories/entities/category.entity';
 export class HomeService {
   constructor(
     private readonly productsService: ProductsService,
-    @InjectRepository(Category) private readonly categoryRepo: Repository<Category>,
+    @InjectRepository(Category)
+    private readonly categoryRepo: Repository<Category>,
   ) {}
 
-  async getHomeFeed(opts: { perSection: number; userCity?: string; userRegion?: string; userCountry?: string; view?: 'grid' | 'full' }) {
+  async getHomeFeed(opts: {
+    perSection: number;
+    userCity?: string;
+    userRegion?: string;
+    userCountry?: string;
+    view?: 'grid' | 'full';
+  }) {
     const { perSection, userCity, userRegion, userCountry, view } = opts;
 
     // Build base filters per section
@@ -20,15 +27,56 @@ export class HomeService {
     const curatedNewTags = 'home-new,home_new,new_arrival,curated-new';
     const curatedBestTags = 'home-best,home_best,best_seller,curated-best';
 
-    const [bestSellers, topRated, geoAll, newArrivals, curatedNew, curatedBest] = await Promise.all([
-      this.productsService.findFiltered({ ...base, sort: 'sales_desc', view } as any),
-      this.productsService.findFiltered({ ...base, sort: 'rating_desc', view } as any),
-      this.productsService.findFiltered({ ...base, sort: 'rating_desc', geoPriority: true, userCity, userRegion, userCountry, view } as any),
+    const [
+      bestSellers,
+      topRated,
+      geoAll,
+      newArrivals,
+      curatedNew,
+      curatedBest,
+    ] = await Promise.all([
+      this.productsService.findFiltered({
+        ...base,
+        sort: 'sales_desc',
+        view,
+      }),
+      this.productsService.findFiltered({
+        ...base,
+        sort: 'rating_desc',
+        view,
+      }),
+      this.productsService.findFiltered({
+        ...base,
+        sort: 'rating_desc',
+        geoPriority: true,
+        userCity,
+        userRegion,
+        userCountry,
+        view,
+      }),
       // New arrivals: prefer most recent, lightly geo-prioritized
-      this.productsService.findFiltered({ ...base, sort: 'created_desc', geoPriority: true, userCity, userRegion, userCountry, view } as any),
+      this.productsService.findFiltered({
+        ...base,
+        sort: 'created_desc',
+        geoPriority: true,
+        userCity,
+        userRegion,
+        userCountry,
+        view,
+      }),
       // Curated by tags
-      this.productsService.findFiltered({ ...base, sort: 'created_desc', tags: curatedNewTags, view } as any),
-      this.productsService.findFiltered({ ...base, sort: 'sales_desc', tags: curatedBestTags, view } as any),
+      this.productsService.findFiltered({
+        ...base,
+        sort: 'created_desc',
+        tags: curatedNewTags,
+        view,
+      }),
+      this.productsService.findFiltered({
+        ...base,
+        sort: 'sales_desc',
+        tags: curatedBestTags,
+        view,
+      }),
     ]);
 
     return {
@@ -49,7 +97,13 @@ export class HomeService {
       take: 20,
     });
     return {
-      featuredCategories: categories.map((c) => ({ id: c.id, name: c.name, slug: c.slug, iconUrl: c.iconUrl, order: c.sortOrder })),
+      featuredCategories: categories.map((c) => ({
+        id: c.id,
+        name: c.name,
+        slug: c.slug,
+        iconUrl: c.iconUrl,
+        order: c.sortOrder,
+      })),
       eastAfricaCountries: ['ET', 'SO', 'KE', 'DJ'],
       defaultSorts: {
         homeAll: 'rating_desc',

@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ConflictException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, ILike } from 'typeorm';
 import { Tag } from './tag.entity';
@@ -11,15 +15,13 @@ export class TagService {
   ) {}
 
   async suggestTags(q?: string): Promise<string[]> {
-    const where = q
-      ? { name: ILike(`%${q}%`) }
-      : {};
+    const where = q ? { name: ILike(`%${q}%`) } : {};
     const tags = await this.tagRepository.find({
       where,
       take: 20,
       order: { name: 'ASC' },
     });
-    return tags.map(tag => tag.name);
+    return tags.map((tag) => tag.name);
   }
 
   async findAll(): Promise<Tag[]> {
