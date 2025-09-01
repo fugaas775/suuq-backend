@@ -1,8 +1,8 @@
-// Debug log for DB_PASSWORD and DB_DATABASE
+// Debug info (avoid logging secrets in clear text)
 console.log(
   'DEBUG DB_PASSWORD:',
   typeof process.env.DB_PASSWORD,
-  process.env.DB_PASSWORD,
+  process.env.DB_PASSWORD ? '[REDACTED]' : '<missing>',
 );
 console.log(
   'DEBUG DB_DATABASE:',

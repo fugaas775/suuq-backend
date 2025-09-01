@@ -28,12 +28,12 @@ import { VerificationModule } from './verification/verification.module';
 import { AdminModule } from './admin/admin.module';
 import { HomeModule } from './home/home.module';
 import { CurationModule } from './curation/curation.module';
-import { HealthModule } from './health/health.module';
 
 import { EmailModule } from './email/email.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { FavoritesModule } from './favorites/favorites.module';
+import { HealthModule } from './health/health.module';
 
 @Module({
   imports: [
@@ -66,11 +66,11 @@ import { FavoritesModule } from './favorites/favorites.module';
     FirebaseModule,
     MediaModule,
     VerificationModule,
-    AdminModule,
-    HomeModule,
-    CurationModule,
-    FavoritesModule,
-    HealthModule,
+  AdminModule,
+  HomeModule,
+  CurationModule,
+  FavoritesModule,
+  HealthModule,
   ],
   controllers: [AppController],
   providers: [AppService],
