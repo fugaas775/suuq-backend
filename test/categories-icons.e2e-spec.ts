@@ -43,8 +43,10 @@ describe('Categories icons (e2e)', () => {
   });
 
   it('/api/categories (GET) exposes iconName/iconUrl', async () => {
+    type CategoryLite = { slug?: string; iconName?: string; iconUrl?: string };
     const res = await request(app.getHttpServer()).get('/api/categories').expect(200);
-    const anyWithIcons = res.body.find((c: any) => c.slug?.startsWith('icon-test-') && c.iconName && c.iconUrl);
+    const list = res.body as CategoryLite[];
+    const anyWithIcons = list.find((c) => c.slug?.startsWith('icon-test-') && !!c.iconName && !!c.iconUrl);
     expect(anyWithIcons).toBeTruthy();
   });
 });

@@ -2,6 +2,7 @@ import { INestApplication, CanActivate, ExecutionContext } from '@nestjs/common'
 import { Test } from '@nestjs/testing';
 import * as request from 'supertest';
 import { JwtAuthGuard } from '../src/auth/jwt-auth.guard';
+import { RolesGuard } from '../src/common/guards/roles.guard';
 
 import { VendorPublicController } from '../src/vendor/vendor-public.controller';
 import { VendorService } from '../src/vendor/vendor.service';
@@ -47,8 +48,8 @@ describe('Public verification and profile (e2e-lite)', () => {
       ],
     })
       // Override guards to allow requests without JWT/roles for test
-      .overrideGuard(JwtAuthGuard).useClass(AllowGuard)
-      .overrideGuard((require('../src/common/guards/roles.guard').RolesGuard)).useClass(AllowGuard as any)
+  .overrideGuard(JwtAuthGuard).useClass(AllowGuard)
+  .overrideGuard(RolesGuard).useClass(AllowGuard as any)
       .compile();
 
   app = moduleRef.createNestApplication();
