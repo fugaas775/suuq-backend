@@ -48,11 +48,8 @@ jobs:
     - name: Run type check
       run: npx tsc --noEmit
       
-    - name: Run unit tests (scope to stable specs)
-      run: >-
-        yarn test --passWithNoTests \
-        --testPathPattern='src/(health|app\\.controller)\\..*\\.spec\\.ts$' \
-        --testPathIgnorePatterns=e2e
+    - name: Run unit tests
+      run: yarn test -i
       env:
         NODE_ENV: test
         DATABASE_URL: postgres://testuser:testpass@localhost:5432/suuq_test
