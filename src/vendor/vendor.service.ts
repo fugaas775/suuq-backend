@@ -13,7 +13,8 @@ import { Product } from '../products/entities/product.entity';
 import { Category } from '../categories/entities/category.entity';
 import { ProductImage } from '../products/entities/product-image.entity';
 import { Order, OrderItem } from '../orders/entities/order.entity';
-import { OrderStatus } from '../orders/entities/order.entity';
+import { OrderStatus, PaymentMethod, PaymentStatus } from '../orders/entities/order.entity';
+import { normalizeProductMedia } from '../common/utils/media-url.util';
 import { UserRole } from '../auth/roles.enum';
 import { NotificationsService } from '../notifications/notifications.service';
 
@@ -367,9 +368,6 @@ export class VendorService {
       relations: ['images', 'category', 'tags'],
     });
     try {
-      const {
-        normalizeProductMedia,
-      } = require('../common/utils/media-url.util');
       return Array.isArray(products) ? products.map(normalizeProductMedia) : [];
     } catch {
       return Array.isArray(products) ? products : [];
@@ -938,10 +936,8 @@ export class VendorService {
     // Payment gating: allow moving to SHIPPED only if PAID or COD
     if (
       status === OrderStatus.SHIPPED &&
-      order.paymentStatus !==
-        require('../orders/entities/order.entity').PaymentStatus.PAID &&
-      order.paymentMethod !==
-        require('../orders/entities/order.entity').PaymentMethod.COD
+      order.paymentStatus !== PaymentStatus.PAID &&
+      order.paymentMethod !== PaymentMethod.COD
     ) {
       throw new ForbiddenException('Cannot ship unpaid order (non-COD)');
     }
@@ -1021,10 +1017,8 @@ export class VendorService {
     }
 
     // Payment gating: restrict shipping/delivery on unpaid (non-COD) orders
-    const PaymentStatus =
-      require('../orders/entities/order.entity').PaymentStatus;
-    const PaymentMethod =
-      require('../orders/entities/order.entity').PaymentMethod;
+  const PaymentStatusLocal = PaymentStatus;
+  const PaymentMethodLocal = PaymentMethod;
     const isShippingLike = [
       OrderStatus.SHIPPED,
       OrderStatus.OUT_FOR_DELIVERY,

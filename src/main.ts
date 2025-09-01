@@ -55,7 +55,7 @@ async function bootstrap() {
       crossOriginEmbedderPolicy: false, // keep disabled to avoid breaking dev assets if not COEP-compliant
       hidePoweredBy: true,
       hsts: process.env.NODE_ENV === 'production' ? undefined : false,
-    })
+    }),
   );
   // Disable Express automatic ETag; we'll manage ETag via interceptor selectively
   const expressApp = app.getHttpAdapter().getInstance();
@@ -226,7 +226,10 @@ async function bootstrap() {
   app.useGlobalFilters(new GlobalExceptionFilter());
   // Request ID propagation
   app.use((req, res, next) => {
-    const rid = (req.headers['x-request-id'] as string) || crypto.randomUUID?.() || Math.random().toString(36).slice(2);
+    const rid =
+      (req.headers['x-request-id'] as string) ||
+      crypto.randomUUID?.() ||
+      Math.random().toString(36).slice(2);
     req.headers['x-request-id'] = rid;
     res.setHeader('x-request-id', rid);
     next();
@@ -250,7 +253,8 @@ async function bootstrap() {
   }
   // Swagger (gated by env)
   try {
-    const enableDocs = (process.env.SWAGGER_ENABLED || 'false').toLowerCase() === 'true';
+    const enableDocs =
+      (process.env.SWAGGER_ENABLED || 'false').toLowerCase() === 'true';
     if (enableDocs) {
       const config = new DocumentBuilder()
         .setTitle('Suuq API')

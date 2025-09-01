@@ -32,8 +32,8 @@ export class ProductsService {
     @InjectRepository(User) private userRepo: Repository<User>,
     @InjectRepository(Order) private orderRepo: Repository<Order>,
     @InjectRepository(Tag) private tagRepo: Repository<Tag>,
-  @InjectRepository(Category)
-  private categoryRepo: TreeRepository<Category>,
+    @InjectRepository(Category)
+    private categoryRepo: TreeRepository<Category>,
     @InjectRepository(ProductImpression)
     private impressionRepo: Repository<ProductImpression>,
     @InjectRepository(SearchKeyword)
@@ -243,8 +243,8 @@ export class ProductsService {
     ua: string,
     sessionId?: string,
   ): Promise<string> {
-  const base = `${ip || ''}|${ua || ''}|${sessionId || ''}`;
-  return createHash('sha256').update(base).digest('hex').slice(0, 64);
+    const base = `${ip || ''}|${ua || ''}|${sessionId || ''}`;
+    return createHash('sha256').update(base).digest('hex').slice(0, 64);
   }
 
   private normalizeQuery(q: string): string {

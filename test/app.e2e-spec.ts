@@ -15,9 +15,9 @@ describe('AppController (e2e)', () => {
     }).compile();
 
     app = moduleFixture.createNestApplication();
-  app.setGlobalPrefix('api');
+    app.setGlobalPrefix('api');
     await app.init();
-  dataSource = app.get(DataSource);
+    dataSource = app.get(DataSource);
   });
   afterAll(async () => {
     await app.close();
