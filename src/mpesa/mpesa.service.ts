@@ -12,7 +12,7 @@ export class MpesaService {
       'base64',
     );
     const url = `${baseUrl}/oauth/v1/generate?grant_type=client_credentials`;
-    const response = await axios.get(url, {
+    const response = await axios.get<{ access_token: string }>(url, {
       headers: { Authorization: `Basic ${auth}` },
     });
     return response.data.access_token;
@@ -46,7 +46,7 @@ export class MpesaService {
       AccountReference: `ORDER-${orderId}`,
       TransactionDesc: `Order #${orderId}`,
     };
-    const response = await axios.post(url, payload, {
+    const response = await axios.post<{ [k: string]: unknown }>(url, payload, {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
     return response.data;

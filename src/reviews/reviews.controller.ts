@@ -8,7 +8,6 @@ import {
   Request,
   ParseIntPipe,
   Res,
-  Put,
   HttpStatus,
 } from '@nestjs/common';
 import { ReviewsService } from './reviews.service';
@@ -49,7 +48,7 @@ export class ReviewsController {
   @Get('me')
   async findMine(
     @Param('productId', ParseIntPipe) productId: number,
-    @Request() req: any,
+    @Request() req: { user?: { id?: number } },
     @Res({ passthrough: true }) res: Response,
   ) {
     const review = await this.reviewsService.findMine(req.user.id, productId);

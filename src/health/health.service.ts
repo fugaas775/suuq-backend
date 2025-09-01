@@ -7,7 +7,7 @@ export class HealthService {
 
   constructor(private readonly dataSource: DataSource) {}
 
-  async checkHealth() {
+  checkHealth() {
     return {
       status: 'ok',
       timestamp: new Date().toISOString(),
@@ -37,8 +37,11 @@ export class HealthService {
       // Simple query to check database connectivity
       await this.dataSource.query('SELECT 1');
       return { status: 'ok' };
-    } catch (error) {
-      this.logger.error('Database health check failed', error);
+    } catch (error: unknown) {
+      this.logger.error(
+        'Database health check failed',
+        error instanceof Error ? error.stack : undefined,
+      );
       return {
         status: 'error',
         message: 'Database connection failed',

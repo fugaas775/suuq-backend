@@ -1,4 +1,4 @@
-import { Expose, Type } from 'class-transformer';
+import { Type } from 'class-transformer';
 import { IsIn, IsInt, IsOptional, IsString, Min } from 'class-validator';
 
 export class VendorProductsQueryDto {

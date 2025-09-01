@@ -228,16 +228,22 @@ export class Product {
   // Convenience alias: expose top-level videoUrl reading from attributes.videoUrl when set
   @Expose()
   get videoUrl(): string | undefined {
-    const v = (this.attributes as any)?.videoUrl;
+    const attrs = this.attributes;
+    if (!attrs || typeof attrs !== 'object') return undefined;
+    const v = (attrs as Record<string, unknown>).videoUrl;
     return typeof v === 'string' ? v : undefined;
   }
 
   // Convenience for edit forms: list of tag names
   @Expose({ name: 'tag_names' })
   get tag_names(): string[] {
-    return Array.isArray(this.tags)
-      ? this.tags.map((t: any) => t?.name).filter(Boolean)
-      : [];
+    if (!Array.isArray(this.tags)) return [];
+    const out: string[] = [];
+    for (const t of this.tags) {
+      const name = (t as unknown as { name?: unknown })?.name;
+      if (typeof name === 'string') out.push(name);
+    }
+    return out;
   }
 
   // These getters are now removed as they are not needed.

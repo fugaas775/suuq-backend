@@ -8,6 +8,7 @@ import {
   Query,
   UseGuards,
   Req,
+  ForbiddenException,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { RolesGuard } from '../auth/roles.guard';
@@ -222,9 +223,7 @@ export class AdminVendorsController {
       ? req.user.roles
       : [];
     if (!roles.includes('SUPER_ADMIN')) {
-      throw new (require('@nestjs/common').ForbiddenException)(
-        'Only SUPER_ADMIN can change active state',
-      );
+      throw new ForbiddenException('Only SUPER_ADMIN can change active state');
     }
     const updated = await this.vendorService.setVendorActiveState(
       id,

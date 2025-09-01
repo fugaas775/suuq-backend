@@ -238,11 +238,11 @@ export class ProductsService {
       .execute();
   }
 
-  async deriveImpressionSessionKey(
+  deriveImpressionSessionKey(
     ip: string,
     ua: string,
     sessionId?: string,
-  ): Promise<string> {
+  ): string {
     const base = `${ip || ''}|${ua || ''}|${sessionId || ''}`;
     return createHash('sha256').update(base).digest('hex').slice(0, 64);
   }

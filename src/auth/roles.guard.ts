@@ -48,6 +48,6 @@ export class RolesGuard implements CanActivate {
       );
     }
 
-    return hasRequiredRole;
+    return !!hasRequiredRole;
   }
 }

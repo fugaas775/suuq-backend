@@ -1,4 +1,3 @@
-import { WithdrawalsModule } from './withdrawals/withdrawals.module';
 // src/app.module.ts
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';

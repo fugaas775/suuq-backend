@@ -15,6 +15,7 @@ import {
   Post,
   Delete,
   ParseIntPipe,
+  BadRequestException,
 } from '@nestjs/common';
 import { VendorService } from './vendor.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -45,7 +46,7 @@ export class VendorController {
     verificationStatus?: 'APPROVED' | 'PENDING' | 'REJECTED',
     @Query('role') role?: 'VENDOR',
   ) {
-    const { items, total, currentPage, totalPages } =
+    const { items, total, currentPage } =
       await this.vendorService.findPublicVendors({
         page: Number(page) || 1,
         limit: Math.min(Number(limit) || 20, 100),
@@ -232,9 +233,7 @@ export class VendorController {
         query?.userId,
     );
     if (!delivererId || Number.isNaN(delivererId)) {
-      throw new (require('@nestjs/common').BadRequestException)(
-        'delivererId is required',
-      );
+      throw new BadRequestException('delivererId is required');
     }
     return this.vendorService.assignDelivererByVendor(
       req.user.id,

@@ -47,7 +47,8 @@ export class CategoriesService {
   > {
     const term = (q || '').trim();
     const take = Math.min(Math.max(Number(limit) || 10, 1), 50);
-    const where: any = term
+
+    const where = term
       ? [{ name: ILike(`%${term}%`) }, { slug: ILike(`%${term}%`) }]
       : {};
     const cats = await this.categoryRepo.find({

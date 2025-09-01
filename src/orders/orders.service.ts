@@ -21,10 +21,7 @@ import { TelebirrService } from '../telebirr/telebirr.service';
 import { User } from '../users/entities/user.entity';
 import { NotificationsService } from '../notifications/notifications.service';
 import { plainToInstance } from 'class-transformer';
-import {
-  OrderResponseDto,
-  OrderItemResponseDto,
-} from './dto/order-response.dto';
+import { OrderResponseDto } from './dto/order-response.dto';
 
 @Injectable()
 export class OrdersService {
@@ -57,35 +54,47 @@ export class OrdersService {
 
     const [orders, total] = await qb.getManyAndCount();
     const response = orders.map((order) => {
-      const vendorsMap = new Map<
-        number,
-        { id: number; displayName?: string | null; storeName?: string | null }
-      >();
+      type VendorLike = {
+        id?: number;
+        displayName?: string | null;
+        storeName?: string | null;
+      };
+      const vendorsMap = new Map<number, VendorLike & { id: number }>();
       for (const it of order.items || []) {
-        const v = (it as any).product?.vendor;
-        if (v?.id && !vendorsMap.has(v.id)) {
-          vendorsMap.set(v.id, {
-            id: v.id,
-            displayName: v.displayName || null,
-            storeName: v.storeName || null,
+        const vendor = it.product?.vendor as VendorLike | undefined;
+        if (
+          vendor &&
+          typeof vendor.id === 'number' &&
+          !vendorsMap.has(vendor.id)
+        ) {
+          vendorsMap.set(vendor.id, {
+            id: vendor.id,
+            displayName: vendor.displayName ?? null,
+            storeName: vendor.storeName ?? null,
           });
         }
       }
       const vendors = Array.from(vendorsMap.values());
-      const deliverer = (order as any).deliverer;
+      const deliverer = order.deliverer as
+        | (User & {
+            displayName?: string | null;
+            email?: string | null;
+            phoneNumber?: string | null;
+          })
+        | undefined;
       return plainToInstance(OrderResponseDto, {
         ...order,
-        userId: (order as any).user?.id,
+        userId: order.user?.id,
         delivererId: deliverer?.id,
-        delivererName: deliverer?.displayName || null,
-        delivererEmail: deliverer?.email || null,
-        delivererPhone: deliverer?.phoneNumber || null,
+        delivererName: deliverer?.displayName ?? null,
+        delivererEmail: deliverer?.email ?? null,
+        delivererPhone: deliverer?.phoneNumber ?? null,
         vendors,
         vendorName:
           vendors.length === 1
             ? vendors[0].storeName || vendors[0].displayName || null
             : null,
-        items: (order.items || []).map((item: any) => ({
+        items: (order.items || []).map((item) => ({
           productId: item.product?.id,
           quantity: item.quantity,
           price: item.price,
@@ -99,12 +108,13 @@ export class OrdersService {
    * Get total revenue from all PAID orders.
    */
   async getTotalRevenue(): Promise<number> {
-    const result = await this.orderRepository
+    const raw = await this.orderRepository
       .createQueryBuilder('order')
       .select('SUM(order.total)', 'sum')
-      .where('order.paymentStatus = :status', { status: 'PAID' })
-      .getRawOne();
-    return Number(result.sum) || 0;
+      .where('order.paymentStatus = :status', { status: PaymentStatus.PAID })
+      .getRawOne<{ sum: string | number | null }>();
+    const sum = raw?.sum;
+    return typeof sum === 'number' ? sum : sum ? Number(sum) : 0;
   }
 
   /**
@@ -189,14 +199,14 @@ export class OrdersService {
     });
 
     const total = orderItems.reduce(
-      (sum, item) => sum + item.price * item.quantity,
+      (sum: number, item: OrderItem) => sum + item.price * item.quantity,
       0,
     );
 
     // Payment method branching
     const { paymentMethod, phoneNumber } = createOrderDto;
     let newOrder: Order;
-    if (paymentMethod === PaymentMethod.COD) {
+    if (paymentMethod === 'COD') {
       newOrder = this.orderRepository.create({
         user: { id: userId } as User,
         items: orderItems,
@@ -209,7 +219,7 @@ export class OrdersService {
       const savedOrder = await this.orderRepository.save(newOrder);
       await this.cartService.clearCart(userId);
       return savedOrder;
-    } else if (paymentMethod === PaymentMethod.MPESA) {
+    } else if (paymentMethod === 'MPESA') {
       if (!phoneNumber || !phoneNumber.trim()) {
         throw new BadRequestException(
           'phoneNumber is required for MPESA payments.',
@@ -232,7 +242,7 @@ export class OrdersService {
       );
       await this.cartService.clearCart(userId);
       return savedOrder;
-    } else if (paymentMethod === PaymentMethod.TELEBIRR) {
+    } else if (paymentMethod === 'TELEBIRR') {
       if (!phoneNumber || !phoneNumber.trim()) {
         throw new BadRequestException(
           'phoneNumber is required for TELEBIRR payments.',

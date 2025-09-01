@@ -7,13 +7,17 @@ import { CreateVendorProductDto } from './dto/create-vendor-product.dto';
 import { FindAllVendorsDto } from './dto/find-all-vendors.dto';
 import { UpdateVendorProductDto } from './dto/update-vendor-product.dto';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Like, Raw, ArrayContains, ILike } from 'typeorm';
+import { Repository, Raw, ArrayContains, ILike } from 'typeorm';
 import { User, VerificationStatus } from '../users/entities/user.entity';
 import { Product } from '../products/entities/product.entity';
 import { Category } from '../categories/entities/category.entity';
 import { ProductImage } from '../products/entities/product-image.entity';
 import { Order, OrderItem } from '../orders/entities/order.entity';
-import { OrderStatus, PaymentMethod, PaymentStatus } from '../orders/entities/order.entity';
+import {
+  OrderStatus,
+  PaymentMethod,
+  PaymentStatus,
+} from '../orders/entities/order.entity';
 import { normalizeProductMedia } from '../common/utils/media-url.util';
 import { UserRole } from '../auth/roles.enum';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -433,11 +437,10 @@ export class VendorService {
     const [raw, total] = await qb.getManyAndCount();
     let items = raw;
     try {
-      const {
-        normalizeProductMedia,
-      } = require('../common/utils/media-url.util');
       items = raw.map(normalizeProductMedia);
-    } catch {}
+    } catch {
+      // ignore normalization errors and return raw items
+    }
     const totalPages = Math.ceil(total / limit) || 1;
     return { items, total, page, limit, totalPages };
   }
@@ -566,8 +569,10 @@ export class VendorService {
   async setVendorVerificationStatus(
     userId: number,
     status: VerificationStatus,
-    reason?: string,
+    _reason?: string,
   ): Promise<User> {
+    // Mark optional reason as intentionally unused
+    void _reason;
     const user = await this.userRepository.findOne({ where: { id: userId } });
     if (!user) {
       throw new NotFoundException(`Vendor with ID ${userId} not found.`);
@@ -857,7 +862,7 @@ export class VendorService {
         title: 'New Delivery Assigned',
         body: `You have been assigned order #${orderId}`,
       });
-    } catch (_) {
+    } catch {
       // ignore notification failures
     }
 
@@ -1017,8 +1022,6 @@ export class VendorService {
     }
 
     // Payment gating: restrict shipping/delivery on unpaid (non-COD) orders
-  const PaymentStatusLocal = PaymentStatus;
-  const PaymentMethodLocal = PaymentMethod;
     const isShippingLike = [
       OrderStatus.SHIPPED,
       OrderStatus.OUT_FOR_DELIVERY,
@@ -1113,10 +1116,6 @@ export class VendorService {
       }
     }
     // Payment gating: restrict shipping on unpaid (non-COD) orders
-    const PaymentStatus =
-      require('../orders/entities/order.entity').PaymentStatus;
-    const PaymentMethod =
-      require('../orders/entities/order.entity').PaymentMethod;
     const order = rows[0].order;
     if (
       order.paymentStatus !== PaymentStatus.PAID &&
@@ -1169,12 +1168,9 @@ export class VendorService {
       relations: ['images', 'category', 'tags', 'vendor'],
     });
     try {
-      const {
-        normalizeProductMedia,
-      } = require('../common/utils/media-url.util');
-      return normalizeProductMedia(full);
+      return normalizeProductMedia(full as any);
     } catch {
-      return full;
+      return full as any;
     }
   }
 }

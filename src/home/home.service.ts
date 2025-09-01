@@ -22,19 +22,17 @@ export class HomeService {
     const { perSection, userCity, userRegion, userCountry, view } = opts;
 
     // Build base filters per section
-    const base = { perPage: perSection } as any;
+    const base: Pick<
+      import('../products/dto/ProductFilterDto').ProductFilterDto,
+      'perPage'
+    > & {
+      perPage: number;
+    } = { perPage: perSection };
 
     const curatedNewTags = 'home-new,home_new,new_arrival,curated-new';
     const curatedBestTags = 'home-best,home_best,best_seller,curated-best';
 
-    const [
-      bestSellers,
-      topRated,
-      geoAll,
-      newArrivals,
-      curatedNew,
-      curatedBest,
-    ] = await Promise.all([
+    const combined = (await Promise.all([
       this.productsService.findFiltered({
         ...base,
         sort: 'sales_desc',
@@ -77,7 +75,15 @@ export class HomeService {
         tags: curatedBestTags,
         view,
       }),
-    ]);
+    ])) as unknown;
+    const [
+      bestSellers,
+      topRated,
+      geoAll,
+      newArrivals,
+      curatedNew,
+      curatedBest,
+    ] = combined as Array<{ items: unknown[] }>;
 
     return {
       bestSellers: bestSellers.items,
@@ -89,15 +95,27 @@ export class HomeService {
     };
   }
 
-  async getHomeConfig() {
+  async getHomeConfig(): Promise<{
+    featuredCategories: Array<{
+      id: number;
+      name: string;
+      slug: string;
+      iconUrl: string | null;
+      order: number | null;
+    }>;
+    eastAfricaCountries: string[];
+    defaultSorts: { homeAll: string; bestSellers: string; topRated: string };
+  }> {
     // Featured categories ordered; include minimal fields for client chips/cards
     const categories = await this.categoryRepo.find({
       where: {},
-      order: { sortOrder: 'ASC', name: 'ASC' as any },
+      // TypeORM typing quirk: cast to any for name order only
+
+      order: { sortOrder: 'ASC', name: 'ASC' as const },
       take: 20,
     });
     return {
-      featuredCategories: categories.map((c) => ({
+      featuredCategories: categories.map((c: Category) => ({
         id: c.id,
         name: c.name,
         slug: c.slug,

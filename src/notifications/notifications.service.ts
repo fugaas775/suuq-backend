@@ -1,16 +1,16 @@
+/* eslint-disable @typescript-eslint/no-base-to-string */
 import { Injectable, Inject, Logger } from '@nestjs/common';
 import { UsersService } from '../users/users.service';
 import { Repository } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DeviceToken } from './entities/device-token.entity';
-import { RegisterDeviceTokenDto } from './dto/register-device-token.dto';
 
 @Injectable()
 export class NotificationsService {
   private readonly logger = new Logger(NotificationsService.name);
 
   constructor(
-    @Inject('FIREBASE_ADMIN') private readonly firebase: any,
+    @Inject('FIREBASE_ADMIN') private readonly firebase: unknown,
     @InjectRepository(DeviceToken)
     private readonly deviceTokenRepository: Repository<DeviceToken>,
     private readonly usersService: UsersService,
@@ -38,21 +38,31 @@ export class NotificationsService {
     const message = {
       notification: { title, body },
       tokens: deviceTokens,
-    } as any;
+    } as const;
     // firebase-admin v13 uses sendEachForMulticast
     try {
-      const response = await this.firebase
-        .messaging()
-        .sendEachForMulticast(message);
+      const fb = this.firebase as {
+        messaging?: () => {
+          sendEachForMulticast: (
+            msg: typeof message,
+          ) => Promise<{ successCount: number; failureCount: number }>;
+        };
+      };
+      const response = await fb.messaging?.().sendEachForMulticast(message);
+      if (!response) {
+        this.logger.error('Firebase messaging not available');
+        return { successCount: 0, failureCount: 0 };
+      }
       this.logger.log(
         `Sent notification to user ${userId}: ${response.successCount} success, ${response.failureCount} failure`,
       );
       return response;
-    } catch (err) {
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
       this.logger.error(
-        `Failed to send notification to user ${userId}: ${err?.message || err}`,
+        `Failed to send notification to user ${userId}: ${msg}`,
       );
-      return { successCount: 0, failureCount: 0 } as any;
+      return { successCount: 0, failureCount: 0 };
     }
   }
 

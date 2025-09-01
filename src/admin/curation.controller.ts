@@ -11,6 +11,7 @@ import {
   Patch,
   Param,
   ParseIntPipe,
+  NotFoundException,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { RolesGuard } from '../auth/roles.guard';
@@ -385,9 +386,7 @@ export class AdminCurationController {
       relations: ['tags'],
     });
     if (!product) {
-      throw new (require('@nestjs/common').NotFoundException)(
-        'Product not found',
-      );
+      throw new NotFoundException('Product not found');
     }
 
     let tags = product.tags || [];

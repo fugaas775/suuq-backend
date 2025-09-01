@@ -24,7 +24,6 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { UserRole } from '../auth/roles.enum';
 import { Category } from './entities/category.entity';
 import { Response } from 'express';
-import { ILike } from 'typeorm';
 
 @Controller('categories')
 @UseInterceptors(ClassSerializerInterceptor)

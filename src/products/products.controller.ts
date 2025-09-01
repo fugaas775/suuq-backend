@@ -20,7 +20,7 @@ import { UpdateProductDto } from './dto/update-product.dto';
 import { AuthGuard } from '@nestjs/passport';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
-import { plainToInstance } from 'class-transformer';
+// import { plainToInstance } from 'class-transformer';
 import { ClassSerializerInterceptor } from '@nestjs/common';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UserRole } from '../auth/roles.enum';
@@ -28,6 +28,7 @@ import { ProductFilterDto } from './dto/ProductFilterDto';
 import { UseInterceptors, ParseBoolPipe } from '@nestjs/common';
 import { RecordImpressionsDto } from './dto/record-impressions.dto';
 import { normalizeProductMedia } from '../common/utils/media-url.util';
+import { AuthenticatedRequest } from '../auth/auth.types';
 
 @UseInterceptors(ClassSerializerInterceptor)
 @Controller('products')
@@ -42,8 +43,12 @@ export class ProductsController {
   @Post()
   @UseGuards(AuthGuard('jwt'), RolesGuard)
   @Roles(UserRole.VENDOR)
-  create(@Body() createProductDto: CreateProductDto, @Req() req: any) {
-    console.log('Raw request body:', JSON.stringify(req.body));
+  create(
+    @Body() createProductDto: CreateProductDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const bodyString = JSON.stringify(req.body ?? {});
+    console.log('Raw request body:', bodyString);
     console.log('Parsed DTO:', JSON.stringify(createProductDto));
     return this.productsService.create({
       ...createProductDto,
@@ -52,22 +57,25 @@ export class ProductsController {
   }
   // Batched impressions for list views (idempotent per session/window)
   @Post('impressions')
-  async recordImpressions(@Req() req: any, @Body() dto: RecordImpressionsDto) {
+  async recordImpressions(
+    @Req() req: AuthenticatedRequest,
+    @Body() dto: RecordImpressionsDto,
+  ) {
     // If authenticated vendor, ignore to prevent inflating their own stats
-    const role = req.user?.role || req.user?.roles?.[0];
+    const role = (req.user as any)?.role || req.user?.roles?.[0];
     if (role && String(role).toUpperCase().includes('VENDOR')) {
       return { recorded: 0, ignored: dto.productIds.length };
     }
-    const ip = (
+    const ip = String(
       req.headers['x-real-ip'] ||
-      req.headers['x-forwarded-for'] ||
-      req.ip ||
-      ''
-    ).toString();
-    const ua = (req.headers['user-agent'] || '').toString();
+        req.headers['x-forwarded-for'] ||
+        req.ip ||
+        '',
+    );
+    const ua = String(req.headers['user-agent'] || '');
     const sessionId = dto.sessionId || '';
     const windowSeconds = Math.max(60, Number(dto.windowSeconds || 300));
-    const sessionKey = await this.productsService.deriveImpressionSessionKey(
+    const sessionKey = this.productsService.deriveImpressionSessionKey(
       ip,
       ua,
       sessionId,
@@ -85,11 +93,15 @@ export class ProductsController {
   async findAll(
     @Query() filters: ProductFilterDto,
     @Query('currency') currency?: string,
-    @Req() req?: any,
+    @Req() req?: AuthenticatedRequest,
   ) {
     try {
-      this.logger.debug(
-        `findAll filters: ${JSON.stringify(filters)}, currency: ${currency}`,
+      // Role (if present)
+      const role =
+        (req?.user as { role?: string; roles?: string[] } | undefined)?.role ||
+        req?.user?.roles?.[0];
+      this.logger.log(
+        `findAll filters: ${JSON.stringify(filters)}, currency: ${currency}, role: ${String(role || '')}`,
       );
 
       // Support both limit and perPage for pagination
@@ -98,8 +110,18 @@ export class ProductsController {
       }
 
       // Map category alias to categoryId for frontend query param compatibility
-      if (!filters.categoryId && (filters as any).categoryAlias) {
-        filters.categoryId = (filters as any).categoryAlias;
+      if (!filters.categoryId) {
+        const anyFilters = filters as unknown as Record<string, unknown>;
+        const alias = anyFilters.categoryAlias as unknown;
+        const n =
+          typeof alias === 'string'
+            ? Number(alias)
+            : typeof alias === 'number'
+            ? alias
+            : undefined;
+        if (typeof n === 'number' && Number.isFinite(n) && n > 0) {
+          filters.categoryId = n;
+        }
       }
 
       const result = await this.productsService.findFiltered(filters);
@@ -114,18 +136,24 @@ export class ProductsController {
           { name: string; id?: number; country?: string; count: number }
         >();
         for (const it of result.items || []) {
-          const vendor: any = (it as any).vendor;
+          const vendor = (it as unknown as { vendor?: any }).vendor as
+            | {
+                id?: number;
+                storeName?: string;
+                displayName?: string;
+                name?: string;
+                registrationCountry?: string;
+                country?: string;
+              }
+            | undefined;
           if (!vendor) continue;
-          const vid = vendor.id as number | undefined;
-          const vname = (
-            vendor.storeName ||
-            vendor.displayName ||
-            vendor.name ||
-            ''
-          ).toString();
-          const vcountry = (vendor.registrationCountry || vendor.country || '')
-            .toString()
-            .toUpperCase();
+          const vid = vendor.id;
+          const vname = String(
+            vendor.storeName || vendor.displayName || vendor.name || '',
+          );
+          const vcountry = String(
+            vendor.registrationCountry || vendor.country || '',
+          ).toUpperCase();
           const key = `${vid || ''}|${vname}`;
           if (!counts.has(key))
             counts.set(key, {
@@ -134,7 +162,8 @@ export class ProductsController {
               country: vcountry || undefined,
               count: 0,
             });
-          counts.get(key).count += 1;
+          const cur = counts.get(key);
+          if (cur) cur.count += 1;
         }
         vendorHits = Array.from(counts.values())
           .sort((a, b) => b.count - a.count)
@@ -145,62 +174,83 @@ export class ProductsController {
 
       // Record submitted searches (typed then submitted)
       if (filters.search && typeof filters.search === 'string') {
-        const ip = (
-          req?.headers?.['x-real-ip'] ||
-          req?.headers?.['x-forwarded-for'] ||
-          req?.ip ||
-          ''
-        ).toString();
-        const ua = (req?.headers?.['user-agent'] || '').toString();
-        let vendorName = (
-          req?.user?.storeName ||
-          req?.user?.displayName ||
-          req?.user?.name ||
-          ''
-        ).toString();
+        const ip = String(
+          (req?.headers?.['x-real-ip'] as string | undefined) ||
+            (req?.headers?.['x-forwarded-for'] as string | undefined) ||
+            req?.ip ||
+            '',
+        );
+        const ua = String(req?.headers?.['user-agent'] || '');
+        let vendorName = String(
+          (
+            req?.user as
+              | { storeName?: string; displayName?: string; name?: string }
+              | undefined
+          )?.storeName ||
+            req?.user?.displayName ||
+            (req?.user as { name?: string } | undefined)?.name ||
+            '',
+        );
         // If the request is filtering for a vendor, derive a display name even if the request is anonymous
         const vendorIdFilter =
-          (filters as any).vendorId || (filters as any).vendor_id;
+          (filters as unknown as any).vendorId ||
+          (filters as unknown as any).vendor_id;
         if (!vendorName && vendorIdFilter) {
           const vn = await this.productsService.getVendorDisplayName(
             Number(vendorIdFilter),
           );
           vendorName = vn || '';
         }
-        const cityHeader = (
-          req?.headers?.['x-user-city'] ||
-          req?.headers?.['x-city'] ||
-          ''
-        ).toString();
-        const countryHeader = (
-          req?.headers?.['x-user-country'] ||
-          req?.headers?.['x-country'] ||
-          req?.headers?.['cf-ipcountry'] ||
-          req?.headers?.['x-vercel-ip-country'] ||
-          req?.headers?.['x-country-code'] ||
-          ''
-        ).toString();
+        const cityHeader = String(
+          (req?.headers?.['x-user-city'] as string | undefined) ||
+            (req?.headers?.['x-city'] as string | undefined) ||
+            '',
+        );
+        const countryHeader = String(
+          (req?.headers?.['x-user-country'] as string | undefined) ||
+            (req?.headers?.['x-country'] as string | undefined) ||
+            (req?.headers?.['cf-ipcountry'] as string | undefined) ||
+            (req?.headers?.['x-vercel-ip-country'] as string | undefined) ||
+            (req?.headers?.['x-country-code'] as string | undefined) ||
+            '',
+        );
         // Accept-Language fallback: e.g., en-US -> US
         let alCountry = '';
-        const al = (req?.headers?.['accept-language'] || '').toString();
-        if (al) {
-          const m = String(al).match(/^[a-z]{2,3}-([A-Z]{2})/);
+        const al1 = String(req?.headers?.['accept-language'] || '');
+        if (al1) {
+          const m = String(al1).match(/^[a-z]{2,3}-([A-Z]{2})/);
           if (m && m[1]) alCountry = m[1];
         }
         // Authenticated user country fallback
-        const userCountry = (
-          req?.user?.registrationCountry ||
-          req?.user?.country ||
-          ''
-        ).toString();
+        const userCountry = String(
+          (
+            req?.user as
+              | { registrationCountry?: string; country?: string }
+              | undefined
+          )?.registrationCountry ||
+            (
+              req?.user as
+                | { registrationCountry?: string; country?: string }
+                | undefined
+            )?.country ||
+            '',
+        );
         const city =
-          (filters as any).userCity ||
-          (filters as any).city ||
+          ((filters as unknown as Record<string, unknown>).userCity as
+            | string
+            | undefined) ||
+          ((filters as unknown as Record<string, unknown>).city as
+            | string
+            | undefined) ||
           cityHeader ||
           '';
         const country = (
-          (filters as any).userCountry ||
-          (filters as any).country ||
+          ((filters as unknown as Record<string, unknown>).userCountry as
+            | string
+            | undefined) ||
+          ((filters as unknown as Record<string, unknown>).country as
+            | string
+            | undefined) ||
           countryHeader ||
           userCountry ||
           alCountry ||

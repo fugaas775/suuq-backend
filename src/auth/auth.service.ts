@@ -17,8 +17,7 @@ import { User } from '../users/entities/user.entity';
 import { UserRole } from './roles.enum';
 import { OAuth2Client, TokenPayload } from 'google-auth-library';
 import { ConfigService } from '@nestjs/config';
-import { UserResponseDto } from '../users/dto/user-response.dto';
-import { plainToInstance } from 'class-transformer';
+// removed unused imports
 import { EmailService } from '../email/email.service';
 
 @Injectable()
@@ -158,7 +157,7 @@ export class AuthService {
         ].filter((id) => !!id),
       });
       googlePayload = ticket.getPayload();
-    } catch (error: any) {
+    } catch {
       throw new UnauthorizedException('Invalid Google token');
     }
 
@@ -202,7 +201,7 @@ export class AuthService {
       }
 
       return this.generateTokens(user);
-    } catch (error) {
+    } catch {
       throw new UnauthorizedException('Invalid or expired refresh token');
     }
   }

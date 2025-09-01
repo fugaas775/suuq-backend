@@ -1,6 +1,6 @@
 // Backend: src/payments/payments.controller.ts
 
-import { Controller, Post, Body, Req, Logger, Get } from '@nestjs/common'; // <-- Make sure 'Get' is imported
+import { Controller, Post, Body, Logger, Get } from '@nestjs/common';
 import { OrdersService } from '../orders/orders.service';
 import { Repository } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -49,14 +49,25 @@ export class PaymentsController {
   }
 
   @Post('mpesa-callback')
-  async mpesaCallback(@Body() body: any) {
+  async mpesaCallback(
+    @Body()
+    body: {
+      Body?: {
+        stkCallback?: {
+          ResultCode?: number;
+          CallbackMetadata?: unknown;
+          MerchantRequestID?: string;
+          CheckoutRequestID?: string;
+          AccountReference?: string;
+        };
+      };
+    },
+  ) {
     this.logger.log('Received M-Pesa callback', JSON.stringify(body));
-    const callback = body?.Body?.stkCallback;
+    const callback = body.Body?.stkCallback;
     if (!callback) return { status: 'ignored' };
-    const resultCode = callback.ResultCode;
-    const metadata = callback.CallbackMetadata;
-    const orderRef = callback?.MerchantRequestID || callback?.CheckoutRequestID;
-    const accountRef = callback?.AccountReference || '';
+    const resultCode = callback.ResultCode ?? -1;
+    const accountRef = callback.AccountReference || '';
     const orderId = parseInt((accountRef || '').replace('ORDER-', ''));
     if (!orderId || isNaN(orderId)) return { status: 'order not found' };
     const order = await this.orderRepository.findOne({

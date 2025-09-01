@@ -8,12 +8,14 @@ export function absolutize(
     const base =
       process.env.PUBLIC_BASE_URL || process.env.MEDIA_BASE_URL || '';
     let scheme = 'https:';
-    try {
-      if (base) {
+    if (base) {
+      try {
         const u = new URL(base);
         if (u.protocol) scheme = u.protocol;
+      } catch {
+        // ignore malformed base
       }
-    } catch {}
+    }
     return `${scheme}${url}`;
   }
   const base = process.env.MEDIA_BASE_URL || process.env.PUBLIC_BASE_URL || '';

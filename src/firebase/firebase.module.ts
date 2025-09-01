@@ -1,5 +1,6 @@
 import { Module, Global, Logger } from '@nestjs/common';
 import * as admin from 'firebase-admin';
+import { ServiceAccount } from 'firebase-admin';
 import { ConfigModule } from '@nestjs/config';
 import * as path from 'path';
 import * as fs from 'fs'; // Import the File System module
@@ -27,7 +28,9 @@ import * as fs from 'fs'; // Import the File System module
             'utf8',
           );
           // Parse the string into a JSON object
-          const serviceAccount = JSON.parse(serviceAccountFile);
+          const serviceAccount = JSON.parse(
+            serviceAccountFile,
+          ) as ServiceAccount;
 
           if (!admin.apps.length) {
             admin.initializeApp({
@@ -36,10 +39,10 @@ import * as fs from 'fs'; // Import the File System module
             logger.log('Firebase Admin initialized successfully.');
           }
           return admin;
-        } catch (error) {
+        } catch (error: unknown) {
           logger.error(
             `CRITICAL: Failed to load or parse Firebase service account from: ${serviceAccountPath}.`,
-            error.stack,
+            error instanceof Error ? error.stack : undefined,
           );
           throw new Error('Could not initialize Firebase Admin SDK.');
         }

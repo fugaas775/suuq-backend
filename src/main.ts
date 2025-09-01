@@ -1,6 +1,5 @@
 import 'dotenv/config';
 import 'reflect-metadata';
-import express from 'express';
 import { NestFactory } from '@nestjs/core';
 import { DataSource } from 'typeorm';
 import { AppModule } from './app.module';
@@ -58,7 +57,9 @@ async function bootstrap() {
     }),
   );
   // Disable Express automatic ETag; we'll manage ETag via interceptor selectively
-  const expressApp = app.getHttpAdapter().getInstance();
+  const expressApp = app.getHttpAdapter().getInstance() as
+    | (import('express').Express & { set?: (k: string, v: unknown) => void })
+    | undefined;
   if (expressApp?.set) {
     expressApp.set('etag', false);
   }
@@ -83,7 +84,10 @@ async function bootstrap() {
   ).map((o) => o.trim());
 
   app.enableCors({
-    origin: (origin, callback) => {
+    origin: (
+      origin: string | undefined,
+      callback: (err: Error | null, allow?: boolean) => void,
+    ) => {
       // Allow no-origin requests (mobile apps, curl, server-to-server)
       if (!origin) return callback(null, true);
       if (allowedOrigins.includes(origin)) return callback(null, true);
@@ -134,70 +138,84 @@ async function bootstrap() {
   // JSON already configured above
 
   // Ensure caching/CDNs vary responses per requesting origin
-  app.use((req, res, next) => {
-    res.setHeader('Vary', 'Origin');
-    next();
-  });
+  app.use(
+    (
+      req: import('express').Request,
+      res: import('express').Response,
+      next: import('express').NextFunction,
+    ) => {
+      res.setHeader('Vary', 'Origin');
+      next();
+    },
+  );
 
   // Improved logging with sanitization
-  app.use((req: any, res: any, next: any) => {
-    const requestId = req.id;
-    const isProduction = process.env.NODE_ENV === 'production';
+  app.use(
+    (
+      req: import('express').Request & { id?: string },
+      res: import('express').Response,
+      next: import('express').NextFunction,
+    ) => {
+      const requestId = (req as { id?: string }).id;
+      const isProduction = process.env.NODE_ENV === 'production';
 
-    if (isProduction) {
-      // Structured logging in production
-      const logData = {
-        requestId,
-        method: req.method,
-        url: req.url,
-        userAgent: req.headers['user-agent'],
-        timestamp: new Date().toISOString(),
-      };
+      if (isProduction) {
+        // Structured logging in production
+        const logData: Record<string, unknown> = {
+          requestId,
+          method: req.method,
+          url: req.url,
+          userAgent: req.headers['user-agent'],
+          timestamp: new Date().toISOString(),
+        };
 
-      // Sanitize body in production - redact sensitive fields
-      if (req.body && typeof req.body === 'object') {
-        const sanitizedBody = { ...req.body };
-        const sensitiveFields = [
-          'password',
-          'token',
-          'secret',
-          'authorization',
-          'jwt',
-        ];
+        // Sanitize body in production - redact sensitive fields
+        if (req.body && typeof req.body === 'object') {
+          const sanitizedBody: Record<string, unknown> = {
+            ...(req.body as Record<string, unknown>),
+          };
+          const sensitiveFields = [
+            'password',
+            'token',
+            'secret',
+            'authorization',
+            'jwt',
+          ];
 
-        for (const field of sensitiveFields) {
-          if (sanitizedBody[field]) {
-            sanitizedBody[field] = '[REDACTED]';
+          for (const field of sensitiveFields) {
+            if (sanitizedBody[field]) {
+              sanitizedBody[field] = '[REDACTED]';
+            }
           }
+
+          logData['body'] = sanitizedBody;
         }
 
-        logData['body'] = sanitizedBody;
-      }
-
-      console.log(JSON.stringify(logData));
-    } else {
-      // Verbose logging in development
-      console.log('--- Logging middleware triggered ---');
-      console.log(`[${req.method}] ${req.url} (ID: ${requestId})`);
-      console.log('Request headers:', req.headers);
-
-      // Do not attempt to log body for multipart/form-data
-      const contentType = req.headers['content-type'];
-      if (contentType && contentType.includes('multipart/form-data')) {
-        console.log('Incoming request body: <multipart/form-data stream>');
-      } else if (typeof req.body !== 'undefined') {
-        const bodyString = JSON.stringify(req.body);
-        console.log(
-          'Incoming request body:',
-          bodyString === '{}' ? '<empty object>' : bodyString,
-        );
+        console.log(JSON.stringify(logData));
       } else {
-        console.log('Incoming request body: <undefined>');
-      }
-    }
+        // Verbose logging in development
+        console.log('--- Logging middleware triggered ---');
+        console.log(`[${req.method}] ${req.url} (ID: ${requestId})`);
+        console.log('Request headers:', req.headers);
 
-    next();
-  });
+        // Do not attempt to log body for multipart/form-data
+        const contentType = req.headers['content-type'];
+        if (contentType && contentType.includes('multipart/form-data')) {
+          console.log('Incoming request body: <multipart/form-data stream>');
+        } else if (typeof req.body !== 'undefined') {
+          const bodyString = JSON.stringify(req.body as unknown);
+          console.log(
+            'Incoming request body:',
+            bodyString === '{}' ? '<empty object>' : bodyString,
+          );
+        } else {
+          console.log('Incoming request body: <undefined>');
+        }
+      }
+
+      next();
+    },
+  );
 
   // Set global prefix for all routes
   app.setGlobalPrefix('api');
@@ -210,11 +228,13 @@ async function bootstrap() {
       whitelist: true,
       transform: true,
       exceptionFactory: (errors) => {
-        const messages = errors.map(
-          (error) =>
-            `${error.property}: ${Object.values(error.constraints).join(', ')}`,
-        );
-        logger.warn(`Validation failed: ${messages}`);
+        const messages = errors.map((error) => {
+          const constraints = error.constraints
+            ? Object.values(error.constraints)
+            : [];
+          return `${error.property}: ${constraints.join(', ')}`;
+        });
+        logger.warn(`Validation failed: ${messages.join('; ')}`);
         return new BadRequestException(messages);
       },
     }),
@@ -225,15 +245,22 @@ async function bootstrap() {
   // Register global exception filter for detailed error logging
   app.useGlobalFilters(new GlobalExceptionFilter());
   // Request ID propagation
-  app.use((req, res, next) => {
-    const rid =
-      (req.headers['x-request-id'] as string) ||
-      crypto.randomUUID?.() ||
-      Math.random().toString(36).slice(2);
-    req.headers['x-request-id'] = rid;
-    res.setHeader('x-request-id', rid);
-    next();
-  });
+  app.use(
+    (
+      req: import('express').Request,
+      res: import('express').Response,
+      next: import('express').NextFunction,
+    ) => {
+      const rid =
+        (req.headers['x-request-id'] as string | undefined) ||
+        (typeof crypto.randomUUID === 'function'
+          ? crypto.randomUUID()
+          : Math.random().toString(36).slice(2));
+      // Ensure the header is set on response; don't mutate req.headers type unsafely
+      res.setHeader('x-request-id', rid);
+      next();
+    },
+  );
   // (removed temporary route introspection)
   // Auto-run DB migrations unless disabled
   try {
@@ -245,11 +272,9 @@ async function bootstrap() {
       await ds.runMigrations();
       Logger.log('Database migrations executed on startup', 'Bootstrap');
     }
-  } catch (e: any) {
-    Logger.warn(
-      `Auto migration skipped/failed: ${e?.message || e}`,
-      'Bootstrap',
-    );
+  } catch (_e: unknown) {
+    const msg = _e instanceof Error ? _e.message : 'unknown error';
+    Logger.warn(`Auto migration skipped/failed: ${msg}`, 'Bootstrap');
   }
   // Swagger (gated by env)
   try {
@@ -268,11 +293,14 @@ async function bootstrap() {
       });
       Logger.log('Swagger documentation available at /api/docs', 'Bootstrap');
     }
-  } catch {}
+  } catch {
+    Logger.warn('Swagger setup failed (disabled or error)', 'Bootstrap');
+  }
 
   const port = parseInt(process.env.PORT || '3000', 10);
   const host = process.env.HOST || '0.0.0.0';
   await app.listen(port, host);
-  console.log(`Application is running on: ${await app.getUrl()}`);
+  const appUrl = await app.getUrl();
+  console.log(`Application is running on: ${appUrl}`);
 }
-bootstrap();
+void bootstrap();

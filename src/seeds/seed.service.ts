@@ -92,7 +92,7 @@ export class SeedService {
         iconName: string;
         subcategories?: { name: string; iconName?: string }[];
       }
-    > = require('./data/categories_with_icons.json');
+    > = (await import('./data/categories_with_icons.json')).default as any;
 
     for (const [parentName, meta] of Object.entries(data)) {
       const parentSlug = this.slugifyName(parentName);

@@ -22,7 +22,7 @@ export class HealthController {
       },
     },
   })
-  async getHealth() {
+  getHealth() {
     return this.healthService.checkHealth();
   }
 
@@ -50,7 +50,7 @@ export class HealthController {
       },
     },
   })
-  async getReadiness() {
+  getReadiness() {
     return this.healthService.checkReadiness();
   }
 }

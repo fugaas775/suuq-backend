@@ -7,13 +7,12 @@ import {
   UseGuards,
   Req,
   ParseIntPipe,
-  Patch,
   Query,
   UseInterceptors,
 } from '@nestjs/common';
-import { RolesGuard } from '../auth/roles.guard';
-import { Roles } from '../common/decorators/roles.decorator';
-import { UserRole } from '../auth/roles.enum';
+// import { RolesGuard } from '../auth/roles.guard';
+// import { Roles } from '../common/decorators/roles.decorator';
+// import { UserRole } from '../auth/roles.enum';
 import { OrdersService } from './orders.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';

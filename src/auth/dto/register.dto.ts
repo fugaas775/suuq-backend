@@ -6,7 +6,6 @@ import {
   IsArray,
   IsEnum,
   ValidateIf,
-  IsNotEmpty,
   Matches,
 } from 'class-validator';
 import { UserRole } from '../../auth/roles.enum';
