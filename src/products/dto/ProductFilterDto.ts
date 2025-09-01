@@ -85,9 +85,13 @@ export class ProductFilterDto {
   vendorId?: number;
 
   @IsOptional()
-  @IsString()
   @Expose({ name: 'tag' })
-  tags?: string;
+  @Transform(({ value }) => {
+    if (Array.isArray(value)) return value.map((v) => String(v));
+    if (typeof value === 'string') return value;
+    return undefined;
+  })
+  tags?: string | string[];
 
   @IsOptional()
   @Type(() => Number)

@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In, MoreThan, TreeRepository } from 'typeorm';
+import { Category } from '../categories/entities/category.entity';
 import { Product } from './entities/product.entity';
 import { User } from '../users/entities/user.entity';
 import { Order } from '../orders/entities/order.entity';
@@ -18,6 +19,7 @@ import { Tag } from '../tags/tag.entity';
 import { ProductImpression } from './entities/product-impression.entity';
 import { SearchKeyword } from './entities/search-keyword.entity';
 import { createHash } from 'crypto';
+import { normalizeProductMedia } from '../common/utils/media-url.util';
 
 @Injectable()
 export class ProductsService {
@@ -30,10 +32,8 @@ export class ProductsService {
     @InjectRepository(User) private userRepo: Repository<User>,
     @InjectRepository(Order) private orderRepo: Repository<Order>,
     @InjectRepository(Tag) private tagRepo: Repository<Tag>,
-    @InjectRepository(
-      require('../categories/entities/category.entity').Category,
-    )
-    private categoryRepo: TreeRepository<any>,
+  @InjectRepository(Category)
+  private categoryRepo: TreeRepository<Category>,
     @InjectRepository(ProductImpression)
     private impressionRepo: Repository<ProductImpression>,
     @InjectRepository(SearchKeyword)
@@ -207,9 +207,6 @@ export class ProductsService {
     // Increment view counter in the background; ignore failures
     this.incrementViewCount(id).catch(() => {});
     try {
-      const {
-        normalizeProductMedia,
-      } = require('../common/utils/media-url.util');
       return normalizeProductMedia(product);
     } catch {
       return product;
@@ -246,8 +243,8 @@ export class ProductsService {
     ua: string,
     sessionId?: string,
   ): Promise<string> {
-    const base = `${ip || ''}|${ua || ''}|${sessionId || ''}`;
-    return createHash('sha1').update(base).digest('hex').slice(0, 40);
+  const base = `${ip || ''}|${ua || ''}|${sessionId || ''}`;
+  return createHash('sha256').update(base).digest('hex').slice(0, 64);
   }
 
   private normalizeQuery(q: string): string {
@@ -460,7 +457,12 @@ export class ProductsService {
     if (typeof featured === 'boolean')
       qb.andWhere('product.featured = :featured', { featured });
     if (tags) {
-      const tagList = tags.split(',').map((t) => t.trim());
+      const tagList = Array.isArray(tags)
+        ? (tags as string[]).map((t) => String(t).trim())
+        : String(tags)
+            .split(',')
+            .map((t) => t.trim())
+            .filter(Boolean);
       qb.innerJoin(
         'product.tags',
         'tagFilter',
@@ -652,7 +654,12 @@ export class ProductsService {
         if (typeof featured === 'boolean')
           q.andWhere('product.featured = :featured', { featured });
         if (tags) {
-          const tagList = tags.split(',').map((t) => t.trim());
+          const tagList = Array.isArray(tags)
+            ? (tags as string[]).map((t) => String(t).trim())
+            : String(tags)
+                .split(',')
+                .map((t) => t.trim())
+                .filter(Boolean);
           q.innerJoin(
             'product.tags',
             'tagFilter',

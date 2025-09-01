@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import 'reflect-metadata';
-const express = require('express');
+import express from 'express';
 import { NestFactory } from '@nestjs/core';
 import { DataSource } from 'typeorm';
 import { AppModule } from './app.module';

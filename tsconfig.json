@@ -22,7 +22,7 @@
     "moduleResolution": "node",
   "types": ["node", "jest"]
   },
-  "include": ["src/**/*"],
+  "include": ["src/**/*", "test/**/*.ts"],
   "ts-node": {
     "compilerOptions": {
       "module": "CommonJS"
