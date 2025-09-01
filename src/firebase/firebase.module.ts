@@ -3,7 +3,7 @@ import * as admin from 'firebase-admin';
 import { ServiceAccount } from 'firebase-admin';
 import { ConfigModule } from '@nestjs/config';
 import * as path from 'path';
-import * as fs from 'fs'; // Import the File System module
+import * as fs from 'fs';
 
 @Global()
 @Module({
@@ -13,35 +13,47 @@ import * as fs from 'fs'; // Import the File System module
       provide: 'FIREBASE_ADMIN',
       useFactory: () => {
         const logger = new Logger('FirebaseModule');
+        // Allow disabling in tests/CI
+        const disabled =
+          process.env.FIREBASE_DISABLED === 'true' ||
+          process.env.NODE_ENV === 'test';
+        if (disabled) {
+          logger.warn('Firebase disabled (test/CI). Using no-op messaging.');
+          const mock = {
+            messaging: () => ({
+              sendEachForMulticast: async () => ({
+                successCount: 0,
+                failureCount: 0,
+              }),
+            }),
+          } as unknown as typeof admin;
+          return mock;
+        }
 
-        const serviceAccountPath = path.join(
-          __dirname,
-          '..',
-          'config',
-          'firebase-service-account.json',
-        );
+        // Prefer JSON from env, else fall back to file path
+        const envJson = process.env.FIREBASE_SERVICE_ACCOUNT;
+        const serviceAccountPath =
+          process.env.FIREBASE_SERVICE_ACCOUNT_PATH ||
+          path.join(__dirname, '..', 'config', 'firebase-service-account.json');
 
         try {
-          // Read the file's contents as a string
-          const serviceAccountFile = fs.readFileSync(
-            serviceAccountPath,
-            'utf8',
-          );
-          // Parse the string into a JSON object
-          const serviceAccount = JSON.parse(
-            serviceAccountFile,
-          ) as ServiceAccount;
-
+          let serviceAccount: ServiceAccount | null = null;
+          if (envJson) {
+            serviceAccount = JSON.parse(envJson) as ServiceAccount;
+          } else {
+            const serviceAccountFile = fs.readFileSync(serviceAccountPath, 'utf8');
+            serviceAccount = JSON.parse(serviceAccountFile) as ServiceAccount;
+          }
           if (!admin.apps.length) {
             admin.initializeApp({
-              credential: admin.credential.cert(serviceAccount),
+              credential: admin.credential.cert(serviceAccount as ServiceAccount),
             });
             logger.log('Firebase Admin initialized successfully.');
           }
           return admin;
         } catch (error: unknown) {
           logger.error(
-            `CRITICAL: Failed to load or parse Firebase service account from: ${serviceAccountPath}.`,
+            `CRITICAL: Failed to initialize Firebase Admin SDK. Path tried: ${serviceAccountPath}.`,
             error instanceof Error ? error.stack : undefined,
           );
           throw new Error('Could not initialize Firebase Admin SDK.');
