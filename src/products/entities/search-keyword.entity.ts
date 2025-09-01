@@ -1,4 +1,11 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, Index } from 'typeorm';
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  CreateDateColumn,
+  UpdateDateColumn,
+  Index,
+} from 'typeorm';
 
 @Entity('search_keyword')
 export class SearchKeyword {
@@ -36,13 +43,23 @@ export class SearchKeyword {
   @Column({ type: 'varchar', length: 2, nullable: true, name: 'last_country' })
   lastCountry?: string | null;
 
-  @Column({ type: 'varchar', length: 256, nullable: true, name: 'last_vendor_name' })
+  @Column({
+    type: 'varchar',
+    length: 256,
+    nullable: true,
+    name: 'last_vendor_name',
+  })
   lastVendorName?: string | null;
 
   // Distribution of vendors that appeared in the search results for this keyword (last submit)
   // Example: [{ name: 'Acme', id: 123, country: 'KE', count: 4 }]
   @Column({ type: 'jsonb', nullable: true, name: 'vendor_hits' })
-  vendorHits?: Array<{ name: string; id?: number; country?: string; count: number }> | null;
+  vendorHits?: Array<{
+    name: string;
+    id?: number;
+    country?: string;
+    count: number;
+  }> | null;
 
   @CreateDateColumn({ name: 'first_seen_at' })
   firstSeenAt!: Date;

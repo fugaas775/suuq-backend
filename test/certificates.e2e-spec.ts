@@ -18,7 +18,7 @@ describe('Public Certificates & Profile (e2e)', () => {
     }).compile();
 
     app = moduleFixture.createNestApplication();
-  app.setGlobalPrefix('api');
+    app.setGlobalPrefix('api');
     await app.init();
     usersService = app.get(UsersService);
     dataSource = app.get(DataSource);

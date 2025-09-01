@@ -1,4 +1,10 @@
-import { ExceptionFilter, Catch, ArgumentsHost, HttpException, Logger } from '@nestjs/common';
+import {
+  ExceptionFilter,
+  Catch,
+  ArgumentsHost,
+  HttpException,
+  Logger,
+} from '@nestjs/common';
 import { Request, Response } from 'express';
 
 @Catch()
@@ -9,10 +15,15 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     const ctx = host.switchToHttp();
     const request = ctx.getRequest<Request>();
     const response = ctx.getResponse<Response>();
-    const status = exception instanceof HttpException ? exception.getStatus() : 500;
-    const responseBody = exception instanceof HttpException ? exception.getResponse() : exception;
+    const status =
+      exception instanceof HttpException ? exception.getStatus() : 500;
+    const responseBody =
+      exception instanceof HttpException ? exception.getResponse() : exception;
     let code = 'INTERNAL_ERROR';
-    let message = typeof responseBody === 'string' ? responseBody : (responseBody as any)?.message || 'Unknown error';
+    let message =
+      typeof responseBody === 'string'
+        ? responseBody
+        : (responseBody as any)?.message || 'Unknown error';
     let details: any = undefined;
     if (typeof responseBody === 'object' && responseBody) {
       code = (responseBody as any).code || code;
@@ -23,7 +34,10 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       }
     }
 
-    this.logger.error(`Exception on ${request.method} ${request.url}:`, exception instanceof Error ? exception.stack : JSON.stringify(exception));
+    this.logger.error(
+      `Exception on ${request.method} ${request.url}:`,
+      exception instanceof Error ? exception.stack : JSON.stringify(exception),
+    );
 
     response.status(status).json({
       error: {

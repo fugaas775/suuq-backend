@@ -47,7 +47,10 @@ export class SettingsController {
     @Body() updateDto: UpdateSettingsDto,
   ) {
     try {
-      return await this.settingsService.updateUserSettings(req.user.id, updateDto);
+      return await this.settingsService.updateUserSettings(
+        req.user.id,
+        updateDto,
+      );
     } catch (err) {
       if (err instanceof Error) {
         this.logger.error('Error in updateProfile:', err.stack || err.message);
@@ -64,10 +67,10 @@ export class SettingsController {
   async getAll() {
     return this.settingsService.getAllSettings();
   }
-  
+
   // This endpoint for updating should be protected for admins
   // You would typically add an Admin role guard here
-  @UseGuards(JwtAuthGuard) 
+  @UseGuards(JwtAuthGuard)
   @Patch('ui-settings/:key')
   async updateSetting(@Param('key') key: string, @Body('value') value: any) {
     const updated = await this.settingsService.updateSetting(key, value);

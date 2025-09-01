@@ -1,5 +1,5 @@
 import { Expose, Exclude } from 'class-transformer';
-import { UserRole } from '../../auth/roles.enum'; 
+import { UserRole } from '../../auth/roles.enum';
 
 @Exclude()
 export class UserResponseDto {

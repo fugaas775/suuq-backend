@@ -7,13 +7,26 @@ import { Product } from '../products/entities/product.entity';
 function createMockRepo<T extends object>(seed: Partial<T>[] = []) {
   const items = new Map<any, any>();
   return {
-    findOne: async ({ where }: any) => items.get((where as any).userId) || null,
-    save: async (obj: any) => { items.set(obj.userId, { ...obj, updatedAt: new Date(), createdAt: obj.createdAt ?? new Date() }); return items.get(obj.userId); },
-    create: (obj: any) => ({ ...obj, createdAt: new Date(), updatedAt: new Date() }),
+    findOne: async ({ where }: any) => items.get(where.userId) || null,
+    save: async (obj: any) => {
+      items.set(obj.userId, {
+        ...obj,
+        updatedAt: new Date(),
+        createdAt: obj.createdAt ?? new Date(),
+      });
+      return items.get(obj.userId);
+    },
+    create: (obj: any) => ({
+      ...obj,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    }),
     find: async ({ where }: any) => {
-      const ids = (where.id as any).value as number[];
+      const ids = where.id.value as number[];
       // pretend all ids 1..100 exist
-      return ids.filter((id) => id >= 1 && id <= 100).map((id) => ({ id })) as any;
+      return ids
+        .filter((id) => id >= 1 && id <= 100)
+        .map((id) => ({ id })) as any;
     },
   } as any;
 }
@@ -25,8 +38,14 @@ describe('FavoritesService', () => {
     const moduleRef = await Test.createTestingModule({
       providers: [
         FavoritesService,
-        { provide: getRepositoryToken(Favorite), useValue: createMockRepo<Favorite>() },
-        { provide: getRepositoryToken(Product), useValue: createMockRepo<Product>() },
+        {
+          provide: getRepositoryToken(Favorite),
+          useValue: createMockRepo<Favorite>(),
+        },
+        {
+          provide: getRepositoryToken(Product),
+          useValue: createMockRepo<Product>(),
+        },
       ],
     }).compile();
     service = moduleRef.get(FavoritesService);
@@ -70,6 +89,8 @@ describe('FavoritesService', () => {
     const userId = 5;
     const g = await service.get(userId, false);
     await service.put(userId, { ids: [1] });
-    await expect(service.put(userId, { ids: [2] }, 'W/"fav-0-deadbeef"')).rejects.toBeTruthy();
+    await expect(
+      service.put(userId, { ids: [2] }, 'W/"fav-0-deadbeef"'),
+    ).rejects.toBeTruthy();
   });
 });

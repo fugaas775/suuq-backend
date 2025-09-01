@@ -18,13 +18,12 @@ import {
 import { CategoriesService } from './categories.service';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
-import { JwtAuthGuard } from '../auth/jwt-auth.guard'; 
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { UserRole } from '../auth/roles.enum';
 import { Category } from './entities/category.entity';
 import { Response } from 'express';
-import { ILike } from 'typeorm';
 
 @Controller('categories')
 @UseInterceptors(ClassSerializerInterceptor)
@@ -43,13 +42,17 @@ export class CategoriesController {
   async suggest(
     @Query('q') q?: string,
     @Query('limit', new DefaultValuePipe(10), ParseIntPipe) limit?: number,
-  ): Promise<Array<{ id: number; name: string; slug: string; parentId: number | null }>> {
+  ): Promise<
+    Array<{ id: number; name: string; slug: string; parentId: number | null }>
+  > {
     const lim = Math.min(Math.max(Number(limit) || 10, 1), 50);
     return this.categoriesService.suggest(q || '', lim);
   }
 
   @Get('tree')
-  async getRootCategories(@Res({ passthrough: true }) res: Response): Promise<Category[]> {
+  async getRootCategories(
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<Category[]> {
     const roots = await this.categoriesService.findRoots();
     // Compute Last-Modified from latest updatedAt across roots and children
     const timestamps: number[] = [];
@@ -70,7 +73,9 @@ export class CategoriesController {
   }
 
   @Head('tree')
-  async headRootCategories(@Res({ passthrough: true }) res: Response): Promise<void> {
+  async headRootCategories(
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<void> {
     // Leverage the same logic to set headers without sending body
     await this.getRootCategories(res);
   }

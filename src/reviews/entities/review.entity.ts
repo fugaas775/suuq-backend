@@ -1,4 +1,10 @@
-import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, CreateDateColumn } from 'typeorm';
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  ManyToOne,
+  CreateDateColumn,
+} from 'typeorm';
 import { User } from '../../users/entities/user.entity';
 import { Product } from '../../products/entities/product.entity';
 
@@ -16,9 +22,9 @@ export class Review {
   @CreateDateColumn()
   createdAt!: Date;
 
-  @ManyToOne(() => User, user => user.reviews, { eager: true })
+  @ManyToOne(() => User, (user) => user.reviews, { eager: true })
   user!: User;
 
-  @ManyToOne(() => Product, product => product.reviews, { eager: true })
+  @ManyToOne(() => Product, (product) => product.reviews, { eager: true })
   product!: Product;
 }

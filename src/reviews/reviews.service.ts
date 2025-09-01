@@ -1,4 +1,8 @@
-import { Injectable, ConflictException, NotFoundException, ForbiddenException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Review } from './entities/review.entity';
@@ -10,11 +14,15 @@ export class ReviewsService {
   constructor(
     @InjectRepository(Review)
     private readonly reviewRepository: Repository<Review>,
-  @InjectRepository(Product)
-  private readonly productRepository: Repository<Product>,
+    @InjectRepository(Product)
+    private readonly productRepository: Repository<Product>,
   ) {}
 
-  async create(userId: number, productId: number, dto: CreateReviewDto): Promise<{ review: Review; updated: boolean }> {
+  async create(
+    userId: number,
+    productId: number,
+    dto: CreateReviewDto,
+  ): Promise<{ review: Review; updated: boolean }> {
     // Upsert behavior: if a review exists for (user, product), update it; otherwise create new
     const existing = await this.reviewRepository.findOne({
       where: { user: { id: userId }, product: { id: productId } },
@@ -51,7 +59,10 @@ export class ReviewsService {
   }
 
   async update(reviewId: number, userId: number, dto: CreateReviewDto) {
-    const review = await this.reviewRepository.findOne({ where: { id: reviewId }, relations: ['user'] });
+    const review = await this.reviewRepository.findOne({
+      where: { id: reviewId },
+      relations: ['user'],
+    });
     if (!review) {
       throw new NotFoundException('Review not found');
     }
@@ -66,7 +77,8 @@ export class ReviewsService {
   }
 
   private async recomputeProductRating(productId: number) {
-    const { avg, count } = await this.reviewRepository.createQueryBuilder('r')
+    const { avg, count } = await this.reviewRepository
+      .createQueryBuilder('r')
       .select('AVG(r.rating)', 'avg')
       .addSelect('COUNT(r.id)', 'count')
       .where('r.productId = :productId', { productId })

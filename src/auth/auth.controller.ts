@@ -1,10 +1,20 @@
 import {
-  Controller, Post, Get, Body, Request, UseGuards, HttpCode, HttpStatus, UnauthorizedException, Patch, Put,
+  Controller,
+  Post,
+  Get,
+  Body,
+  Request,
+  UseGuards,
+  HttpCode,
+  HttpStatus,
+  UnauthorizedException,
+  Patch,
+  Put,
 } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
-import { JwtAuthGuard } from './jwt-auth.guard'; 
+import { JwtAuthGuard } from './jwt-auth.guard';
 import { UserResponseDto } from '../users/dto/user-response.dto';
 import { GoogleAuthDto } from './dto/google-auth.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
@@ -23,44 +33,58 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   async register(@Body() dto: RegisterDto) {
     const user = await this.authService.register(dto);
-    const { accessToken, refreshToken } = await this.authService.login({ email: user.email, password: dto.password });
+    const { accessToken, refreshToken } = await this.authService.login({
+      email: user.email,
+      password: dto.password,
+    });
     return {
       accessToken,
       refreshToken,
-      user: plainToInstance(UserResponseDto, user, { excludeExtraneousValues: true }),
+      user: plainToInstance(UserResponseDto, user, {
+        excludeExtraneousValues: true,
+      }),
     };
   }
 
   @Post('login')
   @HttpCode(HttpStatus.OK)
   async login(@Body() dto: LoginDto) {
-    const { accessToken, refreshToken, user } = await this.authService.login(dto);
+    const { accessToken, refreshToken, user } =
+      await this.authService.login(dto);
     return {
       accessToken,
       refreshToken,
-      user: plainToInstance(UserResponseDto, user, { excludeExtraneousValues: true }),
+      user: plainToInstance(UserResponseDto, user, {
+        excludeExtraneousValues: true,
+      }),
     };
   }
 
   @Post('google')
   @HttpCode(HttpStatus.OK)
   async googleLogin(@Body() dto: GoogleAuthDto) {
-    const { accessToken, refreshToken, user } = await this.authService.googleLogin(dto);
+    const { accessToken, refreshToken, user } =
+      await this.authService.googleLogin(dto);
     return {
       accessToken,
       refreshToken,
-      user: plainToInstance(UserResponseDto, user, { excludeExtraneousValues: true }),
+      user: plainToInstance(UserResponseDto, user, {
+        excludeExtraneousValues: true,
+      }),
     };
   }
 
   @Post('refresh')
   @HttpCode(HttpStatus.OK)
   async refreshToken(@Body() dto: RefreshTokenDto) {
-    const { accessToken, refreshToken, user } = await this.authService.refreshToken(dto.refreshToken);
+    const { accessToken, refreshToken, user } =
+      await this.authService.refreshToken(dto.refreshToken);
     return {
       accessToken,
       refreshToken,
-      user: plainToInstance(UserResponseDto, user, { excludeExtraneousValues: true }),
+      user: plainToInstance(UserResponseDto, user, {
+        excludeExtraneousValues: true,
+      }),
     };
   }
 
@@ -69,14 +93,19 @@ export class AuthController {
   async getProfile(@Request() req: AuthenticatedRequest) {
     // Fetch the full user from the database to ensure all fields are present
     const user = await this.authService.getUsersService().findById(req.user.id);
-    return plainToInstance(UserResponseDto, user, { excludeExtraneousValues: true });
+    return plainToInstance(UserResponseDto, user, {
+      excludeExtraneousValues: true,
+    });
   }
 
   // Allow PATCH/PUT /api/auth/profile as client fallbacks to update current user
   @Patch('profile')
   @Put('profile')
   @UseGuards(JwtAuthGuard)
-  async updateOwnProfileViaAuth(@Request() req: AuthenticatedRequest, @Body() data: UpdateUserDto) {
+  async updateOwnProfileViaAuth(
+    @Request() req: AuthenticatedRequest,
+    @Body() data: UpdateUserDto,
+  ) {
     const usersService = this.authService.getUsersService();
     const userId = req.user?.id;
     if (!userId) throw new UnauthorizedException();
@@ -87,14 +116,19 @@ export class AuthController {
     delete data.password;
 
     const user = await usersService.update(userId, data);
-    return plainToInstance(UserResponseDto, user, { excludeExtraneousValues: true });
+    return plainToInstance(UserResponseDto, user, {
+      excludeExtraneousValues: true,
+    });
   }
 
   // Change password for the current user
   @Patch('password')
   @Put('password')
   @UseGuards(JwtAuthGuard)
-  async changePassword(@Request() req: AuthenticatedRequest, @Body() body: ChangePasswordDto) {
+  async changePassword(
+    @Request() req: AuthenticatedRequest,
+    @Body() body: ChangePasswordDto,
+  ) {
     const userId = req.user?.id;
     if (!userId) throw new UnauthorizedException();
     const current = body.resolveCurrent();
@@ -119,6 +153,8 @@ export class AuthController {
   @Get('verify')
   @UseGuards(JwtAuthGuard)
   verify(@Request() req: AuthenticatedRequest) {
-    return plainToInstance(UserResponseDto, req.user, { excludeExtraneousValues: true });
+    return plainToInstance(UserResponseDto, req.user, {
+      excludeExtraneousValues: true,
+    });
   }
 }

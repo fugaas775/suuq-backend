@@ -17,7 +17,7 @@ export class FindAllVendorsDto {
   @IsOptional()
   @IsString()
   search?: string;
-  
+
   @IsOptional()
   @IsString()
   country?: string;

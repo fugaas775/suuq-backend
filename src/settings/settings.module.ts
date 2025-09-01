@@ -7,10 +7,7 @@ import { UserSettings } from './entities/user-settings.entity';
 import { UsersModule } from '../users/users.module';
 
 @Module({
-  imports: [
-    UsersModule,
-    TypeOrmModule.forFeature([UiSetting, UserSettings]),
-  ],
+  imports: [UsersModule, TypeOrmModule.forFeature([UiSetting, UserSettings])],
   providers: [SettingsService],
   controllers: [SettingsController],
 })

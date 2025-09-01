@@ -7,7 +7,11 @@ import { NotificationsModule } from '../notifications/notifications.module';
 import { OrdersModule } from '../orders/orders.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Withdrawal]), NotificationsModule, OrdersModule],
+  imports: [
+    TypeOrmModule.forFeature([Withdrawal]),
+    NotificationsModule,
+    OrdersModule,
+  ],
   providers: [WithdrawalsService],
   controllers: [WithdrawalsController],
   exports: [WithdrawalsService],

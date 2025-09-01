@@ -15,7 +15,10 @@ export class UpdateCategoryDto {
 
   @IsString()
   @IsOptional()
-  @Matches(/^(mdi:[a-z0-9_\-]+|[a-z0-9_\-]+)$/i, { message: 'iconName must be alphanumeric with dashes/underscores, optional mdi: prefix' })
+  @Matches(/^(mdi:[a-z0-9_-]+|[a-z0-9_-]+)$/i, {
+    message:
+      'iconName must be alphanumeric with dashes/underscores, optional mdi: prefix',
+  })
   iconName?: string;
   /**
    * Only send iconName/iconUrl to perform icons-only edits.

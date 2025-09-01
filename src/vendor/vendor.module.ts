@@ -16,11 +16,11 @@ import { ProductsModule } from '../products/products.module';
 @Module({
   imports: [
     // ✨ 2. PRODUCTIMAGE ENTITY ADDED HERE
-  TypeOrmModule.forFeature([User, Product, Order, OrderItem, ProductImage]),
-  UsersModule,
-  forwardRef(() => ProductsModule),
-  MediaModule,
-  NotificationsModule,
+    TypeOrmModule.forFeature([User, Product, Order, OrderItem, ProductImage]),
+    UsersModule,
+    forwardRef(() => ProductsModule),
+    MediaModule,
+    NotificationsModule,
   ],
   controllers: [
     VendorController,

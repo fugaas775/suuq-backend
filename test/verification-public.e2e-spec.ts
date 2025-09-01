@@ -1,7 +1,12 @@
-import { INestApplication, CanActivate, ExecutionContext } from '@nestjs/common';
+import {
+  INestApplication,
+  CanActivate,
+  ExecutionContext,
+} from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import * as request from 'supertest';
 import { JwtAuthGuard } from '../src/auth/jwt-auth.guard';
+import { RolesGuard } from '../src/common/guards/roles.guard';
 
 import { VendorPublicController } from '../src/vendor/vendor-public.controller';
 import { VendorService } from '../src/vendor/vendor.service';
@@ -47,12 +52,14 @@ describe('Public verification and profile (e2e-lite)', () => {
       ],
     })
       // Override guards to allow requests without JWT/roles for test
-      .overrideGuard(JwtAuthGuard).useClass(AllowGuard)
-      .overrideGuard((require('../src/common/guards/roles.guard').RolesGuard)).useClass(AllowGuard as any)
+      .overrideGuard(JwtAuthGuard)
+      .useClass(AllowGuard)
+      .overrideGuard(RolesGuard)
+      .useClass(AllowGuard as any)
       .compile();
 
-  app = moduleRef.createNestApplication();
-  app.setGlobalPrefix('api');
+    app = moduleRef.createNestApplication();
+    app.setGlobalPrefix('api');
     await app.init();
   });
 
@@ -61,7 +68,9 @@ describe('Public verification and profile (e2e-lite)', () => {
   });
 
   it('GET /vendors/:id/certificates returns 2 items when approved', async () => {
-  (vendorServiceMock.getPublicProfile as any).mockResolvedValueOnce({ id: 42 });
+    (vendorServiceMock.getPublicProfile as any).mockResolvedValueOnce({
+      id: 42,
+    });
     (usersServiceMock.getPublicCertificates as any).mockResolvedValueOnce([
       { url: 'https://cdn.example.com/doc1.pdf', name: 'doc1.pdf' },
       { url: 'https://cdn.example.com/doc2.pdf', name: 'doc2.pdf' },
@@ -89,7 +98,9 @@ describe('Public verification and profile (e2e-lite)', () => {
   });
 
   it('GET /vendors/:id/certificates returns empty items when not approved', async () => {
-  (vendorServiceMock.getPublicProfile as any).mockResolvedValueOnce({ id: 43 });
+    (vendorServiceMock.getPublicProfile as any).mockResolvedValueOnce({
+      id: 43,
+    });
     (usersServiceMock.getPublicCertificates as any).mockResolvedValueOnce([]);
 
     const res = await request(app.getHttpServer())
@@ -111,7 +122,7 @@ describe('Public verification and profile (e2e-lite)', () => {
       .get('/api/auth/profile')
       .expect(200);
 
-    const body: UserResponseDto = res.body as any;
+    const body: UserResponseDto = res.body;
     expect(body).toHaveProperty('verificationStatus');
     expect(body.verificationStatus).toBe('APPROVED');
   });

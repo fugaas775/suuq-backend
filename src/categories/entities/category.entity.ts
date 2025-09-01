@@ -1,5 +1,13 @@
 import {
-  Entity, PrimaryGeneratedColumn, Column, Tree, TreeChildren, TreeParent, OneToMany, CreateDateColumn, UpdateDateColumn,
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  Tree,
+  TreeChildren,
+  TreeParent,
+  OneToMany,
+  CreateDateColumn,
+  UpdateDateColumn,
 } from 'typeorm';
 import { Product } from '../../products/entities/product.entity';
 import { Exclude } from 'class-transformer'; // <-- Import Exclude
@@ -25,7 +33,7 @@ export class Category {
   // Optional explicit version to bust CDN cache when icon changes
   @Column({ type: 'int', default: 0 })
   iconVersion: number;
-  
+
   @Column({ type: 'int', default: 0 })
   sortOrder: number;
 

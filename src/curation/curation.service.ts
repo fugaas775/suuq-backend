@@ -5,7 +5,13 @@ import { ProductsService } from '../products/products.service';
 export class CurationService {
   constructor(private readonly productsService: ProductsService) {}
 
-  async getHome(opts: { perSection?: number; city?: string; region?: string; country?: string; view?: 'grid' | 'full' }) {
+  async getHome(opts: {
+    perSection?: number;
+    city?: string;
+    region?: string;
+    country?: string;
+    view?: 'grid' | 'full';
+  }) {
     const per = Math.min(Number(opts.perSection || 10) || 10, 20);
     const v = opts.view ?? 'grid';
     const [a, b] = await Promise.all([
@@ -15,7 +21,10 @@ export class CurationService {
     return { newArrivals: a, bestSellers: b };
   }
 
-  async getSection(key: string, opts: { limit?: number; cursor?: string | null; view?: 'grid' | 'full' }) {
+  async getSection(
+    key: string,
+    opts: { limit?: number; cursor?: string | null; view?: 'grid' | 'full' },
+  ) {
     // Only allow curated keys per requirement
     const tagKey = key === 'home-new' || key === 'home-best' ? key : null;
     if (!tagKey) throw new BadRequestException('Unknown section');
@@ -23,8 +32,8 @@ export class CurationService {
     const limit = Math.min(Math.max(Number(opts.limit) || 20, 1), 50);
     const page = decodeCursor(opts.cursor) || 1;
 
-  // Ordering preference: curatedOrder ASC, curatedAt DESC, updatedAt DESC
-  // Note: curated fields are not present; fallback sorts are used until fields exist
+    // Ordering preference: curatedOrder ASC, curatedAt DESC, updatedAt DESC
+    // Note: curated fields are not present; fallback sorts are used until fields exist
     const fallbackSort = tagKey === 'home-best' ? 'sales_desc' : 'created_desc';
 
     const res = await this.productsService.findFiltered({
@@ -35,7 +44,13 @@ export class CurationService {
       view: opts.view,
     } as any);
     const nextCursor = page * limit < res.total ? encodeCursor(page + 1) : null;
-    return { items: res.items, page, perPage: limit, total: res.total, nextCursor };
+    return {
+      items: res.items,
+      page,
+      perPage: limit,
+      total: res.total,
+      nextCursor,
+    };
   }
 }
 

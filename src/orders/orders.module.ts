@@ -21,9 +21,6 @@ import { NotificationsModule } from '../notifications/notifications.module';
   ],
   controllers: [OrdersController],
   providers: [OrdersService],
-  exports: [
-    TypeOrmModule,
-    OrdersService,
-  ],
+  exports: [TypeOrmModule, OrdersService],
 })
 export class OrdersModule {}

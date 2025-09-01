@@ -1,4 +1,11 @@
-import { IsArray, ArrayMinSize, IsInt, Min, IsOptional, IsString } from 'class-validator';
+import {
+  IsArray,
+  ArrayMinSize,
+  IsInt,
+  Min,
+  IsOptional,
+  IsString,
+} from 'class-validator';
 
 export class RecordImpressionsDto {
   @IsArray()

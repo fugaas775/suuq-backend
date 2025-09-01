@@ -1,6 +1,14 @@
-// Debug log for DB_PASSWORD and DB_DATABASE
-console.log('DEBUG DB_PASSWORD:', typeof process.env.DB_PASSWORD, process.env.DB_PASSWORD);
-console.log('DEBUG DB_DATABASE:', typeof process.env.DB_DATABASE, process.env.DB_DATABASE);
+// Debug info (avoid logging secrets in clear text)
+console.log(
+  'DEBUG DB_PASSWORD:',
+  typeof process.env.DB_PASSWORD,
+  process.env.DB_PASSWORD ? '[REDACTED]' : '<missing>',
+);
+console.log(
+  'DEBUG DB_DATABASE:',
+  typeof process.env.DB_DATABASE,
+  process.env.DB_DATABASE,
+);
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
@@ -17,7 +25,7 @@ import { Category } from '../categories/entities/category.entity';
       envFilePath: '.env',
     }),
     // Use the async factory to ensure .env is loaded first
-  TypeOrmModule.forRootAsync({
+    TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => ({
@@ -28,13 +36,13 @@ import { Category } from '../categories/entities/category.entity';
         username: configService.get('DB_USERNAME'),
         password: configService.get('DB_PASSWORD'),
         database: configService.get('DB_DATABASE'),
-    entities: [Country, Category], // Load needed entities for seeding
+        entities: [Country, Category], // Load needed entities for seeding
         synchronize: false,
       }),
     }),
     // Import modules that provide necessary services (like CountriesService)
-  CountriesModule,
-  CategoriesModule,
+    CountriesModule,
+    CategoriesModule,
   ],
   providers: [SeedService],
   exports: [SeedService],

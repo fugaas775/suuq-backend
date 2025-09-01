@@ -20,7 +20,7 @@ import { UpdateProductDto } from './dto/update-product.dto';
 import { AuthGuard } from '@nestjs/passport';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
-import { plainToInstance } from 'class-transformer';
+// import { plainToInstance } from 'class-transformer';
 import { ClassSerializerInterceptor } from '@nestjs/common';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UserRole } from '../auth/roles.enum';
@@ -28,6 +28,7 @@ import { ProductFilterDto } from './dto/ProductFilterDto';
 import { UseInterceptors, ParseBoolPipe } from '@nestjs/common';
 import { RecordImpressionsDto } from './dto/record-impressions.dto';
 import { normalizeProductMedia } from '../common/utils/media-url.util';
+import { AuthenticatedRequest } from '../auth/auth.types';
 
 @UseInterceptors(ClassSerializerInterceptor)
 @Controller('products')
@@ -42,8 +43,12 @@ export class ProductsController {
   @Post()
   @UseGuards(AuthGuard('jwt'), RolesGuard)
   @Roles(UserRole.VENDOR)
-  create(@Body() createProductDto: CreateProductDto, @Req() req: any) {
-    console.log('Raw request body:', JSON.stringify(req.body));
+  create(
+    @Body() createProductDto: CreateProductDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const bodyString = JSON.stringify(req.body ?? {});
+    console.log('Raw request body:', bodyString);
     console.log('Parsed DTO:', JSON.stringify(createProductDto));
     return this.productsService.create({
       ...createProductDto,
@@ -52,26 +57,52 @@ export class ProductsController {
   }
   // Batched impressions for list views (idempotent per session/window)
   @Post('impressions')
-  async recordImpressions(@Req() req: any, @Body() dto: RecordImpressionsDto) {
+  async recordImpressions(
+    @Req() req: AuthenticatedRequest,
+    @Body() dto: RecordImpressionsDto,
+  ) {
     // If authenticated vendor, ignore to prevent inflating their own stats
-    const role = req.user?.role || req.user?.roles?.[0];
+    const role = (req.user as any)?.role || req.user?.roles?.[0];
     if (role && String(role).toUpperCase().includes('VENDOR')) {
       return { recorded: 0, ignored: dto.productIds.length };
     }
-    const ip = (req.headers['x-real-ip'] || req.headers['x-forwarded-for'] || req.ip || '').toString();
-    const ua = (req.headers['user-agent'] || '').toString();
+    const ip = String(
+      req.headers['x-real-ip'] ||
+        req.headers['x-forwarded-for'] ||
+        req.ip ||
+        '',
+    );
+    const ua = String(req.headers['user-agent'] || '');
     const sessionId = dto.sessionId || '';
     const windowSeconds = Math.max(60, Number(dto.windowSeconds || 300));
-    const sessionKey = await this.productsService.deriveImpressionSessionKey(ip, ua, sessionId);
-    const { recorded, ignored } = await this.productsService.recordImpressions(dto.productIds, sessionKey, windowSeconds);
+    const sessionKey = this.productsService.deriveImpressionSessionKey(
+      ip,
+      ua,
+      sessionId,
+    );
+    const { recorded, ignored } = await this.productsService.recordImpressions(
+      dto.productIds,
+      sessionKey,
+      windowSeconds,
+    );
     return { recorded, ignored, windowSeconds };
   }
 
   // --- UPDATED: This method now uses the ProductFilterDto ---
   @Get()
-  async findAll(@Query() filters: ProductFilterDto, @Query('currency') currency?: string, @Req() req?: any) {
+  async findAll(
+    @Query() filters: ProductFilterDto,
+    @Query('currency') currency?: string,
+    @Req() req?: AuthenticatedRequest,
+  ) {
     try {
-      this.logger.debug(`findAll filters: ${JSON.stringify(filters)}, currency: ${currency}`);
+      // Role (if present)
+      const role =
+        (req?.user as { role?: string; roles?: string[] } | undefined)?.role ||
+        req?.user?.roles?.[0];
+      this.logger.log(
+        `findAll filters: ${JSON.stringify(filters)}, currency: ${currency}, role: ${String(role || '')}`,
+      );
 
       // Support both limit and perPage for pagination
       if (filters.limit && !filters.perPage) {
@@ -79,69 +110,164 @@ export class ProductsController {
       }
 
       // Map category alias to categoryId for frontend query param compatibility
-      if (!filters.categoryId && (filters as any).categoryAlias) {
-        filters.categoryId = (filters as any).categoryAlias as any;
+      if (!filters.categoryId) {
+        const anyFilters = filters as unknown as Record<string, unknown>;
+        const alias = anyFilters.categoryAlias as unknown;
+        const n =
+          typeof alias === 'string'
+            ? Number(alias)
+            : typeof alias === 'number'
+            ? alias
+            : undefined;
+        if (typeof n === 'number' && Number.isFinite(n) && n > 0) {
+          filters.categoryId = n;
+        }
       }
 
       const result = await this.productsService.findFiltered(filters);
 
       // Derive vendorHits (distribution of vendors in the current result set)
-      let vendorHits: Array<{ name: string; id?: number; country?: string; count: number }> | undefined;
+      let vendorHits:
+        | Array<{ name: string; id?: number; country?: string; count: number }>
+        | undefined;
       try {
-        const counts = new Map<string, { name: string; id?: number; country?: string; count: number }>();
+        const counts = new Map<
+          string,
+          { name: string; id?: number; country?: string; count: number }
+        >();
         for (const it of result.items || []) {
-          const vendor: any = (it as any).vendor;
+          const vendor = (it as unknown as { vendor?: any }).vendor as
+            | {
+                id?: number;
+                storeName?: string;
+                displayName?: string;
+                name?: string;
+                registrationCountry?: string;
+                country?: string;
+              }
+            | undefined;
           if (!vendor) continue;
-          const vid = vendor.id as number | undefined;
-          const vname = (vendor.storeName || vendor.displayName || vendor.name || '').toString();
-          const vcountry = (vendor.registrationCountry || vendor.country || '').toString().toUpperCase();
+          const vid = vendor.id;
+          const vname = String(
+            vendor.storeName || vendor.displayName || vendor.name || '',
+          );
+          const vcountry = String(
+            vendor.registrationCountry || vendor.country || '',
+          ).toUpperCase();
           const key = `${vid || ''}|${vname}`;
-          if (!counts.has(key)) counts.set(key, { name: vname, id: vid, country: vcountry || undefined, count: 0 });
-          counts.get(key)!.count += 1;
+          if (!counts.has(key))
+            counts.set(key, {
+              name: vname,
+              id: vid,
+              country: vcountry || undefined,
+              count: 0,
+            });
+          const cur = counts.get(key);
+          if (cur) cur.count += 1;
         }
-        vendorHits = Array.from(counts.values()).sort((a, b) => b.count - a.count).slice(0, 50);
+        vendorHits = Array.from(counts.values())
+          .sort((a, b) => b.count - a.count)
+          .slice(0, 50);
       } catch {
         vendorHits = undefined;
       }
 
       // Record submitted searches (typed then submitted)
       if (filters.search && typeof filters.search === 'string') {
-        const ip = (req?.headers?.['x-real-ip'] || req?.headers?.['x-forwarded-for'] || req?.ip || '').toString();
-        const ua = (req?.headers?.['user-agent'] || '').toString();
-        let vendorName = (req?.user?.storeName || req?.user?.displayName || req?.user?.name || '').toString();
+        const ip = String(
+          (req?.headers?.['x-real-ip'] as string | undefined) ||
+            (req?.headers?.['x-forwarded-for'] as string | undefined) ||
+            req?.ip ||
+            '',
+        );
+        const ua = String(req?.headers?.['user-agent'] || '');
+        let vendorName = String(
+          (
+            req?.user as
+              | { storeName?: string; displayName?: string; name?: string }
+              | undefined
+          )?.storeName ||
+            req?.user?.displayName ||
+            (req?.user as { name?: string } | undefined)?.name ||
+            '',
+        );
         // If the request is filtering for a vendor, derive a display name even if the request is anonymous
-        const vendorIdFilter = (filters as any).vendorId || (filters as any).vendor_id;
+        const vendorIdFilter =
+          (filters as unknown as any).vendorId ||
+          (filters as unknown as any).vendor_id;
         if (!vendorName && vendorIdFilter) {
-          const vn = await this.productsService.getVendorDisplayName(Number(vendorIdFilter));
+          const vn = await this.productsService.getVendorDisplayName(
+            Number(vendorIdFilter),
+          );
           vendorName = vn || '';
         }
-        const cityHeader = (req?.headers?.['x-user-city'] || req?.headers?.['x-city'] || '').toString();
-        const countryHeader = (req?.headers?.['x-user-country'] || req?.headers?.['x-country'] || req?.headers?.['cf-ipcountry'] || req?.headers?.['x-vercel-ip-country'] || req?.headers?.['x-country-code'] || '').toString();
+        const cityHeader = String(
+          (req?.headers?.['x-user-city'] as string | undefined) ||
+            (req?.headers?.['x-city'] as string | undefined) ||
+            '',
+        );
+        const countryHeader = String(
+          (req?.headers?.['x-user-country'] as string | undefined) ||
+            (req?.headers?.['x-country'] as string | undefined) ||
+            (req?.headers?.['cf-ipcountry'] as string | undefined) ||
+            (req?.headers?.['x-vercel-ip-country'] as string | undefined) ||
+            (req?.headers?.['x-country-code'] as string | undefined) ||
+            '',
+        );
         // Accept-Language fallback: e.g., en-US -> US
         let alCountry = '';
-        const al = (req?.headers?.['accept-language'] || '').toString();
-        if (al) {
-          const m = String(al).match(/^[a-z]{2,3}-([A-Z]{2})/);
+        const al1 = String(req?.headers?.['accept-language'] || '');
+        if (al1) {
+          const m = String(al1).match(/^[a-z]{2,3}-([A-Z]{2})/);
           if (m && m[1]) alCountry = m[1];
         }
         // Authenticated user country fallback
-        const userCountry = (req?.user?.registrationCountry || req?.user?.country || '').toString();
-        const city = (filters as any).userCity || (filters as any).city || cityHeader || '';
-        const country = ((filters as any).userCountry || (filters as any).country || countryHeader || userCountry || alCountry || '').toString();
+        const userCountry = String(
+          (
+            req?.user as
+              | { registrationCountry?: string; country?: string }
+              | undefined
+          )?.registrationCountry ||
+            (
+              req?.user as
+                | { registrationCountry?: string; country?: string }
+                | undefined
+            )?.country ||
+            '',
+        );
+        const city =
+          ((filters as unknown as Record<string, unknown>).userCity as
+            | string
+            | undefined) ||
+          ((filters as unknown as Record<string, unknown>).city as
+            | string
+            | undefined) ||
+          cityHeader ||
+          '';
+        const country = (
+          ((filters as unknown as Record<string, unknown>).userCountry as
+            | string
+            | undefined) ||
+          ((filters as unknown as Record<string, unknown>).country as
+            | string
+            | undefined) ||
+          countryHeader ||
+          userCountry ||
+          alCountry ||
+          ''
+        ).toString();
         this.productsService
-          .recordSearchKeyword(
-            filters.search,
-            'submit',
-            {
-              results: Array.isArray(result.items) ? result.items.length : undefined,
-              ip,
-              ua,
-              vendorName: vendorName || undefined,
-              city: city || undefined,
-      country: country || undefined,
-              vendorHits,
-            },
-          )
+          .recordSearchKeyword(filters.search, 'submit', {
+            results: Array.isArray(result.items)
+              ? result.items.length
+              : undefined,
+            ip,
+            ua,
+            vendorName: vendorName || undefined,
+            city: city || undefined,
+            country: country || undefined,
+            vendorHits,
+          })
           .catch(() => {});
       }
 
@@ -163,23 +289,61 @@ export class ProductsController {
 
   @Get('suggest')
   @Header('Cache-Control', 'public, s-maxage=30, stale-while-revalidate=60')
-  async suggest(@Query('q') q: string, @Query('limit') limit?: string, @Req() req?: any) {
+  async suggest(
+    @Query('q') q: string,
+    @Query('limit') limit?: string,
+    @Req() req?: any,
+  ) {
     const lim = Math.min(Math.max(Number(limit) || 8, 1), 10);
-  // Fire-and-forget capture of suggest keyword
-  const ip = (req?.headers?.['x-real-ip'] || req?.headers?.['x-forwarded-for'] || req?.ip || '').toString();
-  const ua = (req?.headers?.['user-agent'] || '').toString();
-  const cityHeader = (req?.headers?.['x-user-city'] || req?.headers?.['x-city'] || '').toString();
-  const countryHeader = (req?.headers?.['x-user-country'] || req?.headers?.['x-country'] || req?.headers?.['cf-ipcountry'] || req?.headers?.['x-vercel-ip-country'] || req?.headers?.['x-country-code'] || '').toString();
-  let alCountry = '';
-  const al = (req?.headers?.['accept-language'] || '').toString();
-  if (al) {
-    const m = String(al).match(/^[a-z]{2,3}-([A-Z]{2})/);
-    if (m && m[1]) alCountry = m[1];
-  }
-  const city = ((req as any)?.query?.userCity || (req as any)?.query?.city || cityHeader || '').toString();
-  const country = (((req as any)?.query?.userCountry) || ((req as any)?.query?.country) || countryHeader || alCountry || '').toString();
-  this.productsService.recordSearchKeyword(q, 'suggest', { ip, ua, city: city || undefined, country: country || undefined }).catch(() => {});
-  return this.productsService.suggestNames(q, lim);
+    // Fire-and-forget capture of suggest keyword
+    const ip = (
+      req?.headers?.['x-real-ip'] ||
+      req?.headers?.['x-forwarded-for'] ||
+      req?.ip ||
+      ''
+    ).toString();
+    const ua = (req?.headers?.['user-agent'] || '').toString();
+    const cityHeader = (
+      req?.headers?.['x-user-city'] ||
+      req?.headers?.['x-city'] ||
+      ''
+    ).toString();
+    const countryHeader = (
+      req?.headers?.['x-user-country'] ||
+      req?.headers?.['x-country'] ||
+      req?.headers?.['cf-ipcountry'] ||
+      req?.headers?.['x-vercel-ip-country'] ||
+      req?.headers?.['x-country-code'] ||
+      ''
+    ).toString();
+    let alCountry = '';
+    const al = (req?.headers?.['accept-language'] || '').toString();
+    if (al) {
+      const m = String(al).match(/^[a-z]{2,3}-([A-Z]{2})/);
+      if (m && m[1]) alCountry = m[1];
+    }
+    const city = (
+      req?.query?.userCity ||
+      req?.query?.city ||
+      cityHeader ||
+      ''
+    ).toString();
+    const country = (
+      req?.query?.userCountry ||
+      req?.query?.country ||
+      countryHeader ||
+      alCountry ||
+      ''
+    ).toString();
+    this.productsService
+      .recordSearchKeyword(q, 'suggest', {
+        ip,
+        ua,
+        city: city || undefined,
+        country: country || undefined,
+      })
+      .catch(() => {});
+    return this.productsService.suggestNames(q, lim);
   }
 
   // Aggregated home feed: avoid collision with ':id' by defining here
@@ -187,11 +351,14 @@ export class ProductsController {
   @Header('Cache-Control', 'public, max-age=60')
   async homeFeed(@Query() q: any) {
     const perSection = Math.min(Number(q.limit || q.per_page) || 10, 20);
-    const v = typeof q.view === 'string' && (q.view === 'grid' || q.view === 'full') ? (q.view as 'grid' | 'full') : 'grid';
+    const v =
+      typeof q.view === 'string' && (q.view === 'grid' || q.view === 'full')
+        ? (q.view as 'grid' | 'full')
+        : 'grid';
     const city = q.userCity || q.city;
     const region = q.userRegion || q.region;
     const country = q.userCountry || q.country;
-  const data = await this.homeService.getHomeFeed({
+    const data = await this.homeService.getHomeFeed({
       perSection,
       userCity: city,
       userRegion: region,
@@ -224,15 +391,37 @@ export class ProductsController {
       meta: {
         perSection,
         view: v,
-        geo: { city: city || null, region: region || null, country: country || null },
+        geo: {
+          city: city || null,
+          region: region || null,
+          country: country || null,
+        },
         seeAll: {
-          newArrivals: ((data as any).curatedNew?.length ?? 0) > 0 ? { tag: 'home-new', kind: 'curated' } : { tag: 'home-new' },
-          bestSellers: ((data as any).curatedBest?.length ?? 0) > 0 ? { tag: 'home-best', kind: 'curated' } : { sort: 'sales_desc' },
+          newArrivals:
+            ((data as any).curatedNew?.length ?? 0) > 0
+              ? { tag: 'home-new', kind: 'curated' }
+              : { tag: 'home-new' },
+          bestSellers:
+            ((data as any).curatedBest?.length ?? 0) > 0
+              ? { tag: 'home-best', kind: 'curated' }
+              : { sort: 'sales_desc' },
           // aliases expected by some clients
-          curatedNew: ((data as any).curatedNew?.length ?? 0) > 0 ? { tag: 'home-new', kind: 'curated' } : { tag: 'home-new' },
-          homeNew: ((data as any).curatedNew?.length ?? 0) > 0 ? { tag: 'home-new', kind: 'curated' } : { tag: 'home-new' },
-          curatedBest: ((data as any).curatedBest?.length ?? 0) > 0 ? { tag: 'home-best', kind: 'curated' } : { sort: 'sales_desc' },
-          homeBest: ((data as any).curatedBest?.length ?? 0) > 0 ? { tag: 'home-best', kind: 'curated' } : { sort: 'sales_desc' },
+          curatedNew:
+            ((data as any).curatedNew?.length ?? 0) > 0
+              ? { tag: 'home-new', kind: 'curated' }
+              : { tag: 'home-new' },
+          homeNew:
+            ((data as any).curatedNew?.length ?? 0) > 0
+              ? { tag: 'home-new', kind: 'curated' }
+              : { tag: 'home-new' },
+          curatedBest:
+            ((data as any).curatedBest?.length ?? 0) > 0
+              ? { tag: 'home-best', kind: 'curated' }
+              : { sort: 'sales_desc' },
+          homeBest:
+            ((data as any).curatedBest?.length ?? 0) > 0
+              ? { tag: 'home-best', kind: 'curated' }
+              : { sort: 'sales_desc' },
         },
       },
     } as any;
@@ -250,12 +439,16 @@ export class ProductsController {
       .filter(Boolean);
     const per = Math.min(Number(q.per_country || q.per || q.limit) || 10, 30);
     const sort = typeof q.sort === 'string' ? q.sort : 'rating_desc';
-    const view = typeof q.view === 'string' && (q.view === 'grid' || q.view === 'full') ? (q.view as 'grid' | 'full') : 'grid';
+    const view =
+      typeof q.view === 'string' && (q.view === 'grid' || q.view === 'full')
+        ? (q.view as 'grid' | 'full')
+        : 'grid';
 
     const results = await Promise.all(
       countries.map((code) =>
-        this.productsService.findFiltered({ perPage: per, sort, country: code, view } as any)
-          .then((res) => ({ code, items: res.items }))
+        this.productsService
+          .findFiltered({ perPage: per, sort, country: code, view } as any)
+          .then((res) => ({ code, items: res.items })),
       ),
     );
     return { countries: results };
@@ -282,9 +475,12 @@ export class ProductsController {
   ) {
     const userId = req.user?.id;
     if (!userId) throw new BadRequestException('Unauthorized');
-    return this.productsService.recommendedForUser(Number(userId), Number(page) || 1, Number(perPage) || 20);
+    return this.productsService.recommendedForUser(
+      Number(userId),
+      Number(page) || 1,
+      Number(perPage) || 20,
+    );
   }
-
 
   @Patch(':id')
   @UseGuards(AuthGuard('jwt'), RolesGuard)
@@ -300,10 +496,7 @@ export class ProductsController {
   @Delete(':id')
   @UseGuards(AuthGuard('jwt'), RolesGuard)
   @Roles(UserRole.VENDOR)
-  deleteProduct(
-    @Param('id', ParseIntPipe) id: number,
-    @Req() req: any,
-  ) {
+  deleteProduct(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
     return this.productsService.deleteProduct(id, req.user);
   }
 

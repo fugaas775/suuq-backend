@@ -1,5 +1,11 @@
 import { Type } from 'class-transformer';
-import { IsNotEmpty, IsNumber, IsArray, ValidateNested, Min } from 'class-validator';
+import {
+  IsNotEmpty,
+  IsNumber,
+  IsArray,
+  ValidateNested,
+  Min,
+} from 'class-validator';
 
 class CartItemDto {
   @IsNotEmpty()
@@ -31,12 +37,12 @@ export class AddToCartDto {
 }
 
 export class UpdateQuantityDto {
-    @IsNotEmpty()
-    @IsNumber()
-    productId!: number; // ADDED !
+  @IsNotEmpty()
+  @IsNumber()
+  productId!: number; // ADDED !
 
-    @IsNotEmpty()
-    @IsNumber()
-    @Min(0)
-    quantity!: number; // ADDED !
+  @IsNotEmpty()
+  @IsNumber()
+  @Min(0)
+  quantity!: number; // ADDED !
 }

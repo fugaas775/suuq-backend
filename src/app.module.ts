@@ -1,8 +1,8 @@
-import { WithdrawalsModule } from './withdrawals/withdrawals.module';
 // src/app.module.ts
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { ThrottlerModule } from '@nestjs/throttler';
 import { dataSourceOptions } from './ormconfig';
 
 // Import all your feature modules
@@ -32,12 +32,19 @@ import { EmailModule } from './email/email.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { FavoritesModule } from './favorites/favorites.module';
+import { HealthModule } from './health/health.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true, envFilePath: '.env' }),
     TypeOrmModule.forRoot(dataSourceOptions), // Use the simplified, direct config
-    
+    ThrottlerModule.forRoot([
+      {
+        ttl: parseInt(process.env.THROTTLE_TTL, 10) || 60000, // 1 minute default
+        limit: parseInt(process.env.THROTTLE_LIMIT, 10) || 60, // 60 requests per minute default
+      },
+    ]),
+
     // List all your feature modules
     UsersModule,
     AuthModule,
@@ -58,10 +65,11 @@ import { FavoritesModule } from './favorites/favorites.module';
     FirebaseModule,
     MediaModule,
     VerificationModule,
-  AdminModule,
-  HomeModule,
-  CurationModule,
-  FavoritesModule,
+    AdminModule,
+    HomeModule,
+    CurationModule,
+    FavoritesModule,
+    HealthModule,
   ],
   controllers: [AppController],
   providers: [AppService],

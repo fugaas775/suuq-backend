@@ -15,6 +15,7 @@ import {
   Post,
   Delete,
   ParseIntPipe,
+  BadRequestException,
 } from '@nestjs/common';
 import { VendorService } from './vendor.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -39,20 +40,28 @@ export class VendorController {
     @Query('q') q?: string,
     @Query('page') page: number = 1,
     @Query('limit') limit: number = 20,
-    @Query('sort') sort: 'name' | 'recent' | 'popular' | 'verifiedAt' = 'recent',
-    @Query('verificationStatus') verificationStatus?: 'APPROVED' | 'PENDING' | 'REJECTED',
+    @Query('sort')
+    sort: 'name' | 'recent' | 'popular' | 'verifiedAt' = 'recent',
+    @Query('verificationStatus')
+    verificationStatus?: 'APPROVED' | 'PENDING' | 'REJECTED',
     @Query('role') role?: 'VENDOR',
   ) {
-    const { items, total, currentPage, totalPages } = await this.vendorService.findPublicVendors({
-      page: Number(page) || 1,
-      limit: Math.min(Number(limit) || 20, 100),
-      search: q,
-      sort,
-      verificationStatus,
-      role,
-    } as any);
+    const { items, total, currentPage } =
+      await this.vendorService.findPublicVendors({
+        page: Number(page) || 1,
+        limit: Math.min(Number(limit) || 20, 100),
+        search: q,
+        sort,
+        verificationStatus,
+        role,
+      } as any);
 
-    return { items, page: currentPage, limit: Math.min(Number(limit) || 20, 100), total };
+    return {
+      items,
+      page: currentPage,
+      limit: Math.min(Number(limit) || 20, 100),
+      total,
+    };
   }
 
   @Get('vendors/:id')
@@ -80,7 +89,8 @@ export class VendorController {
   @Get('vendor/products/manage')
   async getVendorProductsManage(
     @Req() req: any,
-    @Query() q: import('./dto/vendor-products-query.dto').VendorProductsQueryDto,
+    @Query()
+    q: import('./dto/vendor-products-query.dto').VendorProductsQueryDto,
   ) {
     return this.vendorService.getVendorProductsManage(req.user.id, q);
   }
@@ -122,7 +132,12 @@ export class VendorController {
     @Param('productId', ParseIntPipe) productId: number,
     @Body() body: { publish?: boolean; status?: 'publish' | 'draft' },
   ) {
-    const desired = typeof body?.publish === 'boolean' ? (body.publish ? 'publish' : 'draft') : (body?.status || 'publish');
+    const desired =
+      typeof body?.publish === 'boolean'
+        ? body.publish
+          ? 'publish'
+          : 'draft'
+        : body?.status || 'publish';
     return this.vendorService.setPublishStatus(req.user.id, productId, desired);
   }
 
@@ -190,7 +205,11 @@ export class VendorController {
     @Param('orderId', ParseIntPipe) orderId: number,
     @Body() dto: UpdateOrderStatusDto,
   ) {
-    return this.vendorService.updateOrderStatus(req.user.id, orderId, dto.status);
+    return this.vendorService.updateOrderStatus(
+      req.user.id,
+      orderId,
+      dto.status,
+    );
   }
 
   // Vendor assigns a deliverer to an order they fully own
@@ -205,18 +224,22 @@ export class VendorController {
   ) {
     const delivererId = Number(
       body?.delivererId ??
-      body?.userId ??
-      body?.deliverer_id ??
-      body?.assigneeId ??
-      body?.driverId ??
-      body?.courierId ??
-      query?.delivererId ??
-      query?.userId,
+        body?.userId ??
+        body?.deliverer_id ??
+        body?.assigneeId ??
+        body?.driverId ??
+        body?.courierId ??
+        query?.delivererId ??
+        query?.userId,
     );
     if (!delivererId || Number.isNaN(delivererId)) {
-      throw new (require('@nestjs/common') as any).BadRequestException('delivererId is required');
+      throw new BadRequestException('delivererId is required');
     }
-    return this.vendorService.assignDelivererByVendor(req.user.id, orderId, delivererId);
+    return this.vendorService.assignDelivererByVendor(
+      req.user.id,
+      orderId,
+      delivererId,
+    );
   }
 
   // ===== Item-level endpoints =====
@@ -237,9 +260,15 @@ export class VendorController {
     @Req() req: any,
     @Param('orderId', ParseIntPipe) orderId: number,
     @Param('itemId', ParseIntPipe) itemId: number,
-    @Body() dto: import('./dto/update-order-item-status.dto').UpdateOrderItemStatusDto,
+    @Body()
+    dto: import('./dto/update-order-item-status.dto').UpdateOrderItemStatusDto,
   ) {
-    return this.vendorService.updateOrderItemStatus(req.user.id, orderId, itemId, dto.status);
+    return this.vendorService.updateOrderItemStatus(
+      req.user.id,
+      orderId,
+      itemId,
+      dto.status,
+    );
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
@@ -249,9 +278,15 @@ export class VendorController {
     @Req() req: any,
     @Param('orderId', ParseIntPipe) orderId: number,
     @Param('itemId', ParseIntPipe) itemId: number,
-    @Body() dto: import('./dto/update-order-item-tracking.dto').UpdateOrderItemTrackingDto,
+    @Body()
+    dto: import('./dto/update-order-item-tracking.dto').UpdateOrderItemTrackingDto,
   ) {
-    return this.vendorService.updateOrderItemTracking(req.user.id, orderId, itemId, dto);
+    return this.vendorService.updateOrderItemTracking(
+      req.user.id,
+      orderId,
+      itemId,
+      dto,
+    );
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)

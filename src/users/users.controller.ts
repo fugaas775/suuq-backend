@@ -34,20 +34,21 @@ export class UsersController {
    */
   @Get()
   @Roles(UserRole.ADMIN)
-  async getAllUsers(@Query() filters: FindUsersQueryDto): Promise<UserResponseDto[]> {
+  async getAllUsers(
+    @Query() filters: FindUsersQueryDto,
+  ): Promise<UserResponseDto[]> {
     const result = await this.usersService.findAll(filters);
     // If paginated result, return mapped users array
     const users = Array.isArray(result) ? result : result.users;
     return users.map((user: any) =>
-      plainToInstance(UserResponseDto, user, { excludeExtraneousValues: true })
+      plainToInstance(UserResponseDto, user, { excludeExtraneousValues: true }),
     );
   }
-
 
   @Patch('me')
   async updateOwnProfile(
     @Req() req: AuthenticatedRequest,
-    @Body() data: UpdateUserDto
+    @Body() data: UpdateUserDto,
   ): Promise<UserResponseDto> {
     const userId = req.user?.id;
     if (!userId) throw new UnauthorizedException();
@@ -58,14 +59,16 @@ export class UsersController {
     delete data.password;
 
     const user = await this.usersService.update(userId, data);
-    return plainToInstance(UserResponseDto, user, { excludeExtraneousValues: true });
+    return plainToInstance(UserResponseDto, user, {
+      excludeExtraneousValues: true,
+    });
   }
 
   // Allow clients that use PUT /users/me (alias of PATCH)
   @Put('me')
   async putOwnProfile(
     @Req() req: AuthenticatedRequest,
-    @Body() data: UpdateUserDto
+    @Body() data: UpdateUserDto,
   ): Promise<UserResponseDto> {
     const userId = req.user?.id;
     if (!userId) throw new UnauthorizedException();
@@ -76,7 +79,9 @@ export class UsersController {
     delete data.password;
 
     const user = await this.usersService.update(userId, data);
-    return plainToInstance(UserResponseDto, user, { excludeExtraneousValues: true });
+    return plainToInstance(UserResponseDto, user, {
+      excludeExtraneousValues: true,
+    });
   }
 
   // Password change for current user (accept multiple verbs to match clients)
@@ -85,7 +90,8 @@ export class UsersController {
   async changeOwnPassword(@Req() req: AuthenticatedRequest, @Body() body: any) {
     const userId = req.user?.id;
     if (!userId) throw new UnauthorizedException();
-    const current = body.currentPassword || body.oldPassword || body.passwordCurrent;
+    const current =
+      body.currentPassword || body.oldPassword || body.passwordCurrent;
     const next = body.newPassword || body.password || body.new_password;
     if (!next) {
       throw new Error('New password is required.');
@@ -97,39 +103,56 @@ export class UsersController {
   // POST alias for clients using /users/me/change-password
   @Put('me/change-password')
   @Patch('me/change-password')
-  async changeOwnPasswordAlias(@Req() req: AuthenticatedRequest, @Body() body: any) {
+  async changeOwnPasswordAlias(
+    @Req() req: AuthenticatedRequest,
+    @Body() body: any,
+  ) {
     return this.changeOwnPassword(req, body);
   }
 
   @Get(':id')
   @Roles(UserRole.ADMIN)
-  async getUser(@Param('id', ParseIntPipe) id: number): Promise<UserResponseDto> {
+  async getUser(
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<UserResponseDto> {
     const user = await this.usersService.findById(id);
-    return plainToInstance(UserResponseDto, user, { excludeExtraneousValues: true });
+    return plainToInstance(UserResponseDto, user, {
+      excludeExtraneousValues: true,
+    });
   }
 
   @Put(':id')
   @Roles(UserRole.ADMIN)
   async updateUser(
     @Param('id', ParseIntPipe) id: number,
-    @Body() data: UpdateUserDto
+    @Body() data: UpdateUserDto,
   ): Promise<UserResponseDto> {
     const user = await this.usersService.update(id, data);
-    return plainToInstance(UserResponseDto, user, { excludeExtraneousValues: true });
+    return plainToInstance(UserResponseDto, user, {
+      excludeExtraneousValues: true,
+    });
   }
 
   @Put(':id/deactivate')
   @Roles(UserRole.ADMIN)
-  async deactivateUser(@Param('id', ParseIntPipe) id: number): Promise<UserResponseDto> {
+  async deactivateUser(
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<UserResponseDto> {
     const user = await this.usersService.deactivate(id);
-    return plainToInstance(UserResponseDto, user, { excludeExtraneousValues: true });
+    return plainToInstance(UserResponseDto, user, {
+      excludeExtraneousValues: true,
+    });
   }
 
   @Put(':id/reactivate')
   @Roles(UserRole.ADMIN)
-  async reactivateUser(@Param('id', ParseIntPipe) id: number): Promise<UserResponseDto> {
+  async reactivateUser(
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<UserResponseDto> {
     const user = await this.usersService.reactivate(id);
-    return plainToInstance(UserResponseDto, user, { excludeExtraneousValues: true });
+    return plainToInstance(UserResponseDto, user, {
+      excludeExtraneousValues: true,
+    });
   }
 
   @Delete(':id')
@@ -150,7 +173,13 @@ export class UsersController {
       // Consistent error envelope handled by GlobalExceptionFilter
       throw new Error("Invalid status. Use 'APPROVED' or 'REJECTED'.");
     }
-    const user = await this.usersService.setVerificationStatus(id, status as any, req.user?.email);
-    return plainToInstance(UserResponseDto, user, { excludeExtraneousValues: true });
+    const user = await this.usersService.setVerificationStatus(
+      id,
+      status as any,
+      req.user?.email,
+    );
+    return plainToInstance(UserResponseDto, user, {
+      excludeExtraneousValues: true,
+    });
   }
 }

@@ -1,4 +1,12 @@
-import { Controller, Get, Req, UseGuards, Patch, Param, Body } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Req,
+  UseGuards,
+  Patch,
+  Param,
+  Body,
+} from '@nestjs/common';
 import { UpdateVendorProductDto } from './dto/update-vendor-product.dto';
 import { VendorService } from './vendor.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -13,7 +21,6 @@ export class VendorDashboardController {
   constructor(private readonly vendorService: VendorService) {}
 
   @Get('overview')
-
   async getDashboardOverview(@Req() req: any) {
     return this.vendorService.getDashboardOverview(req.user.id);
   }

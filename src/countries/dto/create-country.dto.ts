@@ -1,4 +1,10 @@
-import { IsString, IsArray, IsUrl, IsNotEmpty, ValidateNested } from 'class-validator';
+import {
+  IsString,
+  IsArray,
+  IsUrl,
+  IsNotEmpty,
+  ValidateNested,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 
 class SupplyDto {
@@ -27,7 +33,7 @@ export class CreateCountryDto {
   @IsUrl()
   @IsNotEmpty()
   imageUrl!: string;
-  
+
   @IsString()
   @IsNotEmpty()
   description!: string;

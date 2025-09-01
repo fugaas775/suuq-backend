@@ -1,4 +1,9 @@
-import { CallHandler, ExecutionContext, Injectable, NestInterceptor } from '@nestjs/common';
+import {
+  CallHandler,
+  ExecutionContext,
+  Injectable,
+  NestInterceptor,
+} from '@nestjs/common';
 import { createHash } from 'crypto';
 import { Observable } from 'rxjs';
 import { tap } from 'rxjs/operators';
@@ -13,10 +18,14 @@ export class EtagInterceptor implements NestInterceptor {
     const req = ctx.getRequest();
 
     return next.handle().pipe(
-  tap((data) => {
+      tap((data) => {
         try {
           // Bypass ETag/Cache for curation endpoints entirely
-          const originalUrl: string = (req?.originalUrl || req?.url || '').toString();
+          const originalUrl: string = (
+            req?.originalUrl ||
+            req?.url ||
+            ''
+          ).toString();
           if (originalUrl.includes('/curation/')) {
             // Force no-store and suppress ETag generation by Express
             if (!res.getHeader('Cache-Control')) {
@@ -26,7 +35,10 @@ export class EtagInterceptor implements NestInterceptor {
             return;
           }
           const routeCache = res.getHeader('Cache-Control');
-          if (routeCache && String(routeCache).toLowerCase().includes('no-store')) {
+          if (
+            routeCache &&
+            String(routeCache).toLowerCase().includes('no-store')
+          ) {
             // Respect route opting out of caching/etag
             return;
           }
@@ -35,13 +47,17 @@ export class EtagInterceptor implements NestInterceptor {
             return;
           }
           const body = JSON.stringify(data ?? '');
-          const etag = 'W/"' + createHash('sha1').update(body).digest('hex') + '"';
+          const etag =
+            'W/"' + createHash('sha1').update(body).digest('hex') + '"';
           const ifNoneMatch = req.headers['if-none-match'];
           res.setHeader('ETag', etag);
           if (!res.getHeader('Last-Modified')) {
             res.setHeader('Last-Modified', new Date().toUTCString());
           }
-          res.setHeader('Cache-Control', `public, max-age=${this.cacheSeconds}`);
+          res.setHeader(
+            'Cache-Control',
+            `public, max-age=${this.cacheSeconds}`,
+          );
           if (ifNoneMatch && ifNoneMatch === etag) {
             res.status(304).end();
           }

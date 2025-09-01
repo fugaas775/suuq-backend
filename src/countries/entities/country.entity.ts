@@ -17,7 +17,7 @@ export class Country {
 
   @Column()
   flagUrl!: string;
-  
+
   @Column()
   imageUrl!: string;
 

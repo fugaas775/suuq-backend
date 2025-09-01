@@ -1,5 +1,9 @@
 import { Injectable } from '@nestjs/common';
-import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
+import {
+  S3Client,
+  PutObjectCommand,
+  GetObjectCommand,
+} from '@aws-sdk/client-s3';
 import { getSignedUrl as awsGetSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 @Injectable()
@@ -18,8 +22,8 @@ export class DoSpacesService {
     this.s3 = new S3Client({
       endpoint: this.endpoint,
       credentials: {
-        accessKeyId: process.env.DO_SPACES_KEY!,
-        secretAccessKey: process.env.DO_SPACES_SECRET!,
+        accessKeyId: process.env.DO_SPACES_KEY,
+        secretAccessKey: process.env.DO_SPACES_SECRET,
       },
       region: this.region,
     });
@@ -37,7 +41,7 @@ export class DoSpacesService {
       ACL: 'public-read',
       ContentType: mimetype,
       ContentDisposition: 'inline',
-  CacheControl: 'public, max-age=31536000, immutable',
+      CacheControl: 'public, max-age=31536000, immutable',
     });
 
     await this.s3.send(command);
@@ -53,7 +57,7 @@ export class DoSpacesService {
   async getSignedUrl(
     key: string,
     ttlSecs = 300,
-    opts?: { contentType?: string; inlineFilename?: string }
+    opts?: { contentType?: string; inlineFilename?: string },
   ): Promise<string> {
     const command = new GetObjectCommand({
       Bucket: this.bucket,
@@ -63,7 +67,9 @@ export class DoSpacesService {
         ? `inline; filename="${opts.inlineFilename}"`
         : 'inline',
     });
-    return awsGetSignedUrl(this.s3 as any, command as any, { expiresIn: ttlSecs });
+    return awsGetSignedUrl(this.s3 as any, command as any, {
+      expiresIn: ttlSecs,
+    });
   }
 
   /** Extract the object key from a full Spaces URL. */

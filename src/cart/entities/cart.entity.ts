@@ -1,4 +1,12 @@
-import { Entity, PrimaryGeneratedColumn, OneToOne, JoinColumn, OneToMany, Column, ManyToOne } from 'typeorm';
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  OneToOne,
+  JoinColumn,
+  OneToMany,
+  Column,
+  ManyToOne,
+} from 'typeorm';
 import { User } from '../../users/entities/user.entity';
 import { Product } from '../../products/entities/product.entity';
 
@@ -11,7 +19,10 @@ export class Cart {
   @JoinColumn()
   user!: User;
 
-  @OneToMany(() => CartItem, (item) => item.cart, { cascade: true, eager: true })
+  @OneToMany(() => CartItem, (item) => item.cart, {
+    cascade: true,
+    eager: true,
+  })
   items!: CartItem[];
 }
 

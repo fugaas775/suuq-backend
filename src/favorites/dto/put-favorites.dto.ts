@@ -1,4 +1,11 @@
-import { ArrayMaxSize, ArrayUnique, IsArray, IsBoolean, IsInt, IsOptional } from 'class-validator';
+import {
+  ArrayMaxSize,
+  ArrayUnique,
+  IsArray,
+  IsBoolean,
+  IsInt,
+  IsOptional,
+} from 'class-validator';
 
 export class PutFavoritesDto {
   @IsArray()

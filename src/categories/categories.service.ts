@@ -39,17 +39,29 @@ export class CategoriesService {
     });
   }
 
-  async suggest(q: string, limit: number): Promise<Array<{ id: number; name: string; slug: string; parentId: number | null }>> {
+  async suggest(
+    q: string,
+    limit: number,
+  ): Promise<
+    Array<{ id: number; name: string; slug: string; parentId: number | null }>
+  > {
     const term = (q || '').trim();
     const take = Math.min(Math.max(Number(limit) || 10, 1), 50);
-    const where: any = term
-      ? [
-          { name: ILike(`%${term}%`) },
-          { slug: ILike(`%${term}%`) },
-        ]
+
+    const where = term
+      ? [{ name: ILike(`%${term}%`) }, { slug: ILike(`%${term}%`) }]
       : {};
-    const cats = await this.categoryRepo.find({ where, take, order: { name: 'ASC' } });
-    return cats.map((c) => ({ id: c.id, name: c.name, slug: c.slug, parentId: c.parent ? c.parent.id : null }));
+    const cats = await this.categoryRepo.find({
+      where,
+      take,
+      order: { name: 'ASC' },
+    });
+    return cats.map((c) => ({
+      id: c.id,
+      name: c.name,
+      slug: c.slug,
+      parentId: c.parent ? c.parent.id : null,
+    }));
   }
 
   async findOne(id: number): Promise<Category> {
@@ -57,23 +69,31 @@ export class CategoriesService {
       where: { id },
       relations: ['parent'],
     });
-    if (!category) throw new NotFoundException(`Category with ID ${id} not found`);
+    if (!category)
+      throw new NotFoundException(`Category with ID ${id} not found`);
     return category;
   }
 
   /** Find a category by slug or return null */
   async findBySlug(slug: string): Promise<Category | null> {
-    return this.categoryRepo.findOne({ where: { slug }, relations: ['parent'] });
+    return this.categoryRepo.findOne({
+      where: { slug },
+      relations: ['parent'],
+    });
   }
 
   async create(dto: CreateCategoryDto): Promise<Category> {
-    const slug = dto.slug ? slugify(dto.slug) : slugify(dto.name.toLowerCase().trim());
+    const slug = dto.slug
+      ? slugify(dto.slug)
+      : slugify(dto.name.toLowerCase().trim());
     const exists = await this.categoryRepo.findOne({ where: { slug } });
     if (exists) {
-      throw new BadRequestException(`Slug already exists for category: '${exists.name}'`);
+      throw new BadRequestException(
+        `Slug already exists for category: '${exists.name}'`,
+      );
     }
 
-    let iconUrl = dto.iconUrl;
+    const iconUrl = dto.iconUrl;
     const createdAt = new Date();
     const category = this.categoryRepo.create({
       name: dto.name,
@@ -87,7 +107,9 @@ export class CategoriesService {
     if (dto.parentId) {
       const parent = await this.findOne(dto.parentId);
       if (parent.parent) {
-        throw new BadRequestException('A category cannot be a sub-category of another sub-category.');
+        throw new BadRequestException(
+          'A category cannot be a sub-category of another sub-category.',
+        );
       }
       category.parent = parent;
     }
@@ -95,7 +117,11 @@ export class CategoriesService {
     const saved = await this.categoryRepo.save(category);
     // If iconUrl exists, append version param for cache-busting
     if (saved.iconUrl) {
-      saved.iconUrl = this.appendIconVersion(saved.iconUrl, saved.iconVersion, saved.updatedAt ?? createdAt);
+      saved.iconUrl = this.appendIconVersion(
+        saved.iconUrl,
+        saved.iconVersion,
+        saved.updatedAt ?? createdAt,
+      );
       await this.categoryRepo.save(saved);
     }
     return saved;
@@ -105,7 +131,9 @@ export class CategoriesService {
     const category = await this.findOne(id);
 
     if (dto.slug && dto.slug !== category.slug) {
-      const exists = await this.categoryRepo.findOne({ where: { slug: dto.slug } });
+      const exists = await this.categoryRepo.findOne({
+        where: { slug: dto.slug },
+      });
       if (exists) throw new BadRequestException('Slug already exists');
     }
 
@@ -114,12 +142,16 @@ export class CategoriesService {
     } else if (dto.parentId) {
       const parent = await this.findOne(dto.parentId);
       if (parent.parent) {
-        throw new BadRequestException('A category cannot be a sub-category of another sub-category.');
+        throw new BadRequestException(
+          'A category cannot be a sub-category of another sub-category.',
+        );
       }
       category.parent = parent;
     }
 
-    const wasIconChanged = (typeof dto.iconName !== 'undefined' && dto.iconName !== category.iconName) ||
+    const wasIconChanged =
+      (typeof dto.iconName !== 'undefined' &&
+        dto.iconName !== category.iconName) ||
       (typeof dto.iconUrl !== 'undefined' && dto.iconUrl !== category.iconUrl);
 
     const updatedCategory = this.categoryRepo.merge(category, dto);
@@ -130,22 +162,32 @@ export class CategoriesService {
 
     const saved = await this.categoryRepo.save(updatedCategory);
     if (wasIconChanged && saved.iconUrl) {
-      saved.iconUrl = this.appendIconVersion(saved.iconUrl, saved.iconVersion, saved.updatedAt);
+      saved.iconUrl = this.appendIconVersion(
+        saved.iconUrl,
+        saved.iconVersion,
+        saved.updatedAt,
+      );
       return this.categoryRepo.save(saved);
     }
     return saved;
   }
 
   async delete(id: number): Promise<{ deleted: boolean }> {
-    const productCount = await this.productRepo.count({ where: { category: { id } } });
+    const productCount = await this.productRepo.count({
+      where: { category: { id } },
+    });
     if (productCount > 0) {
-      throw new BadRequestException('Cannot delete category because it is linked to existing products.');
+      throw new BadRequestException(
+        'Cannot delete category because it is linked to existing products.',
+      );
     }
-    
+
     const category = await this.findOne(id);
     const childrenCount = await this.categoryRepo.countDescendants(category);
     if (childrenCount > 1) {
-      throw new BadRequestException('Cannot delete a category that has sub-categories. Please delete them first.');
+      throw new BadRequestException(
+        'Cannot delete a category that has sub-categories. Please delete them first.',
+      );
     }
 
     const result = await this.categoryRepo.delete(id);
@@ -153,8 +195,17 @@ export class CategoriesService {
   }
 
   // Append cache-busting version to icon URL using iconVersion or updatedAt timestamp
-  private appendIconVersion(url: string, iconVersion?: number, updatedAt?: Date): string {
-    const ver = typeof iconVersion === 'number' ? iconVersion : (updatedAt ? updatedAt.getTime() : Date.now());
+  private appendIconVersion(
+    url: string,
+    iconVersion?: number,
+    updatedAt?: Date,
+  ): string {
+    const ver =
+      typeof iconVersion === 'number'
+        ? iconVersion
+        : updatedAt
+          ? updatedAt.getTime()
+          : Date.now();
     const hasQuery = url.includes('?');
     const sep = hasQuery ? '&' : '?';
     // If already has v= param, replace it
@@ -170,8 +221,11 @@ function hasQuery(url: string): boolean {
   return url.includes('?');
 }
 
-export function appendQuery(url: string, key: string, value: string | number): string {
+export function appendQuery(
+  url: string,
+  key: string,
+  value: string | number,
+): string {
   const sep = hasQuery(url) ? '&' : '?';
   return `${url}${sep}${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`;
 }
-

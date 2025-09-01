@@ -6,7 +6,6 @@ import {
   IsArray,
   IsEnum,
   ValidateIf,
-  IsNotEmpty,
   Matches,
 } from 'class-validator';
 import { UserRole } from '../../auth/roles.enum';
@@ -33,7 +32,7 @@ export class RegisterDto {
   roles?: UserRole[];
 
   @IsOptional()
-  @ValidateIf(o => !o.roles || o.roles.length === 0)
+  @ValidateIf((o) => !o.roles || o.roles.length === 0)
   @IsEnum(UserRole)
   role?: UserRole;
 
@@ -44,13 +43,15 @@ export class RegisterDto {
   @IsOptional()
   @IsString()
   storeName?: string;
-  
+
   @IsOptional()
   @IsString()
   phoneCountryCode?: string;
 
   @IsOptional()
   @IsString()
-  @Matches(/^(\d{9}|0\d{9})$/, { message: 'Phone number must be 9 digits, or 10 digits starting with 0.' })
+  @Matches(/^(\d{9}|0\d{9})$/, {
+    message: 'Phone number must be 9 digits, or 10 digits starting with 0.',
+  })
   phoneNumber?: string;
 }

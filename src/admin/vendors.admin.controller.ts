@@ -1,4 +1,15 @@
-import { Body, Controller, Get, Param, ParseIntPipe, Patch, Query, UseGuards, Req } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  ParseIntPipe,
+  Patch,
+  Query,
+  UseGuards,
+  Req,
+  ForbiddenException,
+} from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -12,7 +23,10 @@ import { UpdateVendorActiveDto } from './dto/update-vendor-active.dto';
 @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
 @Controller('admin/vendors')
 export class AdminVendorsController {
-  constructor(private readonly vendorService: VendorService, private readonly audit: AuditService) {}
+  constructor(
+    private readonly vendorService: VendorService,
+    private readonly audit: AuditService,
+  ) {}
 
   @Get()
   async list(
@@ -20,7 +34,8 @@ export class AdminVendorsController {
     @Query('limit') limit?: string,
     @Query('q') q?: string,
     @Query('sort') sort?: 'name' | 'recent' | 'popular' | 'verifiedAt',
-    @Query('verificationStatus') verificationStatus?: 'APPROVED' | 'PENDING' | 'REJECTED',
+    @Query('verificationStatus')
+    verificationStatus?: 'APPROVED' | 'PENDING' | 'REJECTED',
     @Query('country') country?: string,
     @Query('region') region?: string,
     @Query('city') city?: string,
@@ -29,8 +44,12 @@ export class AdminVendorsController {
   ) {
     const p = Math.max(Number(page) || 1, 1);
     const l = Math.min(Math.max(Number(limit) || 20, 1), 100);
-    const minSalesNum = minSales !== undefined && minSales !== '' ? Number(minSales) : undefined;
-    const minRatingNum = minRating !== undefined && minRating !== '' ? Number(minRating) : undefined;
+    const minSalesNum =
+      minSales !== undefined && minSales !== '' ? Number(minSales) : undefined;
+    const minRatingNum =
+      minRating !== undefined && minRating !== ''
+        ? Number(minRating)
+        : undefined;
     const result = await this.vendorService.findPublicVendors({
       page: p,
       limit: l,
@@ -41,8 +60,10 @@ export class AdminVendorsController {
       country,
       region,
       city,
-      minSales: Number.isFinite(minSalesNum as any) ? (minSalesNum as number) : undefined,
-      minRating: Number.isFinite(minRatingNum as any) ? (minRatingNum as number) : undefined,
+      minSales: Number.isFinite(minSalesNum as any) ? minSalesNum : undefined,
+      minRating: Number.isFinite(minRatingNum as any)
+        ? minRatingNum
+        : undefined,
     } as any);
     return {
       items: result.items,
@@ -55,7 +76,7 @@ export class AdminVendorsController {
 
   @Get(':id')
   async getOne(@Param('id', ParseIntPipe) id: number) {
-  return await this.vendorService.getAdminVendorDetail(id);
+    return await this.vendorService.getAdminVendorDetail(id);
   }
 
   @Get(':id/audit')
@@ -73,7 +94,10 @@ export class AdminVendorsController {
     const p = Math.max(Number(page) || 1, 1);
     const l = Math.min(Math.max(Number(limit) || 20, 1), 100);
     const useCursor = !!after;
-    const actionList = (actions || '').split(',').map(s => s.trim()).filter(Boolean);
+    const actionList = (actions || '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
     const filters = {
       actions: actionList.length ? actionList : undefined,
       actorEmail: actorEmail || undefined,
@@ -85,8 +109,12 @@ export class AdminVendorsController {
     // Build using the service query builder helpers indirectly by calling the paged/cursor methods and then filtering via controller-level composition is tricky.
     // For simplicity and minimal changes, we’ll filter using the service’s applyFilters via a tiny internal helper.
     const repo: any = (this.audit as any).repo;
-    const qb = repo.createQueryBuilder('a')
-      .where('a.targetType = :targetType AND a.targetId = :targetId', { targetType: 'vendor', targetId: id })
+    const qb = repo
+      .createQueryBuilder('a')
+      .where('a.targetType = :targetType AND a.targetId = :targetId', {
+        targetType: 'vendor',
+        targetId: id,
+      })
       .orderBy('a.createdAt', 'DESC')
       .addOrderBy('a.id', 'DESC');
     this.audit.applyFilters(qb, filters);
@@ -94,12 +122,18 @@ export class AdminVendorsController {
     if (useCursor) {
       const { createdAt, id: cid } = this.audit.decodeCursor(after);
       if (createdAt && cid) {
-        qb.andWhere('(a.createdAt < :createdAt OR (a.createdAt = :createdAt AND a.id < :cid))', { createdAt, cid });
+        qb.andWhere(
+          '(a.createdAt < :createdAt OR (a.createdAt = :createdAt AND a.id < :cid))',
+          { createdAt, cid },
+        );
       }
       qb.take(l + 1);
       const rows = await qb.getMany();
       const itemsRows = rows.slice(0, l);
-      const nextCursor = rows.length > l ? this.audit.encodeCursor(itemsRows[itemsRows.length - 1]) : null;
+      const nextCursor =
+        rows.length > l
+          ? this.audit.encodeCursor(itemsRows[itemsRows.length - 1])
+          : null;
       const items = itemsRows.map((it: any) => ({
         id: it.id,
         action: it.action,
@@ -124,7 +158,13 @@ export class AdminVendorsController {
         meta: it.meta || null,
         createdAt: it.createdAt,
       }));
-      return { items, total, page: p, perPage: l, totalPages: Math.ceil(total / l) };
+      return {
+        items,
+        total,
+        page: p,
+        perPage: l,
+        totalPages: Math.ceil(total / l),
+      };
     }
     const label = (action: string, meta?: any) => {
       switch (action) {
@@ -146,7 +186,7 @@ export class AdminVendorsController {
           return action;
       }
     };
-  // Unreachable due to early returns above
+    // Unreachable due to early returns above
   }
 
   @Patch(':id/verification')
@@ -155,7 +195,11 @@ export class AdminVendorsController {
     @Body() dto: UpdateVendorVerificationDto,
     @Req() req: any,
   ) {
-    const updated = await this.vendorService.setVendorVerificationStatus(id, dto.status, dto.reason);
+    const updated = await this.vendorService.setVendorVerificationStatus(
+      id,
+      dto.status,
+      dto.reason,
+    );
     await this.audit.log({
       action: 'vendor.verification.update',
       targetType: 'vendor',
@@ -175,11 +219,16 @@ export class AdminVendorsController {
     @Req() req: any,
   ) {
     // Enforce SUPER_ADMIN for activate/deactivate on backend as well
-    const roles: string[] = Array.isArray(req?.user?.roles) ? req.user.roles : [];
+    const roles: string[] = Array.isArray(req?.user?.roles)
+      ? req.user.roles
+      : [];
     if (!roles.includes('SUPER_ADMIN')) {
-      throw new (require('@nestjs/common').ForbiddenException)('Only SUPER_ADMIN can change active state');
+      throw new ForbiddenException('Only SUPER_ADMIN can change active state');
     }
-    const updated = await this.vendorService.setVendorActiveState(id, dto.isActive);
+    const updated = await this.vendorService.setVendorActiveState(
+      id,
+      dto.isActive,
+    );
     await this.audit.log({
       action: 'vendor.active.update',
       targetType: 'vendor',

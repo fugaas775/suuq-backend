@@ -1,4 +1,15 @@
-import { Controller, Post, Get, Param, Body, UseGuards, Request, ParseIntPipe, Res, Put, HttpStatus } from '@nestjs/common';
+import {
+  Controller,
+  Post,
+  Get,
+  Param,
+  Body,
+  UseGuards,
+  Request,
+  ParseIntPipe,
+  Res,
+  HttpStatus,
+} from '@nestjs/common';
 import { ReviewsService } from './reviews.service';
 import { CreateReviewDto } from './create-review.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -13,9 +24,13 @@ export class ReviewsController {
   async create(
     @Param('productId') productId: number,
     @Body() dto: CreateReviewDto,
-    @Request() req: any
+    @Request() req: any,
   ) {
-    const result = await this.reviewsService.create(req.user.id, Number(productId), dto);
+    const result = await this.reviewsService.create(
+      req.user.id,
+      Number(productId),
+      dto,
+    );
     // If updated existing, return 200; if created new, return 201
     return {
       statusCode: result.updated ? HttpStatus.OK : HttpStatus.CREATED,
@@ -33,8 +48,8 @@ export class ReviewsController {
   @Get('me')
   async findMine(
     @Param('productId', ParseIntPipe) productId: number,
-    @Request() req: any,
-    @Res({ passthrough: true }) res: Response
+    @Request() req: { user?: { id?: number } },
+    @Res({ passthrough: true }) res: Response,
   ) {
     const review = await this.reviewsService.findMine(req.user.id, productId);
     if (!review) {

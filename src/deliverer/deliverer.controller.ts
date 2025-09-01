@@ -1,4 +1,13 @@
-import { Controller, Get, Patch, Body, Param, Req, UseGuards, ParseIntPipe } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Patch,
+  Body,
+  Param,
+  Req,
+  UseGuards,
+  ParseIntPipe,
+} from '@nestjs/common';
 import { DelivererService } from './deliverer.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
@@ -44,6 +53,10 @@ export class DelivererController {
     @Param('orderId', ParseIntPipe) orderId: number,
     @Body('status') status: OrderStatus,
   ) {
-    return this.delivererService.updateDeliveryStatus(req.user.id, orderId, status);
+    return this.delivererService.updateDeliveryStatus(
+      req.user.id,
+      orderId,
+      status,
+    );
   }
 }

@@ -34,7 +34,9 @@ export class GeoResolverService {
     const defaultPath = path.resolve(process.cwd(), 'assets/geo/ea_cities.csv');
     const filePath = envPath && fs.existsSync(envPath) ? envPath : defaultPath;
     if (!fs.existsSync(filePath)) {
-      this.logger.warn(`Geo cities file not found at ${filePath}; using built-in minimal mapping`);
+      this.logger.warn(
+        `Geo cities file not found at ${filePath}; using built-in minimal mapping`,
+      );
       this.seedMinimal();
       this.loaded = true;
       return;
@@ -45,7 +47,9 @@ export class GeoResolverService {
       this.loaded = true;
       this.logger.log(`Loaded geo cities from ${filePath}`);
     } catch (e: any) {
-      this.logger.warn(`Failed to load geo cities from ${filePath}: ${e?.message || e}`);
+      this.logger.warn(
+        `Failed to load geo cities from ${filePath}: ${e?.message || e}`,
+      );
       this.seedMinimal();
       this.loaded = true;
     }
@@ -63,14 +67,15 @@ export class GeoResolverService {
       if (!cc) continue;
       const names = [row.city, ...(row.alt_names || [])]
         .map((s) => this.norm(s))
-        .filter(Boolean) as string[];
+        .filter(Boolean);
       for (const n of names) this.byCity.set(n, cc);
       // contains index: single-token needles for substring matches
       for (const n of names) {
         if (!n) continue;
         // prefer single word tokens like 'addis', 'djibouti'
         const token = n.split(/\s+/)[0];
-        if (token && token.length >= 3) this.containsIndex.push({ needle: token, cc });
+        if (token && token.length >= 3)
+          this.containsIndex.push({ needle: token, cc });
       }
     }
   }
@@ -82,7 +87,12 @@ export class GeoResolverService {
     const city = arr[0]?.trim();
     const altRaw = arr[1]?.trim();
     const cc = (arr[2] || arr[arr.length - 1] || '').trim();
-    const alt = altRaw ? altRaw.split('|').map((s) => s.trim()).filter(Boolean) : [];
+    const alt = altRaw
+      ? altRaw
+          .split('|')
+          .map((s) => s.trim())
+          .filter(Boolean)
+      : [];
     if (!city || !cc) return null;
     return { city, alt_names: alt, country_code: cc };
   }
@@ -104,11 +114,12 @@ export class GeoResolverService {
       const cc = row.country_code.toUpperCase();
       const names = [row.city, ...(row.alt_names || [])]
         .map((s) => this.norm(s))
-        .filter(Boolean) as string[];
+        .filter(Boolean);
       for (const n of names) this.byCity.set(n, cc);
       for (const n of names) {
         const token = n.split(/\s+/)[0];
-        if (token && token.length >= 3) this.containsIndex.push({ needle: token, cc });
+        if (token && token.length >= 3)
+          this.containsIndex.push({ needle: token, cc });
       }
     }
   }

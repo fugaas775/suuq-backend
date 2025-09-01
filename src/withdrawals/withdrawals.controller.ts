@@ -1,9 +1,9 @@
-import { Controller, Get, Post, Body, Patch, Param, Query, UseGuards, ParseIntPipe, Req } from '@nestjs/common';
+import { Controller, Get, Post, Body, UseGuards, Req } from '@nestjs/common';
 import { WithdrawalsService } from './withdrawals.service';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { UserRole } from '../auth/roles.enum';
-import { WithdrawalStatus } from './entities/withdrawal.entity';
+// import { WithdrawalStatus } from './entities/withdrawal.entity';
 
 @UseGuards(RolesGuard)
 @Controller('withdrawals')
@@ -13,7 +13,11 @@ export class WithdrawalsController {
   @Roles(UserRole.VENDOR)
   @Get('balance')
   async getBalance(@Req() req) {
-    return { balance: await this.withdrawalsService.calculateVendorBalance(req.user.id) };
+    return {
+      balance: await this.withdrawalsService.calculateVendorBalance(
+        req.user.id,
+      ),
+    };
   }
 
   @Roles(UserRole.VENDOR)
