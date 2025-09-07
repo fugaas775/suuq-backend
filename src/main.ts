@@ -66,6 +66,13 @@ async function bootstrap() {
   // Accept both JSON and application/x-www-form-urlencoded payloads
   app.use(urlencoded({ extended: true, limit: '50mb' }));
   app.use(json({ limit: '50mb' }));
+  // Ensure temp upload directory exists for Multer disk storage
+  try {
+    const fs = await import('fs');
+    await fs.promises.mkdir('/tmp/uploads', { recursive: true });
+  } catch {
+    // ignore
+  }
   // Enable all log levels for better visibility in production
   app.useLogger(['log', 'error', 'warn', 'debug', 'verbose']);
 
@@ -216,6 +223,19 @@ async function bootstrap() {
       next();
     },
   );
+
+  // Tiny plain GET /pdown endpoint (no prefix) to quiet external probes
+  try {
+    const http = app.getHttpAdapter().getInstance() as import('express').Express;
+    http.get('/pdown', (_req, res) => res.status(200).send('OK'));
+    // Quiet common probes
+    http.get('/robots.txt', (_req, res) => {
+      res.type('text/plain').status(200).send('User-agent: *\nDisallow: /');
+    });
+    http.get('/favicon.ico', (_req, res) => res.status(204).end());
+  } catch {
+    // ignore if adapter is not Express
+  }
 
   // Set global prefix for all routes
   app.setGlobalPrefix('api');

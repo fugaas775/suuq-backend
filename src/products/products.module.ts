@@ -12,7 +12,10 @@ import { SearchKeyword } from './entities/search-keyword.entity';
 import { ProductsService } from './products.service';
 import { ProductsController } from './products.controller';
 import { CurrencyModule } from '../common/services/currency.module';
+import { MediaModule } from '../media/media.module';
+import { AuditModule } from '../audit/audit.module';
 import { HomeModule } from '../home/home.module';
+import { FavoritesModule } from '../favorites/favorites.module';
 
 @Module({
   imports: [
@@ -28,7 +31,10 @@ import { HomeModule } from '../home/home.module';
     ]),
     CurrencyModule,
     forwardRef(() => UsersModule),
-    forwardRef(() => HomeModule),
+  forwardRef(() => HomeModule),
+  MediaModule,
+  AuditModule,
+  FavoritesModule,
   ],
   providers: [ProductsService],
   controllers: [ProductsController],

@@ -29,6 +29,8 @@ import { UseInterceptors, ParseBoolPipe } from '@nestjs/common';
 import { RecordImpressionsDto } from './dto/record-impressions.dto';
 import { normalizeProductMedia } from '../common/utils/media-url.util';
 import { AuthenticatedRequest } from '../auth/auth.types';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { FavoritesService } from '../favorites/favorites.service';
 
 @UseInterceptors(ClassSerializerInterceptor)
 @Controller('products')
@@ -38,7 +40,21 @@ export class ProductsController {
   constructor(
     private readonly productsService: ProductsService,
     private readonly homeService: HomeService,
+  private readonly favoritesService: FavoritesService,
   ) {}
+
+  // Public: return a short-lived signed attachment URL for free digital products
+  @Get(':id/free-download')
+  @Header('Cache-Control', 'private, no-store')
+  async freeDownload(
+    @Param('id', ParseIntPipe) id: number,
+    @Query('ttl') ttl?: string,
+    @Req() req?: AuthenticatedRequest,
+  ) {
+    const ttlNum = Math.max(60, Math.min(parseInt(String(ttl || '600'), 10) || 600, 1800));
+    const actorId = (req?.user as any)?.id ?? null;
+    return this.productsService.getFreeDownload(id, { ttl: ttlNum, actorId });
+  }
 
   @Post()
   @UseGuards(AuthGuard('jwt'), RolesGuard)
@@ -112,13 +128,13 @@ export class ProductsController {
       // Map category alias to categoryId for frontend query param compatibility
       if (!filters.categoryId) {
         const anyFilters = filters as unknown as Record<string, unknown>;
-        const alias = anyFilters.categoryAlias as unknown;
+        const alias = anyFilters.categoryAlias;
         const n =
           typeof alias === 'string'
             ? Number(alias)
             : typeof alias === 'number'
-            ? alias
-            : undefined;
+              ? alias
+              : undefined;
         if (typeof n === 'number' && Number.isFinite(n) && n > 0) {
           filters.categoryId = n;
         }
@@ -460,12 +476,7 @@ export class ProductsController {
     return this.productsService.suggestNames(q);
   }
 
-  @Get(':id')
-  findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.productsService.findOne(id);
-  }
-
-  // Personalized recommendations for the current user
+  // Personalized recommendations for the current user (place before ':id')
   @UseGuards(AuthGuard('jwt'))
   @Get('recommended')
   async recommended(
@@ -480,6 +491,18 @@ export class ProductsController {
       Number(page) || 1,
       Number(perPage) || 20,
     );
+  }
+
+  // Likes count endpoint(s) for compatibility with mobile client
+  @Get(':id/likes')
+  async getLikesCount(@Param('id', ParseIntPipe) id: number) {
+    const likes = await this.favoritesService.countLikes(id);
+    return { likes };
+  }
+
+  @Get(':id')
+  findOne(@Param('id', ParseIntPipe) id: number) {
+    return this.productsService.findOne(id);
   }
 
   @Patch(':id')

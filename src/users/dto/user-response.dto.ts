@@ -8,6 +8,15 @@ export class UserResponseDto {
 
   @Expose()
   verified?: boolean;
+
+  @Expose()
+  verificationRejectionReason?: string | null;
+
+  @Expose()
+  verificationReviewedBy?: string | null;
+
+  @Expose()
+  verificationReviewedAt?: Date | null;
   @Expose()
   id!: number;
 
@@ -31,6 +40,9 @@ export class UserResponseDto {
 
   @Expose()
   phoneNumber?: string;
+
+  @Expose()
+  createdAt?: Date; // helpful for sorting / UI display
 
   // Explicitly exclude sensitive/internal fields:
   // @Exclude() password!: string;

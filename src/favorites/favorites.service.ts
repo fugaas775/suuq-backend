@@ -251,4 +251,20 @@ export class FavoritesService {
     for (const id of ids) result[id.toString()] = set.has(id);
     return result;
   }
+
+  /**
+   * Return how many users have favorited the given product.
+   * Uses a database-side array operator to avoid scanning all rows in memory.
+   */
+  async countLikes(productId: number): Promise<number> {
+    // SELECT COUNT(*) FROM favorites WHERE ids @> ARRAY[productId]
+    // TypeORM query builder with Postgres array contains operator
+    const qb = this.favRepo
+      .createQueryBuilder('f')
+      .where(':pid = ANY(f.ids)', { pid: productId })
+      .select('COUNT(*)', 'cnt');
+    const raw = await qb.getRawOne<{ cnt: string }>();
+    const n = raw?.cnt ? parseInt(raw.cnt, 10) : 0;
+    return Number.isNaN(n) ? 0 : n;
+  }
 }

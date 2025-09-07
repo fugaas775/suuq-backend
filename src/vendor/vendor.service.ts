@@ -7,7 +7,7 @@ import { CreateVendorProductDto } from './dto/create-vendor-product.dto';
 import { FindAllVendorsDto } from './dto/find-all-vendors.dto';
 import { UpdateVendorProductDto } from './dto/update-vendor-product.dto';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Raw, ArrayContains, ILike } from 'typeorm';
+import { Repository, Raw, ArrayContains, ILike, In } from 'typeorm';
 import { User, VerificationStatus } from '../users/entities/user.entity';
 import { Product } from '../products/entities/product.entity';
 import { Category } from '../categories/entities/category.entity';
@@ -21,6 +21,8 @@ import {
 import { normalizeProductMedia } from '../common/utils/media-url.util';
 import { UserRole } from '../auth/roles.enum';
 import { NotificationsService } from '../notifications/notifications.service';
+import { Tag } from '../tags/tag.entity';
+import { DoSpacesService } from '../media/do-spaces.service';
 
 @Injectable()
 export class VendorService {
@@ -33,9 +35,12 @@ export class VendorService {
     private readonly orderRepository: Repository<Order>,
     @InjectRepository(OrderItem)
     private readonly orderItemRepository: Repository<OrderItem>,
-    @InjectRepository(ProductImage)
-    private readonly productImageRepository: Repository<ProductImage>,
+  @InjectRepository(ProductImage)
+  private readonly productImageRepository: Repository<ProductImage>,
+  @InjectRepository(Tag)
+  private readonly tagRepository: Repository<Tag>,
     private readonly notificationsService: NotificationsService,
+  private readonly doSpacesService: DoSpacesService,
   ) {}
 
   // ✅ FIX: This function now correctly handles an array of ImageDto objects
@@ -48,19 +53,103 @@ export class VendorService {
       throw new NotFoundException(`Vendor with ID ${userId} not found.`);
     }
 
-    const { images, categoryId, ...productData } = dto;
+    const {
+      images,
+      categoryId,
+      listingType,
+      listingTypeMulti,
+      listingCity,
+      bedrooms,
+      bathrooms,
+      sizeSqm,
+      furnished,
+      rentPeriod,
+      attributes,
+      tags,
+      videoUrl,
+      posterUrl,
+  downloadKey,
+  isFree,
+      ...productData
+    } = dto as any;
 
-    const newProduct = this.productRepository.create({
+    // Normalize listingType if client sent listingTypeMulti
+    const resolvedListingType: 'sale' | 'rent' | undefined = (() => {
+      if (listingType && (listingType === 'sale' || listingType === 'rent')) return listingType;
+      if (Array.isArray(listingTypeMulti) && listingTypeMulti.length) {
+        const first = String(listingTypeMulti[0] || '').toLowerCase();
+        if (first === 'sale' || first === 'sell') return 'sale';
+        if (first === 'rent' || first === 'rental') return 'rent';
+      }
+      return undefined;
+    })();
+
+    const safeAttributes: Record<string, any> | undefined = (() => {
+      const a: Record<string, any> = {};
+      if (attributes && typeof attributes === 'object') Object.assign(a, attributes);
+      // Some clients send videoUrl at top-level attributes or in dto.attributes
+      if (a.videoUrl == null && dto && (dto as any).attributes?.videoUrl) {
+        a.videoUrl = (dto as any).attributes.videoUrl;
+      }
+      // Also accept top-level dto.videoUrl
+      if (a.videoUrl == null && (dto as any)?.videoUrl) a.videoUrl = (dto as any).videoUrl;
+      // Poster URL handling
+      if (a.posterUrl == null && dto && (dto as any).attributes?.posterUrl) {
+        a.posterUrl = (dto as any).attributes.posterUrl;
+      }
+      if (a.posterUrl == null && (dto as any)?.posterUrl) a.posterUrl = (dto as any).posterUrl;
+      // Digital product download key
+      if (a.downloadKey == null && dto && (dto as any).attributes?.downloadKey) {
+        a.downloadKey = (dto as any).attributes.downloadKey;
+      }
+      if (a.downloadKey == null && (dto as any)?.downloadKey) a.downloadKey = (dto as any).downloadKey;
+      // Free flag (boolean)
+      if (typeof (dto as any)?.isFree === 'boolean') a.isFree = !!(dto as any).isFree;
+      if (dto && (dto as any).attributes && typeof (dto as any).attributes.isFree === 'boolean' && a.isFree == null) {
+        a.isFree = !!(dto as any).attributes.isFree;
+      }
+      // Also accept top-level dto.attributes.videoUrl or dto.videoUrl inside dto.attributes
+      return Object.keys(a).length ? a : undefined;
+    })();
+
+  const newProduct = this.productRepository.create({
       ...productData,
       vendor: vendor,
       category: categoryId ? { id: categoryId } : undefined,
       imageUrl: images && images.length > 0 ? images[0].src : null, // Set main display image
+      listingType: resolvedListingType,
+      listingCity,
+      bedrooms,
+      bathrooms,
+      sizeSqm,
+      furnished,
+      rentPeriod,
+      attributes: safeAttributes,
     });
 
-    // 1. Save the main product to get its ID
-    const savedProduct = await this.productRepository.save(newProduct);
+  // 1. Save the main product to get its ID
+  const savedProduct = (await this.productRepository.save(
+      newProduct as any,
+    )) as Product;
 
-    // 2. Create and save all associated image entities
+    // 2. Handle tags by names (create if missing)
+    if (Array.isArray(tags)) {
+      const tagNames: string[] = tags
+        .map((t: any) => (typeof t === 'string' ? t.trim() : ''))
+        .filter((s: string) => !!s);
+      if (tagNames.length) {
+        const existing = await this.tagRepository.find({ where: { name: In(tagNames) } as any });
+        const existingNames = new Set(existing.map((t: any) => t.name));
+        const toCreate = tagNames.filter((n) => !existingNames.has(n));
+        const created = toCreate.length
+          ? await this.tagRepository.save(toCreate.map((name) => this.tagRepository.create({ name })))
+          : [];
+        (savedProduct as any).tags = [...existing, ...created];
+        await this.productRepository.save(savedProduct);
+      }
+    }
+
+    // 3. Create and save all associated image entities
     if (images && images.length > 0) {
       const imageEntities = images.map((imageObj, index) =>
         this.productImageRepository.create({
@@ -74,7 +163,7 @@ export class VendorService {
       await this.productImageRepository.save(imageEntities);
     }
 
-    // 3. Return the full product with all its new relations
+    // 4. Return the full product with all its new relations
     return this.productRepository.findOneOrFail({
       where: { id: savedProduct.id },
       relations: ['images', 'vendor', 'category', 'tags'],
@@ -94,10 +183,97 @@ export class VendorService {
       throw new NotFoundException('Product not found or you do not own it.');
     }
 
-    const { images, categoryId, ...productData } = dto;
+    const {
+      images,
+      categoryId,
+      listingType,
+      listingTypeMulti,
+      listingCity,
+      bedrooms,
+      bathrooms,
+      sizeSqm,
+      furnished,
+      rentPeriod,
+      attributes,
+      tags,
+      videoUrl,
+      posterUrl,
+  downloadKey,
+  isFree,
+      ...productData
+    } = dto as any;
 
-    // Update simple fields
-    Object.assign(product, productData);
+  // Update simple fields (exclude computed getters like posterUrl/videoUrl)
+  if (productData && typeof productData === 'object') {
+    // Extra safety: drop any computed keys if present
+    if ('posterUrl' in productData) delete (productData as any).posterUrl;
+    if ('videoUrl' in productData) delete (productData as any).videoUrl;
+  }
+  Object.assign(product, productData);
+
+    // Merge property fields
+    const resolvedListingType: 'sale' | 'rent' | undefined = (() => {
+      if (listingType && (listingType === 'sale' || listingType === 'rent')) return listingType;
+      if (Array.isArray(listingTypeMulti) && listingTypeMulti.length) {
+        const first = String(listingTypeMulti[0] || '').toLowerCase();
+        if (first === 'sale' || first === 'sell') return 'sale';
+        if (first === 'rent' || first === 'rental') return 'rent';
+      }
+      return undefined;
+    })();
+    if (resolvedListingType) product.listingType = resolvedListingType;
+    if (typeof listingCity !== 'undefined') product.listingCity = listingCity ?? null;
+    if (typeof bedrooms !== 'undefined') product.bedrooms = bedrooms as any;
+    if (typeof bathrooms !== 'undefined') product.bathrooms = bathrooms as any;
+    if (typeof sizeSqm !== 'undefined') product.sizeSqm = sizeSqm as any;
+    if (typeof furnished !== 'undefined') product.furnished = furnished as any;
+    if (typeof rentPeriod !== 'undefined') product.rentPeriod = rentPeriod as any;
+
+    if (typeof attributes !== 'undefined') {
+      const existing = (product.attributes && typeof product.attributes === 'object') ? { ...(product.attributes as any) } : {};
+      const next = attributes && typeof attributes === 'object' ? { ...existing, ...attributes } : existing;
+      product.attributes = Object.keys(next).length ? next : null;
+    }
+    // Accept top-level dto.videoUrl during update as well
+    if ((dto as any) && typeof (dto as any).videoUrl === 'string' && (dto as any).videoUrl) {
+      const base = (product.attributes && typeof product.attributes === 'object') ? { ...(product.attributes as any) } : {};
+      base.videoUrl = (dto as any).videoUrl;
+      product.attributes = base;
+    }
+    // Accept top-level dto.posterUrl during update as well
+    if ((dto as any) && typeof (dto as any).posterUrl === 'string' && (dto as any).posterUrl) {
+      const base = (product.attributes && typeof product.attributes === 'object') ? { ...(product.attributes as any) } : {};
+      base.posterUrl = (dto as any).posterUrl;
+      product.attributes = base;
+    }
+    // Accept top-level dto.downloadKey during update as well
+    if ((dto as any) && typeof (dto as any).downloadKey === 'string' && (dto as any).downloadKey) {
+      const base = (product.attributes && typeof product.attributes === 'object') ? { ...(product.attributes as any) } : {};
+      base.downloadKey = (dto as any).downloadKey;
+      product.attributes = base;
+    }
+    // Accept top-level dto.isFree during update
+    if ((dto as any) && typeof (dto as any).isFree === 'boolean') {
+      const base = (product.attributes && typeof product.attributes === 'object') ? { ...(product.attributes as any) } : {};
+      base.isFree = !!(dto as any).isFree;
+      product.attributes = base;
+    }
+
+    // Update tags by names if provided
+    if (Array.isArray(tags)) {
+      const tagNames: string[] = tags
+        .map((t: any) => (typeof t === 'string' ? t.trim() : ''))
+        .filter((s: string) => !!s);
+      const existing = tagNames.length
+        ? await this.tagRepository.find({ where: { name: In(tagNames) } as any })
+        : [];
+      const existingNames = new Set(existing.map((t: any) => t.name));
+      const toCreate = tagNames.filter((n) => !existingNames.has(n));
+      const created = toCreate.length
+        ? await this.tagRepository.save(toCreate.map((name) => this.tagRepository.create({ name })))
+        : [];
+      (product as any).tags = [...existing, ...created];
+    }
 
     // Update category if it was sent
     if (categoryId !== undefined) {
@@ -134,7 +310,7 @@ export class VendorService {
       await this.productImageRepository.save(imageEntities);
     }
 
-    await this.productRepository.save(product);
+  await this.productRepository.save(product);
     return this.productRepository.findOneOrFail({
       where: { id: productId },
       relations: ['images', 'vendor', 'category', 'tags'],
@@ -155,10 +331,60 @@ export class VendorService {
     return { deleted: true };
   }
 
+  // Fetch a single product owned by the vendor (for edit prefill)
+  async getMyProduct(
+    userId: number,
+    productId: number,
+    opts?: { playable?: boolean; ttlSecs?: number },
+  ): Promise<Product & { playableUrl?: string; playableExpiresIn?: number }> {
+    const product = await this.productRepository.findOne({
+      where: { id: productId, vendor: { id: userId } },
+      relations: ['images', 'category', 'tags', 'vendor'],
+    });
+    if (!product) {
+      throw new NotFoundException('Product not found or not owned by user');
+    }
+    try {
+      const out = normalizeProductMedia(product as any) as any;
+      // Optional: attach a short-lived signed playback URL for the video to simplify clients
+      if (opts?.playable) {
+        const v: string | undefined = out.videoUrl || (out.attributes?.videoUrl as string | undefined);
+        if (typeof v === 'string' && v) {
+          const key = this.doSpacesService.extractKeyFromUrl(v);
+          if (key) {
+            const ttl = Math.max(60, Math.min(opts.ttlSecs || 300, 3600));
+            const ext = (key.split('.').pop() || '').toLowerCase();
+            const mime =
+              ext === 'mp4'
+                ? 'video/mp4'
+                : ext === 'webm'
+                ? 'video/webm'
+                : ext === 'mov'
+                ? 'video/quicktime'
+                : undefined;
+            const fileName = key.split('/').pop();
+            out.playableUrl = await this.doSpacesService.getSignedUrl(key, ttl, {
+              contentType: mime,
+              inlineFilename: fileName,
+            });
+            out.playableExpiresIn = ttl;
+          }
+        }
+      }
+      return out;
+    } catch {
+      return product as any;
+    }
+  }
+
   async getSalesGraphData(vendorId: number, range: string) {
     const startDate = new Date();
-    if (range === '30d') startDate.setDate(startDate.getDate() - 30);
-    else if (range === '7d') startDate.setDate(startDate.getDate() - 7);
+    const r = String(range || '').toLowerCase();
+    if (r === '365d') startDate.setDate(startDate.getDate() - 365);
+    else if (r === '90d') startDate.setDate(startDate.getDate() - 90);
+    else if (r === '30d') startDate.setDate(startDate.getDate() - 30);
+    else if (r === '7d') startDate.setDate(startDate.getDate() - 7);
+    else startDate.setDate(startDate.getDate() - 30);
 
     const salesData = await this.orderRepository
       .createQueryBuilder('o')
@@ -168,13 +394,15 @@ export class VendorService {
       .andWhere('o.createdAt >= :startDate', { startDate })
       .select('DATE(o.createdAt)', 'date')
       .addSelect('SUM(o.total)', 'total')
+      .addSelect('COUNT(DISTINCT o.id)', 'orderCount')
       .groupBy('DATE(o.createdAt)')
       .orderBy('date', 'ASC')
       .getRawMany();
 
     return salesData.map((point) => ({
-      ...point,
+      date: point.date,
       total: parseFloat(point.total) || 0,
+      orderCount: parseInt(point.orderCount, 10) || 0,
     }));
   }
 
@@ -347,8 +575,8 @@ export class VendorService {
       .andWhere(':role = ANY(user.roles)', { role: UserRole.VENDOR })
       .getOne();
     if (!user) return null;
-    const { id, storeName, avatarUrl, displayName, createdAt } = user;
-    return { id, storeName, avatarUrl, displayName, createdAt };
+  const { id, storeName, avatarUrl, displayName, createdAt } = user as any;
+  return { id, storeName, avatarUrl, displayName, createdAt };
   }
 
   async getDashboardOverview(userId: number) {
@@ -616,12 +844,7 @@ export class VendorService {
     page?: number;
     limit?: number;
   }): Promise<{
-    items: Array<{
-      id: number;
-      name: string | null;
-      email: string | null;
-      phone: string | null;
-    }>;
+    items: Array<{ id: number; name: string | null; email: string | null; phone: string | null }>;
     total: number;
   }> {
     const q = (opts.q || '').trim();
@@ -638,7 +861,7 @@ export class VendorService {
 
     if (q) {
       qb.andWhere(
-        '(user.displayName ILIKE :q OR user.email ILIKE :q OR user.phoneNumber ILIKE :q)',
+        '(user.displayName ILIKE :q OR user.email ILIKE :q OR user."phoneNumber" ILIKE :q)',
         { q: `%${q}%` },
       );
     }
@@ -649,8 +872,6 @@ export class VendorService {
       name: u.displayName || null,
       email: u.email || null,
       phone: (u as any).phoneNumber || null,
-      lat: (u as any).locationLat ?? null,
-      lng: (u as any).locationLng ?? null,
     }));
     return { items, total };
   }

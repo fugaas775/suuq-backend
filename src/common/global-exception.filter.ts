@@ -34,10 +34,21 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       }
     }
 
-    this.logger.error(
-      `Exception on ${request.method} ${request.url}:`,
-      exception instanceof Error ? exception.stack : JSON.stringify(exception),
-    );
+  // Reduce noise for expected denials (401/403) and 404s: log as warn with concise message
+  if (status === 401 || status === 403 || status === 404) {
+      this.logger.warn(
+    `${status === 404 ? 'Not Found' : 'Auth denial'} ${status} on ${request.method} ${request.url}: ${
+          typeof message === 'string' ? message : JSON.stringify(message)
+        }`,
+      );
+    } else {
+      this.logger.error(
+        `Exception on ${request.method} ${request.url}:`,
+        exception instanceof Error
+          ? exception.stack
+          : JSON.stringify(exception),
+      );
+    }
 
     response.status(status).json({
       error: {

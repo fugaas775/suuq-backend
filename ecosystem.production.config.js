@@ -18,6 +18,8 @@ module.exports = {
     env: {
       NODE_ENV: 'production',
       PORT: 3000,
+  // Temporarily disable Firebase until credentials are configured
+  FIREBASE_DISABLED: 'true',
     },
     
     // Logging

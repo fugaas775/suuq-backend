@@ -1,5 +1,8 @@
 // src/app.module.ts
 import { Module } from '@nestjs/common';
+import { APP_GUARD } from '@nestjs/core';
+import { ThrottlerGuard } from '@nestjs/throttler';
+import { AdminThrottlerGuard } from './common/guards/admin-throttler.guard';
 import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ThrottlerModule } from '@nestjs/throttler';
@@ -27,12 +30,14 @@ import { VerificationModule } from './verification/verification.module';
 import { AdminModule } from './admin/admin.module';
 import { HomeModule } from './home/home.module';
 import { CurationModule } from './curation/curation.module';
+import { MetricsModule } from './metrics/metrics.module';
 
 import { EmailModule } from './email/email.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { FavoritesModule } from './favorites/favorites.module';
 import { HealthModule } from './health/health.module';
+// import { ModerationModule } from './moderation/moderation.module';
 
 @Module({
   imports: [
@@ -69,9 +74,18 @@ import { HealthModule } from './health/health.module';
     HomeModule,
     CurationModule,
     FavoritesModule,
-    HealthModule,
+  MetricsModule,
+  HealthModule,
+  // ModerationModule,
   ],
   controllers: [AppController],
-  providers: [AppService],
+  // Apply rate limiting globally
+  providers: [
+    AppService,
+    {
+      provide: APP_GUARD,
+      useClass: AdminThrottlerGuard,
+    },
+  ],
 })
 export class AppModule {}

@@ -152,6 +152,22 @@ export class ProductFilterDto {
   geoAppend?: boolean;
 
   // Property: bedrooms exact or ranges
+  // Property listing type filter (?listingType=sale or ?listing_type=rent)
+  @IsOptional()
+  @IsString()
+  listingType?: string;
+
+  // listingTypeMode: 'filter' (default) => restrict to that listingType; 'priority' => bring that listingType first but include others
+  @IsOptional()
+  @IsString()
+  listingTypeMode?: string;
+
+  @IsOptional()
+  @IsString()
+  @Expose({ name: 'listing_type' })
+  listing_type?: string;
+
+  // Property: bedrooms exact or ranges
   @IsOptional()
   @Type(() => Number)
   @IsNumber()

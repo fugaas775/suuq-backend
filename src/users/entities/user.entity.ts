@@ -103,6 +103,8 @@ export class User {
   @Column({ type: 'varchar', length: 255, nullable: true })
   vendorAvatarUrl?: string | null;
 
+  // (telegramUrl removed)
+
   // --- Phone Number Block ---
   @Column({ nullable: true, length: 10 }) // For codes like '+251'
   phoneCountryCode?: string;
@@ -133,6 +135,17 @@ export class User {
 
   @Column({ type: 'timestamp', nullable: true })
   verifiedAt?: Date | null;
+
+  // Reason provided when verification is rejected (admin supplied)
+  @Column({ type: 'text', nullable: true })
+  verificationRejectionReason?: string | null;
+
+  // Reviewer metadata
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  verificationReviewedBy?: string | null;
+
+  @Column({ type: 'timestamp', nullable: true })
+  verificationReviewedAt?: Date | null;
 
   @Column({ default: true })
   isActive!: boolean;

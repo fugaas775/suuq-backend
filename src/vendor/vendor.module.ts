@@ -8,6 +8,7 @@ import { User } from '../users/entities/user.entity';
 import { Product } from '../products/entities/product.entity';
 import { Order, OrderItem } from '../orders/entities/order.entity';
 import { ProductImage } from '../products/entities/product-image.entity'; // <-- 1. IMPORT ADDED
+import { Tag } from '../tags/tag.entity';
 import { UsersModule } from '../users/users.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { MediaModule } from '../media/media.module';
@@ -16,7 +17,7 @@ import { ProductsModule } from '../products/products.module';
 @Module({
   imports: [
     // ✨ 2. PRODUCTIMAGE ENTITY ADDED HERE
-    TypeOrmModule.forFeature([User, Product, Order, OrderItem, ProductImage]),
+  TypeOrmModule.forFeature([User, Product, Order, OrderItem, ProductImage, Tag]),
     UsersModule,
     forwardRef(() => ProductsModule),
     MediaModule,

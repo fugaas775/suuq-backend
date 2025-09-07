@@ -20,6 +20,9 @@ import { ProductImpression } from './entities/product-impression.entity';
 import { SearchKeyword } from './entities/search-keyword.entity';
 import { createHash } from 'crypto';
 import { normalizeProductMedia } from '../common/utils/media-url.util';
+// import { assertAllowedMediaUrl } from '../common/utils/media-policy.util';
+import { DoSpacesService } from '../media/do-spaces.service';
+import { AuditService } from '../audit/audit.service';
 
 @Injectable()
 export class ProductsService {
@@ -38,6 +41,8 @@ export class ProductsService {
     private impressionRepo: Repository<ProductImpression>,
     @InjectRepository(SearchKeyword)
     private searchKeywordRepo: Repository<SearchKeyword>,
+  private readonly doSpaces: DoSpacesService,
+  private readonly audit: AuditService,
   ) {}
 
   // Simple in-memory cache for Property & Real Estate subtree ids
@@ -155,6 +160,8 @@ export class ProductsService {
       }
     }
 
+  // Image URL host policy check removed in rollback
+
     const product = this.productRepo.create({
       ...rest,
       vendor,
@@ -168,7 +175,7 @@ export class ProductsService {
       furnished: furnished ?? null,
       rentPeriod: rentPeriod ?? null,
       attributes: this.sanitizeAttributes(attributes) ?? {},
-      imageUrl: images.length > 0 ? images[0].src : null,
+  imageUrl: images.length > 0 ? images[0].src : null,
     });
 
     if (tags.length) {
@@ -179,7 +186,7 @@ export class ProductsService {
 
     // 2. Create and save the associated ProductImage entities
     if (images.length > 0) {
-      const imageEntities = images.map((imageObj, index) =>
+  const imageEntities = images.map((imageObj, index) =>
         this.productImageRepo.create({
           src: imageObj.src,
           thumbnailSrc: imageObj.thumbnailSrc,
@@ -211,6 +218,44 @@ export class ProductsService {
     } catch {
       return product;
     }
+  }
+
+  // Free digital download: presign attachment if product is marked free and has a downloadKey
+  async getFreeDownload(
+    productId: number,
+    opts?: { ttl?: number; actorId?: number | null },
+  ): Promise<{ url: string; expiresIn: number; filename?: string; contentType?: string }>{
+    const product = await this.productRepo.findOne({ where: { id: productId } });
+    if (!product) throw new NotFoundException('Product not found');
+    const attrs = (product.attributes && typeof product.attributes === 'object') ? (product.attributes as Record<string, any>) : {};
+    const isFree = attrs.isFree === true || attrs.is_free === true;
+    const downloadKey: string | undefined = typeof attrs.downloadKey === 'string' ? attrs.downloadKey : undefined;
+    if (!isFree) throw new BadRequestException('This item is not marked as free');
+    if (!downloadKey) throw new BadRequestException('No digital download available');
+
+    // Basic rate-limit: 20 per day per product (unauth users will have null actorId)
+    const now = new Date();
+    const from = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    const count = await this.audit.countForTargetSince('FREE_PRODUCT_DOWNLOAD', productId, from);
+    if (count >= 500) {
+      // broader cap to protect origin for viral freebies
+      throw new BadRequestException('Download limit reached. Please try later.');
+    }
+
+    const fileName = downloadKey.split('/').pop();
+    const ext = (fileName?.split('.').pop() || '').toLowerCase();
+    const contentType = ext === 'pdf' ? 'application/pdf' : ext === 'epub' ? 'application/epub+zip' : ext === 'zip' ? 'application/zip' : undefined;
+    const ttlSecs = Math.max(60, Math.min(Number(opts?.ttl || 600), 3600));
+    const url = await this.doSpaces.getDownloadSignedUrl(downloadKey, ttlSecs, { contentType, filename: fileName });
+
+    await this.audit.log({
+      actorId: opts?.actorId ?? null,
+      action: 'SIGNED_DOWNLOAD_FREE',
+      targetType: 'FREE_PRODUCT_DOWNLOAD',
+      targetId: productId,
+      meta: { productId, downloadKey, ttlSecs },
+    });
+    return { url, expiresIn: ttlSecs, filename: fileName, contentType };
   }
 
   // Helper: get a presentable vendor name by id
@@ -410,6 +455,9 @@ export class ProductsService {
       .leftJoinAndSelect('product.vendor', 'vendor')
       .leftJoinAndSelect('product.category', 'category');
 
+    // Select all columns from vendor to ensure verification status is available
+    qb.addSelect('vendor.*');
+
     // Lean projection for grid views: limit selected columns
     if (view === 'grid') {
       qb.select([
@@ -474,9 +522,21 @@ export class ProductsService {
       qb.andWhere('product.price >= :priceMin', { priceMin });
     if (priceMax !== undefined)
       qb.andWhere('product.price <= :priceMax', { priceMax });
-    const listingTypeFilter = listing_type || listingType;
-    if (listingTypeFilter)
-      qb.andWhere('product.listing_type = :lt', { lt: listingTypeFilter });
+    // Normalize listing type (accept camelCase or snake_case; ignore empty/invalid)
+    const rawLt = (listing_type ?? listingType);
+    const ltNorm = typeof rawLt === 'string' ? rawLt.trim().toLowerCase() : undefined;
+    const listingTypeMode = (filters as any).listingTypeMode || (filters as any).listing_type_mode;
+    const ltValid = ltNorm && (ltNorm === 'sale' || ltNorm === 'rent') ? ltNorm : undefined;
+    if (ltValid) {
+      if (listingTypeMode === 'priority') {
+        // Priority mode: do NOT filter, but rank matching listing_type highest
+        qb.addSelect(`CASE WHEN product.listing_type = :lt THEN 1 ELSE 0 END`, 'lt_priority_rank');
+  qb.addOrderBy('lt_priority_rank', 'DESC');
+      } else {
+        qb.andWhere('product.listing_type = :lt', { lt: ltValid });
+        this.logger.debug(`Applied listingType filter: ${ltValid}`);
+      }
+    }
     // Bedrooms filter: exact or range
     const brExact = bedrooms;
     const brMin = bedrooms_min ?? bedroomsMin;
@@ -609,7 +669,7 @@ export class ProductsService {
     }
 
     // If asked to prioritize category subtree first, perform union-like pagination
-    if (categoryFirst && subtreeIds && subtreeIds.length) {
+  if (categoryFirst && subtreeIds && subtreeIds.length) {
       // Helper to build a base QB with all filters except the category constraint
       const buildBase = () => {
         const q = this.productRepo
@@ -672,11 +732,18 @@ export class ProductsService {
         if (priceMax !== undefined)
           q.andWhere('product.price <= :priceMax', { priceMax });
 
-        const listingTypeFilterLocal = listing_type || listingType;
-        if (listingTypeFilterLocal)
-          q.andWhere('product.listing_type = :ltLocal', {
-            ltLocal: listingTypeFilterLocal,
-          });
+        const rawLtLocal = (listing_type ?? listingType);
+        const ltNormLocal = typeof rawLtLocal === 'string' ? rawLtLocal.trim().toLowerCase() : undefined;
+        const ltValidLocal = ltNormLocal && (ltNormLocal === 'sale' || ltNormLocal === 'rent') ? ltNormLocal : undefined;
+        if (ltValidLocal) {
+          if (listingTypeMode === 'priority') {
+            q.addSelect(`CASE WHEN product.listing_type = :ltLocal THEN 1 ELSE 0 END`, 'lt_priority_rank');
+            q.addOrderBy('lt_priority_rank', 'DESC');
+          } else {
+            q.andWhere('product.listing_type = :ltLocal', { ltLocal: ltValidLocal });
+            this.logger.debug(`Applied listingType filter (categoryFirst branch): ${ltValidLocal}`);
+          }
+        }
         const brExactLocal = bedrooms;
         const brMinLocal = bedrooms_min ?? bedroomsMin;
         const brMaxLocal = bedrooms_max ?? bedroomsMax;
@@ -835,6 +902,12 @@ export class ProductsService {
       }
 
       const total = primaryTotal + othersTotal;
+      if (process.env.DEBUG_SQL === '1') {
+        try {
+          this.logger.debug(`(categoryFirst) primary SQL => ${primaryQb.getSql()}`);
+          this.logger.debug(`(categoryFirst) others SQL => ${othersQb.getSql()}`);
+        } catch {}
+      }
       return {
         items,
         total,
@@ -847,6 +920,12 @@ export class ProductsService {
 
     qb.skip((page - 1) * perPage).take(perPage);
     const [items, total] = await qb.getManyAndCount();
+    if (process.env.DEBUG_SQL === '1') {
+      try {
+        this.logger.debug(`SQL => ${qb.getSql()}`);
+        this.logger.debug(`Params => ${JSON.stringify(qb.getParameters())}`);
+      } catch {}
+    }
 
     return {
       items,
@@ -970,6 +1049,7 @@ export class ProductsService {
 
     // Update images if provided: delete old ones, add new ones
     if (images) {
+  // Image URL host policy check removed in rollback
       product.imageUrl = images.length > 0 ? images[0].src : null;
       await this.productImageRepo.delete({ product: { id } }); // Delete old images
       const imageEntities = images.map((img, index) =>
