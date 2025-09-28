@@ -31,6 +31,8 @@ import { AdminModule } from './admin/admin.module';
 import { HomeModule } from './home/home.module';
 import { CurationModule } from './curation/curation.module';
 import { MetricsModule } from './metrics/metrics.module';
+import { RedisModule } from './redis/redis.module';
+import { RolesModule } from './roles/roles.module';
 
 import { EmailModule } from './email/email.module';
 import { AppController } from './app.controller';
@@ -45,8 +47,8 @@ import { HealthModule } from './health/health.module';
     TypeOrmModule.forRoot(dataSourceOptions), // Use the simplified, direct config
     ThrottlerModule.forRoot([
       {
-        ttl: parseInt(process.env.THROTTLE_TTL, 10) || 60000, // 1 minute default
-        limit: parseInt(process.env.THROTTLE_LIMIT, 10) || 60, // 60 requests per minute default
+        ttl: parseInt(process.env.THROTTLE_TTL ?? '', 10) || 60000, // 1 minute default
+        limit: parseInt(process.env.THROTTLE_LIMIT ?? '', 10) || 180, // 180 rpm default; override via env
       },
     ]),
 
@@ -76,6 +78,8 @@ import { HealthModule } from './health/health.module';
     FavoritesModule,
   MetricsModule,
   HealthModule,
+  RedisModule,
+  RolesModule,
   // ModerationModule,
   ],
   controllers: [AppController],

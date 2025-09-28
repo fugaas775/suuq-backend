@@ -17,8 +17,24 @@ import {
   Index,
 } from 'typeorm';
 import { UserRole } from '../../auth/roles.enum';
+import { Exclude } from 'class-transformer';
 import { Product } from '../../products/entities/product.entity';
 import { Review } from '../../reviews/entities/review.entity';
+
+export interface BusinessLicenseInfo {
+  tradeName: string;
+  legalCondition: string;
+  capital: string;
+  registeredDate: string;
+  renewalDate: string;
+  status: string;
+}
+
+export enum VerificationMethod {
+  AUTOMATIC = 'AUTOMATIC',
+  MANUAL = 'MANUAL',
+  NONE = 'NONE',
+}
 
 export interface VerificationDocument {
   url: string;
@@ -39,6 +55,7 @@ export class User {
   @Index()
   email!: string;
 
+  @Exclude()
   @Column({ nullable: true })
   password?: string;
 
@@ -124,6 +141,20 @@ export class User {
   verificationStatus!: VerificationStatus;
 
   @Column({
+    type: 'enum',
+    enum: VerificationMethod,
+    default: VerificationMethod.NONE,
+  })
+  verificationMethod!: VerificationMethod;
+
+  @Column({
+    type: 'jsonb',
+    nullable: true,
+  })
+  businessLicenseInfo?: BusinessLicenseInfo | null;
+
+  @Exclude()
+  @Column({
     type: 'jsonb',
     nullable: true,
     default: '[]',
@@ -195,6 +226,7 @@ export class User {
   timezone?: string | null;
 
   // Payment Fields
+  @Exclude()
   @Column({ type: 'varchar', length: 64, nullable: true })
   bankAccountNumber?: string | null;
 
@@ -208,9 +240,11 @@ export class User {
   mobileMoneyProvider?: string | null;
 
   // --- Password Reset ---
+  @Exclude()
   @Column({ nullable: true })
   passwordResetToken?: string;
 
+  @Exclude()
   @Column({ type: 'timestamp', nullable: true })
   passwordResetExpires?: Date;
 

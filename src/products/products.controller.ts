@@ -25,7 +25,10 @@ import { ClassSerializerInterceptor } from '@nestjs/common';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UserRole } from '../auth/roles.enum';
 import { ProductFilterDto } from './dto/ProductFilterDto';
+import { TieredProductsDto } from './dto/tiered-products.dto';
 import { UseInterceptors, ParseBoolPipe } from '@nestjs/common';
+import { RateLimitInterceptor } from '../common/interceptors/rate-limit.interceptor';
+import { SkipThrottle } from '@nestjs/throttler';
 import { RecordImpressionsDto } from './dto/record-impressions.dto';
 import { normalizeProductMedia } from '../common/utils/media-url.util';
 import { AuthenticatedRequest } from '../auth/auth.types';
@@ -63,9 +66,11 @@ export class ProductsController {
     @Body() createProductDto: CreateProductDto,
     @Req() req: AuthenticatedRequest,
   ) {
-    const bodyString = JSON.stringify(req.body ?? {});
-    console.log('Raw request body:', bodyString);
-    console.log('Parsed DTO:', JSON.stringify(createProductDto));
+    if (process.env.NODE_ENV !== 'production') {
+      const bodyString = JSON.stringify(req.body ?? {});
+      console.log('Raw request body:', bodyString);
+      console.log('Parsed DTO:', JSON.stringify(createProductDto));
+    }
     return this.productsService.create({
       ...createProductDto,
       vendorId: req.user.id,
@@ -106,6 +111,8 @@ export class ProductsController {
 
   // --- UPDATED: This method now uses the ProductFilterDto ---
   @Get()
+  @SkipThrottle()
+  @UseInterceptors(new RateLimitInterceptor({ maxRps: 10, burst: 20, keyBy: 'userOrIp', scope: 'route', headers: true }))
   async findAll(
     @Query() filters: ProductFilterDto,
     @Query('currency') currency?: string,
@@ -125,18 +132,12 @@ export class ProductsController {
         filters.perPage = filters.limit;
       }
 
-      // Map category alias to categoryId for frontend query param compatibility
-      if (!filters.categoryId) {
-        const anyFilters = filters as unknown as Record<string, unknown>;
-        const alias = anyFilters.categoryAlias;
-        const n =
-          typeof alias === 'string'
-            ? Number(alias)
-            : typeof alias === 'number'
-              ? alias
-              : undefined;
-        if (typeof n === 'number' && Number.isFinite(n) && n > 0) {
-          filters.categoryId = n;
+      // Map alias -> categoryId if categoryId not provided (DTO already normalizes to number[])
+      if (!Array.isArray(filters.categoryId) || filters.categoryId.length === 0) {
+        const anyFilters = filters as unknown as Record<string, unknown> & { categoryAlias?: number[] };
+        const aliasArr = anyFilters.categoryAlias;
+        if (Array.isArray(aliasArr) && aliasArr.length > 0) {
+          filters.categoryId = aliasArr.filter((n) => Number.isFinite(n) && (n as unknown as number) > 0) as unknown as any;
         }
       }
 
@@ -470,6 +471,30 @@ export class ProductsController {
     return { countries: results };
   }
 
+  // Tiered buckets for client-side merge/scoring (base -> siblings -> parent -> global)
+  // Example: GET /products/tiers?categoryId=12&per_page=12&geo_priority=1&geo_append=1&userCountry=ET&userRegion=AA&userCity=Addis
+  @Get('tiers')
+  @Header('Cache-Control', 'public, s-maxage=10, stale-while-revalidate=30')
+  async tiered(@Query() q: TieredProductsDto) {
+    // If merge flag is on, return a single merged list using server-side scoring
+    if ((q as any).merge) {
+      const { items, meta } = await this.productsService.findTieredMerged(q);
+      return { items: (items || []).map(normalizeProductMedia), meta } as any;
+    }
+    const { base, siblings, parent, global, meta } = await this.productsService.findTieredBuckets(q);
+    // Normalize media for lean payloads
+    const norm = (arr: any[]) => (arr || []).map(normalizeProductMedia);
+    return {
+      base: norm(base),
+      siblings: Object.fromEntries(
+        Object.entries(siblings || {}).map(([k, v]) => [k, norm(v as any)])
+      ),
+      parent: norm(parent),
+      global: norm(global),
+      meta,
+    } as any;
+  }
+
   @Get('/tags/suggest')
   suggestTags(@Query('q') q: string) {
     // TODO: Replace with actual tag suggestion service if available
@@ -494,7 +519,31 @@ export class ProductsController {
   }
 
   // Likes count endpoint(s) for compatibility with mobile client
+  // Bulk likes: GET /products/likes?ids=1,2,3
+  // Place BEFORE the parameterized route to avoid shadowing
+  @Get('likes')
+  @Header('Cache-Control', 'public, max-age=10')
+  async getLikesCountBulk(@Query('ids') ids: string) {
+    const parts = String(ids || '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const list = Array.from(
+      new Set(
+        parts
+          .map((s) => Number(s))
+          .filter((n) => Number.isInteger(n) && n >= 1),
+      ),
+    );
+    if (!list.length) {
+      throw new BadRequestException('ids must be a comma-separated list of positive integers');
+    }
+    const map = await this.favoritesService.countLikesBulk(list);
+    return map;
+  }
+
   @Get(':id/likes')
+  @Header('Cache-Control', 'public, max-age=15')
   async getLikesCount(@Param('id', ParseIntPipe) id: number) {
     const likes = await this.favoritesService.countLikes(id);
     return { likes };

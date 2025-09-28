@@ -31,7 +31,25 @@ class AttributesDto {
 
   @IsOptional()
   @IsString()
+  downloadUrl?: string;
+
+  @IsOptional()
+  @IsString()
   downloadKey?: string;
+
+  @IsOptional()
+  @IsString()
+  format?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  fileSizeMB?: number;
+
+  @IsOptional()
+  @Type(() => Boolean)
+  @IsBoolean()
+  licenseRequired?: boolean;
 
   @IsOptional()
   @Type(() => Boolean)
@@ -97,6 +115,11 @@ export class UpdateVendorProductDto {
   @IsOptional()
   @IsString()
   posterUrl?: string;
+
+  // Optional top-level convenience to set attributes.downloadUrl
+  @IsOptional()
+  @IsString()
+  downloadUrl?: string;
 
   // Optional top-level convenience to set attributes.downloadKey
   @IsOptional()

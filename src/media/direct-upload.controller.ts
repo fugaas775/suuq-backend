@@ -10,11 +10,13 @@ import {
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { DoSpacesService } from './do-spaces.service';
-import * as sharp from 'sharp';
 import { execFile as _execFile } from 'child_process';
 import { promisify } from 'util';
 import * as path from 'path';
 const execFile = promisify(_execFile);
+// Use require to avoid TS2349 in certain editor setups while keeping runtime interop safe
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const sharpAny: any = require('sharp');
 
 // Simple direct-upload flow:
 // 1) Client POST /api/media/request-signed-url with { filename, contentType }
@@ -62,14 +64,15 @@ export class DirectUploadController {
     }
   // Ensure object is public-read for direct access
   await this.doSpaces.setPublicRead(key).catch(() => void 0);
+  // Stable canonical public URL (never signed) used for storing in product attributes.
   const url = this.doSpaces.buildPublicUrl(key);
     const ts = Date.now();
 
     if (kind === 'image' || contentType.startsWith('image/')) {
       // Derive image variants from the uploaded object
-      const imageBuffer = await this.doSpaces.getObjectBuffer(key);
-      const thumbBuffer = await sharp(imageBuffer).resize(200).toBuffer();
-      const lowResBuffer = await sharp(imageBuffer).resize(50).toBuffer();
+  const imageBuffer = await this.doSpaces.getObjectBuffer(key);
+  const thumbBuffer = await sharpAny(imageBuffer).resize(200).toBuffer();
+  const lowResBuffer = await sharpAny(imageBuffer).resize(50).toBuffer();
 
       const thumbKey = `thumb_${ts}_${key}`;
       const lowResKey = `lowres_${ts}_${key}`;
@@ -126,6 +129,8 @@ export class DirectUploadController {
         contentType,
         contentLength: meta?.contentLength,
         filename: fileName,
+        // NOTE: For digital products we persist only the object key in attributes.digital.download.key;
+        // publicUrl can always be derived server-side via buildPublicUrl(key).
       };
       if (deriveCover && contentType === 'application/pdf') {
         const ts2 = Date.now();
@@ -162,7 +167,6 @@ export class DirectUploadController {
   }
 
   // Poll poster generation status: returns 200 with { exists, posterUrl }
-  @Get('poster-status')
   @UseGuards(JwtAuthGuard)
   async posterStatus(@Query('key') key?: string) {
     if (!key) throw new BadRequestException('key is required');

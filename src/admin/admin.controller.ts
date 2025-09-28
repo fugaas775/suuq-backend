@@ -18,6 +18,7 @@ import {
   Delete,
 } from '@nestjs/common';
 import { UsersService } from '../users/users.service';
+import { SkipThrottle } from '@nestjs/throttler';
 import { OrdersService } from '../orders/orders.service';
 import { RolesGuard } from '../auth/roles.guard';
 import { AuthGuard } from '@nestjs/passport'; // Import the built-in guard
@@ -30,6 +31,7 @@ import { BulkUserIdsDto } from './dto/bulk-user-ids.dto';
 
 // ✨ FINAL FIX: Use AuthGuard('jwt') to match your other working controllers
 @UseGuards(AuthGuard('jwt'), RolesGuard)
+@SkipThrottle()
 @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
 @Controller('admin')
 export class AdminController {

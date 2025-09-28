@@ -7,6 +7,8 @@ import { Product } from '../products/entities/product.entity';
 import { Order, OrderItem } from '../orders/entities/order.entity';
 import { ProductImage } from '../products/entities/product-image.entity';
 import { NotificationsService } from '../notifications/notifications.service';
+import { Tag } from '../tags/tag.entity';
+import { DoSpacesService } from '../media/do-spaces.service';
 
 /**
  * Unit tests (mocked repos) for geo-aware searchDeliverers
@@ -64,7 +66,9 @@ describe('VendorService.searchDeliverers (geo)', () => {
         { provide: getRepositoryToken(Order), useClass: Repository },
         { provide: getRepositoryToken(OrderItem), useClass: Repository },
         { provide: getRepositoryToken(ProductImage), useClass: Repository },
+        { provide: getRepositoryToken(Tag), useClass: Repository },
         { provide: NotificationsService, useValue: { sendToUser: jest.fn() } },
+        { provide: DoSpacesService, useValue: {} },
       ],
     }).compile();
 

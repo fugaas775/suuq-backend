@@ -177,17 +177,24 @@ export class VendorController {
     @Query('q') q?: string,
     @Query('page') page: number = 1,
     @Query('limit') limit: number = 20,
+    @Query('lat') lat?: string,
+    @Query('lng') lng?: string,
+    @Query('radiusKm') radiusKm?: string,
   ) {
-    const { items, total } = await this.vendorService.searchDeliverers({
+    const { items, total, hasMore } = await this.vendorService.searchDeliverers({
       q: q || '',
       page: Number(page) || 1,
       limit: Math.min(Number(limit) || 20, 100),
+      lat: lat != null ? Number(lat) : undefined,
+      lng: lng != null ? Number(lng) : undefined,
+      radiusKm: radiusKm != null ? Number(radiusKm) : undefined,
     });
     return {
       items,
       total,
       page: Number(page) || 1,
       limit: Math.min(Number(limit) || 20, 100),
+      hasMore: !!hasMore,
     };
   }
 

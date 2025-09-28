@@ -6,6 +6,8 @@ import { CartService } from '../cart/cart.service';
 import { MpesaService } from '../mpesa/mpesa.service';
 import { TelebirrService } from '../telebirr/telebirr.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { DoSpacesService } from '../media/do-spaces.service';
+import { AuditService } from '../audit/audit.service';
 
 describe('OrdersService', () => {
   let service: OrdersService;
@@ -19,6 +21,8 @@ describe('OrdersService', () => {
         { provide: MpesaService, useValue: {} },
         { provide: TelebirrService, useValue: {} },
         { provide: NotificationsService, useValue: {} },
+        { provide: DoSpacesService, useValue: {} },
+        { provide: AuditService, useValue: {} },
       ],
     }).compile();
 

@@ -12,14 +12,15 @@ export class EnsureTelegramColumns1757000002000 implements MigrationInterface {
     }
     // If only camelCase exists and you prefer snake_case, optionally duplicate
     if (names.has('telegramUrl') && !names.has('telegram_url')) {
-      // Create snake_case as a generated (stored) column if Postgres 12+ not used we just add a nullable copy
+      // Create snake_case variant and backfill from existing camelCase column
       await queryRunner.query(`ALTER TABLE "user" ADD COLUMN IF NOT EXISTS "telegram_url" character varying(255)`);
-      await queryRunner.query(`UPDATE "user" SET telegram_url = telegramUrl WHERE telegram_url IS NULL AND telegramUrl IS NOT NULL`);
+      // Need to quote "telegramUrl" everywhere to avoid implicit lowercase folding
+      await queryRunner.query(`UPDATE "user" SET telegram_url = "telegramUrl" WHERE telegram_url IS NULL AND "telegramUrl" IS NOT NULL`);
     }
     if (!names.has('telegramUrl') && names.has('telegram_url')) {
-      // Add camelCase alias column for ORM mapping
+      // Add camelCase alias column for ORM mapping (quoted identifier preserves case)
       await queryRunner.query(`ALTER TABLE "user" ADD COLUMN IF NOT EXISTS "telegramUrl" character varying(255)`);
-      await queryRunner.query(`UPDATE "user" SET "telegramUrl" = telegram_url WHERE telegramUrl IS NULL AND telegram_url IS NOT NULL`);
+      await queryRunner.query(`UPDATE "user" SET "telegramUrl" = telegram_url WHERE "telegramUrl" IS NULL AND telegram_url IS NOT NULL`);
     }
   }
   public async down(queryRunner: QueryRunner): Promise<void> {

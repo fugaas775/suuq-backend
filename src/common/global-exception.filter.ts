@@ -15,6 +15,10 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     const ctx = host.switchToHttp();
     const request = ctx.getRequest<Request>();
     const response = ctx.getResponse<Response>();
+    // If the request is already aborted, do not attempt any writes
+    if ((request as any)?.aborted) {
+      return;
+    }
     const status =
       exception instanceof HttpException ? exception.getStatus() : 500;
     const responseBody =
@@ -34,13 +38,16 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       }
     }
 
-  // Reduce noise for expected denials (401/403) and 404s: log as warn with concise message
-  if (status === 401 || status === 403 || status === 404) {
-      this.logger.warn(
-    `${status === 404 ? 'Not Found' : 'Auth denial'} ${status} on ${request.method} ${request.url}: ${
+  // Reduce noise for expected denials (401/403), 404s, and rate limits (429): log as warn with concise message
+  if (status === 401 || status === 403 || status === 404 || status === 429) {
+      const msg = `${status === 404 ? 'Not Found' : status === 429 ? 'Rate limited' : 'Auth denial'} ${status} on ${request.method} ${request.url}: ${
           typeof message === 'string' ? message : JSON.stringify(message)
-        }`,
-      );
+        }`;
+      if (status === 429) {
+        this.logger.debug(msg);
+      } else {
+        this.logger.warn(msg);
+      }
     } else {
       this.logger.error(
         `Exception on ${request.method} ${request.url}:`,
@@ -48,6 +55,20 @@ export class GlobalExceptionFilter implements ExceptionFilter {
           ? exception.stack
           : JSON.stringify(exception),
       );
+    }
+
+    // If headers already sent or stream already ended/finished, don't attempt to write again
+    const resAny = response as any;
+    const headersAlreadySent = !!resAny.headersSent;
+    const streamEnded = !!resAny.writableEnded || !!resAny.writableFinished;
+    if (headersAlreadySent || streamEnded) {
+      // Best-effort: close the connection if not already ended
+      try {
+        if (!streamEnded && typeof resAny.end === 'function') {
+          resAny.end();
+        }
+      } catch {}
+      return;
     }
 
     response.status(status).json({

@@ -18,8 +18,10 @@ import { VendorService } from '../vendor/vendor.service';
 import { AuditService } from '../audit/audit.service';
 import { UpdateVendorVerificationDto } from './dto/update-vendor-verification.dto';
 import { UpdateVendorActiveDto } from './dto/update-vendor-active.dto';
+import { SkipThrottle } from '@nestjs/throttler';
 
 @UseGuards(AuthGuard('jwt'), RolesGuard)
+@SkipThrottle()
 @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
 @Controller('admin/vendors')
 export class AdminVendorsController {

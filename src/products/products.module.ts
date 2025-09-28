@@ -11,11 +11,13 @@ import { ProductImpression } from './entities/product-impression.entity';
 import { SearchKeyword } from './entities/search-keyword.entity';
 import { ProductsService } from './products.service';
 import { ProductsController } from './products.controller';
+import { ProductsV1Controller } from './v1.products.controller';
 import { CurrencyModule } from '../common/services/currency.module';
 import { MediaModule } from '../media/media.module';
 import { AuditModule } from '../audit/audit.module';
 import { HomeModule } from '../home/home.module';
 import { FavoritesModule } from '../favorites/favorites.module';
+import { ReviewsModule } from '../reviews/reviews.module';
 
 @Module({
   imports: [
@@ -35,9 +37,10 @@ import { FavoritesModule } from '../favorites/favorites.module';
   MediaModule,
   AuditModule,
   FavoritesModule,
+  ReviewsModule,
   ],
   providers: [ProductsService],
-  controllers: [ProductsController],
+  controllers: [ProductsController, ProductsV1Controller],
   exports: [ProductsService],
 })
 export class ProductsModule {}

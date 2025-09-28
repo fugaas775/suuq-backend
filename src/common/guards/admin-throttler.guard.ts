@@ -15,24 +15,44 @@ export class AdminThrottlerGuard extends ThrottlerGuard {
   }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
-    const ctx = context.switchToHttp();
-    const req = ctx.getRequest<any>();
-    const path: string = req.path || '';
+  const ctx = context.switchToHttp();
+  const req = ctx.getRequest<any>();
+  const rawPath: string = (req.originalUrl || req.url || req.path || '').toString();
+  const path = rawPath; // retain original for logging if needed
+  const pathLower = rawPath.toLowerCase();
     const user = req.user;
   this.metrics?.increment('checked');
 
+    // Explicitly honor @SkipThrottle metadata (per-route or controller)
+    try {
+      const reflector: any = (this as any).reflector;
+      // Support both legacy and current metadata keys, just in case
+      const SKIP_KEYS = ['THROTTLER:SKIP', 'THROTTLER_SKIP', 'skip_throttle'];
+      const skip: boolean = SKIP_KEYS.some((k) => reflector?.getAllAndOverride?.(k, [
+        context.getHandler?.(),
+        context.getClass?.(),
+      ]));
+      if (skip) {
+        this.metrics?.increment('skippedByMeta');
+        this.metrics?.increment('bypassed');
+        return true;
+      }
+    } catch {
+      // ignore reflector access issues; fall through to normal logic
+    }
+
     // Environment driven bypass configuration
-    const bypassPrefixes = (process.env.THROTTLE_BYPASS_PREFIXES || '/api/health,/api/status')
+    const bypassPrefixes = (process.env.THROTTLE_BYPASS_PREFIXES || '/api/health,/api/status,/api/vendors/products,/api/vendors/products/batch,/api/admin,/admin,/api/v1/products')
       .split(',')
-      .map((p) => p.trim())
+      .map((p) => p.trim().toLowerCase())
       .filter(Boolean);
     const bypassRoles = (process.env.THROTTLE_ADMIN_BYPASS_ROLES || 'ADMIN,SUPER_ADMIN')
       .split(',')
-      .map((r) => r.trim())
+      .map((r) => r.trim().toUpperCase())
       .filter(Boolean);
 
     // Path-based bypass
-    if (bypassPrefixes.some((pref) => path.startsWith(pref))) {
+  if (bypassPrefixes.some((pref) => pathLower.startsWith(pref))) {
   this.metrics?.increment('skippedByPath');
   this.metrics?.increment('bypassed');
       return true;
@@ -40,7 +60,16 @@ export class AdminThrottlerGuard extends ThrottlerGuard {
 
     // Role-based bypass (admin area or global if roles configured)
     if (user && Array.isArray(user.roles)) {
-      if (user.roles.some((r: string) => bypassRoles.includes(r))) {
+      // Normalize roles: support strings or objects with name/role/code fields
+      const userRoleNames: string[] = user.roles
+        .map((r: any) => {
+          if (typeof r === 'string') return r;
+          if (r && typeof r === 'object') return r.name || r.role || r.code || '';
+          return '';
+        })
+        .map((s: string) => s.toUpperCase())
+        .filter(Boolean);
+      if (userRoleNames.some((rn) => bypassRoles.includes(rn))) {
         this.metrics?.increment('skippedByRole');
         this.metrics?.increment('bypassed');
         return true;

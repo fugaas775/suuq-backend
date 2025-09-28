@@ -198,11 +198,13 @@ export class UsersService {
       'storeName',
       'phoneCountryCode',
       'phoneNumber',
+  'isPhoneVerified',
       'isActive',
       // Verification fields for admin
       'verificationStatus',
       'verificationDocuments',
       'verified',
+  'verifiedAt',
     ];
     const updateData: Partial<User> = {};
     for (const key of allowedFields) {

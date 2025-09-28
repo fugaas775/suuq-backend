@@ -4,7 +4,7 @@ import {
   ExecutionContext,
 } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import * as request from 'supertest';
+import request from 'supertest';
 import { JwtAuthGuard } from '../src/auth/jwt-auth.guard';
 import { RolesGuard } from '../src/common/guards/roles.guard';
 
@@ -15,6 +15,7 @@ import { AuthController } from '../src/auth/auth.controller';
 import { AuthService } from '../src/auth/auth.service';
 import { UsersController } from '../src/users/users.controller';
 import { UserResponseDto } from '../src/users/dto/user-response.dto';
+import { ProductsService } from '../src/products/products.service';
 
 class AllowGuard implements CanActivate {
   canActivate(context: ExecutionContext): boolean {
@@ -37,6 +38,10 @@ describe('Public verification and profile (e2e-lite)', () => {
     getPublicProfile: jest.fn(),
   } as unknown as VendorService;
 
+  const productsServiceMock = {
+    findFiltered: jest.fn().mockResolvedValue({ items: [] }),
+  } as unknown as ProductsService;
+
   const authServiceMock = {
     getUsersService: () => usersServiceMock,
     // other methods not needed for these tests
@@ -49,6 +54,7 @@ describe('Public verification and profile (e2e-lite)', () => {
         { provide: VendorService, useValue: vendorServiceMock },
         { provide: UsersService, useValue: usersServiceMock },
         { provide: AuthService, useValue: authServiceMock },
+        { provide: ProductsService, useValue: productsServiceMock },
       ],
     })
       // Override guards to allow requests without JWT/roles for test

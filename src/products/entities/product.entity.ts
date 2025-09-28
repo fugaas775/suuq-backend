@@ -15,6 +15,8 @@ import { Category } from '../../categories/entities/category.entity';
 import { Tag } from '../../tags/tag.entity';
 import { ProductImage } from './product-image.entity';
 import { Review } from '../../reviews/entities/review.entity';
+import { ApiProperty } from '@nestjs/swagger';
+import { normalizeDigitalAttributes } from '../../common/utils/digital.util';
 
 @Entity()
 export class Product {
@@ -117,6 +119,12 @@ export class Product {
   // Viewers counter for vendor analytics (DB column: view_count)
   @Column('int', { default: 0, name: 'view_count' })
   viewCount!: number;
+
+  // Product type classification (physical, digital, service, property)
+  @ApiProperty({ enum: ['physical', 'digital', 'service', 'property'], required: false })
+  @Expose()
+  @Column({ type: 'varchar', length: 16, name: 'product_type', nullable: true, default: 'physical' })
+  productType?: 'physical' | 'digital' | 'service' | 'property' | null;
 
   // Listing type for property verticals: 'sale' | 'rent'
   @Expose()
@@ -363,6 +371,24 @@ export class Product {
         else if (['month', 'monthly'].includes(s)) this.rentPeriod = 'month' as any;
         else if (['year', 'yearly', 'annually', 'annual'].includes(s)) this.rentPeriod = 'year' as any;
       }
+    }
+  }
+
+  // Second AfterLoad hook to normalize digital schema & derive productType
+  @AfterLoad()
+  private hydrateDigitalSchema() {
+    try {
+      const attrs = (this.attributes && typeof this.attributes === 'object') ? { ...(this.attributes as any) } : {};
+      const { updated, changed, inferredType } = normalizeDigitalAttributes(attrs);
+      if (changed) this.attributes = updated;
+      // Derive productType if not explicitly set
+      if (!this.productType) {
+        if (inferredType === 'digital') this.productType = 'digital';
+        else if (this.listingType || this.listingCity || this.bedrooms != null) this.productType = 'property';
+        else this.productType = 'physical';
+      }
+    } catch {
+      // ignore normalization errors; leave attributes untouched
     }
   }
 }

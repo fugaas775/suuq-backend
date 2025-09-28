@@ -8,6 +8,7 @@ import { Repository } from 'typeorm';
 import { SearchKeyword } from '../products/entities/search-keyword.entity';
 import { Product } from '../products/entities/product.entity';
 import { GeoResolverService } from '../common/services/geo-resolver.service';
+import { SkipThrottle } from '@nestjs/throttler';
 
 type SortKey =
   | 'submit_desc'
@@ -20,6 +21,7 @@ type SortKey =
   | 'noresult_asc';
 
 @UseGuards(AuthGuard('jwt'), RolesGuard)
+@SkipThrottle()
 @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
 @Controller()
 export class AdminAnalyticsController {

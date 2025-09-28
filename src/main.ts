@@ -13,6 +13,7 @@ import { GlobalExceptionFilter } from './common/global-exception.filter';
 import { Reflector } from '@nestjs/core';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import helmet from 'helmet';
+import * as compression from 'compression';
 import { json, urlencoded } from 'express';
 import { EtagInterceptor } from './common/interceptors/etag.interceptor';
 import * as crypto from 'crypto';
@@ -66,6 +67,13 @@ async function bootstrap() {
   // Accept both JSON and application/x-www-form-urlencoded payloads
   app.use(urlencoded({ extended: true, limit: '50mb' }));
   app.use(json({ limit: '50mb' }));
+  // Enable gzip compression for responses
+  const compressionFn: any = (compression as any)?.default || (compression as any);
+  app.use(
+    compressionFn({
+      threshold: 1024,
+    }),
+  );
   // Ensure temp upload directory exists for Multer disk storage
   try {
     const fs = await import('fs');
@@ -80,6 +88,7 @@ async function bootstrap() {
   const defaultAllowedOrigins = [
     'https://suuq.ugasfuad.com',
     'https://admin.suuq.ugasfuad.com',
+  'https://api.suuq.ugasfuad.com',
     'http://localhost:5173',
     'http://localhost:3000',
     'http://localhost:3001',
@@ -168,6 +177,15 @@ async function bootstrap() {
 
       if (isProduction) {
         // Structured logging in production
+        // Apply simple sampling to reduce log volume for high-fanout endpoints
+        // Default sample rate: 1/N (lower = more logs). Override via LOG_SAMPLE_N
+        const sampleN = Math.max(1, parseInt(process.env.LOG_SAMPLE_N || '5', 10));
+        const shouldLog = Math.floor(Math.random() * sampleN) === 0;
+
+        if (!shouldLog) {
+          return next();
+        }
+
         const logData: Record<string, unknown> = {
           requestId,
           method: req.method,
@@ -247,6 +265,8 @@ async function bootstrap() {
     new ValidationPipe({
       whitelist: true,
       transform: true,
+      transformOptions: { enableImplicitConversion: true },
+      forbidUnknownValues: false,
       exceptionFactory: (errors) => {
         const messages = errors.map((error) => {
           const constraints = error.constraints

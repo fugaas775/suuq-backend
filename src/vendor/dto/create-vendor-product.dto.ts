@@ -30,10 +30,30 @@ class AttributesDto {
   @IsString()
   posterUrl?: string;
 
+  // Full public URL to the digital file in Spaces or CDN; server will derive key
+  @IsOptional()
+  @IsString()
+  downloadUrl?: string;
+
   // Key in Spaces for digital product download (e.g., PDFs). Prefer object key, not full URL.
   @IsOptional()
   @IsString()
   downloadKey?: string;
+
+  // Optional display-only metadata preserved for prefill
+  @IsOptional()
+  @IsString()
+  format?: string; // e.g., PDF, EPUB, ZIP
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  fileSizeMB?: number; // client-provided size in MB for prefill
+
+  @IsOptional()
+  @Type(() => Boolean)
+  @IsBoolean()
+  licenseRequired?: boolean;
 
   // Mark this product as free to download (when downloadKey is set)
   @IsOptional()
@@ -92,6 +112,11 @@ export class CreateVendorProductDto {
   @IsOptional()
   @IsString()
   posterUrl?: string;
+
+  // Optional top-level convenience to set attributes.downloadUrl (server will derive key)
+  @IsOptional()
+  @IsString()
+  downloadUrl?: string;
 
   // Optional top-level convenience to set attributes.downloadKey
   @IsOptional()

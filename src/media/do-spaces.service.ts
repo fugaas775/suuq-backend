@@ -7,6 +7,7 @@ import {
   GetObjectCommand,
   HeadObjectCommand,
   ListObjectsV2Command,
+  DeleteObjectCommand,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl as awsGetSignedUrl } from '@aws-sdk/s3-request-presigner';
 
@@ -115,6 +116,45 @@ export class DoSpacesService {
     }
   }
 
+  /**
+   * If the given URL points to this application's Spaces bucket, return the object key.
+   * Supports both virtual-hosted (bucket.region.digitaloceanspaces.com/key)
+   * and path-style (region.digitaloceanspaces.com/bucket/key) URLs, including CDN subdomain.
+   */
+  urlToKeyIfInBucket(url: string): string | null {
+    try {
+      const u = new URL(url);
+      const host = u.host.toLowerCase();
+      const path = u.pathname.startsWith('/') ? u.pathname.slice(1) : u.pathname;
+      const expectedVirtual = `${this.bucket}.${this.region}.digitaloceanspaces.com`.toLowerCase();
+      const expectedCdnVirtual = `${this.bucket}.${this.region}.cdn.digitaloceanspaces.com`.toLowerCase();
+      const regionHost = `${this.region}.digitaloceanspaces.com`.toLowerCase();
+      const cdnRegionHost = `${this.region}.cdn.digitaloceanspaces.com`.toLowerCase();
+      // Virtual-hosted: bucket.region.digitaloceanspaces.com/<key>
+      if (host === expectedVirtual || host === expectedCdnVirtual) {
+        return path || null;
+      }
+      // Path-style: region.digitaloceanspaces.com/<bucket>/<key>
+      if (host === regionHost || host === cdnRegionHost) {
+        if (path.startsWith(`${this.bucket}/`)) {
+          return path.slice(this.bucket.length + 1) || null;
+        }
+      }
+      // Custom endpoints: try to match configured endpoint host
+      try {
+        const endpointHost = new URL(this.endpoint).host.toLowerCase();
+        if (host === endpointHost && path.startsWith(`${this.bucket}/`)) {
+          return path.slice(this.bucket.length + 1) || null;
+        }
+      } catch {
+        // ignore endpoint parsing failures
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
   /** Build the public URL for a given object key. */
   buildPublicUrl(key: string): string {
     return `https://${this.bucket}.${this.region}.digitaloceanspaces.com/${key}`;
@@ -203,5 +243,15 @@ export class DoSpacesService {
   const keys = ((res?.Contents as any[]) || []).map((o: any) => o.Key).filter(Boolean);
   const nextToken = res?.NextContinuationToken as string | undefined;
     return { keys, nextToken };
+  }
+
+  /** Delete an object from Spaces (best-effort). */
+  async deleteObject(key: string): Promise<void> {
+    try {
+      const cmd = new DeleteObjectCommand({ Bucket: this.bucket, Key: key });
+      await this.s3.send(cmd as any);
+    } catch {
+      // ignore failures; caller may log
+    }
   }
 }

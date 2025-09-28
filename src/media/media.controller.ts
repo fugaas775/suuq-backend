@@ -6,7 +6,6 @@ import {
   UseInterceptors,
   ParseFilePipe,
   MaxFileSizeValidator,
-  FileTypeValidator,
   UseFilters,
   BadRequestException,
 } from '@nestjs/common';
@@ -14,7 +13,7 @@ import { Throttle } from '@nestjs/throttler';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { DoSpacesService } from './do-spaces.service';
-import * as sharp from 'sharp';
+import sharpModule from 'sharp';
 // import { ContentModerationService } from '../moderation/content-moderation.service';
 import { MulterExceptionFilter } from './multer-exception.filter';
 import { fileTypeFromBuffer } from 'file-type';
@@ -22,6 +21,7 @@ import { execFile as _execFile } from 'child_process';
 import { promisify } from 'util';
 import * as path from 'path';
 const execFile = promisify(_execFile);
+const sharpExec: any = (sharpModule as any)?.default ?? (sharpModule as any);
 
 @Controller('media')
 export class MediaController {
@@ -39,16 +39,19 @@ export class MediaController {
     @UploadedFile(
       new ParseFilePipe({
         validators: [
-          // Allow up to 50MB for videos/images
-          new MaxFileSizeValidator({ maxSize: 50 * 1024 * 1024, message: 'Please upload a file up to 50MB in size.' }),
+          new MaxFileSizeValidator({
+            maxSize: 50 * 1024 * 1024,
+            message: 'Please upload a file up to 50MB in size.',
+          }),
         ],
         fileIsRequired: true,
       }),
-    ) // ✨ FINAL FIX: Update the file type to the standard Multer file
+    )
     file: Express.Multer.File,
   ) {
-    // Read a small chunk for magic-bytes detection even with disk storage
     const fs = await import('fs');
+
+    // Read a small chunk for magic-bytes detection even with disk storage
     const fd = await fs.promises.open(file.path, 'r');
     const head = Buffer.alloc(4100);
     await fd.read(head, 0, head.length, 0);
@@ -59,16 +62,22 @@ export class MediaController {
     let mime = ft?.mime || file.mimetype; // prefer detected mime
     // Fallback for some mobile-recorded videos where magic-bytes lib may return undefined
     if (!ft && file.mimetype?.startsWith('video/')) {
-      // heuristic by extension
       const ext = (file.originalname.split('.').pop() || '').toLowerCase();
       const extToMime: Record<string, string> = {
-        mp4: 'video/mp4', m4v: 'video/x-m4v', mov: 'video/quicktime',
-        webm: 'video/webm', mkv: 'video/x-matroska', '3gp': 'video/3gpp', '3g2': 'video/3gpp2',
+        mp4: 'video/mp4',
+        m4v: 'video/x-m4v',
+        mov: 'video/quicktime',
+        webm: 'video/webm',
+        mkv: 'video/x-matroska',
+        '3gp': 'video/3gpp',
+        '3g2': 'video/3gpp2',
       };
       mime = extToMime[ext] || file.mimetype;
     }
-  const isImage = mime?.startsWith('image/');
-  const isVideo = mime?.startsWith('video/');
+
+    const isImage = mime?.startsWith('image/');
+    const isVideo = mime?.startsWith('video/');
+
     const allowedImage = new Set([
       'image/jpeg',
       'image/png',
@@ -96,7 +105,8 @@ export class MediaController {
         'Unsupported video type. Allowed: mp4, webm, mov.',
       );
     }
-  const ts = Date.now();
+
+    const ts = Date.now();
 
     // Upload original file via stream to avoid buffering in memory
     const stream = fs.createReadStream(file.path);
@@ -108,25 +118,24 @@ export class MediaController {
 
     if (isImage) {
       // Derive lightweight variants for images only
-  // Read image file into buffer only once for thumbnail derivations
   const imageBuffer = await fs.promises.readFile(file.path);
-  const thumbBuffer = await sharp(imageBuffer).resize(200).toBuffer();
+  const thumbBuffer = await sharpExec(imageBuffer).resize(200).toBuffer();
       const thumbUrl = await this.doSpacesService.uploadFile(
         thumbBuffer,
         `thumb_${ts}_${file.originalname}`,
-  mime,
+        mime,
       );
 
-  const lowResBuffer = await sharp(imageBuffer).resize(50).toBuffer();
+  const lowResBuffer = await sharpExec(imageBuffer).resize(50).toBuffer();
       const lowResUrl = await this.doSpacesService.uploadFile(
         lowResBuffer,
         `lowres_${ts}_${file.originalname}`,
-  mime,
+        mime,
       );
 
-  // Cleanup temp file
-  void fs.promises.unlink(file.path).catch(() => {});
-  return {
+      // Cleanup temp file
+      void fs.promises.unlink(file.path).catch(() => {});
+      return {
         kind: 'image',
         src: fullUrl,
         url: fullUrl,
@@ -140,16 +149,21 @@ export class MediaController {
       // Try to generate a small poster thumbnail using ffmpeg (best-effort)
       let posterUrl: string | undefined;
       try {
-  const posterFilename = `poster_${ts}_${file.originalname.replace(/[^A-Za-z0-9._-]/g, '_')}.jpg`;
+        const posterFilename = `poster_${ts}_${file.originalname.replace(/[^A-Za-z0-9._-]/g, '_')}.jpg`;
         const posterPath = path.join('/tmp/uploads', posterFilename);
-  const argsPrimary = [
+        const argsPrimary = [
           '-y',
           '-hide_banner',
-          '-loglevel', 'error',
-          '-ss', '00:00:01.000', // seek to 1s for a representative frame
-          '-i', file.path,
-          '-frames:v', '1',
-          '-vf', 'scale=320:-1',
+          '-loglevel',
+          'error',
+          '-ss',
+          '00:00:01.000', // seek to 1s for a representative frame
+          '-i',
+          file.path,
+          '-frames:v',
+          '1',
+          '-vf',
+          'scale=320:-1',
           posterPath,
         ];
         try {
@@ -157,10 +171,16 @@ export class MediaController {
         } catch {
           // Fallback: try from first frame without seek
           const argsFallback = [
-            '-y', '-hide_banner', '-loglevel', 'error',
-            '-i', file.path,
-            '-frames:v', '1',
-            '-vf', 'scale=320:-1',
+            '-y',
+            '-hide_banner',
+            '-loglevel',
+            'error',
+            '-i',
+            file.path,
+            '-frames:v',
+            '1',
+            '-vf',
+            'scale=320:-1',
             posterPath,
           ];
           await execFile('ffmpeg', argsFallback, { timeout: 15000 });
@@ -185,12 +205,12 @@ export class MediaController {
         src: fullUrl,
         url: fullUrl,
         urls: [fullUrl],
-  posterSrc: posterUrl,
-  posterUrl: posterUrl,
+        posterSrc: posterUrl,
+        posterUrl: posterUrl,
       };
     }
 
-  // Fallback (should be unreachable due to validator)
+    // Fallback (should be unreachable due to validator)
     void fs.promises.unlink(file.path).catch(() => {});
     return { src: fullUrl, url: fullUrl, urls: [fullUrl] };
   }

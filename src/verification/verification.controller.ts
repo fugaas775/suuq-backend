@@ -8,28 +8,45 @@ import {
   ParseFilePipe,
   MaxFileSizeValidator,
   FileTypeValidator,
+  Body,
 } from '@nestjs/common';
 import { FilesInterceptor } from '@nestjs/platform-express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
-import { Roles } from '../common/decorators/roles.decorator';
-import { UserRole } from '../auth/roles.enum';
+// import { Roles } from '../common/decorators/roles.decorator';
+// import { UserRole } from '../auth/roles.enum';
 import { UsersService } from '../users/users.service';
 import {
   VerificationStatus,
   VerificationDocument,
 } from '../users/entities/user.entity';
 import { DoSpacesService } from '../media/do-spaces.service';
+import { VerificationService } from './verification.service';
 
 @Controller('verification')
 export class VerificationController {
   constructor(
     private readonly usersService: UsersService,
     private readonly doSpacesService: DoSpacesService,
+    private readonly verificationService: VerificationService,
   ) {}
+
+  @Post('check-license')
+  @UseGuards(JwtAuthGuard)
+  // Allow any authenticated user to check license as part of upgrade flow
+  async checkLicense(
+    @Req() req,
+    @Body('businessLicenseNumber') businessLicenseNumber: string,
+  ) {
+    const userId = req.user.id;
+    return this.verificationService.checkBusinessLicense(
+      userId,
+      businessLicenseNumber,
+    );
+  }
 
   @Post('request')
   @UseGuards(JwtAuthGuard)
-  @Roles(UserRole.VENDOR, UserRole.DELIVERER)
+  // Allow any authenticated user to submit verification documents as part of upgrade flow
   @UseInterceptors(FilesInterceptor('documents'))
   async requestVerification(
     @UploadedFiles(

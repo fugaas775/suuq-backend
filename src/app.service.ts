@@ -1,8 +1,8 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 
 @Injectable()
-export class AppService implements OnModuleInit {
+export class AppService {
   private readonly logger = new Logger(AppService.name);
   constructor(private readonly dataSource: DataSource) {}
 
@@ -10,107 +10,43 @@ export class AppService implements OnModuleInit {
     return 'Hello World!';
   }
 
-  async onModuleInit() {
-    // Lightweight column existence check (runs once at startup)
-    try {
-      const res = await this.dataSource.query(
-        `SELECT column_name FROM information_schema.columns WHERE table_name='user' AND column_name IN ('verificationRejectionReason','verificationReviewedBy','verificationReviewedAt')`,
-      );
-      const found = res.map((r: any) => r.column_name);
-      const expected = [
-        'verificationRejectionReason',
-        'verificationReviewedBy',
-        'verificationReviewedAt',
-      ];
-      const missing = expected.filter((c) => !found.includes(c));
-      if (missing.length) {
-        this.logger.warn(
-          `Database missing new verification columns: ${missing.join(', ')}. Run migrations to add them.`,
-        );
-        if (process.env.AUTO_APPLY_USER_VERIFICATION_COLUMNS === '1') {
-          this.logger.log('AUTO_APPLY_USER_VERIFICATION_COLUMNS=1 => attempting automatic patch.');
-          try {
-            await this.dataSource.query(
-              `ALTER TABLE "user" ADD COLUMN IF NOT EXISTS "verificationRejectionReason" text;`,
-            );
-            await this.dataSource.query(
-              `ALTER TABLE "user" ADD COLUMN IF NOT EXISTS "verificationReviewedBy" varchar(255);`,
-            );
-            await this.dataSource.query(
-              `ALTER TABLE "user" ADD COLUMN IF NOT EXISTS "verificationReviewedAt" timestamp;`,
-            );
-            await this.dataSource.query(
-              `CREATE INDEX IF NOT EXISTS "IDX_user_verification_status" ON "user" ("verificationStatus");`,
-            );
-            await this.dataSource.query(
-              `CREATE INDEX IF NOT EXISTS "IDX_user_created_at" ON "user" ("createdAt");`,
-            );
-            this.logger.log('Automatic column patch applied successfully.');
-          } catch (e) {
-            this.logger.error('Automatic column patch failed: ' + (e as Error).message);
-          }
-        }
-      }
-    } catch (e) {
-      this.logger.warn('Startup column check failed: ' + (e as Error).message);
-    }
+  // Removed legacy auto patcher. Migrations are now the single source of truth.
 
-    // Lightweight column existence check for 'vendor' table
+  async getHealth(): Promise<Record<string, any>> {
+    const start = Date.now();
+    let dbOk = false;
+    let indexIssues: string[] = [];
     try {
-      const res = await this.dataSource.query(
-        `SELECT column_name FROM information_schema.columns WHERE table_name='vendor' AND column_name IN ('verificationRejectionReason','verificationReviewedBy','verificationReviewedAt')`,
-      );
-      const found = res.map((r: any) => r.column_name);
-      const expected = [
-        'verificationRejectionReason',
-        'verificationReviewedBy',
-        'verificationReviewedAt',
+      // Check a trivial query
+      await this.dataSource.query('SELECT 1');
+      dbOk = true;
+      // Validate critical indexes exist (by name)
+      const wanted = [
+        'IDX_user_verification_status',
+        'IDX_user_created_at',
+        'idx_products_listing_type',
+        'idx_products_bedrooms',
+        'idx_products_city',
+        'idx_products_listing_type_bedrooms',
+        'idx_products_city_type_bedrooms_created',
       ];
-      const missing = expected.filter((c) => !found.includes(c));
-      if (missing.length) {
-        this.logger.warn(
-          `Database missing new verification columns for vendor: ${missing.join(
-            ', ',
-          )}. Run migrations to add them.`,
-        );
-        if (process.env.AUTO_APPLY_USER_VERIFICATION_COLUMNS === '1') {
-          this.logger.log(
-            'AUTO_APPLY_USER_VERIFICATION_COLUMNS=1 => attempting automatic patch for vendor.',
-          );
-          try {
-            await this.dataSource.query(
-              `ALTER TABLE "vendor" ADD COLUMN IF NOT EXISTS "verificationRejectionReason" text;`,
-            );
-            await this.dataSource.query(
-              `ALTER TABLE "vendor" ADD COLUMN IF NOT EXISTS "verificationReviewedBy" integer;`,
-            );
-            await this.dataSource.query(
-              `ALTER TABLE "vendor" ADD COLUMN IF NOT EXISTS "verificationReviewedAt" timestamp;`,
-            );
-            this.logger.log(
-              'Automatic column patch for vendor applied successfully.',
-            );
-          } catch (e) {
-            this.logger.error(
-              'Automatic column patch for vendor failed: ' +
-                (e as Error).message,
-            );
-          }
-        }
-      }
-    } catch (e) {
-      this.logger.warn(
-        'Startup column check for vendor failed: ' + (e as Error).message,
+      const rows = await this.dataSource.query(
+        `SELECT indexname FROM pg_indexes WHERE schemaname='public' AND indexname = ANY($1)`,
+        [wanted],
       );
+      const present = new Set(rows.map((r: any) => r.indexname));
+      indexIssues = wanted.filter((n) => !present.has(n));
+    } catch (e) {
+      this.logger.warn('Health DB check failed: ' + (e as Error).message);
     }
-  }
-
-  getHealth(): Record<string, any> {
     return {
-      status: 'OK',
+      status: dbOk && indexIssues.length === 0 ? 'OK' : 'DEGRADED',
       timestamp: new Date().toISOString(),
       uptime: process.uptime(),
       version: process.env.npm_package_version || '1.0.0',
+      db: dbOk ? 'up' : 'down',
+      indexIssues,
+      latencyMs: Date.now() - start,
     };
   }
 
