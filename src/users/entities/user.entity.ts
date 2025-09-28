@@ -17,8 +17,24 @@ import {
   Index,
 } from 'typeorm';
 import { UserRole } from '../../auth/roles.enum';
+import { Exclude } from 'class-transformer';
 import { Product } from '../../products/entities/product.entity';
 import { Review } from '../../reviews/entities/review.entity';
+
+export interface BusinessLicenseInfo {
+  tradeName: string;
+  legalCondition: string;
+  capital: string;
+  registeredDate: string;
+  renewalDate: string;
+  status: string;
+}
+
+export enum VerificationMethod {
+  AUTOMATIC = 'AUTOMATIC',
+  MANUAL = 'MANUAL',
+  NONE = 'NONE',
+}
 
 export interface VerificationDocument {
   url: string;
@@ -39,6 +55,7 @@ export class User {
   @Index()
   email!: string;
 
+  @Exclude()
   @Column({ nullable: true })
   password?: string;
 
@@ -103,6 +120,8 @@ export class User {
   @Column({ type: 'varchar', length: 255, nullable: true })
   vendorAvatarUrl?: string | null;
 
+  // (telegramUrl removed)
+
   // --- Phone Number Block ---
   @Column({ nullable: true, length: 10 }) // For codes like '+251'
   phoneCountryCode?: string;
@@ -122,6 +141,20 @@ export class User {
   verificationStatus!: VerificationStatus;
 
   @Column({
+    type: 'enum',
+    enum: VerificationMethod,
+    default: VerificationMethod.NONE,
+  })
+  verificationMethod!: VerificationMethod;
+
+  @Column({
+    type: 'jsonb',
+    nullable: true,
+  })
+  businessLicenseInfo?: BusinessLicenseInfo | null;
+
+  @Exclude()
+  @Column({
     type: 'jsonb',
     nullable: true,
     default: '[]',
@@ -133,6 +166,17 @@ export class User {
 
   @Column({ type: 'timestamp', nullable: true })
   verifiedAt?: Date | null;
+
+  // Reason provided when verification is rejected (admin supplied)
+  @Column({ type: 'text', nullable: true })
+  verificationRejectionReason?: string | null;
+
+  // Reviewer metadata
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  verificationReviewedBy?: string | null;
+
+  @Column({ type: 'timestamp', nullable: true })
+  verificationReviewedAt?: Date | null;
 
   @Column({ default: true })
   isActive!: boolean;
@@ -182,6 +226,7 @@ export class User {
   timezone?: string | null;
 
   // Payment Fields
+  @Exclude()
   @Column({ type: 'varchar', length: 64, nullable: true })
   bankAccountNumber?: string | null;
 
@@ -195,9 +240,11 @@ export class User {
   mobileMoneyProvider?: string | null;
 
   // --- Password Reset ---
+  @Exclude()
   @Column({ nullable: true })
   passwordResetToken?: string;
 
+  @Exclude()
   @Column({ type: 'timestamp', nullable: true })
   passwordResetExpires?: Date;
 

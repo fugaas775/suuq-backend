@@ -251,4 +251,54 @@ export class FavoritesService {
     for (const id of ids) result[id.toString()] = set.has(id);
     return result;
   }
+
+  /**
+   * Return how many users have favorited the given product.
+   * Uses a database-side array operator to avoid scanning all rows in memory.
+   */
+  async countLikes(productId: number): Promise<number> {
+    // SELECT COUNT(*) FROM favorites WHERE ids @> ARRAY[productId]
+    // TypeORM query builder with Postgres array contains operator
+    const qb = this.favRepo
+      .createQueryBuilder('f')
+      .where(':pid = ANY(f.ids)', { pid: productId })
+      .select('COUNT(*)', 'cnt');
+    const raw = await qb.getRawOne<{ cnt: string }>();
+    const n = raw?.cnt ? parseInt(raw.cnt, 10) : 0;
+    return Number.isNaN(n) ? 0 : n;
+  }
+
+  /**
+   * Bulk likes count for multiple product IDs.
+   * Uses Postgres UNNEST to expand favorites.ids array and group by element.
+   */
+  async countLikesBulk(ids: number[]): Promise<Record<string, number>> {
+    const out: Record<string, number> = {};
+    const list = Array.from(new Set((ids || []).filter((n) => Number.isFinite(n)))) as number[];
+    if (!list.length) return out;
+    const sql = `
+      SELECT elem::int AS product_id, COUNT(*)::bigint AS cnt
+      FROM favorites f, unnest(f.ids) AS elem
+      WHERE elem = ANY($1::int[])
+      GROUP BY elem
+    `;
+    try {
+      const rows: Array<{ product_id: number; cnt: string }> = await this.favRepo.query(sql, [list]);
+      for (const r of rows) {
+        const pid = Number(r.product_id);
+        const c = parseInt(r.cnt, 10) || 0;
+        if (Number.isFinite(pid)) out[String(pid)] = c;
+      }
+    } catch (e) {
+      // Fallback: loop sequentially to avoid total failure
+      for (const id of list) {
+        try {
+          out[String(id)] = await this.countLikes(id);
+        } catch {
+          out[String(id)] = 0;
+        }
+      }
+    }
+    return out;
+  }
 }

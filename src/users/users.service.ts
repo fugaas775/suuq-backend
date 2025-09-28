@@ -82,35 +82,91 @@ export class UsersService {
   }
 
   /**
+   * Hard delete multiple users (irreversible). Returns count removed.
+   */
+  async hardDeleteMany(ids: number[]): Promise<{ deleted: number }> {
+    if (!ids.length) return { deleted: 0 };
+    const result = await this.userRepository.delete(ids);
+    return { deleted: result.affected || 0 };
+  }
+
+  /**
+   * Soft deactivate many users.
+   */
+  async deactivateMany(ids: number[]): Promise<{ updated: number }> {
+    if (!ids.length) return { updated: 0 };
+    const result = await this.userRepository
+      .createQueryBuilder()
+      .update(User)
+      .set({ isActive: false })
+      .whereInIds(ids)
+      .execute();
+    return { updated: result.affected || 0 };
+  }
+
+  /**
    * Find all users with optional filtering and pagination for admin panel.
    * Returns { users, total } for pagination.
    */
   async findAll(
-    filters?: FindUsersQueryDto & { page?: number; pageSize?: number },
-  ): Promise<{ users: User[]; total: number }> {
+    filters?: FindUsersQueryDto,
+  ): Promise<{ users: User[]; total: number; page: number; pageSize: number }> {
     const qb = this.userRepository.createQueryBuilder('user');
 
     if (filters?.role) {
       qb.andWhere('user.roles @> :roles', { roles: [filters.role] });
     }
 
+    if (filters?.verificationStatus) {
+      qb.andWhere('user.verificationStatus = :vs', {
+        vs: filters.verificationStatus,
+      });
+    }
+
+    if (filters?.isActive !== undefined) {
+      qb.andWhere('user.isActive = :ia', { ia: !!Number(filters.isActive) });
+    }
+
     if (filters?.search) {
       qb.andWhere(
-        '(user.displayName ILIKE :search OR user.storeName ILIKE :search)',
+        '(user.displayName ILIKE :search OR user.storeName ILIKE :search OR user.email ILIKE :search)',
         {
           search: `%${filters.search}%`,
         },
       );
     }
 
-    // Pagination
+    if (filters?.createdFrom) {
+      qb.andWhere('user."createdAt" >= :from', { from: filters.createdFrom });
+    }
+    if (filters?.createdTo) {
+      qb.andWhere('user."createdAt" <= :to', { to: filters.createdTo });
+    }
+
+    // Sorting
+    const sortBy = filters?.sortBy || 'id';
+    const sortOrder = (filters?.sortOrder || 'desc').toUpperCase() as 'ASC' | 'DESC';
+    const sortableColumns = new Set([
+      'id',
+      'email',
+      'displayName',
+      'createdAt',
+      'verificationStatus',
+    ]);
+    if (sortableColumns.has(sortBy)) {
+      qb.orderBy(`user.${sortBy}`, sortOrder);
+    } else {
+      qb.orderBy('user.id', 'DESC');
+    }
+
+    // Pagination (safe bounds)
     const page = filters?.page && filters.page > 0 ? filters.page : 1;
-    const pageSize =
-      filters?.pageSize && filters.pageSize > 0 ? filters.pageSize : 20;
+    const rawPageSize = filters?.pageSize && filters.pageSize > 0 ? filters.pageSize : 20;
+    const pageSize = Math.min(rawPageSize, 200); // cap to avoid huge queries
     qb.skip((page - 1) * pageSize).take(pageSize);
 
     const [users, total] = await qb.getManyAndCount();
-    return { users, total };
+    return { users, total, page, pageSize };
   }
 
   /**
@@ -142,11 +198,13 @@ export class UsersService {
       'storeName',
       'phoneCountryCode',
       'phoneNumber',
+  'isPhoneVerified',
       'isActive',
       // Verification fields for admin
       'verificationStatus',
       'verificationDocuments',
       'verified',
+  'verifiedAt',
     ];
     const updateData: Partial<User> = {};
     for (const key of allowedFields) {
@@ -209,18 +267,26 @@ export class UsersService {
     userId: number,
     status: VerificationStatus.APPROVED | VerificationStatus.REJECTED,
     actedBy?: string,
+    reason?: string,
   ): Promise<User> {
     const user = await this.findById(userId);
-    // Idempotent updates
+    const prevStatus = user.verificationStatus;
     user.verificationStatus = status;
     if (status === VerificationStatus.APPROVED) {
       user.verified = true;
       user.verifiedAt = user.verifiedAt || new Date();
+      // Clear rejection metadata if previously rejected
+      user.verificationRejectionReason = null;
+    } else if (status === VerificationStatus.REJECTED) {
+      user.verified = false; // ensure false
+      user.verificationRejectionReason = reason || null;
     }
+    user.verificationReviewedBy = actedBy || null;
+    user.verificationReviewedAt = new Date();
     user.updatedBy = actedBy;
     const saved = await this.userRepository.save(user);
     this.logger.log(
-      `Verification status changed: userId=${userId} status=${status} by=${actedBy || 'system'}`,
+      `Verification status changed: userId=${userId} prev=${prevStatus} status=${status} reason=${reason || 'n/a'} by=${actedBy || 'system'}`,
     );
     return saved;
   }

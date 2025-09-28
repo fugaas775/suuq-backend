@@ -8,6 +8,8 @@ import { ProductsModule } from '../products/products.module';
 import { TelebirrModule } from '../telebirr/telebirr.module';
 import { MpesaModule } from '../mpesa/mpesa.module';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { MediaModule } from '../media/media.module';
+import { AuditModule } from '../audit/audit.module';
 // import { AdminOrdersController } from './admin-orders.controller'; // <-- DELETE THIS LINE
 
 @Module({
@@ -18,6 +20,8 @@ import { NotificationsModule } from '../notifications/notifications.module';
     TelebirrModule,
     MpesaModule,
     NotificationsModule,
+  MediaModule,
+  AuditModule,
   ],
   controllers: [OrdersController],
   providers: [OrdersService],

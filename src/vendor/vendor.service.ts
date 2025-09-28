@@ -7,7 +7,7 @@ import { CreateVendorProductDto } from './dto/create-vendor-product.dto';
 import { FindAllVendorsDto } from './dto/find-all-vendors.dto';
 import { UpdateVendorProductDto } from './dto/update-vendor-product.dto';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Raw, ArrayContains, ILike } from 'typeorm';
+import { Repository, Raw, ArrayContains, ILike, In } from 'typeorm';
 import { User, VerificationStatus } from '../users/entities/user.entity';
 import { Product } from '../products/entities/product.entity';
 import { Category } from '../categories/entities/category.entity';
@@ -21,6 +21,10 @@ import {
 import { normalizeProductMedia } from '../common/utils/media-url.util';
 import { UserRole } from '../auth/roles.enum';
 import { NotificationsService } from '../notifications/notifications.service';
+import { Tag } from '../tags/tag.entity';
+import { DoSpacesService } from '../media/do-spaces.service';
+import { normalizeDigitalAttributes, validateDigitalStructure, mapDigitalError } from '../common/utils/digital.util';
+import { Logger } from '@nestjs/common';
 
 @Injectable()
 export class VendorService {
@@ -33,10 +37,15 @@ export class VendorService {
     private readonly orderRepository: Repository<Order>,
     @InjectRepository(OrderItem)
     private readonly orderItemRepository: Repository<OrderItem>,
-    @InjectRepository(ProductImage)
-    private readonly productImageRepository: Repository<ProductImage>,
+  @InjectRepository(ProductImage)
+  private readonly productImageRepository: Repository<ProductImage>,
+  @InjectRepository(Tag)
+  private readonly tagRepository: Repository<Tag>,
     private readonly notificationsService: NotificationsService,
+  private readonly doSpacesService: DoSpacesService,
   ) {}
+
+  private readonly logger = new Logger(VendorService.name);
 
   // ✅ FIX: This function now correctly handles an array of ImageDto objects
   async createMyProduct(
@@ -48,19 +57,132 @@ export class VendorService {
       throw new NotFoundException(`Vendor with ID ${userId} not found.`);
     }
 
-    const { images, categoryId, ...productData } = dto;
+    const {
+      images,
+      categoryId,
+      listingType,
+      listingTypeMulti,
+      listingCity,
+      bedrooms,
+      bathrooms,
+      sizeSqm,
+      furnished,
+      rentPeriod,
+      attributes,
+      tags,
+      videoUrl,
+      posterUrl,
+  downloadKey,
+  isFree,
+      ...productData
+    } = dto as any;
 
-    const newProduct = this.productRepository.create({
+    // Normalize listingType if client sent listingTypeMulti
+    const resolvedListingType: 'sale' | 'rent' | undefined = (() => {
+      if (listingType && (listingType === 'sale' || listingType === 'rent')) return listingType;
+      if (Array.isArray(listingTypeMulti) && listingTypeMulti.length) {
+        const first = String(listingTypeMulti[0] || '').toLowerCase();
+        if (first === 'sale' || first === 'sell') return 'sale';
+        if (first === 'rent' || first === 'rental') return 'rent';
+      }
+      return undefined;
+    })();
+
+    let safeAttributes: Record<string, any> | undefined = (() => {
+      const a: Record<string, any> = {};
+      if (attributes && typeof attributes === 'object') Object.assign(a, attributes);
+      // Some clients send videoUrl at top-level attributes or in dto.attributes
+      if (a.videoUrl == null && dto && (dto as any).attributes?.videoUrl) {
+        a.videoUrl = (dto as any).attributes.videoUrl;
+      }
+      // Also accept top-level dto.videoUrl
+      if (a.videoUrl == null && (dto as any)?.videoUrl) a.videoUrl = (dto as any).videoUrl;
+      // Poster URL handling
+      if (a.posterUrl == null && dto && (dto as any).attributes?.posterUrl) {
+        a.posterUrl = (dto as any).attributes.posterUrl;
+      }
+      if (a.posterUrl == null && (dto as any)?.posterUrl) a.posterUrl = (dto as any).posterUrl;
+      // Digital product download URL (server will derive key)
+      if (a.downloadUrl == null && dto && (dto as any).attributes?.downloadUrl) {
+        a.downloadUrl = (dto as any).attributes.downloadUrl;
+      }
+      if (a.downloadUrl == null && (dto as any)?.downloadUrl) a.downloadUrl = (dto as any).downloadUrl;
+      // Digital product download key
+      if (a.downloadKey == null && dto && (dto as any).attributes?.downloadKey) {
+        a.downloadKey = (dto as any).attributes.downloadKey;
+      }
+      if (a.downloadKey == null && (dto as any)?.downloadKey) a.downloadKey = (dto as any).downloadKey;
+      // Free flag (boolean)
+      if (typeof (dto as any)?.isFree === 'boolean') a.isFree = !!(dto as any).isFree;
+      if (dto && (dto as any).attributes && typeof (dto as any).attributes.isFree === 'boolean' && a.isFree == null) {
+        a.isFree = !!(dto as any).attributes.isFree;
+      }
+      // Also accept top-level dto.attributes.videoUrl or dto.videoUrl inside dto.attributes
+      return Object.keys(a).length ? a : undefined;
+    })();
+
+    // Normalize & validate digital schema (create path)
+    if (safeAttributes) {
+      try {
+        const before = JSON.stringify(safeAttributes);
+        const norm = normalizeDigitalAttributes(safeAttributes);
+        safeAttributes = norm.updated;
+        if (norm.inferredType === 'digital') (productData as any).productType = 'digital';
+        const after = JSON.stringify(safeAttributes);
+        if (before !== after) {
+          this.logger.debug(`Normalized digital attributes (create) product temp: ${before} -> ${after}`);
+        }
+        // Validate if explicitly digital or inferred digital
+        if ((productData as any).productType === 'digital') {
+          try {
+            validateDigitalStructure(safeAttributes, { requireKey: true, maxSizeBytes: 100 * 1024 * 1024 });
+          } catch (e: any) {
+            const { code, message } = mapDigitalError(String(e?.message || ''));
+            throw new ForbiddenException({ error: message, code });
+          }
+        }
+      } catch {}
+    }
+
+  const newProduct = this.productRepository.create({
       ...productData,
       vendor: vendor,
       category: categoryId ? { id: categoryId } : undefined,
       imageUrl: images && images.length > 0 ? images[0].src : null, // Set main display image
+      listingType: resolvedListingType,
+      listingCity,
+      bedrooms,
+      bathrooms,
+      sizeSqm,
+      furnished,
+      rentPeriod,
+      attributes: safeAttributes,
+      productType: (productData as any).productType || (resolvedListingType ? 'property' : undefined),
     });
 
-    // 1. Save the main product to get its ID
-    const savedProduct = await this.productRepository.save(newProduct);
+  // 1. Save the main product to get its ID
+  const savedProduct = (await this.productRepository.save(
+      newProduct as any,
+    )) as Product;
 
-    // 2. Create and save all associated image entities
+    // 2. Handle tags by names (create if missing)
+    if (Array.isArray(tags)) {
+      const tagNames: string[] = tags
+        .map((t: any) => (typeof t === 'string' ? t.trim() : ''))
+        .filter((s: string) => !!s);
+      if (tagNames.length) {
+        const existing = await this.tagRepository.find({ where: { name: In(tagNames) } as any });
+        const existingNames = new Set(existing.map((t: any) => t.name));
+        const toCreate = tagNames.filter((n) => !existingNames.has(n));
+        const created = toCreate.length
+          ? await this.tagRepository.save(toCreate.map((name) => this.tagRepository.create({ name })))
+          : [];
+        (savedProduct as any).tags = [...existing, ...created];
+        await this.productRepository.save(savedProduct);
+      }
+    }
+
+    // 3. Create and save all associated image entities
     if (images && images.length > 0) {
       const imageEntities = images.map((imageObj, index) =>
         this.productImageRepository.create({
@@ -74,7 +196,7 @@ export class VendorService {
       await this.productImageRepository.save(imageEntities);
     }
 
-    // 3. Return the full product with all its new relations
+    // 4. Return the full product with all its new relations
     return this.productRepository.findOneOrFail({
       where: { id: savedProduct.id },
       relations: ['images', 'vendor', 'category', 'tags'],
@@ -94,10 +216,126 @@ export class VendorService {
       throw new NotFoundException('Product not found or you do not own it.');
     }
 
-    const { images, categoryId, ...productData } = dto;
+    const {
+      images,
+      categoryId,
+      listingType,
+      listingTypeMulti,
+      listingCity,
+      bedrooms,
+      bathrooms,
+      sizeSqm,
+      furnished,
+      rentPeriod,
+      attributes,
+      tags,
+      videoUrl,
+      posterUrl,
+  downloadKey,
+  isFree,
+      ...productData
+    } = dto as any;
 
-    // Update simple fields
-    Object.assign(product, productData);
+  // Update simple fields (exclude computed getters like posterUrl/videoUrl)
+  if (productData && typeof productData === 'object') {
+    // Extra safety: drop any computed keys if present
+    if ('posterUrl' in productData) delete (productData as any).posterUrl;
+    if ('videoUrl' in productData) delete (productData as any).videoUrl;
+  }
+  Object.assign(product, productData);
+
+    // Merge property fields
+    const resolvedListingType: 'sale' | 'rent' | undefined = (() => {
+      if (listingType && (listingType === 'sale' || listingType === 'rent')) return listingType;
+      if (Array.isArray(listingTypeMulti) && listingTypeMulti.length) {
+        const first = String(listingTypeMulti[0] || '').toLowerCase();
+        if (first === 'sale' || first === 'sell') return 'sale';
+        if (first === 'rent' || first === 'rental') return 'rent';
+      }
+      return undefined;
+    })();
+    if (resolvedListingType) product.listingType = resolvedListingType;
+    if (typeof listingCity !== 'undefined') product.listingCity = listingCity ?? null;
+    if (typeof bedrooms !== 'undefined') product.bedrooms = bedrooms as any;
+    if (typeof bathrooms !== 'undefined') product.bathrooms = bathrooms as any;
+    if (typeof sizeSqm !== 'undefined') product.sizeSqm = sizeSqm as any;
+    if (typeof furnished !== 'undefined') product.furnished = furnished as any;
+    if (typeof rentPeriod !== 'undefined') product.rentPeriod = rentPeriod as any;
+
+    if (typeof attributes !== 'undefined') {
+      const existing = (product.attributes && typeof product.attributes === 'object') ? { ...(product.attributes as any) } : {};
+      const next = attributes && typeof attributes === 'object' ? { ...existing, ...attributes } : existing;
+      product.attributes = Object.keys(next).length ? next : null;
+    }
+    // Accept top-level dto.videoUrl during update as well
+    if ((dto as any) && typeof (dto as any).videoUrl === 'string' && (dto as any).videoUrl) {
+      const base = (product.attributes && typeof product.attributes === 'object') ? { ...(product.attributes as any) } : {};
+      base.videoUrl = (dto as any).videoUrl;
+      product.attributes = base;
+    }
+    // Accept top-level dto.posterUrl during update as well
+    if ((dto as any) && typeof (dto as any).posterUrl === 'string' && (dto as any).posterUrl) {
+      const base = (product.attributes && typeof product.attributes === 'object') ? { ...(product.attributes as any) } : {};
+      base.posterUrl = (dto as any).posterUrl;
+      product.attributes = base;
+    }
+    // Accept top-level dto.downloadKey during update as well
+    if ((dto as any) && typeof (dto as any).downloadKey === 'string' && (dto as any).downloadKey) {
+      const base = (product.attributes && typeof product.attributes === 'object') ? { ...(product.attributes as any) } : {};
+      base.downloadKey = (dto as any).downloadKey;
+      product.attributes = base;
+    }
+    // Accept top-level dto.downloadUrl during update as well
+    if ((dto as any) && typeof (dto as any).downloadUrl === 'string' && (dto as any).downloadUrl) {
+      const base = (product.attributes && typeof product.attributes === 'object') ? { ...(product.attributes as any) } : {};
+      base.downloadUrl = (dto as any).downloadUrl;
+      product.attributes = base;
+    }
+    // Accept top-level dto.isFree during update
+    if ((dto as any) && typeof (dto as any).isFree === 'boolean') {
+      const base = (product.attributes && typeof product.attributes === 'object') ? { ...(product.attributes as any) } : {};
+      base.isFree = !!(dto as any).isFree;
+      product.attributes = base;
+    }
+
+    // Normalize & validate digital schema after merges (update path)
+    if (product.attributes && typeof product.attributes === 'object') {
+      try {
+        const before = JSON.stringify(product.attributes);
+        const { updated, inferredType } = normalizeDigitalAttributes(product.attributes as any);
+        product.attributes = updated;
+        const after = JSON.stringify(product.attributes);
+        if (before !== after) {
+          this.logger.debug(`Normalized digital attributes (update id=${productId}) ${before} -> ${after}`);
+        }
+        if (inferredType === 'digital') product.productType = 'digital' as any;
+        else if (!product.productType && product.listingType) product.productType = 'property' as any;
+        if (product.productType === 'digital') {
+          try {
+            validateDigitalStructure(product.attributes as any, { requireKey: true, maxSizeBytes: 100 * 1024 * 1024 });
+          } catch (e: any) {
+            const { code, message } = mapDigitalError(String(e?.message || ''));
+            throw new ForbiddenException({ error: message, code });
+          }
+        }
+      } catch {}
+    }
+
+    // Update tags by names if provided
+    if (Array.isArray(tags)) {
+      const tagNames: string[] = tags
+        .map((t: any) => (typeof t === 'string' ? t.trim() : ''))
+        .filter((s: string) => !!s);
+      const existing = tagNames.length
+        ? await this.tagRepository.find({ where: { name: In(tagNames) } as any })
+        : [];
+      const existingNames = new Set(existing.map((t: any) => t.name));
+      const toCreate = tagNames.filter((n) => !existingNames.has(n));
+      const created = toCreate.length
+        ? await this.tagRepository.save(toCreate.map((name) => this.tagRepository.create({ name })))
+        : [];
+      (product as any).tags = [...existing, ...created];
+    }
 
     // Update category if it was sent
     if (categoryId !== undefined) {
@@ -134,7 +372,7 @@ export class VendorService {
       await this.productImageRepository.save(imageEntities);
     }
 
-    await this.productRepository.save(product);
+  await this.productRepository.save(product);
     return this.productRepository.findOneOrFail({
       where: { id: productId },
       relations: ['images', 'vendor', 'category', 'tags'],
@@ -155,10 +393,191 @@ export class VendorService {
     return { deleted: true };
   }
 
+  // Fetch a single product owned by the vendor (for edit prefill)
+  async getMyProduct(
+    userId: number,
+    productId: number,
+    opts?: { playable?: boolean; ttlSecs?: number },
+  ): Promise<Product & { playableUrl?: string; playableExpiresIn?: number }> {
+    const product = await this.productRepository.findOne({
+      where: { id: productId, vendor: { id: userId } },
+      relations: ['images', 'category', 'tags', 'vendor'],
+    });
+    if (!product) {
+      throw new NotFoundException('Product not found or not owned by user');
+    }
+    try {
+      const out = normalizeProductMedia(product as any) as any;
+
+      // Ensure digital alias fields are present for edit prefills
+      try {
+        const ensureDigitalAliases = (obj: any) => {
+          if (!obj) return;
+          let attrs = (obj.attributes && typeof obj.attributes === 'object') ? (obj.attributes as Record<string, any>) : undefined;
+          if (!attrs) return;
+
+          // First, normalize into canonical digital structure if applicable
+          try {
+            const { updated } = normalizeDigitalAttributes(attrs);
+            if (updated && typeof updated === 'object') attrs = updated as Record<string, any>;
+          } catch {}
+
+          // Read canonical digital structure if present
+          const dig = (attrs as any).digital && typeof (attrs as any).digital === 'object' ? (attrs as any).digital : undefined;
+          const dl = dig && typeof dig.download === 'object' ? dig.download as Record<string, any> : undefined;
+
+          // Fallback to downloadKey present at root attrs if canonical missing
+          let key: string | undefined = (dl?.key as string) || (attrs.downloadKey as string) || obj.downloadKey;
+          // Derive key from an existing downloadUrl (or legacy url/src) if needed
+          const urlCandidate: string | undefined =
+            (typeof attrs.downloadUrl === 'string' && attrs.downloadUrl)
+              ? attrs.downloadUrl
+              : (typeof (attrs as any).url === 'string' && (attrs as any).url)
+                ? (attrs as any).url
+                : (typeof (attrs as any).src === 'string' && (attrs as any).src)
+                  ? (attrs as any).src
+                  : undefined;
+          if (!key && urlCandidate) {
+            try {
+              key = this.doSpacesService.extractKeyFromUrl(urlCandidate) || key;
+            } catch {}
+          }
+
+          // Derive/choose public URL
+          let publicUrl: string | undefined = (dl?.publicUrl as string) || (attrs.downloadUrl as string) || (attrs as any).url || (attrs as any).src;
+          if (!publicUrl && typeof key === 'string' && key) {
+            const bucket = process.env.DO_SPACES_BUCKET;
+            const region = process.env.DO_SPACES_REGION;
+            if (bucket && region) {
+              publicUrl = `https://${bucket}.${region}.digitaloceanspaces.com/${key}`;
+            }
+          }
+
+          // Backfill alias fields when missing
+          if (!attrs.downloadUrl && publicUrl) attrs.downloadUrl = publicUrl;
+          // Ensure root-level downloadKey alias for prefill
+          if (!attrs.downloadKey && typeof ((dl?.key as string) || key) === 'string' && ((dl?.key as string) || key)) {
+            attrs.downloadKey = (dl?.key as string) || (key as string);
+          }
+
+          // format alias from key extension
+          if (!attrs.format) {
+            const from = (dl?.key as string) || key || (typeof attrs.downloadUrl === 'string' ? attrs.downloadUrl : '');
+            const ext = String(from.split('.').pop() || '').toLowerCase();
+            if (ext === 'pdf' || ext === 'epub' || ext === 'zip') {
+              attrs.format = ext.toUpperCase();
+            }
+          }
+
+          // fileSizeMB from bytes if available
+          if (!attrs.fileSizeMB && typeof dl?.size === 'number' && isFinite(dl.size)) {
+            const mb = dl.size / (1024 * 1024);
+            if (mb > 0) attrs.fileSizeMB = Math.round(mb * 100) / 100;
+          }
+
+          // licenseRequired alias
+          if (typeof attrs.licenseRequired === 'undefined' && typeof dl?.licenseRequired === 'boolean') {
+            attrs.licenseRequired = dl.licenseRequired;
+          }
+
+          // Expose a generic `file` alias object for edit UI expecting file/url shape
+          // Do this only at read-time (do not persist), safe for prefill forms
+          if (typeof (attrs as any).file === 'undefined' && (publicUrl || key)) {
+            const filename = (dl?.filename as string) || (typeof ((dl?.key as string) || key) === 'string' ? String((dl?.key as string) || key).split('/').pop() : undefined);
+            const sizeMB = (typeof attrs.fileSizeMB === 'number' && isFinite(attrs.fileSizeMB))
+              ? attrs.fileSizeMB
+              : (typeof dl?.size === 'number' && isFinite(dl.size) && dl.size > 0)
+                ? Math.round((dl.size / (1024 * 1024)) * 100) / 100
+                : undefined;
+            (attrs as any).file = {
+              url: publicUrl,
+              src: publicUrl,
+              name: filename,
+              key: (dl?.key as string) || key,
+              size: typeof dl?.size === 'number' ? dl.size : undefined,
+              sizeMB,
+              contentType: dl?.contentType,
+            };
+          }
+          // Also expose files array form if missing
+          if (typeof (attrs as any).files === 'undefined' && (attrs as any).file) {
+            (attrs as any).files = [(attrs as any).file];
+          }
+
+          obj.attributes = attrs; // assign back (possibly updated reference)
+        };
+        ensureDigitalAliases(out);
+
+        // Log attribute keys for troubleshooting prefill (use .log for visibility in prod)
+        try {
+          const attrs = out.attributes && typeof out.attributes === 'object' ? (out.attributes as Record<string, any>) : undefined;
+          const dig = attrs && typeof attrs.digital === 'object' ? (attrs.digital as any) : undefined;
+          const dl = dig && typeof dig.download === 'object' ? (dig.download as any) : undefined;
+          const preview = {
+            keys: attrs ? Object.keys(attrs) : [],
+            hasDigital: !!dig,
+            digitalKeys: dig ? Object.keys(dig) : [],
+            hasDownload: !!dl,
+            downloadKeys: dl ? Object.keys(dl) : [],
+            downloadKey: (attrs as any)?.downloadKey || dl?.key || out.downloadKey || null,
+            downloadUrl: (attrs as any)?.downloadUrl || dl?.publicUrl || null,
+            format: (attrs as any)?.format || null,
+            fileSizeMB: (attrs as any)?.fileSizeMB || null,
+            licenseRequired: (attrs as any)?.licenseRequired ?? null,
+          } as any;
+          this.logger.log(`getMyProduct prefill id=${productId} attrs=${JSON.stringify(preview)}`);
+          // Optional deep attributes dump for specific IDs via env flag (comma-separated or 'all')
+          try {
+            const dbg = (process.env.DEBUG_ATTRS_PRODUCT_IDS || '').trim();
+            if (dbg) {
+              const should = dbg === 'all' || dbg.split(',').map((s) => parseInt(s.trim(), 10)).filter((n) => !isNaN(n)).includes(productId);
+              if (should) {
+                const raw = attrs ? JSON.stringify(attrs) : 'null';
+                this.logger.warn(`DEBUG rawAttrs id=${productId} attrs=${raw}`);
+              }
+            }
+          } catch {}
+        } catch {}
+      } catch {}
+      // Optional: attach a short-lived signed playback URL for the video to simplify clients
+      if (opts?.playable) {
+        const v: string | undefined = out.videoUrl || (out.attributes?.videoUrl as string | undefined);
+        if (typeof v === 'string' && v) {
+          const key = this.doSpacesService.extractKeyFromUrl(v);
+          if (key) {
+            const ttl = Math.max(60, Math.min(opts.ttlSecs || 300, 3600));
+            const ext = (key.split('.').pop() || '').toLowerCase();
+            const mime =
+              ext === 'mp4'
+                ? 'video/mp4'
+                : ext === 'webm'
+                ? 'video/webm'
+                : ext === 'mov'
+                ? 'video/quicktime'
+                : undefined;
+            const fileName = key.split('/').pop();
+            out.playableUrl = await this.doSpacesService.getSignedUrl(key, ttl, {
+              contentType: mime,
+              inlineFilename: fileName,
+            });
+            out.playableExpiresIn = ttl;
+          }
+        }
+      }
+      return out;
+    } catch {
+      return product as any;
+    }
+  }
+
   async getSalesGraphData(vendorId: number, range: string) {
     const startDate = new Date();
-    if (range === '30d') startDate.setDate(startDate.getDate() - 30);
-    else if (range === '7d') startDate.setDate(startDate.getDate() - 7);
+    const r = String(range || '').toLowerCase();
+    if (r === '365d') startDate.setDate(startDate.getDate() - 365);
+    else if (r === '90d') startDate.setDate(startDate.getDate() - 90);
+    else if (r === '30d') startDate.setDate(startDate.getDate() - 30);
+    else if (r === '7d') startDate.setDate(startDate.getDate() - 7);
+    else startDate.setDate(startDate.getDate() - 30);
 
     const salesData = await this.orderRepository
       .createQueryBuilder('o')
@@ -168,13 +587,15 @@ export class VendorService {
       .andWhere('o.createdAt >= :startDate', { startDate })
       .select('DATE(o.createdAt)', 'date')
       .addSelect('SUM(o.total)', 'total')
+      .addSelect('COUNT(DISTINCT o.id)', 'orderCount')
       .groupBy('DATE(o.createdAt)')
       .orderBy('date', 'ASC')
       .getRawMany();
 
     return salesData.map((point) => ({
-      ...point,
+      date: point.date,
       total: parseFloat(point.total) || 0,
+      orderCount: parseInt(point.orderCount, 10) || 0,
     }));
   }
 
@@ -347,8 +768,8 @@ export class VendorService {
       .andWhere(':role = ANY(user.roles)', { role: UserRole.VENDOR })
       .getOne();
     if (!user) return null;
-    const { id, storeName, avatarUrl, displayName, createdAt } = user;
-    return { id, storeName, avatarUrl, displayName, createdAt };
+  const { id, storeName, avatarUrl, displayName, createdAt } = user as any;
+  return { id, storeName, avatarUrl, displayName, createdAt };
   }
 
   async getDashboardOverview(userId: number) {
@@ -615,44 +1036,110 @@ export class VendorService {
     q?: string;
     page?: number;
     limit?: number;
+    lat?: number;
+    lng?: number;
+    radiusKm?: number;
   }): Promise<{
     items: Array<{
       id: number;
       name: string | null;
       email: string | null;
       phone: string | null;
+      distanceKm?: number | null;
     }>;
     total: number;
+    hasMore?: boolean;
   }> {
     const q = (opts.q || '').trim();
     const page = opts.page && opts.page > 0 ? opts.page : 1;
     const limit = opts.limit && opts.limit > 0 ? Math.min(opts.limit, 100) : 20;
+    const origin =
+      typeof opts.lat === 'number' && typeof opts.lng === 'number'
+        ? { lat: Number(opts.lat), lng: Number(opts.lng) }
+        : null;
+    const radiusKm =
+      typeof opts.radiusKm === 'number' && opts.radiusKm > 0
+        ? Number(opts.radiusKm)
+        : undefined;
 
     const qb = this.userRepository
       .createQueryBuilder('user')
       .where(':role = ANY(user.roles)', { role: UserRole.DELIVERER })
       .andWhere('user.isActive = true')
-      .orderBy('user.displayName', 'ASC')
-      .skip((page - 1) * limit)
-      .take(limit);
+      .orderBy('user.displayName', 'ASC');
 
     if (q) {
       qb.andWhere(
-        '(user.displayName ILIKE :q OR user.email ILIKE :q OR user.phoneNumber ILIKE :q)',
+        '(user.displayName ILIKE :q OR user.email ILIKE :q OR user."phoneNumber" ILIKE :q)',
         { q: `%${q}%` },
       );
     }
 
-    const [users, total] = await qb.getManyAndCount();
-    const items = users.map((u) => ({
+    // Fetch a wider slice if geo filtering is requested, then apply distance/radius/pagination in memory.
+    let users: Array<any> = [];
+    let total = 0;
+    if (origin) {
+      // Get a reasonably large pool to sort/filter from; cap at 500 to avoid heavy queries in tests
+      users = await qb.take(500).getMany();
+      // Compute distance using haversine
+      const withDistances = users.map((u) => {
+        const lat = (u as any).locationLat as number | null;
+        const lng = (u as any).locationLng as number | null;
+        const ok = typeof lat === 'number' && typeof lng === 'number';
+        const d = ok ? this.haversineKm(origin!.lat, origin!.lng, lat!, lng!) : Number.POSITIVE_INFINITY;
+        return { user: u, distanceKm: ok ? d : null };
+      });
+      // Filter by radius if provided
+      const filtered = (radiusKm
+        ? withDistances.filter((r) => (r.distanceKm ?? Number.POSITIVE_INFINITY) <= radiusKm)
+        : withDistances
+      )
+        // Sort by distance; null/Inf go last
+        .sort((a, b) => {
+          const da = a.distanceKm ?? Number.POSITIVE_INFINITY;
+          const db = b.distanceKm ?? Number.POSITIVE_INFINITY;
+          return da - db;
+        });
+      total = filtered.length;
+      const start = (page - 1) * limit;
+      const paged = filtered.slice(start, start + limit);
+      const items = paged.map(({ user: u, distanceKm }) => ({
+        id: u.id,
+        name: u.displayName || null,
+        email: u.email || null,
+        phone: (u as any).phoneNumber || null,
+        distanceKm: distanceKm ?? null,
+      }));
+      return { items, total, hasMore: start + items.length < total };
+    }
+
+    // Non-geo path: use DB pagination
+    const [dbUsers, dbTotal] = await qb
+      .skip((page - 1) * limit)
+      .take(limit)
+      .getManyAndCount();
+    const items = dbUsers.map((u) => ({
       id: u.id,
       name: u.displayName || null,
       email: u.email || null,
       phone: (u as any).phoneNumber || null,
-      lat: (u as any).locationLat ?? null,
-      lng: (u as any).locationLng ?? null,
     }));
-    return { items, total };
+    return { items, total: dbTotal, hasMore: page * limit < dbTotal };
+  }
+
+  // Great-circle distance (Haversine) in kilometers
+  private haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
+    const toRad = (v: number) => (v * Math.PI) / 180;
+    const R = 6371; // km
+    const dLat = toRad(lat2 - lat1);
+    const dLon = toRad(lon2 - lon1);
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(toRad(lat1)) *
+        Math.cos(toRad(lat2)) *
+        Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
   }
 
   // Lightweight vendor suggestions for dropdowns/search-as-you-type

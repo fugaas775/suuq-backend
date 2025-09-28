@@ -21,7 +21,7 @@ import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { plainToInstance } from 'class-transformer';
-import { AuthenticatedRequest } from 'src/common/interfaces/authenticated-request.interface';
+import { AuthenticatedRequest } from '../common/interfaces/authenticated-request.interface';
 import { UpdateUserDto } from '../users/dto/update-user.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 

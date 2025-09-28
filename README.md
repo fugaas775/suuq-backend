@@ -25,6 +25,69 @@
 
 [Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
 
+## Business License Verification Flow
+
+The platform supports two verification methods for vendors:
+
+1. Automatic (Ethiopia / eTrade scraping)
+2. Manual (document upload & admin review)
+
+### Automatic Flow (Ethiopia)
+Endpoint: `POST /api/verification/check-license`
+
+Request body:
+```json
+{ "businessLicenseNumber": "<license-number>" }
+```
+
+Behavior:
+- Authenticated vendor (role VENDOR or DELIVERER) calls endpoint.
+- Service posts the license number to the Ethiopian eTrade checker.
+- Scrapes returned HTML table for: tradeName, legalCondition, capital, registeredDate, renewalDate, status.
+- If status === `Valid`, user is updated:
+  - `verificationStatus = APPROVED`
+  - `verificationMethod = AUTOMATIC`
+  - `businessLicenseInfo` JSON populated
+  - `businessLicenseNumber` stored
+- On failure (not found / not valid) a 404 NotFoundException is returned; user is not modified.
+
+### Manual Flow (All Countries)
+Endpoint: `POST /api/verification/request` (multipart form-data)
+
+Field: `documents` (array of files: png, jpeg, jpg, pdf, doc, docx — max 10MB each)
+
+Behavior:
+- Stores uploaded files in DigitalOcean Spaces (path: `verification/<userId>/<timestamp>_<filename>`)
+- Updates user:
+  - `verificationStatus = PENDING`
+  - `verificationDocuments = [ { url, name } ]`
+- Admin back-office will later review and set APPROVED / REJECTED along with rejection reason.
+
+### Relevant User Columns
+| Column | Purpose |
+|--------|---------|
+| verificationStatus | UNVERIFIED | PENDING | APPROVED | REJECTED | SUSPENDED |
+| verificationMethod | NONE | AUTOMATIC | MANUAL |
+| businessLicenseInfo | JSON details returned from automatic checker |
+| businessLicenseNumber | Raw license number provided by vendor |
+| verificationDocuments | JSON array of uploaded manual docs |
+| verificationRejectionReason | Admin supplied reason when REJECTED |
+| verificationReviewedBy / verificationReviewedAt | Admin audit metadata |
+
+### Startup Safety Patch (Temporary)
+`AppService.onModuleInit` performs a lightweight column existence check for newly added verification columns. This was an interim resiliency measure when migrations were failing in production. It should be safe to remove once migrations run reliably.
+
+### Testing
+E2E-lite tests:
+- `verification-check-license.e2e-spec.ts` (success & invalid license failure paths)
+
+### Future Improvements
+- Add rate limiting / debounce for repeated failed license lookups.
+- Cache successful license lookups for 24h.
+- Add admin endpoint to override automatic result.
+- Country adapter pattern for future automatic verifiers (plug-in architecture).
+
+
 ## Project setup
 
 ```bash

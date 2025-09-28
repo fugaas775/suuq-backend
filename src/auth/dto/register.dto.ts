@@ -54,4 +54,12 @@ export class RegisterDto {
     message: 'Phone number must be 9 digits, or 10 digits starting with 0.',
   })
   phoneNumber?: string;
+
+  @IsOptional()
+  @IsString()
+  country?: string;
+
+  @IsOptional()
+  @IsString()
+  businessLicenseNumber?: string;
 }

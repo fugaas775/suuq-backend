@@ -10,6 +10,64 @@ import {
   IsInt,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import { ApiPropertyOptional } from '@nestjs/swagger';
+
+class DigitalLicenseDto {
+  @IsOptional()
+  @IsString()
+  id?: string;
+  @IsOptional()
+  @IsString()
+  name?: string;
+  @IsOptional()
+  @IsString()
+  url?: string;
+}
+
+class DigitalDownloadDto {
+  @IsString()
+  @ApiPropertyOptional({ description: 'Object storage key (no host)', example: 'uploads/12345_file.pdf' })
+  key: string; // object key only
+  @IsOptional()
+  @IsString()
+  publicUrl?: string; // optional; server can derive
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  size?: number;
+  @IsOptional()
+  @IsString()
+  contentType?: string;
+  @IsOptional()
+  @IsString()
+  filename?: string;
+  @IsOptional()
+  @IsString()
+  checksum?: string;
+  @IsOptional()
+  @Type(() => Boolean)
+  @IsBoolean()
+  licenseRequired?: boolean;
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => DigitalLicenseDto)
+  license?: DigitalLicenseDto;
+}
+
+class DigitalAttributesDto {
+  @IsIn(['digital'])
+  @ApiPropertyOptional({ enum: ['digital'] })
+  type: 'digital';
+  @IsOptional()
+  @Type(() => Boolean)
+  @IsBoolean()
+  @ApiPropertyOptional({ description: 'Flag for free download eligibility' })
+  isFree?: boolean;
+  @ValidateNested()
+  @Type(() => DigitalDownloadDto)
+  @ApiPropertyOptional({ description: 'Download metadata object' })
+  download: DigitalDownloadDto;
+}
 
 class ImageDto {
   @IsString()
@@ -100,8 +158,15 @@ export class CreateProductDto {
   @IsIn(['day', 'week', 'month', 'year'])
   rentPeriod?: 'day' | 'week' | 'month' | 'year';
 
+  // Optional explicit productType (else inferred)
+  @IsOptional()
+  @IsIn(['physical', 'digital', 'service', 'property'])
+  @ApiPropertyOptional({ enum: ['physical', 'digital', 'service', 'property'] })
+  productType?: 'physical' | 'digital' | 'service' | 'property';
+
   // Free-form attributes bag for extensibility (e.g., videoUrl)
   @IsOptional()
   // Note: kept untyped here for flexibility; validate specific keys server-side if needed
-  attributes?: Record<string, any>;
+  @ApiPropertyOptional({ description: 'Arbitrary attributes bag; may contain canonical digital structure under digital', example: { digital: { type: 'digital', isFree: true, download: { key: 'files/book.pdf' } } } })
+  attributes?: Record<string, any> & { digital?: DigitalAttributesDto };
 }

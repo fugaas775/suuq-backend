@@ -30,7 +30,10 @@ export class VendorController {
   @Get('vendor/sales-graph')
   async getSalesGraph(@Query('range') range: string, @Req() req: any) {
     const userId = req.user.id;
-    const graphData = await this.vendorService.getSalesGraphData(userId, range);
+    const graphData = await this.vendorService.getSalesGraphData(
+      userId,
+      range,
+    );
     return { points: graphData };
   }
   constructor(private readonly vendorService: VendorService) {}
@@ -102,6 +105,24 @@ export class VendorController {
     return this.vendorService.createMyProduct(req.user.id, dto);
   }
 
+  // Fetch a single product owned by the current vendor (for edit prefill)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.VENDOR)
+  @Get('vendor/products/:productId')
+  async getMyProduct(
+    @Req() req: any,
+    @Param('productId', ParseIntPipe) productId: number,
+    @Query('playable') playable?: string,
+    @Query('ttl') ttl?: string,
+  ) {
+    const wantsPlayable = String(playable || '').trim() === '1' || /^(true|yes)$/i.test(String(playable || ''));
+    const ttlSecs = Math.max(60, Math.min(parseInt(String(ttl || '300'), 10) || 300, 3600));
+    return this.vendorService.getMyProduct(req.user.id, productId, {
+      playable: wantsPlayable,
+      ttlSecs,
+    });
+  }
+
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.VENDOR)
   @Delete('vendor/products/:productId')
@@ -156,17 +177,24 @@ export class VendorController {
     @Query('q') q?: string,
     @Query('page') page: number = 1,
     @Query('limit') limit: number = 20,
+    @Query('lat') lat?: string,
+    @Query('lng') lng?: string,
+    @Query('radiusKm') radiusKm?: string,
   ) {
-    const { items, total } = await this.vendorService.searchDeliverers({
+    const { items, total, hasMore } = await this.vendorService.searchDeliverers({
       q: q || '',
       page: Number(page) || 1,
       limit: Math.min(Number(limit) || 20, 100),
+      lat: lat != null ? Number(lat) : undefined,
+      lng: lng != null ? Number(lng) : undefined,
+      radiusKm: radiusKm != null ? Number(radiusKm) : undefined,
     });
     return {
-      items, // normalized to { id, name, email, phone }
+      items,
       total,
       page: Number(page) || 1,
       limit: Math.min(Number(limit) || 20, 100),
+      hasMore: !!hasMore,
     };
   }
 

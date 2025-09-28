@@ -79,6 +79,15 @@ export class Vendor {
   @Column({ type: 'text', nullable: true })
   about?: string | null;
 
+  @Column({ type: 'text', nullable: true })
+  verificationRejectionReason?: string | null;
+
+  @Column({ type: 'int', nullable: true })
+  verificationReviewedBy?: number | null; // Admin User ID
+
+  @Column({ type: 'timestamp', nullable: true })
+  verificationReviewedAt?: Date | null;
+
   @Column({ type: 'boolean', nullable: true, default: true })
   is_active?: boolean;
 

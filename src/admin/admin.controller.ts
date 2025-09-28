@@ -18,6 +18,7 @@ import {
   Delete,
 } from '@nestjs/common';
 import { UsersService } from '../users/users.service';
+import { SkipThrottle } from '@nestjs/throttler';
 import { OrdersService } from '../orders/orders.service';
 import { RolesGuard } from '../auth/roles.guard';
 import { AuthGuard } from '@nestjs/passport'; // Import the built-in guard
@@ -26,9 +27,11 @@ import { WithdrawalStatus } from '../withdrawals/entities/withdrawal.entity';
 import { Roles } from '../common/decorators/roles.decorator';
 import { UserRole } from '../auth/roles.enum';
 import { CreateAdminDto } from './dto/create-admin.dto';
+import { BulkUserIdsDto } from './dto/bulk-user-ids.dto';
 
 // ✨ FINAL FIX: Use AuthGuard('jwt') to match your other working controllers
 @UseGuards(AuthGuard('jwt'), RolesGuard)
+@SkipThrottle()
 @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
 @Controller('admin')
 export class AdminController {
@@ -88,6 +91,24 @@ export class AdminController {
   @HttpCode(HttpStatus.OK)
   async deactivateUser(@Param('id', ParseIntPipe) id: number) {
     return this.usersService.deactivateUser(id);
+  }
+
+  @Delete('users/:id/hard')
+  @Roles(UserRole.SUPER_ADMIN)
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async hardDeleteUser(@Param('id', ParseIntPipe) id: number) {
+    await this.usersService.remove(id);
+  }
+
+  @Patch('users/bulk/deactivate')
+  async bulkDeactivateUsers(@Body() dto: BulkUserIdsDto) {
+    return this.usersService.deactivateMany(dto.ids);
+  }
+
+  @Delete('users/bulk/hard')
+  @Roles(UserRole.SUPER_ADMIN)
+  async bulkHardDeleteUsers(@Body() dto: BulkUserIdsDto) {
+    return this.usersService.hardDeleteMany(dto.ids);
   }
 
   // ================== ORDER MANAGEMENT ENDPOINTS ==================

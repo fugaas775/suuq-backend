@@ -1,4 +1,4 @@
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Get, Header } from '@nestjs/common';
 import { AppService } from './app.service';
 
 @Controller()
@@ -11,7 +11,8 @@ export class AppController {
   }
 
   @Get('health')
-  getHealth(): object {
+  @Header('Cache-Control', 'public, max-age=10, stale-while-revalidate=30')
+  async getHealth(): Promise<object> {
     return this.appService.getHealth();
   }
 

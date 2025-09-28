@@ -7,6 +7,7 @@ import {
   ManyToMany,
   JoinTable,
   CreateDateColumn,
+  AfterLoad,
 } from 'typeorm';
 import { Expose } from 'class-transformer';
 import { User } from '../../users/entities/user.entity';
@@ -14,6 +15,8 @@ import { Category } from '../../categories/entities/category.entity';
 import { Tag } from '../../tags/tag.entity';
 import { ProductImage } from './product-image.entity';
 import { Review } from '../../reviews/entities/review.entity';
+import { ApiProperty } from '@nestjs/swagger';
+import { normalizeDigitalAttributes } from '../../common/utils/digital.util';
 
 @Entity()
 export class Product {
@@ -116,6 +119,12 @@ export class Product {
   // Viewers counter for vendor analytics (DB column: view_count)
   @Column('int', { default: 0, name: 'view_count' })
   viewCount!: number;
+
+  // Product type classification (physical, digital, service, property)
+  @ApiProperty({ enum: ['physical', 'digital', 'service', 'property'], required: false })
+  @Expose()
+  @Column({ type: 'varchar', length: 16, name: 'product_type', nullable: true, default: 'physical' })
+  productType?: 'physical' | 'digital' | 'service' | 'property' | null;
 
   // Listing type for property verticals: 'sale' | 'rent'
   @Expose()
@@ -234,6 +243,39 @@ export class Product {
     return typeof v === 'string' ? v : undefined;
   }
 
+  // Expose poster thumbnail URL for video if present in attributes
+  @Expose()
+  get posterUrl(): string | undefined {
+    const attrs = this.attributes;
+    if (!attrs || typeof attrs !== 'object') return undefined;
+    const v = (attrs as Record<string, unknown>).posterUrl ?? (attrs as any).posterSrc;
+    return typeof v === 'string' ? v : undefined;
+  }
+
+  // Alias for some clients
+  @Expose()
+  get videoPosterUrl(): string | undefined {
+    return this.posterUrl;
+  }
+
+  // Convenience: expose digital download key (object key), if present. Not intended for public clients.
+  @Expose()
+  get downloadKey(): string | undefined {
+    const attrs = this.attributes;
+    if (!attrs || typeof attrs !== 'object') return undefined;
+    const v = (attrs as Record<string, unknown>).downloadKey;
+    return typeof v === 'string' ? v : undefined;
+  }
+
+  // Convenience: expose free flag for digital items
+  @Expose()
+  get isFree(): boolean | undefined {
+    const attrs = this.attributes;
+    if (!attrs || typeof attrs !== 'object') return undefined;
+    const v = (attrs as Record<string, unknown>).isFree as any;
+    return typeof v === 'boolean' ? v : undefined;
+  }
+
   // Convenience for edit forms: list of tag names
   @Expose({ name: 'tag_names' })
   get tag_names(): string[] {
@@ -248,4 +290,105 @@ export class Product {
 
   // These getters are now removed as they are not needed.
   // The full, correct URL is now stored directly in `imageUrl` and in the `src` of the ProductImage entities.
+
+  // Hydrate legacy Property & Real Estate fields from attributes on entity load for better prefill
+  @AfterLoad()
+  hydratePropertyFieldsFromAttributes() {
+    const attrs = (this.attributes && typeof this.attributes === 'object') ? (this.attributes as Record<string, any>) : undefined;
+    if (!attrs) return;
+
+    const pickString = (...keys: string[]): string | undefined => {
+      for (const k of keys) {
+        const v = attrs[k];
+        if (typeof v === 'string' && v.trim()) return v.trim();
+      }
+      return undefined;
+    };
+    const pickNumber = (...keys: string[]): number | undefined => {
+      for (const k of keys) {
+        const v = attrs[k];
+        if (typeof v === 'number' && Number.isFinite(v)) return v;
+        if (typeof v === 'string') {
+          const n = Number(v);
+          if (Number.isFinite(n)) return n;
+        }
+      }
+      return undefined;
+    };
+    const pickBoolean = (...keys: string[]): boolean | undefined => {
+      for (const k of keys) {
+        const v = attrs[k];
+        if (typeof v === 'boolean') return v;
+        if (typeof v === 'string') {
+          const s = v.trim().toLowerCase();
+          if (['true', 'yes', '1'].includes(s)) return true;
+          if (['false', 'no', '0'].includes(s)) return false;
+        }
+        if (typeof v === 'number') return v !== 0;
+      }
+      return undefined;
+    };
+
+    // listingType: 'sale' | 'rent'
+    if (this.listingType == null) {
+      const ltRaw = pickString('listingType', 'listing_type', 'type', 'sale_or_rent');
+      const lt = ltRaw ? ltRaw.toLowerCase() : undefined;
+      if (lt === 'sale' || lt === 'sell') this.listingType = 'sale' as any;
+      else if (lt === 'rent' || lt === 'rental') this.listingType = 'rent' as any;
+    }
+    // listingCity
+    if (this.listingCity == null) {
+      const city = pickString('listingCity', 'listing_city', 'city', 'location', 'area');
+      if (city) this.listingCity = city;
+    }
+    // bedrooms
+    if (this.bedrooms == null) {
+      const n = pickNumber('bedrooms', 'beds');
+      if (typeof n === 'number') this.bedrooms = n;
+    }
+    // bathrooms
+    if (this.bathrooms == null) {
+      const n = pickNumber('bathrooms', 'baths', 'washrooms');
+      if (typeof n === 'number') this.bathrooms = n;
+    }
+    // sizeSqm
+    if (this.sizeSqm == null) {
+      const n = pickNumber('sizeSqm', 'size_sqm', 'sqm', 'area', 'size', 'plot_area');
+      if (typeof n === 'number') this.sizeSqm = n;
+    }
+    // furnished
+    if (this.furnished == null) {
+      const b = pickBoolean('furnished', 'is_furnished');
+      if (typeof b === 'boolean') this.furnished = b;
+    }
+    // rentPeriod: 'day' | 'week' | 'month' | 'year'
+    if (this.rentPeriod == null) {
+      const raw = pickString('rentPeriod', 'rent_period', 'period', 'rent_frequency');
+      if (raw) {
+        const s = raw.toLowerCase();
+        if (['day', 'daily'].includes(s)) this.rentPeriod = 'day' as any;
+        else if (['week', 'weekly'].includes(s)) this.rentPeriod = 'week' as any;
+        else if (['month', 'monthly'].includes(s)) this.rentPeriod = 'month' as any;
+        else if (['year', 'yearly', 'annually', 'annual'].includes(s)) this.rentPeriod = 'year' as any;
+      }
+    }
+  }
+
+  // Second AfterLoad hook to normalize digital schema & derive productType
+  @AfterLoad()
+  private hydrateDigitalSchema() {
+    try {
+      const attrs = (this.attributes && typeof this.attributes === 'object') ? { ...(this.attributes as any) } : {};
+      const { updated, changed, inferredType } = normalizeDigitalAttributes(attrs);
+      if (changed) this.attributes = updated;
+      // Derive productType if not explicitly set
+      if (!this.productType) {
+        if (inferredType === 'digital') this.productType = 'digital';
+        else if (this.listingType || this.listingCity || this.bedrooms != null) this.productType = 'property';
+        else this.productType = 'physical';
+      }
+    } catch {
+      // ignore normalization errors; leave attributes untouched
+    }
+  }
 }

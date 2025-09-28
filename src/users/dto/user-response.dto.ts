@@ -6,8 +6,26 @@ export class UserResponseDto {
   @Expose()
   verificationStatus?: string;
 
+  // Helpful alias for UI chips: APPROVED => VERIFIED
+  @Expose()
+  get verificationStatusDisplay(): string | undefined {
+    if (!this.verificationStatus) return undefined;
+    return this.verificationStatus === 'APPROVED'
+      ? 'VERIFIED'
+      : this.verificationStatus;
+  }
+
   @Expose()
   verified?: boolean;
+
+  @Expose()
+  verificationRejectionReason?: string | null;
+
+  @Expose()
+  verificationReviewedBy?: string | null;
+
+  @Expose()
+  verificationReviewedAt?: Date | null;
   @Expose()
   id!: number;
 
@@ -31,6 +49,12 @@ export class UserResponseDto {
 
   @Expose()
   phoneNumber?: string;
+
+  @Expose()
+  isPhoneVerified?: boolean;
+
+  @Expose()
+  createdAt?: Date; // helpful for sorting / UI display
 
   // Explicitly exclude sensitive/internal fields:
   // @Exclude() password!: string;

@@ -16,6 +16,8 @@ import { AdminVendorsController } from './vendors.admin.controller';
 import { AuditModule } from '../audit/audit.module';
 import { SearchKeyword } from '../products/entities/search-keyword.entity';
 import { AdminAnalyticsController } from './analytics.controller';
+import { RolesModule } from '../roles/roles.module';
+import { AdminRolesController } from './roles.admin.controller';
 import { GeoResolverService } from '../common/services/geo-resolver.service';
 
 @Module({
@@ -25,8 +27,9 @@ import { GeoResolverService } from '../common/services/geo-resolver.service';
     OrdersModule,
     WithdrawalsModule,
     ProductsModule,
-    VendorModule,
+  VendorModule,
     AuditModule,
+  RolesModule,
     TypeOrmModule.forFeature([Product, Tag, SearchKeyword]),
   ],
   controllers: [
@@ -34,6 +37,7 @@ import { GeoResolverService } from '../common/services/geo-resolver.service';
     AdminCurationController,
     AdminVendorsController,
     AdminAnalyticsController,
+  AdminRolesController,
   ],
   // 3. Remove the services from providers. They are now correctly provided by the imported modules.
   providers: [RolesGuard, GeoResolverService],

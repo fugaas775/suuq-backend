@@ -22,6 +22,8 @@ import { User } from '../users/entities/user.entity';
 import { NotificationsService } from '../notifications/notifications.service';
 import { plainToInstance } from 'class-transformer';
 import { OrderResponseDto } from './dto/order-response.dto';
+import { DoSpacesService } from '../media/do-spaces.service';
+import { AuditService } from '../audit/audit.service';
 
 @Injectable()
 export class OrdersService {
@@ -132,6 +134,8 @@ export class OrdersService {
     private readonly mpesaService: MpesaService,
     private readonly telebirrService: TelebirrService,
     private readonly notificationsService: NotificationsService,
+  private readonly doSpaces: DoSpacesService,
+  private readonly audit: AuditService,
   ) {}
 
   /**
@@ -187,6 +191,27 @@ export class OrdersService {
     if (cart.items.length === 0) {
       throw new BadRequestException(
         'Cannot create an order from an empty cart.',
+      );
+    }
+
+    // Prevent self-purchase: if any cart item belongs to the same user (vendor), block order creation
+    const selfOwned = cart.items.filter(
+      (ci) => ci.product?.vendor && ci.product.vendor.id === userId,
+    );
+    if (selfOwned.length) {
+      const ids = selfOwned.map((i) => i.product?.id).filter(Boolean);
+      // Audit the blocked self-purchase attempt (pick first product id as targetId fallback)
+      try {
+        await this.audit.log({
+          actorId: userId,
+          action: 'SELF_PURCHASE_BLOCKED',
+          targetType: 'ORDER_SELF_PURCHASE',
+          targetId: (ids[0] as number) || 0,
+          meta: { productIds: ids },
+        });
+      } catch {}
+      throw new BadRequestException(
+        `You cannot purchase your own products (product ids: ${ids.join(', ')}). Remove them to continue.`,
       );
     }
 
@@ -316,6 +341,60 @@ export class OrdersService {
       );
     }
     return order;
+  }
+
+  /**
+   * Buyer-gated: returns a short-lived signed download URL for a purchased digital item.
+   * Validates ownership and payment status, checks product.attributes.downloadKey, enforces a per-user/day limit, and logs via AuditService.
+   */
+  async getSignedDownloadForBuyer(
+    userId: number,
+    orderId: number,
+    itemId: number,
+    ttl?: string,
+  ): Promise<{ url: string; expiresIn: number; filename?: string; contentType?: string }>{
+    const order = await this.orderRepository.findOne({
+      where: { id: orderId, user: { id: userId } },
+      relations: ['items', 'items.product'],
+    });
+    if (!order) throw new NotFoundException('Order not found');
+    if (order.paymentStatus !== PaymentStatus.PAID) {
+      throw new BadRequestException('Order not paid');
+    }
+    const item = (order.items || []).find((it) => it.id === itemId);
+    if (!item) throw new NotFoundException('Order item not found');
+    const product = item.product as any;
+    const attrs: Record<string, any> | undefined = product?.attributes && typeof product.attributes === 'object' ? product.attributes : undefined;
+    const downloadKey: string | undefined = attrs?.downloadKey || undefined;
+    if (!downloadKey || typeof downloadKey !== 'string') {
+      throw new BadRequestException('No digital download available for this item');
+    }
+
+    // Optional: basic rate-limit using audit logs (max 10 per day per orderItem)
+    const now = new Date();
+    const from = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    const count = await this.audit.countForTargetSince('ORDER_ITEM_DOWNLOAD', itemId, from);
+    if (count >= 10) {
+      throw new BadRequestException('Daily download limit reached. Try again later.');
+    }
+
+    // Try to infer content type and filename from key
+    const fileName = downloadKey.split('/').pop();
+    const ext = (fileName?.split('.').pop() || '').toLowerCase();
+    const contentType = ext === 'pdf' ? 'application/pdf' : ext === 'epub' ? 'application/epub+zip' : ext === 'zip' ? 'application/zip' : undefined;
+    const ttlSecs = Math.max(60, Math.min(parseInt(String(ttl || '600'), 10) || 600, 3600));
+    const url = await this.doSpaces.getDownloadSignedUrl(downloadKey, ttlSecs, { contentType, filename: fileName });
+
+    // Log issuance
+    await this.audit.log({
+      actorId: userId,
+      action: 'SIGNED_DOWNLOAD_ISSUED',
+      targetType: 'ORDER_ITEM_DOWNLOAD',
+      targetId: itemId,
+      meta: { orderId, productId: product?.id, downloadKey, ttlSecs },
+    });
+
+    return { url, expiresIn: ttlSecs, filename: fileName, contentType };
   }
 
   /**

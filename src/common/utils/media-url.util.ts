@@ -53,5 +53,29 @@ export function normalizeProductMedia<T extends Record<string, any>>(p: T): T {
   if (candidate) out.imageUrl = absolutize(candidate);
   else if (typeof out.imageUrl === 'string')
     out.imageUrl = absolutize(out.imageUrl);
+
+  // Ensure videoUrl is available at top-level for edit prefills
+  if (out.videoUrl == null && out.attributes && typeof out.attributes === 'object') {
+    const v = out.attributes.videoUrl;
+    if (typeof v === 'string' && v) {
+      out.videoUrl = v; // typically already absolute from Spaces
+    }
+  }
+  // Ensure posterUrl is available at top-level too (if generated)
+  if (out.posterUrl == null && out.attributes && typeof out.attributes === 'object') {
+    const v = (out.attributes.posterUrl ?? out.attributes.posterSrc) as unknown;
+    if (typeof v === 'string' && v) out.posterUrl = v;
+  }
+
+  // Ensure downloadKey (for digital products) is available at top-level for edit prefills
+  if (out.downloadKey == null && out.attributes && typeof out.attributes === 'object') {
+    const k = (out.attributes as Record<string, unknown>).downloadKey;
+    if (typeof k === 'string' && k) out.downloadKey = k;
+  }
+  // Ensure isFree is bubbled up
+  if (out.isFree == null && out.attributes && typeof out.attributes === 'object') {
+    const f = (out.attributes as Record<string, unknown>).isFree as any;
+    if (typeof f === 'boolean') out.isFree = f;
+  }
   return out as T;
 }

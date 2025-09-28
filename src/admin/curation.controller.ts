@@ -22,8 +22,10 @@ import { Repository, In } from 'typeorm';
 import { Product } from '../products/entities/product.entity';
 import { Tag } from '../tags/tag.entity';
 import { ProductsService } from '../products/products.service';
+import { SkipThrottle } from '@nestjs/throttler';
 
 @UseGuards(AuthGuard('jwt'), RolesGuard)
+@SkipThrottle()
 @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
 @Controller('admin/curation')
 export class AdminCurationController {

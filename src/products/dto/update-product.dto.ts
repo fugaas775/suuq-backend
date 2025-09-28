@@ -9,6 +9,28 @@ import {
   IsInt,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import { ApiPropertyOptional } from '@nestjs/swagger';
+
+class DigitalLicenseDtoU {
+  @IsOptional() @IsString() id?: string;
+  @IsOptional() @IsString() name?: string;
+  @IsOptional() @IsString() url?: string;
+}
+class DigitalDownloadDtoU {
+  @IsOptional() @IsString() @ApiPropertyOptional({ description: 'Object storage key (no host)', example: 'uploads/12345_file.pdf' }) key?: string;
+  @IsOptional() @IsString() publicUrl?: string;
+  @IsOptional() @Type(() => Number) @IsNumber() size?: number;
+  @IsOptional() @IsString() contentType?: string;
+  @IsOptional() @IsString() filename?: string;
+  @IsOptional() @IsString() checksum?: string;
+  @IsOptional() @Type(() => Boolean) @IsBoolean() licenseRequired?: boolean;
+  @IsOptional() @ValidateNested() @Type(() => DigitalLicenseDtoU) license?: DigitalLicenseDtoU;
+}
+class DigitalAttributesDtoU {
+  @IsOptional() @IsIn(['digital']) @ApiPropertyOptional({ enum: ['digital'] }) type?: 'digital';
+  @IsOptional() @Type(() => Boolean) @IsBoolean() @ApiPropertyOptional({ description: 'Flag for free download eligibility' }) isFree?: boolean;
+  @IsOptional() @ValidateNested() @Type(() => DigitalDownloadDtoU) @ApiPropertyOptional({ description: 'Download metadata object' }) download?: DigitalDownloadDtoU;
+}
 
 class ImageDto {
   @IsString()
@@ -97,5 +119,11 @@ export class UpdateProductDto {
   rentPeriod?: 'day' | 'week' | 'month' | 'year';
 
   @IsOptional()
-  attributes?: Record<string, any>;
+  @IsIn(['physical', 'digital', 'service', 'property'])
+  @ApiPropertyOptional({ enum: ['physical', 'digital', 'service', 'property'] })
+  productType?: 'physical' | 'digital' | 'service' | 'property';
+
+  @IsOptional()
+  @ApiPropertyOptional({ description: 'Arbitrary attributes bag; may include canonical digital structure under digital' })
+  attributes?: Record<string, any> & { digital?: DigitalAttributesDtoU };
 }

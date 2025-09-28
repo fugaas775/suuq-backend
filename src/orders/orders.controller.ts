@@ -64,4 +64,19 @@ export class OrdersController {
   ) {
     return this.ordersService.findOneForUser(req.user.id, id);
   }
+
+  // Buyer-gated: return a short-lived attachment URL for a purchased digital product.
+  @Get(':orderId/items/:itemId/signed-download')
+  @ApiParam({ name: 'orderId', type: Number })
+  @ApiParam({ name: 'itemId', type: Number })
+  @ApiQuery({ name: 'ttl', required: false, type: Number })
+  @ApiOkResponse({ description: 'Get a signed download URL for a purchased item' })
+  async signedDownload(
+    @Req() req: AuthenticatedRequest,
+    @Param('orderId', ParseIntPipe) orderId: number,
+    @Param('itemId', ParseIntPipe) itemId: number,
+    @Query('ttl') ttl?: string,
+  ) {
+    return this.ordersService.getSignedDownloadForBuyer(req.user.id, orderId, itemId, ttl);
+  }
 }

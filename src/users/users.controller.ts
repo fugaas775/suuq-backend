@@ -11,6 +11,8 @@ import {
   Body,
   Query,
   Patch,
+  Res,
+  Header,
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { UsersService } from './users.service';
@@ -22,6 +24,7 @@ import { AuthenticatedRequest } from '../auth/auth.types';
 import { UserRole } from '../auth/roles.enum';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { FindUsersQueryDto } from './dto/find-users-query.dto';
+import { Response } from 'express';
 
 @Controller('users')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -36,13 +39,18 @@ export class UsersController {
   @Roles(UserRole.ADMIN)
   async getAllUsers(
     @Query() filters: FindUsersQueryDto,
-  ): Promise<UserResponseDto[]> {
-    const result = await this.usersService.findAll(filters);
-    // If paginated result, return mapped users array
-    const users = Array.isArray(result) ? result : result.users;
-    return users.map((user: any) =>
+    @Query('meta') metaFlag?: string,
+  ): Promise<any> {
+    const { users, total, page, pageSize } = await this.usersService.findAll(
+      filters,
+    );
+    const data = users.map((user: any) =>
       plainToInstance(UserResponseDto, user, { excludeExtraneousValues: true }),
     );
+    if (metaFlag === '1') {
+      return { data, meta: { total, page, pageSize } };
+    }
+    return data;
   }
 
   @Patch('me')
@@ -170,16 +178,63 @@ export class UsersController {
   ): Promise<UserResponseDto> {
     const status = body?.status;
     if (status !== 'APPROVED' && status !== 'REJECTED') {
-      // Consistent error envelope handled by GlobalExceptionFilter
       throw new Error("Invalid status. Use 'APPROVED' or 'REJECTED'.");
     }
     const user = await this.usersService.setVerificationStatus(
       id,
       status as any,
       req.user?.email,
+      body.reason,
     );
     return plainToInstance(UserResponseDto, user, {
       excludeExtraneousValues: true,
     });
+  }
+
+  /**
+   * Export users (current filters & sorting). If all=1 provided, export all rows (capped by safety limit).
+   */
+  @Get('export/csv')
+  @Roles(UserRole.ADMIN)
+  @Header('Content-Type', 'text/csv')
+  async exportCsv(
+    @Res() res: Response,
+    @Query() filters: FindUsersQueryDto,
+    @Query('all') all?: string,
+  ) {
+    // Force meta for pagination if not exporting all
+    if (all === '1') {
+      filters.page = 1;
+      filters.pageSize = 10000; // upper bound for single export
+    }
+    const { users } = await this.usersService.findAll(filters);
+    const header = [
+      'id',
+      'email',
+      'displayName',
+      'verificationStatus',
+      'verified',
+      'verificationRejectionReason',
+      'createdAt',
+    ];
+    const lines = [header.join(',')];
+    for (const u of users) {
+      lines.push(
+        [
+          u.id,
+          JSON.stringify(u.email || ''),
+          JSON.stringify(u.displayName || ''),
+          u.verificationStatus,
+            u.verified ? 'true' : 'false',
+          JSON.stringify(u.verificationRejectionReason || ''),
+          u.createdAt?.toISOString?.() || '',
+        ].join(','),
+      );
+    }
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="users-${Date.now()}.csv"`,
+    );
+    res.send(lines.join('\n'));
   }
 }

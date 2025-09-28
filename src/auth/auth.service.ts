@@ -101,20 +101,54 @@ export class AuthService {
     }
     const firebaseUid = dto.firebaseUid || `local_${crypto.randomUUID()}`;
 
+    const registrationCountryIso2 = this.normalizeCountryIso2(dto.country);
+
     const userToCreateData: Partial<User> = {
       firebaseUid,
       email: dto.email,
       password: dto.password,
       displayName: dto.displayName,
-      phoneCountryCode: dto.phoneCountryCode,
-      phoneNumber: dto.phoneNumber,
       avatarUrl: dto.avatarUrl,
       storeName: dto.storeName,
       roles: userRoles,
       isActive: true,
+      registrationCountry: registrationCountryIso2,
+      businessLicenseNumber: dto.businessLicenseNumber,
     };
 
     return this.usersService.create(userToCreateData);
+  }
+
+  /**
+   * Normalize a country value to ISO-3166-1 alpha-2. Accepts:
+   * - Already ISO-2 (e.g., "ET", case-insensitive)
+   * - Common country names (e.g., "Ethiopia", "Kenya", "Somalia", "Djibouti")
+   * Returns undefined if input is falsy.
+   */
+  private normalizeCountryIso2(country?: string): string | undefined {
+    if (!country) return undefined;
+    const c = country.trim();
+    if (!c) return undefined;
+    if (c.length === 2) return c.toUpperCase();
+    const map: Record<string, string> = {
+      ethiopia: 'ET',
+      et: 'ET',
+      kenya: 'KE',
+      ke: 'KE',
+      somalia: 'SO',
+      so: 'SO',
+      djibouti: 'DJ',
+      dj: 'DJ',
+      'united states': 'US',
+      usa: 'US',
+      us: 'US',
+    };
+    const key = c.toLowerCase();
+    if (map[key]) return map[key];
+    // Fallback: take first 2 letters uppercased, but warn in logs
+    const iso2 = c.slice(0, 2).toUpperCase();
+    this.logger.warn(`normalizeCountryIso2: Unknown country "${country}". Falling back to "${iso2}".`);
+    return iso2;
   }
 
   async login(

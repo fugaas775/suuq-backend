@@ -8,6 +8,7 @@ import { CartService } from '../cart/cart.service';
 import { TelebirrModule } from '../telebirr/telebirr.module';
 import { CartModule } from '../cart/cart.module';
 import { NotificationsModule } from '../notifications/notifications.module'; // <-- IMPORT THIS
+import { OrdersModule } from '../orders/orders.module';
 
 @Module({
   imports: [
@@ -16,8 +17,9 @@ import { NotificationsModule } from '../notifications/notifications.module'; // 
     TelebirrModule,
     CartModule,
     NotificationsModule, // <-- ADD THIS LINE
+    OrdersModule,
   ],
   controllers: [PaymentsController],
-  providers: [OrdersService, CartService],
+  providers: [],
 })
 export class PaymentsModule {}

@@ -34,18 +34,77 @@ export class ProductFilterDto {
   search?: string;
 
   @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  categoryId?: number;
+  @Transform(({ value }) => {
+    const toPosInts = (arr: unknown[]): number[] =>
+      arr
+        .map((v) => Number(v))
+        .filter((n) => Number.isFinite(n) && n >= 1 && Number.isInteger(n));
+    if (typeof value === 'string') {
+      const parts = value.split(',').map((s) => s.trim()).filter(Boolean);
+      const nums = toPosInts(parts);
+      return nums.length ? nums : undefined;
+    }
+    if (Array.isArray(value)) {
+      const nums = toPosInts(value);
+      return nums.length ? nums : undefined;
+    }
+    if (typeof value === 'number') {
+      const n = Number(value);
+      return Number.isInteger(n) && n >= 1 ? [n] : undefined;
+    }
+    return undefined;
+  })
+  categoryId?: number[];
 
   // Accept frontend alias ?category= as categoryId
   @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
+  @Transform(({ value }) => {
+    const toPosInts = (arr: unknown[]): number[] =>
+      arr
+        .map((v) => Number(v))
+        .filter((n) => Number.isFinite(n) && n >= 1 && Number.isInteger(n));
+    if (typeof value === 'string') {
+      const parts = value.split(',').map((s) => s.trim()).filter(Boolean);
+      const nums = toPosInts(parts);
+      return nums.length ? nums : undefined;
+    }
+    if (Array.isArray(value)) {
+      const nums = toPosInts(value);
+      return nums.length ? nums : undefined;
+    }
+    if (typeof value === 'number') {
+      const n = Number(value);
+      return Number.isInteger(n) && n >= 1 ? [n] : undefined;
+    }
+    return undefined;
+  })
   @Expose({ name: 'category' })
-  categoryAlias?: number;
+  categoryAlias?: number[];
+
+  // Accept frontend alias ?categories= as categoryId list (CSV)
+  @IsOptional()
+  @Transform(({ value }) => {
+    const toPosInts = (arr: unknown[]): number[] =>
+      arr
+        .map((v) => Number(v))
+        .filter((n) => Number.isFinite(n) && n >= 1 && Number.isInteger(n));
+    if (typeof value === 'string') {
+      const parts = value.split(',').map((s) => s.trim()).filter(Boolean);
+      const nums = toPosInts(parts);
+      return nums.length ? nums : undefined;
+    }
+    if (Array.isArray(value)) {
+      const nums = toPosInts(value);
+      return nums.length ? nums : undefined;
+    }
+    if (typeof value === 'number') {
+      const n = Number(value);
+      return Number.isInteger(n) && n >= 1 ? [n] : undefined;
+    }
+    return undefined;
+  })
+  @Expose({ name: 'categories' })
+  categoriesCsv?: number[];
 
   @IsOptional()
   @IsString()
@@ -150,6 +209,22 @@ export class ProductFilterDto {
   @IsBoolean()
   @Expose({ name: 'geo_append' })
   geoAppend?: boolean;
+
+  // Property: bedrooms exact or ranges
+  // Property listing type filter (?listingType=sale or ?listing_type=rent)
+  @IsOptional()
+  @IsString()
+  listingType?: string;
+
+  // listingTypeMode: 'filter' (default) => restrict to that listingType; 'priority' => bring that listingType first but include others
+  @IsOptional()
+  @IsString()
+  listingTypeMode?: string;
+
+  @IsOptional()
+  @IsString()
+  @Expose({ name: 'listing_type' })
+  listing_type?: string;
 
   // Property: bedrooms exact or ranges
   @IsOptional()

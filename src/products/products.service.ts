@@ -15,11 +15,16 @@ import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { ProductImage } from './entities/product-image.entity';
 import { ProductFilterDto } from './dto/ProductFilterDto';
+import { TieredProductsDto } from './dto/tiered-products.dto';
 import { Tag } from '../tags/tag.entity';
 import { ProductImpression } from './entities/product-impression.entity';
 import { SearchKeyword } from './entities/search-keyword.entity';
 import { createHash } from 'crypto';
 import { normalizeProductMedia } from '../common/utils/media-url.util';
+import { normalizeDigitalAttributes } from '../common/utils/digital.util';
+// import { assertAllowedMediaUrl } from '../common/utils/media-policy.util';
+import { DoSpacesService } from '../media/do-spaces.service';
+import { AuditService } from '../audit/audit.service';
 
 @Injectable()
 export class ProductsService {
@@ -38,6 +43,8 @@ export class ProductsService {
     private impressionRepo: Repository<ProductImpression>,
     @InjectRepository(SearchKeyword)
     private searchKeywordRepo: Repository<SearchKeyword>,
+  private readonly doSpaces: DoSpacesService,
+  private readonly audit: AuditService,
   ) {}
 
   // Simple in-memory cache for Property & Real Estate subtree ids
@@ -155,6 +162,8 @@ export class ProductsService {
       }
     }
 
+  // Image URL host policy check removed in rollback
+
     const product = this.productRepo.create({
       ...rest,
       vendor,
@@ -168,7 +177,7 @@ export class ProductsService {
       furnished: furnished ?? null,
       rentPeriod: rentPeriod ?? null,
       attributes: this.sanitizeAttributes(attributes) ?? {},
-      imageUrl: images.length > 0 ? images[0].src : null,
+  imageUrl: images.length > 0 ? images[0].src : null,
     });
 
     if (tags.length) {
@@ -179,7 +188,7 @@ export class ProductsService {
 
     // 2. Create and save the associated ProductImage entities
     if (images.length > 0) {
-      const imageEntities = images.map((imageObj, index) =>
+  const imageEntities = images.map((imageObj, index) =>
         this.productImageRepo.create({
           src: imageObj.src,
           thumbnailSrc: imageObj.thumbnailSrc,
@@ -207,10 +216,174 @@ export class ProductsService {
     // Increment view counter in the background; ignore failures
     this.incrementViewCount(id).catch(() => {});
     try {
-      return normalizeProductMedia(product);
+      const out: any = normalizeProductMedia(product);
+      // Ensure digital alias fields are present for clients
+      try {
+        let attrs = out.attributes && typeof out.attributes === 'object' ? (out.attributes as Record<string, any>) : undefined;
+        if (attrs) {
+          // Normalize into canonical digital structure if applicable
+          try {
+            const { updated } = normalizeDigitalAttributes(attrs);
+            if (updated && typeof updated === 'object') attrs = updated as Record<string, any>;
+          } catch {}
+          const dig = attrs.digital && typeof attrs.digital === 'object' ? (attrs.digital as any) : undefined;
+          const dl = dig && typeof dig.download === 'object' ? (dig.download as Record<string, any>) : undefined;
+          // Key resolution: prefer canonical key, else legacy, else derive from downloadUrl
+          let key: string | undefined = (dl?.key as string) || (attrs.downloadKey as string) || out.downloadKey;
+          const urlCandidate: string | undefined =
+            (typeof attrs.downloadUrl === 'string' && attrs.downloadUrl)
+              ? attrs.downloadUrl
+              : (typeof (attrs as any).url === 'string' && (attrs as any).url)
+                ? (attrs as any).url
+                : (typeof (attrs as any).src === 'string' && (attrs as any).src)
+                  ? (attrs as any).src
+                  : undefined;
+          if (!key && urlCandidate) {
+            try {
+              key = this.doSpaces.urlToKeyIfInBucket(urlCandidate) || key;
+            } catch {}
+          }
+          // downloadUrl
+          let publicUrl: string | undefined = (dl?.publicUrl as string) || (attrs.downloadUrl as string) || (attrs as any).url || (attrs as any).src;
+          if (!publicUrl && typeof key === 'string' && key) {
+            try { publicUrl = this.doSpaces.buildPublicUrl(key); } catch {}
+          }
+          if (!attrs.downloadUrl && publicUrl) attrs.downloadUrl = publicUrl;
+          // Ensure root-level downloadKey alias for prefill
+          if (!attrs.downloadKey && typeof ((dl?.key as string) || key) === 'string' && ((dl?.key as string) || key)) {
+            attrs.downloadKey = (dl?.key as string) || (key as string);
+          }
+          // format
+          if (!attrs.format) {
+            const from = (dl?.key as string) || key || (typeof attrs.downloadUrl === 'string' ? attrs.downloadUrl : '');
+            const ext = String((from.split('.').pop() || '')).toLowerCase();
+            if (ext === 'pdf' || ext === 'epub' || ext === 'zip') attrs.format = ext.toUpperCase();
+          }
+          // fileSizeMB
+          if (!attrs.fileSizeMB && typeof dl?.size === 'number' && isFinite(dl.size)) {
+            const mb = dl.size / (1024 * 1024);
+            if (mb > 0) attrs.fileSizeMB = Math.round(mb * 100) / 100;
+          }
+          // licenseRequired
+          if (typeof attrs.licenseRequired === 'undefined' && typeof dl?.licenseRequired === 'boolean') {
+            attrs.licenseRequired = dl.licenseRequired;
+          }
+
+          // Expose a generic `file` alias object for clients that expect file/url shape
+          if (typeof (attrs as any).file === 'undefined' && (publicUrl || key)) {
+            const filename = (dl?.filename as string) || (typeof ((dl?.key as string) || key) === 'string' ? String((dl?.key as string) || key).split('/').pop() : undefined);
+            const sizeMB = (typeof attrs.fileSizeMB === 'number' && isFinite(attrs.fileSizeMB))
+              ? attrs.fileSizeMB
+              : (typeof dl?.size === 'number' && isFinite(dl.size) && dl.size > 0)
+                ? Math.round((dl.size / (1024 * 1024)) * 100) / 100
+                : undefined;
+            (attrs as any).file = {
+              url: publicUrl,
+              src: publicUrl,
+              name: filename,
+              key: (dl?.key as string) || key,
+              size: typeof dl?.size === 'number' ? dl.size : undefined,
+              sizeMB,
+              contentType: dl?.contentType,
+            };
+          }
+          if (typeof (attrs as any).files === 'undefined' && (attrs as any).file) {
+            (attrs as any).files = [(attrs as any).file];
+          }
+          out.attributes = attrs;
+        }
+        // Log attribute keys (visibility in logs) for troubleshooting
+        try {
+          const a = out.attributes && typeof out.attributes === 'object' ? (out.attributes as Record<string, any>) : undefined;
+          const dig = a && typeof a.digital === 'object' ? (a.digital as any) : undefined;
+          const dl = dig && typeof dig.download === 'object' ? (dig.download as any) : undefined;
+          const preview = {
+            keys: a ? Object.keys(a) : [],
+            hasDigital: !!dig,
+            digitalKeys: dig ? Object.keys(dig) : [],
+            hasDownload: !!dl,
+            downloadKeys: dl ? Object.keys(dl) : [],
+            downloadKey: (a as any)?.downloadKey || dl?.key || out.downloadKey || null,
+            downloadUrl: (a as any)?.downloadUrl || dl?.publicUrl || null,
+            format: (a as any)?.format || null,
+            fileSizeMB: (a as any)?.fileSizeMB || null,
+            licenseRequired: (a as any)?.licenseRequired ?? null,
+          } as any;
+          this.logger.log(`ProductsService.findOne prefill id=${id} attrs=${JSON.stringify(preview)}`);
+          // Optional deep attributes dump for specific IDs via env flag (comma-separated or 'all')
+          try {
+            const dbg = (process.env.DEBUG_ATTRS_PRODUCT_IDS || '').trim();
+            if (dbg) {
+              const should = dbg === 'all' || dbg.split(',').map((s) => parseInt(s.trim(), 10)).filter((n) => !isNaN(n)).includes(id);
+              if (should) {
+                const raw = a ? JSON.stringify(a) : 'null';
+                this.logger.warn(`DEBUG rawAttrs id=${id} attrs=${raw}`);
+              }
+            }
+          } catch {}
+        } catch {}
+      } catch {}
+      return out;
     } catch {
       return product;
     }
+  }
+
+  // Free digital download: presign attachment if product is marked free and has a downloadKey
+  async getFreeDownload(
+    productId: number,
+    opts?: { ttl?: number; actorId?: number | null },
+  ): Promise<{ url: string; expiresIn: number; filename?: string; contentType?: string }>{
+    const product = await this.productRepo.findOne({ where: { id: productId } });
+    if (!product) throw new NotFoundException('Product not found');
+    let attrs = (product.attributes && typeof product.attributes === 'object') ? (product.attributes as Record<string, any>) : {};
+    // Normalize to canonical digital structure if applicable
+    try {
+      const { updated } = normalizeDigitalAttributes(attrs);
+      if (updated) attrs = updated as any;
+    } catch {}
+    const dig = attrs && typeof (attrs as any).digital === 'object' ? ((attrs as any).digital as any) : undefined;
+    const dl = dig && typeof dig.download === 'object' ? (dig.download as any) : undefined;
+    const isFree = (dig?.isFree === true) || (attrs.isFree === true) || (attrs.is_free === true);
+    // Resolve key: prefer canonical, else legacy, else derive from URL
+    let downloadKey: string | undefined = (dl?.key as string) || (attrs.downloadKey as string) || undefined;
+    if (!downloadKey) {
+      const urlCandidate: string | undefined =
+        (typeof dl?.publicUrl === 'string' && dl.publicUrl)
+          ? dl.publicUrl
+          : (typeof attrs.downloadUrl === 'string' && attrs.downloadUrl)
+            ? attrs.downloadUrl
+            : undefined;
+      if (urlCandidate) {
+        try { downloadKey = this.doSpaces.urlToKeyIfInBucket(urlCandidate) || undefined; } catch {}
+      }
+    }
+    if (!isFree) throw new BadRequestException('This item is not marked as free');
+    if (!downloadKey) throw new BadRequestException('No digital download available');
+
+    // Basic rate-limit: 20 per day per product (unauth users will have null actorId)
+    const now = new Date();
+    const from = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    const count = await this.audit.countForTargetSince('FREE_PRODUCT_DOWNLOAD', productId, from);
+    if (count >= 500) {
+      // broader cap to protect origin for viral freebies
+      throw new BadRequestException('Download limit reached. Please try later.');
+    }
+
+    const fileName = downloadKey.split('/').pop();
+    const ext = (fileName?.split('.').pop() || '').toLowerCase();
+    const contentType = ext === 'pdf' ? 'application/pdf' : ext === 'epub' ? 'application/epub+zip' : ext === 'zip' ? 'application/zip' : undefined;
+    const ttlSecs = Math.max(60, Math.min(Number(opts?.ttl || 600), 3600));
+  const url = await this.doSpaces.getDownloadSignedUrl(downloadKey, ttlSecs, { contentType, filename: fileName });
+
+    await this.audit.log({
+      actorId: opts?.actorId ?? null,
+      action: 'SIGNED_DOWNLOAD_FREE',
+      targetType: 'FREE_PRODUCT_DOWNLOAD',
+      targetId: productId,
+      meta: { productId, downloadKey, ttlSecs },
+    });
+    return { url, expiresIn: ttlSecs, filename: fileName, contentType };
   }
 
   // Helper: get a presentable vendor name by id
@@ -372,8 +545,9 @@ export class ProductsService {
       page = 1,
       perPage: rawPerPage = 20,
       search,
-      categoryId: rawCategoryId,
-      categoryAlias,
+  categoryId: rawCategoryId,
+  categoryAlias,
+      categoriesCsv,
       categorySlug,
       featured,
       tags,
@@ -400,7 +574,20 @@ export class ProductsService {
       bedroomsMin,
       bedroomsMax,
     } = filters as any;
-    const categoryId = rawCategoryId || categoryAlias;
+    // categoryId can be an array (DTO transforms comma-separated query into number[])
+    const categoryIds: number[] = Array.isArray(rawCategoryId)
+      ? (rawCategoryId as unknown as number[])
+      : Array.isArray(categoryAlias)
+      ? (categoryAlias as unknown as number[])
+      : Array.isArray(categoriesCsv)
+      ? (categoriesCsv as unknown as number[])
+      : typeof rawCategoryId === 'number'
+      ? [rawCategoryId]
+      : typeof categoryAlias === 'number'
+      ? [categoryAlias]
+      : typeof categoriesCsv === 'number'
+      ? [categoriesCsv]
+      : [];
 
     // Clamp perPage to protect backend
     const perPage = Math.min(Math.max(Number(rawPerPage) || 20, 1), 50);
@@ -409,6 +596,9 @@ export class ProductsService {
       .createQueryBuilder('product')
       .leftJoinAndSelect('product.vendor', 'vendor')
       .leftJoinAndSelect('product.category', 'category');
+
+    // Select all columns from vendor to ensure verification status is available
+    qb.addSelect('vendor.*');
 
     // Lean projection for grid views: limit selected columns
     if (view === 'grid') {
@@ -451,8 +641,8 @@ export class ProductsService {
       qb.andWhere('product.name ILIKE :search', { search: `%${search}%` });
     if (categorySlug)
       qb.andWhere('category.slug = :categorySlug', { categorySlug });
-    else if (categoryId && !includeDescendants && !categoryFirst)
-      qb.andWhere('category.id = :categoryId', { categoryId });
+    else if (categoryIds.length && !includeDescendants && !categoryFirst)
+      qb.andWhere('category.id IN (:...categoryIds)', { categoryIds });
     if (vendorId) qb.andWhere('vendor.id = :vendorId', { vendorId });
     if (typeof featured === 'boolean')
       qb.andWhere('product.featured = :featured', { featured });
@@ -474,9 +664,21 @@ export class ProductsService {
       qb.andWhere('product.price >= :priceMin', { priceMin });
     if (priceMax !== undefined)
       qb.andWhere('product.price <= :priceMax', { priceMax });
-    const listingTypeFilter = listing_type || listingType;
-    if (listingTypeFilter)
-      qb.andWhere('product.listing_type = :lt', { lt: listingTypeFilter });
+    // Normalize listing type (accept camelCase or snake_case; ignore empty/invalid)
+    const rawLt = (listing_type ?? listingType);
+    const ltNorm = typeof rawLt === 'string' ? rawLt.trim().toLowerCase() : undefined;
+    const listingTypeMode = (filters as any).listingTypeMode || (filters as any).listing_type_mode;
+    const ltValid = ltNorm && (ltNorm === 'sale' || ltNorm === 'rent') ? ltNorm : undefined;
+    if (ltValid) {
+      if (listingTypeMode === 'priority') {
+        // Priority mode: do NOT filter, but rank matching listing_type highest
+        qb.addSelect(`CASE WHEN product.listing_type = :lt THEN 1 ELSE 0 END`, 'lt_priority_rank');
+  qb.addOrderBy('lt_priority_rank', 'DESC');
+      } else {
+        qb.andWhere('product.listing_type = :lt', { lt: ltValid });
+        this.logger.debug(`Applied listingType filter: ${ltValid}`);
+      }
+    }
     // Bedrooms filter: exact or range
     const brExact = bedrooms;
     const brMin = bedrooms_min ?? bedroomsMin;
@@ -489,8 +691,9 @@ export class ProductsService {
       qb.andWhere('product.bedrooms <= :brMax', { brMax });
 
     // Property city filter (from userCity or listing_city alias)
-    const listingCityFilter =
-      (filters as any).listing_city || (filters as any).userCity;
+    // Apply strict property city filter only when explicitly provided as listing_city.
+    // Do NOT treat userCity as a hard filter; userCity is used for geo ranking when geoPriority is enabled.
+    const listingCityFilter = (filters as any).listing_city;
     if (listingCityFilter)
       qb.andWhere('LOWER(product.listing_city) = LOWER(:lc)', {
         lc: listingCityFilter,
@@ -550,27 +753,30 @@ export class ProductsService {
 
     // If includeDescendants is true, expand filter to include all descendant category IDs
     let subtreeIds: number[] | null = null;
-    if ((includeDescendants || categoryFirst) && (categoryId || categorySlug)) {
+    if ((includeDescendants || categoryFirst) && ((categoryIds && categoryIds.length) || categorySlug)) {
       // Resolve base category id via slug if needed
-      const baseCategoryId =
-        categoryId ||
-        (categorySlug
-          ? (await this.categoryRepo.findOne({ where: { slug: categorySlug } }))
-              ?.id
-          : undefined);
-      if (baseCategoryId) {
-        // Using closure table categories_category_closure table name pattern
-        // TypeORM default: category_closure (root/ancestor/descendant); but we’ll use repository to get descendants ids
-        const cat = await this.categoryRepo.findOne({
-          where: { id: baseCategoryId },
-        });
-        if (cat) {
-          const descs = await this.categoryRepo.findDescendants(cat);
-          const ids = Array.from(new Set(descs.map((c: any) => c.id)));
-          subtreeIds = ids;
-          if (ids.length && !categoryFirst) {
-            qb.andWhere('category.id IN (:...catIds)', { catIds: ids });
+      const baseIds: number[] = [];
+      if (categoryIds && categoryIds.length) baseIds.push(...categoryIds);
+      else if (categorySlug) {
+        const found = await this.categoryRepo.findOne({ where: { slug: categorySlug } });
+        if (found?.id) baseIds.push(found.id);
+      }
+      if (baseIds.length) {
+        const idSet = new Set<number>();
+        for (const bid of baseIds) {
+          const cat = await this.categoryRepo.findOne({ where: { id: bid } });
+          if (!cat) continue;
+          try {
+            const descs = await this.categoryRepo.findDescendants(cat);
+            for (const d of descs) idSet.add(d.id);
+          } catch {
+            idSet.add(bid);
           }
+        }
+        const ids = Array.from(idSet);
+        subtreeIds = ids;
+        if (ids.length && !categoryFirst) {
+          qb.andWhere('category.id IN (:...catIds)', { catIds: ids });
         }
       }
     }
@@ -609,7 +815,7 @@ export class ProductsService {
     }
 
     // If asked to prioritize category subtree first, perform union-like pagination
-    if (categoryFirst && subtreeIds && subtreeIds.length) {
+  if (categoryFirst && subtreeIds && subtreeIds.length) {
       // Helper to build a base QB with all filters except the category constraint
       const buildBase = () => {
         const q = this.productRepo
@@ -672,11 +878,18 @@ export class ProductsService {
         if (priceMax !== undefined)
           q.andWhere('product.price <= :priceMax', { priceMax });
 
-        const listingTypeFilterLocal = listing_type || listingType;
-        if (listingTypeFilterLocal)
-          q.andWhere('product.listing_type = :ltLocal', {
-            ltLocal: listingTypeFilterLocal,
-          });
+        const rawLtLocal = (listing_type ?? listingType);
+        const ltNormLocal = typeof rawLtLocal === 'string' ? rawLtLocal.trim().toLowerCase() : undefined;
+        const ltValidLocal = ltNormLocal && (ltNormLocal === 'sale' || ltNormLocal === 'rent') ? ltNormLocal : undefined;
+        if (ltValidLocal) {
+          if (listingTypeMode === 'priority') {
+            q.addSelect(`CASE WHEN product.listing_type = :ltLocal THEN 1 ELSE 0 END`, 'lt_priority_rank');
+            q.addOrderBy('lt_priority_rank', 'DESC');
+          } else {
+            q.andWhere('product.listing_type = :ltLocal', { ltLocal: ltValidLocal });
+            this.logger.debug(`Applied listingType filter (categoryFirst branch): ${ltValidLocal}`);
+          }
+        }
         const brExactLocal = bedrooms;
         const brMinLocal = bedrooms_min ?? bedroomsMin;
         const brMaxLocal = bedrooms_max ?? bedroomsMax;
@@ -687,8 +900,8 @@ export class ProductsService {
         if (brMaxLocal !== undefined)
           q.andWhere('product.bedrooms <= :brMaxLocal', { brMaxLocal });
 
-        const listingCityFilterLocal =
-          (filters as any).listing_city || (filters as any).userCity;
+        // Same rule in categoryFirst branch: only apply strict listing_city if explicitly provided.
+        const listingCityFilterLocal = (filters as any).listing_city;
         if (listingCityFilterLocal)
           q.andWhere('LOWER(product.listing_city) = LOWER(:lcLocal)', {
             lcLocal: listingCityFilterLocal,
@@ -835,6 +1048,12 @@ export class ProductsService {
       }
 
       const total = primaryTotal + othersTotal;
+      if (process.env.DEBUG_SQL === '1') {
+        try {
+          this.logger.debug(`(categoryFirst) primary SQL => ${primaryQb.getSql()}`);
+          this.logger.debug(`(categoryFirst) others SQL => ${othersQb.getSql()}`);
+        } catch {}
+      }
       return {
         items,
         total,
@@ -847,6 +1066,12 @@ export class ProductsService {
 
     qb.skip((page - 1) * perPage).take(perPage);
     const [items, total] = await qb.getManyAndCount();
+    if (process.env.DEBUG_SQL === '1') {
+      try {
+        this.logger.debug(`SQL => ${qb.getSql()}`);
+        this.logger.debug(`Params => ${JSON.stringify(qb.getParameters())}`);
+      } catch {}
+    }
 
     return {
       items,
@@ -855,6 +1080,252 @@ export class ProductsService {
       currentPage: page,
       totalPages: Math.ceil(total / perPage),
     };
+  }
+
+  // Returns tiered buckets without merging: base (subcategory), siblings (same parent), parent (descendants), global
+  async findTieredBuckets(q: TieredProductsDto): Promise<{
+    base: Product[];
+    siblings: Record<string, Product[]>; // key: sibling category id as string
+    parent: Product[];
+    global: Product[];
+    meta: any;
+  }> {
+    const page = Number((q as any).page || 1) || 1;
+    const perBase = Math.min(Math.max(Number(q.perPage || q.limit) || 12, 1), 50);
+    const perSibling = Math.min(Math.max(Number(q.perSibling ?? 6), 0), 24);
+    const siblingCount = Math.min(Math.max(Number(q.siblingCount ?? 2), 0), 10);
+    const parentLimit = Math.min(Math.max(Number(q.parentLimit ?? 12), 0), 50);
+    const globalLimit = Math.min(Math.max(Number(q.globalLimit ?? 12), 0), 50);
+
+    const baseFilters: ProductFilterDto = {
+      ...q,
+      perPage: perBase,
+    } as any;
+    const baseRes = await this.findFiltered(baseFilters);
+    const base = baseRes.items;
+
+    // Determine base subcategory and parent category
+    let baseCatId: number | undefined = undefined;
+    if (Array.isArray(q.categoryId) && q.categoryId.length) baseCatId = Number(q.categoryId[0]);
+    // If categorySlug provided and no id, try resolving it
+    if (!baseCatId && q.categorySlug) {
+      const cat = await this.categoryRepo.findOne({ where: { slug: q.categorySlug } });
+      if (cat?.id) baseCatId = cat.id;
+    }
+
+    let parentId: number | undefined = q.siblingParentId as any;
+    if (!parentId && baseCatId) {
+      const cat = await this.categoryRepo.findOne({ where: { id: baseCatId }, relations: ['parent'] as any }).catch(() => null);
+      parentId = (cat as any)?.parent?.id;
+    }
+
+    const siblings: Record<string, Product[]> = {};
+    if (perSibling > 0 && siblingCount > 0 && parentId) {
+      // Load siblings sorted by sortOrder, exclude the base category itself
+      const parent = await this.categoryRepo.findOne({ where: { id: parentId }, relations: ['children'] as any }).catch(() => null);
+      const kids = Array.isArray((parent as any)?.children) ? (parent as any).children : [];
+      const ordered = kids
+        .filter((c: any) => c && c.id && c.id !== baseCatId)
+        .sort((a: any, b: any) => (a.sortOrder || 0) - (b.sortOrder || 0))
+        .slice(0, siblingCount);
+      for (const sib of ordered) {
+        const res = await this.findFiltered({
+          ...q,
+          categoryId: [sib.id],
+          includeDescendants: true,
+          perPage: perSibling,
+          page,
+        } as any);
+        siblings[String(sib.id)] = res.items;
+      }
+    }
+
+    // Parent bucket: include descendants of the parent category (if found)
+    let parentBucket: Product[] = [];
+    if (parentLimit > 0 && (parentId || baseCatId)) {
+      // Determine tree root for parent bucket: if parentId exists, use it; else use base category itself
+      const rootId = parentId || baseCatId!;
+      const res = await this.findFiltered({
+        ...q,
+        categoryId: [rootId],
+        includeDescendants: true,
+        perPage: parentLimit,
+        page,
+      } as any);
+      parentBucket = res.items;
+    }
+
+    // Global bucket: drop category filter, keep geo priority and sorts
+    let globalBucket: Product[] = [];
+    if (globalLimit > 0) {
+      const { categoryId, categorySlug, ...rest } = q as any;
+      const res = await this.findFiltered({
+        ...rest,
+        perPage: globalLimit,
+        page,
+        categoryFirst: false,
+        includeDescendants: false,
+      } as any);
+      globalBucket = res.items;
+    }
+
+    const meta = {
+      base: { count: base.length, perPage: perBase },
+      siblings: Object.fromEntries(Object.entries(siblings).map(([k, v]) => [k, { count: (v as any[]).length, perPage: perSibling }])),
+      parent: { count: parentBucket.length, limit: parentLimit, rootCategoryId: parentId || baseCatId || null },
+      global: { count: globalBucket.length, limit: globalLimit },
+      geo: {
+        userCountry: (q as any).userCountry || (q as any).country || null,
+        userRegion: (q as any).userRegion || (q as any).region || null,
+        userCity: (q as any).userCity || (q as any).city || null,
+        geoPriority: !!(q as any).geoPriority,
+        geoAppend: !!(q as any).geoAppend,
+        eastAfrica: (q as any).eastAfrica || 'ET,SO,KE,DJ',
+      },
+    };
+
+    return { base, siblings, parent: parentBucket, global: globalBucket, meta };
+  }
+
+  // Merge tiered buckets into a single ordered list using simple scoring
+  async findTieredMerged(q: TieredProductsDto): Promise<{ items: Product[]; meta: any }> {
+    const { base, siblings, parent, global, meta } = await this.findTieredBuckets(q);
+    const eaList = (q as any).eastAfrica
+      ? String((q as any).eastAfrica)
+          .split(',')
+          .map((c: string) => c.trim().toUpperCase())
+      : ['ET', 'SO', 'KE', 'DJ'];
+    const uc = (q as any).userCountry || (q as any).country || '';
+    const ur = (q as any).userRegion || (q as any).region || '';
+    const uci = (q as any).userCity || (q as any).city || '';
+    const hardCap = Math.min(Math.max(Number((q as any).hardCap || 48), 1), 200);
+    const antiClump = ((q as any).antiClump ?? true) ? true : false;
+
+    type Tier = 'base' | 'sibling' | 'parent' | 'global';
+    const tierWeight: Record<Tier, number> = { base: 1.0, sibling: 0.8, parent: 0.6, global: 0.4 };
+
+    // Build candidate list with tier tag
+    const siblingEntries: Array<{ item: Product; tier: Tier }> = [];
+    for (const [sid, arr] of Object.entries(siblings || {})) {
+      for (const it of arr) siblingEntries.push({ item: it, tier: 'sibling' });
+    }
+    const candidates: Array<{ item: Product; tier: Tier }> = [
+      ...base.map((it) => ({ item: it, tier: 'base' as Tier })),
+      ...siblingEntries,
+      ...parent.map((it) => ({ item: it, tier: 'parent' as Tier })),
+      ...global.map((it) => ({ item: it, tier: 'global' as Tier })),
+    ];
+
+    // De-duplicate by product.id (first occurrence kept)
+    const seen = new Set<number>();
+    const deduped = candidates.filter(({ item }) => {
+      const id = (item as any).id;
+      if (!id || seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    });
+
+    // Compute normalization maxima for popularity
+    let maxSales = 0,
+      maxRatings = 0,
+      maxViews = 0;
+    for (const { item } of deduped) {
+      maxSales = Math.max(maxSales, Number((item as any).sales_count || 0));
+      maxRatings = Math.max(maxRatings, Number((item as any).rating_count || 0));
+      maxViews = Math.max(maxViews, Number((item as any).viewCount || 0));
+    }
+
+    const now = Date.now();
+    const halfLifeDays = 14;
+
+    function geoWeight(vendor: any): number {
+      if (!vendor) return 0;
+      const city = String(vendor.registrationCity || '').toLowerCase();
+      const region = String(vendor.registrationRegion || '').toLowerCase();
+      const country = String(vendor.registrationCountry || '').toUpperCase();
+      const uciL = String(uci || '').toLowerCase();
+      const urL = String(ur || '').toLowerCase();
+      const ucU = String(uc || '').toUpperCase();
+      if (uciL && city && uciL === city) return 0.3;
+      if (urL && region && urL === region) return 0.2;
+      if (ucU && country && ucU === country) return 0.1;
+      if (country && eaList.includes(country)) return 0.05;
+      return 0;
+    }
+
+    function recencyWeight(createdAt: any): number {
+      const t = new Date(createdAt).getTime();
+      if (!isFinite(t)) return 0;
+      const ageDays = Math.max(0, (now - t) / (1000 * 60 * 60 * 24));
+      const base = Math.exp(-ageDays / halfLifeDays);
+      return 0.2 * base;
+    }
+
+    function popularityWeight(item: any): number {
+      const s = Number(item.sales_count || 0);
+      const r = Number(item.rating_count || 0);
+      const v = Number(item.viewCount || 0);
+      const sN = maxSales > 0 ? s / maxSales : 0;
+      const rN = maxRatings > 0 ? r / maxRatings : 0;
+      const vN = maxViews > 0 ? v / maxViews : 0;
+      const mix = 0.5 * sN + 0.3 * rN + 0.2 * vN;
+      return 0.2 * mix;
+    }
+
+    const scored = deduped.map(({ item, tier }) => {
+      const tW = tierWeight[tier];
+      const gW = geoWeight((item as any).vendor);
+      const rec = recencyWeight((item as any).createdAt);
+      const pop = popularityWeight(item as any);
+      const score = tW + gW + rec + pop;
+      return { item, tier, score };
+    });
+
+    scored.sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      // tie-breakers: recency desc, then id asc
+      const at = new Date((a.item as any).createdAt).getTime();
+      const bt = new Date((b.item as any).createdAt).getTime();
+      if (bt !== at) return bt - at;
+      return ((a.item as any).id || 0) - ((b.item as any).id || 0);
+    });
+
+    // Anti-clumping: avoid consecutive same vendor if possible by a simple swap pass
+    const arranged: Product[] = [];
+    if (antiClump) {
+      for (const entry of scored) arranged.push(entry.item);
+      for (let i = 1; i < arranged.length; i++) {
+        const prevV = (arranged[i - 1] as any).vendor?.id;
+        const curV = (arranged[i] as any).vendor?.id;
+        if (prevV && curV && prevV === curV) {
+          // try swap with next different vendor
+          let swapIdx = i + 1;
+          while (swapIdx < arranged.length) {
+            const sv = (arranged[swapIdx] as any).vendor?.id;
+            if (!sv || sv !== curV) break;
+            swapIdx++;
+          }
+          if (swapIdx < arranged.length) {
+            const tmp = arranged[i];
+            arranged[i] = arranged[swapIdx];
+            arranged[swapIdx] = tmp;
+          }
+        }
+      }
+    } else {
+      for (const entry of scored) arranged.push(entry.item);
+    }
+
+    const items = arranged.slice(0, hardCap);
+    const mergedMeta = {
+      ...meta,
+      merged: {
+        totalCandidates: scored.length,
+        hardCap,
+        antiClump,
+      },
+    };
+    return { items, meta: mergedMeta };
   }
 
   // Basic recommendation strategy:
@@ -970,6 +1441,7 @@ export class ProductsService {
 
     // Update images if provided: delete old ones, add new ones
     if (images) {
+  // Image URL host policy check removed in rollback
       product.imageUrl = images.length > 0 ? images[0].src : null;
       await this.productImageRepo.delete({ product: { id } }); // Delete old images
       const imageEntities = images.map((img, index) =>
@@ -1027,7 +1499,7 @@ export class ProductsService {
   ): Promise<{ deleted: boolean }> {
     const product = await this.productRepo.findOne({
       where: { id },
-      relations: ['vendor'],
+      relations: ['vendor', 'images'],
     });
     if (!product) throw new NotFoundException('Product not found');
     if (product.vendor.id !== user.id)
@@ -1037,6 +1509,52 @@ export class ProductsService {
     });
     if (hasOrders > 0)
       throw new BadRequestException('Cannot delete product with active orders');
+    // Best-effort media cleanup before deleting DB rows
+    try {
+      // 1) Collect candidate URLs/keys
+      const keys = new Set<string>();
+      const urls = new Set<string>();
+      // Main imageUrl
+      if ((product as any).imageUrl) urls.add(String((product as any).imageUrl));
+      // Gallery images
+      for (const img of product.images || []) {
+        if (img?.src) urls.add(String(img.src));
+        if (img?.thumbnailSrc) urls.add(String(img.thumbnailSrc));
+        if (img?.lowResSrc) urls.add(String(img.lowResSrc));
+      }
+      // Attributes: digital download, video and poster
+      const attrs = (product as any).attributes && typeof (product as any).attributes === 'object' ? { ...(product as any).attributes } : {};
+      // Canonical digital
+      const dig = (attrs as any).digital;
+      if (dig && typeof dig === 'object' && dig.download && typeof dig.download === 'object') {
+        const k = (dig.download as any).key;
+        if (typeof k === 'string' && k) keys.add(k);
+        const pub = (dig.download as any).publicUrl;
+        if (typeof pub === 'string' && pub) urls.add(pub);
+      }
+      // Legacy keys
+      const legacyKey = (attrs as any).downloadKey || (attrs as any).download_key;
+      if (typeof legacyKey === 'string' && legacyKey) keys.add(legacyKey);
+      const videoUrl = (attrs as any).videoUrl || (attrs as any).video_url;
+      if (typeof videoUrl === 'string' && videoUrl) urls.add(videoUrl);
+      const posterUrl = (attrs as any).posterUrl || (attrs as any).posterSrc || (attrs as any).poster_url;
+      if (typeof posterUrl === 'string' && posterUrl) urls.add(posterUrl);
+
+      // 2) Convert URLs to keys when they belong to our bucket
+      for (const u of Array.from(urls)) {
+        const key = this.doSpaces.urlToKeyIfInBucket(u);
+        if (key) keys.add(key);
+      }
+
+      // 3) Delete objects best-effort (do not block product deletion on failures)
+      for (const key of Array.from(keys)) {
+        await this.doSpaces.deleteObject(key).catch(() => {});
+      }
+    } catch {
+      // ignore cleanup errors
+    }
+
+    // Finally remove product (images will cascade via FK onDelete: CASCADE)
     await this.productRepo.delete(id);
     return { deleted: true };
   }

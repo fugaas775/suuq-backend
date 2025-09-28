@@ -10,7 +10,11 @@
     "ts-jest": {
       "tsconfig": {
         "types": ["node", "jest"]
-      }
+      },
+      "isolatedModules": true
     }
+  },
+  "moduleNameMapper": {
+    "^file-type$": "<rootDir>/../__mocks__/file-type.ts"
   }
 }

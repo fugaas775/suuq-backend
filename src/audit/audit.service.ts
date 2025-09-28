@@ -120,6 +120,22 @@ export class AuditService {
     return { items, nextCursor };
   }
 
+  /** Count audit logs for a target since a specific date (inclusive). */
+  async countForTargetSince(
+    targetType: string,
+    targetId: number,
+    from: Date,
+  ): Promise<number> {
+    return this.repo
+      .createQueryBuilder('a')
+      .where('a.targetType = :targetType AND a.targetId = :targetId', {
+        targetType,
+        targetId,
+      })
+      .andWhere('a.createdAt >= :from', { from })
+      .getCount();
+  }
+
   // Apply filters helper used by controller via query builder chaining
   applyFilters(
     qb: ReturnType<Repository<AuditLog>['createQueryBuilder']>,
