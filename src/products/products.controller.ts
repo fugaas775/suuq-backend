@@ -9,6 +9,7 @@ import {
   Body,
   Query,
   Req,
+  Res,
   UseGuards,
   ParseIntPipe,
   BadRequestException,
@@ -34,6 +35,9 @@ import { normalizeProductMedia } from '../common/utils/media-url.util';
 import { AuthenticatedRequest } from '../auth/auth.types';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { FavoritesService } from '../favorites/favorites.service';
+import { Response } from 'express';
+import { createHash } from 'crypto';
+import { toProductCard } from './utils/product-card.util';
 
 @UseInterceptors(ClassSerializerInterceptor)
 @Controller('products')
@@ -117,6 +121,7 @@ export class ProductsController {
     @Query() filters: ProductFilterDto,
     @Query('currency') currency?: string,
     @Req() req?: AuthenticatedRequest,
+    @Res({ passthrough: true }) res?: Response,
   ) {
     try {
       // Role (if present)
@@ -141,7 +146,7 @@ export class ProductsController {
         }
       }
 
-      const result = await this.productsService.findFiltered(filters);
+  const result = await this.productsService.findFiltered(filters);
 
       // Derive vendorHits (distribution of vendors in the current result set)
       let vendorHits:
@@ -293,6 +298,28 @@ export class ProductsController {
         throw new BadRequestException('Product list could not be loaded');
       }
 
+      // If client provided ETag, compare and return 304 when unchanged
+      try {
+        const ids = Array.isArray(result.items) ? result.items.map((it: any) => it?.id || 0) : [];
+        const ts = Array.isArray(result.items)
+          ? result.items.map((it: any) =>
+              it?.updatedAt ? new Date(it.updatedAt).getTime() : (it?.createdAt ? new Date(it.createdAt).getTime() : 0),
+            )
+          : [];
+        const base = JSON.stringify({ f: { ...filters, currency }, ids, ts });
+        const etag = `W/"${createHash('sha1').update(base).digest('hex')}"`;
+        if (res) {
+          res.setHeader('ETag', etag);
+          res.setHeader('Cache-Control', 'public, max-age=10, stale-while-revalidate=30');
+          if (filters.view === 'grid') res.setHeader('X-Items-View', 'grid');
+          const inm = (req?.headers?.['if-none-match'] as string | undefined) || '';
+          if (inm && inm === etag) {
+            res.status(304);
+            return;
+          }
+        }
+      } catch {}
+
       // No manual conversion or DTO mapping; return result.items directly
       return {
         ...result,
@@ -302,6 +329,54 @@ export class ProductsController {
       this.logger.error('findAll error:', err);
       throw err;
     }
+  }
+
+  // Lightweight cards endpoint mirroring filters but returning ProductCard DTOs
+  @Get('cards')
+  @SkipThrottle()
+  @UseInterceptors(new RateLimitInterceptor({ maxRps: 10, burst: 20, keyBy: 'userOrIp', scope: 'route', headers: true }))
+  async listCards(
+    @Query() filters: ProductFilterDto,
+    @Req() req?: AuthenticatedRequest,
+    @Res({ passthrough: true }) res?: Response,
+  ) {
+    // Force grid view for lean projection
+    (filters as any).view = 'grid';
+    if (filters.limit && !filters.perPage) filters.perPage = filters.limit;
+    // Normalize aliases to categoryId if needed (DTO already does most)
+    if (!Array.isArray(filters.categoryId) || filters.categoryId.length === 0) {
+      const aliasArr = (filters as any).categoryAlias || (filters as any).categoriesCsv;
+      if (Array.isArray(aliasArr) && aliasArr.length > 0) {
+        (filters as any).categoryId = aliasArr as any;
+      }
+    }
+
+    const result = await this.productsService.findFiltered(filters);
+    const items = (result.items || []).map(toProductCard);
+
+    // Compute and set ETag/Cache-Control and honor If-None-Match
+    try {
+      const base = JSON.stringify({ f: { ...filters }, ids: items.map((i) => i.id), ts: items.map((i) => i.createdAt) });
+      const etag = `W/"${createHash('sha1').update(base).digest('hex')}"`;
+      if (res) {
+        res.setHeader('ETag', etag);
+        res.setHeader('Cache-Control', 'public, max-age=15, stale-while-revalidate=60');
+        res.setHeader('X-Items-View', 'grid-cards');
+        const inm = (req?.headers?.['if-none-match'] as string | undefined) || '';
+        if (inm && inm === etag) {
+          res.status(304);
+          return;
+        }
+      }
+    } catch {}
+
+    return {
+      items,
+      total: result.total,
+      perPage: result.perPage,
+      currentPage: result.currentPage,
+      totalPages: result.totalPages,
+    };
   }
 
   @Get('suggest')
@@ -366,6 +441,8 @@ export class ProductsController {
   // Aggregated home feed: avoid collision with ':id' by defining here
   @Get('home')
   @Header('Cache-Control', 'public, max-age=60')
+  @Header('Deprecation', 'true')
+  @Header('Sunset', 'Wed, 31 Dec 2025 23:59:59 GMT')
   async homeFeed(@Query() q: any) {
     const perSection = Math.min(Number(q.limit || q.per_page) || 10, 20);
     const v =
@@ -552,6 +629,37 @@ export class ProductsController {
   @Get(':id')
   findOne(@Param('id', ParseIntPipe) id: number) {
     return this.productsService.findOne(id);
+  }
+
+  // Related products for a given product id
+  // Accepts optional city filter and limit; returns a lean list suitable for grid cards
+  @Get(':id/related')
+  @Header('Cache-Control', 'public, max-age=30, stale-while-revalidate=60')
+  async related(
+    @Param('id', ParseIntPipe) id: number,
+    @Query('city') city?: string,
+    @Query('limit') limit?: string,
+    @Req() req?: AuthenticatedRequest,
+    @Res({ passthrough: true }) res?: Response,
+  ) {
+    const lim = Math.min(Math.max(parseInt(String(limit || '24'), 10) || 24, 1), 50);
+    const items = await this.productsService.findRelatedProducts(id, { limit: lim, city });
+
+    // ETag based on ids + createdAt timestamps to enable client-side caching
+    try {
+      const base = JSON.stringify({ k: 'related', id, city: city || '', ids: items.map((i: any) => i.id), ts: items.map((i: any) => i.createdAt || i.updatedAt) });
+      const etag = `W/"${createHash('sha1').update(base).digest('hex')}"`;
+      if (res && req) {
+        res.setHeader('ETag', etag);
+        const inm = (req.headers?.['if-none-match'] as string | undefined) || '';
+        if (inm && inm === etag) {
+          res.status(304);
+          return;
+        }
+      }
+    } catch {}
+
+    return { items };
   }
 
   @Patch(':id')

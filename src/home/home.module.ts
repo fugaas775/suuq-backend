@@ -5,13 +5,17 @@ import { HomeService } from './home.service';
 import { HomeV1Controller } from './v1.home.controller';
 import { ProductsModule } from '../products/products.module';
 import { Category } from '../categories/entities/category.entity';
+import { User } from '../users/entities/user.entity';
+import { CurationModule } from '../curation/curation.module';
+import { HomeV2Controller } from './v2.home.controller';
 
 @Module({
   imports: [
     forwardRef(() => ProductsModule),
-    TypeOrmModule.forFeature([Category]),
+  CurationModule,
+    TypeOrmModule.forFeature([Category, User]),
   ],
-  controllers: [HomeController, HomeV1Controller],
+  controllers: [HomeController, HomeV1Controller, HomeV2Controller],
   providers: [HomeService],
   exports: [HomeService],
 })

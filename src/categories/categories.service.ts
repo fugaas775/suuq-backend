@@ -82,6 +82,17 @@ export class CategoriesService {
     });
   }
 
+  /** Find a category by slug with its descendants tree */
+  async findDescendantsBySlug(slug: string): Promise<Category> {
+    const category = await this.categoryRepo.findOne({ where: { slug } });
+    if (!category) throw new NotFoundException(`Category '${slug}' not found`);
+    const tree = await this.categoryRepo.findDescendantsTree(category, {
+      relations: ['children'],
+      depth: 2, // limit depth for safety; adjust if needed
+    });
+    return tree;
+  }
+
   async create(dto: CreateCategoryDto): Promise<Category> {
     const slug = dto.slug
       ? slugify(dto.slug)
@@ -130,9 +141,14 @@ export class CategoriesService {
   async update(id: number, dto: UpdateCategoryDto): Promise<Category> {
     const category = await this.findOne(id);
 
-    if (dto.slug && dto.slug !== category.slug) {
+    // Normalize slug if provided to keep consistency with create()
+    const normalizedSlug = dto.slug
+      ? slugify(dto.slug)
+      : undefined;
+
+    if (normalizedSlug && normalizedSlug !== category.slug) {
       const exists = await this.categoryRepo.findOne({
-        where: { slug: dto.slug },
+        where: { slug: normalizedSlug },
       });
       if (exists) throw new BadRequestException('Slug already exists');
     }
@@ -154,7 +170,10 @@ export class CategoriesService {
         dto.iconName !== category.iconName) ||
       (typeof dto.iconUrl !== 'undefined' && dto.iconUrl !== category.iconUrl);
 
-    const updatedCategory = this.categoryRepo.merge(category, dto);
+    const updatedCategory = this.categoryRepo.merge(category, {
+      ...dto,
+      ...(typeof normalizedSlug !== 'undefined' ? { slug: normalizedSlug } : {}),
+    });
 
     if (wasIconChanged) {
       updatedCategory.iconVersion = (updatedCategory.iconVersion || 0) + 1;

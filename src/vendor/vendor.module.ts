@@ -18,7 +18,7 @@ import { ProductsModule } from '../products/products.module';
   imports: [
     // ✨ 2. PRODUCTIMAGE ENTITY ADDED HERE
   TypeOrmModule.forFeature([User, Product, Order, OrderItem, ProductImage, Tag]),
-    UsersModule,
+    forwardRef(() => UsersModule),
     forwardRef(() => ProductsModule),
     MediaModule,
     NotificationsModule,

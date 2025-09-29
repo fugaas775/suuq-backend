@@ -9,6 +9,8 @@ export class HomeV1Controller {
   // Return ProductCard rails mirroring /products/home but in v1 lean shape
   @Get('feed')
   @Header('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=120')
+  @Header('Deprecation', 'true')
+  @Header('Sunset', 'Wed, 31 Dec 2025 23:59:59 GMT')
   async feed(@Query() q: any) {
     const perSection = Math.min(Number(q.limit || q.per_page) || 10, 20);
     const view: 'grid' | 'full' = 'grid';

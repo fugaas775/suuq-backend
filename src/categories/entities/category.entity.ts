@@ -8,6 +8,7 @@ import {
   OneToMany,
   CreateDateColumn,
   UpdateDateColumn,
+  Index,
 } from 'typeorm';
 import { Product } from '../../products/entities/product.entity';
 import { Exclude } from 'class-transformer'; // <-- Import Exclude
@@ -19,6 +20,7 @@ export class Category {
   id: number;
 
   @Column()
+  @Index()
   name: string;
 
   @Column({ unique: true })
@@ -35,6 +37,7 @@ export class Category {
   iconVersion: number;
 
   @Column({ type: 'int', default: 0 })
+  @Index()
   sortOrder: number;
 
   @TreeChildren({ cascade: true }) // Added cascade for easier management

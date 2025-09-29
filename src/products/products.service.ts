@@ -402,6 +402,90 @@ export class ProductsService {
     }
   }
 
+  // Find related products for a given product id. Strategy:
+  // - Prefer same category subtree; then same vendor; then shared tags
+  // - Exclude the base product
+  // - Optional exact city match for property listings when provided
+  // - Return lean normalized media for client usage
+  async findRelatedProducts(
+    productId: number,
+    opts?: { limit?: number; city?: string | null },
+  ): Promise<any[]> {
+    const base = await this.productRepo.findOne({
+      where: { id: productId },
+      relations: ['category', 'vendor', 'tags'],
+    });
+    if (!base) throw new NotFoundException('Product not found');
+    const lim = Math.min(Math.max(Number(opts?.limit) || 24, 1), 50);
+    const city = (opts?.city || '').trim();
+
+    // Resolve descendant category ids for stronger topical similarity
+    let subtreeIds: number[] = [];
+    if (base.category?.id) {
+      try {
+        const desc = await this.categoryRepo.findDescendants(base.category);
+        subtreeIds = Array.from(new Set(desc.map((c) => c.id)));
+      } catch {
+        subtreeIds = [base.category.id];
+      }
+    }
+
+    const qb = this.productRepo
+      .createQueryBuilder('product')
+      .leftJoinAndSelect('product.vendor', 'vendor')
+      .leftJoinAndSelect('product.category', 'category')
+      .where('product.status = :status', { status: 'publish' })
+      .andWhere('product.isBlocked = false')
+      .andWhere('product.id <> :pid', { pid: productId })
+      .limit(lim);
+
+    // Prefer category subtree
+    if (subtreeIds.length) {
+      qb.andWhere('category.id IN (:...catIds)', { catIds: subtreeIds });
+    }
+
+    // Optional exact property city filter
+    if (city) {
+      qb.andWhere('LOWER(product.listing_city) = LOWER(:lc)', { lc: city });
+    }
+
+    // Soft scoring: prefer same vendor; then sales/rating recency
+    if (base.vendor?.id) {
+      qb.addOrderBy(`CASE WHEN vendor.id = :bv THEN 2 ELSE 0 END`, 'DESC').setParameter('bv', base.vendor.id);
+    }
+    // Shared tags count approximation could be added here if needed
+    qb.addOrderBy('product.sales_count', 'DESC', 'NULLS LAST');
+    qb.addOrderBy('product.average_rating', 'DESC', 'NULLS LAST');
+    qb.addOrderBy('product.createdAt', 'DESC');
+
+    // Lean select
+    qb.select([
+      'product.id',
+      'product.name',
+      'product.price',
+      'product.currency',
+      'product.imageUrl',
+      'product.average_rating',
+      'product.rating_count',
+      'product.sales_count',
+      'product.createdAt',
+      'product.listingType',
+      'product.listingCity',
+      'vendor.id',
+      'vendor.storeName',
+      'vendor.displayName',
+      'vendor.email',
+      'vendor.avatarUrl',
+      'vendor.verified',
+      'category.id',
+      'category.slug',
+    ]);
+
+    const rows = await qb.getMany();
+    // Normalize media fields for client compatibility
+    return rows.map((p) => normalizeProductMedia(p as any));
+  }
+
   async incrementViewCount(id: number): Promise<void> {
     await this.productRepo
       .createQueryBuilder()
@@ -589,16 +673,15 @@ export class ProductsService {
       ? [categoriesCsv]
       : [];
 
-    // Clamp perPage to protect backend
-    const perPage = Math.min(Math.max(Number(rawPerPage) || 20, 1), 50);
+  // Clamp perPage to protect backend (aligned with DTO cap 100)
+  const perPage = Math.min(Math.max(Number(rawPerPage) || 20, 1), 100);
 
     const qb = this.productRepo
       .createQueryBuilder('product')
       .leftJoinAndSelect('product.vendor', 'vendor')
       .leftJoinAndSelect('product.category', 'category');
 
-    // Select all columns from vendor to ensure verification status is available
-    qb.addSelect('vendor.*');
+  // Do not select all vendor columns by default; select minimal fields in grid view
 
     // Lean projection for grid views: limit selected columns
     if (view === 'grid') {
@@ -619,9 +702,14 @@ export class ProductsService {
         'product.sizeSqm',
         'product.furnished',
         'product.rentPeriod',
-        'product.attributes',
         'product.createdAt',
+        // minimal vendor fields needed for product cards and ranking
         'vendor.id',
+        'vendor.email',
+        'vendor.displayName',
+        'vendor.avatarUrl',
+        'vendor.storeName',
+        'vendor.verified',
         'category.id',
         'category.slug',
       ]);
@@ -690,14 +778,14 @@ export class ProductsService {
     if (brMax !== undefined)
       qb.andWhere('product.bedrooms <= :brMax', { brMax });
 
-    // Property city filter (from userCity or listing_city alias)
-    // Apply strict property city filter only when explicitly provided as listing_city.
-    // Do NOT treat userCity as a hard filter; userCity is used for geo ranking when geoPriority is enabled.
+    // Property city filter
     const listingCityFilter = (filters as any).listing_city;
-    if (listingCityFilter)
-      qb.andWhere('LOWER(product.listing_city) = LOWER(:lc)', {
-        lc: listingCityFilter,
-      });
+    if (listingCityFilter) {
+      qb.andWhere('LOWER(product.listing_city) = LOWER(:lc)', { lc: listingCityFilter });
+    } else if (userCity && ltValid) {
+      // When userCity is provided alongside a listingType filter, treat it as a strict property city filter
+      qb.andWhere('LOWER(product.listing_city) = LOWER(:userLC)', { userLC: userCity });
+    }
 
     // Bathrooms range (optional)
     const baths = (filters as any).bathrooms;
@@ -900,12 +988,12 @@ export class ProductsService {
         if (brMaxLocal !== undefined)
           q.andWhere('product.bedrooms <= :brMaxLocal', { brMaxLocal });
 
-        // Same rule in categoryFirst branch: only apply strict listing_city if explicitly provided.
         const listingCityFilterLocal = (filters as any).listing_city;
-        if (listingCityFilterLocal)
-          q.andWhere('LOWER(product.listing_city) = LOWER(:lcLocal)', {
-            lcLocal: listingCityFilterLocal,
-          });
+        if (listingCityFilterLocal) {
+          q.andWhere('LOWER(product.listing_city) = LOWER(:lcLocal)', { lcLocal: listingCityFilterLocal });
+        } else if (userCity && ltValidLocal) {
+          q.andWhere('LOWER(product.listing_city) = LOWER(:userLcLocal)', { userLcLocal: userCity });
+        }
 
         const bathsLocal = (filters as any).bathrooms;
         const bathsMinLocal = (filters as any).bathrooms_min;
@@ -993,7 +1081,7 @@ export class ProductsService {
         return q;
       };
 
-      const perPage = Math.min(Math.max(Number(rawPerPage) || 20, 1), 50);
+  const perPage = Math.min(Math.max(Number(rawPerPage) || 20, 1), 100);
       const startIndex = (page - 1) * perPage;
 
       const primaryQb = buildBase().andWhere('category.id IN (:...catIds)', {

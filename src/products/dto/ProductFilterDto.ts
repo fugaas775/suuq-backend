@@ -13,6 +13,12 @@ export class ProductFilterDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
+  @Transform(({ value }) => {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return undefined;
+    // Cap per-page to 100
+    return Math.max(1, Math.min(n, 100));
+  })
   @Expose({ name: 'per_page' })
   perPage?: number;
 
@@ -27,10 +33,21 @@ export class ProductFilterDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
+  @Transform(({ value }) => {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return undefined;
+    // Defensive cap to avoid deep pages thrashing database
+    return Math.max(1, Math.min(n, 1000));
+  })
   page?: number;
 
   @IsOptional()
   @IsString()
+  @Transform(({ value }) => {
+    if (typeof value !== 'string') return undefined;
+    const t = value.trim().replace(/\s+/g, ' ');
+    return t.slice(0, 256);
+  })
   search?: string;
 
   @IsOptional()
@@ -117,6 +134,19 @@ export class ProductFilterDto {
 
   @IsOptional()
   @IsString()
+  @Transform(({ value }) => {
+    if (typeof value !== 'string') return undefined;
+    const v = value.trim().toLowerCase();
+    const allowed = new Set([
+      'sales_desc',
+      'rating_desc',
+      'price_asc',
+      'price_desc',
+      'created_desc',
+      'created_asc',
+    ]);
+    return allowed.has(v) ? v : undefined;
+  })
   sort?: string;
 
   // Optional lean projection for grids
