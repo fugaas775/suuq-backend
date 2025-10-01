@@ -27,6 +27,11 @@ export function absolutize(
 export function normalizeProductMedia<T extends Record<string, any>>(p: T): T {
   if (!p || typeof p !== 'object') return p;
   const out: any = { ...p };
+  // Bubble up computed distance if present under various aliases
+  if (out.distanceKm == null) {
+    const d = (out as any).distance_km ?? (out as any).distancekm ?? (out as any).distance;
+    if (typeof d === 'number' && isFinite(d)) out.distanceKm = d;
+  }
   if (Array.isArray(out.images)) {
     out.images = out.images.map((img: any) => {
       // Support string items: ["/uploads/x.jpg", ...]

@@ -19,6 +19,8 @@ import { ReviewsService } from '../reviews/reviews.service';
 import { RateLimitInterceptor } from '../common/interceptors/rate-limit.interceptor';
 import { ApiOkResponse, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { SkipThrottle } from '@nestjs/throttler';
+import { ProductListingService } from './listing/product-listing.service';
+import { ProductListingDto } from './listing/dto/product-listing.dto';
 
 @ApiTags('v1/products')
 // Limit bursts on the hot listing endpoint. Roughly 10 rps with burst 20 per subject per route.
@@ -31,6 +33,7 @@ export class ProductsV1Controller {
     @InjectRepository(Category) private readonly categoryRepo: Repository<Category>,
     private readonly favoritesService: FavoritesService,
     private readonly reviewsService: ReviewsService,
+    private readonly listingService: ProductListingService,
   ) {}
 
   // Lightweight per-process cache for the hot listing endpoint
@@ -89,9 +92,25 @@ export class ProductsV1Controller {
       return cached.data;
     }
 
-    const result = await this.productsService.findFiltered(norm as any);
+    let result: any;
+    const useV2 = String(process.env.LISTING_ENGINE_V2 || '').toLowerCase() === '1';
+    if (useV2 && (norm as any).view === 'grid') {
+      const dto: ProductListingDto = (norm as unknown) as ProductListingDto;
+      result = await this.listingService.list(dto, { mapCards: true });
+      // Adapt result shape to legacy naming
+      result = {
+        items: result.items,
+        total: result.total,
+        perPage: result.perPage,
+        currentPage: result.page,
+        totalPages: result.totalPages,
+        ...(dto.debugListing ? { debug: result.debug } : {}),
+      };
+    } else {
+      result = await this.productsService.findFiltered(norm as any);
+    }
 
-    const items = (result.items || []).map(toProductCard);
+    const items = useV2 && (norm as any).view === 'grid' ? (result.items || []) : (result.items || []).map(toProductCard);
     // Last-Modified derived from newest createdAt among items
     const latest = items
       .map((i) => new Date(i.createdAt).getTime())
@@ -99,6 +118,16 @@ export class ProductsV1Controller {
       .sort((a, b) => b - a)[0];
     const lastModified = latest ? new Date(latest).toUTCString() : undefined;
     if (lastModified) res.setHeader('Last-Modified', lastModified);
+
+    // If debug requested, emit a few lightweight headers for QA
+    if ((norm as any).debug_listing === '1' || (norm as any).debugListing === '1' || (norm as any).debugListing === true) {
+      try {
+        const dbg = (result as any)?.debug?.meta || {};
+        if (typeof dbg.usedOthers !== 'undefined') res.setHeader('X-Listing-Used-Others', String(dbg.usedOthers));
+        if (typeof dbg.geoFilled !== 'undefined') res.setHeader('X-Listing-Geo-Filled', String(dbg.geoFilled));
+        if (typeof dbg.fallbackToParent !== 'undefined') res.setHeader('X-Listing-Fallback-Parent', String(dbg.fallbackToParent));
+      } catch {}
+    }
 
     // Return a plain object so Nest interceptors (serializer, ETag) can operate
     // while still allowing us to set headers via passthrough response.
@@ -108,6 +137,7 @@ export class ProductsV1Controller {
       perPage: result.perPage,
       currentPage: result.currentPage,
       totalPages: result.totalPages,
+      ...(result.debug ? { debug: result.debug } : {}),
     };
 
     // Cache the response for a short window to absorb bursts

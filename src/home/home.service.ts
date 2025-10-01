@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ProductsService } from '../products/products.service';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -7,9 +7,11 @@ import { CurationService } from '../curation/curation.service';
 // Avoid VendorModule import to prevent circular deps; query vendors directly via User repo
 import { toProductCard } from '../products/utils/product-card.util';
 import { User } from '../users/entities/user.entity';
+import { ProductListingService } from '../products/listing/product-listing.service';
 
 @Injectable()
 export class HomeService {
+  private readonly logger = new Logger(HomeService.name);
   constructor(
     private readonly productsService: ProductsService,
     private readonly curation: CurationService,
@@ -17,6 +19,7 @@ export class HomeService {
     private readonly categoryRepo: Repository<Category>,
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
+    private readonly listingService: ProductListingService,
   ) {}
 
   /**
@@ -116,6 +119,16 @@ export class HomeService {
     userCity?: string;
     userRegion?: string;
     userCountry?: string;
+    // Optional category-first wiring for Explore grid
+    categoryId?: number[];
+    categorySlug?: string;
+    categoryFirst?: boolean;
+    includeDescendants?: boolean;
+    geoAppend?: boolean;
+    sort?: string;
+    // Property passthrough
+    listingType?: string;
+    listingTypeMode?: string;
   }) {
     const page = Math.max(1, Number(opts.page) || 1);
     const perPage = Math.min(Math.max(Number(opts.perPage) || 20, 1), 50);
@@ -125,6 +138,7 @@ export class HomeService {
 
     // 1) Featured categories (reuse existing config helper)
     const configPromise = this.getHomeConfig().catch((e) => {
+      this.logger.error('Failed to get home config', e);
       errors.push({ section: 'featuredCategories', message: e?.message || 'config failed' });
       return { featuredCategories: [], eastAfricaCountries: [], defaultSorts: { homeAll: 'rating_desc', bestSellers: 'sales_desc', topRated: 'rating_desc' } } as any;
     });
@@ -134,33 +148,73 @@ export class HomeService {
       this.curation
         .getSection('home-new', { limit: 10, cursor: null, view: 'grid' })
         .catch((e) => {
+          this.logger.error('Failed to get curatedNew section', e);
           errors.push({ section: 'curatedNew', message: e?.message || 'curatedNew failed' });
           return { items: [] } as any;
         }),
       this.curation
         .getSection('home-best', { limit: 10, cursor: null, view: 'grid' })
         .catch((e) => {
+          this.logger.error('Failed to get curatedBest section', e);
           errors.push({ section: 'curatedBest', message: e?.message || 'curatedBest failed' });
           return { items: [] } as any;
         }),
     ]);
 
-    // 3) Explore products: one main filtered query with geo priority
-    const explorePromise = this.productsService
-      .findFiltered({
-        page,
-        perPage,
-        sort: 'rating_desc' as any,
-        geoPriority: true,
-        userCity: opts.userCity,
-        userRegion: opts.userRegion,
-        userCountry: opts.userCountry,
-        view: 'grid',
-      } as any)
-      .catch((e) => {
+    // 3) Explore products: use new engine behind flag, fallback to legacy service
+    const explorePromise = (async () => {
+      const useV2 = String(process.env.HOME_EXPLORE_ENGINE_V2 || '1') === '1';
+      try {
+        if (useV2) {
+          const res = await this.listingService.list(
+            {
+              page,
+              perPage,
+              sort: (opts.sort as any) || ('rating_desc' as any),
+              geoPriority: true,
+              userCity: opts.userCity,
+              userRegion: opts.userRegion,
+              userCountry: opts.userCountry,
+              // Category-first flags; if provided, enable prioritization
+              categoryId: Array.isArray(opts.categoryId) ? opts.categoryId : undefined,
+              categorySlug: opts.categorySlug,
+              categoryFirst: opts.categoryFirst,
+              includeDescendants: opts.includeDescendants,
+              geoAppend: opts.geoAppend,
+              // Property passthrough
+              listingType: opts.listingType as any,
+              listingTypeMode: opts.listingTypeMode as any,
+              view: 'grid',
+            } as any,
+            { mapCards: true },
+          );
+          return { items: res.items, total: res.total, currentPage: res.page } as any;
+        }
+        // Legacy path
+        const fallback = await this.productsService.findFiltered({
+          page,
+          perPage,
+          sort: (opts.sort as any) || ('rating_desc' as any),
+          geoPriority: true,
+          userCity: opts.userCity,
+          userRegion: opts.userRegion,
+          userCountry: opts.userCountry,
+          categoryId: Array.isArray(opts.categoryId) ? opts.categoryId : undefined,
+          categorySlug: opts.categorySlug,
+          categoryFirst: opts.categoryFirst,
+          includeDescendants: opts.includeDescendants,
+          geoAppend: opts.geoAppend,
+          listing_type: opts.listingType as any,
+          listingTypeMode: opts.listingTypeMode as any,
+          view: 'grid',
+        } as any);
+        return fallback as any;
+      } catch (e: any) {
+        this.logger.error('Failed to get exploreProducts', e);
         errors.push({ section: 'exploreProducts', message: e?.message || 'explore failed' });
         return { items: [], total: 0, currentPage: page } as any;
-      });
+      }
+    })();
 
     // 4) Featured vendors: leverage public listing with thresholds
     // Use raw SQL to completely avoid accidental enum casts (e.g., verificationStatus enum)
@@ -227,6 +281,7 @@ export class HomeService {
         >>;
         return { items: rows as any[] };
       } catch (e: any) {
+        this.logger.error('Failed to get featuredVendors', e);
         errors.push({ section: 'featuredVendors', message: e?.message || 'vendors failed' });
         return { items: [] };
       }
@@ -269,7 +324,7 @@ export class HomeService {
         },
       })),
       exploreProducts: {
-        items: explore.items,
+        items: (explore.items || []).map((p: any) => toProductCard(p)),
         total: explore.total,
         page: (explore as any).currentPage || page,
       },

@@ -132,6 +132,7 @@ export class ProductsService {
       furnished,
       rentPeriod,
       attributes,
+      downloadKey,
       ...rest
     } = data;
 
@@ -179,6 +180,15 @@ export class ProductsService {
       attributes: this.sanitizeAttributes(attributes) ?? {},
   imageUrl: images.length > 0 ? images[0].src : null,
     });
+
+    // If a downloadKey is provided explicitly, mirror it into attributes for digital products
+    try {
+      const attrs = (product.attributes && typeof product.attributes === 'object') ? (product.attributes as Record<string, any>) : {};
+      if (typeof downloadKey === 'string' && downloadKey && !attrs.downloadKey) {
+        attrs.downloadKey = downloadKey;
+        product.attributes = attrs as any;
+      }
+    } catch {}
 
     if (tags.length) {
       product.tags = await this.assignTags(tags);
@@ -657,6 +667,10 @@ export class ProductsService {
       bedrooms_max,
       bedroomsMin,
       bedroomsMax,
+      lat,
+      lng,
+      distanceKm: maxDistanceKm,
+      radiusKm,
     } = filters as any;
     // categoryId can be an array (DTO transforms comma-separated query into number[])
     const categoryIds: number[] = Array.isArray(rawCategoryId)
@@ -799,10 +813,39 @@ export class ProductsService {
       qb.andWhere('product.bathrooms <= :bathsMax', { bathsMax });
 
     // Geo handling
+    // Optional distance computation (vendor.locationLat/Lng -> product.distanceKm)
+    const latNum = Number(lat);
+    const lngNum = Number(lng);
+    const hasCoords = Number.isFinite(latNum) && Number.isFinite(lngNum);
+    const radius = Number.isFinite(Number(radiusKm))
+      ? Math.max(0, Number(radiusKm))
+      : Number.isFinite(Number(maxDistanceKm))
+      ? Math.max(0, Number(maxDistanceKm))
+      : undefined;
+    if (hasCoords) {
+      // Haversine formula (km). Earth radius ~6371km.
+      const dExpr = `CASE WHEN vendor."locationLat" IS NULL OR vendor."locationLng" IS NULL THEN NULL ELSE (
+        2 * 6371 * ASIN(
+          SQRT(
+            POWER(SIN(RADIANS((vendor."locationLat" - :lat) / 2)), 2) +
+            COS(RADIANS(:lat)) * COS(RADIANS(vendor."locationLat")) *
+            POWER(SIN(RADIANS((vendor."locationLng" - :lng) / 2)), 2)
+          )
+        )
+      ) END`;
+      qb.addSelect(dExpr, 'distance_km').setParameters({ lat: latNum, lng: lngNum });
+      // Radius filter if provided
+      if (typeof radius === 'number' && isFinite(radius) && radius > 0) {
+        qb.andWhere(`(${dExpr}) <= :radiusKm`, { lat: latNum, lng: lngNum, radiusKm: radius });
+      }
+    }
     // If geoPriority mode is enabled, we DO NOT hard filter; we rank by proximity of vendor profile fields to user provided geo.
     // Otherwise, we apply strict filters if supplied.
     let addedGeoRank = false;
     if (geoPriority) {
+      // Property-aware geo rank: prefer product.listing_city for Property/Real Estate categories
+      const propIds = await this.getPropertySubtreeIds().catch(() => []);
+      const hasPropCats = Array.isArray(propIds) && propIds.length > 0 ? 1 : 0;
       // Normalize inputs and parameterize to avoid SQL injection
       const eaList = (filters as any).eastAfrica
         ? String((filters as any).eastAfrica)
@@ -814,6 +857,7 @@ export class ProductsService {
       const uci = userCity || city || '';
       const eastAfricaSqlList = eaList.map((_, i) => `:ea${i}`).join(',');
       const geoRankExpr = `CASE 
+        WHEN (:uci <> '' AND LOWER(product."listing_city") = LOWER(:uci) AND :hasProp = 1 AND category.id IN (:...propIds)) THEN 5
         WHEN (:uci <> '' AND LOWER(vendor."registrationCity") = LOWER(:uci)) THEN 4
         WHEN (:ur <> '' AND LOWER(vendor."registrationRegion") = LOWER(:ur)) THEN 3
         WHEN (:uc <> '' AND LOWER(vendor."registrationCountry") = LOWER(:uc)) THEN 2
@@ -823,6 +867,8 @@ export class ProductsService {
         uci,
         ur,
         uc,
+        hasProp: hasPropCats,
+        propIds: hasPropCats ? propIds : [0],
         ...Object.fromEntries(eaList.map((v, i) => [`ea${i}`, v])),
       });
       addedGeoRank = true;
@@ -870,10 +916,28 @@ export class ProductsService {
     }
 
     // Sorting options
-    // Default: newest first
-    if (!sort || sort === 'created_desc' || sort === '') {
+    // best_match: geo (if any) -> sales -> rating -> recency
+    if (sort === 'best_match') {
       if (addedGeoRank) qb.orderBy('geo_rank', 'DESC');
+      qb.addOrderBy('product.sales_count', 'DESC', 'NULLS LAST')
+        .addOrderBy('product.average_rating', 'DESC', 'NULLS LAST')
+        .addOrderBy('product.rating_count', 'DESC', 'NULLS LAST')
+        .addOrderBy('product.createdAt', 'DESC');
+    } else if ((sort === 'distance_asc' || sort === 'distance_desc') && hasCoords) {
+      // Distance sort when coordinates available; fallback to createdAt
+      if (addedGeoRank) qb.orderBy('geo_rank', 'DESC');
+      qb.addOrderBy('distance_km', sort === 'distance_desc' ? 'DESC' : 'ASC', 'NULLS LAST');
       qb.addOrderBy('product.createdAt', 'DESC');
+    } else if (!sort || sort === 'created_desc' || sort === '') {
+      // If geoPriority is active but no explicit sort, approximate best_match; otherwise use recency
+      if (addedGeoRank) {
+        qb.orderBy('geo_rank', 'DESC');
+        qb.addOrderBy('product.sales_count', 'DESC', 'NULLS LAST')
+          .addOrderBy('product.average_rating', 'DESC', 'NULLS LAST')
+          .addOrderBy('product.createdAt', 'DESC');
+      } else {
+        qb.addOrderBy('product.createdAt', 'DESC');
+      }
     } else if (sort === 'price_asc') {
       if (addedGeoRank) qb.orderBy('geo_rank', 'DESC');
       qb.addOrderBy('product.price', 'ASC', 'NULLS LAST');
@@ -904,6 +968,9 @@ export class ProductsService {
 
     // If asked to prioritize category subtree first, perform union-like pagination
   if (categoryFirst && subtreeIds && subtreeIds.length) {
+      // Precompute property subtree ids for geo ranking in this branch
+      const propIdsLocal = await this.getPropertySubtreeIds().catch(() => []);
+      const hasPropCatsLocal = Array.isArray(propIdsLocal) && propIdsLocal.length > 0 ? 1 : 0;
       // Helper to build a base QB with all filters except the category constraint
       const buildBase = () => {
         const q = this.productRepo
@@ -1005,7 +1072,7 @@ export class ProductsService {
         if (bathsMaxLocal !== undefined)
           q.andWhere('product.bathrooms <= :bathsMaxLocal', { bathsMaxLocal });
 
-        // Geo handling
+  // Geo handling
         let addedGeoRankLocal = false;
         if (geoPriority) {
           const eaList = (filters as any).eastAfrica
@@ -1020,6 +1087,7 @@ export class ProductsService {
             .map((_, i) => `:ea_local_${i}`)
             .join(',');
           const geoRankExpr = `CASE 
+        WHEN (:uci_local <> '' AND LOWER(product."listing_city") = LOWER(:uci_local) AND :hasProp_local = 1 AND category.id IN (:...propIds_local)) THEN 5
         WHEN (:uci_local <> '' AND LOWER(vendor."registrationCity") = LOWER(:uci_local)) THEN 4
         WHEN (:ur_local <> '' AND LOWER(vendor."registrationRegion") = LOWER(:ur_local)) THEN 3
         WHEN (:uc_local <> '' AND LOWER(vendor."registrationCountry") = LOWER(:uc_local)) THEN 2
@@ -1029,6 +1097,8 @@ export class ProductsService {
             uci_local: uci,
             ur_local: ur,
             uc_local: uc,
+            hasProp_local: hasPropCatsLocal,
+            propIds_local: hasPropCatsLocal ? propIdsLocal : [0],
             ...Object.fromEntries(eaList.map((v, i) => [`ea_local_${i}`, v])),
           });
           addedGeoRankLocal = true;
@@ -1047,10 +1117,43 @@ export class ProductsService {
             });
         }
 
+        // Optional distance computation (repeated for local builder)
+        if (hasCoords) {
+          const dExpr = `CASE WHEN vendor."locationLat" IS NULL OR vendor."locationLng" IS NULL THEN NULL ELSE (
+            2 * 6371 * ASIN(
+              SQRT(
+                POWER(SIN(RADIANS((vendor."locationLat" - :lat) / 2)), 2) +
+                COS(RADIANS(:lat)) * COS(RADIANS(vendor."locationLat")) *
+                POWER(SIN(RADIANS((vendor."locationLng" - :lng) / 2)), 2)
+              )
+            )
+          ) END`;
+          q.addSelect(dExpr, 'distance_km').setParameters({ lat: latNum, lng: lngNum });
+          if (typeof radius === 'number' && isFinite(radius) && radius > 0) {
+            q.andWhere(`(${dExpr}) <= :radiusKm`, { lat: latNum, lng: lngNum, radiusKm: radius });
+          }
+        }
+
         // Sorting
-        if (!sort || sort === 'created_desc' || sort === '') {
+        if (sort === 'best_match') {
           if (addedGeoRankLocal) q.orderBy('geo_rank', 'DESC');
+          q.addOrderBy('product.sales_count', 'DESC', 'NULLS LAST')
+            .addOrderBy('product.average_rating', 'DESC', 'NULLS LAST')
+            .addOrderBy('product.rating_count', 'DESC', 'NULLS LAST')
+            .addOrderBy('product.createdAt', 'DESC');
+        } else if ((sort === 'distance_asc' || sort === 'distance_desc') && hasCoords) {
+          if (addedGeoRankLocal) q.orderBy('geo_rank', 'DESC');
+          q.addOrderBy('distance_km', sort === 'distance_desc' ? 'DESC' : 'ASC', 'NULLS LAST');
           q.addOrderBy('product.createdAt', 'DESC');
+        } else if (!sort || sort === 'created_desc' || sort === '') {
+          if (addedGeoRankLocal) {
+            q.orderBy('geo_rank', 'DESC');
+            q.addOrderBy('product.sales_count', 'DESC', 'NULLS LAST')
+              .addOrderBy('product.average_rating', 'DESC', 'NULLS LAST')
+              .addOrderBy('product.createdAt', 'DESC');
+          } else {
+            q.addOrderBy('product.createdAt', 'DESC');
+          }
         } else if (sort === 'price_asc') {
           if (addedGeoRankLocal) q.orderBy('geo_rank', 'DESC');
           q.addOrderBy('product.price', 'ASC', 'NULLS LAST');
@@ -1143,12 +1246,11 @@ export class ProductsService {
         } catch {}
       }
       return {
-        items,
-        total,
+        items: items || [],
+        total: total || 0,
         perPage,
         currentPage: page,
         totalPages: Math.ceil(total / perPage),
-        meta: { union: { primaryTotal, othersTotal, geoAppended } },
       } as any;
     }
 
@@ -1162,8 +1264,8 @@ export class ProductsService {
     }
 
     return {
-      items,
-      total,
+      items: items || [],
+      total: total || 0,
       perPage,
       currentPage: page,
       totalPages: Math.ceil(total / perPage),
@@ -1506,6 +1608,7 @@ export class ProductsService {
       furnished,
       rentPeriod,
       attributes,
+      downloadKey,
       ...rest
     } = updateData;
     // Update simple properties
@@ -1553,6 +1656,14 @@ export class ProductsService {
       product.rentPeriod = (rentPeriod as any) ?? null;
     if (attributes !== undefined)
       product.attributes = this.sanitizeAttributes(attributes) as any;
+    // Mirror explicit downloadKey into attributes for digital products
+    try {
+      if (typeof downloadKey === 'string' && downloadKey) {
+        const attrs = (product.attributes && typeof product.attributes === 'object') ? { ...(product.attributes as any) } : {};
+        if (!attrs.downloadKey) attrs.downloadKey = downloadKey;
+        product.attributes = attrs as any;
+      }
+    } catch {}
     // Property validations using resulting state
     const finalCategory = product.category;
     const finalListingCity =

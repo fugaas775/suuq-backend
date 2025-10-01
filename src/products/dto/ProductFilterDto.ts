@@ -137,15 +137,45 @@ export class ProductFilterDto {
   @Transform(({ value }) => {
     if (typeof value !== 'string') return undefined;
     const v = value.trim().toLowerCase();
+    // Normalize synonyms to canonical values
+    const alias: Record<string, string> = {
+      best: 'best_match',
+      'best-match': 'best_match',
+      'best match': 'best_match',
+      relevant: 'best_match',
+      relevance: 'best_match',
+      popular: 'sales_desc',
+      newest: 'created_desc',
+      'newest-first': 'created_desc',
+      'newest first': 'created_desc',
+      'price:low-to-high': 'price_asc',
+      'price low to high': 'price_asc',
+      'price-low-to-high': 'price_asc',
+      'price:high-to-low': 'price_desc',
+      'price high to low': 'price_desc',
+      'price-high-to-low': 'price_desc',
+      'top-rated': 'rating_desc',
+      'top rated': 'rating_desc',
+      distance: 'distance_asc',
+      nearest: 'distance_asc',
+      nearby: 'distance_asc',
+      proximity: 'distance_asc',
+      farthest: 'distance_desc',
+    };
+    const norm = alias[v] || v;
     const allowed = new Set([
+      'best_match',
       'sales_desc',
       'rating_desc',
+      'views_desc',
       'price_asc',
       'price_desc',
       'created_desc',
       'created_asc',
+      'distance_asc',
+      'distance_desc',
     ]);
-    return allowed.has(v) ? v : undefined;
+    return allowed.has(norm) ? norm : undefined;
   })
   sort?: string;
 
@@ -290,4 +320,15 @@ export class ProductFilterDto {
   @Type(() => Number)
   @IsNumber()
   distanceKm?: number;
+
+  // Optional radius (in kilometers) for nearby filtering; accepts aliases: radius, radius_km, nearbyRadius, radiusKm
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Transform(({ value, obj }) => {
+    const raw = value ?? obj?.radius ?? obj?.radius_km ?? obj?.nearbyRadius ?? obj?.radiusKm;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : undefined;
+  })
+  radiusKm?: number;
 }

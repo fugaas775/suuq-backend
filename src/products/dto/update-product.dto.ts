@@ -123,6 +123,12 @@ export class UpdateProductDto {
   @ApiPropertyOptional({ enum: ['physical', 'digital', 'service', 'property'] })
   productType?: 'physical' | 'digital' | 'service' | 'property';
 
+  // Object storage key for digital products (alias to attributes.downloadKey)
+  @IsOptional()
+  @IsString()
+  @ApiPropertyOptional({ description: 'Object storage key for digital products; mirrors attributes.downloadKey', example: 'files/books/ebook.pdf' })
+  downloadKey?: string;
+
   @IsOptional()
   @ApiPropertyOptional({ description: 'Arbitrary attributes bag; may include canonical digital structure under digital' })
   attributes?: Record<string, any> & { digital?: DigitalAttributesDtoU };

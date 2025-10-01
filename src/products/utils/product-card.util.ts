@@ -21,6 +21,8 @@ export type ProductCard = {
   categoryId?: number | null;
   listingType?: 'sale' | 'rent' | null;
   listingCity?: string | null;
+  // Optional server-computed distance in kilometers
+  distanceKm?: number;
   createdAt: string; // ISO string for client compatibility
   vendor?: {
     id: number;
@@ -109,6 +111,7 @@ export function toProductCard(p: Product): ProductCard {
     categoryId: (p as any).category?.id ?? null,
     listingType: (p as any).listingType ?? null,
     listingCity: (p as any).listingCity ?? null,
+    distanceKm: (p as any).distance_km ?? (p as any).distanceKm,
     createdAt: p.createdAt instanceof Date ? p.createdAt.toISOString() : (typeof (p as any).createdAt === 'string' ? (p as any).createdAt : new Date().toISOString()),
     vendor: vendor
       ? {

@@ -18,6 +18,7 @@ import { AuditModule } from '../audit/audit.module';
 import { HomeModule } from '../home/home.module';
 import { FavoritesModule } from '../favorites/favorites.module';
 import { ReviewsModule } from '../reviews/reviews.module';
+import { ProductListingModule } from './listing/product-listing.module';
 
 @Module({
   imports: [
@@ -38,9 +39,10 @@ import { ReviewsModule } from '../reviews/reviews.module';
   AuditModule,
   FavoritesModule,
   ReviewsModule,
+  ProductListingModule,
   ],
   providers: [ProductsService],
   controllers: [ProductsController, ProductsV1Controller],
-  exports: [ProductsService],
+  exports: [ProductsService, ProductListingModule],
 })
 export class ProductsModule {}

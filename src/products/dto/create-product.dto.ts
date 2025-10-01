@@ -164,6 +164,12 @@ export class CreateProductDto {
   @ApiPropertyOptional({ enum: ['physical', 'digital', 'service', 'property'] })
   productType?: 'physical' | 'digital' | 'service' | 'property';
 
+  // Object storage key for digital products (alias to attributes.downloadKey)
+  @IsOptional()
+  @IsString()
+  @ApiPropertyOptional({ description: 'Object storage key for digital products; mirrors attributes.downloadKey', example: 'files/books/ebook.pdf' })
+  downloadKey?: string;
+
   // Free-form attributes bag for extensibility (e.g., videoUrl)
   @IsOptional()
   // Note: kept untyped here for flexibility; validate specific keys server-side if needed

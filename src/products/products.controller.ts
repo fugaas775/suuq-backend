@@ -146,6 +146,43 @@ export class ProductsController {
         }
       }
 
+      // Derive user geo from headers if not explicitly provided
+      const cityHeader = String(
+        (req?.headers?.['x-user-city'] as string | undefined) ||
+          (req?.headers?.['x-city'] as string | undefined) ||
+          '',
+      );
+      const countryHeader = String(
+        (req?.headers?.['x-user-country'] as string | undefined) ||
+          (req?.headers?.['x-country'] as string | undefined) ||
+          (req?.headers?.['cf-ipcountry'] as string | undefined) ||
+          (req?.headers?.['x-vercel-ip-country'] as string | undefined) ||
+          (req?.headers?.['x-country-code'] as string | undefined) ||
+          '',
+      );
+      if (!filters.userCity && cityHeader) (filters as any).userCity = cityHeader;
+      if (!filters.userCountry && countryHeader) (filters as any).userCountry = countryHeader;
+
+      // Legacy default: when no explicit sort provided, use recency so freshly created items (like test seeds) appear
+      if (!filters.sort) {
+        (filters as any).sort = 'created_desc';
+        // Do not force geoPriority globally here; keep behavior stable for legacy /products
+      }
+      // Make geo ranking the default for category browsing
+      const hasCategoryContext = (Array.isArray(filters.categoryId) && filters.categoryId.length > 0) || !!filters.categorySlug;
+      if (hasCategoryContext) {
+        if (typeof filters.geoPriority === 'undefined') (filters as any).geoPriority = true;
+        // Prefer pulling the whole subtree and prioritizing it first, then top up
+        if (typeof filters.includeDescendants === 'undefined') (filters as any).includeDescendants = true;
+        if (typeof filters.categoryFirst === 'undefined') (filters as any).categoryFirst = true;
+        if (typeof (filters as any).geoAppend === 'undefined') (filters as any).geoAppend = true;
+        // Unless client chose a specific sort, default to best_match
+        const s = (filters as any).sort;
+        if (!s || s === '' || s === 'created_desc') (filters as any).sort = 'best_match';
+        // Default East Africa scope
+        if (!(filters as any).eastAfrica) (filters as any).eastAfrica = 'ET,SO,KE,DJ';
+      }
+
   const result = await this.productsService.findFiltered(filters);
 
       // Derive vendorHits (distribution of vendors in the current result set)
@@ -349,6 +386,13 @@ export class ProductsController {
       if (Array.isArray(aliasArr) && aliasArr.length > 0) {
         (filters as any).categoryId = aliasArr as any;
       }
+    }
+
+    // Global default Best Match when sort not provided
+    if (!(filters as any).sort) {
+      (filters as any).sort = 'best_match';
+      if (typeof (filters as any).geoPriority === 'undefined') (filters as any).geoPriority = true;
+      if ((filters as any).geoPriority && !(filters as any).eastAfrica) (filters as any).eastAfrica = 'ET,SO,KE,DJ';
     }
 
     const result = await this.productsService.findFiltered(filters);
