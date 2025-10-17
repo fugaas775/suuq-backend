@@ -295,6 +295,9 @@ export class ProductsController {
             '',
         );
         const city =
+          ((filters as unknown as Record<string, unknown>).user_city as
+            | string
+            | undefined) ||
           ((filters as unknown as Record<string, unknown>).userCity as
             | string
             | undefined) ||
@@ -304,6 +307,9 @@ export class ProductsController {
           cityHeader ||
           '';
         const country = (
+          ((filters as unknown as Record<string, unknown>).user_country as
+            | string
+            | undefined) ||
           ((filters as unknown as Record<string, unknown>).userCountry as
             | string
             | undefined) ||
@@ -459,12 +465,14 @@ export class ProductsController {
       if (m && m[1]) alCountry = m[1];
     }
     const city = (
+      req?.query?.user_city ||
       req?.query?.userCity ||
       req?.query?.city ||
       cityHeader ||
       ''
     ).toString();
     const country = (
+      req?.query?.user_country ||
       req?.query?.userCountry ||
       req?.query?.country ||
       countryHeader ||
@@ -493,9 +501,9 @@ export class ProductsController {
       typeof q.view === 'string' && (q.view === 'grid' || q.view === 'full')
         ? (q.view as 'grid' | 'full')
         : 'grid';
-    const city = q.userCity || q.city;
-    const region = q.userRegion || q.region;
-    const country = q.userCountry || q.country;
+  const city = q.user_city || q.userCity || q.city;
+  const region = q.user_region || q.userRegion || q.region;
+  const country = q.user_country || q.userCountry || q.country;
     const data = await this.homeService.getHomeFeed({
       perSection,
       userCity: city,

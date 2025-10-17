@@ -122,8 +122,29 @@ export class UsersController {
   @Roles(UserRole.ADMIN)
   async getUser(
     @Param('id', ParseIntPipe) id: number,
-  ): Promise<UserResponseDto> {
+    @Req() req: AuthenticatedRequest,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<UserResponseDto | undefined> {
     const user = await this.usersService.findById(id);
+    // Build a weak ETag based on stable fields: id + updatedAt timestamp (ms) + verification status
+    const updated = (user as any)?.updatedAt?.getTime?.() || 0;
+    const tagBase = `${user.id}:${updated}:${user.verificationStatus || ''}`;
+    // Simple hash (FNV-1a like) for compactness
+    let hash = 2166136261;
+    for (let i = 0; i < tagBase.length; i++) {
+      hash ^= tagBase.charCodeAt(i);
+      hash = (hash * 16777619) >>> 0;
+    }
+    const etag = 'W/"u-' + hash.toString(16) + '"';
+    const ifNoneMatch = req.headers['if-none-match'];
+    if (ifNoneMatch && ifNoneMatch === etag) {
+      res.setHeader('ETag', etag);
+      res.status(304);
+      return; // no body
+    }
+    res.setHeader('ETag', etag);
+    // Cache hints for intermediaries / browser (can be tuned)
+    res.setHeader('Cache-Control', 'private, max-age=15');
     return plainToInstance(UserResponseDto, user, {
       excludeExtraneousValues: true,
     });

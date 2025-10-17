@@ -540,52 +540,62 @@ export class ProductsService {
     const qNorm = this.normalizeQuery(q);
     if (!qNorm || qNorm.length < 2) return;
     try {
-      const existing = await this.searchKeywordRepo.findOne({
-        where: { qNorm },
-      });
-      if (existing) {
-        existing.totalCount = (existing.totalCount || 0) + 1;
-        if (kind === 'suggest')
-          existing.suggestCount = (existing.suggestCount || 0) + 1;
-        if (kind === 'submit')
-          existing.submitCount = (existing.submitCount || 0) + 1;
-        if (meta?.results !== undefined) existing.lastResults = meta.results;
-        if (meta?.ip) existing.lastIp = meta.ip.slice(0, 64);
-        if (meta?.ua) existing.lastUa = meta.ua.slice(0, 256);
-        if (meta?.city) existing.lastCity = meta.city.slice(0, 128);
-        if (meta?.vendorName)
-          existing.lastVendorName = meta.vendorName.slice(0, 256);
-        if (meta?.country)
-          existing.lastCountry = meta.country.slice(0, 2).toUpperCase();
-        if (meta?.vendorHits)
-          (existing as any).vendorHits = Array.isArray(meta.vendorHits)
-            ? meta.vendorHits
-            : null;
-        await this.searchKeywordRepo.save(existing);
-      } else {
-        const row = this.searchKeywordRepo.create({
-          q: q.slice(0, 256),
-          qNorm,
-          totalCount: 1,
-          suggestCount: kind === 'suggest' ? 1 : 0,
-          submitCount: kind === 'submit' ? 1 : 0,
-          lastResults: meta?.results ?? null,
-          lastIp: meta?.ip?.slice(0, 64) || null,
-          lastUa: meta?.ua?.slice(0, 256) || null,
-          lastCity: meta?.city ? meta.city.slice(0, 128) : null,
-          lastVendorName: meta?.vendorName
-            ? meta.vendorName.slice(0, 256)
-            : null,
-          lastCountry: meta?.country
-            ? meta.country.slice(0, 2).toUpperCase()
-            : null,
-          vendorHits:
-            meta?.vendorHits && Array.isArray(meta.vendorHits)
-              ? meta.vendorHits
-              : null,
-        });
-        await this.searchKeywordRepo.save(row);
-      }
+      const params = {
+        q: q.slice(0, 256),
+        qNorm,
+        lastResults: meta?.results ?? null,
+        lastIp: meta?.ip ? meta.ip.slice(0, 64) : null,
+        lastUa: meta?.ua ? meta.ua.slice(0, 256) : null,
+        lastCity: meta?.city ? meta.city.slice(0, 128) : null,
+        lastVendorName: meta?.vendorName ? meta.vendorName.slice(0, 256) : null,
+        lastCountry: meta?.country
+          ? meta.country.slice(0, 2).toUpperCase()
+          : null,
+        vendorHits: meta?.vendorHits && Array.isArray(meta.vendorHits)
+          ? JSON.stringify(meta.vendorHits)
+          : null,
+        isSuggest: kind === 'suggest' ? 1 : 0,
+        isSubmit: kind === 'submit' ? 1 : 0,
+      } as const;
+
+      // Use INSERT ... ON CONFLICT for atomic counters. vendor_hits JSON passed as text → cast to jsonb.
+      await this.searchKeywordRepo.query(
+        `INSERT INTO search_keyword (
+            q, q_norm, total_count, suggest_count, submit_count, last_results,
+            last_ip, last_ua, last_city, last_vendor_name, last_country, vendor_hits
+          ) VALUES (
+            $1, $2, 1, $3, $4, $5,
+            $6, $7, $8, $9, $10, $11::jsonb
+          )
+          ON CONFLICT (q_norm)
+          DO UPDATE SET
+            total_count = search_keyword.total_count + 1,
+            suggest_count = search_keyword.suggest_count + EXCLUDED.suggest_count,
+            submit_count = search_keyword.submit_count + EXCLUDED.submit_count,
+            last_results = EXCLUDED.last_results,
+            last_ip = COALESCE(EXCLUDED.last_ip, search_keyword.last_ip),
+            last_ua = COALESCE(EXCLUDED.last_ua, search_keyword.last_ua),
+            last_city = COALESCE(EXCLUDED.last_city, search_keyword.last_city),
+            last_vendor_name = COALESCE(EXCLUDED.last_vendor_name, search_keyword.last_vendor_name),
+            last_country = COALESCE(EXCLUDED.last_country, search_keyword.last_country),
+            vendor_hits = COALESCE(EXCLUDED.vendor_hits, search_keyword.vendor_hits),
+            last_seen_at = now();
+        `,
+        [
+          params.q,
+          params.qNorm,
+            // treat counts
+          params.isSuggest,
+          params.isSubmit,
+          params.lastResults,
+          params.lastIp,
+          params.lastUa,
+          params.lastCity,
+          params.lastVendorName,
+          params.lastCountry,
+          params.vendorHits,
+        ],
+      );
     } catch (e) {
       this.logger.warn(`recordSearchKeyword failed: ${e?.message || e}`);
     }
@@ -775,6 +785,8 @@ export class ProductsService {
       if (listingTypeMode === 'priority') {
         // Priority mode: do NOT filter, but rank matching listing_type highest
         qb.addSelect(`CASE WHEN product.listing_type = :lt THEN 1 ELSE 0 END`, 'lt_priority_rank');
+        // Ensure the :lt parameter is bound; otherwise Postgres will see a raw ':' and error
+        qb.setParameter('lt', ltValid);
   qb.addOrderBy('lt_priority_rank', 'DESC');
       } else {
         qb.andWhere('product.listing_type = :lt', { lt: ltValid });
@@ -1039,6 +1051,8 @@ export class ProductsService {
         if (ltValidLocal) {
           if (listingTypeMode === 'priority') {
             q.addSelect(`CASE WHEN product.listing_type = :ltLocal THEN 1 ELSE 0 END`, 'lt_priority_rank');
+            // Bind parameter used inside addSelect expression
+            q.setParameter('ltLocal', ltValidLocal);
             q.addOrderBy('lt_priority_rank', 'DESC');
           } else {
             q.andWhere('product.listing_type = :ltLocal', { ltLocal: ltValidLocal });

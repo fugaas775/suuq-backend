@@ -21,6 +21,7 @@ import {
 } from '../users/entities/user.entity';
 import { DoSpacesService } from '../media/do-spaces.service';
 import { VerificationService } from './verification.service';
+import { VerificationMethod } from '../users/entities/user.entity';
 
 @Controller('verification')
 export class VerificationController {
@@ -79,6 +80,7 @@ export class VerificationController {
 
     await this.usersService.update(userId, {
       verificationStatus: VerificationStatus.PENDING,
+      verificationMethod: VerificationMethod.MANUAL,
       verificationDocuments,
     });
 

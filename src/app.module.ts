@@ -39,7 +39,7 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { FavoritesModule } from './favorites/favorites.module';
 import { HealthModule } from './health/health.module';
-// import { ModerationModule } from './moderation/moderation.module';
+import { ModerationModule } from './moderation/moderation.module';
 
 @Module({
   imports: [
@@ -80,7 +80,7 @@ import { HealthModule } from './health/health.module';
   HealthModule,
   RedisModule,
   RolesModule,
-  // ModerationModule,
+  ModerationModule,
   ],
   controllers: [AppController],
   // Apply rate limiting globally

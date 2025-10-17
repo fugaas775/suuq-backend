@@ -7,35 +7,56 @@ import { UserRole } from '../../auth/roles.enum';
 export class RolesGuard implements CanActivate {
   constructor(private reflector: Reflector) {}
 
-  canActivate(context: ExecutionContext): boolean {
-    // Get the roles required for the specific route handler or controller
-    const requiredRoles = this.reflector.getAllAndOverride<UserRole[]>(
-      ROLES_KEY,
-      [context.getHandler(), context.getClass()],
-    );
+  private static lastVerboseLogAt = 0; // per-process throttle timestamp
 
-    // If no roles are specified for an endpoint, grant access by default.
+  private verboseEnabled(): boolean {
+    return process.env.ROLES_GUARD_DEBUG === '1';
+  }
+
+  private maybeLog(requiredRoles: UserRole[] | undefined, user: any, granted: boolean) {
+    // Always log denials at DEBUG (can be redirected by logger configuration)
+    if (!granted) {
+      console.debug('[RolesGuard] DENY user roles=%s required=%s', JSON.stringify(user?.roles), JSON.stringify(requiredRoles));
+      return;
+    }
+    // Only log grants if explicit debug enabled and throttled (every 5s)
+    if (this.verboseEnabled()) {
+      const now = Date.now();
+      if (now - RolesGuard.lastVerboseLogAt > 5000) {
+        RolesGuard.lastVerboseLogAt = now;
+        console.debug('[RolesGuard] grant user roles=%s satisfies required=%s', JSON.stringify(user?.roles), JSON.stringify(requiredRoles));
+      }
+    }
+  }
+
+  canActivate(context: ExecutionContext): boolean {
+    const requiredRoles = this.reflector.getAllAndOverride<UserRole[]>(ROLES_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+
     if (!requiredRoles) {
+      // No roles required – implicitly granted (do not log unless verbose)
+      if (this.verboseEnabled()) {
+        this.maybeLog(undefined, context.switchToHttp().getRequest()?.user, true);
+      }
       return true;
     }
 
     const { user } = context.switchToHttp().getRequest();
-    // Debug log for roles
-    console.debug('[RolesGuard] user.roles:', user?.roles);
 
-    // If the request doesn't have a user object or the user has no roles, deny access.
     if (!user || !Array.isArray(user.roles)) {
+      this.maybeLog(requiredRoles, user, false);
       return false;
     }
 
-    // --- ✨ Updated Logic for Role Hierarchy ---
-
-    // 1. If the user has the SUPER_ADMIN role, grant them access to everything immediately.
     if (user.roles.includes(UserRole.SUPER_ADMIN)) {
+      this.maybeLog(requiredRoles, user, true);
       return true;
     }
 
-    // 2. For all other users, check if their roles array includes at least one of the required roles.
-    return requiredRoles.some((role) => user.roles.includes(role));
+    const granted = requiredRoles.some((role) => user.roles.includes(role));
+    this.maybeLog(requiredRoles, user, granted);
+    return granted;
   }
 }

@@ -14,9 +14,9 @@ export class HomeV1Controller {
   async feed(@Query() q: any) {
     const perSection = Math.min(Number(q.limit || q.per_page) || 10, 20);
     const view: 'grid' | 'full' = 'grid';
-    const city = q.userCity || q.city;
-    const region = q.userRegion || q.region;
-    const country = q.userCountry || q.country;
+  const city = q.user_city || q.userCity || q.city;
+  const region = q.user_region || q.userRegion || q.region;
+  const country = q.user_country || q.userCountry || q.country;
     const data = await this.home.getHomeFeed({
       perSection,
       userCity: city,

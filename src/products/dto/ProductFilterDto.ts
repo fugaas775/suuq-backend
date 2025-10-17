@@ -244,23 +244,28 @@ export class ProductFilterDto {
   @IsOptional()
   @Type(() => Boolean)
   @IsBoolean()
+  @Expose({ name: 'geo_priority' })
   geoPriority?: boolean;
 
   @IsOptional()
   @IsString()
+  @Expose({ name: 'user_country' })
   userCountry?: string;
 
   @IsOptional()
   @IsString()
+  @Expose({ name: 'user_region' })
   userRegion?: string;
 
   @IsOptional()
   @IsString()
+  @Expose({ name: 'user_city' })
   userCity?: string;
 
   // Optional comma-separated whitelist of countries for the region scope (defaults to ET,SO,KE,DJ)
   @IsOptional()
   @IsString()
+  @Expose({ name: 'east_africa' })
   eastAfrica?: string;
 
   // Optional: when category_first is true, top up page with geo-ranked items from outside the union (do not change total)
@@ -279,6 +284,7 @@ export class ProductFilterDto {
   // listingTypeMode: 'filter' (default) => restrict to that listingType; 'priority' => bring that listingType first but include others
   @IsOptional()
   @IsString()
+  @Expose({ name: 'listing_type_mode' })
   listingTypeMode?: string;
 
   @IsOptional()

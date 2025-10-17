@@ -15,9 +15,9 @@ export class HomeV2Controller {
       Math.max(Number(q.limit || q.per_page) || 20, 1),
       50,
     );
-    const city = q.userCity || q.city || undefined;
-    const region = q.userRegion || q.region || undefined;
-    const country = q.userCountry || q.country || undefined;
+  const city = q.user_city || q.userCity || q.city || undefined;
+  const region = q.user_region || q.userRegion || q.region || undefined;
+  const country = q.user_country || q.userCountry || q.country || undefined;
 
     // Category filters (accept id(s) or slug)
     const parseIds = (val: unknown): number[] | undefined => {

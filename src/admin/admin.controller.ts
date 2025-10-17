@@ -1,6 +1,7 @@
 import { UpdateUserRolesDto } from './dto/update-user-roles.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { AdminStatsDto } from './dto/admin-stats.dto';
+import { AssignDelivererDto } from './dto/assign-deliverer.dto';
 import {
   Controller,
   Get,
@@ -16,6 +17,8 @@ import {
   Put,
   BadRequestException,
   Delete,
+  Header,
+  UseInterceptors,
 } from '@nestjs/common';
 import { UsersService } from '../users/users.service';
 import { SkipThrottle } from '@nestjs/throttler';
@@ -28,9 +31,14 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { UserRole } from '../auth/roles.enum';
 import { CreateAdminDto } from './dto/create-admin.dto';
 import { BulkUserIdsDto } from './dto/bulk-user-ids.dto';
+import { ClassSerializerInterceptor, ParseEnumPipe } from '@nestjs/common';
+import { plainToInstance } from 'class-transformer';
+import { AdminUserResponseDto } from './dto/admin-user-response.dto';
+import { PaginationQueryDto } from '../common/dto/pagination-query.dto';
 
 // ✨ FINAL FIX: Use AuthGuard('jwt') to match your other working controllers
 @UseGuards(AuthGuard('jwt'), RolesGuard)
+@UseInterceptors(ClassSerializerInterceptor)
 @SkipThrottle()
 @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
 @Controller('admin')
@@ -44,21 +52,26 @@ export class AdminController {
   // ================== USER MANAGEMENT ENDPOINTS ==================
   @Get('users')
   async getAllUsers(
-    @Query('role') role?: string,
-    @Query('page') page = 1,
-    @Query('pageSize') pageSize = 20,
+    @Query('role', new ParseEnumPipe(UserRole, { optional: true })) role: UserRole | undefined,
+    @Query() { page, pageSize }: PaginationQueryDto,
   ) {
-    const userRole = role ? UserRole[role as keyof typeof UserRole] : undefined;
-    return this.usersService.findAll({
-      role: userRole,
-      page: Number(page),
-      pageSize: Number(pageSize),
-    });
+    return this.usersService.findAll({ role, page, pageSize });
   }
 
   @Get('users/:id')
   async getUser(@Param('id', ParseIntPipe) id: number) {
-    return this.usersService.findById(id);
+    const user = await this.usersService.findById(id);
+    const dto = plainToInstance(AdminUserResponseDto, user, {
+      excludeExtraneousValues: true,
+    });
+    // Ensure documents are present even if the entity property is @Exclude() on User
+    const docs = this.usersService.normalizeVerificationDocuments(
+      (user as any).verificationDocuments,
+    );
+    return {
+      ...(dto as any),
+      verificationDocuments: docs,
+    } as AdminUserResponseDto;
   }
 
   @Patch('users/:id')
@@ -93,10 +106,17 @@ export class AdminController {
     return this.usersService.deactivateUser(id);
   }
 
+  @Patch('users/:id/reactivate')
+  @HttpCode(HttpStatus.OK)
+  async reactivateUser(@Param('id', ParseIntPipe) id: number) {
+    return this.usersService.reactivate(id);
+  }
+
   @Delete('users/:id/hard')
   @Roles(UserRole.SUPER_ADMIN)
   @HttpCode(HttpStatus.NO_CONTENT)
   async hardDeleteUser(@Param('id', ParseIntPipe) id: number) {
+    // Performs anonymizing hard delete (scrubs PII & frees email; keeps row for FK integrity)
     await this.usersService.remove(id);
   }
 
@@ -141,141 +161,116 @@ export class AdminController {
   @Patch('orders/:id/assign-deliverer')
   async assignDeliverer(
     @Param('id', ParseIntPipe) id: number,
-    @Body('delivererId', ParseIntPipe) delivererId: number,
+    @Body() dto: AssignDelivererDto,
   ) {
+    const delivererId = this.ensureDelivererId(dto);
     return this.ordersService.assignDeliverer(id, delivererId);
   }
 
   // ===== Alias routes for frontend compatibility =====
   @Put('orders/:id/assign')
+  @Header('Deprecation', 'true')
   async assignDelivererPut(
     @Param('id', ParseIntPipe) id: number,
-    @Body() body: any,
-    @Query() query?: any,
+    @Body() body: AssignDelivererDto,
+    @Query() query?: AssignDelivererDto,
   ) {
-    const delivererId = Number(
-      body?.delivererId ??
-        body?.userId ??
-        body?.deliverer_id ??
-        body?.assigneeId ??
-        body?.driverId ??
-        body?.courierId ??
-        query?.delivererId ??
-        query?.userId,
-    );
-    if (!delivererId || Number.isNaN(delivererId)) {
-      throw new BadRequestException('delivererId is required');
-    }
+    const delivererId = this.ensureDelivererId(body?.delivererId ? body : query);
     return this.ordersService.assignDeliverer(id, delivererId);
   }
 
   @Patch('orders/:id/assign')
+  @Header('Deprecation', 'true')
   async assignDelivererAssignPatch(
     @Param('id', ParseIntPipe) id: number,
-    @Body() body: any,
-    @Query() query?: any,
+    @Body() body: AssignDelivererDto,
+    @Query() query?: AssignDelivererDto,
   ) {
-    const delivererId = Number(
-      body?.delivererId ??
-        body?.userId ??
-        body?.deliverer_id ??
-        body?.assigneeId ??
-        body?.driverId ??
-        body?.courierId ??
-        query?.delivererId ??
-        query?.userId,
-    );
-    if (!delivererId || Number.isNaN(delivererId)) {
-      throw new BadRequestException('delivererId is required');
-    }
+    const delivererId = this.ensureDelivererId(body?.delivererId ? body : query);
     return this.ordersService.assignDeliverer(id, delivererId);
   }
 
   @Post('orders/:id/assign')
+  @Header('Deprecation', 'true')
   async assignDelivererAssignPost(
     @Param('id', ParseIntPipe) id: number,
-    @Body() body: any,
-    @Query() query?: any,
+    @Body() body: AssignDelivererDto,
+    @Query() query?: AssignDelivererDto,
   ) {
-    const delivererId = Number(
-      body?.delivererId ??
-        body?.userId ??
-        body?.deliverer_id ??
-        body?.assigneeId ??
-        body?.driverId ??
-        body?.courierId ??
-        query?.delivererId ??
-        query?.userId,
-    );
-    if (!delivererId || Number.isNaN(delivererId)) {
-      throw new BadRequestException('delivererId is required');
-    }
+    const delivererId = this.ensureDelivererId(body?.delivererId ? body : query);
     return this.ordersService.assignDeliverer(id, delivererId);
   }
 
   @Patch('orders/:id/deliverer')
+  @Header('Deprecation', 'true')
   async assignDelivererPatch(
     @Param('id', ParseIntPipe) id: number,
-    @Body() body: any,
-    @Query() query?: any,
+    @Body() body: AssignDelivererDto,
+    @Query() query?: AssignDelivererDto,
   ) {
-    const delivererId = Number(
-      body?.delivererId ??
-        body?.userId ??
-        body?.deliverer_id ??
-        body?.assigneeId ??
-        body?.driverId ??
-        body?.courierId ??
-        query?.delivererId ??
-        query?.userId,
-    );
-    if (!delivererId || Number.isNaN(delivererId)) {
-      throw new BadRequestException('delivererId is required');
-    }
+    const delivererId = this.ensureDelivererId(body?.delivererId ? body : query);
     return this.ordersService.assignDeliverer(id, delivererId);
   }
 
   @Post('orders/:id/deliverer')
+  @Header('Deprecation', 'true')
   async assignDelivererPost(
     @Param('id', ParseIntPipe) id: number,
-    @Body() body: any,
-    @Query() query?: any,
+    @Body() body: AssignDelivererDto,
+    @Query() query?: AssignDelivererDto,
   ) {
-    const delivererId = Number(
-      body?.delivererId ??
-        body?.userId ??
-        body?.deliverer_id ??
-        body?.assigneeId ??
-        body?.driverId ??
-        body?.courierId ??
-        query?.delivererId ??
-        query?.userId,
-    );
-    if (!delivererId || Number.isNaN(delivererId)) {
-      throw new BadRequestException('delivererId is required');
-    }
+    const delivererId = this.ensureDelivererId(body?.delivererId ? body : query);
     return this.ordersService.assignDeliverer(id, delivererId);
   }
 
   // ================== PLATFORM STATS ENDPOINT ==================
   @Get('stats')
   async getStats(): Promise<AdminStatsDto> {
+    const [
+      totalUsers,
+      totalVendors,
+      totalCustomers,
+      totalAdmins,
+      totalRevenue,
+      totalOrders,
+      pendingWithdrawals,
+    ] = await Promise.all([
+      this.usersService.countAll(),
+      this.usersService.countByRole(UserRole.VENDOR),
+      this.usersService.countByRole(UserRole.CUSTOMER),
+      this.usersService.countByRole(UserRole.ADMIN),
+      this.ordersService.getTotalRevenue(),
+      this.ordersService.countAll(),
+      this.withdrawalsService.countPendingWithdrawals(),
+    ]);
+
     return {
-      totalUsers: await this.usersService.countAll(),
-      totalVendors: await this.usersService.countByRole(UserRole.VENDOR),
-      totalCustomers: await this.usersService.countByRole(UserRole.CUSTOMER),
-      totalAdmins: await this.usersService.countByRole(UserRole.ADMIN),
-      totalRevenue: await this.ordersService.getTotalRevenue(),
-      totalOrders: await this.ordersService.countAll(),
-      pendingWithdrawals:
-        await this.withdrawalsService.countPendingWithdrawals(),
+      totalUsers,
+      totalVendors,
+      totalCustomers,
+      totalAdmins,
+      totalRevenue,
+      totalOrders,
+      pendingWithdrawals,
     };
   }
 
   // ================== WITHDRAWAL MANAGEMENT ENDPOINTS ==================
   @Get('withdrawals')
-  async getAllWithdrawals(@Query('status') status?: WithdrawalStatus) {
+  async getAllWithdrawals(
+    @Query('status', new ParseEnumPipe(WithdrawalStatus, { optional: true }))
+    status?: WithdrawalStatus,
+  ) {
     return this.withdrawalsService.getAllWithdrawals(status);
+  }
+
+  // ===== Helpers =====
+  private ensureDelivererId(input?: AssignDelivererDto): number {
+    const delivererId = Number(input?.delivererId);
+    if (!delivererId || Number.isNaN(delivererId)) {
+      throw new BadRequestException('delivererId is required');
+    }
+    return delivererId;
   }
 
   @Patch('withdrawals/:id/approve')

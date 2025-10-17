@@ -205,6 +205,8 @@ async function bootstrap() {
             'secret',
             'authorization',
             'jwt',
+            'accessToken',
+            'refreshToken',
           ];
 
           for (const field of sensitiveFields) {

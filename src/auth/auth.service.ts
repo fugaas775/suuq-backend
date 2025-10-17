@@ -156,14 +156,25 @@ export class AuthService {
   ): Promise<{ accessToken: string; refreshToken: string; user: User }> {
     this.logger.log(`[login] Attempting login for user: ${dto.email}`);
     const user = await this.usersService.findByEmail(dto.email);
-
-    if (!user || !user.isActive || !user.password) {
-      throw new UnauthorizedException('Invalid credentials');
+    if (!user || !user.password) {
+      throw new UnauthorizedException({
+        code: 'INVALID_CREDENTIALS',
+        message: 'Invalid credentials',
+      });
+    }
+    if (!user.isActive) {
+      throw new UnauthorizedException({
+        code: 'USER_DEACTIVATED',
+        message: 'User account is deactivated.',
+      });
     }
 
     const isPasswordValid = await bcrypt.compare(dto.password, user.password);
     if (!isPasswordValid) {
-      throw new UnauthorizedException('Invalid credentials');
+      throw new UnauthorizedException({
+        code: 'INVALID_CREDENTIALS',
+        message: 'Invalid credentials',
+      });
     }
 
     return this.generateTokens(user);
@@ -175,9 +186,10 @@ export class AuthService {
     const idToken = dto.idToken;
     this.logger.log(`[googleLogin] Attempting Google login`);
     if (!this.oauthClient) {
-      throw new InternalServerErrorException(
-        'Google Sign-In is not configured on the server.',
-      );
+      throw new InternalServerErrorException({
+        code: 'GOOGLE_NOT_CONFIGURED',
+        message: 'Google Sign-In is not configured on the server.',
+      });
     }
 
     let googlePayload: TokenPayload | undefined;
@@ -192,13 +204,17 @@ export class AuthService {
       });
       googlePayload = ticket.getPayload();
     } catch {
-      throw new UnauthorizedException('Invalid Google token');
+      throw new UnauthorizedException({
+        code: 'INVALID_GOOGLE_TOKEN',
+        message: 'Invalid Google token',
+      });
     }
 
     if (!googlePayload?.email) {
-      throw new UnauthorizedException(
-        'Google account email not found in token',
-      );
+      throw new UnauthorizedException({
+        code: 'GOOGLE_EMAIL_MISSING',
+        message: 'Google account email not found in token',
+      });
     }
 
     let user = await this.usersService.findByEmail(googlePayload.email);
@@ -215,7 +231,10 @@ export class AuthService {
         roles: [UserRole.CUSTOMER],
       });
     } else if (!user.isActive) {
-      throw new UnauthorizedException('User account is deactivated.');
+      throw new UnauthorizedException({
+        code: 'USER_DEACTIVATED',
+        message: 'User account is deactivated.',
+      });
     }
 
     return this.generateTokens(user);
@@ -224,20 +243,49 @@ export class AuthService {
   async refreshToken(
     refreshToken: string,
   ): Promise<{ accessToken: string; refreshToken: string; user: User }> {
-    try {
-      const payload = this.jwtService.verify(refreshToken, {
-        secret: this.configService.get<string>('JWT_REFRESH_SECRET'),
-      });
-
-      const user = await this.usersService.findById(payload.sub);
-      if (!user || !user.isActive) {
-        throw new UnauthorizedException('User not found or inactive');
+    // Verify against current + previous refresh secrets. Fallback to JWT_SECRET to ensure
+    // backward compatibility if JWT_REFRESH_SECRET was previously unset.
+    const trySecrets = this.getRefreshVerificationSecrets();
+    let verified: any | null = null;
+    for (const sec of trySecrets) {
+      if (!sec) continue;
+      try {
+        verified = this.jwtService.verify(refreshToken, {
+          secret: sec,
+          // A tiny skew tolerance can reduce false negatives if clocks drift slightly
+          clockTolerance: 5,
+        } as any);
+        // If signature verified, stop trying others
+        break;
+      } catch (_e) {
+        // continue with next secret
       }
-
-      return this.generateTokens(user);
-    } catch {
-      throw new UnauthorizedException('Invalid or expired refresh token');
     }
+
+    if (!verified) {
+      throw new UnauthorizedException({
+        code: 'INVALID_REFRESH_TOKEN',
+        message: 'Invalid or expired refresh token',
+      });
+    }
+
+    // Enforce token type when present; tolerate absence for older tokens
+    if (verified.tokenType && verified.tokenType !== 'refresh') {
+      throw new UnauthorizedException({
+        code: 'INVALID_REFRESH_TOKEN',
+        message: 'Invalid or expired refresh token',
+      });
+    }
+
+    const user = await this.usersService.findById(verified.sub);
+    if (!user || !user.isActive) {
+      throw new UnauthorizedException({
+        code: 'USER_INACTIVE',
+        message: 'User not found or inactive',
+      });
+    }
+
+    return this.generateTokens(user);
   }
 
   private async generateTokens(
@@ -250,13 +298,40 @@ export class AuthService {
         secret: this.configService.get<string>('JWT_SECRET'),
         expiresIn: this.configService.get<string>('JWT_EXPIRES_IN'),
       }),
-      this.jwtService.signAsync(payload, {
+      this.jwtService.signAsync({ ...payload, tokenType: 'refresh' }, {
         secret: this.configService.get<string>('JWT_REFRESH_SECRET'),
         expiresIn: this.configService.get<string>('JWT_REFRESH_EXPIRES_IN'),
       }),
     ]);
 
     return { accessToken, refreshToken, user };
+  }
+
+  /**
+   * Build an ordered list of secrets to try when verifying refresh tokens.
+   * Order: current JWT_REFRESH_SECRET, JWT_REFRESH_PREVIOUS_SECRETS (comma-separated),
+   * and finally JWT_SECRET as a backward-compatible fallback.
+   */
+  private getRefreshVerificationSecrets(): string[] {
+    const current = this.configService.get<string>('JWT_REFRESH_SECRET');
+    const previousCsv = this.configService.get<string>(
+      'JWT_REFRESH_PREVIOUS_SECRETS',
+    );
+    const previous = (previousCsv || '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const fallback = this.configService.get<string>('JWT_SECRET');
+    const list = [current, ...previous, fallback].filter(
+      (s): s is string => typeof s === 'string' && s.length > 0,
+    );
+    if (!list.length) {
+      // No secrets configured; log a warning so operators can fix envs.
+      this.logger.warn(
+        'No refresh token verification secrets configured. Set JWT_REFRESH_SECRET.',
+      );
+    }
+    return list;
   }
 
   async forgotPassword(email: string): Promise<{ message: string }> {

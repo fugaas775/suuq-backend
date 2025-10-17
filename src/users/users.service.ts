@@ -72,13 +72,42 @@ export class UsersService {
   }
 
   /**
-   * Remove user by ID.
+   * Hard remove (anonymize) user by ID.
+   * Instead of physical DELETE (blocked by FK constraints like reviews),
+   * we scrub personal data, free the original email, and deactivate the account.
    */
   async remove(id: number): Promise<void> {
-    const result = await this.userRepository.delete(id);
-    if (result.affected === 0) {
+    const user = await this.userRepository.findOne({ where: { id } });
+    if (!user) {
       throw new NotFoundException(`User with ID "${id}" not found`);
     }
+    const tombstoneEmail = `deleted+${user.id}+${Date.now()}@deleted.local`;
+    // Preserve minimal row for FK integrity (reviews/products) while scrubbing PII.
+    user.email = tombstoneEmail;
+    user.displayName = 'Deleted User';
+    user.storeName = null as any;
+    user.avatarUrl = null as any;
+    user.vendorAvatarUrl = null as any;
+    user.phoneCountryCode = null as any;
+    user.phoneNumber = null as any;
+    user.isPhoneVerified = false;
+    user.businessLicenseInfo = null;
+    user.verificationDocuments = [];
+    user.verificationRejectionReason = null;
+    user.verificationReviewedBy = null;
+    user.verificationReviewedAt = null;
+    user.googleId = null as any;
+    user.bankAccountNumber = null as any;
+    user.bankName = null as any;
+    user.mobileMoneyNumber = null as any;
+    user.mobileMoneyProvider = null as any;
+    user.password = undefined; // remove hashed password so login impossible
+    user.isActive = false;
+    user.roles = [] as any; // no roles
+    user.deletedAt = new Date();
+    user.deletedBy = 'system';
+    await this.userRepository.save(user);
+    this.logger.log(`User anonymized instead of deleted id=${id}`);
   }
 
   /**
