@@ -132,7 +132,51 @@ Approve a withdrawal request.
 ### PATCH /api/admin/withdrawals/:id/reject
 Reject a withdrawal request.
 
-## 🛡️ Permission Levels
+## �️ Product Administration
+
+These endpoints let admins safely remove or restore vendor products.
+
+### DELETE /api/admin/products/:id
+Soft-delete a product (ADMIN or SUPER_ADMIN). Hides it from public listings. Idempotent.
+
+Request body (optional):
+```json
+{ "reason": "Duplicate listing" }
+```
+
+Response:
+```json
+{ "id": 123, "softDeleted": true, "previousStatus": "publish" }
+```
+
+### PATCH /api/admin/products/:id/restore
+Restore a previously soft-deleted product (ADMIN or SUPER_ADMIN). Restores as draft and unblocks.
+
+Request body (optional):
+```json
+{ "reason": "Appeal approved" }
+```
+
+Response:
+```json
+{ "id": 123, "restored": true }
+```
+
+### DELETE /api/admin/products/:id/hard
+Hard-delete a product (SUPER_ADMIN only). Irreversible. Fails if orders exist for the product.
+
+Request body (optional):
+```json
+{ "reason": "DMCA takedown" }
+```
+
+Response: 204 No Content
+
+Notes:
+- Audit log entries are recorded for all actions (soft delete / restore / hard delete).
+- Hard delete attempts to clean up associated media in object storage on a best-effort basis.
+
+## �🛡️ Permission Levels
 
 - **ADMIN**: Access to all endpoints except user creation and role management
 - **SUPER_ADMIN**: Full access to all admin endpoints including:

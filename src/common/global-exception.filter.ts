@@ -6,6 +6,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { Request, Response } from 'express';
+import * as Sentry from '@sentry/node';
 
 @Catch()
 export class GlobalExceptionFilter implements ExceptionFilter {
@@ -55,6 +56,12 @@ export class GlobalExceptionFilter implements ExceptionFilter {
           ? exception.stack
           : JSON.stringify(exception),
       );
+      // Report 5xx to Sentry if configured
+      try {
+        if (status >= 500 && process.env.SENTRY_DSN) {
+          Sentry.captureException(exception instanceof Error ? exception : new Error(String(message)));
+        }
+      } catch {}
     }
 
     // If headers already sent or stream already ended/finished, don't attempt to write again

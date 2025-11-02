@@ -31,8 +31,8 @@ export class PhoneVerificationController {
       }
       await client.set(key, '1', 'PX', RESEND_COOLDOWN_MS);
     }
-    await this.phoneService.sendCode(dto.phone, dto.region);
-    return { success: true };
+    const res = await this.phoneService.sendCode(dto.phone, dto.region, (dto.channel as any) || 'sms');
+    return { success: true, channel: res.channel, message: res.message } as any;
   }
 
   @Post('verify')

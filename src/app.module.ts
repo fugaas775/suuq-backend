@@ -1,6 +1,8 @@
 // src/app.module.ts
 import { Module } from '@nestjs/common';
+import { CacheModule } from '@nestjs/cache-manager';
 import { APP_GUARD } from '@nestjs/core';
+import { APP_INTERCEPTOR } from '@nestjs/core';
 import { ThrottlerGuard } from '@nestjs/throttler';
 import { AdminThrottlerGuard } from './common/guards/admin-throttler.guard';
 import { ConfigModule } from '@nestjs/config';
@@ -33,6 +35,7 @@ import { CurationModule } from './curation/curation.module';
 import { MetricsModule } from './metrics/metrics.module';
 import { RedisModule } from './redis/redis.module';
 import { RolesModule } from './roles/roles.module';
+import { SearchModule } from './search/search.module';
 
 import { EmailModule } from './email/email.module';
 import { AppController } from './app.controller';
@@ -40,17 +43,95 @@ import { AppService } from './app.service';
 import { FavoritesModule } from './favorites/favorites.module';
 import { HealthModule } from './health/health.module';
 import { ModerationModule } from './moderation/moderation.module';
+import { IdempotencyInterceptor } from './common/interceptors/idempotency.interceptor';
+import { FeatureFlagsModule } from './common/feature-flags/feature-flags.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true, envFilePath: '.env' }),
     TypeOrmModule.forRoot(dataSourceOptions), // Use the simplified, direct config
-    ThrottlerModule.forRoot([
-      {
-        ttl: parseInt(process.env.THROTTLE_TTL ?? '', 10) || 60000, // 1 minute default
-        limit: parseInt(process.env.THROTTLE_LIMIT ?? '', 10) || 180, // 180 rpm default; override via env
+    // Global Cache (Redis if configured, else in-memory)
+    CacheModule.registerAsync({
+      isGlobal: true,
+      useFactory: async () => {
+        const ttl = parseInt(process.env.DEFAULT_CACHE_TTL_MS || '60000', 10);
+        const url = process.env.REDIS_URL || '';
+        if (url) {
+          try {
+            const { default: redisStore } = await import('cache-manager-redis-yet');
+            return {
+              store: redisStore as any,
+              url,
+              ttl,
+              pingInterval: 10000,
+              // Optionally namespace keys
+              // prefix: 'suuq:',
+            } as any;
+          } catch (e) {
+            // eslint-disable-next-line no-console
+            console.warn('Redis cache store unavailable, falling back to memory:', (e as Error)?.message);
+          }
+        }
+        return { ttl } as any;
       },
-    ]),
+    }),
+    // Global rate limiting with optional Redis storage for multi-instance deployments
+    ThrottlerModule.forRootAsync({
+      useFactory: async () => {
+        const ttl = parseInt(process.env.THROTTLE_TTL ?? '', 10) || 60000;
+        const limit = parseInt(process.env.THROTTLE_LIMIT ?? '', 10) || 180;
+
+        // Attempt to use Redis-backed storage if configured
+        const redisUrl = process.env.REDIS_URL;
+        const redisHost = process.env.REDIS_HOST;
+        const redisPort = process.env.REDIS_PORT
+          ? parseInt(process.env.REDIS_PORT, 10)
+          : undefined;
+        const redisPassword = process.env.REDIS_PASSWORD;
+
+        try {
+          if (redisUrl || redisHost) {
+            const { createClient } = await import('redis');
+            const client = redisUrl
+              ? createClient({ url: redisUrl })
+              : createClient({
+                  socket: { host: redisHost as string, port: redisPort || 6379 },
+                  password: redisPassword,
+                });
+            await client.connect();
+
+            // Lightweight Redis storage implementation for throttler
+            const storage = {
+              async getRecord(key: string) {
+                const v: unknown = await client.get(key as any);
+                const s = typeof v === 'string' ? v : (v && (v as any).toString ? (v as any).toString('utf8') : undefined);
+                return s ? JSON.parse(s) : []; // array of timestamps
+              },
+              async addRecord(key: string, ttlMs: number) {
+                const now = Date.now();
+                const expireAt = Math.ceil(ttlMs / 1000);
+                const records = await this.getRecord(key);
+                records.push(now);
+                const filtered = records.filter((t: number) => now - t <= ttlMs);
+                await client.set(key, JSON.stringify(filtered), { EX: expireAt });
+              },
+            } as any;
+
+            return [{ ttl, limit, storage }];
+          }
+        } catch (e) {
+          // eslint-disable-next-line no-console
+          console.warn('Redis throttler storage unavailable, using in-memory. Error:', (e as Error).message);
+        }
+
+        return [
+          {
+            ttl,
+            limit,
+          },
+        ];
+      },
+    }),
 
     // List all your feature modules
     UsersModule,
@@ -81,6 +162,8 @@ import { ModerationModule } from './moderation/moderation.module';
   RedisModule,
   RolesModule,
   ModerationModule,
+  FeatureFlagsModule,
+  SearchModule,
   ],
   controllers: [AppController],
   // Apply rate limiting globally
@@ -89,6 +172,10 @@ import { ModerationModule } from './moderation/moderation.module';
     {
       provide: APP_GUARD,
       useClass: AdminThrottlerGuard,
+    },
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: IdempotencyInterceptor,
     },
   ],
 })

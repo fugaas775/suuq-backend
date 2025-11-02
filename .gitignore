@@ -1,3 +1,21 @@
+# Ignore local environment and secret files
+.env
+.env.*
+
+# Firebase service account credentials should never be committed
+src/config/firebase-service-account.json
+firebase-service-account.json
+service-account.json
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Build output
+dist
 # compiled output
 /dist
 /node_modules

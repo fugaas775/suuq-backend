@@ -17,9 +17,48 @@ import * as compression from 'compression';
 import { json, urlencoded } from 'express';
 import { EtagInterceptor } from './common/interceptors/etag.interceptor';
 import * as crypto from 'crypto';
+import * as Sentry from '@sentry/node';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, { bodyParser: true });
+
+  // Initialize Sentry (optional) for error monitoring
+  try {
+    const dsn = process.env.SENTRY_DSN;
+    if (dsn) {
+      Sentry.init({
+        dsn,
+        environment: process.env.SENTRY_ENVIRONMENT || process.env.NODE_ENV || 'development',
+        // Sample all errors, and a portion of transactions
+        tracesSampleRate: parseFloat(process.env.SENTRY_TRACES_SAMPLE_RATE || '0.05'),
+        profilesSampleRate: parseFloat(process.env.SENTRY_PROFILES_SAMPLE_RATE || '0'),
+        // Scrub PII before sending
+        beforeSend(event) {
+          try {
+            // Remove potentially sensitive headers
+            const headers = (event.request as any)?.headers;
+            if (headers) {
+              const redactedHeaders = ['authorization', 'cookie', 'set-cookie', 'x-api-key'];
+              for (const h of redactedHeaders) {
+                if (headers[h]) headers[h] = '[REDACTED]';
+              }
+            }
+            // Remove request body
+            if ((event.request as any)?.data) {
+              (event.request as any).data = '[REDACTED]';
+            }
+            // Remove user info
+            if (event.user) {
+              event.user = { id: event.user?.id } as any;
+            }
+          } catch {}
+          return event;
+        },
+      });
+    }
+  } catch {
+    // ignore
+  }
 
   // Security headers (CSP configured to allow Swagger UI when enabled)
   app.use(
@@ -63,17 +102,25 @@ async function bootstrap() {
     | undefined;
   if (expressApp?.set) {
     expressApp.set('etag', false);
+    // Ensure correct IP and protocol when behind a reverse proxy (Nginx/ALB)
+    // Enables req.ip and secure cookies to work as expected
+    try {
+      expressApp.set('trust proxy', (process.env.TRUST_PROXY as any) ?? 1);
+    } catch {}
   }
   // Accept both JSON and application/x-www-form-urlencoded payloads
   app.use(urlencoded({ extended: true, limit: '50mb' }));
   app.use(json({ limit: '50mb' }));
-  // Enable gzip compression for responses
-  const compressionFn: any = (compression as any)?.default || (compression as any);
-  app.use(
-    compressionFn({
-      threshold: 1024,
-    }),
-  );
+  // Enable gzip compression for responses (disable by default in production; offload to Nginx)
+  const enableNodeCompression = (process.env.ENABLE_NODE_COMPRESSION || '').toLowerCase() === 'true';
+  if (enableNodeCompression || process.env.NODE_ENV !== 'production') {
+    const compressionFn: any = (compression as any)?.default || (compression as any);
+    app.use(
+      compressionFn({
+        threshold: 1024,
+      }),
+    );
+  }
   // Ensure temp upload directory exists for Multer disk storage
   try {
     const fs = await import('fs');
@@ -193,31 +240,18 @@ async function bootstrap() {
           userAgent: req.headers['user-agent'],
           timestamp: new Date().toISOString(),
         };
+        // Avoid JSON-stringifying request bodies in production to reduce CPU overhead
+        // You can enable body logging for specific routes under debug only.
 
-        // Sanitize body in production - redact sensitive fields
-        if (req.body && typeof req.body === 'object') {
-          const sanitizedBody: Record<string, unknown> = {
-            ...(req.body as Record<string, unknown>),
-          };
-          const sensitiveFields = [
-            'password',
-            'token',
-            'secret',
-            'authorization',
-            'jwt',
-            'accessToken',
-            'refreshToken',
-          ];
-
-          for (const field of sensitiveFields) {
-            if (sanitizedBody[field]) {
-              sanitizedBody[field] = '[REDACTED]';
+        // Also scrub a subset of sensitive headers
+        try {
+          if ((logData as any).headers) {
+            const scrub = ['authorization', 'cookie', 'x-api-key'];
+            for (const h of scrub) {
+              if ((logData as any).headers[h]) (logData as any).headers[h] = '[REDACTED]';
             }
           }
-
-          logData['body'] = sanitizedBody;
-        }
-
+        } catch {}
         console.log(JSON.stringify(logData));
       } else {
         // Verbose logging in development
@@ -286,6 +320,25 @@ async function bootstrap() {
   app.useGlobalInterceptors(new EtagInterceptor(300));
   // Register global exception filter for detailed error logging
   app.useGlobalFilters(new GlobalExceptionFilter());
+  // Tune HTTP server-level timeouts to play nicely with reverse proxies
+  try {
+    const server = app.getHttpServer() as unknown as {
+      keepAliveTimeout?: number;
+      headersTimeout?: number;
+      requestTimeout?: number;
+      setTimeout?: (msecs: number, cb?: () => void) => void;
+    };
+    // Keep connections alive slightly longer than proxy to let proxy control reuse
+    server.keepAliveTimeout = parseInt(process.env.KEEP_ALIVE_TIMEOUT_MS || '65000', 10);
+    // A little higher than keepAliveTimeout to avoid premature timeout
+    server.headersTimeout = parseInt(process.env.HEADERS_TIMEOUT_MS || '66000', 10);
+    // Disable per-request inactivity timeout by default (proxy should enforce)
+    server.requestTimeout = parseInt(process.env.REQUEST_TIMEOUT_MS || '0', 10) || 0;
+    // Also ensure the legacy socket timeout is disabled
+    if (typeof server.setTimeout === 'function') {
+      server.setTimeout(parseInt(process.env.SOCKET_TIMEOUT_MS || '0', 10) || 0);
+    }
+  } catch {}
   // Request ID propagation
   app.use(
     (
@@ -304,11 +357,11 @@ async function bootstrap() {
     },
   );
   // (removed temporary route introspection)
-  // Auto-run DB migrations unless disabled
+  // Auto-run DB migrations unless disabled (default off in production)
   try {
     const ds = app.get(DataSource);
     const allowAuto =
-      (process.env.AUTO_MIGRATE ?? 'true') !== 'false' &&
+      (process.env.AUTO_MIGRATE ?? (process.env.NODE_ENV === 'production' ? 'false' : 'true')) !== 'false' &&
       process.env.NODE_ENV !== 'test';
     if (allowAuto && ds && typeof ds.runMigrations === 'function') {
       await ds.runMigrations();

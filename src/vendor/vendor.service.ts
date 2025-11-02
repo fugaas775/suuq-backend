@@ -2,6 +2,7 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  UnprocessableEntityException,
 } from '@nestjs/common';
 import { CreateVendorProductDto } from './dto/create-vendor-product.dto';
 import { FindAllVendorsDto } from './dto/find-all-vendors.dto';
@@ -55,6 +56,25 @@ export class VendorService {
     const vendor = await this.userRepository.findOneBy({ id: userId });
     if (!vendor) {
       throw new NotFoundException(`Vendor with ID ${userId} not found.`);
+    }
+
+    // Enforce verification before allowing product creation
+    const isApproved = vendor.verified === true || vendor.verificationStatus === VerificationStatus.APPROVED;
+    if (!isApproved) {
+      // Use 422 for pending/rejected detail, else 403 as a strict default
+      if (
+        vendor.verificationStatus === VerificationStatus.PENDING ||
+        vendor.verificationStatus === VerificationStatus.REJECTED ||
+        vendor.verificationStatus === VerificationStatus.SUSPENDED ||
+        vendor.verificationStatus === VerificationStatus.UNVERIFIED
+      ) {
+        throw new UnprocessableEntityException({
+          error: 'Vendor is not verified to create products',
+          status: vendor.verificationStatus,
+          code: 'VENDOR_NOT_VERIFIED',
+        });
+      }
+      throw new ForbiddenException('Vendor is not verified to create products');
     }
 
     const {

@@ -11,6 +11,7 @@ import { UpdateCategoryDto } from './dto/update-category.dto';
 import { slugify } from 'transliteration';
 import { Product } from '../products/entities/product.entity';
 import { ILike } from 'typeorm';
+import { repoCacheTTL } from '../common/utils/db-cache.util';
 
 @Injectable()
 export class CategoriesService {
@@ -22,10 +23,12 @@ export class CategoriesService {
   ) {}
 
   async findRoots(): Promise<Category[]> {
+    const ttl = repoCacheTTL();
     return this.categoryRepo.find({
       where: { parent: IsNull() },
       relations: ['children'],
       order: { sortOrder: 'ASC', name: 'ASC' },
+      ...(ttl ? { cache: { id: 'categories:roots:v1', milliseconds: ttl } } : {}),
     });
   }
 
@@ -51,10 +54,12 @@ export class CategoriesService {
     const where = term
       ? [{ name: ILike(`%${term}%`) }, { slug: ILike(`%${term}%`) }]
       : {};
+    const ttl = repoCacheTTL();
     const cats = await this.categoryRepo.find({
       where,
       take,
       order: { name: 'ASC' },
+      ...(ttl ? { cache: { id: `categories:suggest:${term}:${take}`, milliseconds: Math.min(ttl, 15000) } } : {}),
     });
     return cats.map((c) => ({
       id: c.id,

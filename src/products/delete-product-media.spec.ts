@@ -11,6 +11,8 @@ import { ProductImpression } from './entities/product-impression.entity';
 import { SearchKeyword } from './entities/search-keyword.entity';
 import { DoSpacesService } from '../media/do-spaces.service';
 import { AuditService } from '../audit/audit.service';
+import { Review } from '../reviews/entities/review.entity';
+import { FavoritesService } from '../favorites/favorites.service';
 
 describe('ProductsService.deleteProduct media cleanup', () => {
   let service: ProductsService;
@@ -26,6 +28,8 @@ describe('ProductsService.deleteProduct media cleanup', () => {
   const categoryRepo = {};
   const impressionRepo = {};
   const searchKeywordRepo = {};
+  const reviewRepo = { delete: jest.fn() };
+  const favorites = { removeProductEverywhere: jest.fn().mockResolvedValue(0) } as unknown as FavoritesService;
 
   const doSpaces = {
     urlToKeyIfInBucket: jest.fn((url: string) => {
@@ -56,8 +60,10 @@ describe('ProductsService.deleteProduct media cleanup', () => {
         { provide: getRepositoryToken(Category), useValue: categoryRepo },
         { provide: getRepositoryToken(ProductImpression), useValue: impressionRepo },
         { provide: getRepositoryToken(SearchKeyword), useValue: searchKeywordRepo },
+        { provide: getRepositoryToken(Review), useValue: reviewRepo },
         { provide: DoSpacesService, useValue: doSpaces },
         { provide: AuditService, useValue: audit },
+        { provide: FavoritesService, useValue: favorites },
       ],
     }).compile();
 

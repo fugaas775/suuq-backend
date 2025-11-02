@@ -258,6 +258,19 @@ export class Product {
     return this.posterUrl;
   }
 
+  // --- Admin deletion metadata (soft delete support) ---
+  @Expose()
+  @Column({ type: 'timestamp', nullable: true, name: 'deleted_at' })
+  deletedAt?: Date | null;
+
+  @Expose()
+  @Column({ type: 'int', nullable: true, name: 'deleted_by_admin_id' })
+  deletedByAdminId?: number | null;
+
+  @Expose()
+  @Column({ type: 'varchar', length: 512, nullable: true, name: 'deleted_reason' })
+  deletedReason?: string | null;
+
   // Convenience: expose digital download key (object key), if present. Not intended for public clients.
   @Expose()
   get downloadKey(): string | undefined {

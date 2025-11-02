@@ -22,9 +22,13 @@ import { SearchKeyword } from './entities/search-keyword.entity';
 import { createHash } from 'crypto';
 import { normalizeProductMedia } from '../common/utils/media-url.util';
 import { normalizeDigitalAttributes } from '../common/utils/digital.util';
+import { GeoResolverService } from '../common/services/geo-resolver.service';
 // import { assertAllowedMediaUrl } from '../common/utils/media-policy.util';
 import { DoSpacesService } from '../media/do-spaces.service';
 import { AuditService } from '../audit/audit.service';
+import { Review } from '../reviews/entities/review.entity';
+import { FavoritesService } from '../favorites/favorites.service';
+import { qbCacheIfEnabled } from '../common/utils/db-cache.util';
 
 @Injectable()
 export class ProductsService {
@@ -43,8 +47,12 @@ export class ProductsService {
     private impressionRepo: Repository<ProductImpression>,
     @InjectRepository(SearchKeyword)
     private searchKeywordRepo: Repository<SearchKeyword>,
+    @InjectRepository(Review)
+    private reviewRepo: Repository<Review>,
   private readonly doSpaces: DoSpacesService,
   private readonly audit: AuditService,
+  private readonly geo: GeoResolverService,
+  private readonly favorites: FavoritesService,
   ) {}
 
   // Simple in-memory cache for Property & Real Estate subtree ids
@@ -80,6 +88,53 @@ export class ProductsService {
     const ids = Array.from(idSet);
     this.propertyIdsCache = { ids, at: now };
     return ids;
+  }
+
+  /** Fetch many products by ids (any order); supports grid view lean selection when opts.view === 'grid' */
+  async findManyByIds(ids: number[], opts?: { view?: 'grid' | 'full' }): Promise<Product[]> {
+    const list = Array.from(new Set((ids || []).filter((n) => Number.isInteger(n) && n > 0)));
+    if (!list.length) return [] as any;
+    const qb = this.productRepo
+      .createQueryBuilder('product')
+      .leftJoinAndSelect('product.vendor', 'vendor')
+      .leftJoinAndSelect('product.category', 'category')
+      .where('product.id IN (:...ids)', { ids: list })
+      .andWhere('product.status = :status', { status: 'publish' })
+      .andWhere('product.isBlocked = false');
+
+    if ((opts?.view || 'grid') === 'grid') {
+      qb.select([
+        'product.id',
+        'product.name',
+        'product.price',
+        'product.currency',
+        'product.imageUrl',
+        'product.average_rating',
+        'product.rating_count',
+        'product.sales_count',
+        'product.viewCount',
+        'product.listingType',
+        'product.bedrooms',
+        'product.listingCity',
+        'product.bathrooms',
+        'product.sizeSqm',
+        'product.furnished',
+        'product.rentPeriod',
+        'product.createdAt',
+        'vendor.id',
+        'category.id',
+        'category.slug',
+      ]);
+    } else {
+      qb.leftJoinAndSelect('product.tags', 'tag').leftJoinAndSelect('product.images', 'images');
+    }
+
+  // Cache this deterministic GET by ids for a short time when enabled
+  qbCacheIfEnabled(qb as any, `products:many:${(opts?.view || 'grid')}:${list.join(',')}`);
+  const results = await qb.getMany();
+    // Reorder to match input ids
+    const byId = new Map(results.map((p) => [p.id, p]));
+    return list.map((id) => byId.get(id)).filter(Boolean) as Product[];
   }
 
   private isPropertyCategory(category?: any): boolean {
@@ -139,6 +194,20 @@ export class ProductsService {
     const vendor = await this.userRepo.findOneBy({ id: vendorId });
     if (!vendor) {
       throw new NotFoundException('Vendor not found');
+    }
+
+    // Enforce phone number presence for vendors (admins are exempt)
+    try {
+      const rolesArr = Array.isArray(vendor.roles) ? vendor.roles : [];
+      const isAdmin = rolesArr.includes('ADMIN' as any) || rolesArr.includes('SUPER_ADMIN' as any);
+      if (!isAdmin) {
+        const phone = (vendor as any).phoneNumber || (vendor as any).vendorPhoneNumber || '';
+        if (!phone || !String(phone).trim()) {
+          throw new BadRequestException('A phone number is required on your profile before posting a product. Please update your profile to continue.');
+        }
+      }
+    } catch (e) {
+      if (e instanceof BadRequestException) throw e;
     }
 
     let category = undefined;
@@ -540,20 +609,55 @@ export class ProductsService {
     const qNorm = this.normalizeQuery(q);
     if (!qNorm || qNorm.length < 2) return;
     try {
+      // Normalize geo
+      const normCity = (meta?.city || '').toString().trim();
+      const city = normCity ? normCity : null;
+      // Country priority: explicit meta.country (2-letter) -> derive from city via GeoResolver
+      const explicitCountry = (meta?.country || '').toString().trim();
+      let country: string | null = null;
+      if (explicitCountry && /^[a-zA-Z]{2}$/.test(explicitCountry)) {
+        country = explicitCountry.toUpperCase();
+      } else if (city) {
+        const cc = this.geo?.resolveCountryFromCity(city) || null;
+        country = cc ? cc.toUpperCase() : null;
+      }
+      // Normalize vendorHits array: ensure each item has proper country code normalization
+      let vendorHitsJson: string | null = null;
+      if (meta?.vendorHits && Array.isArray(meta.vendorHits)) {
+        const cleaned = meta.vendorHits
+          .filter((v) => v && typeof v === 'object' && v.name)
+          .map((v) => {
+            const name = (v.name || '').toString();
+            const id =
+              v.id != null && !Number.isNaN(Number(v.id))
+                ? Number(v.id)
+                : undefined;
+            let vc: string | undefined;
+            const raw = (v.country || '').toString().trim();
+            if (raw && /^[a-zA-Z]{2}$/.test(raw)) vc = raw.toUpperCase();
+            else if (city) {
+              const cc = this.geo?.resolveCountryFromCity(city) || null;
+              if (cc) vc = cc.toUpperCase();
+            }
+            return {
+              name,
+              ...(id != null ? { id } : {}),
+              ...(vc ? { country: vc } : {}),
+              count: Number(v.count) || 0,
+            };
+          });
+        vendorHitsJson = cleaned.length ? JSON.stringify(cleaned) : null;
+      }
       const params = {
         q: q.slice(0, 256),
         qNorm,
         lastResults: meta?.results ?? null,
         lastIp: meta?.ip ? meta.ip.slice(0, 64) : null,
         lastUa: meta?.ua ? meta.ua.slice(0, 256) : null,
-        lastCity: meta?.city ? meta.city.slice(0, 128) : null,
+        lastCity: city ? city.slice(0, 128) : null,
         lastVendorName: meta?.vendorName ? meta.vendorName.slice(0, 256) : null,
-        lastCountry: meta?.country
-          ? meta.country.slice(0, 2).toUpperCase()
-          : null,
-        vendorHits: meta?.vendorHits && Array.isArray(meta.vendorHits)
-          ? JSON.stringify(meta.vendorHits)
-          : null,
+        lastCountry: country,
+        vendorHits: vendorHitsJson,
         isSuggest: kind === 'suggest' ? 1 : 0,
         isSubmit: kind === 'submit' ? 1 : 0,
       } as const;
@@ -1767,8 +1871,133 @@ export class ProductsService {
       // ignore cleanup errors
     }
 
-    // Finally remove product (images will cascade via FK onDelete: CASCADE)
+    // Clean up associated rows in other tables before deleting the product
+    try {
+      // Remove reviews linked to this product
+      await this.reviewRepo.delete({ product: { id } } as any);
+    } catch {}
+    try {
+      // Remove lightweight impressions rows
+      await this.impressionRepo.delete({ productId: id } as any);
+    } catch {}
+    try {
+      // Remove this product ID from all users' favorites (best-effort)
+      this.favorites.removeProductEverywhere(id).catch(() => {});
+    } catch {}
+
+    // Finally remove product (images will cascade via FK onDelete: CASCADE, join table tags will cascade via FKs)
     await this.productRepo.delete(id);
+    return { deleted: true };
+  }
+
+  /** Admin soft delete: hide product from public while retaining data. Idempotent. */
+  async softDeleteByAdmin(
+    id: number,
+    opts: { actorId?: number | null; reason?: string | null } = {},
+  ): Promise<{ id: number; softDeleted: boolean; alreadyDeleted?: boolean; previousStatus?: string | null }>
+  {
+    const product = await this.productRepo.findOne({ where: { id } });
+    if (!product) throw new NotFoundException('Product not found');
+    const already = !!product.deletedAt;
+    const previousStatus = (product as any).status || null;
+    if (!already) {
+      product.deletedAt = new Date();
+      product.deletedByAdminId = (opts.actorId ?? null) as any;
+      product.deletedReason = (opts.reason ?? null) as any;
+      // Also ensure it won't show up in public listings
+      product.isBlocked = true;
+      if (product.status === 'publish') (product as any).status = 'draft';
+      await this.productRepo.save(product);
+      await this.audit.log({
+        actorId: opts.actorId ?? null,
+        action: 'ADMIN_PRODUCT_SOFT_DELETE',
+        targetType: 'PRODUCT',
+        targetId: id,
+        reason: opts.reason ?? null,
+        meta: { previousStatus },
+      });
+      return { id, softDeleted: true, previousStatus };
+    }
+    return { id, softDeleted: false, alreadyDeleted: true, previousStatus };
+  }
+
+  /** Admin restore: reverse soft delete and keep product in draft for safety. */
+  async restoreByAdmin(
+    id: number,
+    opts: { actorId?: number | null; reason?: string | null } = {},
+  ): Promise<{ id: number; restored: boolean }>{
+    const product = await this.productRepo.findOne({ where: { id } });
+    if (!product) throw new NotFoundException('Product not found');
+    product.deletedAt = null as any;
+    product.deletedByAdminId = null as any;
+    product.deletedReason = null as any;
+    // Keep it in draft and unblocked; vendor/admin can republish explicitly
+    (product as any).status = 'draft';
+    product.isBlocked = false;
+    await this.productRepo.save(product);
+    await this.audit.log({
+      actorId: opts.actorId ?? null,
+      action: 'ADMIN_PRODUCT_RESTORE',
+      targetType: 'PRODUCT',
+      targetId: id,
+      reason: opts.reason ?? null,
+    });
+    return { id, restored: true };
+  }
+
+  /** Admin hard delete (SUPER_ADMIN): remove product permanently with best-effort media cleanup. */
+  async hardDeleteByAdmin(
+    id: number,
+    opts: { actorId?: number | null; reason?: string | null } = {},
+  ): Promise<{ deleted: boolean }>{
+    const product = await this.productRepo.findOne({ where: { id }, relations: ['images'] });
+    if (!product) throw new NotFoundException('Product not found');
+    // Block deletion if orders reference the product to preserve history
+    const hasOrders = await this.orderRepo.count({ where: { items: { product: { id } } } });
+    if (hasOrders > 0)
+      throw new BadRequestException('Cannot hard-delete product with orders');
+
+    // Best-effort media cleanup (same as vendor delete)
+    try {
+      const keys = new Set<string>();
+      const urls = new Set<string>();
+      if ((product as any).imageUrl) urls.add(String((product as any).imageUrl));
+      for (const img of product.images || []) {
+        if (img?.src) urls.add(String(img.src));
+        if (img?.thumbnailSrc) urls.add(String(img.thumbnailSrc));
+        if (img?.lowResSrc) urls.add(String(img.lowResSrc));
+      }
+      const attrs = (product as any).attributes && typeof (product as any).attributes === 'object' ? { ...(product as any).attributes } : {};
+      const dig = (attrs as any).digital;
+      if (dig && typeof dig === 'object' && dig.download && typeof dig.download === 'object') {
+        const k = (dig.download as any).key;
+        if (typeof k === 'string' && k) keys.add(k);
+        const pub = (dig.download as any).publicUrl;
+        if (typeof pub === 'string' && pub) urls.add(pub);
+      }
+      const legacyKey = (attrs as any).downloadKey || (attrs as any).download_key;
+      if (typeof legacyKey === 'string' && legacyKey) keys.add(legacyKey);
+      const videoUrl = (attrs as any).videoUrl || (attrs as any).video_url;
+      if (typeof videoUrl === 'string' && videoUrl) urls.add(videoUrl);
+      const posterUrl = (attrs as any).posterUrl || (attrs as any).posterSrc || (attrs as any).poster_url;
+      if (typeof posterUrl === 'string' && posterUrl) urls.add(posterUrl);
+      for (const u of Array.from(urls)) {
+        const key = this.doSpaces.urlToKeyIfInBucket(u);
+        if (key) keys.add(key);
+      }
+      for (const key of Array.from(keys)) {
+        await this.doSpaces.deleteObject(key).catch(() => {});
+      }
+    } catch {}
+
+    await this.productRepo.delete(id);
+    await this.audit.log({
+      actorId: opts.actorId ?? null,
+      action: 'ADMIN_PRODUCT_HARD_DELETE',
+      targetType: 'PRODUCT',
+      targetId: id,
+      reason: opts.reason ?? null,
+    });
     return { deleted: true };
   }
 

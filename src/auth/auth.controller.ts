@@ -24,6 +24,7 @@ import { plainToInstance } from 'class-transformer';
 import { AuthenticatedRequest } from '../common/interfaces/authenticated-request.interface';
 import { UpdateUserDto } from '../users/dto/update-user.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
+import { AppleAuthDto } from './dto/apple-auth.dto';
 
 @Controller('auth')
 export class AuthController {
@@ -65,6 +66,20 @@ export class AuthController {
   async googleLogin(@Body() dto: GoogleAuthDto) {
     const { accessToken, refreshToken, user } =
       await this.authService.googleLogin(dto);
+    return {
+      accessToken,
+      refreshToken,
+      user: plainToInstance(UserResponseDto, user, {
+        excludeExtraneousValues: true,
+      }),
+    };
+  }
+
+  @Post('apple')
+  @HttpCode(HttpStatus.OK)
+  async appleLogin(@Body() dto: AppleAuthDto) {
+    const { accessToken, refreshToken, user } =
+      await this.authService.appleLogin(dto);
     return {
       accessToken,
       refreshToken,

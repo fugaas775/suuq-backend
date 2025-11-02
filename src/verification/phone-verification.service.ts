@@ -52,12 +52,49 @@ export class PhoneVerificationService {
     throw new BadRequestException('Invalid phone number. Use local or E.164 (e.g., +251915333513).');
   }
 
-  async sendCode(to: string, region?: string): Promise<{ success: true }> {
+  async sendCode(
+    to: string,
+    region?: string,
+    preferredChannel: 'sms' | 'whatsapp' = 'sms',
+  ): Promise<{ success: true; channel: 'sms' | 'whatsapp'; message?: string }>{
     this.ensureConfigured();
     const phone = this.normalizeE164(to, region);
-    await this.client!.verify.v2.services(this.serviceSid!)
-      .verifications.create({ to: phone, channel: 'sms' });
-    return { success: true };
+    const tryChannel = async (channel: 'sms' | 'whatsapp') => {
+      return this.client!.verify.v2
+        .services(this.serviceSid!)
+        .verifications.create({ to: phone, channel });
+    };
+    const safe = (s: string) => (s.length > 6 ? s.slice(0, s.length - 6) + '******' : '******');
+    try {
+      await tryChannel(preferredChannel);
+      return { success: true, channel: preferredChannel };
+    } catch (e: any) {
+      const msg = String(e?.message || e || '');
+      const code = e?.code || e?.status || '';
+      this.logger.warn(`sendCode failed ch=${preferredChannel} to=${safe(phone)} code=${code} msg=${msg}`);
+      const looksBlocked = /blocked\s+for\s+the\s+SMS\s+channel/i.test(msg) || /temporarily\s+blocked/i.test(msg);
+      const canFallback = preferredChannel === 'sms';
+      if (looksBlocked && canFallback) {
+        try {
+          await tryChannel('whatsapp');
+          return {
+            success: true,
+            channel: 'whatsapp',
+            message: 'SMS is blocked for this destination. We sent your code via WhatsApp instead.',
+          };
+        } catch (e2: any) {
+          const msg2 = String(e2?.message || e2 || '');
+          const code2 = e2?.code || e2?.status || '';
+          this.logger.error(`fallback whatsapp failed to=${safe(phone)} code=${code2} msg=${msg2}`);
+          throw new BadRequestException('SMS to this number is blocked and WhatsApp also failed. Please try a different phone number.');
+        }
+      }
+      // Other errors: surface a friendly message
+      if (/invalid\s+phone/i.test(msg)) {
+        throw new BadRequestException('Invalid phone number. Please check the number and try again.');
+      }
+      throw new BadRequestException('We couldn\'t send a verification code right now. Please try again later.');
+    }
   }
 
   async checkCode(

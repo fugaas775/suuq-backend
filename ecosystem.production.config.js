@@ -3,7 +3,7 @@ module.exports = {
     name: 'suuq-api',
     script: './dist/main.js',
     cwd: '/root/suuq-backend',
-    instances: 2, // Use 2 instances for 4 CPU cores
+  instances: 'max', // Utilize all available CPU cores
     exec_mode: 'cluster',
     env: {
       NODE_ENV: 'production',
@@ -30,6 +30,10 @@ module.exports = {
     env: {
       NODE_ENV: 'production',
       PORT: 3000,
+      // Increase libuv threadpool for image processing, hashing, etc. (default is 4)
+      UV_THREADPOOL_SIZE: process.env.UV_THREADPOOL_SIZE || 8,
+      // Apple Sign-In audiences (bundle IDs / service IDs), comma-separated
+      APPLE_AUDIENCES: process.env.APPLE_AUDIENCES,
   // Enable selective raw attributes logging in responses (comma-separated IDs or 'all')
   // Optional deep raw-attributes logging for troubleshooting. Disable by default.
   // To enable for specific IDs: set env DEBUG_ATTRS_PRODUCT_IDS="82,83" at deploy time.
@@ -57,6 +61,6 @@ module.exports = {
     
     // Process management
     kill_timeout: 5000,
-    listen_timeout: 3000
+    listen_timeout: 5000
   }]
 }

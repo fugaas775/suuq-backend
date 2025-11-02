@@ -25,7 +25,7 @@ export interface AppUser {
   displayName?: string;
   avatarUrl?: string;
   storeName?: string;
-  lastLoginMethod?: 'email' | 'google';
+  lastLoginMethod?: 'email' | 'google' | 'apple';
 }
 
 // Extend Express.Request for typed req.user

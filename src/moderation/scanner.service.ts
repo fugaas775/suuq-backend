@@ -33,6 +33,12 @@ export class ModerationScannerService {
         .getMany();
 
       for (const img of recent) {
+        // Skip images not linked to a product (avoid null productId moderation rows)
+        const pid = (img as any)?.product?.id ?? (img as any)?.productId;
+        if (!pid) {
+          this.logger.warn('Skipping moderation for image without productId');
+          continue;
+        }
         const exists = await this.pimRepo.findOne({ where: { productImageId: (img as any).id } });
         if (exists && exists.status !== 'pending') continue;
         await this.processImage(img).catch((e) => this.logger.warn(e?.message || e));
@@ -54,8 +60,13 @@ export class ModerationScannerService {
     const labels = await this.moderation.analyzeImage(buf);
     const decision = this.moderation.isExplicit(labels);
     const record = await this.pimRepo.findOne({ where: { productImageId: (img as any).id } });
+    const productId = (img as any).product?.id || (img as any).productId;
+    if (!productId) {
+      this.logger.warn('processImage: missing productId, skipping moderation save');
+      return;
+    }
     const entity = record || this.pimRepo.create({
-      productId: (img as any).product?.id || (img as any).productId,
+      productId,
       productImageId: (img as any).id,
       imageUrl: url,
       status: 'pending',
@@ -66,17 +77,17 @@ export class ModerationScannerService {
     entity.status = decision.explicit ? 'flagged' : 'approved';
     await this.pimRepo.save(entity);
 
-    const productId = entity.productId;
+    const productId2 = entity.productId;
     if (entity.status === 'flagged') {
       // Immediately hide the product
-      await this.productRepo.update(productId, { isBlocked: true });
+      await this.productRepo.update(productId2, { isBlocked: true });
     } else if (entity.status === 'approved') {
       // If no other pending/flagged records remain, unhide
       const remaining = await this.pimRepo.count({
-        where: { productId, status: (['flagged', 'pending'] as any) },
+        where: { productId: productId2, status: (['flagged', 'pending'] as any) },
       } as any);
       if (!remaining) {
-        await this.productRepo.update(productId, { isBlocked: false });
+        await this.productRepo.update(productId2, { isBlocked: false });
       }
     }
   }

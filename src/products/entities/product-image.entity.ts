@@ -27,6 +27,13 @@ export class ProductImage {
   @Column({ nullable: true })
   sortOrder?: number; // For ordering images in the gallery
 
+  // Optional perceptual hash for visual similarity search (e.g., dHash 64-bit as hex)
+  @Column({ nullable: true, length: 64 })
+  phash?: string | null;
+
+  @Column({ nullable: true, length: 16 })
+  phashAlgo?: string | null; // e.g., 'dhash64'
+
   @ManyToOne(() => Product, (product) => product.images, {
     onDelete: 'CASCADE',
   })

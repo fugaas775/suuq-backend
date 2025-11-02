@@ -424,4 +424,29 @@ export class UsersService {
     });
     return this.userRepository.save(user);
   }
+
+  /** Create a user using Apple ID payload. Email may be missing for returning users. */
+  async createWithApple(payload: {
+    email: string;
+    sub: string; // Apple user identifier
+    name?: string;
+    roles?: UserRole[];
+  }): Promise<User> {
+    const existing = await this.userRepository.findOne({ where: { email: payload.email } });
+    if (existing) {
+      throw new ConflictException('A user with this email already exists.');
+    }
+    const user = this.userRepository.create({
+      email: payload.email,
+      displayName: payload.name,
+      appleId: payload.sub,
+      roles: payload.roles && payload.roles.length > 0 ? payload.roles : [UserRole.CUSTOMER],
+      isActive: true,
+    });
+    return this.userRepository.save(user);
+  }
+
+  async findByAppleId(sub: string): Promise<User | null> {
+    return this.userRepository.findOne({ where: { appleId: sub } });
+  }
 }

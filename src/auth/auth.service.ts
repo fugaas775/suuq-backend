@@ -19,11 +19,14 @@ import { OAuth2Client, TokenPayload } from 'google-auth-library';
 import { ConfigService } from '@nestjs/config';
 // removed unused imports
 import { EmailService } from '../email/email.service';
+import { AppleAuthDto } from './dto/apple-auth.dto';
+import { createRemoteJWKSet, jwtVerify } from 'jose';
 
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
   private readonly oauthClient: OAuth2Client | null = null;
+  private appleJwks?: ReturnType<typeof createRemoteJWKSet>;
 
   constructor(
     private readonly usersService: UsersService,
@@ -235,6 +238,78 @@ export class AuthService {
         code: 'USER_DEACTIVATED',
         message: 'User account is deactivated.',
       });
+    }
+
+    return this.generateTokens(user);
+  }
+
+  async appleLogin(dto: AppleAuthDto): Promise<{ accessToken: string; refreshToken: string; user: User }>{
+    const idToken = (dto.identityToken || dto.idToken || '').trim();
+    if (!idToken) {
+      throw new BadRequestException({ code: 'INVALID_APPLE_TOKEN', message: 'idToken (identityToken) is required' });
+    }
+
+    // Prepare JWKS (cached per process)
+    if (!this.appleJwks) {
+      this.appleJwks = createRemoteJWKSet(new URL('https://appleid.apple.com/auth/keys'));
+    }
+
+    // Accepted audiences (bundle IDs or services IDs), comma-separated
+    const audienceCsv = this.configService.get<string>('APPLE_AUDIENCES') || this.configService.get<string>('APPLE_CLIENT_IDS') || this.configService.get<string>('APPLE_BUNDLE_ID') || '';
+    const audiences = audienceCsv
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (!audiences.length) {
+      this.logger.warn('APPLE_AUDIENCES/APPLE_CLIENT_IDS/APPLE_BUNDLE_ID not configured; rejecting Apple Sign-In');
+      throw new InternalServerErrorException({ code: 'APPLE_NOT_CONFIGURED', message: 'Apple Sign-In is not configured on the server.' });
+    }
+
+    let payload: any;
+    try {
+      const verified = await jwtVerify(idToken, this.appleJwks, {
+        issuer: 'https://appleid.apple.com',
+        audience: audiences,
+      });
+      payload = verified.payload as Record<string, any>;
+    } catch (e) {
+      this.logger.warn(`appleLogin: jwt verify failed: ${e instanceof Error ? e.message : String(e)}`);
+      throw new UnauthorizedException({ code: 'INVALID_APPLE_TOKEN', message: 'Invalid Apple token' });
+    }
+
+    const sub = String(payload.sub || '');
+    const emailFromToken = typeof payload.email === 'string' ? payload.email : undefined;
+    // Some clients also send email in body (first-time only)
+    const email = (dto.email || emailFromToken || '').trim().toLowerCase();
+    if (!sub) {
+      throw new UnauthorizedException({ code: 'INVALID_APPLE_TOKEN', message: 'Missing subject in Apple token' });
+    }
+
+    // Try by appleId first
+    let user = await this.usersService.findByAppleId(sub);
+    if (!user && email) {
+      // If a user exists with this email, link it
+      const existingByEmail = await this.usersService.findByEmail(email);
+      if (existingByEmail) {
+        // link appleId
+        await this.usersService.update(existingByEmail.id, { appleId: sub });
+        user = await this.usersService.findById(existingByEmail.id);
+      }
+    }
+
+    if (!user) {
+      if (!email) {
+        // Cannot create without email due to unique constraint; ask client to pass email (first-time consent)
+        throw new UnauthorizedException({ code: 'APPLE_EMAIL_MISSING', message: 'Apple did not provide an email. Please grant email access or provide an email to link.' });
+      }
+      user = await this.usersService.createWithApple({
+        email,
+        sub,
+        name: dto.name,
+        roles: [UserRole.CUSTOMER],
+      });
+    } else if (!user.isActive) {
+      throw new UnauthorizedException({ code: 'USER_DEACTIVATED', message: 'User account is deactivated.' });
     }
 
     return this.generateTokens(user);

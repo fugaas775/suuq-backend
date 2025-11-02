@@ -1,4 +1,4 @@
-import { IsOptional, IsString, Matches } from 'class-validator';
+import { IsIn, IsOptional, IsString, Matches } from 'class-validator';
 
 export class SendCodeDto {
   @IsString()
@@ -9,4 +9,10 @@ export class SendCodeDto {
   @IsOptional()
   @IsString()
   region?: 'ET' | 'SO' | 'KE' | 'DJ';
+
+  // Optional preferred channel; defaults to 'sms'. Server may fall back to 'whatsapp' if SMS is blocked.
+  @IsOptional()
+  @IsString()
+  @IsIn(['sms', 'whatsapp'])
+  channel?: 'sms' | 'whatsapp';
 }

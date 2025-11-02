@@ -19,6 +19,7 @@ import { AdminAnalyticsController } from './analytics.controller';
 import { RolesModule } from '../roles/roles.module';
 import { AdminRolesController } from './roles.admin.controller';
 import { GeoResolverService } from '../common/services/geo-resolver.service';
+import { AdminProductsController } from './products.admin.controller';
 
 @Module({
   // 2. Add UsersModule and OrdersModule here
@@ -38,6 +39,7 @@ import { GeoResolverService } from '../common/services/geo-resolver.service';
     AdminVendorsController,
     AdminAnalyticsController,
   AdminRolesController,
+  AdminProductsController,
   ],
   // 3. Remove the services from providers. They are now correctly provided by the imported modules.
   providers: [RolesGuard, GeoResolverService],

@@ -69,6 +69,14 @@ export class ProductsV1Controller {
     @Res({ passthrough: true }) res: Response,
   ) {
     const now = Date.now();
+    // Guard against mobile image/camera search placeholders like "Search by image: <filename>"
+    const rawSearch = typeof (filters as any).search === 'string' ? String((filters as any).search).trim() : '';
+    const isImageSearchPlaceholder = /^(search\s+by\s+image:|search\s+by\s+camera:|image\s+search:)/i.test(rawSearch);
+    if (isImageSearchPlaceholder) {
+      // Drop placeholder to avoid meaningless text search and improve relevance; signal via header for observability
+      (filters as any).search = undefined as any;
+      res.setHeader('X-Image-Search-Placeholder', '1');
+    }
     // Normalize category filters for stable behavior and cache keys:
     // Accept category, categories, or categoryId from DTO; coalesce into categoryId only
     const norm: ProductFilterDto = { ...(filters as any) } as any;
@@ -85,7 +93,7 @@ export class ProductsV1Controller {
     // Force lean grid projection
     (norm as any).view = 'grid';
 
-    const cacheKey = this.makeCacheKey(norm as any);
+  const cacheKey = this.makeCacheKey(norm as any);
     const cached = ProductsV1Controller.LIST_CACHE.get(cacheKey);
     if (cached && cached.expiresAt > now) {
       if (cached.lastModified) res.setHeader('Last-Modified', cached.lastModified);

@@ -186,6 +186,11 @@ export class User {
   @Index()
   googleId?: string;
 
+  // --- Apple SSO ---
+  @Column({ nullable: true })
+  @Index()
+  appleId?: string;
+
   // --- Relationships ---
   @OneToMany(() => Product, (product: Product) => product.vendor)
   products!: Product[];

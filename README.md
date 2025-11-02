@@ -107,6 +107,53 @@ $ yarn run start:dev
 $ yarn run start:prod
 ```
 
+## Production hardening (new)
+
+This backend includes several production-oriented features.
+
+### New endpoints
+
+- Metrics (Prometheus): `GET /metrics` (requires `METRICS_ENABLED=true`)
+- Health: `GET /api/health`, `GET /api/health/ready`, `GET /status`, `GET /pdown`
+
+### Idempotency for writes
+
+- For POST/PUT/PATCH requests, sending header `Idempotency-Key: <unique-id>` will cache successful 2xx responses for a short TTL (default 10 minutes) and return the same response for retries. Configure TTL with `IDEMPOTENCY_TTL_SEC`.
+
+### Rate limiting
+
+- Global rate limiting is enabled. For multi-instance deployments, provide Redis to make limits consistent across instances.
+- Env: `REDIS_URL` or `REDIS_HOST/REDIS_PORT/REDIS_PASSWORD`, plus `THROTTLE_TTL` (ms), `THROTTLE_LIMIT` (requests per TTL).
+
+### Metrics and observability
+
+- `METRICS_ENABLED=true` to expose `/metrics` in Prometheus format. Protect this endpoint at the edge (e.g., /metrics only accessible internally).
+- Optional Sentry error tracking: set `SENTRY_DSN` (and optionally `SENTRY_ENVIRONMENT`, `SENTRY_TRACES_SAMPLE_RATE`, `SENTRY_PROFILES_SAMPLE_RATE`). Sensitive fields and headers are scrubbed before sending.
+
+### Feature flags and phased rollout
+
+- A lightweight feature flag system driven by env vars and request headers:
+  - Client should send `X-App-Version` (e.g., `1.2.3`), and optionally `X-Device-Id` for stable percentage bucketing.
+  - Enable a flag with `FEATURE_<FLAG>_ENABLED=true`
+  - Minimum version gate: `FEATURE_<FLAG>_MIN_VERSION=1.2.0`
+  - Percentage rollout: `FEATURE_<FLAG>_PCT=25` (0–100)
+  - Example: `FEATURE_NEW_CHECKOUT_ENABLED=true`, `FEATURE_NEW_CHECKOUT_MIN_VERSION=1.5.0`, `FEATURE_NEW_CHECKOUT_PCT=20`
+- Usage in a controller:
+  - Decorate a route with `@RequireFeature('NEW_CHECKOUT')` and apply the `FeatureFlagGuard` (either at controller or route level) if you want guard enforcement; otherwise, inject `FeatureFlagsService` and check programmatically.
+
+### Database pool tuning
+
+- TypeORM is configured with pool and timeout options; tune via env:
+  - `DB_POOL_MAX` (default 10)
+  - `DB_IDLE_TIMEOUT_MS` (default 10000)
+  - `DB_CONNECT_TIMEOUT_MS` (default 5000)
+  - `DB_STATEMENT_TIMEOUT_MS` (default 15000)
+  - `DB_SLOW_MS` (default 300) for slow query logging threshold
+
+### Migrations and startup
+
+- Auto-migrations default to OFF in production. Set `AUTO_MIGRATE=true` only if you accept migrations at boot; otherwise run migrations in CI/CD before reload.
+
 ## Run tests
 
 ```bash

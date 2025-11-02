@@ -23,6 +23,7 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 // import { plainToInstance } from 'class-transformer';
 import { ClassSerializerInterceptor } from '@nestjs/common';
+import { CacheInterceptor, CacheTTL } from '@nestjs/cache-manager';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UserRole } from '../auth/roles.enum';
 import { ProductFilterDto } from './dto/ProductFilterDto';
@@ -116,7 +117,11 @@ export class ProductsController {
   // --- UPDATED: This method now uses the ProductFilterDto ---
   @Get()
   @SkipThrottle()
-  @UseInterceptors(new RateLimitInterceptor({ maxRps: 10, burst: 20, keyBy: 'userOrIp', scope: 'route', headers: true }))
+  @UseInterceptors(
+    new RateLimitInterceptor({ maxRps: 10, burst: 20, keyBy: 'userOrIp', scope: 'route', headers: true }),
+    CacheInterceptor,
+  )
+  @CacheTTL(30000) // 30s cache for primary listing
   async findAll(
     @Query() filters: ProductFilterDto,
     @Query('currency') currency?: string,
@@ -124,6 +129,14 @@ export class ProductsController {
     @Res({ passthrough: true }) res?: Response,
   ) {
     try {
+      // Normalize/guard against placeholder queries coming from image/camera search on mobile
+      const rawSearch = typeof filters.search === 'string' ? filters.search.trim() : '';
+      const isImageSearchPlaceholder = /^(search\s+by\s+image:|search\s+by\s+camera:|image\s+search:)/i.test(rawSearch);
+      if (isImageSearchPlaceholder) {
+        // Drop placeholder to avoid meaningless text search and noisy analytics
+        (filters as any).search = undefined as any;
+        if (res) res.setHeader('X-Image-Search-Placeholder', '1');
+      }
       // Role (if present)
       const role =
         (req?.user as { role?: string; roles?: string[] } | undefined)?.role ||
@@ -232,7 +245,7 @@ export class ProductsController {
       }
 
       // Record submitted searches (typed then submitted)
-      if (filters.search && typeof filters.search === 'string') {
+      if (!isImageSearchPlaceholder && filters.search && typeof filters.search === 'string') {
         const ip = String(
           (req?.headers?.['x-real-ip'] as string | undefined) ||
             (req?.headers?.['x-forwarded-for'] as string | undefined) ||
@@ -377,7 +390,11 @@ export class ProductsController {
   // Lightweight cards endpoint mirroring filters but returning ProductCard DTOs
   @Get('cards')
   @SkipThrottle()
-  @UseInterceptors(new RateLimitInterceptor({ maxRps: 10, burst: 20, keyBy: 'userOrIp', scope: 'route', headers: true }))
+  @UseInterceptors(
+    new RateLimitInterceptor({ maxRps: 10, burst: 20, keyBy: 'userOrIp', scope: 'route', headers: true }),
+    CacheInterceptor,
+  )
+  @CacheTTL(45000) // 45s cache for cards
   async listCards(
     @Query() filters: ProductFilterDto,
     @Req() req?: AuthenticatedRequest,
@@ -495,7 +512,11 @@ export class ProductsController {
   @Header('Cache-Control', 'public, max-age=60')
   @Header('Deprecation', 'true')
   @Header('Sunset', 'Wed, 31 Dec 2025 23:59:59 GMT')
-  async homeFeed(@Query() q: any) {
+  async homeFeed(
+    @Query() q: any,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
     const perSection = Math.min(Number(q.limit || q.per_page) || 10, 20);
     const v =
       typeof q.view === 'string' && (q.view === 'grid' || q.view === 'full')
@@ -511,6 +532,33 @@ export class ProductsController {
       userCountry: country,
       view: v,
     });
+
+    // Compute and set a lightweight ETag based on list IDs + timestamps
+    try {
+      const dig = (arr: any[] | undefined) =>
+        Array.isArray(arr)
+          ? arr.map((it) => `${it?.id || ''}:${new Date((it?.updatedAt || it?.createdAt || 0) as any).getTime()}`)
+          : [];
+      const base = JSON.stringify({
+        k: 'home',
+        v,
+        perSection,
+        geo: { city: city || '', region: region || '', country: country || '' },
+        best: dig((data as any).bestSellers),
+        top: dig((data as any).topRated),
+        geoAll: dig((data as any).geoAll),
+        newArrivals: dig((data as any).newArrivals),
+        curatedNew: dig((data as any).curatedNew),
+        curatedBest: dig((data as any).curatedBest),
+      });
+      const etag = `W/"${createHash('sha1').update(base).digest('hex')}"`;
+      res.setHeader('ETag', etag);
+      const inm = (req.headers['if-none-match'] as string | undefined) || '';
+      if (inm && inm === etag) {
+        res.status(304);
+        return;
+      }
+    } catch {}
 
     // Build aliases to help flexible clients
     const payload = {
@@ -578,7 +626,11 @@ export class ProductsController {
 
   // East Africa batch: returns items grouped by country codes in one call
   @Get('east-africa')
-  async eastAfricaBatch(@Query() q: any) {
+  async eastAfricaBatch(
+    @Query() q: any,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
     const countries = String(q.countries || 'ET,SO,KE,DJ')
       .split(',')
       .map((c) => c.trim().toUpperCase())
@@ -597,6 +649,24 @@ export class ProductsController {
           .then((res) => ({ code, items: res.items })),
       ),
     );
+    // ETag for the grouped response
+    try {
+      const base = JSON.stringify({
+        k: 'ea-batch',
+        countries,
+        per,
+        sort,
+        view,
+        ids: results.flatMap((r) => (r.items || []).map((i: any) => `${r.code}:${i.id}:${i.updatedAt || i.createdAt || ''}`)),
+      });
+      const etag = `W/"${createHash('sha1').update(base).digest('hex')}"`;
+      res.setHeader('ETag', etag);
+      const inm = (req.headers['if-none-match'] as string | undefined) || '';
+      if (inm && inm === etag) {
+        res.status(304);
+        return;
+      }
+    } catch {}
     return { countries: results };
   }
 

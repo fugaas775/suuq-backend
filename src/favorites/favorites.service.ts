@@ -301,4 +301,19 @@ export class FavoritesService {
     }
     return out;
   }
+
+  /** Remove a product ID from all users' favorites and bump version for changed rows. Returns affected row count. */
+  async removeProductEverywhere(productId: number): Promise<number> {
+    try {
+      const res: { rowCount?: number } = (await this.favRepo.query(
+        `UPDATE favorites SET ids = array_remove(ids, $1), version = CASE WHEN $1 = ANY(ids) THEN version + 1 ELSE version END WHERE $1 = ANY(ids)`,
+        [productId],
+      )) as any;
+      // Some drivers don't populate rowCount; compute as best-effort
+      return typeof res?.rowCount === 'number' ? res.rowCount : 0;
+    } catch (e) {
+      this.logger.warn(`removeProductEverywhere failed for id=${productId}: ${(e as Error).message}`);
+      return 0;
+    }
+  }
 }

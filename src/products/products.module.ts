@@ -7,6 +7,7 @@ import { User } from '../users/entities/user.entity';
 import { Order } from '../orders/entities/order.entity';
 import { Tag } from '../tags/tag.entity';
 import { Category } from '../categories/entities/category.entity'; // 1. Import the Category entity
+import { Review } from '../reviews/entities/review.entity';
 import { ProductImpression } from './entities/product-impression.entity';
 import { SearchKeyword } from './entities/search-keyword.entity';
 import { ProductsService } from './products.service';
@@ -19,6 +20,7 @@ import { HomeModule } from '../home/home.module';
 import { FavoritesModule } from '../favorites/favorites.module';
 import { ReviewsModule } from '../reviews/reviews.module';
 import { ProductListingModule } from './listing/product-listing.module';
+import { GeoResolverService } from '../common/services/geo-resolver.service';
 
 @Module({
   imports: [
@@ -31,6 +33,7 @@ import { ProductListingModule } from './listing/product-listing.module';
       Category, // ✅ 2. Add the Category entity here
       ProductImpression,
       SearchKeyword,
+      Review,
     ]),
     CurrencyModule,
     forwardRef(() => UsersModule),
@@ -41,7 +44,7 @@ import { ProductListingModule } from './listing/product-listing.module';
   ReviewsModule,
   ProductListingModule,
   ],
-  providers: [ProductsService],
+  providers: [ProductsService, GeoResolverService],
   controllers: [ProductsController, ProductsV1Controller],
   exports: [ProductsService, ProductListingModule],
 })
