@@ -5,8 +5,8 @@
     "removeComments": true,
     "emitDecoratorMetadata": true,
     "experimentalDecorators": true,
-  "allowSyntheticDefaultImports": true,
-  "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
     "target": "es2017",
     "sourceMap": true,
     "outDir": "./dist",
@@ -21,7 +21,7 @@
     "noFallthroughCasesInSwitch": false,
     "resolveJsonModule": true,
     "moduleResolution": "node",
-  "types": ["node", "jest"]
+    "types": ["node", "express"]
   },
   "include": ["src/**/*", "test/**/*.ts"],
   "ts-node": {

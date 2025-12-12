@@ -13,11 +13,21 @@ import { UsersModule } from '../users/users.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { MediaModule } from '../media/media.module';
 import { ProductsModule } from '../products/products.module';
+import { SearchKeyword } from '../products/entities/search-keyword.entity';
+import { VendorAnalyticsController } from './vendor-analytics.controller';
 
 @Module({
   imports: [
     // ✨ 2. PRODUCTIMAGE ENTITY ADDED HERE
-  TypeOrmModule.forFeature([User, Product, Order, OrderItem, ProductImage, Tag]),
+    TypeOrmModule.forFeature([
+      User,
+      Product,
+      Order,
+      OrderItem,
+      ProductImage,
+      Tag,
+      SearchKeyword,
+    ]),
     forwardRef(() => UsersModule),
     forwardRef(() => ProductsModule),
     MediaModule,
@@ -27,6 +37,7 @@ import { ProductsModule } from '../products/products.module';
     VendorController,
     VendorPublicController,
     VendorDashboardController,
+    VendorAnalyticsController,
   ],
   providers: [VendorService],
   exports: [VendorService],

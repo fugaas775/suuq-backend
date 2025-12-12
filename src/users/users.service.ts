@@ -142,6 +142,61 @@ export class UsersService {
   ): Promise<{ users: User[]; total: number; page: number; pageSize: number }> {
     const qb = this.userRepository.createQueryBuilder('user');
 
+    // Normalize search term and source
+    const aliasSearch = (
+      filters?.q ||
+      filters?.query ||
+      filters?.term ||
+      filters?.keyword ||
+      ''
+    ).trim();
+    const explicitSearch = (filters?.search || '').trim();
+    const term = aliasSearch || explicitSearch;
+    const hasAnySearch = !!term;
+
+    // ---- Advanced field-specific filters (added for admin tokens) ----
+    // These allow precise server-side matches instead of client-side fallbacks.
+    // Parsing precedence for active status tokens: status -> isActive -> active
+
+    // Exact id match (token id:123)
+    if (filters?.id) {
+      qb.andWhere('user.id = :exactId', { exactId: filters.id });
+    }
+
+    // Email contains (token email:foo) - case-insensitive partial
+    if (filters?.email) {
+      qb.andWhere('user.email ILIKE :emailLike', {
+        emailLike: `%${filters.email}%`,
+      });
+    }
+
+    // Display name contains (token name:john)
+    if (filters?.name) {
+      qb.andWhere('user.displayName ILIKE :nameLike', {
+        nameLike: `%${filters.name}%`,
+      });
+    }
+
+    // Store name contains (token store:acme)
+    if (filters?.store) {
+      qb.andWhere('user.storeName ILIKE :storeLike', {
+        storeLike: `%${filters.store}%`,
+      });
+    }
+
+    // Map friendly status to isActive when provided
+    let isActiveFilter: boolean | undefined = undefined;
+    if (filters?.status === 'active') isActiveFilter = true;
+    if (filters?.status === 'inactive') isActiveFilter = false;
+    if (filters?.isActive !== undefined) {
+      isActiveFilter = !!Number(filters.isActive);
+    }
+    if (filters?.active !== undefined && isActiveFilter === undefined) {
+      // Only apply 'active' alias if status/isActive not already set
+      isActiveFilter = !!Number(filters.active);
+    }
+
+    // Enforce role filter whenever provided so vendor/admin searches stay scoped
     if (filters?.role) {
       qb.andWhere('user.roles @> :roles', { roles: [filters.role] });
     }
@@ -152,17 +207,41 @@ export class UsersService {
       });
     }
 
-    if (filters?.isActive !== undefined) {
-      qb.andWhere('user.isActive = :ia', { ia: !!Number(filters.isActive) });
+    if (typeof isActiveFilter === 'boolean') {
+      qb.andWhere('user.isActive = :ia', { ia: isActiveFilter });
     }
 
-    if (filters?.search) {
-      qb.andWhere(
-        '(user.displayName ILIKE :search OR user.storeName ILIKE :search OR user.email ILIKE :search)',
-        {
-          search: `%${filters.search}%`,
-        },
-      );
+    if (term) {
+      if (aliasSearch) {
+        // For q-based search: include storeName so vendor lookups work with q-term
+        qb.andWhere(
+          '(user.email ILIKE :t OR user.displayName ILIKE :t OR user.storeName ILIKE :t)',
+          { t: `%${term}%` },
+        );
+      } else {
+        // Legacy/explicit search: include storeName too for broader matching
+        qb.andWhere(
+          '(user.displayName ILIKE :t OR user.storeName ILIKE :t OR user.email ILIKE :t)',
+          { t: `%${term}%` },
+        );
+      }
+    }
+
+    // Filter by presence of verification documents (hasdocs:true/false)
+    if (filters?.hasdocs !== undefined) {
+      const hasDocsToken = (filters.hasdocs || '').toLowerCase();
+      const wantsDocs = ['true', '1'].includes(hasDocsToken);
+      if (wantsDocs) {
+        qb.andWhere(
+          'jsonb_array_length(COALESCE(user.verificationDocuments, :emptyJsonb)) > 0',
+          { emptyJsonb: '[]' },
+        );
+      } else if (['false', '0'].includes(hasDocsToken)) {
+        qb.andWhere(
+          'jsonb_array_length(COALESCE(user.verificationDocuments, :emptyJsonb)) = 0',
+          { emptyJsonb: '[]' },
+        );
+      }
     }
 
     if (filters?.createdFrom) {
@@ -174,7 +253,9 @@ export class UsersService {
 
     // Sorting
     const sortBy = filters?.sortBy || 'id';
-    const sortOrder = (filters?.sortOrder || 'desc').toUpperCase() as 'ASC' | 'DESC';
+    const sortOrder = (filters?.sortOrder || 'desc').toUpperCase() as
+      | 'ASC'
+      | 'DESC';
     const sortableColumns = new Set([
       'id',
       'email',
@@ -190,8 +271,13 @@ export class UsersService {
 
     // Pagination (safe bounds)
     const page = filters?.page && filters.page > 0 ? filters.page : 1;
-    const rawPageSize = filters?.pageSize && filters.pageSize > 0 ? filters.pageSize : 20;
-    const pageSize = Math.min(rawPageSize, 200); // cap to avoid huge queries
+    const requested =
+      filters?.limit && filters.limit > 0
+        ? filters.limit
+        : filters?.pageSize && filters.pageSize > 0
+          ? filters.pageSize
+          : 20;
+    const pageSize = Math.min(requested, 1000); // allow up to 1000 for CSV batching
     qb.skip((page - 1) * pageSize).take(pageSize);
 
     const [users, total] = await qb.getManyAndCount();
@@ -227,13 +313,13 @@ export class UsersService {
       'storeName',
       'phoneCountryCode',
       'phoneNumber',
-  'isPhoneVerified',
+      'isPhoneVerified',
       'isActive',
       // Verification fields for admin
       'verificationStatus',
       'verificationDocuments',
       'verified',
-  'verifiedAt',
+      'verifiedAt',
     ];
     const updateData: Partial<User> = {};
     for (const key of allowedFields) {
@@ -432,7 +518,9 @@ export class UsersService {
     name?: string;
     roles?: UserRole[];
   }): Promise<User> {
-    const existing = await this.userRepository.findOne({ where: { email: payload.email } });
+    const existing = await this.userRepository.findOne({
+      where: { email: payload.email },
+    });
     if (existing) {
       throw new ConflictException('A user with this email already exists.');
     }
@@ -440,7 +528,10 @@ export class UsersService {
       email: payload.email,
       displayName: payload.name,
       appleId: payload.sub,
-      roles: payload.roles && payload.roles.length > 0 ? payload.roles : [UserRole.CUSTOMER],
+      roles:
+        payload.roles && payload.roles.length > 0
+          ? payload.roles
+          : [UserRole.CUSTOMER],
       isActive: true,
     });
     return this.userRepository.save(user);

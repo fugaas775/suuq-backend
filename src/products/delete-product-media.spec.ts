@@ -13,6 +13,8 @@ import { DoSpacesService } from '../media/do-spaces.service';
 import { AuditService } from '../audit/audit.service';
 import { Review } from '../reviews/entities/review.entity';
 import { FavoritesService } from '../favorites/favorites.service';
+import { GeoResolverService } from '../common/services/geo-resolver.service';
+import { UserRole } from '../auth/roles.enum';
 
 describe('ProductsService.deleteProduct media cleanup', () => {
   let service: ProductsService;
@@ -29,7 +31,9 @@ describe('ProductsService.deleteProduct media cleanup', () => {
   const impressionRepo = {};
   const searchKeywordRepo = {};
   const reviewRepo = { delete: jest.fn() };
-  const favorites = { removeProductEverywhere: jest.fn().mockResolvedValue(0) } as unknown as FavoritesService;
+  const favorites = {
+    removeProductEverywhere: jest.fn().mockResolvedValue(0),
+  } as unknown as FavoritesService;
 
   const doSpaces = {
     urlToKeyIfInBucket: jest.fn((url: string) => {
@@ -45,7 +49,10 @@ describe('ProductsService.deleteProduct media cleanup', () => {
     getDownloadSignedUrl: jest.fn(),
   } as unknown as DoSpacesService;
 
-  const audit = { log: jest.fn(), countForTargetSince: jest.fn() } as unknown as AuditService;
+  const audit = {
+    log: jest.fn(),
+    countForTargetSince: jest.fn(),
+  } as unknown as AuditService;
 
   beforeEach(async () => {
     jest.clearAllMocks();
@@ -53,17 +60,30 @@ describe('ProductsService.deleteProduct media cleanup', () => {
       providers: [
         ProductsService,
         { provide: getRepositoryToken(Product), useValue: productRepo },
-        { provide: getRepositoryToken(ProductImage), useValue: productImageRepo },
+        {
+          provide: getRepositoryToken(ProductImage),
+          useValue: productImageRepo,
+        },
         { provide: getRepositoryToken(User), useValue: userRepo },
         { provide: getRepositoryToken(Order), useValue: orderRepo },
         { provide: getRepositoryToken(Tag), useValue: tagRepo },
         { provide: getRepositoryToken(Category), useValue: categoryRepo },
-        { provide: getRepositoryToken(ProductImpression), useValue: impressionRepo },
-        { provide: getRepositoryToken(SearchKeyword), useValue: searchKeywordRepo },
+        {
+          provide: getRepositoryToken(ProductImpression),
+          useValue: impressionRepo,
+        },
+        {
+          provide: getRepositoryToken(SearchKeyword),
+          useValue: searchKeywordRepo,
+        },
         { provide: getRepositoryToken(Review), useValue: reviewRepo },
         { provide: DoSpacesService, useValue: doSpaces },
         { provide: AuditService, useValue: audit },
         { provide: FavoritesService, useValue: favorites },
+        {
+          provide: GeoResolverService,
+          useValue: { resolveCountryFromCity: jest.fn() },
+        },
       ],
     }).compile();
 
@@ -78,12 +98,20 @@ describe('ProductsService.deleteProduct media cleanup', () => {
       images: [
         {
           src: 'https://bucket.region.digitaloceanspaces.com/images/img1.jpg',
-          thumbnailSrc: 'https://bucket.region.digitaloceanspaces.com/images/img1-thumb.jpg',
-          lowResSrc: 'https://bucket.region.digitaloceanspaces.com/images/img1-low.jpg',
+          thumbnailSrc:
+            'https://bucket.region.digitaloceanspaces.com/images/img1-thumb.jpg',
+          lowResSrc:
+            'https://bucket.region.digitaloceanspaces.com/images/img1-low.jpg',
         },
       ],
       attributes: {
-        digital: { download: { key: 'downloads/file1.zip', publicUrl: 'https://bucket.region.digitaloceanspaces.com/downloads/file1.zip' } },
+        digital: {
+          download: {
+            key: 'downloads/file1.zip',
+            publicUrl:
+              'https://bucket.region.digitaloceanspaces.com/downloads/file1.zip',
+          },
+        },
         videoUrl: 'https://bucket.region.digitaloceanspaces.com/videos/v1.mp4',
         posterUrl: 'https://bucket.region.digitaloceanspaces.com/videos/v1.jpg',
       },
@@ -92,7 +120,10 @@ describe('ProductsService.deleteProduct media cleanup', () => {
     orderRepo.count.mockResolvedValue(0);
     productRepo.delete.mockResolvedValue({});
 
-    const res = await service.deleteProduct(42, { id: 123 } as any);
+    const res = await service.deleteProduct(42, {
+      id: 123,
+      roles: [UserRole.VENDOR],
+    } as any);
     expect(res).toEqual({ deleted: true });
 
     // Ensure order check and final delete were called
@@ -100,7 +131,9 @@ describe('ProductsService.deleteProduct media cleanup', () => {
     expect(productRepo.delete).toHaveBeenCalledWith(42);
 
     // Validate deleteObject was called for deduped set of keys
-    const deletedKeys = (doSpaces.deleteObject as any).mock.calls.map((c: any[]) => c[0]);
+    const deletedKeys = (doSpaces.deleteObject as any).mock.calls.map(
+      (c: any[]) => c[0],
+    );
     const expectKeys = [
       'images/main.jpg',
       'images/img1.jpg',
@@ -116,5 +149,22 @@ describe('ProductsService.deleteProduct media cleanup', () => {
     for (const k of uniqueExpected) {
       expect(deletedKeys).toContain(k);
     }
+  });
+
+  it('allows admins to delete products they do not own', async () => {
+    const product: any = {
+      id: 77,
+      vendor: { id: 555 },
+      images: [],
+      attributes: {},
+    };
+    productRepo.findOne.mockResolvedValue(product);
+    orderRepo.count.mockResolvedValue(0);
+    productRepo.delete.mockResolvedValue({});
+
+    await expect(
+      service.deleteProduct(77, { id: 999, roles: [UserRole.ADMIN] } as any),
+    ).resolves.toEqual({ deleted: true });
+    expect(productRepo.delete).toHaveBeenCalledWith(77);
   });
 });

@@ -12,6 +12,7 @@ import { PatchFavoritesDto } from './dto/patch-favorites.dto';
 import { PutFavoritesDto } from './dto/put-favorites.dto';
 import { Product } from '../products/entities/product.entity';
 import { createHash } from 'crypto';
+import { instanceToPlain } from 'class-transformer';
 
 export type FavoritesResponse = {
   userId: 'me';
@@ -52,6 +53,10 @@ export class FavoritesService {
   }
 
   private toResponse(row: Favorite, products?: Product[]): FavoritesResponse {
+    // Force plain objects to avoid serialization issues with entity instances
+    const plainProducts = products
+      ? (instanceToPlain(products) as Product[])
+      : undefined;
     return {
       userId: 'me',
       ids: row.ids,
@@ -59,7 +64,7 @@ export class FavoritesService {
       updatedAt: row.updatedAt.toISOString(),
       version: row.version,
       etag: this.makeEtag(row.version, row.ids),
-      ...(products ? { products } : {}),
+      ...(plainProducts ? { products: plainProducts } : {}),
     };
   }
 
@@ -274,7 +279,9 @@ export class FavoritesService {
    */
   async countLikesBulk(ids: number[]): Promise<Record<string, number>> {
     const out: Record<string, number> = {};
-    const list = Array.from(new Set((ids || []).filter((n) => Number.isFinite(n)))) as number[];
+    const list = Array.from(
+      new Set((ids || []).filter((n) => Number.isFinite(n))),
+    );
     if (!list.length) return out;
     const sql = `
       SELECT elem::int AS product_id, COUNT(*)::bigint AS cnt
@@ -283,7 +290,8 @@ export class FavoritesService {
       GROUP BY elem
     `;
     try {
-      const rows: Array<{ product_id: number; cnt: string }> = await this.favRepo.query(sql, [list]);
+      const rows: Array<{ product_id: number; cnt: string }> =
+        await this.favRepo.query(sql, [list]);
       for (const r of rows) {
         const pid = Number(r.product_id);
         const c = parseInt(r.cnt, 10) || 0;
@@ -305,14 +313,16 @@ export class FavoritesService {
   /** Remove a product ID from all users' favorites and bump version for changed rows. Returns affected row count. */
   async removeProductEverywhere(productId: number): Promise<number> {
     try {
-      const res: { rowCount?: number } = (await this.favRepo.query(
+      const res: { rowCount?: number } = await this.favRepo.query(
         `UPDATE favorites SET ids = array_remove(ids, $1), version = CASE WHEN $1 = ANY(ids) THEN version + 1 ELSE version END WHERE $1 = ANY(ids)`,
         [productId],
-      )) as any;
+      );
       // Some drivers don't populate rowCount; compute as best-effort
       return typeof res?.rowCount === 'number' ? res.rowCount : 0;
     } catch (e) {
-      this.logger.warn(`removeProductEverywhere failed for id=${productId}: ${(e as Error).message}`);
+      this.logger.warn(
+        `removeProductEverywhere failed for id=${productId}: ${(e as Error).message}`,
+      );
       return 0;
     }
   }

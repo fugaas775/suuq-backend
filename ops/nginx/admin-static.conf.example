@@ -1,0 +1,55 @@
+# Example Nginx config snippet for the Admin UI static hosting
+# Adjust root and server_name to your environment
+
+server {
+    listen 80;
+    server_name admin.suuq.ugasfuad.com;
+
+    root /var/www/suuq-admin; # Ensure this points to the folder you rsynced
+    index index.html;
+
+    # Never cache index.html so new deployments are visible immediately
+    location = /index.html {
+        add_header Cache-Control "no-cache, no-store, must-revalidate" always;
+        add_header Pragma "no-cache" always;
+        add_header Expires "0" always;
+        try_files $uri =404;
+    }
+
+    # Route all SPA paths to index.html (history API fallback)
+    location / {
+        try_files $uri $uri/ /index.html;
+        # Ensure HTML is not cached even if / resolves to index.html
+        types { }
+        default_type "text/html";
+        add_header Cache-Control "no-cache, no-store, must-revalidate" always;
+        add_header Pragma "no-cache" always;
+        add_header Expires "0" always;
+    }
+
+    # Long-cache hashed assets (JS/CSS) — adjust paths to your build output
+    # Examples assume Vite/React build structure: /assets/ with content-hashed filenames
+    location ~* ^/(assets|static|build)/.*\.(?:js|css|woff2?|ttf|eot|svg)$ {
+        access_log off;
+        expires 1y;
+        add_header Cache-Control "public, max-age=31536000, immutable" always;
+        try_files $uri =404;
+    }
+
+    # Images can be cached moderately; tailor as needed
+    location ~* \.(?:png|jpe?g|gif|webp|ico)$ {
+        access_log off;
+        expires 30d;
+        add_header Cache-Control "public, max-age=2592000" always;
+        try_files $uri =404;
+    }
+
+    # Proxy API calls to backend (optional convenience if hosting UI+API on same Nginx)
+    # location /api/ {
+    #     proxy_pass http://127.0.0.1:3000;
+    #     proxy_set_header Host $host;
+    #     proxy_set_header X-Real-IP $remote_addr;
+    #     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    #     proxy_set_header X-Forwarded-Proto $scheme;
+    # }
+}

@@ -6,10 +6,10 @@
 # - Reload Nginx after applying
 
 # Optional: if you prefer to reflect only specific origins
-# set $cors_origin "";
-# if ($http_origin ~* ^https://(admin\.)?suuq\.ugasfuad\.com$) {
-#     set $cors_origin $http_origin;
-# }
+set $cors_origin "";
+if ($http_origin ~* ^https://(admin\.)?suuq\.ugasfuad\.com$) {
+    set $cors_origin $http_origin;
+}
 
 location /api/ {
     # Allow uploads up to 50MB (matches app-side limit). Without this, Nginx returns 413 before Nest sees the request.
@@ -28,7 +28,7 @@ location /api/ {
     # Handle CORS preflight directly at the edge to avoid 503s
     if ($request_method = OPTIONS) {
         # If you set $cors_origin above, replace $http_origin with $cors_origin
-        add_header 'Access-Control-Allow-Origin' $http_origin always;
+        add_header 'Access-Control-Allow-Origin' $cors_origin always;
         add_header 'Access-Control-Allow-Credentials' 'true' always;
         add_header 'Access-Control-Allow-Methods' 'GET, POST, PUT, PATCH, DELETE, OPTIONS' always;
         add_header 'Access-Control-Allow-Headers' 'Origin, X-Requested-With, Content-Type, Accept, Authorization, Cache-Control, Pragma, If-None-Match, If-Modified-Since' always;
@@ -45,7 +45,7 @@ location /api/ {
     proxy_set_header X-Forwarded-Proto $scheme;
 
     # CORS headers on responses
-    add_header 'Access-Control-Allow-Origin' $http_origin always;
+    add_header 'Access-Control-Allow-Origin' $cors_origin always;
     add_header 'Access-Control-Allow-Credentials' 'true' always;
     add_header 'Vary' 'Origin' always;
 }

@@ -28,14 +28,31 @@ export class VendorPublicController {
     @Optional() private readonly doSpacesService?: DoSpacesService,
   ) {}
 
+  // Simple vendor suggestion for admin dropdowns and client search
+  // Placed before :id route to avoid ParseIntPipe errors on /vendors/suggest
+  @Get('suggest')
+  async suggestVendors(@Query('q') q?: string, @Query('limit') limit?: string) {
+    const lim = Math.min(Number(limit) || 10, 50);
+    return this.vendorService.suggestVendors(q, lim);
+  }
+
   // Lightweight per-process cache for batch vendor products (hot on home)
   private static readonly BATCH_TTL_MS = 30_000; // 30s to match Cache-Control
   private static readonly BATCH_CACHE_MAX = 200;
-  private static readonly BATCH_CACHE: Map<string, { data: any; lastModified?: string; expiresAt: number }> =
-    new Map();
+  private static readonly BATCH_CACHE: Map<
+    string,
+    { data: any; lastModified?: string; expiresAt: number }
+  > = new Map();
 
-  private makeBatchKey(params: { vendorIds: number[]; per: number; sort?: string; view?: string }): string {
-    const ids = [...(params.vendorIds || [])].filter((n) => Number.isInteger(n) && n > 0).sort((a, b) => a - b);
+  private makeBatchKey(params: {
+    vendorIds: number[];
+    per: number;
+    sort?: string;
+    view?: string;
+  }): string {
+    const ids = [...(params.vendorIds || [])]
+      .filter((n) => Number.isInteger(n) && n > 0)
+      .sort((a, b) => a - b);
     const v = params.view === 'grid' ? 'grid' : 'full';
     return `ids=${ids.join(',')}&per=${params.per}&sort=${params.sort || 'created_desc'}&view=${v}`;
   }
@@ -44,7 +61,15 @@ export class VendorPublicController {
   @SkipThrottle()
   @Header('Cache-Control', 'public, max-age=30, stale-while-revalidate=60')
   @Get('products')
-  @UseInterceptors(new RateLimitInterceptor({ maxRps: 15, burst: 30, keyBy: 'userOrIp', scope: 'route', headers: true }))
+  @UseInterceptors(
+    new RateLimitInterceptor({
+      maxRps: 15,
+      burst: 30,
+      keyBy: 'userOrIp',
+      scope: 'route',
+      headers: true,
+    }),
+  )
   async batchVendorProducts(
     @Query('vendorIds') vendorIdsParam: string,
     @Query('per_vendor') perVendor?: string,
@@ -65,7 +90,8 @@ export class VendorPublicController {
     const cacheKey = this.makeBatchKey({ vendorIds, per, sort, view: v });
     const cached = VendorPublicController.BATCH_CACHE.get(cacheKey);
     if (cached && cached.expiresAt > now) {
-      if (cached.lastModified && res) res.setHeader('Last-Modified', cached.lastModified);
+      if (cached.lastModified && res)
+        res.setHeader('Last-Modified', cached.lastModified);
       return cached.data;
     }
 
@@ -86,15 +112,26 @@ export class VendorPublicController {
     // Compute Last-Modified across all returned items
     const newest = Math.max(
       -Infinity,
-      ...results.flatMap((g) => g.items.map((it: any) => new Date(it?.createdAt).getTime())).filter((n) => Number.isFinite(n)),
+      ...results
+        .flatMap((g) =>
+          g.items.map((it: any) => new Date(it?.createdAt).getTime()),
+        )
+        .filter((n) => Number.isFinite(n)),
     );
-    const lastModified = Number.isFinite(newest) && newest > 0 ? new Date(newest).toUTCString() : undefined;
+    const lastModified =
+      Number.isFinite(newest) && newest > 0
+        ? new Date(newest).toUTCString()
+        : undefined;
     if (lastModified && res) res.setHeader('Last-Modified', lastModified);
 
     const payload = { vendors: results };
     // Evict if over cap; simple FIFO
-    if (VendorPublicController.BATCH_CACHE.size >= VendorPublicController.BATCH_CACHE_MAX) {
-      const firstKey = VendorPublicController.BATCH_CACHE.keys().next().value as string | undefined;
+    if (
+      VendorPublicController.BATCH_CACHE.size >=
+      VendorPublicController.BATCH_CACHE_MAX
+    ) {
+      const firstKey = VendorPublicController.BATCH_CACHE.keys().next()
+        .value as string | undefined;
       if (firstKey) VendorPublicController.BATCH_CACHE.delete(firstKey);
     }
     VendorPublicController.BATCH_CACHE.set(cacheKey, {
@@ -111,7 +148,15 @@ export class VendorPublicController {
   @SkipThrottle()
   @Header('Cache-Control', 'public, max-age=30, stale-while-revalidate=60')
   @Get('products/batch')
-  @UseInterceptors(new RateLimitInterceptor({ maxRps: 15, burst: 30, keyBy: 'userOrIp', scope: 'route', headers: true }))
+  @UseInterceptors(
+    new RateLimitInterceptor({
+      maxRps: 15,
+      burst: 30,
+      keyBy: 'userOrIp',
+      scope: 'route',
+      headers: true,
+    }),
+  )
   async batchVendorProductsSafe(
     @Query('vendorIds') vendorIdsParam: string,
     @Query('per_vendor') perVendor?: string,
@@ -131,7 +176,8 @@ export class VendorPublicController {
     const cacheKey = this.makeBatchKey({ vendorIds, per, sort, view: v });
     const cached = VendorPublicController.BATCH_CACHE.get(cacheKey);
     if (cached && cached.expiresAt > now) {
-      if (cached.lastModified && res) res.setHeader('Last-Modified', cached.lastModified);
+      if (cached.lastModified && res)
+        res.setHeader('Last-Modified', cached.lastModified);
       return cached.data;
     }
 
@@ -151,14 +197,25 @@ export class VendorPublicController {
     );
     const newest = Math.max(
       -Infinity,
-      ...results.flatMap((g) => g.items.map((it: any) => new Date(it?.createdAt).getTime())).filter((n) => Number.isFinite(n)),
+      ...results
+        .flatMap((g) =>
+          g.items.map((it: any) => new Date(it?.createdAt).getTime()),
+        )
+        .filter((n) => Number.isFinite(n)),
     );
-    const lastModified = Number.isFinite(newest) && newest > 0 ? new Date(newest).toUTCString() : undefined;
+    const lastModified =
+      Number.isFinite(newest) && newest > 0
+        ? new Date(newest).toUTCString()
+        : undefined;
     if (lastModified && res) res.setHeader('Last-Modified', lastModified);
 
     const payload = { vendors: results };
-    if (VendorPublicController.BATCH_CACHE.size >= VendorPublicController.BATCH_CACHE_MAX) {
-      const firstKey = VendorPublicController.BATCH_CACHE.keys().next().value as string | undefined;
+    if (
+      VendorPublicController.BATCH_CACHE.size >=
+      VendorPublicController.BATCH_CACHE_MAX
+    ) {
+      const firstKey = VendorPublicController.BATCH_CACHE.keys().next()
+        .value as string | undefined;
       if (firstKey) VendorPublicController.BATCH_CACHE.delete(firstKey);
     }
     VendorPublicController.BATCH_CACHE.set(cacheKey, {
@@ -173,13 +230,6 @@ export class VendorPublicController {
   @Get(':id')
   async getPublicProfile(@Param('id') id: number) {
     return this.vendorService.getPublicProfile(id);
-  }
-
-  // Simple vendor suggestion for admin dropdowns and client search
-  @Get('suggest')
-  async suggestVendors(@Query('q') q?: string, @Query('limit') limit?: string) {
-    const lim = Math.min(Number(limit) || 10, 50);
-    return this.vendorService.suggestVendors(q, lim);
   }
 
   // Public endpoint to fetch approved verification certificates for a vendor

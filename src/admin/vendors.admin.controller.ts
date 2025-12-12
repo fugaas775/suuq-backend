@@ -43,6 +43,7 @@ export class AdminVendorsController {
     @Query('city') city?: string,
     @Query('minSales') minSales?: string,
     @Query('minRating') minRating?: string,
+    @Query('meta') metaFlag?: string,
   ) {
     const p = Math.max(Number(page) || 1, 1);
     const l = Math.min(Math.max(Number(limit) || 20, 1), 100);
@@ -67,13 +68,40 @@ export class AdminVendorsController {
         ? minRatingNum
         : undefined,
     } as any);
-    return {
+    const payload = {
       items: result.items,
       total: result.total,
       page: result.currentPage,
       perPage: l,
       totalPages: result.totalPages,
     };
+    return metaFlag === '1' ? { data: payload.items, meta: payload } : payload;
+  }
+
+  // Lightweight search endpoint for admin autocomplete use-cases
+  @Get('search')
+  async search(
+    @Query('q') q?: string,
+    @Query('limit') limit?: string,
+    @Query('meta') metaFlag?: string,
+  ) {
+    const l = Math.min(Math.max(Number(limit) || 20, 1), 100);
+    const result = await this.vendorService.findPublicVendors({
+      page: 1,
+      limit: l,
+      search: q,
+      sort: 'recent',
+      role: 'VENDOR',
+    } as any);
+
+    const payload = {
+      items: result.items,
+      total: result.total,
+      page: result.currentPage,
+      perPage: l,
+      totalPages: result.totalPages,
+    };
+    return metaFlag === '1' ? { data: payload.items, meta: payload } : payload;
   }
 
   @Get(':id')

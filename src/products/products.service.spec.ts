@@ -11,6 +11,9 @@ import { ProductImpression } from './entities/product-impression.entity';
 import { SearchKeyword } from './entities/search-keyword.entity';
 import { DoSpacesService } from '../media/do-spaces.service';
 import { AuditService } from '../audit/audit.service';
+import { Review } from '../reviews/entities/review.entity';
+import { GeoResolverService } from '../common/services/geo-resolver.service';
+import { FavoritesService } from '../favorites/favorites.service';
 
 describe('ProductsService', () => {
   let service: ProductsService;
@@ -39,18 +42,41 @@ describe('ProductsService', () => {
         { provide: getRepositoryToken(Category), useValue: {} },
         { provide: getRepositoryToken(ProductImpression), useValue: {} },
         { provide: getRepositoryToken(SearchKeyword), useValue: {} },
+        { provide: getRepositoryToken(Review), useValue: {} },
         {
           provide: DoSpacesService,
           useValue: {
             urlToKeyIfInBucket: jest.fn((url: string) => {
-              try { const u = new URL(url); return u.pathname.replace(/^\//, ''); } catch { return null; }
+              try {
+                const u = new URL(url);
+                return u.pathname.replace(/^\//, '');
+              } catch {
+                return null;
+              }
             }),
-            buildPublicUrl: jest.fn((key: string) => `https://bucket.region.digitaloceanspaces.com/${key}`),
+            buildPublicUrl: jest.fn(
+              (key: string) =>
+                `https://bucket.region.digitaloceanspaces.com/${key}`,
+            ),
             getDownloadSignedUrl: jest.fn(),
             deleteObject: jest.fn(),
           },
         },
-        { provide: AuditService, useValue: { log: jest.fn(), countForTargetSince: jest.fn().mockResolvedValue(0) } },
+        {
+          provide: AuditService,
+          useValue: {
+            log: jest.fn(),
+            countForTargetSince: jest.fn().mockResolvedValue(0),
+          },
+        },
+        {
+          provide: GeoResolverService,
+          useValue: { resolveCountryFromCity: jest.fn() },
+        },
+        {
+          provide: FavoritesService,
+          useValue: { removeProductEverywhere: jest.fn() },
+        },
       ],
     }).compile();
 

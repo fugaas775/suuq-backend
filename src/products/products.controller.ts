@@ -48,7 +48,7 @@ export class ProductsController {
   constructor(
     private readonly productsService: ProductsService,
     private readonly homeService: HomeService,
-  private readonly favoritesService: FavoritesService,
+    private readonly favoritesService: FavoritesService,
   ) {}
 
   // Public: return a short-lived signed attachment URL for free digital products
@@ -59,7 +59,10 @@ export class ProductsController {
     @Query('ttl') ttl?: string,
     @Req() req?: AuthenticatedRequest,
   ) {
-    const ttlNum = Math.max(60, Math.min(parseInt(String(ttl || '600'), 10) || 600, 1800));
+    const ttlNum = Math.max(
+      60,
+      Math.min(parseInt(String(ttl || '600'), 10) || 600, 1800),
+    );
     const actorId = (req?.user as any)?.id ?? null;
     return this.productsService.getFreeDownload(id, { ttl: ttlNum, actorId });
   }
@@ -118,10 +121,16 @@ export class ProductsController {
   @Get()
   @SkipThrottle()
   @UseInterceptors(
-    new RateLimitInterceptor({ maxRps: 10, burst: 20, keyBy: 'userOrIp', scope: 'route', headers: true }),
+    new RateLimitInterceptor({
+      maxRps: 10,
+      burst: 20,
+      keyBy: 'userOrIp',
+      scope: 'route',
+      headers: true,
+    }),
     CacheInterceptor,
   )
-  @CacheTTL(30000) // 30s cache for primary listing
+  @CacheTTL(30) // 30s cache for primary listing
   async findAll(
     @Query() filters: ProductFilterDto,
     @Query('currency') currency?: string,
@@ -130,8 +139,12 @@ export class ProductsController {
   ) {
     try {
       // Normalize/guard against placeholder queries coming from image/camera search on mobile
-      const rawSearch = typeof filters.search === 'string' ? filters.search.trim() : '';
-      const isImageSearchPlaceholder = /^(search\s+by\s+image:|search\s+by\s+camera:|image\s+search:)/i.test(rawSearch);
+      const rawSearch =
+        typeof filters.search === 'string' ? filters.search.trim() : '';
+      const isImageSearchPlaceholder =
+        /^(search\s+by\s+image:|search\s+by\s+camera:|image\s+search:)/i.test(
+          rawSearch,
+        );
       if (isImageSearchPlaceholder) {
         // Drop placeholder to avoid meaningless text search and noisy analytics
         (filters as any).search = undefined as any;
@@ -151,11 +164,18 @@ export class ProductsController {
       }
 
       // Map alias -> categoryId if categoryId not provided (DTO already normalizes to number[])
-      if (!Array.isArray(filters.categoryId) || filters.categoryId.length === 0) {
-        const anyFilters = filters as unknown as Record<string, unknown> & { categoryAlias?: number[] };
+      if (
+        !Array.isArray(filters.categoryId) ||
+        filters.categoryId.length === 0
+      ) {
+        const anyFilters = filters as unknown as Record<string, unknown> & {
+          categoryAlias?: number[];
+        };
         const aliasArr = anyFilters.categoryAlias;
         if (Array.isArray(aliasArr) && aliasArr.length > 0) {
-          filters.categoryId = aliasArr.filter((n) => Number.isFinite(n) && (n as unknown as number) > 0) as unknown as any;
+          filters.categoryId = aliasArr.filter(
+            (n) => Number.isFinite(n) && (n as unknown as number) > 0,
+          ) as unknown as any;
         }
       }
 
@@ -173,8 +193,10 @@ export class ProductsController {
           (req?.headers?.['x-country-code'] as string | undefined) ||
           '',
       );
-      if (!filters.userCity && cityHeader) (filters as any).userCity = cityHeader;
-      if (!filters.userCountry && countryHeader) (filters as any).userCountry = countryHeader;
+      if (!filters.userCity && cityHeader)
+        (filters as any).userCity = cityHeader;
+      if (!filters.userCountry && countryHeader)
+        (filters as any).userCountry = countryHeader;
 
       // Legacy default: when no explicit sort provided, use recency so freshly created items (like test seeds) appear
       if (!filters.sort) {
@@ -182,21 +204,29 @@ export class ProductsController {
         // Do not force geoPriority globally here; keep behavior stable for legacy /products
       }
       // Make geo ranking the default for category browsing
-      const hasCategoryContext = (Array.isArray(filters.categoryId) && filters.categoryId.length > 0) || !!filters.categorySlug;
+      const hasCategoryContext =
+        (Array.isArray(filters.categoryId) && filters.categoryId.length > 0) ||
+        !!filters.categorySlug;
       if (hasCategoryContext) {
-        if (typeof filters.geoPriority === 'undefined') (filters as any).geoPriority = true;
+        if (typeof filters.geoPriority === 'undefined')
+          (filters as any).geoPriority = true;
         // Prefer pulling the whole subtree and prioritizing it first, then top up
-        if (typeof filters.includeDescendants === 'undefined') (filters as any).includeDescendants = true;
-        if (typeof filters.categoryFirst === 'undefined') (filters as any).categoryFirst = true;
-        if (typeof (filters as any).geoAppend === 'undefined') (filters as any).geoAppend = true;
+        if (typeof filters.includeDescendants === 'undefined')
+          (filters as any).includeDescendants = true;
+        if (typeof filters.categoryFirst === 'undefined')
+          (filters as any).categoryFirst = true;
+        if (typeof (filters as any).geoAppend === 'undefined')
+          (filters as any).geoAppend = true;
         // Unless client chose a specific sort, default to best_match
         const s = (filters as any).sort;
-        if (!s || s === '' || s === 'created_desc') (filters as any).sort = 'best_match';
+        if (!s || s === '' || s === 'created_desc')
+          (filters as any).sort = 'best_match';
         // Default East Africa scope
-        if (!(filters as any).eastAfrica) (filters as any).eastAfrica = 'ET,SO,KE,DJ';
+        if (!(filters as any).eastAfrica)
+          (filters as any).eastAfrica = 'ET,SO,KE,DJ';
       }
 
-  const result = await this.productsService.findFiltered(filters);
+      const result = await this.productsService.findFiltered(filters);
 
       // Derive vendorHits (distribution of vendors in the current result set)
       let vendorHits:
@@ -245,7 +275,11 @@ export class ProductsController {
       }
 
       // Record submitted searches (typed then submitted)
-      if (!isImageSearchPlaceholder && filters.search && typeof filters.search === 'string') {
+      if (
+        !isImageSearchPlaceholder &&
+        filters.search &&
+        typeof filters.search === 'string'
+      ) {
         const ip = String(
           (req?.headers?.['x-real-ip'] as string | undefined) ||
             (req?.headers?.['x-forwarded-for'] as string | undefined) ||
@@ -356,19 +390,28 @@ export class ProductsController {
 
       // If client provided ETag, compare and return 304 when unchanged
       try {
-        const ids = Array.isArray(result.items) ? result.items.map((it: any) => it?.id || 0) : [];
+        const ids = Array.isArray(result.items)
+          ? result.items.map((it: any) => it?.id || 0)
+          : [];
         const ts = Array.isArray(result.items)
           ? result.items.map((it: any) =>
-              it?.updatedAt ? new Date(it.updatedAt).getTime() : (it?.createdAt ? new Date(it.createdAt).getTime() : 0),
+              it?.updatedAt
+                ? new Date(it.updatedAt).getTime()
+                : it?.createdAt
+                  ? new Date(it.createdAt).getTime()
+                  : 0,
             )
           : [];
         const base = JSON.stringify({ f: { ...filters, currency }, ids, ts });
         const etag = `W/"${createHash('sha1').update(base).digest('hex')}"`;
         if (res) {
           res.setHeader('ETag', etag);
-          res.setHeader('Cache-Control', 'public, max-age=10, stale-while-revalidate=30');
+          res.setHeader(
+            'Cache-Control',
+            'public, max-age=10, stale-while-revalidate=30',
+          );
           if (filters.view === 'grid') res.setHeader('X-Items-View', 'grid');
-          const inm = (req?.headers?.['if-none-match'] as string | undefined) || '';
+          const inm = req?.headers?.['if-none-match'] || '';
           if (inm && inm === etag) {
             res.status(304);
             return;
@@ -391,10 +434,16 @@ export class ProductsController {
   @Get('cards')
   @SkipThrottle()
   @UseInterceptors(
-    new RateLimitInterceptor({ maxRps: 10, burst: 20, keyBy: 'userOrIp', scope: 'route', headers: true }),
+    new RateLimitInterceptor({
+      maxRps: 10,
+      burst: 20,
+      keyBy: 'userOrIp',
+      scope: 'route',
+      headers: true,
+    }),
     CacheInterceptor,
   )
-  @CacheTTL(45000) // 45s cache for cards
+  @CacheTTL(45) // 45s cache for cards
   async listCards(
     @Query() filters: ProductFilterDto,
     @Req() req?: AuthenticatedRequest,
@@ -405,7 +454,8 @@ export class ProductsController {
     if (filters.limit && !filters.perPage) filters.perPage = filters.limit;
     // Normalize aliases to categoryId if needed (DTO already does most)
     if (!Array.isArray(filters.categoryId) || filters.categoryId.length === 0) {
-      const aliasArr = (filters as any).categoryAlias || (filters as any).categoriesCsv;
+      const aliasArr =
+        (filters as any).categoryAlias || (filters as any).categoriesCsv;
       if (Array.isArray(aliasArr) && aliasArr.length > 0) {
         (filters as any).categoryId = aliasArr as any;
       }
@@ -414,8 +464,10 @@ export class ProductsController {
     // Global default Best Match when sort not provided
     if (!(filters as any).sort) {
       (filters as any).sort = 'best_match';
-      if (typeof (filters as any).geoPriority === 'undefined') (filters as any).geoPriority = true;
-      if ((filters as any).geoPriority && !(filters as any).eastAfrica) (filters as any).eastAfrica = 'ET,SO,KE,DJ';
+      if (typeof (filters as any).geoPriority === 'undefined')
+        (filters as any).geoPriority = true;
+      if ((filters as any).geoPriority && !(filters as any).eastAfrica)
+        (filters as any).eastAfrica = 'ET,SO,KE,DJ';
     }
 
     const result = await this.productsService.findFiltered(filters);
@@ -423,13 +475,20 @@ export class ProductsController {
 
     // Compute and set ETag/Cache-Control and honor If-None-Match
     try {
-      const base = JSON.stringify({ f: { ...filters }, ids: items.map((i) => i.id), ts: items.map((i) => i.createdAt) });
+      const base = JSON.stringify({
+        f: { ...filters },
+        ids: items.map((i) => i.id),
+        ts: items.map((i) => i.createdAt),
+      });
       const etag = `W/"${createHash('sha1').update(base).digest('hex')}"`;
       if (res) {
         res.setHeader('ETag', etag);
-        res.setHeader('Cache-Control', 'public, max-age=15, stale-while-revalidate=60');
+        res.setHeader(
+          'Cache-Control',
+          'public, max-age=15, stale-while-revalidate=60',
+        );
         res.setHeader('X-Items-View', 'grid-cards');
-        const inm = (req?.headers?.['if-none-match'] as string | undefined) || '';
+        const inm = req?.headers?.['if-none-match'] || '';
         if (inm && inm === etag) {
           res.status(304);
           return;
@@ -522,9 +581,9 @@ export class ProductsController {
       typeof q.view === 'string' && (q.view === 'grid' || q.view === 'full')
         ? (q.view as 'grid' | 'full')
         : 'grid';
-  const city = q.user_city || q.userCity || q.city;
-  const region = q.user_region || q.userRegion || q.region;
-  const country = q.user_country || q.userCountry || q.country;
+    const city = q.user_city || q.userCity || q.city;
+    const region = q.user_region || q.userRegion || q.region;
+    const country = q.user_country || q.userCountry || q.country;
     const data = await this.homeService.getHomeFeed({
       perSection,
       userCity: city,
@@ -537,7 +596,10 @@ export class ProductsController {
     try {
       const dig = (arr: any[] | undefined) =>
         Array.isArray(arr)
-          ? arr.map((it) => `${it?.id || ''}:${new Date((it?.updatedAt || it?.createdAt || 0) as any).getTime()}`)
+          ? arr.map(
+              (it) =>
+                `${it?.id || ''}:${new Date(it?.updatedAt || it?.createdAt || 0).getTime()}`,
+            )
           : [];
       const base = JSON.stringify({
         k: 'home',
@@ -657,7 +719,11 @@ export class ProductsController {
         per,
         sort,
         view,
-        ids: results.flatMap((r) => (r.items || []).map((i: any) => `${r.code}:${i.id}:${i.updatedAt || i.createdAt || ''}`)),
+        ids: results.flatMap((r) =>
+          (r.items || []).map(
+            (i: any) => `${r.code}:${i.id}:${i.updatedAt || i.createdAt || ''}`,
+          ),
+        ),
       });
       const etag = `W/"${createHash('sha1').update(base).digest('hex')}"`;
       res.setHeader('ETag', etag);
@@ -680,13 +746,14 @@ export class ProductsController {
       const { items, meta } = await this.productsService.findTieredMerged(q);
       return { items: (items || []).map(normalizeProductMedia), meta } as any;
     }
-    const { base, siblings, parent, global, meta } = await this.productsService.findTieredBuckets(q);
+    const { base, siblings, parent, global, meta } =
+      await this.productsService.findTieredBuckets(q);
     // Normalize media for lean payloads
     const norm = (arr: any[]) => (arr || []).map(normalizeProductMedia);
     return {
       base: norm(base),
       siblings: Object.fromEntries(
-        Object.entries(siblings || {}).map(([k, v]) => [k, norm(v as any)])
+        Object.entries(siblings || {}).map(([k, v]) => [k, norm(v as any)]),
       ),
       parent: norm(parent),
       global: norm(global),
@@ -735,7 +802,9 @@ export class ProductsController {
       ),
     );
     if (!list.length) {
-      throw new BadRequestException('ids must be a comma-separated list of positive integers');
+      throw new BadRequestException(
+        'ids must be a comma-separated list of positive integers',
+      );
     }
     const map = await this.favoritesService.countLikesBulk(list);
     return map;
@@ -764,16 +833,28 @@ export class ProductsController {
     @Req() req?: AuthenticatedRequest,
     @Res({ passthrough: true }) res?: Response,
   ) {
-    const lim = Math.min(Math.max(parseInt(String(limit || '24'), 10) || 24, 1), 50);
-    const items = await this.productsService.findRelatedProducts(id, { limit: lim, city });
+    const lim = Math.min(
+      Math.max(parseInt(String(limit || '24'), 10) || 24, 1),
+      50,
+    );
+    const items = await this.productsService.findRelatedProducts(id, {
+      limit: lim,
+      city,
+    });
 
     // ETag based on ids + createdAt timestamps to enable client-side caching
     try {
-      const base = JSON.stringify({ k: 'related', id, city: city || '', ids: items.map((i: any) => i.id), ts: items.map((i: any) => i.createdAt || i.updatedAt) });
+      const base = JSON.stringify({
+        k: 'related',
+        id,
+        city: city || '',
+        ids: items.map((i: any) => i.id),
+        ts: items.map((i: any) => i.createdAt || i.updatedAt),
+      });
       const etag = `W/"${createHash('sha1').update(base).digest('hex')}"`;
       if (res && req) {
         res.setHeader('ETag', etag);
-        const inm = (req.headers?.['if-none-match'] as string | undefined) || '';
+        const inm = req.headers?.['if-none-match'] || '';
         if (inm && inm === etag) {
           res.status(304);
           return;
@@ -797,7 +878,7 @@ export class ProductsController {
 
   @Delete(':id')
   @UseGuards(AuthGuard('jwt'), RolesGuard)
-  @Roles(UserRole.VENDOR)
+  @Roles(UserRole.VENDOR, UserRole.ADMIN, UserRole.SUPER_ADMIN)
   deleteProduct(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
     return this.productsService.deleteProduct(id, req.user);
   }

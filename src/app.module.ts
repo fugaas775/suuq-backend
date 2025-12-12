@@ -45,6 +45,7 @@ import { HealthModule } from './health/health.module';
 import { ModerationModule } from './moderation/moderation.module';
 import { IdempotencyInterceptor } from './common/interceptors/idempotency.interceptor';
 import { FeatureFlagsModule } from './common/feature-flags/feature-flags.module';
+import { ProductRequestsModule } from './product-requests/product-requests.module';
 
 @Module({
   imports: [
@@ -58,7 +59,9 @@ import { FeatureFlagsModule } from './common/feature-flags/feature-flags.module'
         const url = process.env.REDIS_URL || '';
         if (url) {
           try {
-            const { default: redisStore } = await import('cache-manager-redis-yet');
+            const { default: redisStore } = await import(
+              'cache-manager-redis-yet'
+            );
             return {
               store: redisStore as any,
               url,
@@ -68,8 +71,10 @@ import { FeatureFlagsModule } from './common/feature-flags/feature-flags.module'
               // prefix: 'suuq:',
             } as any;
           } catch (e) {
-            // eslint-disable-next-line no-console
-            console.warn('Redis cache store unavailable, falling back to memory:', (e as Error)?.message);
+            console.warn(
+              'Redis cache store unavailable, falling back to memory:',
+              (e as Error)?.message,
+            );
           }
         }
         return { ttl } as any;
@@ -95,7 +100,10 @@ import { FeatureFlagsModule } from './common/feature-flags/feature-flags.module'
             const client = redisUrl
               ? createClient({ url: redisUrl })
               : createClient({
-                  socket: { host: redisHost as string, port: redisPort || 6379 },
+                  socket: {
+                    host: redisHost,
+                    port: redisPort || 6379,
+                  },
                   password: redisPassword,
                 });
             await client.connect();
@@ -104,7 +112,12 @@ import { FeatureFlagsModule } from './common/feature-flags/feature-flags.module'
             const storage = {
               async getRecord(key: string) {
                 const v: unknown = await client.get(key as any);
-                const s = typeof v === 'string' ? v : (v && (v as any).toString ? (v as any).toString('utf8') : undefined);
+                const s =
+                  typeof v === 'string'
+                    ? v
+                    : v && (v as any).toString
+                      ? (v as any).toString('utf8')
+                      : undefined;
                 return s ? JSON.parse(s) : []; // array of timestamps
               },
               async addRecord(key: string, ttlMs: number) {
@@ -112,16 +125,22 @@ import { FeatureFlagsModule } from './common/feature-flags/feature-flags.module'
                 const expireAt = Math.ceil(ttlMs / 1000);
                 const records = await this.getRecord(key);
                 records.push(now);
-                const filtered = records.filter((t: number) => now - t <= ttlMs);
-                await client.set(key, JSON.stringify(filtered), { EX: expireAt });
+                const filtered = records.filter(
+                  (t: number) => now - t <= ttlMs,
+                );
+                await client.set(key, JSON.stringify(filtered), {
+                  EX: expireAt,
+                });
               },
             } as any;
 
             return [{ ttl, limit, storage }];
           }
         } catch (e) {
-          // eslint-disable-next-line no-console
-          console.warn('Redis throttler storage unavailable, using in-memory. Error:', (e as Error).message);
+          console.warn(
+            'Redis throttler storage unavailable, using in-memory. Error:',
+            (e as Error).message,
+          );
         }
 
         return [
@@ -157,13 +176,14 @@ import { FeatureFlagsModule } from './common/feature-flags/feature-flags.module'
     HomeModule,
     CurationModule,
     FavoritesModule,
-  MetricsModule,
-  HealthModule,
-  RedisModule,
-  RolesModule,
-  ModerationModule,
-  FeatureFlagsModule,
-  SearchModule,
+    MetricsModule,
+    HealthModule,
+    RedisModule,
+    RolesModule,
+    ModerationModule,
+    FeatureFlagsModule,
+    SearchModule,
+    ProductRequestsModule,
   ],
   controllers: [AppController],
   // Apply rate limiting globally

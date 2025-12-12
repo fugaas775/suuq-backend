@@ -4,6 +4,8 @@ import {
   Column,
   ManyToOne,
   CreateDateColumn,
+  JoinColumn,
+  RelationId,
 } from 'typeorm';
 import { Product } from './product.entity';
 
@@ -37,7 +39,11 @@ export class ProductImage {
   @ManyToOne(() => Product, (product) => product.images, {
     onDelete: 'CASCADE',
   })
+  @JoinColumn({ name: 'productId' })
   product!: Product;
+
+  @RelationId((image: ProductImage) => image.product)
+  productId!: number;
 
   @CreateDateColumn()
   createdAt!: Date; // When the image was added

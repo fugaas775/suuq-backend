@@ -20,6 +20,20 @@ import { RolesModule } from '../roles/roles.module';
 import { AdminRolesController } from './roles.admin.controller';
 import { GeoResolverService } from '../common/services/geo-resolver.service';
 import { AdminProductsController } from './products.admin.controller';
+import { SupplyOutreachTask } from './entities/supply-outreach-task.entity';
+import { AdminOutreachController } from './outreach.admin.controller';
+import { AdminOutreachService } from './outreach.admin.service';
+import { ProductRequest } from '../product-requests/entities/product-request.entity';
+import { User } from '../users/entities/user.entity';
+import { FeatureFlagsModule } from '../common/feature-flags/feature-flags.module';
+import { FeatureFlagGuard } from '../common/feature-flags/feature-flag.guard';
+import { ProductRequestForward } from '../product-requests/entities/product-request-forward.entity';
+import { AdminProductRequestsController } from './product-requests.admin.controller';
+import { AdminSearchLogController } from './search-log.admin.controller';
+import { SearchModule } from '../search/search.module';
+import { NotificationsModule } from '../notifications/notifications.module';
+import { SearchLog } from '../search/entities/search-log.entity';
+import { AdminUsersController } from './users.admin.controller';
 
 @Module({
   // 2. Add UsersModule and OrdersModule here
@@ -28,20 +42,41 @@ import { AdminProductsController } from './products.admin.controller';
     OrdersModule,
     WithdrawalsModule,
     ProductsModule,
-  VendorModule,
+    VendorModule,
     AuditModule,
-  RolesModule,
-    TypeOrmModule.forFeature([Product, Tag, SearchKeyword]),
+    RolesModule,
+    FeatureFlagsModule,
+    SearchModule,
+    NotificationsModule,
+    TypeOrmModule.forFeature([
+      Product,
+      Tag,
+      SearchKeyword,
+      SearchLog,
+      SupplyOutreachTask,
+      ProductRequest,
+      ProductRequestForward,
+      User,
+    ]),
   ],
   controllers: [
     AdminController,
     AdminCurationController,
     AdminVendorsController,
     AdminAnalyticsController,
-  AdminRolesController,
-  AdminProductsController,
+    AdminRolesController,
+    AdminProductsController,
+    AdminOutreachController,
+    AdminProductRequestsController,
+    AdminSearchLogController,
+    AdminUsersController,
   ],
   // 3. Remove the services from providers. They are now correctly provided by the imported modules.
-  providers: [RolesGuard, GeoResolverService],
+  providers: [
+    RolesGuard,
+    GeoResolverService,
+    AdminOutreachService,
+    FeatureFlagGuard,
+  ],
 })
 export class AdminModule {}

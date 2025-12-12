@@ -28,17 +28,29 @@ async function bootstrap() {
     if (dsn) {
       Sentry.init({
         dsn,
-        environment: process.env.SENTRY_ENVIRONMENT || process.env.NODE_ENV || 'development',
+        environment:
+          process.env.SENTRY_ENVIRONMENT ||
+          process.env.NODE_ENV ||
+          'development',
         // Sample all errors, and a portion of transactions
-        tracesSampleRate: parseFloat(process.env.SENTRY_TRACES_SAMPLE_RATE || '0.05'),
-        profilesSampleRate: parseFloat(process.env.SENTRY_PROFILES_SAMPLE_RATE || '0'),
+        tracesSampleRate: parseFloat(
+          process.env.SENTRY_TRACES_SAMPLE_RATE || '0.05',
+        ),
+        profilesSampleRate: parseFloat(
+          process.env.SENTRY_PROFILES_SAMPLE_RATE || '0',
+        ),
         // Scrub PII before sending
         beforeSend(event) {
           try {
             // Remove potentially sensitive headers
             const headers = (event.request as any)?.headers;
             if (headers) {
-              const redactedHeaders = ['authorization', 'cookie', 'set-cookie', 'x-api-key'];
+              const redactedHeaders = [
+                'authorization',
+                'cookie',
+                'set-cookie',
+                'x-api-key',
+              ];
               for (const h of redactedHeaders) {
                 if (headers[h]) headers[h] = '[REDACTED]';
               }
@@ -111,10 +123,26 @@ async function bootstrap() {
   // Accept both JSON and application/x-www-form-urlencoded payloads
   app.use(urlencoded({ extended: true, limit: '50mb' }));
   app.use(json({ limit: '50mb' }));
+
+  // Gracefully handle legacy clients hitting /product-requests without the /api prefix
+  app.use((req: import('express').Request, _res, next) => {
+    try {
+      const url = req.url || '';
+      if (
+        url.startsWith('/product-requests') &&
+        !url.startsWith('/api/product-requests')
+      ) {
+        req.url = `/api${url}`;
+      }
+    } catch {}
+    next();
+  });
   // Enable gzip compression for responses (disable by default in production; offload to Nginx)
-  const enableNodeCompression = (process.env.ENABLE_NODE_COMPRESSION || '').toLowerCase() === 'true';
+  const enableNodeCompression =
+    (process.env.ENABLE_NODE_COMPRESSION || '').toLowerCase() === 'true';
   if (enableNodeCompression || process.env.NODE_ENV !== 'production') {
-    const compressionFn: any = (compression as any)?.default || (compression as any);
+    const compressionFn: any =
+      (compression as any)?.default || (compression as any);
     app.use(
       compressionFn({
         threshold: 1024,
@@ -135,7 +163,7 @@ async function bootstrap() {
   const defaultAllowedOrigins = [
     'https://suuq.ugasfuad.com',
     'https://admin.suuq.ugasfuad.com',
-  'https://api.suuq.ugasfuad.com',
+    'https://api.suuq.ugasfuad.com',
     'http://localhost:5173',
     'http://localhost:3000',
     'http://localhost:3001',
@@ -212,6 +240,32 @@ async function bootstrap() {
     },
   );
 
+  // Enforce no-store on admin API responses to avoid stale data via proxies/browsers
+  app.use(
+    (
+      req: import('express').Request,
+      res: import('express').Response,
+      next: import('express').NextFunction,
+    ) => {
+      try {
+        const url = (req.originalUrl || req.url || '').toString();
+        // Consider both with and without global prefix
+        const noStoreAll = (process.env.NO_STORE_ALL_API || '').toLowerCase();
+        const enableAll = noStoreAll === '1' || noStoreAll === 'true';
+        if (enableAll) {
+          if (url.startsWith('/api') || url.startsWith('api')) {
+            res.setHeader('Cache-Control', 'no-store');
+          }
+        } else {
+          if (url.startsWith('/api/admin') || url.startsWith('/admin')) {
+            res.setHeader('Cache-Control', 'no-store');
+          }
+        }
+      } catch {}
+      next();
+    },
+  );
+
   // Improved logging with sanitization
   app.use(
     (
@@ -226,7 +280,10 @@ async function bootstrap() {
         // Structured logging in production
         // Apply simple sampling to reduce log volume for high-fanout endpoints
         // Default sample rate: 1/N (lower = more logs). Override via LOG_SAMPLE_N
-        const sampleN = Math.max(1, parseInt(process.env.LOG_SAMPLE_N || '5', 10));
+        const sampleN = Math.max(
+          1,
+          parseInt(process.env.LOG_SAMPLE_N || '5', 10),
+        );
         const shouldLog = Math.floor(Math.random() * sampleN) === 0;
 
         if (!shouldLog) {
@@ -248,7 +305,8 @@ async function bootstrap() {
           if ((logData as any).headers) {
             const scrub = ['authorization', 'cookie', 'x-api-key'];
             for (const h of scrub) {
-              if ((logData as any).headers[h]) (logData as any).headers[h] = '[REDACTED]';
+              if ((logData as any).headers[h])
+                (logData as any).headers[h] = '[REDACTED]';
             }
           }
         } catch {}
@@ -280,7 +338,9 @@ async function bootstrap() {
 
   // Tiny plain GET /pdown endpoint (no prefix) to quiet external probes
   try {
-    const http = app.getHttpAdapter().getInstance() as import('express').Express;
+    const http = app
+      .getHttpAdapter()
+      .getInstance() as import('express').Express;
     http.get('/pdown', (_req, res) => res.status(200).send('OK'));
     // Quiet common probes
     http.get('/robots.txt', (_req, res) => {
@@ -329,14 +389,23 @@ async function bootstrap() {
       setTimeout?: (msecs: number, cb?: () => void) => void;
     };
     // Keep connections alive slightly longer than proxy to let proxy control reuse
-    server.keepAliveTimeout = parseInt(process.env.KEEP_ALIVE_TIMEOUT_MS || '65000', 10);
+    server.keepAliveTimeout = parseInt(
+      process.env.KEEP_ALIVE_TIMEOUT_MS || '65000',
+      10,
+    );
     // A little higher than keepAliveTimeout to avoid premature timeout
-    server.headersTimeout = parseInt(process.env.HEADERS_TIMEOUT_MS || '66000', 10);
+    server.headersTimeout = parseInt(
+      process.env.HEADERS_TIMEOUT_MS || '66000',
+      10,
+    );
     // Disable per-request inactivity timeout by default (proxy should enforce)
-    server.requestTimeout = parseInt(process.env.REQUEST_TIMEOUT_MS || '0', 10) || 0;
+    server.requestTimeout =
+      parseInt(process.env.REQUEST_TIMEOUT_MS || '0', 10) || 0;
     // Also ensure the legacy socket timeout is disabled
     if (typeof server.setTimeout === 'function') {
-      server.setTimeout(parseInt(process.env.SOCKET_TIMEOUT_MS || '0', 10) || 0);
+      server.setTimeout(
+        parseInt(process.env.SOCKET_TIMEOUT_MS || '0', 10) || 0,
+      );
     }
   } catch {}
   // Request ID propagation
@@ -361,8 +430,9 @@ async function bootstrap() {
   try {
     const ds = app.get(DataSource);
     const allowAuto =
-      (process.env.AUTO_MIGRATE ?? (process.env.NODE_ENV === 'production' ? 'false' : 'true')) !== 'false' &&
-      process.env.NODE_ENV !== 'test';
+      (process.env.AUTO_MIGRATE ??
+        (process.env.NODE_ENV === 'production' ? 'false' : 'true')) !==
+        'false' && process.env.NODE_ENV !== 'test';
     if (allowAuto && ds && typeof ds.runMigrations === 'function') {
       await ds.runMigrations();
       Logger.log('Database migrations executed on startup', 'Bootstrap');

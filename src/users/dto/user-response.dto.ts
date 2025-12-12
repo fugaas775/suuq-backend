@@ -44,6 +44,24 @@ export class UserResponseDto {
   @Expose()
   storeName?: string;
 
+  // Friendly fallback name for vendor/autocomplete display
+  @Expose()
+  get vendorName(): string | undefined {
+    return (
+      this.displayName ||
+      this.storeName ||
+      (this as any).legalName ||
+      (this as any).contactName ||
+      undefined
+    );
+  }
+
+  // Generic name alias some clients use
+  @Expose()
+  get name(): string | undefined {
+    return this.vendorName;
+  }
+
   @Expose()
   phoneCountryCode?: string;
 

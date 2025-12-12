@@ -32,3 +32,9 @@ export interface AppUser {
 export interface AuthenticatedRequest extends Request {
   user?: AppUser;
 }
+
+declare module 'express-serve-static-core' {
+  interface Request {
+    user?: AppUser;
+  }
+}

@@ -3,6 +3,7 @@ import { ProductsController } from './products.controller';
 import { ProductsService } from './products.service';
 import { HomeService } from '../home/home.service';
 import { FavoritesService } from '../favorites/favorites.service';
+import { CacheInterceptor } from '@nestjs/cache-manager';
 
 describe('ProductsController', () => {
   let controller: ProductsController;
@@ -14,6 +15,15 @@ describe('ProductsController', () => {
         { provide: ProductsService, useValue: {} },
         { provide: HomeService, useValue: {} },
         { provide: FavoritesService, useValue: {} },
+        // CacheInterceptor dependencies
+        {
+          provide: 'CACHE_MANAGER',
+          useValue: { get: jest.fn(), set: jest.fn() },
+        },
+        {
+          provide: CacheInterceptor,
+          useValue: { intercept: jest.fn((_, next) => next.handle()) },
+        },
       ],
     }).compile();
 

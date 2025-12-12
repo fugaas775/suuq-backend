@@ -19,6 +19,7 @@ import {
   Delete,
   Header,
   UseInterceptors,
+  Res,
 } from '@nestjs/common';
 import { UsersService } from '../users/users.service';
 import { SkipThrottle } from '@nestjs/throttler';
@@ -34,7 +35,8 @@ import { BulkUserIdsDto } from './dto/bulk-user-ids.dto';
 import { ClassSerializerInterceptor, ParseEnumPipe } from '@nestjs/common';
 import { plainToInstance } from 'class-transformer';
 import { AdminUserResponseDto } from './dto/admin-user-response.dto';
-import { PaginationQueryDto } from '../common/dto/pagination-query.dto';
+import { FindUsersQueryDto } from '../users/dto/find-users-query.dto';
+import { Response } from 'express';
 
 // ✨ FINAL FIX: Use AuthGuard('jwt') to match your other working controllers
 @UseGuards(AuthGuard('jwt'), RolesGuard)
@@ -51,11 +53,80 @@ export class AdminController {
 
   // ================== USER MANAGEMENT ENDPOINTS ==================
   @Get('users')
-  async getAllUsers(
-    @Query('role', new ParseEnumPipe(UserRole, { optional: true })) role: UserRole | undefined,
-    @Query() { page, pageSize }: PaginationQueryDto,
+  async getAllUsers(@Query() filters: FindUsersQueryDto) {
+    const { users, total } = await this.usersService.findAll(filters);
+    return { users, total };
+  }
+
+  // Prefer a specific route before the generic :id matcher to avoid ParseIntPipe errors
+  @Get('users/stream')
+  @Header('Content-Type', 'application/x-ndjson; charset=utf-8')
+  async streamUsersNdjson(
+    @Res() res: Response,
+    @Query() filters: FindUsersQueryDto,
+    @Query('chunkSize') chunkSize?: string,
   ) {
-    return this.usersService.findAll({ role, page, pageSize });
+    const parsed = parseInt(String(chunkSize ?? ''), 10);
+    const safeChunk = Math.min(
+      Math.max(!isNaN(parsed) ? parsed : 100, 1),
+      2000,
+    );
+    // Advise download filename and disable caching
+    res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="users.ndjson"');
+    res.setHeader('Cache-Control', 'no-store');
+    // Hint proxies for streaming
+    res.setHeader('Transfer-Encoding', 'chunked');
+
+    let aborted = false;
+    // @ts-ignore - express typings
+    const req: any = (res as any).req;
+    if (req && typeof req.on === 'function') {
+      req.on('close', () => {
+        aborted = true;
+      });
+    }
+
+    // Page through results to avoid loading everything in memory
+    let page = 1;
+    try {
+      while (!aborted) {
+        const { users } = await this.usersService.findAll({
+          ...filters,
+          page,
+          pageSize: safeChunk,
+          limit: safeChunk,
+        });
+        if (!users.length) break;
+        for (const u of users) {
+          if (aborted) break;
+          const line = JSON.stringify({
+            id: u.id,
+            email: u.email,
+            displayName: u.displayName ?? '',
+            storeName: u.storeName ?? '',
+            roles: Array.isArray(u.roles) ? u.roles : [],
+            isActive: !!u.isActive,
+            verificationStatus: u.verificationStatus ?? '',
+            verificationMethod: (u as any).verificationMethod ?? '',
+          });
+          res.write(line + '\n');
+        }
+        if (users.length < safeChunk) break;
+        page += 1;
+        await new Promise((r) => setImmediate(r));
+      }
+    } catch (e) {
+      try {
+        res.write(
+          JSON.stringify({ error: true, message: 'stream_failed' }) + '\n',
+        );
+      } catch {}
+    } finally {
+      try {
+        res.end();
+      } catch {}
+    }
   }
 
   @Get('users/:id')
@@ -131,6 +202,75 @@ export class AdminController {
     return this.usersService.hardDeleteMany(dto.ids);
   }
 
+  // ================== USER EXPORT (CSV) ==================
+  @Get('users/export')
+  @Header('Content-Type', 'text/csv; charset=utf-8')
+  async exportUsersCsv(
+    @Res() res: Response,
+    @Query() filters: FindUsersQueryDto,
+    @Query('format') format?: string,
+  ) {
+    const fmt = (format || 'csv').toLowerCase();
+    if (fmt !== 'csv') {
+      throw new BadRequestException(
+        'Only CSV export is supported at the moment',
+      );
+    }
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="users_export_${Date.now()}.csv"`,
+    );
+    // Do not cache exports
+    res.setHeader('Cache-Control', 'no-store');
+
+    // CSV header
+    res.write(
+      [
+        'ID',
+        'Email',
+        'Display Name',
+        'Store Name',
+        'Roles',
+        'Status',
+        'Verification',
+        'Method',
+      ].join(',') + '\n',
+    );
+
+    // Stream in pages to avoid memory blowups
+    let page = 1;
+    const limit = Math.min(Number(filters.limit || 1000), 1000);
+    // Ensure cross-role search rules/sorting are applied by service
+
+    while (true) {
+      const { users } = await this.usersService.findAll({
+        ...filters,
+        page,
+        pageSize: limit,
+        limit,
+      });
+      if (!users.length) break;
+      for (const u of users) {
+        const line = [
+          u.id,
+          JSON.stringify(u.email || ''),
+          JSON.stringify(u.displayName || ''),
+          JSON.stringify(u.storeName || ''),
+          JSON.stringify((u.roles || []).join('|')),
+          u.isActive ? 'active' : 'inactive',
+          u.verificationStatus || '',
+          u.verificationMethod || '',
+        ].join(',');
+        res.write(line + '\n');
+      }
+      if (users.length < limit) break;
+      page += 1;
+    }
+    res.end();
+  }
+
   // ================== ORDER MANAGEMENT ENDPOINTS ==================
   @Get('orders')
   async getAllOrders(
@@ -175,7 +315,9 @@ export class AdminController {
     @Body() body: AssignDelivererDto,
     @Query() query?: AssignDelivererDto,
   ) {
-    const delivererId = this.ensureDelivererId(body?.delivererId ? body : query);
+    const delivererId = this.ensureDelivererId(
+      body?.delivererId ? body : query,
+    );
     return this.ordersService.assignDeliverer(id, delivererId);
   }
 
@@ -186,7 +328,9 @@ export class AdminController {
     @Body() body: AssignDelivererDto,
     @Query() query?: AssignDelivererDto,
   ) {
-    const delivererId = this.ensureDelivererId(body?.delivererId ? body : query);
+    const delivererId = this.ensureDelivererId(
+      body?.delivererId ? body : query,
+    );
     return this.ordersService.assignDeliverer(id, delivererId);
   }
 
@@ -197,7 +341,9 @@ export class AdminController {
     @Body() body: AssignDelivererDto,
     @Query() query?: AssignDelivererDto,
   ) {
-    const delivererId = this.ensureDelivererId(body?.delivererId ? body : query);
+    const delivererId = this.ensureDelivererId(
+      body?.delivererId ? body : query,
+    );
     return this.ordersService.assignDeliverer(id, delivererId);
   }
 
@@ -208,7 +354,9 @@ export class AdminController {
     @Body() body: AssignDelivererDto,
     @Query() query?: AssignDelivererDto,
   ) {
-    const delivererId = this.ensureDelivererId(body?.delivererId ? body : query);
+    const delivererId = this.ensureDelivererId(
+      body?.delivererId ? body : query,
+    );
     return this.ordersService.assignDeliverer(id, delivererId);
   }
 
@@ -219,7 +367,9 @@ export class AdminController {
     @Body() body: AssignDelivererDto,
     @Query() query?: AssignDelivererDto,
   ) {
-    const delivererId = this.ensureDelivererId(body?.delivererId ? body : query);
+    const delivererId = this.ensureDelivererId(
+      body?.delivererId ? body : query,
+    );
     return this.ordersService.assignDeliverer(id, delivererId);
   }
 

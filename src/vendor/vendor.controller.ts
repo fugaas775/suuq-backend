@@ -30,13 +30,17 @@ export class VendorController {
   @Get('vendor/sales-graph')
   async getSalesGraph(@Query('range') range: string, @Req() req: any) {
     const userId = req.user.id;
-    const graphData = await this.vendorService.getSalesGraphData(
-      userId,
-      range,
-    );
+    const graphData = await this.vendorService.getSalesGraphData(userId, range);
     return { points: graphData };
   }
   constructor(private readonly vendorService: VendorService) {}
+
+  // Explicit suggest route to avoid hitting the numeric :id path
+  @Get('vendors/suggest')
+  async suggestVendors(@Query('q') q?: string, @Query('limit') limit?: string) {
+    const lim = Math.min(Number(limit) || 10, 50);
+    return this.vendorService.suggestVendors(q, lim);
+  }
 
   @Get('vendors')
   async findPublicVendors(
@@ -115,8 +119,13 @@ export class VendorController {
     @Query('playable') playable?: string,
     @Query('ttl') ttl?: string,
   ) {
-    const wantsPlayable = String(playable || '').trim() === '1' || /^(true|yes)$/i.test(String(playable || ''));
-    const ttlSecs = Math.max(60, Math.min(parseInt(String(ttl || '300'), 10) || 300, 3600));
+    const wantsPlayable =
+      String(playable || '').trim() === '1' ||
+      /^(true|yes)$/i.test(String(playable || ''));
+    const ttlSecs = Math.max(
+      60,
+      Math.min(parseInt(String(ttl || '300'), 10) || 300, 3600),
+    );
     return this.vendorService.getMyProduct(req.user.id, productId, {
       playable: wantsPlayable,
       ttlSecs,
@@ -181,14 +190,16 @@ export class VendorController {
     @Query('lng') lng?: string,
     @Query('radiusKm') radiusKm?: string,
   ) {
-    const { items, total, hasMore } = await this.vendorService.searchDeliverers({
-      q: q || '',
-      page: Number(page) || 1,
-      limit: Math.min(Number(limit) || 20, 100),
-      lat: lat != null ? Number(lat) : undefined,
-      lng: lng != null ? Number(lng) : undefined,
-      radiusKm: radiusKm != null ? Number(radiusKm) : undefined,
-    });
+    const { items, total, hasMore } = await this.vendorService.searchDeliverers(
+      {
+        q: q || '',
+        page: Number(page) || 1,
+        limit: Math.min(Number(limit) || 20, 100),
+        lat: lat != null ? Number(lat) : undefined,
+        lng: lng != null ? Number(lng) : undefined,
+        radiusKm: radiusKm != null ? Number(radiusKm) : undefined,
+      },
+    );
     return {
       items,
       total,

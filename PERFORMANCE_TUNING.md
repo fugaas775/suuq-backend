@@ -24,6 +24,28 @@ This document captures the key runtime and code settings to reduce P95 latency, 
 - Consider PgBouncer in transaction mode for bursty workloads.
 - Index search fields:
   - Migration added to enable `pg_trgm` and GIN index on `product.name`.
+  - User directory filtering scalability: add composite & GIN indexes for new admin filters.
+    - Composite (activity + verification) for common dashboard queries:
+      ```sql
+      CREATE INDEX IF NOT EXISTS idx_users_active_verification ON "user" ("isActive", "verificationStatus");
+      ```
+    - Role containment (array field) benefits from a GIN index:
+      ```sql
+      CREATE INDEX IF NOT EXISTS idx_users_roles_gin ON "user" USING GIN (roles);
+      ```
+    - Optional additional index for frequent recent-user sorts combined with activity:
+      ```sql
+      CREATE INDEX IF NOT EXISTS idx_users_active_created_at ON "user" ("isActive", "createdAt" DESC);
+      ```
+    - If email substring searches dominate and become slow at scale, enable `pg_trgm` and create an index:
+      ```sql
+      CREATE EXTENSION IF NOT EXISTS pg_trgm;
+      CREATE INDEX IF NOT EXISTS idx_users_email_trgm ON "user" USING GIN (email gin_trgm_ops);
+      ```
+    - Verification documents presence checks (`jsonb_array_length`) rely on a sequential scan today; consider a partial index for docs presence:
+      ```sql
+      CREATE INDEX IF NOT EXISTS idx_users_has_docs ON "user" ((jsonb_array_length(COALESCE("verificationDocuments", '[]'::jsonb)))) WHERE jsonb_array_length(COALESCE("verificationDocuments", '[]'::jsonb)) > 0;
+      ```
 - Optional query result caching (TypeORM):
   - Enable with `TYPEORM_CACHE_ENABLED=true` (or `TYPEORM_QUERY_CACHE_ENABLED=true`).
   - TTL via `TYPEORM_CACHE_TTL_MS` (or `TYPEORM_QUERY_CACHE_TTL_MS`), default 30000.
@@ -57,4 +79,3 @@ This document captures the key runtime and code settings to reduce P95 latency, 
 - HEADERS_TIMEOUT_MS=66000
 - REQUEST_TIMEOUT_MS=0
 - SOCKET_TIMEOUT_MS=0
-
