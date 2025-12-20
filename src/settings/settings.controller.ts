@@ -10,10 +10,16 @@ import {
   Request as ReqDecorator,
   Logger,
   Param,
+  ForbiddenException,
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { SettingsService } from './settings.service';
 import { UpdateSettingsDto } from './dto/update-settings.dto';
+import { RolesGuard } from '../auth/roles.guard';
+import { Roles } from '../common/decorators/roles.decorator';
+import { UserRole } from '../auth/roles.enum';
+import { UpdateUiSettingDto } from './dto/update-ui-setting.dto';
+import { AuthenticatedRequest } from '../auth/auth.types';
 
 // ✨ FIX: Remove @UseGuards from the controller level
 @Controller('settings')
@@ -25,7 +31,7 @@ export class SettingsController {
   // ✨ FIX: Add @UseGuards ONLY to the routes that need it
   @UseGuards(JwtAuthGuard)
   @Get('profile')
-  async getProfile(@ReqDecorator() req: any) {
+  async getProfile(@ReqDecorator() req: AuthenticatedRequest) {
     try {
       return await this.settingsService.getUserSettings(req.user.id);
     } catch (err) {
@@ -43,7 +49,7 @@ export class SettingsController {
   @Put('profile')
   @Patch('profile')
   async updateProfile(
-    @ReqDecorator() req: any,
+    @ReqDecorator() req: AuthenticatedRequest,
     @Body() updateDto: UpdateSettingsDto,
   ) {
     try {
@@ -73,15 +79,18 @@ export class SettingsController {
     return this.settingsService.getAllSettings();
   }
 
-  // This endpoint for updating should be protected for admins
-  // You would typically add an Admin role guard here
-  @UseGuards(JwtAuthGuard)
+  // Admin-only update for UI settings
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
   @Patch('ui-settings/:key')
-  async updateSetting(@Param('key') key: string, @Body('value') value: any) {
-    const updated = await this.settingsService.updateSetting(key, value);
-    if (!updated) {
-      return { error: 'Setting not found' };
+  async updateSetting(
+    @Param('key') key: string,
+    @Body() body: UpdateUiSettingDto,
+  ) {
+    if (body.key && body.key !== key) {
+      throw new ForbiddenException('Key in body must match path parameter');
     }
-    return updated;
+    const payload = { ...body, key };
+    return this.settingsService.updateSetting(payload);
   }
 }

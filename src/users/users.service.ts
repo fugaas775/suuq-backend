@@ -3,6 +3,8 @@ import {
   NotFoundException,
   ConflictException,
   Logger,
+  BadRequestException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, MoreThan } from 'typeorm';
@@ -35,6 +37,16 @@ export class UsersService {
    * Create a new user (local or otherwise), with password hashing.
    */
   async create(data: Partial<User>): Promise<User> {
+    if (data.email) {
+      const normalizedEmail = data.email.trim().toLowerCase();
+      const existing = await this.userRepository.findOne({
+        where: { email: normalizedEmail },
+      });
+      if (existing) {
+        throw new ConflictException('A user with this email already exists.');
+      }
+      data.email = normalizedEmail;
+    }
     if (data.password) {
       data.password = await bcrypt.hash(data.password, 10);
     }
@@ -441,12 +453,17 @@ export class UsersService {
   ): Promise<void> {
     const user = await this.findById(userId);
     if (!newPassword || newPassword.length < 8) {
-      throw new Error('New password must be at least 8 characters long.');
+      throw new BadRequestException(
+        'New password must be at least 8 characters long.',
+      );
     }
     if (user.password) {
-      const ok = await bcrypt.compare(currentPassword || '', user.password);
+      if (!currentPassword) {
+        throw new UnauthorizedException('Current password is required.');
+      }
+      const ok = await bcrypt.compare(currentPassword, user.password);
       if (!ok) {
-        throw new Error('Current password is incorrect.');
+        throw new UnauthorizedException('Current password is incorrect.');
       }
     }
     const hash = await bcrypt.hash(newPassword, 10);

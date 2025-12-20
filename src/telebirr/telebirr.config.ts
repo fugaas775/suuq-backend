@@ -1,5 +1,5 @@
 import * as dotenv from 'dotenv';
-dotenv.config();
+dotenv.config({ quiet: true });
 
 export const telebirrConfig = {
   appKey: process.env.TELEBIRR_APP_KEY,

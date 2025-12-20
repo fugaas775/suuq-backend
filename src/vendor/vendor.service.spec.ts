@@ -1,3 +1,4 @@
+import { describe, it, expect, beforeEach, jest } from '@jest/globals';
 import { Test, TestingModule } from '@nestjs/testing';
 import { VendorService } from './vendor.service';
 import { getRepositoryToken } from '@nestjs/typeorm';
@@ -8,6 +9,10 @@ import { ProductImage } from '../products/entities/product-image.entity';
 import { NotificationsService } from '../notifications/notifications.service';
 import { Tag } from '../tags/tag.entity';
 import { DoSpacesService } from '../media/do-spaces.service';
+import { Category } from '../categories/entities/category.entity';
+import { VerificationStatus } from '../users/entities/user.entity';
+
+const j = jest as any;
 
 describe('VendorService', () => {
   let service: VendorService;
@@ -19,7 +24,7 @@ describe('VendorService', () => {
   const tagRepoMock: any = {};
   const notificationsMock: any = {};
   const doSpacesMock: any = {
-    extractKeyFromUrl: jest.fn((url: string) => {
+    extractKeyFromUrl: j.fn((url: string) => {
       try {
         const u = new URL(url);
         return u.pathname.startsWith('/') ? u.pathname.slice(1) : u.pathname;
@@ -27,14 +32,78 @@ describe('VendorService', () => {
         return null;
       }
     }),
-    buildPublicUrl: jest.fn((key: string) => `https://test-bucket.test-region.digitaloceanspaces.com/${key}`),
-    getSignedUrl: jest.fn(),
+    buildPublicUrl: j.fn((key: string) => `https://test-bucket.test-region.digitaloceanspaces.com/${key}`),
+    getSignedUrl: j.fn(),
+  };
+
+  const makeQb = (result: any) => {
+    const qb: any = {
+      leftJoinAndSelect: j.fn().mockReturnThis(),
+      innerJoin: j.fn().mockReturnThis(),
+      where: j.fn().mockReturnThis(),
+      andWhere: j.fn().mockReturnThis(),
+      orderBy: j.fn().mockReturnThis(),
+      addOrderBy: j.fn().mockReturnThis(),
+      skip: j.fn().mockReturnThis(),
+      take: j.fn().mockReturnThis(),
+      distinct: j.fn().mockReturnThis(),
+      getManyAndCount: j
+        .fn()
+        .mockResolvedValue(
+          [[result].flat().filter(Boolean), ([result].flat().filter(Boolean)).length] as any,
+        ),
+      getMany: j.fn().mockResolvedValue([result].flat().filter(Boolean) as any),
+      getOne: j.fn().mockResolvedValue(result as any),
+      select: j.fn().mockReturnThis(),
+      addSelect: j.fn().mockReturnThis(),
+      groupBy: j.fn().mockReturnThis(),
+    };
+    return qb;
   };
 
   beforeEach(async () => {
-    // Ensure env used by normalization exists
+    jest.resetAllMocks();
     process.env.DO_SPACES_BUCKET = 'test-bucket';
     process.env.DO_SPACES_REGION = 'test-region';
+
+    Object.assign(productRepoMock, {
+      create: j.fn((v: any) => v),
+      save: j.fn(async (v: any) => v),
+      findOne: j.fn(),
+      findOneOrFail: j.fn(),
+      findAndCount: j.fn(),
+      manager: { transaction: j.fn() },
+      createQueryBuilder: j.fn(),
+    });
+    Object.assign(userRepoMock, {
+      findOneBy: j.fn(),
+      findOne: j.fn(),
+      findAndCount: j.fn(),
+      createQueryBuilder: j.fn(),
+    });
+    Object.assign(orderRepoMock, {
+      createQueryBuilder: j.fn(),
+      save: j.fn(),
+      find: j.fn(),
+    });
+    Object.assign(orderItemRepoMock, {
+      findOne: j.fn(),
+      find: j.fn(),
+      save: j.fn(),
+      manager: { transaction: j.fn() },
+      createQueryBuilder: j.fn(),
+    });
+    Object.assign(productImageRepoMock, {
+      create: j.fn((v: any) => v),
+      save: j.fn(),
+      delete: j.fn(),
+    });
+    Object.assign(tagRepoMock, {
+      find: j.fn(),
+      save: j.fn(),
+      create: j.fn((v: any) => v),
+    });
+    Object.assign(notificationsMock, { sendToUser: j.fn() });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -79,11 +148,13 @@ describe('VendorService', () => {
       },
     };
 
-    productRepoMock.findOne = jest.fn().mockResolvedValue(mockProduct);
+    productRepoMock.createQueryBuilder = j.fn(() =>
+      makeQb(mockProduct),
+    );
 
     const result: any = await service.getMyProduct(userId, productId);
 
-    expect(productRepoMock.findOne).toHaveBeenCalled();
+    expect(productRepoMock.createQueryBuilder).toHaveBeenCalled();
     expect(result).toBeDefined();
     expect(result.attributes).toBeDefined();
 
@@ -114,12 +185,10 @@ describe('VendorService', () => {
         },
       },
     };
-    const normalized = await (service as any).getMyProduct?.call(
-      { productRepository: { findOne: async () => product } },
-      undefined,
-      99,
-      {},
-    ).catch(() => null);
+    productRepoMock.createQueryBuilder = j.fn(() => makeQb(product));
+    const normalized = await service
+      .getMyProduct(1, 99)
+      .catch(() => null);
 
     expect(normalized).toBeDefined();
     expect(normalized.attributes).toBeDefined();
@@ -132,5 +201,147 @@ describe('VendorService', () => {
     expect(attrs.format).toBe('PDF');
     expect(attrs.fileSizeMB).toBeCloseTo(5, 2);
     expect(attrs.licenseRequired).toBe(true);
+  });
+
+  it('createMyProduct saves images inside a transaction', async () => {
+    const user = { id: 1, verified: true, verificationStatus: VerificationStatus.APPROVED } as any;
+    userRepoMock.findOneBy.mockResolvedValue(user);
+
+    const txImageSave = j.fn(async (imgs: any[]) => imgs);
+    const txProductSave = j.fn(async (p: any) => ({ ...p, id: 555 }));
+    const txTagSave = j.fn(async () => []);
+
+    productRepoMock.manager.transaction.mockImplementation(async (cb: any) => {
+      return cb({
+        getRepository: (entity: any) => {
+          if (entity === Product)
+            return {
+              save: txProductSave,
+              create: (v: any) => v,
+            } as any;
+          if (entity === ProductImage)
+            return {
+              create: (v: any) => v,
+              save: txImageSave,
+            } as any;
+          if (entity === Tag)
+            return {
+              find: j.fn().mockResolvedValue([] as any),
+              save: txTagSave,
+              create: (v: any) => v,
+            } as any;
+          if (entity === Category) return { findOne: j.fn() } as any;
+          return {} as any;
+        },
+      });
+    });
+
+    productRepoMock.findOneOrFail.mockResolvedValue({
+      id: 555,
+      images: [],
+      vendor: user,
+      category: null,
+      tags: [],
+    });
+
+    await service.createMyProduct(1, {
+      name: 'Test',
+      price: 10,
+      currency: 'USD',
+      images: [{ src: 'a' }, { src: 'b' }],
+    } as any);
+
+    expect(productRepoMock.manager.transaction).toHaveBeenCalled();
+    expect(txImageSave).toHaveBeenCalledTimes(1);
+    expect((txImageSave.mock.calls[0][0] as any[]).length).toBe(2);
+  });
+
+  it('updateMyProduct avoids wiping images when only primaryImageId is sent', async () => {
+    const userId = 1;
+    const productId = 2;
+    const product = {
+      id: productId,
+      vendor: { id: userId },
+      imageUrl: 'keep-me',
+      attributes: {},
+    } as any;
+
+    const imageDelete = j.fn();
+    const imageSave = j.fn();
+    const productSave = j.fn(async (p: any) => p);
+
+    productRepoMock.manager.transaction.mockImplementation(async (cb: any) => {
+      return cb({
+        getRepository: (entity: any) => {
+          if (entity === Product)
+            return {
+              findOne: j.fn().mockResolvedValue(product as any),
+              save: productSave,
+            } as any;
+          if (entity === ProductImage)
+            return {
+              delete: imageDelete,
+              save: imageSave,
+              create: (v: any) => v,
+            } as any;
+          if (entity === Tag)
+            return { find: j.fn().mockResolvedValue([] as any), save: j.fn(), create: (v: any) => v } as any;
+          if (entity === Category) return { findOne: j.fn() } as any;
+          return {} as any;
+        },
+      });
+    });
+
+    productRepoMock.findOneOrFail.mockResolvedValue(product);
+
+    const updated = await service.updateMyProduct(userId, productId, {
+      primaryImageId: 123,
+    } as any);
+
+    expect(imageDelete).not.toHaveBeenCalled();
+    expect(imageSave).not.toHaveBeenCalled();
+    expect(updated.imageUrl).toBe('keep-me');
+  });
+
+  it('createShipment runs in a transaction and updates order and items', async () => {
+    const order = {
+      id: 10,
+      paymentStatus: 'PAID',
+      paymentMethod: 'PAID',
+      status: 'PENDING',
+      items: [],
+    } as any;
+    const item = {
+      id: 1,
+      order,
+      product: { vendor: { id: 5 } },
+      status: 'PENDING',
+    } as any;
+
+    const itemSave = j.fn(async (rows: any) => rows);
+    const orderSave = j.fn(async (o: any) => o);
+
+    orderItemRepoMock.manager.transaction.mockImplementation(async (cb: any) => {
+      return cb({
+        getRepository: (entity: any) => {
+          if (entity === OrderItem)
+            return {
+              find: j.fn().mockResolvedValue([item] as any),
+              save: itemSave,
+            } as any;
+          if (entity === Order)
+            return {
+              save: orderSave,
+            } as any;
+          return {} as any;
+        },
+      });
+    });
+
+    const res = await service.createShipment(5, 10, [1], {});
+    expect(orderItemRepoMock.manager.transaction).toHaveBeenCalled();
+    expect(itemSave).toHaveBeenCalled();
+    expect(orderSave).toHaveBeenCalled();
+    expect(res[0].status).toBe('SHIPPED');
   });
 });

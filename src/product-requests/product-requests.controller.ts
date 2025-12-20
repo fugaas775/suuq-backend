@@ -31,6 +31,12 @@ import { RespondOfferDto } from './dto/respond-offer.dto';
 export class ProductRequestsController {
   constructor(private readonly productRequests: ProductRequestsService) {}
 
+  // Allow guests to submit requests; no auth required
+  @Post('guest')
+  createAsGuest(@Body() dto: CreateProductRequestDto) {
+    return this.productRequests.createGuestRequest(dto);
+  }
+
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Post()
   create(
@@ -170,6 +176,7 @@ export class ProductRequestsController {
   @Post([
     'search/log',
     'searches/log',
+    'zero-search',
     'analytics/zero-results',
     'analytics/zero-searches',
     'analytics/searches/zero',
@@ -182,6 +189,7 @@ export class ProductRequestsController {
   @Post([
     'v2/search/log',
     'v2/searches/log',
+    'v2/zero-search',
     'v2/analytics/zero-results',
     'v2/analytics/zero-searches',
     'v2/analytics/searches/zero',

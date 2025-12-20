@@ -1,16 +1,22 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { HealthService } from './health.service';
 import { DataSource } from 'typeorm';
+import { Logger } from '@nestjs/common';
 
 describe('HealthService', () => {
   let service: HealthService;
   let dataSource: DataSource;
+  let loggerErrorSpy: jest.SpyInstance;
 
   const mockDataSource = {
     query: jest.fn(),
   };
 
   beforeEach(async () => {
+    loggerErrorSpy = jest
+      .spyOn(Logger.prototype, 'error')
+      .mockImplementation(() => undefined as any);
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         HealthService,
@@ -23,6 +29,10 @@ describe('HealthService', () => {
 
     service = module.get<HealthService>(HealthService);
     dataSource = module.get<DataSource>(DataSource);
+  });
+
+  afterEach(() => {
+    loggerErrorSpy?.mockRestore();
   });
 
   it('should be defined', () => {

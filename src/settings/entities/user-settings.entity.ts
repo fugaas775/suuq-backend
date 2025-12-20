@@ -4,6 +4,7 @@ import {
   Column,
   OneToOne,
   JoinColumn,
+  Index,
 } from 'typeorm';
 import { User } from '../../users/entities/user.entity'; // <-- FIXED IMPORT PATH
 
@@ -15,6 +16,7 @@ export class UserSettings {
   // Each user has a single settings record; settings deleted if user is deleted
   @OneToOne(() => User, { onDelete: 'CASCADE' })
   @JoinColumn()
+  @Index('uq_user_settings_user_id', { unique: true })
   user!: User;
 
   // Restrict theme to 'light' or 'dark'

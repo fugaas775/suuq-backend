@@ -1,4 +1,11 @@
-import { Controller, Post, Body, UseGuards, Req } from '@nestjs/common';
+import {
+  Controller,
+  Post,
+  Body,
+  UseGuards,
+  Req,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { NotificationsService } from './notifications.service';
 import { RegisterDeviceTokenDto } from './dto/register-device-token.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -14,8 +21,10 @@ export class NotificationsController {
     @Req() req: AuthenticatedRequest,
     @Body() dto: RegisterDeviceTokenDto,
   ) {
-    // Prefer the authenticated user's id; fall back to body for backward compatibility
-    const userId = req.user?.id ?? dto.userId;
+    const userId = req.user?.id;
+    if (!userId) {
+      throw new UnauthorizedException('Authentication required to register device token.');
+    }
     return this.notificationsService.registerDeviceToken({
       userId,
       token: dto.token,

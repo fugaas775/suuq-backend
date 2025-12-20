@@ -1,5 +1,5 @@
 import * as dotenv from 'dotenv';
-dotenv.config();
+dotenv.config({ quiet: true });
 
 export const mpesaConfig = {
   consumerKey: process.env.MPESA_CONSUMER_KEY,

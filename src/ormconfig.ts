@@ -1,7 +1,7 @@
 import * as dotenv from 'dotenv';
 import { DataSource, DataSourceOptions } from 'typeorm';
 
-dotenv.config();
+dotenv.config({ quiet: true });
 
 const cacheEnabled = String(
   process.env.TYPEORM_CACHE_ENABLED || process.env.TYPEORM_QUERY_CACHE_ENABLED || 'false',

@@ -1,16 +1,17 @@
 /* eslint-disable @typescript-eslint/no-base-to-string */
-import { Injectable, Inject, Logger } from '@nestjs/common';
+import { Injectable, Inject, Logger, NotFoundException } from '@nestjs/common';
 import { UsersService } from '../users/users.service';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DeviceToken } from './entities/device-token.entity';
+import type { FirebaseMessagingResponse, FirebaseAdmin } from './notifications.types';
 
 @Injectable()
 export class NotificationsService {
   private readonly logger = new Logger(NotificationsService.name);
 
   constructor(
-    @Inject('FIREBASE_ADMIN') private readonly firebase: unknown,
+    @Inject('FIREBASE_ADMIN') private readonly firebase: FirebaseAdmin,
     @InjectRepository(DeviceToken)
     private readonly deviceTokenRepository: Repository<DeviceToken>,
     private readonly usersService: UsersService,
@@ -28,6 +29,12 @@ export class NotificationsService {
     title: string;
     body: string;
   }) {
+    const user = await this.usersService.findOne(userId);
+    if (!user) {
+      this.logger.warn(`Skip send: user ${userId} not found`);
+      return { successCount: 0, failureCount: 0 } as FirebaseMessagingResponse;
+    }
+
     // Fetch device tokens for the user
     const tokens = await this.deviceTokenRepository.find({ where: { userId } });
     const deviceTokens = tokens.map((t) => t.token).filter(Boolean);
@@ -41,18 +48,18 @@ export class NotificationsService {
     } as const;
     // firebase-admin v13 uses sendEachForMulticast
     try {
-      const fb = this.firebase as {
-        messaging?: () => {
-          sendEachForMulticast: (
-            msg: typeof message,
-          ) => Promise<{ successCount: number; failureCount: number }>;
-        };
-      };
-      const response = await fb.messaging?.().sendEachForMulticast(message);
+      const messaging = this.firebase.messaging?.();
+      if (!messaging?.sendEachForMulticast) {
+        this.logger.error('Firebase messaging not available');
+        return { successCount: 0, failureCount: 0 } as FirebaseMessagingResponse;
+      }
+
+      const response = await messaging.sendEachForMulticast(message);
       if (!response) {
         this.logger.error('Firebase messaging not available');
-        return { successCount: 0, failureCount: 0 };
+        return { successCount: 0, failureCount: 0 } as FirebaseMessagingResponse;
       }
+      await this.pruneInvalidTokens(response, deviceTokens);
       this.logger.log(
         `Sent notification to user ${userId}: ${response.successCount} success, ${response.failureCount} failure`,
       );
@@ -62,7 +69,7 @@ export class NotificationsService {
       this.logger.error(
         `Failed to send notification to user ${userId}: ${msg}`,
       );
-      return { successCount: 0, failureCount: 0 };
+      return { successCount: 0, failureCount: 0 } as FirebaseMessagingResponse;
     }
   }
 
@@ -74,20 +81,45 @@ export class NotificationsService {
     token: string;
     platform?: string;
   }) {
-    // Upsert device token for user
-    let device = await this.deviceTokenRepository.findOne({
-      where: { userId: dto.userId, token: dto.token },
-    });
-    if (!device) {
-      device = this.deviceTokenRepository.create({
+    const user = await this.usersService.findOne(dto.userId);
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    await this.deviceTokenRepository.upsert(
+      {
         userId: dto.userId,
         token: dto.token,
         platform: dto.platform || 'unknown',
-      });
-    } else {
-      device.platform = dto.platform || device.platform;
-    }
-    await this.deviceTokenRepository.save(device);
+      },
+      ['token'],
+    );
+
     return { success: true };
+  }
+
+  private async pruneInvalidTokens(
+    response: FirebaseMessagingResponse,
+    tokens: string[],
+  ) {
+    if (!response.responses?.length) return;
+
+    const invalidCodes = new Set([
+      'messaging/invalid-registration-token',
+      'messaging/registration-token-not-registered',
+    ]);
+
+    const invalidTokens = response.responses
+      .map((res, idx) => ({ res, token: tokens[idx] }))
+      .filter(({ res }) => !res.success && res.error?.code && invalidCodes.has(res.error.code))
+      .map(({ token }) => token)
+      .filter(Boolean);
+
+    if (!invalidTokens.length) return;
+
+    await this.deviceTokenRepository.delete({ token: In(invalidTokens) });
+    this.logger.warn(
+      `Pruned ${invalidTokens.length} invalid device tokens: ${invalidTokens.join(', ')}`,
+    );
   }
 }

@@ -3,7 +3,6 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { VendorService } from './vendor.service';
 import { VendorController } from './vendor.controller';
 import { VendorPublicController } from './vendor-public.controller';
-import { VendorDashboardController } from './vendor-dashboard.controller';
 import { User } from '../users/entities/user.entity';
 import { Product } from '../products/entities/product.entity';
 import { Order, OrderItem } from '../orders/entities/order.entity';
@@ -36,7 +35,6 @@ import { VendorAnalyticsController } from './vendor-analytics.controller';
   controllers: [
     VendorController,
     VendorPublicController,
-    VendorDashboardController,
     VendorAnalyticsController,
   ],
   providers: [VendorService],

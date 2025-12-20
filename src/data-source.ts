@@ -1,7 +1,7 @@
 import * as dotenv from 'dotenv';
 import { DataSource, DataSourceOptions } from 'typeorm';
 
-dotenv.config();
+dotenv.config({ quiet: true });
 
 // Prefer single DATABASE_URL when provided (e.g., CI), otherwise use discrete vars.
 // Some environments expose a non-Postgres DATABASE_URL (e.g., MySQL) which would break pg protocol.

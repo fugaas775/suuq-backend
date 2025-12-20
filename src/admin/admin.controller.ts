@@ -51,13 +51,6 @@ export class AdminController {
     private readonly withdrawalsService: WithdrawalsService,
   ) {}
 
-  // ================== USER MANAGEMENT ENDPOINTS ==================
-  @Get('users')
-  async getAllUsers(@Query() filters: FindUsersQueryDto) {
-    const { users, total } = await this.usersService.findAll(filters);
-    return { users, total };
-  }
-
   // Prefer a specific route before the generic :id matcher to avoid ParseIntPipe errors
   @Get('users/stream')
   @Header('Content-Type', 'application/x-ndjson; charset=utf-8')
@@ -274,7 +267,17 @@ export class AdminController {
   // ================== ORDER MANAGEMENT ENDPOINTS ==================
   @Get('orders')
   async getAllOrders(
-    @Query() query: { page?: number; pageSize?: number; status?: string },
+    @Query()
+    query: {
+      page?: number;
+      pageSize?: number;
+      status?: string;
+      sort?: string;
+      sortBy?: string;
+      orderBy?: string;
+      sortOrder?: 'ASC' | 'DESC' | 'asc' | 'desc';
+      order?: 'ASC' | 'DESC' | 'asc' | 'desc';
+    },
   ) {
     const result = await this.ordersService.findAllForAdmin(query as any);
     return { orders: result.data, total: result.total };

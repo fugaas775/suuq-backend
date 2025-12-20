@@ -22,9 +22,9 @@ import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { plainToInstance } from 'class-transformer';
 import { AuthenticatedRequest } from '../common/interfaces/authenticated-request.interface';
-import { UpdateUserDto } from '../users/dto/update-user.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { AppleAuthDto } from './dto/apple-auth.dto';
+import { UpdateOwnProfileDto } from '../users/dto/update-own-profile.dto';
 
 @Controller('auth')
 export class AuthController {
@@ -119,16 +119,11 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   async updateOwnProfileViaAuth(
     @Request() req: AuthenticatedRequest,
-    @Body() data: UpdateUserDto,
+    @Body() data: UpdateOwnProfileDto,
   ) {
     const usersService = this.authService.getUsersService();
     const userId = req.user?.id;
     if (!userId) throw new UnauthorizedException();
-
-    // Sanitize: customers shouldn't modify roles/email/password; keep server-side enforcement minimal here
-    delete data.roles;
-    delete data.email;
-    delete data.password;
 
     const user = await usersService.update(userId, data);
     return plainToInstance(UserResponseDto, user, {

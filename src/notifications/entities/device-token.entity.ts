@@ -1,6 +1,7 @@
 import { Entity, Column, PrimaryGeneratedColumn, Index } from 'typeorm';
 
 @Entity('device_tokens')
+@Index(['token'], { unique: true })
 export class DeviceToken {
   @PrimaryGeneratedColumn()
   id: number;

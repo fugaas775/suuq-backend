@@ -1,4 +1,4 @@
-import { IsOptional, IsString, MinLength } from 'class-validator';
+import { IsOptional, IsString, MinLength, MaxLength } from 'class-validator';
 
 export class ChangePasswordDto {
   // Accept various alias field names from different clients
@@ -12,17 +12,20 @@ export class ChangePasswordDto {
 
   @IsOptional()
   @IsString()
-  @MinLength(6)
+  @MinLength(8)
+  @MaxLength(128)
   newPassword?: string;
 
   @IsOptional()
   @IsString()
-  @MinLength(6)
+  @MinLength(8)
+  @MaxLength(128)
   password?: string;
 
   @IsOptional()
   @IsString()
-  @MinLength(6)
+  @MinLength(8)
+  @MaxLength(128)
   new_password?: string;
 
   resolveCurrent(): string | undefined {

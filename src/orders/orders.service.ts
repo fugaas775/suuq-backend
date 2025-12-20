@@ -36,6 +36,11 @@ export class OrdersService {
     limit?: number;
     pageSize?: number;
     status?: string;
+    sort?: string;
+    sortBy?: string;
+    orderBy?: string;
+    sortOrder?: 'ASC' | 'DESC' | 'asc' | 'desc';
+    order?: 'ASC' | 'DESC' | 'asc' | 'desc';
   }): Promise<{ data: OrderResponseDto[]; total: number }> {
     const qb = this.orderRepository
       .createQueryBuilder('order')
@@ -48,6 +53,43 @@ export class OrdersService {
     if (query.status) {
       qb.andWhere('order.status = :status', { status: query.status });
     }
+
+    // Server-side sorting so admin always sees deterministic newest-first pages
+    const sortableColumns = new Set([
+      'id',
+      'createdAt',
+      'status',
+      'paymentStatus',
+      'paymentMethod',
+      'total',
+    ]);
+
+    const sortToken = (query.sort || '').toString().trim();
+    const tokenColumn = sortToken.replace(/^[-+]/, '') || undefined;
+    const tokenOrder =
+      sortToken && sortToken.startsWith('-')
+        ? 'DESC'
+        : sortToken
+          ? 'ASC'
+          : undefined;
+
+    const requestedColumn =
+      query.sortBy || query.orderBy || tokenColumn || 'createdAt';
+
+    const requestedOrderRaw =
+      query.sortOrder || query.order || tokenOrder || 'DESC';
+    const requestedOrder =
+      requestedOrderRaw &&
+      requestedOrderRaw.toString().toUpperCase() === 'ASC'
+        ? 'ASC'
+        : 'DESC';
+
+    if (requestedColumn && sortableColumns.has(requestedColumn)) {
+      qb.orderBy(`order.${requestedColumn}`, requestedOrder);
+    } else {
+      qb.orderBy('order.createdAt', 'DESC');
+    }
+    qb.addOrderBy('order.id', 'DESC'); // tie-break for deterministic pagination
 
     const page = query.page && query.page > 0 ? query.page : 1;
     const limitInput = query.limit ?? query.pageSize;

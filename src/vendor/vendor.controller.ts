@@ -35,13 +35,6 @@ export class VendorController {
   }
   constructor(private readonly vendorService: VendorService) {}
 
-  // Explicit suggest route to avoid hitting the numeric :id path
-  @Get('vendors/suggest')
-  async suggestVendors(@Query('q') q?: string, @Query('limit') limit?: string) {
-    const lim = Math.min(Number(limit) || 10, 50);
-    return this.vendorService.suggestVendors(q, lim);
-  }
-
   @Get('vendors')
   async findPublicVendors(
     @Query('q') q?: string,

@@ -7,6 +7,7 @@ import {
   UseGuards,
   Req,
   UnauthorizedException,
+  BadRequestException,
   Put,
   Body,
   Query,
@@ -25,6 +26,9 @@ import { UserRole } from '../auth/roles.enum';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { FindUsersQueryDto } from './dto/find-users-query.dto';
 import { Response } from 'express';
+import { UpdateOwnProfileDto } from './dto/update-own-profile.dto';
+import { ChangePasswordDto } from '../auth/dto/change-password.dto';
+import { Throttle } from '@nestjs/throttler';
 
 @Controller('users')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -56,15 +60,10 @@ export class UsersController {
   @Patch('me')
   async updateOwnProfile(
     @Req() req: AuthenticatedRequest,
-    @Body() data: UpdateUserDto,
+    @Body() data: UpdateOwnProfileDto,
   ): Promise<UserResponseDto> {
     const userId = req.user?.id;
     if (!userId) throw new UnauthorizedException();
-
-    // Prevent changing sensitive fields
-    delete data.roles;
-    delete data.email;
-    delete data.password;
 
     const user = await this.usersService.update(userId, data);
     return plainToInstance(UserResponseDto, user, {
@@ -76,15 +75,10 @@ export class UsersController {
   @Put('me')
   async putOwnProfile(
     @Req() req: AuthenticatedRequest,
-    @Body() data: UpdateUserDto,
+    @Body() data: UpdateOwnProfileDto,
   ): Promise<UserResponseDto> {
     const userId = req.user?.id;
     if (!userId) throw new UnauthorizedException();
-
-    // Prevent changing sensitive fields
-    delete data.roles;
-    delete data.email;
-    delete data.password;
 
     const user = await this.usersService.update(userId, data);
     return plainToInstance(UserResponseDto, user, {
@@ -95,14 +89,17 @@ export class UsersController {
   // Password change for current user (accept multiple verbs to match clients)
   @Put('me/password')
   @Patch('me/password')
-  async changeOwnPassword(@Req() req: AuthenticatedRequest, @Body() body: any) {
+  @Throttle({ default: { limit: 5, ttl: 60 } })
+  async changeOwnPassword(
+    @Req() req: AuthenticatedRequest,
+    @Body() body: ChangePasswordDto,
+  ) {
     const userId = req.user?.id;
     if (!userId) throw new UnauthorizedException();
-    const current =
-      body.currentPassword || body.oldPassword || body.passwordCurrent;
-    const next = body.newPassword || body.password || body.new_password;
+    const current = body.resolveCurrent();
+    const next = body.resolveNext();
     if (!next) {
-      throw new Error('New password is required.');
+      throw new BadRequestException('New password is required.');
     }
     await this.usersService.changePassword(userId, current, next);
     return { success: true } as any;
@@ -111,9 +108,10 @@ export class UsersController {
   // POST alias for clients using /users/me/change-password
   @Put('me/change-password')
   @Patch('me/change-password')
+  @Throttle({ default: { limit: 5, ttl: 60 } })
   async changeOwnPasswordAlias(
     @Req() req: AuthenticatedRequest,
-    @Body() body: any,
+    @Body() body: ChangePasswordDto,
   ) {
     return this.changeOwnPassword(req, body);
   }

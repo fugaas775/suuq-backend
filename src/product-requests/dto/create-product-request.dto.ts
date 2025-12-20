@@ -5,6 +5,7 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  IsEmail,
   MaxLength,
   Matches,
   Min,
@@ -143,4 +144,23 @@ export class CreateProductRequestDto {
   @ValidateNested()
   @Type(() => ProductRequestLocationDto)
   location?: ProductRequestLocationDto;
+
+  // Guest submission contact fields (not required for authenticated users)
+  @IsOptional()
+  @IsString()
+  @MaxLength(160)
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  guestName?: string;
+
+  @IsOptional()
+  @IsEmail()
+  @MaxLength(190)
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  guestEmail?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(48)
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  guestPhone?: string;
 }

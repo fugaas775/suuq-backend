@@ -18,6 +18,7 @@ export class MediaMaintenanceService {
     try {
       const fs = await import('fs');
       const dir = '/tmp/uploads';
+      await fs.promises.mkdir(dir, { recursive: true }).catch(() => {});
       const entries = await fs.promises.readdir(dir).catch(() => []);
       const cutoff = Date.now() - 60 * 60 * 1000; // 1h
       for (const name of entries) {
@@ -41,6 +42,7 @@ export class MediaMaintenanceService {
   @Cron('15 3 * * *')
   async backfillVideoPosters() {
     try {
+      const maxVideoBytes = 150 * 1024 * 1024;
       // Scan a prefix if you use one; empty means whole bucket (be careful)
       let token: string | undefined;
       let scanned = 0;
@@ -54,8 +56,12 @@ export class MediaMaintenanceService {
           const posterCandidate = `poster_${key.replace(/[^A-Za-z0-9._/-]/g, '_')}.jpg`;
           const exists = await this.doSpaces.headObjectExists(posterCandidate);
           if (exists) continue;
+          const meta = await this.doSpaces.headObjectMeta(key);
+          if (typeof meta?.contentLength === 'number' && meta.contentLength > maxVideoBytes) {
+            continue;
+          }
           // Generate poster best-effort
-          await this.buildAndUploadPoster(key, posterCandidate).catch(() => {});
+          await this.buildAndUploadPoster(key, posterCandidate, maxVideoBytes).catch(() => {});
           generated++;
           // Soft cap per run to avoid long jobs
           if (generated >= 50) break;
@@ -69,13 +75,18 @@ export class MediaMaintenanceService {
     }
   }
 
-  private async buildAndUploadPoster(originalKey: string, posterKey: string): Promise<void> {
+  private async buildAndUploadPoster(originalKey: string, posterKey: string, maxBytes: number): Promise<void> {
     const fs = await import('fs');
     const tmpDir = '/tmp/uploads';
+    await fs.promises.mkdir(tmpDir, { recursive: true }).catch(() => {});
     const fileNameSafe = originalKey.split('/').pop() || originalKey;
-    const videoBuf = await this.doSpaces.getObjectBuffer(originalKey);
     const videoPath = path.join(tmpDir, `bf_${Date.now()}_${fileNameSafe}`);
-    await fs.promises.writeFile(videoPath, videoBuf);
+    await this.doSpaces.downloadToFile(originalKey, videoPath);
+    const stat = await fs.promises.stat(videoPath).catch(() => null);
+    if (stat && stat.size > maxBytes) {
+      void fs.promises.unlink(videoPath).catch(() => {});
+      return;
+    }
     const posterPath = path.join(tmpDir, `${posterKey.split('/').pop()}`);
     try {
       const args = ['-y', '-hide_banner', '-loglevel', 'error', '-ss', '00:00:01.000', '-i', videoPath, '-frames:v', '1', '-vf', 'scale=320:-1', posterPath];

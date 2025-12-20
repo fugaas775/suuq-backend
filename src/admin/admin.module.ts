@@ -34,6 +34,7 @@ import { SearchModule } from '../search/search.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { SearchLog } from '../search/entities/search-log.entity';
 import { AdminUsersController } from './users.admin.controller';
+import { AdminAuditController } from './audit.admin.controller';
 
 @Module({
   // 2. Add UsersModule and OrdersModule here
@@ -70,6 +71,7 @@ import { AdminUsersController } from './users.admin.controller';
     AdminProductRequestsController,
     AdminSearchLogController,
     AdminUsersController,
+    AdminAuditController,
   ],
   // 3. Remove the services from providers. They are now correctly provided by the imported modules.
   providers: [

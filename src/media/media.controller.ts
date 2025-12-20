@@ -106,6 +106,10 @@ export class MediaController {
       );
     }
 
+    if (!isImage && !isVideo) {
+      throw new BadRequestException('Unsupported file type. Only images or videos are allowed.');
+    }
+
     const ts = Date.now();
 
     // Upload original file via stream to avoid buffering in memory
@@ -146,6 +150,7 @@ export class MediaController {
     }
 
     if (isVideo) {
+        await fs.promises.mkdir('/tmp/uploads', { recursive: true }).catch(() => {});
       // Try to generate a small poster thumbnail using ffmpeg (best-effort)
       let posterUrl: string | undefined;
       try {

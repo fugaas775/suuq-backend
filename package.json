@@ -40,7 +40,8 @@
     "seed:products": "ts-node src/seeds/create-products.ts",
     "seed:categories": "ts-node src/database/seeds/seed-categories.ts",
     "backfill:sales": "ts-node -r tsconfig-paths/register --transpile-only scripts/backfill-product-sales.ts",
-    "backfill:phash": "ts-node -r tsconfig-paths/register --transpile-only scripts/backfill-phash.ts"
+    "backfill:phash": "ts-node -r tsconfig-paths/register --transpile-only scripts/backfill-phash.ts",
+    "monitor:device-tokens": "ts-node -r tsconfig-paths/register scripts/monitor-device-tokens.ts"
   },
   "dependencies": {
     "@aws-sdk/client-rekognition": "^3.864.0",

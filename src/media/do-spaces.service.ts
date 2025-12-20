@@ -17,12 +17,14 @@ export class DoSpacesService {
   private bucket: string;
   private region: string;
   private endpoint: string;
+  private cdnEndpoint?: string;
 
   constructor() {
     // Store these from environment variables
     this.bucket = process.env.DO_SPACES_BUCKET!;
     this.region = process.env.DO_SPACES_REGION!;
     this.endpoint = process.env.DO_SPACES_ENDPOINT!;
+    this.cdnEndpoint = process.env.DO_SPACES_CDN_ENDPOINT;
 
     this.s3 = new S3Client({
       endpoint: this.endpoint,
@@ -157,6 +159,11 @@ export class DoSpacesService {
 
   /** Build the public URL for a given object key. */
   buildPublicUrl(key: string): string {
+    if (this.cdnEndpoint) {
+      const base = this.cdnEndpoint.replace(/\/$/, '');
+      return `${base}/${key}`;
+    }
+    // Fallback to bucket endpoint; works for standard Spaces if CDN not configured
     return `https://${this.bucket}.${this.region}.digitaloceanspaces.com/${key}`;
   }
 
@@ -208,7 +215,7 @@ export class DoSpacesService {
   async getObjectBuffer(key: string): Promise<Buffer> {
     const command = new GetObjectCommand({ Bucket: this.bucket, Key: key });
     const res = await this.s3.send(command);
-    const body = res.Body as Readable;
+    const body = this.extractBody(res);
     const chunks: Buffer[] = [];
     await new Promise<void>((resolve, reject) => {
       body.on('data', (c) => chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c)));
@@ -216,6 +223,50 @@ export class DoSpacesService {
       body.on('error', (e) => reject(e));
     });
     return Buffer.concat(chunks);
+  }
+
+  /** Download only the first N bytes of an object (for magic-byte sniffing). */
+  async getObjectHeadBytes(key: string, maxBytes = 4096): Promise<Buffer> {
+    const end = Math.max(0, Math.min(maxBytes, 1024 * 1024) - 1); // cap to 1MB range
+    const command = new GetObjectCommand({ Bucket: this.bucket, Key: key, Range: `bytes=0-${end}` } as any);
+    const res = await this.s3.send(command as any);
+    const body = this.extractBody(res);
+    const chunks: Buffer[] = [];
+    await new Promise<void>((resolve, reject) => {
+      body.on('data', (c) => chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c)));
+      body.on('end', () => resolve());
+      body.on('error', (e) => reject(e));
+    });
+    return Buffer.concat(chunks);
+  }
+
+  /** Stream an object directly to a local file to avoid buffering large payloads. */
+  async downloadToFile(key: string, destPath: string): Promise<void> {
+    const fs = await import('fs');
+    const pathModule = await import('path');
+    await fs.promises.mkdir(pathModule.dirname(destPath), { recursive: true });
+    const command = new GetObjectCommand({ Bucket: this.bucket, Key: key });
+    const res = await this.s3.send(command);
+    const body = this.extractBody(res);
+    await new Promise<void>((resolve, reject) => {
+      const ws = fs.createWriteStream(destPath);
+      body.pipe(ws);
+      body.on('error', (e) => reject(e));
+      ws.on('error', (e) => reject(e));
+      ws.on('finish', () => resolve());
+    });
+  }
+
+  private ensureReadable(body: any): Readable {
+    if (!body || typeof (body as any).on !== 'function') {
+      throw new Error('Unexpected empty body from S3 response');
+    }
+    return body as Readable;
+  }
+
+  private extractBody(res: any): Readable {
+    const body = (res as any)?.Body;
+    return this.ensureReadable(body);
   }
 
   /** Check if an object exists (HEAD). */

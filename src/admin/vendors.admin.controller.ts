@@ -15,7 +15,11 @@ import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { UserRole } from '../auth/roles.enum';
 import { VendorService } from '../vendor/vendor.service';
-import { AuditService } from '../audit/audit.service';
+import {
+  AuditFilters,
+  AuditService,
+  prettyAuditActionLabel,
+} from '../audit/audit.service';
 import { UpdateVendorVerificationDto } from './dto/update-vendor-verification.dto';
 import { UpdateVendorActiveDto } from './dto/update-vendor-active.dto';
 import { SkipThrottle } from '@nestjs/throttler';
@@ -121,6 +125,23 @@ export class AdminVendorsController {
     @Query('from') from?: string,
     @Query('to') to?: string,
   ) {
+    const mapItem = (it: any) => ({
+      id: it.id,
+      action: it.action,
+      actionLabel: prettyAuditActionLabel(it.action, it.meta),
+      reason: it.reason ?? null,
+      actorId: it.actorId ?? null,
+      actorEmail: it.actorEmail ?? null,
+      meta: it.meta ?? null,
+      createdAt: it.createdAt,
+    });
+
+    const toDate = (value?: string) => {
+      if (!value) return undefined;
+      const d = new Date(value);
+      return Number.isNaN(d.getTime()) ? undefined : d;
+    };
+
     const p = Math.max(Number(page) || 1, 1);
     const l = Math.min(Math.max(Number(limit) || 20, 1), 100);
     const useCursor = !!after;
@@ -128,95 +149,37 @@ export class AdminVendorsController {
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean);
-    const filters = {
+    const filters: AuditFilters = {
       actions: actionList.length ? actionList : undefined,
       actorEmail: actorEmail || undefined,
       actorId: actorId ? Number(actorId) : undefined,
-      from: from ? new Date(from) : undefined,
-      to: to ? new Date(to) : undefined,
-    } as any;
-
-    // Build using the service query builder helpers indirectly by calling the paged/cursor methods and then filtering via controller-level composition is tricky.
-    // For simplicity and minimal changes, we’ll filter using the service’s applyFilters via a tiny internal helper.
-    const repo: any = (this.audit as any).repo;
-    const qb = repo
-      .createQueryBuilder('a')
-      .where('a.targetType = :targetType AND a.targetId = :targetId', {
-        targetType: 'vendor',
-        targetId: id,
-      })
-      .orderBy('a.createdAt', 'DESC')
-      .addOrderBy('a.id', 'DESC');
-    this.audit.applyFilters(qb, filters);
+      from: toDate(from),
+      to: toDate(to),
+    };
 
     if (useCursor) {
-      const { createdAt, id: cid } = this.audit.decodeCursor(after);
-      if (createdAt && cid) {
-        qb.andWhere(
-          '(a.createdAt < :createdAt OR (a.createdAt = :createdAt AND a.id < :cid))',
-          { createdAt, cid },
-        );
-      }
-      qb.take(l + 1);
-      const rows = await qb.getMany();
-      const itemsRows = rows.slice(0, l);
-      const nextCursor =
-        rows.length > l
-          ? this.audit.encodeCursor(itemsRows[itemsRows.length - 1])
-          : null;
-      const items = itemsRows.map((it: any) => ({
-        id: it.id,
-        action: it.action,
-        actionLabel: label(it.action, it.meta),
-        reason: it.reason || null,
-        actorId: it.actorId || null,
-        actorEmail: it.actorEmail || null,
-        meta: it.meta || null,
-        createdAt: it.createdAt,
-      }));
-      return { items, nextCursor };
-    } else {
-      qb.skip((p - 1) * l).take(l);
-      const [rows, total] = await qb.getManyAndCount();
-      const items = rows.map((it: any) => ({
-        id: it.id,
-        action: it.action,
-        actionLabel: label(it.action, it.meta),
-        reason: it.reason || null,
-        actorId: it.actorId || null,
-        actorEmail: it.actorEmail || null,
-        meta: it.meta || null,
-        createdAt: it.createdAt,
-      }));
-      return {
-        items,
-        total,
-        page: p,
-        perPage: l,
-        totalPages: Math.ceil(total / l),
-      };
+      const { items, nextCursor } = await this.audit.listForTargetCursor(
+        'vendor',
+        id,
+        { after, limit: l, filters },
+      );
+      return { items: items.map(mapItem), nextCursor };
     }
-    const label = (action: string, meta?: any) => {
-      switch (action) {
-        case 'vendor.verification.update': {
-          const s = meta?.status;
-          if (s === 'APPROVED') return 'Approved vendor';
-          if (s === 'REJECTED') return 'Rejected vendor';
-          if (s === 'PENDING') return 'Set vendor to pending';
-          if (s === 'SUSPENDED') return 'Suspended vendor';
-          return 'Updated verification status';
-        }
-        case 'vendor.active.update': {
-          const a = meta?.isActive;
-          if (a === true) return 'Activated vendor';
-          if (a === false) return 'Deactivated vendor';
-          return 'Changed active state';
-        }
-        default:
-          return action;
-      }
+
+    const { items, total, perPage, totalPages, page: currentPage } =
+      await this.audit.listForTargetPaged('vendor', id, {
+        page: p,
+        limit: l,
+        filters,
+      });
+
+    return {
+      items: items.map(mapItem),
+      total,
+      page: currentPage,
+      perPage,
+      totalPages,
     };
-    // Unreachable due to early returns above
   }
 
   @Patch(':id/verification')

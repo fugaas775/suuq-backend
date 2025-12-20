@@ -5,6 +5,7 @@ import { Repository } from 'typeorm';
 import { UpdateSettingsDto } from './dto/update-settings.dto';
 import { UsersService } from '../users/users.service';
 import { UiSetting } from './entities/ui-setting.entity';
+import { UpdateUiSettingDto } from './dto/update-ui-setting.dto';
 
 @Injectable()
 export class SettingsService {
@@ -19,20 +20,7 @@ export class SettingsService {
   async getUserSettings(
     userId: number,
   ): Promise<{ userId: number; theme: string; notificationsEnabled: boolean }> {
-    let settings = await this.settingsRepo.findOne({
-      where: { user: { id: userId } },
-      relations: ['user'],
-    });
-
-    if (!settings) {
-      const user = await this.usersService.findOne(userId);
-      if (!user)
-        throw new NotFoundException(`User with ID ${userId} not found`);
-
-      settings = await this.settingsRepo.save(
-        this.settingsRepo.create({ user }),
-      );
-    }
+    const settings = await this.ensureUserSettings(userId, {});
 
     return {
       userId,
@@ -45,22 +33,7 @@ export class SettingsService {
     userId: number,
     dto: UpdateSettingsDto,
   ): Promise<{ userId: number; theme: string; notificationsEnabled: boolean }> {
-    let settings = await this.settingsRepo.findOne({
-      where: { user: { id: userId } },
-      relations: ['user'],
-    });
-
-    if (!settings) {
-      const user = await this.usersService.findOne(userId);
-      if (!user)
-        throw new NotFoundException(`User with ID ${userId} not found`);
-
-      settings = this.settingsRepo.create({ ...dto, user });
-    } else {
-      Object.assign(settings, dto);
-    }
-
-    const saved = await this.settingsRepo.save(settings);
+    const saved = await this.ensureUserSettings(userId, dto);
     return {
       userId,
       theme: saved.theme,
@@ -69,7 +42,9 @@ export class SettingsService {
   }
 
   async getAllSettings(): Promise<Record<string, any>> {
-    const settings = await this.uiSettingRepo.find();
+    const settings = await this.uiSettingRepo.find({
+      cache: { id: 'ui-settings', milliseconds: 30000 },
+    });
     const result: Record<string, any> = {};
     settings.forEach((s) => {
       result[s.key] = s.value;
@@ -77,27 +52,81 @@ export class SettingsService {
     return result;
   }
 
-  async updateSetting(key: string, value: any): Promise<UiSetting | null> {
+  async updateSetting(dto: UpdateUiSettingDto): Promise<UiSetting> {
+    const key = dto.key;
     const setting = await this.uiSettingRepo.findOne({ where: { key } });
     if (!setting) {
       throw new NotFoundException(`Setting with key '${key}' not found.`);
     }
 
-    // ✨ ADD THIS LOGIC ✨
-    // Keys that should be stored as an array of strings
-    const arrayKeys = ['home_search_placeholders', 'product_card_promos'];
+    const arrayKeys = new Set(['home_search_placeholders', 'product_card_promos']);
 
-    // If the incoming value is a string for one of our array keys, split it.
-    if (arrayKeys.includes(key) && typeof value === 'string') {
-      // Split by comma, trim whitespace from each item, and filter out any empty strings
-      setting.value = value
-        .split(',')
-        .map((s) => s.trim())
-        .filter(Boolean);
+    if (arrayKeys.has(key)) {
+      if (Array.isArray(dto.value)) {
+        setting.value = dto.value.map((s) => String(s).trim()).filter(Boolean);
+      } else if (typeof dto.value === 'string') {
+        const trimmed = dto.value.trim();
+        try {
+          const parsed = JSON.parse(trimmed);
+          if (Array.isArray(parsed)) {
+            setting.value = parsed.map((s) => String(s).trim()).filter(Boolean);
+          } else {
+            setting.value = trimmed
+              .split(',')
+              .map((s) => s.trim())
+              .filter(Boolean);
+          }
+        } catch {
+          setting.value = trimmed
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean);
+        }
+      } else {
+        setting.value = []; // default empty when no value provided
+      }
     } else {
-      setting.value = value;
+      setting.value = dto.value ?? setting.value;
     }
 
     return this.uiSettingRepo.save(setting);
+  }
+
+  private async ensureUserSettings(
+    userId: number,
+    dto: UpdateSettingsDto,
+  ): Promise<UserSettings> {
+    const existing = await this.settingsRepo.findOne({
+      where: { user: { id: userId } },
+      relations: ['user'],
+    });
+
+    if (existing) {
+      Object.assign(existing, dto);
+      return this.settingsRepo.save(existing);
+    }
+
+    const user = await this.usersService.findOne(userId);
+    if (!user) {
+      throw new NotFoundException(`User with ID ${userId} not found`);
+    }
+
+    try {
+      const created = this.settingsRepo.create({ ...dto, user });
+      return await this.settingsRepo.save(created);
+    } catch (err: any) {
+      // Handle race where another request inserted concurrently (unique constraint on user_id)
+      if (err?.code === '23505') {
+        const retry = await this.settingsRepo.findOne({
+          where: { user: { id: userId } },
+          relations: ['user'],
+        });
+        if (retry) {
+          Object.assign(retry, dto);
+          return this.settingsRepo.save(retry);
+        }
+      }
+      throw err;
+    }
   }
 }

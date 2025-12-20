@@ -9,7 +9,7 @@ import {
   ValidateNested,
   IsInt,
 } from 'class-validator';
-import { Type } from 'class-transformer';
+import { Type, Transform } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 
 class DigitalLicenseDto {
@@ -72,10 +72,14 @@ class DigitalAttributesDto {
 class ImageDto {
   @IsString()
   src: string;
+  // Allow clients to omit derived variants; fallback to src in service
+  @IsOptional()
   @IsString()
-  thumbnailSrc: string;
+  thumbnailSrc?: string;
+
+  @IsOptional()
   @IsString()
-  lowResSrc: string;
+  lowResSrc?: string;
 }
 
 export class CreateProductDto {
@@ -99,6 +103,14 @@ export class CreateProductDto {
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => ImageDto)
+  @Transform(({ value }) => {
+    if (!Array.isArray(value)) return value;
+    return value.map((img) =>
+      typeof img === 'string'
+        ? { src: img, thumbnailSrc: img, lowResSrc: img }
+        : img,
+    );
+  })
   images?: ImageDto[];
 
   // ✨ FINAL FIX: Add the @Type decorator here

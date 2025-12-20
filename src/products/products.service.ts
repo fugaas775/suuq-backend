@@ -6,7 +6,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, In, MoreThan, TreeRepository } from 'typeorm';
+import { Repository, In, MoreThan, TreeRepository, IsNull } from 'typeorm';
 import { Category } from '../categories/entities/category.entity';
 import { Product } from './entities/product.entity';
 import { User } from '../users/entities/user.entity';
@@ -183,6 +183,116 @@ export class ProductsService {
     return out;
   }
 
+  private normalizeImagesInput(
+    rawImages?: Array<
+      | string
+      | {
+          src?: string | null;
+          thumbnailSrc?: string | null;
+          lowResSrc?: string | null;
+          // Accept common mobile/web aliases so images don’t get dropped
+          url?: string | null;
+          uri?: string | null;
+          path?: string | null;
+          imageUrl?: string | null;
+          image_url?: string | null;
+          image?: string | null;
+          cover?: string | null;
+          thumbnail?: string | null;
+          thumbnailUrl?: string | null;
+          thumbnail_url?: string | null;
+          thumb?: string | null;
+          thumbUrl?: string | null;
+          thumb_url?: string | null;
+          lowRes?: string | null;
+          low_res?: string | null;
+          lowres?: string | null;
+          lowResUrl?: string | null;
+          lowRes_url?: string | null;
+          lowres_url?: string | null;
+        }
+    >,
+    fallbackSrc?: string | null,
+  ): Array<{ src: string; thumbnailSrc: string; lowResSrc: string }> {
+    const deriveVariant = (
+      url: string,
+      kind: 'thumb' | 'lowres',
+    ): string | null => {
+      const replaced = url
+        .replace(/\/(full_)/, `/${kind}_`)
+        .replace(/\/(thumb_)/, `/${kind}_`)
+        .replace(/\/(lowres_)/, `/${kind}_`);
+      if (replaced !== url) return replaced;
+      return null;
+    };
+
+    const pick = (img: any, keys: string[]): string | null => {
+      for (const k of keys) {
+        const v = img?.[k];
+        if (typeof v === 'string' && v.trim()) return v.trim();
+      }
+      return null;
+    };
+
+    const arr = Array.isArray(rawImages) ? rawImages : [];
+    if ((!arr || arr.length === 0) && fallbackSrc) {
+      return [fallbackSrc].filter(Boolean).map((src) => {
+        const thumb = deriveVariant(src, 'thumb') || src;
+        const low = deriveVariant(src, 'lowres') || src;
+        return { src, thumbnailSrc: thumb, lowResSrc: low };
+      });
+    }
+
+    return arr
+      .map((img) =>
+        typeof img === 'string'
+          ? { src: img, thumbnailSrc: img, lowResSrc: img }
+          : img,
+      )
+      .map((img) => {
+        const src = pick(img, [
+          'src',
+          'url',
+          'uri',
+          'path',
+          'imageUrl',
+          'image_url',
+          'image',
+          'cover',
+        ]);
+        if (!src) return null;
+        const thumb =
+          pick(img, [
+            'thumbnailSrc',
+            'thumbnail',
+            'thumbnailUrl',
+            'thumbnail_url',
+            'thumb',
+            'thumbUrl',
+            'thumb_url',
+          ]) ||
+          deriveVariant(src, 'thumb') ||
+          src;
+        const low =
+          pick(img, [
+            'lowResSrc',
+            'lowRes',
+            'low_res',
+            'lowres',
+            'lowResUrl',
+            'lowRes_url',
+            'lowres_url',
+          ]) ||
+          deriveVariant(src, 'lowres') ||
+          src;
+        return { src, thumbnailSrc: thumb, lowResSrc: low };
+      })
+      .filter(
+        (img): img is { src: string; thumbnailSrc: string; lowResSrc: string } =>
+          !!img,
+      );
+  }
+
   // ✅ NEW create method
   async create(
     data: CreateProductDto & { vendorId: number },
@@ -203,6 +313,9 @@ export class ProductsService {
       downloadKey,
       ...rest
     } = data;
+
+    const legacyImage = (rest as any).imageUrl || (rest as any).image_url;
+    const normalizedImages = this.normalizeImagesInput(images, legacyImage);
 
     const vendor = await this.userRepo.findOneBy({ id: vendorId });
     if (!vendor) {
@@ -267,7 +380,7 @@ export class ProductsService {
       furnished: furnished ?? null,
       rentPeriod: rentPeriod ?? null,
       attributes: this.sanitizeAttributes(attributes) ?? {},
-      imageUrl: images.length > 0 ? images[0].src : null,
+      imageUrl: normalizedImages.length > 0 ? normalizedImages[0].src : null,
     });
 
     // If a downloadKey is provided explicitly, mirror it into attributes for digital products
@@ -293,8 +406,8 @@ export class ProductsService {
     const savedProduct = await this.productRepo.save(product);
 
     // 2. Create and save the associated ProductImage entities
-    if (images.length > 0) {
-      const imageEntities = images.map((imageObj, index) =>
+    if (normalizedImages.length > 0) {
+      const imageEntities = normalizedImages.map((imageObj, index) =>
         this.productImageRepo.create({
           src: imageObj.src,
           thumbnailSrc: imageObj.thumbnailSrc,
@@ -469,9 +582,13 @@ export class ProductsService {
             fileSizeMB: (a as any)?.fileSizeMB || null,
             licenseRequired: (a as any)?.licenseRequired ?? null,
           } as any;
-          this.logger.log(
-            `ProductsService.findOne prefill id=${id} attrs=${JSON.stringify(preview)}`,
-          );
+          const debugPrefill =
+            (process.env.DEBUG_PRODUCT_PREFILL || '').toLowerCase() === 'true';
+          if (debugPrefill) {
+            this.logger.log(
+              `ProductsService.findOne prefill id=${id} attrs=${JSON.stringify(preview)}`,
+            );
+          }
           // Optional deep attributes dump for specific IDs via env flag (comma-separated or 'all')
           try {
             const dbg = (process.env.DEBUG_ATTRS_PRODUCT_IDS || '').trim();
@@ -508,7 +625,12 @@ export class ProductsService {
     contentType?: string;
   }> {
     const product = await this.productRepo.findOne({
-      where: { id: productId },
+      where: {
+        id: productId,
+        status: 'publish' as any,
+        isBlocked: false,
+        deletedAt: IsNull(),
+      },
     });
     if (!product) throw new NotFoundException('Product not found');
     let attrs =
@@ -859,18 +981,44 @@ export class ProductsService {
     windowSeconds = 300,
   ): Promise<{ recorded: number; ignored: number }> {
     const cutoff = new Date(Date.now() - windowSeconds * 1000);
+    // Deduplicate, keep positive ints, and cap batch to guard the table
+    const MAX_BATCH = 200;
+    const cleanIds = Array.from(
+      new Set(
+        (productIds || [])
+          .map((n) => Number(n))
+          .filter((n) => Number.isInteger(n) && n > 0),
+      ),
+    ).slice(0, MAX_BATCH);
+
+    if (!cleanIds.length) return { recorded: 0, ignored: 0 };
+
+    // Only consider products that are actually visible
+    const visibleIds = await this.productRepo
+      .createQueryBuilder('product')
+      .select('product.id', 'id')
+      .where('product.id IN (:...ids)', { ids: cleanIds })
+      .andWhere('product.status = :status', { status: 'publish' })
+      .andWhere('product.isBlocked = false')
+      .andWhere('product.deleted_at IS NULL')
+      .getRawMany()
+      .then((rows) => rows.map((r) => Number(r.id)))
+      .catch(() => []);
+
+    if (!visibleIds.length) return { recorded: 0, ignored: cleanIds.length };
+
     let recorded = 0;
     let ignored = 0;
     // Fetch existing recent impressions for these products and session
     const existing = await this.impressionRepo.find({
       where: {
         sessionKey,
-        productId: In(productIds),
+        productId: In(visibleIds),
         createdAt: MoreThan(cutoff),
       } as any,
     });
     const existingSet = new Set(existing.map((e) => e.productId));
-    const toInsert = productIds.filter((id) => !existingSet.has(id));
+    const toInsert = visibleIds.filter((id) => !existingSet.has(id));
     if (toInsert.length) {
       const rows = toInsert.map((productId) =>
         this.impressionRepo.create({ productId, sessionKey }),
@@ -885,7 +1033,7 @@ export class ProductsService {
         .execute();
       recorded = toInsert.length;
     }
-    ignored = productIds.length - recorded;
+    ignored = cleanIds.length - recorded;
     return { recorded, ignored };
   }
 
@@ -951,142 +1099,15 @@ export class ProductsService {
     // Clamp perPage to protect backend (aligned with DTO cap 100)
     const perPage = Math.min(Math.max(Number(rawPerPage) || 20, 1), 100);
 
-    const qb = this.productRepo
-      .createQueryBuilder('product')
-      .leftJoinAndSelect('product.vendor', 'vendor')
-      .leftJoinAndSelect('product.category', 'category');
-
-    // Do not select all vendor columns by default; select minimal fields in grid view
-
-    // Lean projection for grid views: limit selected columns
-    if (view === 'grid') {
-      qb.select([
-        'product.id',
-        'product.name',
-        'product.price',
-        'product.currency',
-        'product.imageUrl',
-        'product.average_rating',
-        'product.rating_count',
-        'product.sales_count',
-        'product.viewCount',
-        'product.listingType',
-        'product.bedrooms',
-        'product.listingCity',
-        'product.bathrooms',
-        'product.sizeSqm',
-        'product.furnished',
-        'product.rentPeriod',
-        'product.createdAt',
-        // minimal vendor fields needed for product cards and ranking
-        'vendor.id',
-        'vendor.email',
-        'vendor.displayName',
-        'vendor.avatarUrl',
-        'vendor.storeName',
-        'vendor.verified',
-        'category.id',
-        'category.slug',
-      ]);
-    } else {
-      qb.leftJoinAndSelect('product.tags', 'tag').leftJoinAndSelect(
-        'product.images',
-        'images',
-      );
-    }
-
-    // Only show published and not blocked products
-    qb.andWhere('product.status = :status', { status: 'publish' }).andWhere(
-      'product.isBlocked = false',
-    );
-
-    if (search)
-      qb.andWhere('product.name ILIKE :search', { search: `%${search}%` });
-    if (categorySlug)
-      qb.andWhere('category.slug = :categorySlug', { categorySlug });
-    else if (categoryIds.length && !includeDescendants && !categoryFirst)
-      qb.andWhere('category.id IN (:...categoryIds)', { categoryIds });
-    if (vendorId) qb.andWhere('vendor.id = :vendorId', { vendorId });
-    if (typeof featured === 'boolean')
-      qb.andWhere('product.featured = :featured', { featured });
-    if (tags) {
-      const tagList = Array.isArray(tags)
-        ? (tags as string[]).map((t) => String(t).trim())
-        : String(tags)
-            .split(',')
-            .map((t) => t.trim())
-            .filter(Boolean);
-      qb.innerJoin(
-        'product.tags',
-        'tagFilter',
-        'tagFilter.name IN (:...tagList)',
-        { tagList },
-      );
-    }
-    if (priceMin !== undefined)
-      qb.andWhere('product.price >= :priceMin', { priceMin });
-    if (priceMax !== undefined)
-      qb.andWhere('product.price <= :priceMax', { priceMax });
-    // Normalize listing type (accept camelCase or snake_case; ignore empty/invalid)
+    const listingTypeMode =
+      (filters as any).listingTypeMode || (filters as any).listing_type_mode;
     const rawLt = listing_type ?? listingType;
     const ltNorm =
       typeof rawLt === 'string' ? rawLt.trim().toLowerCase() : undefined;
-    const listingTypeMode =
-      (filters as any).listingTypeMode || (filters as any).listing_type_mode;
     const ltValid =
       ltNorm && (ltNorm === 'sale' || ltNorm === 'rent') ? ltNorm : undefined;
-    if (ltValid) {
-      if (listingTypeMode === 'priority') {
-        // Priority mode: do NOT filter, but rank matching listing_type highest
-        qb.addSelect(
-          `CASE WHEN product.listing_type = :lt THEN 1 ELSE 0 END`,
-          'lt_priority_rank',
-        );
-        // Ensure the :lt parameter is bound; otherwise Postgres will see a raw ':' and error
-        qb.setParameter('lt', ltValid);
-        qb.addOrderBy('lt_priority_rank', 'DESC');
-      } else {
-        qb.andWhere('product.listing_type = :lt', { lt: ltValid });
-        this.logger.debug(`Applied listingType filter: ${ltValid}`);
-      }
-    }
-    // Bedrooms filter: exact or range
-    const brExact = bedrooms;
-    const brMin = bedrooms_min ?? bedroomsMin;
-    const brMax = bedrooms_max ?? bedroomsMax;
-    if (brExact !== undefined)
-      qb.andWhere('product.bedrooms = :br', { br: brExact });
-    if (brMin !== undefined)
-      qb.andWhere('product.bedrooms >= :brMin', { brMin });
-    if (brMax !== undefined)
-      qb.andWhere('product.bedrooms <= :brMax', { brMax });
 
-    // Property city filter
-    const listingCityFilter = (filters as any).listing_city;
-    if (listingCityFilter) {
-      qb.andWhere('LOWER(product.listing_city) = LOWER(:lc)', {
-        lc: listingCityFilter,
-      });
-    } else if (userCity && ltValid) {
-      // When userCity is provided alongside a listingType filter, treat it as a strict property city filter
-      qb.andWhere('LOWER(product.listing_city) = LOWER(:userLC)', {
-        userLC: userCity,
-      });
-    }
-
-    // Bathrooms range (optional)
-    const baths = (filters as any).bathrooms;
-    const bathsMin = (filters as any).bathrooms_min;
-    const bathsMax = (filters as any).bathrooms_max;
-    if (baths !== undefined)
-      qb.andWhere('product.bathrooms = :baths', { baths });
-    if (bathsMin !== undefined)
-      qb.andWhere('product.bathrooms >= :bathsMin', { bathsMin });
-    if (bathsMax !== undefined)
-      qb.andWhere('product.bathrooms <= :bathsMax', { bathsMax });
-
-    // Geo handling
-    // Optional distance computation (vendor.locationLat/Lng -> product.distanceKm)
+    // Geo helpers computed once to keep the logic consistent across branches
     const latNum = Number(lat);
     const lngNum = Number(lng);
     const hasCoords = Number.isFinite(latNum) && Number.isFinite(lngNum);
@@ -1095,89 +1116,260 @@ export class ProductsService {
       : Number.isFinite(Number(maxDistanceKm))
         ? Math.max(0, Number(maxDistanceKm))
         : undefined;
-    if (hasCoords) {
-      // Haversine formula (km). Earth radius ~6371km.
-      const dExpr = `CASE WHEN vendor."locationLat" IS NULL OR vendor."locationLng" IS NULL THEN NULL ELSE (
-        2 * 6371 * ASIN(
-          SQRT(
-            POWER(SIN(RADIANS((vendor."locationLat" - :lat) / 2)), 2) +
-            COS(RADIANS(:lat)) * COS(RADIANS(vendor."locationLat")) *
-            POWER(SIN(RADIANS((vendor."locationLng" - :lng) / 2)), 2)
-          )
-        )
-      ) END`;
-      qb.addSelect(dExpr, 'distance_km').setParameters({
-        lat: latNum,
-        lng: lngNum,
-      });
-      // Radius filter if provided
-      if (typeof radius === 'number' && isFinite(radius) && radius > 0) {
-        qb.andWhere(`(${dExpr}) <= :radiusKm`, {
-          lat: latNum,
-          lng: lngNum,
-          radiusKm: radius,
+    const eastAfricaList = (filters as any).eastAfrica
+      ? String((filters as any).eastAfrica)
+          .split(',')
+          .map((c: string) => c.trim().toUpperCase())
+      : ['ET', 'SO', 'KE', 'DJ'];
+    const propertySubtreeIds = await this.getPropertySubtreeIds().catch(() => []);
+    const hasPropCats = Array.isArray(propertySubtreeIds) && propertySubtreeIds.length > 0 ? 1 : 0;
+
+    const applyFilters = (
+      qb: any,
+      opts: { categoryMode: 'none' | 'in' | 'not-in'; catIds?: number[] },
+    ) => {
+      if (view === 'grid') {
+        qb.select([
+          'product.id',
+          'product.name',
+          'product.price',
+          'product.currency',
+          'product.imageUrl',
+          'product.average_rating',
+          'product.rating_count',
+          'product.sales_count',
+          'product.viewCount',
+          'product.listingType',
+          'product.bedrooms',
+          'product.listingCity',
+          'product.bathrooms',
+          'product.sizeSqm',
+          'product.furnished',
+          'product.rentPeriod',
+          'product.createdAt',
+          'vendor.id',
+          'vendor.email',
+          'vendor.displayName',
+          'vendor.avatarUrl',
+          'vendor.storeName',
+          'vendor.verified',
+          'category.id',
+          'category.slug',
+        ]);
+      } else {
+        qb.leftJoinAndSelect('product.tags', 'tag').leftJoinAndSelect(
+          'product.images',
+          'images',
+        );
+      }
+
+      qb.andWhere('product.status = :status', { status: 'publish' })
+        .andWhere('product.isBlocked = false')
+        .andWhere('product.deleted_at IS NULL');
+
+      if (search)
+        qb.andWhere('product.name ILIKE :search', { search: `%${search}%` });
+
+      if (opts.categoryMode === 'in' && opts.catIds?.length)
+        qb.andWhere('category.id IN (:...catIds)', { catIds: opts.catIds });
+      else if (opts.categoryMode === 'not-in' && opts.catIds?.length)
+        qb.andWhere('category.id NOT IN (:...catIds)', {
+          catIds: opts.catIds,
+        });
+      else if (categorySlug)
+        qb.andWhere('category.slug = :categorySlug', { categorySlug });
+      else if (categoryIds.length && !includeDescendants && !categoryFirst)
+        qb.andWhere('category.id IN (:...categoryIds)', { categoryIds });
+
+      if (vendorId) qb.andWhere('vendor.id = :vendorId', { vendorId });
+      if (typeof featured === 'boolean')
+        qb.andWhere('product.featured = :featured', { featured });
+      if (tags) {
+        const tagList = Array.isArray(tags)
+          ? (tags as string[]).map((t) => String(t).trim())
+          : String(tags)
+              .split(',')
+              .map((t) => t.trim())
+              .filter(Boolean);
+        qb.innerJoin('product.tags', 'tagFilter', 'tagFilter.name IN (:...tagList)', {
+          tagList,
         });
       }
-    }
-    // If geoPriority mode is enabled, we DO NOT hard filter; we rank by proximity of vendor profile fields to user provided geo.
-    // Otherwise, we apply strict filters if supplied.
-    let addedGeoRank = false;
-    if (geoPriority) {
-      // Property-aware geo rank: prefer product.listing_city for Property/Real Estate categories
-      const propIds = await this.getPropertySubtreeIds().catch(() => []);
-      const hasPropCats = Array.isArray(propIds) && propIds.length > 0 ? 1 : 0;
-      // Normalize inputs and parameterize to avoid SQL injection
-      const eaList = (filters as any).eastAfrica
-        ? String((filters as any).eastAfrica)
-            .split(',')
-            .map((c: string) => c.trim().toUpperCase())
-        : ['ET', 'SO', 'KE', 'DJ'];
-      const uc = userCountry || country || '';
-      const ur = userRegion || region || '';
-      const uci = userCity || city || '';
-      const eastAfricaSqlList = eaList.map((_, i) => `:ea${i}`).join(',');
-      const geoRankExpr = `CASE 
-        WHEN (:uci <> '' AND LOWER(product."listing_city") = LOWER(:uci) AND :hasProp = 1 AND category.id IN (:...propIds)) THEN 5
-        WHEN (:uci <> '' AND LOWER(vendor."registrationCity") = LOWER(:uci)) THEN 4
-        WHEN (:ur <> '' AND LOWER(vendor."registrationRegion") = LOWER(:ur)) THEN 3
-        WHEN (:uc <> '' AND LOWER(vendor."registrationCountry") = LOWER(:uc)) THEN 2
-        WHEN UPPER(COALESCE(vendor."registrationCountry", '')) IN (${eastAfricaSqlList}) THEN 1
-        ELSE 0 END`;
-      qb.addSelect(geoRankExpr, 'geo_rank').setParameters({
-        uci,
-        ur,
-        uc,
-        hasProp: hasPropCats,
-        propIds: hasPropCats ? propIds : [0],
-        ...Object.fromEntries(eaList.map((v, i) => [`ea${i}`, v])),
-      });
-      addedGeoRank = true;
-    } else {
-      if (country)
-        qb.andWhere('LOWER(vendor.registrationCountry) = LOWER(:country)', {
-          country,
-        });
-      if (region)
-        qb.andWhere('LOWER(vendor.registrationRegion) = LOWER(:region)', {
-          region,
-        });
-      if (city)
-        qb.andWhere('LOWER(vendor.registrationCity) = LOWER(:city)', { city });
-    }
+      if (priceMin !== undefined)
+        qb.andWhere('product.price >= :priceMin', { priceMin });
+      if (priceMax !== undefined)
+        qb.andWhere('product.price <= :priceMax', { priceMax });
 
-    // If includeDescendants is true, expand filter to include all descendant category IDs
+      if (ltValid) {
+        if (listingTypeMode === 'priority') {
+          qb.addSelect(
+            `CASE WHEN product.listing_type = :lt THEN 1 ELSE 0 END`,
+            'lt_priority_rank',
+          );
+          qb.setParameter('lt', ltValid);
+          qb.addOrderBy('lt_priority_rank', 'DESC');
+        } else {
+          qb.andWhere('product.listing_type = :lt', { lt: ltValid });
+          this.logger.debug(`Applied listingType filter: ${ltValid}`);
+        }
+      }
+
+      const brExact = bedrooms;
+      const brMin = bedrooms_min ?? bedroomsMin;
+      const brMax = bedrooms_max ?? bedroomsMax;
+      if (brExact !== undefined)
+        qb.andWhere('product.bedrooms = :br', { br: brExact });
+      if (brMin !== undefined) qb.andWhere('product.bedrooms >= :brMin', { brMin });
+      if (brMax !== undefined) qb.andWhere('product.bedrooms <= :brMax', { brMax });
+
+      const listingCityFilter = (filters as any).listing_city;
+      if (listingCityFilter) {
+        qb.andWhere('LOWER(product.listing_city) = LOWER(:lc)', {
+          lc: listingCityFilter,
+        });
+      } else if (userCity && ltValid) {
+        qb.andWhere('LOWER(product.listing_city) = LOWER(:userLC)', {
+          userLC: userCity,
+        });
+      }
+
+      const baths = (filters as any).bathrooms;
+      const bathsMin = (filters as any).bathrooms_min;
+      const bathsMax = (filters as any).bathrooms_max;
+      if (baths !== undefined)
+        qb.andWhere('product.bathrooms = :baths', { baths });
+      if (bathsMin !== undefined)
+        qb.andWhere('product.bathrooms >= :bathsMin', { bathsMin });
+      if (bathsMax !== undefined)
+        qb.andWhere('product.bathrooms <= :bathsMax', { bathsMax });
+
+      if (hasCoords) {
+        const dExpr = `CASE WHEN vendor."locationLat" IS NULL OR vendor."locationLng" IS NULL THEN NULL ELSE (
+          2 * 6371 * ASIN(
+            SQRT(
+              POWER(SIN(RADIANS((vendor."locationLat" - :lat) / 2)), 2) +
+              COS(RADIANS(:lat)) * COS(RADIANS(vendor."locationLat")) *
+              POWER(SIN(RADIANS((vendor."locationLng" - :lng) / 2)), 2)
+            )
+          )
+        ) END`;
+        qb.addSelect(dExpr, 'distance_km').setParameters({
+          lat: latNum,
+          lng: lngNum,
+        });
+        if (typeof radius === 'number' && isFinite(radius) && radius > 0) {
+          qb.andWhere(`(${dExpr}) <= :radiusKm`, {
+            lat: latNum,
+            lng: lngNum,
+            radiusKm: radius,
+          });
+        }
+      }
+
+      let addedGeoRank = false;
+      if (geoPriority) {
+        const uc = userCountry || country || '';
+        const ur = userRegion || region || '';
+        const uci = userCity || city || '';
+        const eastAfricaSqlList = eastAfricaList.map((_, i) => `:ea${i}`).join(',');
+        const geoRankExpr = `CASE 
+          WHEN (:uci <> '' AND LOWER(product."listing_city") = LOWER(:uci) AND :hasProp = 1 AND category.id IN (:...propIds)) THEN 5
+          WHEN (:uci <> '' AND LOWER(vendor."registrationCity") = LOWER(:uci)) THEN 4
+          WHEN (:ur <> '' AND LOWER(vendor."registrationRegion") = LOWER(:ur)) THEN 3
+          WHEN (:uc <> '' AND LOWER(vendor."registrationCountry") = LOWER(:uc)) THEN 2
+          WHEN UPPER(COALESCE(vendor."registrationCountry", '')) IN (${eastAfricaSqlList}) THEN 1
+          ELSE 0 END`;
+        qb.addSelect(geoRankExpr, 'geo_rank').setParameters({
+          uci,
+          ur,
+          uc,
+          hasProp: hasPropCats,
+          propIds: hasPropCats ? propertySubtreeIds : [0],
+          ...Object.fromEntries(eastAfricaList.map((v, i) => [`ea${i}`, v])),
+        });
+        addedGeoRank = true;
+      } else {
+        if (country)
+          qb.andWhere('LOWER(vendor.registrationCountry) = LOWER(:country)', {
+            country,
+          });
+        if (region)
+          qb.andWhere('LOWER(vendor.registrationRegion) = LOWER(:region)', {
+            region,
+          });
+        if (city)
+          qb.andWhere('LOWER(vendor.registrationCity) = LOWER(:city)', { city });
+      }
+
+      return { qb, addedGeoRank } as { qb: any; addedGeoRank: boolean };
+    };
+
+    const applySorting = (qb: any, addedGeoRank: boolean) => {
+      if (sort === 'best_match') {
+        if (addedGeoRank) qb.orderBy('geo_rank', 'DESC');
+        qb.addOrderBy('product.sales_count', 'DESC', 'NULLS LAST')
+          .addOrderBy('product.average_rating', 'DESC', 'NULLS LAST')
+          .addOrderBy('product.rating_count', 'DESC', 'NULLS LAST')
+          .addOrderBy('product.createdAt', 'DESC');
+      } else if (
+        (sort === 'distance_asc' || sort === 'distance_desc') &&
+        hasCoords
+      ) {
+        if (addedGeoRank) qb.orderBy('geo_rank', 'DESC');
+        qb.addOrderBy(
+          'distance_km',
+          sort === 'distance_desc' ? 'DESC' : 'ASC',
+          'NULLS LAST',
+        );
+        qb.addOrderBy('product.createdAt', 'DESC');
+      } else if (!sort || sort === 'created_desc' || sort === '') {
+        if (addedGeoRank) {
+          qb.orderBy('geo_rank', 'DESC');
+          qb.addOrderBy('product.sales_count', 'DESC', 'NULLS LAST')
+            .addOrderBy('product.average_rating', 'DESC', 'NULLS LAST')
+            .addOrderBy('product.createdAt', 'DESC');
+        } else {
+          qb.addOrderBy('product.createdAt', 'DESC');
+        }
+      } else if (sort === 'price_asc') {
+        if (addedGeoRank) qb.orderBy('geo_rank', 'DESC');
+        qb.addOrderBy('product.price', 'ASC', 'NULLS LAST');
+      } else if (sort === 'price_desc') {
+        if (addedGeoRank) qb.orderBy('geo_rank', 'DESC');
+        qb.addOrderBy('product.price', 'DESC', 'NULLS LAST');
+      } else if (sort === 'rating_desc') {
+        if (addedGeoRank) qb.orderBy('geo_rank', 'DESC');
+        qb.addOrderBy('product.average_rating', 'DESC', 'NULLS LAST')
+          .addOrderBy('product.rating_count', 'DESC', 'NULLS LAST')
+          .addOrderBy('product.createdAt', 'DESC');
+      } else if (sort === 'sales_desc') {
+        if (addedGeoRank) qb.orderBy('geo_rank', 'DESC');
+        qb.addOrderBy('product.sales_count', 'DESC', 'NULLS LAST').addOrderBy(
+          'product.createdAt',
+          'DESC',
+        );
+      } else if (sort === 'views_desc') {
+        if (addedGeoRank) qb.orderBy('geo_rank', 'DESC');
+        qb.addOrderBy('product.viewCount', 'DESC', 'NULLS LAST').addOrderBy(
+          'product.createdAt',
+          'DESC',
+        );
+      } else {
+        if (addedGeoRank) qb.orderBy('geo_rank', 'DESC');
+        qb.addOrderBy('product.createdAt', 'DESC');
+      }
+    };
+
+    // Resolve descendant category ids once and reuse
     let subtreeIds: number[] | null = null;
     if (
       (includeDescendants || categoryFirst) &&
       ((categoryIds && categoryIds.length) || categorySlug)
     ) {
-      // Resolve base category id via slug if needed
       const baseIds: number[] = [];
       if (categoryIds && categoryIds.length) baseIds.push(...categoryIds);
       else if (categorySlug) {
-        const found = await this.categoryRepo.findOne({
-          where: { slug: categorySlug },
-        });
+        const found = await this.categoryRepo.findOne({ where: { slug: categorySlug } });
         if (found?.id) baseIds.push(found.id);
       }
       if (baseIds.length) {
@@ -1194,331 +1386,31 @@ export class ProductsService {
         }
         const ids = Array.from(idSet);
         subtreeIds = ids;
-        if (ids.length && !categoryFirst) {
-          qb.andWhere('category.id IN (:...catIds)', { catIds: ids });
-        }
       }
     }
 
-    // Sorting options
-    // best_match: geo (if any) -> sales -> rating -> recency
-    if (sort === 'best_match') {
-      if (addedGeoRank) qb.orderBy('geo_rank', 'DESC');
-      qb.addOrderBy('product.sales_count', 'DESC', 'NULLS LAST')
-        .addOrderBy('product.average_rating', 'DESC', 'NULLS LAST')
-        .addOrderBy('product.rating_count', 'DESC', 'NULLS LAST')
-        .addOrderBy('product.createdAt', 'DESC');
-    } else if (
-      (sort === 'distance_asc' || sort === 'distance_desc') &&
-      hasCoords
-    ) {
-      // Distance sort when coordinates available; fallback to createdAt
-      if (addedGeoRank) qb.orderBy('geo_rank', 'DESC');
-      qb.addOrderBy(
-        'distance_km',
-        sort === 'distance_desc' ? 'DESC' : 'ASC',
-        'NULLS LAST',
-      );
-      qb.addOrderBy('product.createdAt', 'DESC');
-    } else if (!sort || sort === 'created_desc' || sort === '') {
-      // If geoPriority is active but no explicit sort, approximate best_match; otherwise use recency
-      if (addedGeoRank) {
-        qb.orderBy('geo_rank', 'DESC');
-        qb.addOrderBy('product.sales_count', 'DESC', 'NULLS LAST')
-          .addOrderBy('product.average_rating', 'DESC', 'NULLS LAST')
-          .addOrderBy('product.createdAt', 'DESC');
-      } else {
-        qb.addOrderBy('product.createdAt', 'DESC');
-      }
-    } else if (sort === 'price_asc') {
-      if (addedGeoRank) qb.orderBy('geo_rank', 'DESC');
-      qb.addOrderBy('product.price', 'ASC', 'NULLS LAST');
-    } else if (sort === 'price_desc') {
-      if (addedGeoRank) qb.orderBy('geo_rank', 'DESC');
-      qb.addOrderBy('product.price', 'DESC', 'NULLS LAST');
-    } else if (sort === 'rating_desc') {
-      if (addedGeoRank) qb.orderBy('geo_rank', 'DESC');
-      qb.addOrderBy('product.average_rating', 'DESC', 'NULLS LAST')
-        .addOrderBy('product.rating_count', 'DESC', 'NULLS LAST')
-        .addOrderBy('product.createdAt', 'DESC');
-    } else if (sort === 'sales_desc') {
-      if (addedGeoRank) qb.orderBy('geo_rank', 'DESC');
-      qb.addOrderBy('product.sales_count', 'DESC', 'NULLS LAST').addOrderBy(
-        'product.createdAt',
-        'DESC',
-      );
-    } else if (sort === 'views_desc') {
-      if (addedGeoRank) qb.orderBy('geo_rank', 'DESC');
-      qb.addOrderBy('product.viewCount', 'DESC', 'NULLS LAST').addOrderBy(
-        'product.createdAt',
-        'DESC',
-      );
-    } else {
-      if (addedGeoRank) qb.orderBy('geo_rank', 'DESC');
-      qb.addOrderBy('product.createdAt', 'DESC');
-    }
+    const buildQb = (
+      categoryMode: 'none' | 'in' | 'not-in',
+      catIds?: number[] | null,
+    ) => {
+      const base = this.productRepo
+        .createQueryBuilder('product')
+        .leftJoinAndSelect('product.vendor', 'vendor')
+        .leftJoinAndSelect('product.category', 'category');
+      const { addedGeoRank } = applyFilters(base, {
+        categoryMode,
+        catIds: catIds || undefined,
+      });
+      applySorting(base, addedGeoRank);
+      return base;
+    };
 
-    // If asked to prioritize category subtree first, perform union-like pagination
+    // category_first handling reuses the same filter/sort helpers to avoid divergence
     if (categoryFirst && subtreeIds && subtreeIds.length) {
-      // Precompute property subtree ids for geo ranking in this branch
-      const propIdsLocal = await this.getPropertySubtreeIds().catch(() => []);
-      const hasPropCatsLocal =
-        Array.isArray(propIdsLocal) && propIdsLocal.length > 0 ? 1 : 0;
-      // Helper to build a base QB with all filters except the category constraint
-      const buildBase = () => {
-        const q = this.productRepo
-          .createQueryBuilder('product')
-          .leftJoinAndSelect('product.vendor', 'vendor')
-          .leftJoinAndSelect('product.category', 'category');
-        if (view === 'grid') {
-          q.select([
-            'product.id',
-            'product.name',
-            'product.price',
-            'product.currency',
-            'product.imageUrl',
-            'product.average_rating',
-            'product.rating_count',
-            'product.sales_count',
-            'product.viewCount',
-            'product.listingType',
-            'product.bedrooms',
-            'product.listingCity',
-            'product.bathrooms',
-            'product.sizeSqm',
-            'product.furnished',
-            'product.rentPeriod',
-            'product.createdAt',
-            'vendor.id',
-            'category.id',
-            'category.slug',
-          ]);
-        } else {
-          q.leftJoinAndSelect('product.tags', 'tag').leftJoinAndSelect(
-            'product.images',
-            'images',
-          );
-        }
-        q.andWhere('product.status = :status', { status: 'publish' }).andWhere(
-          'product.isBlocked = false',
-        );
-        if (search)
-          q.andWhere('product.name ILIKE :search', { search: `%${search}%` });
-        if (vendorId) q.andWhere('vendor.id = :vendorId', { vendorId });
-        if (typeof featured === 'boolean')
-          q.andWhere('product.featured = :featured', { featured });
-        if (tags) {
-          const tagList = Array.isArray(tags)
-            ? (tags as string[]).map((t) => String(t).trim())
-            : String(tags)
-                .split(',')
-                .map((t) => t.trim())
-                .filter(Boolean);
-          q.innerJoin(
-            'product.tags',
-            'tagFilter',
-            'tagFilter.name IN (:...tagList)',
-            { tagList },
-          );
-        }
-        if (priceMin !== undefined)
-          q.andWhere('product.price >= :priceMin', { priceMin });
-        if (priceMax !== undefined)
-          q.andWhere('product.price <= :priceMax', { priceMax });
-
-        const rawLtLocal = listing_type ?? listingType;
-        const ltNormLocal =
-          typeof rawLtLocal === 'string'
-            ? rawLtLocal.trim().toLowerCase()
-            : undefined;
-        const ltValidLocal =
-          ltNormLocal && (ltNormLocal === 'sale' || ltNormLocal === 'rent')
-            ? ltNormLocal
-            : undefined;
-        if (ltValidLocal) {
-          if (listingTypeMode === 'priority') {
-            q.addSelect(
-              `CASE WHEN product.listing_type = :ltLocal THEN 1 ELSE 0 END`,
-              'lt_priority_rank',
-            );
-            // Bind parameter used inside addSelect expression
-            q.setParameter('ltLocal', ltValidLocal);
-            q.addOrderBy('lt_priority_rank', 'DESC');
-          } else {
-            q.andWhere('product.listing_type = :ltLocal', {
-              ltLocal: ltValidLocal,
-            });
-            this.logger.debug(
-              `Applied listingType filter (categoryFirst branch): ${ltValidLocal}`,
-            );
-          }
-        }
-        const brExactLocal = bedrooms;
-        const brMinLocal = bedrooms_min ?? bedroomsMin;
-        const brMaxLocal = bedrooms_max ?? bedroomsMax;
-        if (brExactLocal !== undefined)
-          q.andWhere('product.bedrooms = :brLocal', { brLocal: brExactLocal });
-        if (brMinLocal !== undefined)
-          q.andWhere('product.bedrooms >= :brMinLocal', { brMinLocal });
-        if (brMaxLocal !== undefined)
-          q.andWhere('product.bedrooms <= :brMaxLocal', { brMaxLocal });
-
-        const listingCityFilterLocal = (filters as any).listing_city;
-        if (listingCityFilterLocal) {
-          q.andWhere('LOWER(product.listing_city) = LOWER(:lcLocal)', {
-            lcLocal: listingCityFilterLocal,
-          });
-        } else if (userCity && ltValidLocal) {
-          q.andWhere('LOWER(product.listing_city) = LOWER(:userLcLocal)', {
-            userLcLocal: userCity,
-          });
-        }
-
-        const bathsLocal = (filters as any).bathrooms;
-        const bathsMinLocal = (filters as any).bathrooms_min;
-        const bathsMaxLocal = (filters as any).bathrooms_max;
-        if (bathsLocal !== undefined)
-          q.andWhere('product.bathrooms = :bathsLocal', { bathsLocal });
-        if (bathsMinLocal !== undefined)
-          q.andWhere('product.bathrooms >= :bathsMinLocal', { bathsMinLocal });
-        if (bathsMaxLocal !== undefined)
-          q.andWhere('product.bathrooms <= :bathsMaxLocal', { bathsMaxLocal });
-
-        // Geo handling
-        let addedGeoRankLocal = false;
-        if (geoPriority) {
-          const eaList = (filters as any).eastAfrica
-            ? String((filters as any).eastAfrica)
-                .split(',')
-                .map((c: string) => c.trim().toUpperCase())
-            : ['ET', 'SO', 'KE', 'DJ'];
-          const uc = userCountry || country || '';
-          const ur = userRegion || region || '';
-          const uci = userCity || city || '';
-          const eastAfricaSqlList = eaList
-            .map((_, i) => `:ea_local_${i}`)
-            .join(',');
-          const geoRankExpr = `CASE 
-        WHEN (:uci_local <> '' AND LOWER(product."listing_city") = LOWER(:uci_local) AND :hasProp_local = 1 AND category.id IN (:...propIds_local)) THEN 5
-        WHEN (:uci_local <> '' AND LOWER(vendor."registrationCity") = LOWER(:uci_local)) THEN 4
-        WHEN (:ur_local <> '' AND LOWER(vendor."registrationRegion") = LOWER(:ur_local)) THEN 3
-        WHEN (:uc_local <> '' AND LOWER(vendor."registrationCountry") = LOWER(:uc_local)) THEN 2
-        WHEN UPPER(COALESCE(vendor."registrationCountry", '')) IN (${eastAfricaSqlList}) THEN 1
-        ELSE 0 END`;
-          q.addSelect(geoRankExpr, 'geo_rank').setParameters({
-            uci_local: uci,
-            ur_local: ur,
-            uc_local: uc,
-            hasProp_local: hasPropCatsLocal,
-            propIds_local: hasPropCatsLocal ? propIdsLocal : [0],
-            ...Object.fromEntries(eaList.map((v, i) => [`ea_local_${i}`, v])),
-          });
-          addedGeoRankLocal = true;
-        } else {
-          if (country)
-            q.andWhere('LOWER(vendor.registrationCountry) = LOWER(:country)', {
-              country,
-            });
-          if (region)
-            q.andWhere('LOWER(vendor.registrationRegion) = LOWER(:region)', {
-              region,
-            });
-          if (city)
-            q.andWhere('LOWER(vendor.registrationCity) = LOWER(:city)', {
-              city,
-            });
-        }
-
-        // Optional distance computation (repeated for local builder)
-        if (hasCoords) {
-          const dExpr = `CASE WHEN vendor."locationLat" IS NULL OR vendor."locationLng" IS NULL THEN NULL ELSE (
-            2 * 6371 * ASIN(
-              SQRT(
-                POWER(SIN(RADIANS((vendor."locationLat" - :lat) / 2)), 2) +
-                COS(RADIANS(:lat)) * COS(RADIANS(vendor."locationLat")) *
-                POWER(SIN(RADIANS((vendor."locationLng" - :lng) / 2)), 2)
-              )
-            )
-          ) END`;
-          q.addSelect(dExpr, 'distance_km').setParameters({
-            lat: latNum,
-            lng: lngNum,
-          });
-          if (typeof radius === 'number' && isFinite(radius) && radius > 0) {
-            q.andWhere(`(${dExpr}) <= :radiusKm`, {
-              lat: latNum,
-              lng: lngNum,
-              radiusKm: radius,
-            });
-          }
-        }
-
-        // Sorting
-        if (sort === 'best_match') {
-          if (addedGeoRankLocal) q.orderBy('geo_rank', 'DESC');
-          q.addOrderBy('product.sales_count', 'DESC', 'NULLS LAST')
-            .addOrderBy('product.average_rating', 'DESC', 'NULLS LAST')
-            .addOrderBy('product.rating_count', 'DESC', 'NULLS LAST')
-            .addOrderBy('product.createdAt', 'DESC');
-        } else if (
-          (sort === 'distance_asc' || sort === 'distance_desc') &&
-          hasCoords
-        ) {
-          if (addedGeoRankLocal) q.orderBy('geo_rank', 'DESC');
-          q.addOrderBy(
-            'distance_km',
-            sort === 'distance_desc' ? 'DESC' : 'ASC',
-            'NULLS LAST',
-          );
-          q.addOrderBy('product.createdAt', 'DESC');
-        } else if (!sort || sort === 'created_desc' || sort === '') {
-          if (addedGeoRankLocal) {
-            q.orderBy('geo_rank', 'DESC');
-            q.addOrderBy('product.sales_count', 'DESC', 'NULLS LAST')
-              .addOrderBy('product.average_rating', 'DESC', 'NULLS LAST')
-              .addOrderBy('product.createdAt', 'DESC');
-          } else {
-            q.addOrderBy('product.createdAt', 'DESC');
-          }
-        } else if (sort === 'price_asc') {
-          if (addedGeoRankLocal) q.orderBy('geo_rank', 'DESC');
-          q.addOrderBy('product.price', 'ASC', 'NULLS LAST');
-        } else if (sort === 'price_desc') {
-          if (addedGeoRankLocal) q.orderBy('geo_rank', 'DESC');
-          q.addOrderBy('product.price', 'DESC', 'NULLS LAST');
-        } else if (sort === 'rating_desc') {
-          if (addedGeoRankLocal) q.orderBy('geo_rank', 'DESC');
-          q.addOrderBy('product.average_rating', 'DESC', 'NULLS LAST')
-            .addOrderBy('product.rating_count', 'DESC', 'NULLS LAST')
-            .addOrderBy('product.createdAt', 'DESC');
-        } else if (sort === 'sales_desc') {
-          if (addedGeoRankLocal) q.orderBy('geo_rank', 'DESC');
-          q.addOrderBy('product.sales_count', 'DESC', 'NULLS LAST').addOrderBy(
-            'product.createdAt',
-            'DESC',
-          );
-        } else if (sort === 'views_desc') {
-          if (addedGeoRankLocal) q.orderBy('geo_rank', 'DESC');
-          q.addOrderBy('product.viewCount', 'DESC', 'NULLS LAST').addOrderBy(
-            'product.createdAt',
-            'DESC',
-          );
-        } else {
-          if (addedGeoRankLocal) q.orderBy('geo_rank', 'DESC');
-          q.addOrderBy('product.createdAt', 'DESC');
-        }
-        return q;
-      };
-
-      const perPage = Math.min(Math.max(Number(rawPerPage) || 20, 1), 100);
       const startIndex = (page - 1) * perPage;
 
-      const primaryQb = buildBase().andWhere('category.id IN (:...catIds)', {
-        catIds: subtreeIds,
-      });
-      const othersQb = buildBase().andWhere('category.id NOT IN (:...catIds)', {
-        catIds: subtreeIds,
-      });
+      const primaryQb = buildQb('in', subtreeIds);
+      const othersQb = buildQb('not-in', subtreeIds);
 
       const primaryTotal = await primaryQb.getCount();
       const othersTotal = await othersQb.getCount();
@@ -1541,38 +1433,25 @@ export class ProductsService {
         items = await othersQb.skip(othersStart).take(perPage).getMany();
       }
 
-      // Optional geo append: if page underfilled, top up with geo-ranked items from outside the union (keep total unchanged)
-      let geoAppended = 0;
       if (geoAppend && items.length < perPage) {
         const excludeIds = new Set(items.map((i) => i.id));
-        const fillQb = buildBase();
-        // Drop category constraints and exclude already included ids
+        const fillQb = buildQb('none');
         fillQb.andWhere('product.id NOT IN (:...exclude)', {
           exclude: Array.from(excludeIds).length ? Array.from(excludeIds) : [0],
         });
-        // Favor geo rank if available
-        if (!geoPriority) {
-          // If geoPriority isn’t on, adding geoAppend should not silently change ranking; we’ll only use existing sort
-        }
         const need = perPage - items.length;
         const fillItems = await fillQb.take(need).getMany();
-        // Concatenate while preserving order
         for (const it of fillItems) {
           if (items.length >= perPage) break;
           if (!excludeIds.has(it.id)) items.push(it);
         }
-        geoAppended = Math.max(0, items.length - (perPage - need));
       }
 
       const total = primaryTotal + othersTotal;
       if (process.env.DEBUG_SQL === '1') {
         try {
-          this.logger.debug(
-            `(categoryFirst) primary SQL => ${primaryQb.getSql()}`,
-          );
-          this.logger.debug(
-            `(categoryFirst) others SQL => ${othersQb.getSql()}`,
-          );
+          this.logger.debug(`(categoryFirst) primary SQL => ${primaryQb.getSql()}`);
+          this.logger.debug(`(categoryFirst) others SQL => ${othersQb.getSql()}`);
         } catch {}
       }
       return {
@@ -1584,6 +1463,10 @@ export class ProductsService {
       } as any;
     }
 
+    // Standard path
+    const catIdsForMain = includeDescendants && subtreeIds?.length ? subtreeIds : categoryIds.length && !includeDescendants && !categorySlug ? categoryIds : undefined;
+    const categoryModeMain = catIdsForMain?.length ? 'in' : 'none';
+    const qb = buildQb(categoryModeMain, catIdsForMain || undefined);
     qb.skip((page - 1) * perPage).take(perPage);
     const [items, total] = await qb.getManyAndCount();
     if (process.env.DEBUG_SQL === '1') {
@@ -1915,7 +1798,10 @@ export class ProductsService {
       .leftJoinAndSelect('product.vendor', 'vendor')
       .leftJoinAndSelect('product.category', 'category')
       .leftJoinAndSelect('product.tags', 'tag')
-      .leftJoinAndSelect('product.images', 'images');
+      .leftJoinAndSelect('product.images', 'images')
+      .andWhere('product.status = :status', { status: 'publish' })
+      .andWhere('product.isBlocked = false')
+      .andWhere('product.deleted_at IS NULL');
 
     if (categoryIds.length) {
       qb.andWhere('category.id IN (:...categoryIds)', { categoryIds });
@@ -1995,13 +1881,16 @@ export class ProductsService {
 
     // Update images if provided: delete old ones, add new ones
     if (images) {
+      const normalizedImages = this.normalizeImagesInput(images);
       // Image URL host policy check removed in rollback
-      product.imageUrl = images.length > 0 ? images[0].src : null;
+      product.imageUrl = normalizedImages.length > 0 ? normalizedImages[0].src : null;
       await this.productImageRepo.delete({ product: { id } }); // Delete old images
-      const imageEntities = images.map((img, index) =>
-        this.productImageRepo.create({ ...img, product, sortOrder: index }),
-      );
-      await this.productImageRepo.save(imageEntities); // Save new images
+      if (normalizedImages.length) {
+        const imageEntities = normalizedImages.map((img, index) =>
+          this.productImageRepo.create({ ...img, product, sortOrder: index }),
+        );
+        await this.productImageRepo.save(imageEntities); // Save new images
+      }
     }
 
     if (listingType !== undefined) {
@@ -2298,12 +2187,22 @@ export class ProductsService {
 
   async toggleBlockStatus(id: number, isBlocked: boolean): Promise<Product> {
     await this.productRepo.update(id, { isBlocked });
-    return this.findOne(id);
+    const product = await this.productRepo.findOne({
+      where: { id },
+      relations: ['vendor', 'category', 'tags', 'images'],
+    });
+    if (!product) throw new NotFoundException('Product not found');
+    return normalizeProductMedia(product) as any;
   }
 
   async toggleFeatureStatus(id: number, featured: boolean): Promise<Product> {
     await this.productRepo.update(id, { featured });
-    return this.findOne(id);
+    const product = await this.productRepo.findOne({
+      where: { id },
+      relations: ['vendor', 'category', 'tags', 'images'],
+    });
+    if (!product) throw new NotFoundException('Product not found');
+    return normalizeProductMedia(product) as any;
   }
 
   async suggestNames(query: string, limit = 8): Promise<{ name: string }[]> {

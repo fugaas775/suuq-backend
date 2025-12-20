@@ -3,12 +3,78 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { AuditLog } from './audit-log.entity';
 
+export type AuditFilters = {
+  actions?: string[];
+  actorEmail?: string;
+  actorId?: number;
+  from?: Date;
+  to?: Date;
+};
+
+export function prettyAuditActionLabel(action?: string, meta?: Record<string, any> | null) {
+  switch (action) {
+    case 'vendor.verification.update': {
+      const s = meta?.status;
+      if (s === 'APPROVED') return 'Approved vendor';
+      if (s === 'REJECTED') return 'Rejected vendor';
+      if (s === 'PENDING') return 'Set vendor to pending';
+      if (s === 'SUSPENDED') return 'Suspended vendor';
+      return 'Updated vendor verification';
+    }
+    case 'vendor.active.update': {
+      const a = meta?.isActive;
+      if (a === true) return 'Activated vendor';
+      if (a === false) return 'Deactivated vendor';
+      return 'Changed vendor active state';
+    }
+    case 'SELF_PURCHASE_BLOCKED':
+      return 'Self purchase blocked';
+    case 'SIGNED_DOWNLOAD_ISSUED':
+      return 'Signed download issued';
+    case 'SIGNED_DOWNLOAD_FREE':
+      return 'Free product download';
+    case 'ADMIN_PRODUCT_SOFT_DELETE':
+      return 'Product soft deleted';
+    case 'ADMIN_PRODUCT_RESTORE':
+      return 'Product restored';
+    case 'ADMIN_PRODUCT_HARD_DELETE':
+      return 'Product hard deleted';
+    default:
+      return action || 'update';
+  }
+}
+
 @Injectable()
 export class AuditService {
   constructor(
     @InjectRepository(AuditLog)
     private readonly repo: Repository<AuditLog>,
   ) {}
+
+  private clampLimit(limit?: number, fallback = 20, max = 100) {
+    return Math.min(Math.max(Number(limit) || fallback, 1), max);
+  }
+
+  private buildBaseQuery(targetType: string, targetId: number) {
+    return this.repo
+      .createQueryBuilder('a')
+      .where('a.targetType = :targetType AND a.targetId = :targetId', {
+        targetType,
+        targetId,
+      })
+      .orderBy('a.createdAt', 'DESC')
+      .addOrderBy('a.id', 'DESC');
+  }
+
+  private buildGlobalQuery(targetType?: string, targetId?: number) {
+    const qb = this.repo
+      .createQueryBuilder('a')
+      .orderBy('a.createdAt', 'DESC')
+      .addOrderBy('a.id', 'DESC');
+    if (targetType) qb.andWhere('a.targetType = :targetType', { targetType });
+    if (Number.isFinite(targetId)) qb.andWhere('a.targetId = :targetId', { targetId });
+    return qb;
+  }
 
   async log(entry: {
     actorId?: number | null;
@@ -32,32 +98,21 @@ export class AuditService {
   }
 
   async listForTarget(targetType: string, targetId: number, limit = 20) {
-    return this.repo.find({
-      where: { targetType, targetId },
-      order: { createdAt: 'DESC' },
-      take: Math.min(Math.max(Number(limit) || 20, 1), 100),
-    });
+    const l = this.clampLimit(limit);
+    return this.buildBaseQuery(targetType, targetId).take(l).getMany();
   }
 
   async listForTargetPaged(
     targetType: string,
     targetId: number,
-    page = 1,
-    limit = 20,
+    opts: { page?: number; limit?: number; filters?: AuditFilters } = {},
   ) {
-    const p = Math.max(Number(page) || 1, 1);
-    const l = Math.min(Math.max(Number(limit) || 20, 1), 100);
-    const skip = (p - 1) * l;
-    const qb = this.repo
-      .createQueryBuilder('a')
-      .where('a.targetType = :targetType AND a.targetId = :targetId', {
-        targetType,
-        targetId,
-      })
-      .orderBy('a.createdAt', 'DESC')
-      .addOrderBy('a.id', 'DESC')
-      .skip(skip)
+    const p = Math.max(Number(opts.page) || 1, 1);
+    const l = this.clampLimit(opts.limit);
+    const qb = this.buildBaseQuery(targetType, targetId)
+      .skip((p - 1) * l)
       .take(l);
+    this.applyFilters(qb, opts.filters);
     const [items, total] = await qb.getManyAndCount();
     return {
       items,
@@ -92,19 +147,12 @@ export class AuditService {
   async listForTargetCursor(
     targetType: string,
     targetId: number,
-    opts: { after?: string; limit?: number },
+    opts: { after?: string; limit?: number; filters?: AuditFilters } = {},
   ) {
-    const l = Math.min(Math.max(Number(opts.limit) || 20, 1), 100);
+    const l = this.clampLimit(opts.limit);
     const { createdAt, id } = this.decodeCursor(opts.after);
-    const qb = this.repo
-      .createQueryBuilder('a')
-      .where('a.targetType = :targetType AND a.targetId = :targetId', {
-        targetType,
-        targetId,
-      })
-      .orderBy('a.createdAt', 'DESC')
-      .addOrderBy('a.id', 'DESC')
-      .take(l + 1); // fetch one extra to detect next
+    const qb = this.buildBaseQuery(targetType, targetId).take(l + 1); // fetch one extra to detect next
+    this.applyFilters(qb, opts.filters);
 
     if (createdAt && id) {
       qb.andWhere(
@@ -116,7 +164,60 @@ export class AuditService {
     const rows = await qb.getMany();
     const items = rows.slice(0, l);
     const nextCursor =
-      rows.length > l ? this.encodeCursor(items[items.length - 1]) : null;
+      rows.length > l && items.length
+        ? this.encodeCursor(items[items.length - 1])
+        : null;
+    return { items, nextCursor };
+  }
+
+  async listAllPaged(opts: {
+    page?: number;
+    limit?: number;
+    filters?: AuditFilters;
+    targetType?: string;
+    targetId?: number;
+  } = {}) {
+    const p = Math.max(Number(opts.page) || 1, 1);
+    const l = this.clampLimit(opts.limit);
+    const qb = this.buildGlobalQuery(opts.targetType, opts.targetId)
+      .skip((p - 1) * l)
+      .take(l);
+    this.applyFilters(qb, opts.filters);
+    const [items, total] = await qb.getManyAndCount();
+    return {
+      items,
+      total,
+      page: p,
+      perPage: l,
+      totalPages: Math.ceil(total / l),
+    };
+  }
+
+  async listAllCursor(opts: {
+    after?: string;
+    limit?: number;
+    filters?: AuditFilters;
+    targetType?: string;
+    targetId?: number;
+  } = {}) {
+    const l = this.clampLimit(opts.limit);
+    const { createdAt, id } = this.decodeCursor(opts.after);
+    const qb = this.buildGlobalQuery(opts.targetType, opts.targetId).take(l + 1);
+    this.applyFilters(qb, opts.filters);
+
+    if (createdAt && id) {
+      qb.andWhere(
+        '(a.createdAt < :createdAt OR (a.createdAt = :createdAt AND a.id < :id))',
+        { createdAt, id },
+      );
+    }
+
+    const rows = await qb.getMany();
+    const items = rows.slice(0, l);
+    const nextCursor =
+      rows.length > l && items.length
+        ? this.encodeCursor(items[items.length - 1])
+        : null;
     return { items, nextCursor };
   }
 
@@ -126,12 +227,7 @@ export class AuditService {
     targetId: number,
     from: Date,
   ): Promise<number> {
-    return this.repo
-      .createQueryBuilder('a')
-      .where('a.targetType = :targetType AND a.targetId = :targetId', {
-        targetType,
-        targetId,
-      })
+    return this.buildBaseQuery(targetType, targetId)
       .andWhere('a.createdAt >= :from', { from })
       .getCount();
   }
@@ -139,13 +235,7 @@ export class AuditService {
   // Apply filters helper used by controller via query builder chaining
   applyFilters(
     qb: ReturnType<Repository<AuditLog>['createQueryBuilder']>,
-    filters?: {
-      actions?: string[];
-      actorEmail?: string;
-      actorId?: number;
-      from?: Date;
-      to?: Date;
-    },
+    filters?: AuditFilters,
   ) {
     if (!filters) return qb;
     if (filters.actions && filters.actions.length) {
