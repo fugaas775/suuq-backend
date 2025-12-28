@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access */
 import { Controller, Get, Header, Query } from '@nestjs/common';
 import { HomeService } from './home.service';
 import { toProductCard } from '../products/utils/product-card.util';
@@ -14,14 +15,16 @@ export class HomeV1Controller {
   async feed(@Query() q: any) {
     const perSection = Math.min(Number(q.limit || q.per_page) || 10, 20);
     const view: 'grid' | 'full' = 'grid';
-  const city = q.user_city || q.userCity || q.city;
-  const region = q.user_region || q.userRegion || q.region;
-  const country = q.user_country || q.userCountry || q.country;
+    const city = q.user_city || q.userCity || q.city;
+    const region = q.user_region || q.userRegion || q.region;
+    const country = q.user_country || q.userCountry || q.country;
+    const currency = q.currency;
     const data = await this.home.getHomeFeed({
       perSection,
       userCity: city,
       userRegion: region,
       userCountry: country,
+      currency,
       view,
     });
     const toCards = (arr: any[]) => (arr || []).map(toProductCard);
@@ -34,7 +37,11 @@ export class HomeV1Controller {
       curatedBest: toCards((data as any).curatedBest),
       meta: {
         perSection,
-        geo: { city: city || null, region: region || null, country: country || null },
+        geo: {
+          city: city || null,
+          region: region || null,
+          country: country || null,
+        },
       },
     };
   }

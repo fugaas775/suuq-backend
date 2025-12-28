@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return */
 import { Injectable, Logger } from '@nestjs/common';
 import { ProductsService } from '../products/products.service';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -30,9 +31,11 @@ export class HomeService {
     userCity?: string;
     userRegion?: string;
     userCountry?: string;
+    currency?: string;
     view?: 'grid' | 'full';
   }) {
-    const { perSection, userCity, userRegion, userCountry, view } = opts;
+    const { perSection, userCity, userRegion, userCountry, currency, view } =
+      opts;
 
     // Build base filters per section
     const base: Pick<
@@ -49,11 +52,13 @@ export class HomeService {
       this.productsService.findFiltered({
         ...base,
         sort: 'sales_desc',
+        currency,
         view,
       }),
       this.productsService.findFiltered({
         ...base,
         sort: 'rating_desc',
+        currency,
         view,
       }),
       this.productsService.findFiltered({
@@ -63,6 +68,7 @@ export class HomeService {
         userCity,
         userRegion,
         userCountry,
+        currency,
         view,
       }),
       // New arrivals: prefer most recent, lightly geo-prioritized
@@ -73,6 +79,7 @@ export class HomeService {
         userCity,
         userRegion,
         userCountry,
+        currency,
         view,
       }),
       // Curated by tags
@@ -80,12 +87,14 @@ export class HomeService {
         ...base,
         sort: 'created_desc',
         tags: curatedNewTags,
+        currency,
         view,
       }),
       this.productsService.findFiltered({
         ...base,
         sort: 'sales_desc',
         tags: curatedBestTags,
+        currency,
         view,
       }),
     ])) as unknown;
@@ -119,6 +128,7 @@ export class HomeService {
     userCity?: string;
     userRegion?: string;
     userCountry?: string;
+    currency?: string;
     // Optional category-first wiring for Explore grid
     categoryId?: number[];
     categorySlug?: string;
@@ -132,6 +142,7 @@ export class HomeService {
   }) {
     const page = Math.max(1, Number(opts.page) || 1);
     const perPage = Math.min(Math.max(Number(opts.perPage) || 20, 1), 50);
+    const currency = opts.currency;
 
     // Collect non-fatal errors per section
     const errors: Array<{ section: string; message: string }> = [];
@@ -139,8 +150,19 @@ export class HomeService {
     // 1) Featured categories (reuse existing config helper)
     const configPromise = this.getHomeConfig().catch((e) => {
       this.logger.error('Failed to get home config', e);
-      errors.push({ section: 'featuredCategories', message: e?.message || 'config failed' });
-      return { featuredCategories: [], eastAfricaCountries: [], defaultSorts: { homeAll: 'rating_desc', bestSellers: 'sales_desc', topRated: 'rating_desc' } } as any;
+      errors.push({
+        section: 'featuredCategories',
+        message: e?.message || 'config failed',
+      });
+      return {
+        featuredCategories: [],
+        eastAfricaCountries: [],
+        defaultSorts: {
+          homeAll: 'rating_desc',
+          bestSellers: 'sales_desc',
+          topRated: 'rating_desc',
+        },
+      } as any;
     });
 
     // 2) Curated sections (parallel via tags home-new/home-best)
@@ -149,14 +171,20 @@ export class HomeService {
         .getSection('home-new', { limit: 10, cursor: null, view: 'grid' })
         .catch((e) => {
           this.logger.error('Failed to get curatedNew section', e);
-          errors.push({ section: 'curatedNew', message: e?.message || 'curatedNew failed' });
+          errors.push({
+            section: 'curatedNew',
+            message: e?.message || 'curatedNew failed',
+          });
           return { items: [] } as any;
         }),
       this.curation
         .getSection('home-best', { limit: 10, cursor: null, view: 'grid' })
         .catch((e) => {
           this.logger.error('Failed to get curatedBest section', e);
-          errors.push({ section: 'curatedBest', message: e?.message || 'curatedBest failed' });
+          errors.push({
+            section: 'curatedBest',
+            message: e?.message || 'curatedBest failed',
+          });
           return { items: [] } as any;
         }),
     ]);
@@ -176,7 +204,9 @@ export class HomeService {
               userRegion: opts.userRegion,
               userCountry: opts.userCountry,
               // Category-first flags; if provided, enable prioritization
-              categoryId: Array.isArray(opts.categoryId) ? opts.categoryId : undefined,
+              categoryId: Array.isArray(opts.categoryId)
+                ? opts.categoryId
+                : undefined,
               categorySlug: opts.categorySlug,
               categoryFirst: opts.categoryFirst,
               includeDescendants: opts.includeDescendants,
@@ -184,11 +214,16 @@ export class HomeService {
               // Property passthrough
               listingType: opts.listingType as any,
               listingTypeMode: opts.listingTypeMode as any,
+              currency,
               view: 'grid',
             } as any,
             { mapCards: true },
           );
-          return { items: res.items, total: res.total, currentPage: res.page } as any;
+          return {
+            items: res.items,
+            total: res.total,
+            currentPage: res.page,
+          } as any;
         }
         // Legacy path
         const fallback = await this.productsService.findFiltered({
@@ -199,19 +234,25 @@ export class HomeService {
           userCity: opts.userCity,
           userRegion: opts.userRegion,
           userCountry: opts.userCountry,
-          categoryId: Array.isArray(opts.categoryId) ? opts.categoryId : undefined,
+          categoryId: Array.isArray(opts.categoryId)
+            ? opts.categoryId
+            : undefined,
           categorySlug: opts.categorySlug,
           categoryFirst: opts.categoryFirst,
           includeDescendants: opts.includeDescendants,
           geoAppend: opts.geoAppend,
           listing_type: opts.listingType as any,
           listingTypeMode: opts.listingTypeMode as any,
+          currency,
           view: 'grid',
         } as any);
         return fallback as any;
       } catch (e: any) {
         this.logger.error('Failed to get exploreProducts', e);
-        errors.push({ section: 'exploreProducts', message: e?.message || 'explore failed' });
+        errors.push({
+          section: 'exploreProducts',
+          message: e?.message || 'explore failed',
+        });
         return { items: [], total: 0, currentPage: page } as any;
       }
     })();
@@ -236,17 +277,23 @@ export class HomeService {
       params.push(true);
       if (uc) {
         const idx = p++;
-        geoOrders.push(`CASE WHEN UPPER(COALESCE("registrationCountry", '')) = UPPER($${idx}) THEN 1 ELSE 0 END DESC`);
+        geoOrders.push(
+          `CASE WHEN UPPER(COALESCE("registrationCountry", '')) = UPPER($${idx}) THEN 1 ELSE 0 END DESC`,
+        );
         params.push(uc);
       }
       if (ur) {
         const idx = p++;
-        geoOrders.push(`CASE WHEN LOWER(COALESCE("registrationRegion", '')) = LOWER($${idx}) THEN 1 ELSE 0 END DESC`);
+        geoOrders.push(
+          `CASE WHEN LOWER(COALESCE("registrationRegion", '')) = LOWER($${idx}) THEN 1 ELSE 0 END DESC`,
+        );
         params.push(ur);
       }
       if (ci) {
         const idx = p++;
-        geoOrders.push(`CASE WHEN LOWER(COALESCE("registrationCity", '')) = LOWER($${idx}) THEN 1 ELSE 0 END DESC`);
+        geoOrders.push(
+          `CASE WHEN LOWER(COALESCE("registrationCity", '')) = LOWER($${idx}) THEN 1 ELSE 0 END DESC`,
+        );
         params.push(ci);
       }
 
@@ -276,13 +323,14 @@ export class HomeService {
       `;
 
       try {
-        const rows = (await this.userRepo.query(sql, params)) as Array<Pick<User,
-          'id' | 'displayName' | 'storeName' | 'vendorAvatarUrl' | 'avatarUrl' | 'rating' | 'numberOfSales' | 'registrationCountry' | 'registrationRegion' | 'registrationCity'
-        >>;
+        const rows = await this.userRepo.query(sql, params);
         return { items: rows as any[] };
       } catch (e: any) {
         this.logger.error('Failed to get featuredVendors', e);
-        errors.push({ section: 'featuredVendors', message: e?.message || 'vendors failed' });
+        errors.push({
+          section: 'featuredVendors',
+          message: e?.message || 'vendors failed',
+        });
         return { items: [] };
       }
     })();
@@ -326,11 +374,11 @@ export class HomeService {
       exploreProducts: {
         items: (explore.items || []).map((p: any) => toProductCard(p)),
         total: explore.total,
-        page: (explore as any).currentPage || page,
+        page: explore.currentPage || page,
       },
     };
 
-    if (errors.length) (payload.errors = errors);
+    if (errors.length) payload.errors = errors;
     return payload;
   }
 

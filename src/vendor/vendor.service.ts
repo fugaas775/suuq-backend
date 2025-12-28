@@ -30,6 +30,7 @@ import {
   mapDigitalError,
 } from '../common/utils/digital.util';
 import { Logger } from '@nestjs/common';
+import { CurrencyService } from '../common/services/currency.service';
 
 @Injectable()
 export class VendorService {
@@ -48,9 +49,83 @@ export class VendorService {
     private readonly tagRepository: Repository<Tag>,
     private readonly notificationsService: NotificationsService,
     private readonly doSpacesService: DoSpacesService,
+    private readonly currencyService: CurrencyService,
   ) {}
 
   private readonly logger = new Logger(VendorService.name);
+  private readonly supportedCurrencies = ['ETB', 'SOS', 'KES', 'DJF', 'USD'];
+
+  private normalizeCurrency(value?: string | null): string {
+    const upper = (value || '').trim().toUpperCase();
+    return this.supportedCurrencies.includes(upper) ? upper : 'ETB';
+  }
+
+  private convertPrice(
+    amount: number | null | undefined,
+    from: string,
+    to: string,
+  ): { amount: number | null; rate?: number } {
+    if (amount === null || amount === undefined) return { amount: null };
+    try {
+      const converted = this.currencyService.convert(amount, from, to);
+      const rate = this.currencyService.getRate(from, to);
+      return {
+        amount: converted,
+        rate:
+          typeof rate === 'number'
+            ? Math.round(rate * 1_000_000) / 1_000_000
+            : undefined,
+      };
+    } catch (err) {
+      this.logger.warn(
+        `Currency convert failed from ${from} to ${to}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      return { amount, rate: undefined };
+    }
+  }
+
+  private applyCurrencyToProduct(product: Product, target: string): Product {
+    if (!product) return product;
+    const from = (product as any)?.currency || 'ETB';
+    const { amount: priceConverted, rate } = this.convertPrice(
+      product.price,
+      from,
+      target,
+    );
+    const { amount: saleConverted } = this.convertPrice(
+      (product as any)?.sale_price,
+      from,
+      target,
+    );
+
+    (product as any).price = priceConverted ?? product.price;
+    (product as any).currency = target;
+    (product as any).price_display = {
+      amount: priceConverted ?? product.price ?? null,
+      currency: target,
+      convertedFrom: from,
+      rate,
+    };
+
+    if (saleConverted !== null && saleConverted !== undefined) {
+      (product as any).sale_price = saleConverted;
+      (product as any).sale_price_display = {
+        amount: saleConverted,
+        currency: target,
+        convertedFrom: from,
+        rate,
+      };
+    }
+
+    return product;
+  }
+
+  private applyCurrencyToProducts(items: Product[], target: string): Product[] {
+    if (!Array.isArray(items) || !items.length) return items || [];
+    return items.map((p) => this.applyCurrencyToProduct(p, target));
+  }
 
   // ✅ FIX: This function now correctly handles an array of ImageDto objects
   async createMyProduct(
@@ -96,10 +171,6 @@ export class VendorService {
       rentPeriod,
       attributes,
       tags,
-      videoUrl,
-      posterUrl,
-      downloadKey,
-      isFree,
       ...productData
     } = dto as any;
 
@@ -193,7 +264,12 @@ export class VendorService {
             throw new ForbiddenException({ error: message, code });
           }
         }
-      } catch {}
+      } catch (err) {
+        this.logger.debug(
+          'Normalize digital attributes (create) skipped',
+          err as Error,
+        );
+      }
     }
 
     const newProduct = this.productRepository.create({
@@ -287,10 +363,6 @@ export class VendorService {
       rentPeriod,
       attributes,
       tags,
-      videoUrl,
-      posterUrl,
-      downloadKey,
-      isFree,
       ...productData
     } = dto as any;
 
@@ -423,7 +495,12 @@ export class VendorService {
             throw new ForbiddenException({ error: message, code });
           }
         }
-      } catch {}
+      } catch (err) {
+        this.logger.debug(
+          'Normalize digital attributes (update) skipped',
+          err as Error,
+        );
+      }
     }
 
     // Update tags by names if provided
@@ -532,7 +609,12 @@ export class VendorService {
           try {
             const { updated } = normalizeDigitalAttributes(attrs);
             if (updated && typeof updated === 'object') attrs = updated;
-          } catch {}
+          } catch (err) {
+            this.logger.debug(
+              'Digital alias normalization skipped',
+              err as Error,
+            );
+          }
 
           // Read canonical digital structure if present
           const dig =
@@ -561,7 +643,9 @@ export class VendorService {
           if (!key && urlCandidate) {
             try {
               key = this.doSpacesService.extractKeyFromUrl(urlCandidate) || key;
-            } catch {}
+            } catch (err) {
+              this.logger.debug('Failed to derive key from URL', err as Error);
+            }
           }
 
           // Derive/choose public URL
@@ -706,9 +790,15 @@ export class VendorService {
                 this.logger.warn(`DEBUG rawAttrs id=${productId} attrs=${raw}`);
               }
             }
-          } catch {}
-        } catch {}
-      } catch {}
+          } catch (err) {
+            this.logger.debug('Attrs debug flag handling failed', err as Error);
+          }
+        } catch (err) {
+          this.logger.debug('Attrs cleanup failed (inner)', err as Error);
+        }
+      } catch (err) {
+        this.logger.debug('Attrs cleanup failed (outer)', err as Error);
+      }
       // Optional: attach a short-lived signed playback URL for the video to simplify clients
       if (opts?.playable) {
         const v: string | undefined =
@@ -961,16 +1051,26 @@ export class VendorService {
 
     return { productCount, orderCount };
   }
-  async getVendorProducts(userId: number) {
+  async getVendorProducts(userId: number, currency?: string) {
+    const target = this.normalizeCurrency(currency);
+    this.logger.debug(
+      `Vendor products currency normalized: requested=${currency} applied=${target}`,
+    );
     // Eagerly load product relations
     const products = await this.productRepository.find({
       where: { vendor: { id: userId } },
       relations: ['images', 'category', 'tags'],
     });
     try {
-      return Array.isArray(products) ? products.map(normalizeProductMedia) : [];
+      const normalized = Array.isArray(products)
+        ? products.map(normalizeProductMedia)
+        : [];
+      return this.applyCurrencyToProducts(normalized, target);
     } catch {
-      return Array.isArray(products) ? products : [];
+      return this.applyCurrencyToProducts(
+        Array.isArray(products) ? products : [],
+        target,
+      );
     }
   }
 
@@ -985,6 +1085,10 @@ export class VendorService {
     limit: number;
     totalPages: number;
   }> {
+    const targetCurrency = this.normalizeCurrency(q?.currency);
+    this.logger.debug(
+      `Vendor products manage currency normalized: requested=${q?.currency} applied=${targetCurrency}`,
+    );
     const page = Math.max(1, Number(q.page) || 1);
     const limit = Math.min(Math.max(Number(q.limit) || 20, 1), 100);
     const qb = this.productRepository
@@ -1037,6 +1141,7 @@ export class VendorService {
     } catch {
       // ignore normalization errors and return raw items
     }
+    items = this.applyCurrencyToProducts(items, targetCurrency);
     const totalPages = Math.ceil(total / limit) || 1;
     return { items, total, page, limit, totalPages };
   }
@@ -1380,10 +1485,19 @@ export class VendorService {
    */
   async getVendorOrders(
     vendorId: number,
-    opts: { page?: number; limit?: number; status?: OrderStatus },
+    opts: {
+      page?: number;
+      limit?: number;
+      status?: OrderStatus;
+      currency?: string;
+    },
   ): Promise<{ data: any[]; total: number }> {
     const page = opts.page && opts.page > 0 ? opts.page : 1;
     const limit = opts.limit && opts.limit > 0 ? Math.min(opts.limit, 100) : 20;
+    const targetCurrency = this.normalizeCurrency(opts.currency);
+    this.logger.debug(
+      `Vendor orders currency normalized: requested=${opts.currency} applied=${targetCurrency}`,
+    );
 
     const qb = this.orderRepository
       .createQueryBuilder('o')
@@ -1421,8 +1535,23 @@ export class VendorService {
         const firstImage = images[0] || {};
         const productImage =
           product.imageUrl || firstImage.thumbnailSrc || firstImage.src || null;
+        const productCurrency = product?.currency || 'ETB';
+        const { amount: priceConverted, rate } = this.convertPrice(
+          it.price,
+          productCurrency,
+          targetCurrency,
+        );
+        const priceToUse = priceConverted ?? it.price;
         return {
           ...it,
+          price: priceToUse,
+          currency: targetCurrency,
+          price_display: {
+            amount: priceToUse ?? null,
+            currency: targetCurrency,
+            convertedFrom: productCurrency,
+            rate,
+          },
           product: {
             ...product,
             image: productImage,
@@ -1432,7 +1561,7 @@ export class VendorService {
         };
       });
       const vendorItemCount = filteredItems.length;
-      const vendorSubtotal = filteredItems.reduce((sum, it: any) => {
+      const vendorSubtotal = itemsWithMedia.reduce((sum, it: any) => {
         const price =
           typeof it.price === 'number' ? it.price : Number(it.price || 0);
         const quantity =
@@ -1441,6 +1570,12 @@ export class VendorService {
             : Number(it.quantity || 0);
         return sum + price * quantity;
       }, 0);
+      const vendorSubtotalDisplay = {
+        amount: Math.round(vendorSubtotal * 100) / 100,
+        currency: targetCurrency,
+        convertedFrom: (filteredItems[0]?.product as any)?.currency || 'ETB',
+        rate: itemsWithMedia[0]?.price_display?.rate,
+      } as const;
       const statusCounts = filteredItems.reduce(
         (acc: Record<OrderStatus, number>, it: any) => {
           const s: OrderStatus | undefined = it.status;
@@ -1501,13 +1636,20 @@ export class VendorService {
         customerContactAllowed: !!customerPhone,
         customerCity,
         customerCountry,
+        currency: targetCurrency,
+        vendorSubtotal_display: vendorSubtotalDisplay,
+        total_display: vendorSubtotalDisplay,
       };
     });
 
     return { data, total };
   }
 
-  async getVendorOrder(vendorId: number, orderId: number) {
+  async getVendorOrder(vendorId: number, orderId: number, currency?: string) {
+    const targetCurrency = this.normalizeCurrency(currency);
+    this.logger.debug(
+      `Vendor order currency normalized: requested=${currency} applied=${targetCurrency}`,
+    );
     const order = await this.orderRepository
       .createQueryBuilder('o')
       .leftJoinAndSelect('o.deliverer', 'deliverer')
@@ -1536,8 +1678,23 @@ export class VendorService {
       const firstImage = images[0] || {};
       const productImage =
         product.imageUrl || firstImage.thumbnailSrc || firstImage.src || null;
+      const productCurrency = product?.currency || 'ETB';
+      const { amount: priceConverted, rate } = this.convertPrice(
+        it.price,
+        productCurrency,
+        targetCurrency,
+      );
+      const priceToUse = priceConverted ?? it.price;
       return {
         ...it,
+        price: priceToUse,
+        currency: targetCurrency,
+        price_display: {
+          amount: priceToUse ?? null,
+          currency: targetCurrency,
+          convertedFrom: productCurrency,
+          rate,
+        },
         product: {
           ...product,
           image: productImage,
@@ -1556,6 +1713,12 @@ export class VendorService {
           : Number(it.quantity || 0);
       return sum + price * quantity;
     }, 0);
+    const vendorSubtotalDisplay = {
+      amount: Math.round(vendorSubtotal * 100) / 100,
+      currency: targetCurrency,
+      convertedFrom: (vendorItemsRaw[0]?.product as any)?.currency || 'ETB',
+      rate: vendorItems[0]?.price_display?.rate,
+    } as const;
     const statusCounts = vendorItems.reduce(
       (acc: Record<OrderStatus, number>, it: any) => {
         const s: OrderStatus | undefined = it.status;
@@ -1617,6 +1780,9 @@ export class VendorService {
       customerContactAllowed: !!customerPhone,
       customerCity,
       customerCountry,
+      currency: targetCurrency,
+      vendorSubtotal_display: vendorSubtotalDisplay,
+      total_display: vendorSubtotalDisplay,
     };
   }
 

@@ -34,7 +34,6 @@ import { SkipThrottle } from '@nestjs/throttler';
 import { RecordImpressionsDto } from './dto/record-impressions.dto';
 import { normalizeProductMedia } from '../common/utils/media-url.util';
 import { AuthenticatedRequest } from '../auth/auth.types';
-import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { FavoritesService } from '../favorites/favorites.service';
 import { Response } from 'express';
 import { createHash } from 'crypto';
@@ -69,7 +68,7 @@ export class ProductsController {
 
   @Post()
   @UseGuards(AuthGuard('jwt'), RolesGuard)
-  @Roles(UserRole.VENDOR)
+  @Roles(UserRole.VENDOR, UserRole.CUSTOMER, UserRole.GUEST)
   create(
     @Body() createProductDto: CreateProductDto,
     @Req() req: AuthenticatedRequest,
@@ -79,8 +78,16 @@ export class ProductsController {
       console.log('Raw request body:', bodyString);
       console.log('Parsed DTO:', JSON.stringify(createProductDto));
     }
+    const roles = Array.isArray(req.user?.roles) ? req.user.roles : [];
+    const isCustomerOrGuest =
+      roles.includes(UserRole.CUSTOMER) || roles.includes(UserRole.GUEST);
+    const enforcedStatus = isCustomerOrGuest
+      ? 'pending_approval'
+      : createProductDto.status;
+
     return this.productsService.create({
       ...createProductDto,
+      status: enforcedStatus,
       vendorId: req.user.id,
     });
   }
@@ -225,6 +232,8 @@ export class ProductsController {
         if (!(filters as any).eastAfrica)
           (filters as any).eastAfrica = 'ET,SO,KE,DJ';
       }
+
+      (filters as any).currency = currency;
 
       const result = await this.productsService.findFiltered(filters);
 
@@ -417,7 +426,12 @@ export class ProductsController {
             return;
           }
         }
-      } catch {}
+      } catch (err) {
+        this.logger.debug(
+          'Failed to compute ETag for product listing',
+          err as Error,
+        );
+      }
 
       // No manual conversion or DTO mapping; return result.items directly
       return {
@@ -494,7 +508,12 @@ export class ProductsController {
           return;
         }
       }
-    } catch {}
+    } catch (err) {
+      this.logger.debug(
+        'Failed to compute ETag for product cards',
+        err as Error,
+      );
+    }
 
     return {
       items,
@@ -620,7 +639,9 @@ export class ProductsController {
         res.status(304);
         return;
       }
-    } catch {}
+    } catch (err) {
+      this.logger.debug('Failed to compute ETag for home feed', err as Error);
+    }
 
     // Build aliases to help flexible clients
     const payload = {
@@ -690,8 +711,9 @@ export class ProductsController {
   @Get('east-africa')
   async eastAfricaBatch(
     @Query() q: any,
-    @Req() req: Request,
-    @Res({ passthrough: true }) res: Response,
+    @Req() req?: Request,
+    @Res({ passthrough: true }) res?: Response,
+    @Query('currency') currency?: string,
   ) {
     const countries = String(q.countries || 'ET,SO,KE,DJ')
       .split(',')
@@ -707,7 +729,13 @@ export class ProductsController {
     const results = await Promise.all(
       countries.map((code) =>
         this.productsService
-          .findFiltered({ perPage: per, sort, country: code, view } as any)
+          .findFiltered({
+            perPage: per,
+            sort,
+            country: code,
+            view,
+            currency,
+          } as any)
           .then((res) => ({ code, items: res.items })),
       ),
     );
@@ -719,6 +747,7 @@ export class ProductsController {
         per,
         sort,
         view,
+        currency: currency || null,
         ids: results.flatMap((r) =>
           (r.items || []).map(
             (i: any) => `${r.code}:${i.id}:${i.updatedAt || i.createdAt || ''}`,
@@ -732,7 +761,12 @@ export class ProductsController {
         res.status(304);
         return;
       }
-    } catch {}
+    } catch (err) {
+      this.logger.debug(
+        'Failed to compute ETag for east-africa batch',
+        err as Error,
+      );
+    }
     return { countries: results };
   }
 
@@ -740,7 +774,11 @@ export class ProductsController {
   // Example: GET /products/tiers?categoryId=12&per_page=12&geo_priority=1&geo_append=1&userCountry=ET&userRegion=AA&userCity=Addis
   @Get('tiers')
   @Header('Cache-Control', 'public, s-maxage=10, stale-while-revalidate=30')
-  async tiered(@Query() q: TieredProductsDto) {
+  async tiered(
+    @Query() q: TieredProductsDto,
+    @Query('currency') currency?: string,
+  ) {
+    (q as any).currency = currency;
     // If merge flag is on, return a single merged list using server-side scoring
     if ((q as any).merge) {
       const { items, meta } = await this.productsService.findTieredMerged(q);
@@ -818,8 +856,11 @@ export class ProductsController {
   }
 
   @Get(':id')
-  findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.productsService.findOne(id);
+  findOne(
+    @Param('id', ParseIntPipe) id: number,
+    @Query('currency') currency?: string,
+  ) {
+    return this.productsService.findOne(id, currency);
   }
 
   // Related products for a given product id
@@ -830,6 +871,7 @@ export class ProductsController {
     @Param('id', ParseIntPipe) id: number,
     @Query('city') city?: string,
     @Query('limit') limit?: string,
+    @Query('currency') currency?: string,
     @Req() req?: AuthenticatedRequest,
     @Res({ passthrough: true }) res?: Response,
   ) {
@@ -840,6 +882,7 @@ export class ProductsController {
     const items = await this.productsService.findRelatedProducts(id, {
       limit: lim,
       city,
+      currency,
     });
 
     // ETag based on ids + createdAt timestamps to enable client-side caching
@@ -860,7 +903,12 @@ export class ProductsController {
           return;
         }
       }
-    } catch {}
+    } catch (err) {
+      this.logger.debug(
+        'Failed to compute ETag for related products',
+        err as Error,
+      );
+    }
 
     return { items };
   }

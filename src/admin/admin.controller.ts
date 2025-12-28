@@ -37,6 +37,7 @@ import { plainToInstance } from 'class-transformer';
 import { AdminUserResponseDto } from './dto/admin-user-response.dto';
 import { FindUsersQueryDto } from '../users/dto/find-users-query.dto';
 import { Response } from 'express';
+import { CurrencyService } from '../common/services/currency.service';
 
 // ✨ FINAL FIX: Use AuthGuard('jwt') to match your other working controllers
 @UseGuards(AuthGuard('jwt'), RolesGuard)
@@ -49,6 +50,7 @@ export class AdminController {
     private readonly usersService: UsersService,
     private readonly ordersService: OrdersService,
     private readonly withdrawalsService: WithdrawalsService,
+    private readonly currencyService: CurrencyService,
   ) {}
 
   // Prefer a specific route before the generic :id matcher to avoid ParseIntPipe errors
@@ -72,8 +74,8 @@ export class AdminController {
     res.setHeader('Transfer-Encoding', 'chunked');
 
     let aborted = false;
-    // @ts-ignore - express typings
-    const req: any = (res as any).req;
+    // Express response carries the originating request; type with a safe cast.
+    const req = (res as any).req as import('express').Request | undefined;
     if (req && typeof req.on === 'function') {
       req.on('close', () => {
         aborted = true;
@@ -109,16 +111,20 @@ export class AdminController {
         page += 1;
         await new Promise((r) => setImmediate(r));
       }
-    } catch (e) {
+    } catch {
       try {
         res.write(
           JSON.stringify({ error: true, message: 'stream_failed' }) + '\n',
         );
-      } catch {}
+      } catch {
+        /* ignore write failure */
+      }
     } finally {
       try {
         res.end();
-      } catch {}
+      } catch {
+        /* ignore end failure */
+      }
     }
   }
 
@@ -174,6 +180,24 @@ export class AdminController {
   @HttpCode(HttpStatus.OK)
   async reactivateUser(@Param('id', ParseIntPipe) id: number) {
     return this.usersService.reactivate(id);
+  }
+
+  // FX rates snapshot for ops visibility
+  @Get('fx-rates')
+  getFxRates() {
+    return this.currencyService.getRatesSnapshot();
+  }
+
+  // Manual refresh/override hook; pass {remote: true} to pull from feed when configured
+  @Post('fx-rates/refresh')
+  refreshFxRates(
+    @Body() body: { rates?: Record<string, number>; remote?: boolean },
+  ) {
+    if (body?.remote) {
+      return this.currencyService.refreshFromRemote();
+    }
+    // Accept either { rates: {...} } or a bare currency map payload
+    return this.currencyService.refreshRates(body?.rates ?? body);
   }
 
   @Delete('users/:id/hard')
@@ -387,6 +411,7 @@ export class AdminController {
       totalRevenue,
       totalOrders,
       pendingWithdrawals,
+      fxSnapshot,
     ] = await Promise.all([
       this.usersService.countAll(),
       this.usersService.countByRole(UserRole.VENDOR),
@@ -395,6 +420,7 @@ export class AdminController {
       this.ordersService.getTotalRevenue(),
       this.ordersService.countAll(),
       this.withdrawalsService.countPendingWithdrawals(),
+      this.currencyService.getRatesSnapshot(),
     ]);
 
     return {
@@ -405,6 +431,9 @@ export class AdminController {
       totalRevenue,
       totalOrders,
       pendingWithdrawals,
+      fxSource: fxSnapshot.source,
+      fxUpdatedAt: fxSnapshot.updatedAt,
+      fxLastFetchAt: fxSnapshot.lastFetchAt ?? null,
     };
   }
 

@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return */
 import { Controller, Get, Header, Query } from '@nestjs/common';
 import { HomeService } from './home.service';
 
@@ -15,9 +16,10 @@ export class HomeV2Controller {
       Math.max(Number(q.limit || q.per_page) || 20, 1),
       50,
     );
-  const city = q.user_city || q.userCity || q.city || undefined;
-  const region = q.user_region || q.userRegion || q.region || undefined;
-  const country = q.user_country || q.userCountry || q.country || undefined;
+    const city = q.user_city || q.userCity || q.city || undefined;
+    const region = q.user_region || q.userRegion || q.region || undefined;
+    const country = q.user_country || q.userCountry || q.country || undefined;
+    const currency = q.currency;
 
     // Category filters (accept id(s) or slug)
     const parseIds = (val: unknown): number[] | undefined => {
@@ -38,7 +40,7 @@ export class HomeV2Controller {
         return parts.length ? parts : undefined;
       }
       if (typeof val === 'number' && Number.isInteger(val) && val >= 1) {
-        return [val as number];
+        return [val];
       }
       return undefined;
     };
@@ -76,6 +78,7 @@ export class HomeV2Controller {
       userCity: city,
       userRegion: region,
       userCountry: country,
+      currency,
       categoryId,
       categorySlug,
       categoryFirst,
