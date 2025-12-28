@@ -2,14 +2,16 @@ import {
   IsOptional,
   IsString,
   IsNumber,
-  IsBoolean,
   IsInt,
   Min,
   Max,
 } from 'class-validator';
 import { Type, Expose, Transform } from 'class-transformer';
 // Local lightweight transform helpers (avoid adding new shared deps during refactor)
-function toInteger(value: any, opts: { default?: number; min?: number; max?: number } = {}): number | undefined {
+function toInteger(
+  value: any,
+  opts: { default?: number; min?: number; max?: number } = {},
+): number | undefined {
   const n = Number(value);
   if (!Number.isFinite(n)) return opts.default;
   let v = Math.trunc(n);
@@ -28,10 +30,19 @@ function toBoolean(value: any): boolean | undefined {
   if (['0', 'false', 'no', 'off'].includes(s)) return false;
   return undefined;
 }
-function parseCsv(value: any, opts: { type: 'number' | 'string' }): any[] | undefined {
+function parseCsv(
+  value: any,
+  opts: { type: 'number' | 'string' },
+): any[] | undefined {
   const coerce = (v: any) => (opts.type === 'number' ? Number(v) : String(v));
   if (Array.isArray(value)) {
-    const arr = value.map(coerce).filter((v) => (opts.type === 'number' ? Number.isFinite(v as any) : String(v).length > 0));
+    const arr = value
+      .map(coerce)
+      .filter((v) =>
+        opts.type === 'number'
+          ? Number.isFinite(v as any)
+          : String(v).length > 0,
+      );
     return arr.length ? arr : undefined;
   }
   if (typeof value === 'string') {
@@ -40,10 +51,19 @@ function parseCsv(value: any, opts: { type: 'number' | 'string' }): any[] | unde
       .map((s) => s.trim())
       .filter(Boolean)
       .map(coerce)
-      .filter((v) => (opts.type === 'number' ? Number.isFinite(v as any) : String(v).length > 0));
+      .filter((v) =>
+        opts.type === 'number'
+          ? Number.isFinite(v as any)
+          : String(v).length > 0,
+      );
     return parts.length ? parts : undefined;
   }
-  if (typeof value === 'number' && opts.type === 'number' && Number.isFinite(value)) return [Math.trunc(value)];
+  if (
+    typeof value === 'number' &&
+    opts.type === 'number' &&
+    Number.isFinite(value)
+  )
+    return [Math.trunc(value)];
   return undefined;
 }
 

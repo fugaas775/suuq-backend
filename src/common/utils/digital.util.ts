@@ -1,12 +1,12 @@
-import { DoSpacesService } from '../../media/do-spaces.service';
+/* eslint-disable no-empty */
 
 export interface DigitalDownloadMeta {
-  key: string;            // object key in Spaces
-  publicUrl?: string;     // stable public URL (derived if missing)
-  size?: number;          // bytes (optional, may be filled by head)
-  contentType?: string;   // MIME
-  filename?: string;      // original filename
-  checksum?: string;      // optional integrity value (e.g., sha256:abcd)
+  key: string; // object key in Spaces
+  publicUrl?: string; // stable public URL (derived if missing)
+  size?: number; // bytes (optional, may be filled by head)
+  contentType?: string; // MIME
+  filename?: string; // original filename
+  checksum?: string; // optional integrity value (e.g., sha256:abcd)
   licenseRequired?: boolean; // backward compat; if true and license missing validation may fail
   license?: { id?: string; name?: string; url?: string } | null; // phase 2 structure
 }
@@ -27,7 +27,10 @@ export interface NormalizeResult {
 const ALLOWED_EXT = new Set(['pdf', 'epub', 'zip']);
 
 /** Infer file metadata from key if possible */
-function inferFromKey(key: string): { filename?: string; contentType?: string } {
+function inferFromKey(key: string): {
+  filename?: string;
+  contentType?: string;
+} {
   const filename = key.split('/').pop();
   if (!filename) return {};
   const ext = filename.split('.').pop()?.toLowerCase();
@@ -47,17 +50,20 @@ function inferFromKey(key: string): { filename?: string; contentType?: string } 
  * Normalize legacy attributes into canonical digital schema.
  * Supports legacy root-level: downloadKey, isFree.
  */
-export function normalizeDigitalAttributes(attrs: Record<string, any>): NormalizeResult {
+export function normalizeDigitalAttributes(
+  attrs: Record<string, any>,
+): NormalizeResult {
   let changed = false;
   const updated: Record<string, any> = { ...attrs };
-  let legacyDetected = false;
 
   // Already canonical?
   if (updated.digital && typeof updated.digital === 'object') {
     const dig = updated.digital as DigitalAttributesSchema;
     if (dig.download && typeof dig.download === 'object' && dig.download.key) {
       // Merge legacy licenseRequired at root or under digital into download metadata if not present
-      const legacyLicenseReq = (updated.licenseRequired === true) || (dig as any).licenseRequired === true;
+      const legacyLicenseReq =
+        updated.licenseRequired === true ||
+        (dig as any).licenseRequired === true;
       if (legacyLicenseReq && !dig.download.licenseRequired) {
         dig.download.licenseRequired = true;
         changed = true;
@@ -79,7 +85,8 @@ export function normalizeDigitalAttributes(attrs: Record<string, any>): Normaliz
       // the canonical digital schema without waiting for a second fetch.
       // They are safe to remove once all clients consume attributes.digital
       // directly. Track via FEATURE_FLAG_DIGITAL_ALIAS_REMOVE env if needed.
-      const removeAliases = process.env.FEATURE_FLAG_DIGITAL_ALIAS_REMOVE === 'true';
+      const removeAliases =
+        process.env.FEATURE_FLAG_DIGITAL_ALIAS_REMOVE === 'true';
       let aliasAdded = false;
       if (!removeAliases) {
         // downloadUrl alias -> digital.download.publicUrl (fallback to derived URL via key)
@@ -106,17 +113,35 @@ export function normalizeDigitalAttributes(attrs: Record<string, any>): Normaliz
           }
         }
         // licenseRequired legacy ( bool ) at root for quick toggle access
-        if (typeof dig.download.licenseRequired === 'boolean' && typeof updated.licenseRequired === 'undefined') {
+        if (
+          typeof dig.download.licenseRequired === 'boolean' &&
+          typeof updated.licenseRequired === 'undefined'
+        ) {
           updated.licenseRequired = dig.download.licenseRequired;
           aliasAdded = true;
         }
       } else {
         // Optional cleanup path when feature flag enabled
-        if ('downloadUrl' in updated) { delete updated.downloadUrl; changed = true; }
-        if ('download_url' in updated) { delete updated.download_url; changed = true; }
-        if ('format' in updated) { delete updated.format; changed = true; }
-        if ('fileSizeMB' in updated) { delete updated.fileSizeMB; changed = true; }
-        if ('licenseRequired' in updated) { delete updated.licenseRequired; changed = true; }
+        if ('downloadUrl' in updated) {
+          delete updated.downloadUrl;
+          changed = true;
+        }
+        if ('download_url' in updated) {
+          delete updated.download_url;
+          changed = true;
+        }
+        if ('format' in updated) {
+          delete updated.format;
+          changed = true;
+        }
+        if ('fileSizeMB' in updated) {
+          delete updated.fileSizeMB;
+          changed = true;
+        }
+        if ('licenseRequired' in updated) {
+          delete updated.licenseRequired;
+          changed = true;
+        }
       }
       if (aliasAdded) changed = true;
       return { updated, changed, inferredType: 'digital' };
@@ -132,7 +157,9 @@ export function normalizeDigitalAttributes(attrs: Record<string, any>): Normaliz
       const region = (process.env.DO_SPACES_REGION || '').toLowerCase();
       if (!bucket || !region) return null;
       const host = u.host.toLowerCase();
-      const path = u.pathname.startsWith('/') ? u.pathname.slice(1) : u.pathname;
+      const path = u.pathname.startsWith('/')
+        ? u.pathname.slice(1)
+        : u.pathname;
       const expectedVirtual = `${bucket}.${region}.digitaloceanspaces.com`;
       const expectedCdnVirtual = `${bucket}.${region}.cdn.digitaloceanspaces.com`;
       const regionHost = `${region}.digitaloceanspaces.com`;
@@ -143,13 +170,17 @@ export function normalizeDigitalAttributes(attrs: Record<string, any>): Normaliz
       }
       // Path-style: region.digitaloceanspaces.com/<bucket>/<key>
       if (host === regionHost || host === cdnRegionHost) {
-        if (path.startsWith(`${bucket}/`)) return path.slice(bucket.length + 1) || null;
+        if (path.startsWith(`${bucket}/`))
+          return path.slice(bucket.length + 1) || null;
       }
       // Custom endpoint support
       try {
-        const endpointHost = new URL(String(process.env.DO_SPACES_ENDPOINT || '')).host.toLowerCase();
+        const endpointHost = new URL(
+          String(process.env.DO_SPACES_ENDPOINT || ''),
+        ).host.toLowerCase();
         if (endpointHost && host === endpointHost) {
-          if (path.startsWith(`${bucket}/`)) return path.slice(bucket.length + 1) || null;
+          if (path.startsWith(`${bucket}/`))
+            return path.slice(bucket.length + 1) || null;
         }
       } catch {}
       return null;
@@ -160,13 +191,16 @@ export function normalizeDigitalAttributes(attrs: Record<string, any>): Normaliz
   // Find a Spaces URL in common alias shapes to derive key
   const pickUrlCandidate = (): string | undefined => {
     const cands: any[] = [];
-    if (typeof (updated as any).downloadUrl === 'string') cands.push((updated as any).downloadUrl);
-    if (typeof (updated as any).download_url === 'string') cands.push((updated as any).download_url);
+    if (typeof (updated as any).downloadUrl === 'string')
+      cands.push((updated as any).downloadUrl);
+    if (typeof (updated as any).download_url === 'string')
+      cands.push((updated as any).download_url);
     const file = (updated as any).file;
     if (file && typeof file === 'object') {
       if (typeof file.url === 'string') cands.push(file.url);
       if (typeof file.src === 'string') cands.push(file.src);
-      if (Array.isArray(file.urls) && typeof file.urls[0] === 'string') cands.push(file.urls[0]);
+      if (Array.isArray(file.urls) && typeof file.urls[0] === 'string')
+        cands.push(file.urls[0]);
     }
     const files = (updated as any).files;
     if (Array.isArray(files) && files.length) {
@@ -174,14 +208,15 @@ export function normalizeDigitalAttributes(attrs: Record<string, any>): Normaliz
       if (f0 && typeof f0 === 'object') {
         if (typeof f0.url === 'string') cands.push(f0.url);
         if (typeof f0.src === 'string') cands.push(f0.src);
-        if (Array.isArray(f0.urls) && typeof f0.urls[0] === 'string') cands.push(f0.urls[0]);
+        if (Array.isArray(f0.urls) && typeof f0.urls[0] === 'string')
+          cands.push(f0.urls[0]);
       } else if (typeof f0 === 'string') cands.push(f0);
     }
     const urls = (updated as any).urls;
     if (Array.isArray(urls) && typeof urls[0] === 'string') cands.push(urls[0]);
     const media = (updated as any).media;
     if (media && typeof media === 'object') {
-      const murl = (media as any).downloadUrl || (media as any).url;
+      const murl = media.downloadUrl || media.url;
       if (typeof murl === 'string') cands.push(murl);
     }
     for (const u of cands) {
@@ -190,17 +225,25 @@ export function normalizeDigitalAttributes(attrs: Record<string, any>): Normaliz
     return undefined;
   };
   const dlUrl: string | undefined = pickUrlCandidate();
-  const derivedKey = !downloadKey && dlUrl ? urlToKeyIfInSpaces(dlUrl) : undefined;
+  const derivedKey =
+    !downloadKey && dlUrl ? urlToKeyIfInSpaces(dlUrl) : undefined;
   if (derivedKey) {
     try {
       // Use console.log to avoid circular Nest Logger deps
-      console.log(`[digital.normalize] Derived key from URL: ${dlUrl} -> ${derivedKey}`);
+      console.log(
+        `[digital.normalize] Derived key from URL: ${dlUrl} -> ${derivedKey}`,
+      );
     } catch {}
   }
   const effectiveKey = downloadKey || derivedKey || undefined;
-  const isFree = typeof updated.isFree === 'boolean' ? updated.isFree : (updated.is_free === true ? true : undefined);
-  const legacyLicenseRequired = (updated.licenseRequired === true) || (updated.license_required === true);
-  if (effectiveKey) legacyDetected = true;
+  const isFree =
+    typeof updated.isFree === 'boolean'
+      ? updated.isFree
+      : updated.is_free === true
+        ? true
+        : undefined;
+  const legacyLicenseRequired =
+    updated.licenseRequired === true || updated.license_required === true;
   if (effectiveKey && typeof effectiveKey === 'string') {
     // Build canonical structure
     const { filename, contentType } = inferFromKey(effectiveKey);
@@ -208,14 +251,19 @@ export function normalizeDigitalAttributes(attrs: Record<string, any>): Normaliz
       try {
         const bucket = process.env.DO_SPACES_BUCKET;
         const region = process.env.DO_SPACES_REGION;
-        if (bucket && region) return `https://${bucket}.${region}.digitaloceanspaces.com/${effectiveKey}`;
+        if (bucket && region)
+          return `https://${bucket}.${region}.digitaloceanspaces.com/${effectiveKey}`;
       } catch {}
       return undefined;
     })();
 
     // Map alias fileSizeMB -> download.size (bytes) if present and valid
     let sizeBytes: number | undefined;
-    if (typeof (updated as any).fileSizeMB === 'number' && isFinite((updated as any).fileSizeMB) && (updated as any).fileSizeMB > 0) {
+    if (
+      typeof (updated as any).fileSizeMB === 'number' &&
+      isFinite((updated as any).fileSizeMB) &&
+      (updated as any).fileSizeMB > 0
+    ) {
       sizeBytes = Math.round((updated as any).fileSizeMB * 1024 * 1024);
     }
 
@@ -234,7 +282,7 @@ export function normalizeDigitalAttributes(attrs: Record<string, any>): Normaliz
     delete updated.downloadKey;
     delete updated.download_key;
     delete updated.is_free;
-  // Keep licenseRequired alias at root for prefill toggles; don't delete it here
+    // Keep licenseRequired alias at root for prefill toggles; don't delete it here
     if ('license_required' in updated) delete updated.license_required;
     changed = true;
     return { updated, changed, inferredType: 'digital' };
@@ -248,7 +296,10 @@ export interface DigitalValidationOptions {
   maxSizeBytes?: number;
 }
 
-export function validateDigitalStructure(attrs: Record<string, any>, opts: DigitalValidationOptions = {}): void {
+export function validateDigitalStructure(
+  attrs: Record<string, any>,
+  opts: DigitalValidationOptions = {},
+): void {
   const dig = attrs?.digital;
   if (!dig) {
     if (opts.requireKey) {
@@ -257,20 +308,25 @@ export function validateDigitalStructure(attrs: Record<string, any>, opts: Digit
     return;
   }
   if (dig.type !== 'digital') throw new Error('DIGITAL_INVALID_TYPE');
-  if (!dig.download || typeof dig.download !== 'object') throw new Error('DIGITAL_MISSING_DOWNLOAD');
+  if (!dig.download || typeof dig.download !== 'object')
+    throw new Error('DIGITAL_MISSING_DOWNLOAD');
   const key = dig.download.key;
   if (!key || typeof key !== 'string') throw new Error('DIGITAL_MISSING_KEY');
   const ext = key.split('.').pop()?.toLowerCase();
   if (ext && !ALLOWED_EXT.has(ext)) throw new Error('DIGITAL_UNSUPPORTED_TYPE');
   const size = dig.download.size;
-  if (typeof size === 'number' && opts.maxSizeBytes && size > opts.maxSizeBytes) throw new Error('DIGITAL_FILE_TOO_LARGE');
+  if (typeof size === 'number' && opts.maxSizeBytes && size > opts.maxSizeBytes)
+    throw new Error('DIGITAL_FILE_TOO_LARGE');
   if (dig.download.licenseRequired && !dig.download.license) {
     throw new Error('DIGITAL_LICENSE_REQUIRED');
   }
 }
 
 /** Map internal validation error codes to user-facing messages */
-export function mapDigitalError(code: string): { code: string; message: string } {
+export function mapDigitalError(code: string): {
+  code: string;
+  message: string;
+} {
   switch (code) {
     case 'DIGITAL_MISSING_STRUCTURE':
       return { code, message: 'Digital product structure missing.' };
@@ -285,8 +341,14 @@ export function mapDigitalError(code: string): { code: string; message: string }
     case 'DIGITAL_FILE_TOO_LARGE':
       return { code, message: 'Digital file exceeds maximum allowed size.' };
     case 'DIGITAL_LICENSE_REQUIRED':
-      return { code, message: 'License information required for this digital download.' };
+      return {
+        code,
+        message: 'License information required for this digital download.',
+      };
     default:
-      return { code: 'DIGITAL_UNKNOWN', message: 'Unknown digital product error.' };
+      return {
+        code: 'DIGITAL_UNKNOWN',
+        message: 'Unknown digital product error.',
+      };
   }
 }
