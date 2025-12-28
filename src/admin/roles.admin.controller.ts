@@ -1,5 +1,19 @@
-import { Controller, Get, Query, UseGuards, Post, Body, ParseIntPipe } from '@nestjs/common';
-import { ApiBearerAuth, ApiBody, ApiOkResponse, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
+import {
+  Controller,
+  Get,
+  Query,
+  UseGuards,
+  Post,
+  Body,
+  BadRequestException,
+} from '@nestjs/common';
+import {
+  ApiBearerAuth,
+  ApiBody,
+  ApiOperation,
+  ApiQuery,
+  ApiTags,
+} from '@nestjs/swagger';
 import { RolesGuard } from '../auth/roles.guard';
 import { AuthGuard } from '@nestjs/passport';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -21,12 +35,25 @@ export class AdminRolesController {
   @ApiOperation({ summary: 'List role upgrade requests' })
   @ApiQuery({ name: 'status', enum: RoleUpgradeStatus, required: false })
   async list(@Query('status') status?: RoleUpgradeStatus) {
-    return this.rolesService.listRequests(status as RoleUpgradeStatus);
+    return this.rolesService.listRequests(status);
   }
 
   @Post('approve')
-  @ApiOperation({ summary: 'Approve role upgrade request by requestId or userId' })
-  @ApiBody({ schema: { properties: { requestId: { type: 'number', nullable: true }, userId: { type: 'number', nullable: true }, roles: { type: 'array', items: { type: 'string', enum: Object.values(UserRole) } } } } })
+  @ApiOperation({
+    summary: 'Approve role upgrade request by requestId or userId',
+  })
+  @ApiBody({
+    schema: {
+      properties: {
+        requestId: { type: 'number', nullable: true },
+        userId: { type: 'number', nullable: true },
+        roles: {
+          type: 'array',
+          items: { type: 'string', enum: Object.values(UserRole) },
+        },
+      },
+    },
+  })
   async approve(
     @Body('requestId') requestId?: number,
     @Body('userId') userId?: number,
@@ -35,18 +62,35 @@ export class AdminRolesController {
   ) {
     let result;
     if (requestId) {
-      result = await this.rolesService.approveRequest(Number(requestId), actedBy || 'admin');
+      result = await this.rolesService.approveRequest(
+        Number(requestId),
+        actedBy || 'admin',
+      );
     } else if (userId) {
-      result = await this.rolesService.approveForUser(Number(userId), roles as any, actedBy || 'admin');
+      result = await this.rolesService.approveForUser(
+        Number(userId),
+        roles as any,
+        actedBy || 'admin',
+      );
     } else {
-      throw new (require('@nestjs/common').BadRequestException)('requestId or userId is required');
+      throw new BadRequestException('requestId or userId is required');
     }
     return { id: result.id, status: result.status };
   }
 
   @Post('reject')
-  @ApiOperation({ summary: 'Reject role upgrade request by requestId or userId' })
-  @ApiBody({ schema: { properties: { requestId: { type: 'number', nullable: true }, userId: { type: 'number', nullable: true }, reason: { type: 'string', nullable: true } } } })
+  @ApiOperation({
+    summary: 'Reject role upgrade request by requestId or userId',
+  })
+  @ApiBody({
+    schema: {
+      properties: {
+        requestId: { type: 'number', nullable: true },
+        userId: { type: 'number', nullable: true },
+        reason: { type: 'string', nullable: true },
+      },
+    },
+  })
   async reject(
     @Body('requestId') requestId?: number,
     @Body('userId') userId?: number,
@@ -55,12 +99,24 @@ export class AdminRolesController {
   ) {
     let result;
     if (requestId) {
-      result = await this.rolesService.rejectRequest(Number(requestId), reason, actedBy || 'admin');
+      result = await this.rolesService.rejectRequest(
+        Number(requestId),
+        reason,
+        actedBy || 'admin',
+      );
     } else if (userId) {
-      result = await this.rolesService.rejectForUser(Number(userId), reason, actedBy || 'admin');
+      result = await this.rolesService.rejectForUser(
+        Number(userId),
+        reason,
+        actedBy || 'admin',
+      );
     } else {
-      throw new (require('@nestjs/common').BadRequestException)('requestId or userId is required');
+      throw new BadRequestException('requestId or userId is required');
     }
-    return { id: result.id, status: result.status, reason: result.decisionReason };
+    return {
+      id: result.id,
+      status: result.status,
+      reason: result.decisionReason,
+    };
   }
 }

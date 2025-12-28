@@ -39,11 +39,11 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       }
     }
 
-  // Reduce noise for expected denials (401/403), 404s, and rate limits (429): log as warn with concise message
-  if (status === 401 || status === 403 || status === 404 || status === 429) {
+    // Reduce noise for expected denials (401/403), 404s, and rate limits (429): log as warn with concise message
+    if (status === 401 || status === 403 || status === 404 || status === 429) {
       const msg = `${status === 404 ? 'Not Found' : status === 429 ? 'Rate limited' : 'Auth denial'} ${status} on ${request.method} ${request.url}: ${
-          typeof message === 'string' ? message : JSON.stringify(message)
-        }`;
+        typeof message === 'string' ? message : JSON.stringify(message)
+      }`;
       if (status === 429) {
         this.logger.debug(msg);
       } else {
@@ -59,9 +59,13 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       // Report 5xx to Sentry if configured
       try {
         if (status >= 500 && process.env.SENTRY_DSN) {
-          Sentry.captureException(exception instanceof Error ? exception : new Error(String(message)));
+          Sentry.captureException(
+            exception instanceof Error ? exception : new Error(String(message)),
+          );
         }
-      } catch {}
+      } catch (err) {
+        this.logger.debug('Sentry capture failed', err as Error);
+      }
     }
 
     // If headers already sent or stream already ended/finished, don't attempt to write again
@@ -74,7 +78,12 @@ export class GlobalExceptionFilter implements ExceptionFilter {
         if (!streamEnded && typeof resAny.end === 'function') {
           resAny.end();
         }
-      } catch {}
+      } catch (err) {
+        this.logger.debug(
+          'Failed to end response after headers sent',
+          err as Error,
+        );
+      }
       return;
     }
 

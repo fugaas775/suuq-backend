@@ -13,7 +13,12 @@ import {
 
 const toIntArray = ({ value }: { value: unknown }): number[] | undefined => {
   if (value === null || typeof value === 'undefined') return undefined;
-  const list = Array.isArray(value) ? value : String(value).split(',');
+  const list = Array.isArray(value)
+    ? value
+    : typeof value === 'string' || typeof value === 'number'
+      ? String(value).split(',')
+      : undefined;
+  if (!list) return undefined;
   const parsed = list
     .map((item) => {
       const num = Number(item);
