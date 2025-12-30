@@ -14,9 +14,12 @@ import { MediaModule } from '../media/media.module';
 import { ProductsModule } from '../products/products.module';
 import { SearchKeyword } from '../products/entities/search-keyword.entity';
 import { VendorAnalyticsController } from './vendor-analytics.controller';
+import { CurrencyModule } from '../common/services/currency.module';
+import { ShippingModule } from '../shipping/shipping.module';
 
 @Module({
   imports: [
+    ShippingModule,
     // ✨ 2. PRODUCTIMAGE ENTITY ADDED HERE
     TypeOrmModule.forFeature([
       User,
@@ -31,6 +34,7 @@ import { VendorAnalyticsController } from './vendor-analytics.controller';
     forwardRef(() => ProductsModule),
     MediaModule,
     NotificationsModule,
+    CurrencyModule,
   ],
   controllers: [
     VendorController,

@@ -79,8 +79,11 @@ export class VendorController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.VENDOR)
   @Get('vendor/products')
-  async getVendorProducts(@Req() req: any) {
-    return this.vendorService.getVendorProducts(req.user.id);
+  async getVendorProducts(
+    @Req() req: any,
+    @Query('currency') currency?: string,
+  ) {
+    return this.vendorService.getVendorProducts(req.user.id, currency);
   }
 
   // New: managed listing with search + publish status filters and pagination
@@ -211,11 +214,13 @@ export class VendorController {
     @Query('page') page = 1,
     @Query('limit') limit = 20,
     @Query('status') status?: OrderStatus,
+    @Query('currency') currency?: string,
   ) {
     return this.vendorService.getVendorOrders(req.user.id, {
       page: Number(page),
       limit: Number(limit),
       status,
+      currency,
     });
   }
 
@@ -225,8 +230,9 @@ export class VendorController {
   async getVendorOrder(
     @Req() req: any,
     @Param('orderId', ParseIntPipe) orderId: number,
+    @Query('currency') currency?: string,
   ) {
-    return this.vendorService.getVendorOrder(req.user.id, orderId);
+    return this.vendorService.getVendorOrder(req.user.id, orderId, currency);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
@@ -334,5 +340,16 @@ export class VendorController {
       trackingNumber: dto.trackingNumber,
       trackingUrl: dto.trackingUrl,
     });
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.VENDOR)
+  @Post('vendor/orders/:orderId/label')
+  async generateLabel(
+    @Req() req: any,
+    @Param('orderId', ParseIntPipe) orderId: number,
+    @Body() dto: import('./dto/generate-label.dto').GenerateLabelDto,
+  ) {
+    return this.vendorService.generateLabel(req.user.id, orderId, dto);
   }
 }

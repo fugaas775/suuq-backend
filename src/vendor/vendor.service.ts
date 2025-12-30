@@ -31,6 +31,8 @@ import {
 } from '../common/utils/digital.util';
 import { Logger } from '@nestjs/common';
 import { CurrencyService } from '../common/services/currency.service';
+import { ShippingService } from '../shipping/shipping.service';
+import { GenerateLabelDto } from './dto/generate-label.dto';
 
 @Injectable()
 export class VendorService {
@@ -50,6 +52,7 @@ export class VendorService {
     private readonly notificationsService: NotificationsService,
     private readonly doSpacesService: DoSpacesService,
     private readonly currencyService: CurrencyService,
+    private readonly shippingService: ShippingService,
   ) {}
 
   private readonly logger = new Logger(VendorService.name);
@@ -2144,5 +2147,55 @@ export class VendorService {
     } catch {
       return full as any;
     }
+  }
+
+  async generateLabel(
+    vendorId: number,
+    orderId: number,
+    dto: GenerateLabelDto,
+  ) {
+    const order = await this.orderRepository.findOne({
+      where: { id: orderId },
+      relations: ['user', 'items', 'items.product', 'items.product.vendor'],
+    });
+    if (!order) throw new NotFoundException('Order not found');
+
+    // Verify vendor owns at least one item in this order
+    const vendorItems = order.items.filter(
+      (i) => i.product.vendor.id === vendorId,
+    );
+    if (vendorItems.length === 0) {
+      throw new ForbiddenException('You do not have items in this order');
+    }
+
+    // Construct addresses (Mock logic for now, assuming vendor address is in profile)
+    const vendor = await this.userRepository.findOne({
+      where: { id: vendorId },
+    });
+    const senderAddress = {
+      name: vendor?.fullName || 'Vendor',
+      street: 'Vendor Address', // TODO: Add address to User entity
+      city: 'Vendor City',
+      country: 'Vendor Country',
+    };
+
+    const recipientAddress = {
+      name: order.shippingAddress.fullName,
+      street: order.shippingAddress.address,
+      city: order.shippingAddress.city,
+      country: order.shippingAddress.country,
+      phone: order.shippingAddress.phoneNumber,
+    };
+
+    // Call Shipping Service
+    return this.shippingService.generateLabel(
+      dto.carrier,
+      senderAddress,
+      recipientAddress,
+      {
+        weight: dto.weight || 1,
+        dimensions: dto.dimensions || '10x10x10',
+      },
+    );
   }
 }
