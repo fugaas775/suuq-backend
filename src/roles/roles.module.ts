@@ -6,7 +6,10 @@ import { RolesController } from './roles.controller';
 import { UsersModule } from '../users/users.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([RoleUpgradeRequest]), forwardRef(() => UsersModule)],
+  imports: [
+    TypeOrmModule.forFeature([RoleUpgradeRequest]),
+    forwardRef(() => UsersModule),
+  ],
   controllers: [RolesController],
   providers: [RolesService],
   exports: [RolesService],

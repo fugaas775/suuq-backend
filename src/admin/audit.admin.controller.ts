@@ -56,9 +56,22 @@ export class AdminAuditController {
       return Number.isNaN(d.getTime()) ? undefined : d;
     };
 
-    const { page, limit, after, actions, actorEmail, actorId, from, to, targetType, targetId } = query;
+    const {
+      page,
+      limit,
+      after,
+      actions,
+      actorEmail,
+      actorId,
+      from,
+      to,
+      targetType,
+      targetId,
+    } = query;
     if (after && page) {
-      throw new BadRequestException('Use either cursor (after) or page-based pagination, not both.');
+      throw new BadRequestException(
+        'Use either cursor (after) or page-based pagination, not both.',
+      );
     }
     if (targetType && !ALLOWED_TARGET_TYPES.has(targetType)) {
       throw new BadRequestException('Invalid targetType');
@@ -93,14 +106,19 @@ export class AdminAuditController {
       return { items: items.map(mapItem), nextCursor };
     }
 
-    const { items, total, perPage, totalPages, page: currentPage } =
-      await this.audit.listAllPaged({
-        page: p,
-        limit: l,
-        filters,
-        targetType: targetType || undefined,
-        targetId: targetIdNum,
-      });
+    const {
+      items,
+      total,
+      perPage,
+      totalPages,
+      page: currentPage,
+    } = await this.audit.listAllPaged({
+      page: p,
+      limit: l,
+      filters,
+      targetType: targetType || undefined,
+      targetId: targetIdNum,
+    });
 
     return {
       items: items.map(mapItem),

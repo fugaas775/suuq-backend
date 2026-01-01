@@ -1,6 +1,8 @@
 import { MigrationInterface, QueryRunner } from 'typeorm';
 
-export class AddUniqueIndexToDeviceToken1766016000000 implements MigrationInterface {
+export class AddUniqueIndexToDeviceToken1766016000000
+  implements MigrationInterface
+{
   name = 'AddUniqueIndexToDeviceToken1766016000000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {

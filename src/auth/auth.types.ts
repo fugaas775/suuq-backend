@@ -6,7 +6,8 @@ export type AppRole =
   | 'VENDOR'
   | 'ADMIN'
   | 'DELIVERER'
-  | 'SUPER_ADMIN';
+  | 'SUPER_ADMIN'
+  | 'GUEST';
 
 // What is stored in the JWT token (decoded from access_token)
 export interface JwtPayload {

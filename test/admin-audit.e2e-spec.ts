@@ -101,7 +101,9 @@ describe('AdminAuditController (e2e)', () => {
 
     expect(Array.isArray(res.body.items)).toBe(true);
     expect(res.body.items.length).toBe(1);
-    expect(res.body.nextCursor === null || typeof res.body.nextCursor === 'string').toBe(true);
+    expect(
+      res.body.nextCursor === null || typeof res.body.nextCursor === 'string',
+    ).toBe(true);
     expect(res.body.items[0].id).toBe(base.id);
   });
 });

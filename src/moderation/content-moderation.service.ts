@@ -1,5 +1,9 @@
 import { Injectable, BadRequestException, Logger } from '@nestjs/common';
-import { RekognitionClient, DetectModerationLabelsCommand, ModerationLabel } from '@aws-sdk/client-rekognition';
+import {
+  RekognitionClient,
+  DetectModerationLabelsCommand,
+  ModerationLabel,
+} from '@aws-sdk/client-rekognition';
 
 type Provider = 'none' | 'rekognition';
 
@@ -37,7 +41,10 @@ export class ContentModerationService {
         );
         this.provider = 'none';
       } else {
-        this.rekognition = new RekognitionClient({ region, credentials: { accessKeyId, secretAccessKey } });
+        this.rekognition = new RekognitionClient({
+          region,
+          credentials: { accessKeyId, secretAccessKey },
+        });
       }
     }
   }
@@ -67,12 +74,16 @@ export class ContentModerationService {
   }
 
   /** Decide whether labels indicate explicit/sexual content (config honors suggestive toggle). */
-  isExplicit(labels: Pick<ModerationLabel, 'Name' | 'ParentName' | 'Confidence'>[]): {
+  isExplicit(
+    labels: Pick<ModerationLabel, 'Name' | 'ParentName' | 'Confidence'>[],
+  ): {
     explicit: boolean;
     matched: string[];
   } {
     const minConfidence = Number(process.env.MODERATION_MIN_CONFIDENCE || 80);
-    const allowSuggestive = /^true$/i.test(process.env.MODERATION_ALLOW_SUGGESTIVE || 'false');
+    const allowSuggestive = /^true$/i.test(
+      process.env.MODERATION_ALLOW_SUGGESTIVE || 'false',
+    );
     const blockLabels = new Set(ContentModerationService.DEFAULT_BLOCK_LABELS);
     if (allowSuggestive) {
       blockLabels.delete('Suggestive');
@@ -86,7 +97,8 @@ export class ContentModerationService {
       const parent = (l.ParentName || '').toString();
       const conf = Number(l.Confidence || 0);
       if (conf < minConfidence) continue;
-      if (blockLabels.has(name) || blockLabels.has(parent)) matched.push(name || parent);
+      if (blockLabels.has(name) || blockLabels.has(parent))
+        matched.push(name || parent);
     }
     return { explicit: matched.length > 0, matched };
   }
@@ -94,7 +106,9 @@ export class ContentModerationService {
   private async checkWithRekognition(buffer: Buffer): Promise<void> {
     if (!this.rekognition) return; // defensive
     const minConfidence = Number(process.env.MODERATION_MIN_CONFIDENCE || 80);
-    const allowSuggestive = /^true$/i.test(process.env.MODERATION_ALLOW_SUGGESTIVE || 'false');
+    const allowSuggestive = /^true$/i.test(
+      process.env.MODERATION_ALLOW_SUGGESTIVE || 'false',
+    );
 
     const res = await this.rekognition.send(
       new DetectModerationLabelsCommand({
@@ -119,8 +133,12 @@ export class ContentModerationService {
       const conf = Number(l.Confidence || 0);
       if (conf < minConfidence) continue;
       if (blockLabels.has(name) || blockLabels.has(parent)) {
-        this.logger.warn(`Blocked image by moderation: ${name} (${conf.toFixed(1)}%)`);
-        throw new BadRequestException('The uploaded image violates our content policy.');
+        this.logger.warn(
+          `Blocked image by moderation: ${name} (${conf.toFixed(1)}%)`,
+        );
+        throw new BadRequestException(
+          'The uploaded image violates our content policy.',
+        );
       }
     }
   }

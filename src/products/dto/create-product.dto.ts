@@ -26,7 +26,10 @@ class DigitalLicenseDto {
 
 class DigitalDownloadDto {
   @IsString()
-  @ApiPropertyOptional({ description: 'Object storage key (no host)', example: 'uploads/12345_file.pdf' })
+  @ApiPropertyOptional({
+    description: 'Object storage key (no host)',
+    example: 'uploads/12345_file.pdf',
+  })
   key: string; // object key only
   @IsOptional()
   @IsString()
@@ -137,8 +140,8 @@ export class CreateProductDto {
   manage_stock?: boolean;
 
   @IsOptional()
-  @IsIn(['publish', 'draft', 'pending'])
-  status?: 'publish' | 'draft' | 'pending';
+  @IsIn(['publish', 'draft', 'pending', 'pending_approval', 'rejected'])
+  status?: 'publish' | 'draft' | 'pending' | 'pending_approval' | 'rejected';
 
   // Property vertical: 'sale' | 'rent'
   @IsOptional()
@@ -179,12 +182,26 @@ export class CreateProductDto {
   // Object storage key for digital products (alias to attributes.downloadKey)
   @IsOptional()
   @IsString()
-  @ApiPropertyOptional({ description: 'Object storage key for digital products; mirrors attributes.downloadKey', example: 'files/books/ebook.pdf' })
+  @ApiPropertyOptional({
+    description:
+      'Object storage key for digital products; mirrors attributes.downloadKey',
+    example: 'files/books/ebook.pdf',
+  })
   downloadKey?: string;
 
   // Free-form attributes bag for extensibility (e.g., videoUrl)
   @IsOptional()
   // Note: kept untyped here for flexibility; validate specific keys server-side if needed
-  @ApiPropertyOptional({ description: 'Arbitrary attributes bag; may contain canonical digital structure under digital', example: { digital: { type: 'digital', isFree: true, download: { key: 'files/book.pdf' } } } })
+  @ApiPropertyOptional({
+    description:
+      'Arbitrary attributes bag; may contain canonical digital structure under digital',
+    example: {
+      digital: {
+        type: 'digital',
+        isFree: true,
+        download: { key: 'files/book.pdf' },
+      },
+    },
+  })
   attributes?: Record<string, any> & { digital?: DigitalAttributesDto };
 }

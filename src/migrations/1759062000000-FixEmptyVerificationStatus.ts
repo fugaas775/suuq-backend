@@ -1,4 +1,4 @@
-import { MigrationInterface, QueryRunner } from "typeorm";
+import { MigrationInterface, QueryRunner } from 'typeorm';
 
 /**
  * Data hygiene migration: ensure user.verificationStatus never stores empty string.
@@ -6,8 +6,10 @@ import { MigrationInterface, QueryRunner } from "typeorm";
  *
  * Safe on all envs: if no such rows exist, it becomes a no-op.
  */
-export class FixEmptyVerificationStatus1759062000000 implements MigrationInterface {
-  name = 'FixEmptyVerificationStatus1759062000000'
+export class FixEmptyVerificationStatus1759062000000
+  implements MigrationInterface
+{
+  name = 'FixEmptyVerificationStatus1759062000000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
     // Some legacy rows may have an empty string in enum column due to prior schema inconsistencies.

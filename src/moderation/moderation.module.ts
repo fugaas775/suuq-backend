@@ -15,7 +15,7 @@ import { ProductImage } from '../products/entities/product-image.entity';
 @Module({
   imports: [
     ScheduleModule.forRoot(),
-  TypeOrmModule.forFeature([ProductImageModeration, Product, ProductImage]),
+    TypeOrmModule.forFeature([ProductImageModeration, Product, ProductImage]),
     ProductsModule,
     MediaModule,
     UsersModule,

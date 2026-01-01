@@ -1,5 +1,21 @@
-import { Body, Controller, Post, UseGuards, Req, Get, Res, HttpStatus } from '@nestjs/common';
-import { ApiBearerAuth, ApiBody, ApiOkResponse, ApiOperation, ApiTags, ApiNoContentResponse } from '@nestjs/swagger';
+import {
+  Body,
+  Controller,
+  Post,
+  UseGuards,
+  Req,
+  Get,
+  Res,
+  HttpStatus,
+} from '@nestjs/common';
+import {
+  ApiBearerAuth,
+  ApiBody,
+  ApiOkResponse,
+  ApiOperation,
+  ApiTags,
+  ApiNoContentResponse,
+} from '@nestjs/swagger';
 import { Response } from 'express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesService } from './roles.service';
@@ -14,9 +30,15 @@ export class RolesController {
   constructor(private readonly rolesService: RolesService) {}
 
   @Post('upgrade-request')
-  @ApiOperation({ summary: 'Create or return a pending role upgrade request for current user' })
+  @ApiOperation({
+    summary: 'Create or return a pending role upgrade request for current user',
+  })
   @ApiBody({ type: RequestRoleUpgradeDto })
-  @ApiOkResponse({ schema: { properties: { id: { type: 'number' }, status: { type: 'string' } } } })
+  @ApiOkResponse({
+    schema: {
+      properties: { id: { type: 'number' }, status: { type: 'string' } },
+    },
+  })
   async requestUpgrade(@Req() req, @Body() dto: RequestRoleUpgradeDto) {
     const userId = req.user.id as number;
     const result = await this.rolesService.requestUpgrade(userId, dto);
@@ -24,10 +46,15 @@ export class RolesController {
   }
 
   @Get('upgrade-request/me')
-  @ApiOperation({ summary: 'Get the latest role upgrade request for current user' })
+  @ApiOperation({
+    summary: 'Get the latest role upgrade request for current user',
+  })
   @ApiOkResponse({ type: RoleUpgradeStatusDto })
   @ApiNoContentResponse({ description: 'No upgrade request for user' })
-  async myLatest(@Req() req, @Res({ passthrough: true }) res: Response): Promise<RoleUpgradeStatusDto | void> {
+  async myLatest(
+    @Req() req,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<RoleUpgradeStatusDto | void> {
     const userId = req.user.id as number;
     const r = await this.rolesService.getLatestForUser(userId);
     if (!r) {

@@ -17,7 +17,7 @@ describe('Products related (e2e)', () => {
 
     app = moduleFixture.createNestApplication();
     app.setGlobalPrefix('api');
-    const expressApp = app.getHttpAdapter().getInstance() as any;
+    const expressApp = app.getHttpAdapter().getInstance();
     if (expressApp?.set) expressApp.set('etag', false);
     app.useGlobalInterceptors(new EtagInterceptor(60));
     await app.init();
@@ -41,7 +41,9 @@ describe('Products related (e2e)', () => {
 
     expect(Array.isArray(rel.body.items)).toBe(true);
     // Should not include the base product itself
-    const containsBase = (rel.body.items || []).some((p: any) => p?.id === baseId);
+    const containsBase = (rel.body.items || []).some(
+      (p: any) => p?.id === baseId,
+    );
     expect(containsBase).toBe(false);
   });
 
@@ -62,8 +64,10 @@ describe('Products related (e2e)', () => {
     expect(Array.isArray(res1.body.items)).toBe(true);
     if (city) {
       // All items should match the city when filter applied
-      const allMatch = (res1.body.items || []).every((p: any) =>
-        String((p.listingCity || p.listing_city || '')).toLowerCase() === city.toLowerCase(),
+      const allMatch = (res1.body.items || []).every(
+        (p: any) =>
+          String(p.listingCity || p.listing_city || '').toLowerCase() ===
+          city.toLowerCase(),
       );
       // It's possible dataset has sparse cities; only assert when there are items
       if ((res1.body.items || []).length > 0) expect(allMatch).toBe(true);

@@ -1,12 +1,20 @@
 import { MigrationInterface, QueryRunner } from 'typeorm';
 
-export class AddDeletedFieldsToProduct1759105000000 implements MigrationInterface {
-  name = 'AddDeletedFieldsToProduct1759105000000'
+export class AddDeletedFieldsToProduct1759105000000
+  implements MigrationInterface
+{
+  name = 'AddDeletedFieldsToProduct1759105000000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(`ALTER TABLE "product" ADD COLUMN IF NOT EXISTS "deleted_at" TIMESTAMP NULL`);
-    await queryRunner.query(`ALTER TABLE "product" ADD COLUMN IF NOT EXISTS "deleted_by_admin_id" integer NULL`);
-    await queryRunner.query(`ALTER TABLE "product" ADD COLUMN IF NOT EXISTS "deleted_reason" varchar(512) NULL`);
+    await queryRunner.query(
+      `ALTER TABLE "product" ADD COLUMN IF NOT EXISTS "deleted_at" TIMESTAMP NULL`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "product" ADD COLUMN IF NOT EXISTS "deleted_by_admin_id" integer NULL`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "product" ADD COLUMN IF NOT EXISTS "deleted_reason" varchar(512) NULL`,
+    );
     // Optional FK (best-effort). PostgreSQL doesn't support IF NOT EXISTS for ADD CONSTRAINT before v15, so use a DO block.
     try {
       await queryRunner.query(`
@@ -32,10 +40,18 @@ export class AddDeletedFieldsToProduct1759105000000 implements MigrationInterfac
   public async down(queryRunner: QueryRunner): Promise<void> {
     // Drop FK first (best-effort)
     try {
-      await queryRunner.query(`ALTER TABLE "product" DROP CONSTRAINT IF EXISTS "FK_product_deleted_by_admin"`);
+      await queryRunner.query(
+        `ALTER TABLE "product" DROP CONSTRAINT IF EXISTS "FK_product_deleted_by_admin"`,
+      );
     } catch {}
-    await queryRunner.query(`ALTER TABLE "product" DROP COLUMN IF EXISTS "deleted_reason"`);
-    await queryRunner.query(`ALTER TABLE "product" DROP COLUMN IF EXISTS "deleted_by_admin_id"`);
-    await queryRunner.query(`ALTER TABLE "product" DROP COLUMN IF EXISTS "deleted_at"`);
+    await queryRunner.query(
+      `ALTER TABLE "product" DROP COLUMN IF EXISTS "deleted_reason"`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "product" DROP COLUMN IF EXISTS "deleted_by_admin_id"`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "product" DROP COLUMN IF EXISTS "deleted_at"`,
+    );
   }
 }

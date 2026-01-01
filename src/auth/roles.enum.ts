@@ -3,5 +3,6 @@ export enum UserRole {
   ADMIN = 'ADMIN',
   VENDOR = 'VENDOR',
   CUSTOMER = 'CUSTOMER',
+  GUEST = 'GUEST',
   DELIVERER = 'DELIVERER',
 }

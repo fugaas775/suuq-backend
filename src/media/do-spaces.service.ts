@@ -1,3 +1,4 @@
+/* eslint-disable prettier/prettier, @typescript-eslint/no-unnecessary-type-assertion */
 import { Injectable } from '@nestjs/common';
 import type { Readable } from 'stream';
 import {
@@ -201,6 +202,7 @@ export class DoSpacesService {
     ttlSecs = 3600,
     _opts?: { cacheControl?: string; contentDisposition?: string; acl?: 'private' | 'public-read' },
   ): Promise<string> {
+    void _opts; // currently unused; kept for future extensibility
     // Keep signed headers minimal to avoid client mismatches; bucket should allow public reads
     const command = new PutObjectCommand({
       Bucket: this.bucket,

@@ -1,4 +1,9 @@
-import { INestApplication, ValidationPipe, CanActivate, ExecutionContext } from '@nestjs/common';
+import {
+  INestApplication,
+  ValidationPipe,
+  CanActivate,
+  ExecutionContext,
+} from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { AppModule } from '../src/app.module';
 import request from 'supertest';
@@ -20,7 +25,12 @@ class AllowGuard implements CanActivate {
 describe('Favorites E2E', () => {
   let app: INestApplication;
   const token = process.env.TEST_JWT || 'dummy';
-  const headers = { 'X-App-Version': '1.0', 'X-Platform': 'android', Accept: 'application/json', 'Content-Type': 'application/json' } as any;
+  const headers = {
+    'X-App-Version': '1.0',
+    'X-Platform': 'android',
+    Accept: 'application/json',
+    'Content-Type': 'application/json',
+  } as any;
 
   // Simple in-memory FavoritesService mock
   const favState = { ids: [] as number[], version: 0 };

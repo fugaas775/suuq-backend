@@ -1,4 +1,11 @@
-import { IsString, IsNotEmpty, IsOptional, IsInt, Matches, Min } from 'class-validator';
+import {
+  IsString,
+  IsNotEmpty,
+  IsOptional,
+  IsInt,
+  Matches,
+  Min,
+} from 'class-validator';
 import { Transform } from 'class-transformer';
 
 export class CreateCategoryDto {
@@ -35,12 +42,20 @@ export class CreateCategoryDto {
 
   @IsInt()
   @IsOptional()
-  @Transform(({ value }) => (value === null || value === undefined || value === '' ? undefined : Number(value)))
+  @Transform(({ value }) =>
+    value === null || value === undefined || value === ''
+      ? undefined
+      : Number(value),
+  )
   parentId?: number;
 
   @IsInt()
   @IsOptional()
   @Min(0)
-  @Transform(({ value }) => (value === null || value === undefined || value === '' ? undefined : Number(value)))
+  @Transform(({ value }) =>
+    value === null || value === undefined || value === ''
+      ? undefined
+      : Number(value),
+  )
   sortOrder?: number;
 }

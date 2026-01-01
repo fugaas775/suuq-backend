@@ -17,7 +17,7 @@ describe('Products list (e2e)', () => {
 
     app = moduleFixture.createNestApplication();
     app.setGlobalPrefix('api');
-    const expressApp = app.getHttpAdapter().getInstance() as any;
+    const expressApp = app.getHttpAdapter().getInstance();
     if (expressApp?.set) expressApp.set('etag', false);
     app.useGlobalInterceptors(new EtagInterceptor(60));
     await app.init();
@@ -31,7 +31,9 @@ describe('Products list (e2e)', () => {
     const overCap = 9999;
     const longSearch = '  phone    case   '.repeat(20); // > 256 before trim
     const res = await request(app.getHttpServer())
-      .get(`/api/products?per_page=${overCap}&search=${encodeURIComponent(longSearch)}`)
+      .get(
+        `/api/products?per_page=${overCap}&search=${encodeURIComponent(longSearch)}`,
+      )
       .expect(200);
 
     expect(res.body).toBeDefined();

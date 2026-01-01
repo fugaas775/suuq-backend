@@ -22,6 +22,7 @@ import { DistanceFilter } from './strategies/filtering/distance.filter';
 import { BestMatchSort } from './strategies/sorting/best-match.sort';
 import { DistanceSort } from './strategies/sorting/distance.sort';
 import { toProductCard } from '../utils/product-card.util';
+import { CurrencyService } from '../../common/services/currency.service';
 
 @Injectable()
 export class ProductListingService {
@@ -30,10 +31,43 @@ export class ProductListingService {
     private readonly productRepository: Repository<Product>,
     @InjectRepository(Category)
     private readonly categoryRepository: Repository<Category>,
+    private readonly currencyService: CurrencyService,
   ) {}
 
+  private readonly supportedCurrencies = ['ETB', 'SOS', 'KES', 'DJF', 'USD'];
+
+  private normalizeCurrency(value?: string): string {
+    const upper = (value || '').trim().toUpperCase();
+    return this.supportedCurrencies.includes(upper) ? upper : 'ETB';
+  }
+
+  private convertItemsCurrency(items: any[], target: string): any[] {
+    if (!Array.isArray(items) || !items.length) return items || [];
+    return items.map((it) => {
+      const from = it?.currency || 'ETB';
+      try {
+        if (typeof it.price === 'number') {
+          it.price = this.currencyService.convert(it.price, from, target);
+        }
+        if (typeof it.sale_price === 'number') {
+          it.sale_price = this.currencyService.convert(
+            it.sale_price,
+            from,
+            target,
+          );
+        }
+        it.currency = target;
+      } catch {
+        it.currency = from;
+      }
+      return it;
+    });
+  }
+
   async list(dto: ProductListingDto, opts?: { mapCards?: boolean }) {
-    const queryBuilder = new ProductQueryBuilder(this.productRepository.createQueryBuilder('product'));
+    const queryBuilder = new ProductQueryBuilder(
+      this.productRepository.createQueryBuilder('product'),
+    );
     // Grid view default
     if ((dto.view || 'grid') === 'grid') queryBuilder.applyGridView();
 
@@ -70,21 +104,27 @@ export class ProductListingService {
     const sorter = sortMap[sortKey] || new CreatedSort();
     sorter.apply(queryBuilder.query, dto);
 
-  // 3. Pagination happens inside execute
+    // 3. Pagination happens inside execute
 
     // 4. Pagination/Execute (category-first union if requested)
-  let items: Product[] = [];
-  let total = 0;
-  let debugMeta: any = undefined;
+    let items: Product[] = [];
+    let total = 0;
+    let debugMeta: any = undefined;
     if (dto.categoryFirst && (dto.categoryId?.length || dto.categorySlug)) {
-      const paginator = new CategoryFirstPaginator(this.productRepository, this.categoryRepository as any);
-      const strict = (dto.strictCategory ?? (dto.includeDescendants === false)) ? true : false;
+      const paginator = new CategoryFirstPaginator(
+        this.productRepository,
+        this.categoryRepository as any,
+      );
+      const strict =
+        (dto.strictCategory ?? dto.includeDescendants === false) ? true : false;
 
       // Resolve effective category IDs for pagination: include slug and optionally descendants
       const baseIds: number[] = [];
       if (Array.isArray(dto.categoryId)) baseIds.push(...dto.categoryId);
       if (dto.categorySlug) {
-        const cat = await this.categoryRepository.findOne({ where: { slug: dto.categorySlug } });
+        const cat = await this.categoryRepository.findOne({
+          where: { slug: dto.categorySlug },
+        });
         if (cat) baseIds.push(cat.id);
       }
       const idSet = new Set<number>();
@@ -92,7 +132,9 @@ export class ProductListingService {
         if (dto.includeDescendants) {
           const root = await this.categoryRepository.findOne({ where: { id } });
           if (root) {
-            const desc = await (this.categoryRepository as any).findDescendants(root);
+            const desc = await (this.categoryRepository as any).findDescendants(
+              root,
+            );
             for (const d of desc) idSet.add(d.id);
           }
         } else {
@@ -104,8 +146,8 @@ export class ProductListingService {
       const res = await paginator.execute(
         queryBuilder.query,
         effectiveCatIds,
-        dto.page!,
-        dto.perPage!,
+        dto.page,
+        dto.perPage,
         !!dto.geoAppend,
         { strict },
       );
@@ -115,11 +157,15 @@ export class ProductListingService {
 
       // Strict-empty → optional parent fallback
       if (strict && items.length === 0 && dto.strictEmptyFallbackParentId) {
-        const parent = await this.categoryRepository.findOne({ where: { id: dto.strictEmptyFallbackParentId } });
+        const parent = await this.categoryRepository.findOne({
+          where: { id: dto.strictEmptyFallbackParentId },
+        });
         if (parent) {
           const parentIds: number[] = [];
           if (dto.fallbackDescendants !== false) {
-            const desc = await (this.categoryRepository as any).findDescendants(parent);
+            const desc = await (this.categoryRepository as any).findDescendants(
+              parent,
+            );
             for (const d of desc) parentIds.push(d.id);
           } else {
             parentIds.push(parent.id);
@@ -127,24 +173,33 @@ export class ProductListingService {
           const res2 = await paginator.execute(
             queryBuilder.query,
             parentIds,
-            dto.page!,
-            dto.perPage!,
+            dto.page,
+            dto.perPage,
             true, // allow geoAppend on fallback
             { strict: false },
           );
           items = res2.items;
           total = res2.total;
-          debugMeta = { ...(res?.meta || {}), fallbackToParent: parent.id, fallbackMeta: res2.meta };
+          debugMeta = {
+            ...(res?.meta || {}),
+            fallbackToParent: parent.id,
+            fallbackMeta: res2.meta,
+          };
         }
       }
     } else {
-      const res = await queryBuilder.execute(dto.page!, dto.perPage!);
+      const res = await queryBuilder.execute(dto.page, dto.perPage);
       items = res.items;
       total = res.total;
     }
 
+    const targetCurrency = this.normalizeCurrency((dto as any).currency);
+    const mappedItems =
+      opts?.mapCards && (dto.view || 'grid') === 'grid'
+        ? (items as any[]).map((p) => toProductCard(p))
+        : items;
     const payload = {
-      items: opts?.mapCards && (dto.view || 'grid') === 'grid' ? (items as any[]).map((p) => toProductCard(p as any)) : items, //
+      items: this.convertItemsCurrency(mappedItems as any[], targetCurrency),
       total,
       page: dto.page,
       perPage: dto.perPage,

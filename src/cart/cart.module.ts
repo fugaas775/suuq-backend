@@ -5,11 +5,13 @@ import { CartService } from './cart.service';
 import { CartController } from './cart.controller';
 import { Product } from '../products/entities/product.entity';
 import { ProductsModule } from '../products/products.module';
+import { CurrencyModule } from '../common/services/currency.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([Cart, CartItem, Product]),
     ProductsModule,
+    CurrencyModule,
   ],
   providers: [CartService],
   controllers: [CartController],

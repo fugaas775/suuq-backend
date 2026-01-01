@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, prettier/prettier */
 import * as dotenv from 'dotenv';
 import { DataSource, DataSourceOptions } from 'typeorm';
 
@@ -9,7 +10,6 @@ const rawUrl = process.env.DATABASE_URL;
 const isPostgresUrl = rawUrl && /^postgres(ql)?:\/\//i.test(rawUrl);
 if (rawUrl && !isPostgresUrl) {
   // Warn early; continue with discrete variables instead of invalid URL
-  // eslint-disable-next-line no-console
   console.warn(
     `Ignoring DATABASE_URL with non-postgres scheme: ${rawUrl.split('?')[0]}. Falling back to discrete DB_* env vars.`,
   );

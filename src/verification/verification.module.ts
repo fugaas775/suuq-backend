@@ -13,11 +13,26 @@ import { EmailModule } from '../email/email.module';
 
 @Module({
   imports: [UsersModule, MediaModule, RedisModule, EmailModule],
-  controllers: (process.env.EMAIL_VERIFICATION_ENABLED === 'true')
-    ? [VerificationController, PhoneVerificationController, EmailVerificationController]
-    : [VerificationController, PhoneVerificationController],
-  providers: (process.env.EMAIL_VERIFICATION_ENABLED === 'true')
-    ? [ETradeVerificationService, VerificationService, PhoneVerificationService, EmailVerificationService]
-    : [ETradeVerificationService, VerificationService, PhoneVerificationService],
+  controllers:
+    process.env.EMAIL_VERIFICATION_ENABLED === 'true'
+      ? [
+          VerificationController,
+          PhoneVerificationController,
+          EmailVerificationController,
+        ]
+      : [VerificationController, PhoneVerificationController],
+  providers:
+    process.env.EMAIL_VERIFICATION_ENABLED === 'true'
+      ? [
+          ETradeVerificationService,
+          VerificationService,
+          PhoneVerificationService,
+          EmailVerificationService,
+        ]
+      : [
+          ETradeVerificationService,
+          VerificationService,
+          PhoneVerificationService,
+        ],
 })
 export class VerificationModule {}

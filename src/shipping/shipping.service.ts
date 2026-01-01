@@ -59,18 +59,12 @@ export class ShippingService {
     trackingNumber: string,
   ): string | null {
     switch (carrier as any) {
-      case ShippingCarrier.DHL:
-      case 'DHL':
-        return `https://www.dhl.com/en/express/tracking.html?AWB=${trackingNumber}`;
-      case ShippingCarrier.FEDEX:
-      case 'FedEx':
-        return `https://www.fedex.com/fedextrack/?trknbr=${trackingNumber}`;
-      case ShippingCarrier.UPS:
-      case 'UPS':
-        return `https://www.ups.com/track?tracknum=${trackingNumber}`;
-      case ShippingCarrier.USPS:
-      case 'USPS':
-        return `https://tools.usps.com/go/TrackConfirmAction?tLabels=${trackingNumber}`;
+      case ShippingCarrier.S_CARRIER:
+      case 'S Carrier':
+        return `${process.env.SITE_URL}/tracking?id=${trackingNumber}`;
+      case ShippingCarrier.DELIVERER:
+      case 'Deliverer':
+        return `${process.env.SITE_URL}/delivery?id=${trackingNumber}`;
       default:
         return null;
     }

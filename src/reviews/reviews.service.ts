@@ -95,9 +95,13 @@ export class ReviewsService {
   /**
    * Bulk summary for reviews: returns { [productId]: { count: number, average: number|null } }
    */
-  async summaryBulk(ids: number[]): Promise<Record<string, { count: number; average: number | null }>> {
+  async summaryBulk(
+    ids: number[],
+  ): Promise<Record<string, { count: number; average: number | null }>> {
     const out: Record<string, { count: number; average: number | null }> = {};
-    const list = Array.from(new Set((ids || []).filter((n) => Number.isFinite(n)))) as number[];
+    const list = Array.from(
+      new Set((ids || []).filter((n) => Number.isFinite(n))),
+    );
     if (!list.length) return out;
     const qb = this.reviewRepository
       .createQueryBuilder('r')
@@ -106,7 +110,11 @@ export class ReviewsService {
       .addSelect('AVG(r.rating)', 'avg')
       .where('r.productId IN (:...ids)', { ids: list })
       .groupBy('r.productId');
-    const rows = await qb.getRawMany<{ productId: number; count: string; avg: string | null }>();
+    const rows = await qb.getRawMany<{
+      productId: number;
+      count: string;
+      avg: string | null;
+    }>();
     for (const r of rows) {
       const pid = Number(r.productId);
       const count = parseInt(r.count, 10) || 0;
@@ -114,7 +122,8 @@ export class ReviewsService {
       out[String(pid)] = { count, average: avg };
     }
     // Ensure all requested IDs are represented
-    for (const id of list) if (!out[String(id)]) out[String(id)] = { count: 0, average: null };
+    for (const id of list)
+      if (!out[String(id)]) out[String(id)] = { count: 0, average: null };
     return out;
   }
 }

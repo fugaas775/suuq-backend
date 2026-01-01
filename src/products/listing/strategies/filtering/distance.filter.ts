@@ -9,7 +9,9 @@ export class DistanceFilter implements IFilterStrategy {
   apply(q: SelectQueryBuilder<Product>, dto: ProductListingDto) {
     const lat = Number(dto.lat);
     const lng = Number(dto.lng);
-    const radius = Number.isFinite(Number(dto.radiusKm)) ? Math.max(0, Number(dto.radiusKm)) : undefined;
+    const radius = Number.isFinite(Number(dto.radiusKm))
+      ? Math.max(0, Number(dto.radiusKm))
+      : undefined;
     const has = Number.isFinite(lat) && Number.isFinite(lng);
     if (!has) return q;
     const dExpr = `CASE WHEN vendor."locationLat" IS NULL OR vendor."locationLng" IS NULL THEN NULL ELSE (

@@ -8,7 +8,8 @@ export class PrometheusController {
   @Get('/metrics')
   @Header('Content-Type', 'text/plain; version=0.0.4')
   getMetrics(): string {
-    const enabled = (process.env.METRICS_ENABLED || 'false').toLowerCase() === 'true';
+    const enabled =
+      (process.env.METRICS_ENABLED || 'false').toLowerCase() === 'true';
     if (!enabled) {
       throw new NotFoundException();
     }

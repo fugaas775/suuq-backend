@@ -21,21 +21,32 @@ export class EtagInterceptor implements NestInterceptor {
       map((data) => {
         try {
           // If response already sent/ended by controller, don't touch headers
-          const resAny: any = res as any;
-          if (resAny?.headersSent || resAny?.writableEnded || resAny?.writableFinished) {
+          const resAny: any = res;
+          if (
+            resAny?.headersSent ||
+            resAny?.writableEnded ||
+            resAny?.writableFinished
+          ) {
             return data;
           }
 
           // Apply only for idempotent reads and successful responses
           const method = String(req?.method || '').toUpperCase();
-          const statusCode: number = typeof res.statusCode === 'number' ? res.statusCode : 200;
-          if ((method !== 'GET' && method !== 'HEAD') || statusCode < 200 || statusCode >= 300) {
+          const statusCode: number =
+            typeof res.statusCode === 'number' ? res.statusCode : 200;
+          if (
+            (method !== 'GET' && method !== 'HEAD') ||
+            statusCode < 200 ||
+            statusCode >= 300
+          ) {
             return data;
           }
 
           // Bypass ETag/Cache for curation endpoints entirely
           const originalUrl: string = (
-            req?.originalUrl || req?.url || ''
+            req?.originalUrl ||
+            req?.url ||
+            ''
           ).toString();
           // For some endpoints (like v1/products) we avoid 304 because of client concurrency issues
           // Consider both with and without a global prefix (e.g., /api)
@@ -64,7 +75,8 @@ export class EtagInterceptor implements NestInterceptor {
           }
 
           const body = JSON.stringify(data ?? '');
-          const etag = 'W/"' + createHash('sha1').update(body).digest('hex') + '"';
+          const etag =
+            'W/"' + createHash('sha1').update(body).digest('hex') + '"';
           const ifNoneMatch = req.headers['if-none-match'];
 
           // Prepare common caching headers
@@ -83,7 +95,10 @@ export class EtagInterceptor implements NestInterceptor {
               res.setHeader('Last-Modified', new Date().toUTCString());
             }
             if (!res.getHeader('Cache-Control')) {
-              res.setHeader('Cache-Control', `public, max-age=${this.cacheSeconds}`);
+              res.setHeader(
+                'Cache-Control',
+                `public, max-age=${this.cacheSeconds}`,
+              );
             }
           };
 

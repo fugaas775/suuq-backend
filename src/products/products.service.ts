@@ -1,3 +1,4 @@
+/* eslint-disable no-empty, @typescript-eslint/no-unused-vars, prettier/prettier */
 import {
   Injectable,
   NotFoundException,
@@ -30,6 +31,7 @@ import { AuditService } from '../audit/audit.service';
 import { Review } from '../reviews/entities/review.entity';
 import { FavoritesService } from '../favorites/favorites.service';
 import { qbCacheIfEnabled } from '../common/utils/db-cache.util';
+import { CurrencyService } from '../common/services/currency.service';
 
 @Injectable()
 export class ProductsService {
@@ -55,10 +57,68 @@ export class ProductsService {
     private readonly audit: AuditService,
     private readonly geo: GeoResolverService,
     private readonly favorites: FavoritesService,
+    private readonly currencyService: CurrencyService,
   ) {}
 
   // Simple in-memory cache for Property & Real Estate subtree ids
   private propertyIdsCache: { ids: number[]; at: number } | null = null;
+
+  private readonly supportedCurrencies = ['ETB', 'SOS', 'KES', 'DJF', 'USD'];
+
+  private normalizeCurrencyParam(value?: string | null): string {
+    const upper = (value || '').trim().toUpperCase();
+    return this.supportedCurrencies.includes(upper) ? upper : 'ETB';
+  }
+
+  private convertAmount(
+    amount: number | null | undefined,
+    fromCurrency: string,
+    toCurrency: string,
+  ): number | null {
+    if (amount === null || amount === undefined) return null;
+    try {
+      return this.currencyService.convert(amount, fromCurrency, toCurrency);
+    } catch {
+      return amount;
+    }
+  }
+
+  private applyCurrency(product: Product, targetCurrency: string): Product {
+    if (!product) return product;
+    const from = product.currency || 'ETB';
+    const price = this.convertAmount(product.price, from, targetCurrency);
+    const sale = this.convertAmount(product.sale_price as any, from, targetCurrency);
+    const rate = this.currencyService.getRate(from, targetCurrency);
+    const roundedRate = typeof rate === 'number' ? Math.round(rate * 1_000_000) / 1_000_000 : undefined;
+
+    (product as any).price = price ?? product.price;
+    (product as any).sale_price = sale ?? product.sale_price;
+    (product as any).currency = targetCurrency;
+
+    // Provide transparent conversion metadata without breaking existing clients
+    (product as any).price_display = {
+      amount: price ?? product.price ?? null,
+      currency: targetCurrency,
+      convertedFrom: from,
+      rate: roundedRate,
+    };
+
+    if (sale !== null && sale !== undefined) {
+      (product as any).sale_price_display = {
+        amount: sale,
+        currency: targetCurrency,
+        convertedFrom: from,
+        rate: roundedRate,
+      };
+    }
+
+    return product;
+  }
+
+  private applyCurrencyList(items: Product[], targetCurrency: string): Product[] {
+    if (!Array.isArray(items) || !items.length) return items || [];
+    return items.map((p) => this.applyCurrency(p, targetCurrency));
+  }
 
   private async getPropertySubtreeIds(): Promise<number[]> {
     const now = Date.now();
@@ -423,7 +483,8 @@ export class ProductsService {
     return this.findOne(savedProduct.id);
   }
 
-  async findOne(id: number): Promise<Product> {
+  async findOne(id: number, currency?: string): Promise<Product> {
+    const targetCurrency = this.normalizeCurrencyParam(currency);
     const product = await this.productRepo.findOne({
       where: { id },
       relations: ['vendor', 'category', 'tags', 'images'],
@@ -608,9 +669,10 @@ export class ProductsService {
           } catch {}
         } catch {}
       } catch {}
+      this.applyCurrency(out, targetCurrency);
       return out;
     } catch {
-      return product;
+      return this.applyCurrency(product, targetCurrency);
     }
   }
 
@@ -736,8 +798,9 @@ export class ProductsService {
   // - Return lean normalized media for client usage
   async findRelatedProducts(
     productId: number,
-    opts?: { limit?: number; city?: string | null },
+    opts?: { limit?: number; city?: string | null; currency?: string | null },
   ): Promise<any[]> {
+    const targetCurrency = this.normalizeCurrencyParam(opts?.currency);
     const base = await this.productRepo.findOne({
       where: { id: productId },
       relations: ['category', 'vendor', 'tags'],
@@ -812,8 +875,11 @@ export class ProductsService {
     ]);
 
     const rows = await qb.getMany();
-    // Normalize media fields for client compatibility
-    return rows.map((p) => normalizeProductMedia(p as any));
+    // Normalize media fields for client compatibility and convert pricing
+    return this.applyCurrencyList(
+      rows.map((p) => normalizeProductMedia(p as any)) as any,
+      targetCurrency,
+    );
   }
 
   async incrementViewCount(id: number): Promise<void> {
@@ -1044,6 +1110,7 @@ export class ProductsService {
     currentPage: number;
     totalPages: number;
   }> {
+    const targetCurrency = this.normalizeCurrencyParam((filters as any).currency);
     const {
       page = 1,
       perPage: rawPerPage = 20,
@@ -1455,7 +1522,7 @@ export class ProductsService {
         } catch {}
       }
       return {
-        items: items || [],
+        items: this.applyCurrencyList(items || [], targetCurrency),
         total: total || 0,
         perPage,
         currentPage: page,
@@ -1477,7 +1544,7 @@ export class ProductsService {
     }
 
     return {
-      items: items || [],
+      items: this.applyCurrencyList(items || [], targetCurrency),
       total: total || 0,
       perPage,
       currentPage: page,
@@ -1493,6 +1560,7 @@ export class ProductsService {
     global: Product[];
     meta: any;
   }> {
+    const targetCurrency = this.normalizeCurrencyParam((q as any).currency);
     const page = Number((q as any).page || 1) || 1;
     const perBase = Math.min(
       Math.max(Number(q.perPage || q.limit) || 12, 1),
@@ -1506,6 +1574,7 @@ export class ProductsService {
     const baseFilters: ProductFilterDto = {
       ...q,
       perPage: perBase,
+      currency: targetCurrency,
     } as any;
     const baseRes = await this.findFiltered(baseFilters);
     const base = baseRes.items;
@@ -1544,6 +1613,7 @@ export class ProductsService {
       for (const sib of ordered) {
         const res = await this.findFiltered({
           ...q,
+          currency: targetCurrency,
           categoryId: [sib.id],
           includeDescendants: true,
           perPage: perSibling,
@@ -1560,6 +1630,7 @@ export class ProductsService {
       const rootId = parentId || baseCatId;
       const res = await this.findFiltered({
         ...q,
+        currency: targetCurrency,
         categoryId: [rootId],
         includeDescendants: true,
         perPage: parentLimit,
@@ -1574,6 +1645,7 @@ export class ProductsService {
       const { categoryId, categorySlug, ...rest } = q as any;
       const res = await this.findFiltered({
         ...rest,
+        currency: targetCurrency,
         perPage: globalLimit,
         page,
         categoryFirst: false,
@@ -2038,6 +2110,150 @@ export class ProductsService {
     // Finally remove product (images will cascade via FK onDelete: CASCADE, join table tags will cascade via FKs)
     await this.productRepo.delete(id);
     return { deleted: true };
+  }
+
+  /** Admin moderation helpers. */
+  async listPendingApproval(): Promise<any[]> {
+    const rows = await this.productRepo.find({
+      where: { status: 'pending_approval' as any, deletedAt: IsNull() },
+      relations: ['vendor', 'category', 'tags', 'images'],
+      order: { createdAt: 'DESC' },
+    });
+    return rows.map((p) => normalizeProductMedia(p as any));
+  }
+
+  async listForAdmin(opts: {
+    status?: string;
+    page?: number;
+    perPage?: number;
+    per_page?: number;
+    q?: string;
+  }): Promise<{ items: Product[]; total: number; page: number; perPage: number }> {
+    const page = Math.max(1, Number(opts?.page || 1));
+    const perPage = Math.min(Math.max(Number(opts?.perPage || opts?.per_page || 20), 1), 200);
+    const status = (opts?.status || 'pending_approval').trim();
+    const q = (opts?.q || '').trim();
+
+    const qb = this.productRepo
+      .createQueryBuilder('p')
+      .leftJoinAndSelect('p.vendor', 'vendor')
+      .leftJoinAndSelect('p.category', 'category')
+      .leftJoinAndSelect('p.tags', 'tags')
+      .leftJoinAndSelect('p.images', 'images')
+      .where('p.deletedAt IS NULL');
+
+    if (status) {
+      qb.andWhere('p.status = :status', { status });
+    }
+
+    if (q) {
+      qb.andWhere('(p.name ILIKE :q OR p.description ILIKE :q)', { q: `%${q}%` });
+    }
+
+    qb.orderBy('p.createdAt', 'DESC');
+    qb.skip((page - 1) * perPage).take(perPage);
+
+    const [rows, total] = await qb.getManyAndCount();
+    return {
+      items: rows.map((p) => normalizeProductMedia(p as any)),
+      total,
+      page,
+      perPage,
+    };
+  }
+
+  async approveProduct(
+    id: number,
+    opts: { actorId?: number | null } = {},
+  ): Promise<Product> {
+    const product = await this.productRepo.findOne({ where: { id } });
+    if (!product) throw new NotFoundException('Product not found');
+    const previousStatus = (product as any).status || null;
+    (product as any).status = 'publish';
+    product.isBlocked = false;
+    await this.productRepo.save(product);
+    await this.audit.log({
+      actorId: opts.actorId ?? null,
+      action: 'ADMIN_PRODUCT_APPROVE',
+      targetType: 'PRODUCT',
+      targetId: id,
+      meta: { previousStatus, nextStatus: 'publish' },
+    });
+    return this.findOne(id);
+  }
+
+  async bulkApprove(
+    ids: number[],
+    opts: { actorId?: number | null } = {},
+  ): Promise<{ updatedIds: number[]; notFoundIds: number[] }> {
+    const uniqueIds = Array.from(new Set((ids || []).map((n) => Number(n)).filter((n) => Number.isFinite(n) && n > 0)));
+    if (!uniqueIds.length) return { updatedIds: [], notFoundIds: [] };
+    const products = await this.productRepo.find({ where: { id: In(uniqueIds) } });
+    const foundIds = products.map((p) => p.id);
+    const notFoundIds = uniqueIds.filter((id) => !foundIds.includes(id));
+    for (const p of products) {
+      const previousStatus = (p as any).status || null;
+      (p as any).status = 'publish';
+      p.isBlocked = false;
+      await this.audit.log({
+        actorId: opts.actorId ?? null,
+        action: 'ADMIN_PRODUCT_APPROVE',
+        targetType: 'PRODUCT',
+        targetId: p.id,
+        meta: { previousStatus, nextStatus: 'publish', bulk: true },
+      });
+    }
+    if (products.length) await this.productRepo.save(products);
+    return { updatedIds: foundIds, notFoundIds };
+  }
+
+  async rejectProduct(
+    id: number,
+    opts: { actorId?: number | null; toStatus?: 'rejected' | 'draft'; reason?: string | null } = {},
+  ): Promise<Product> {
+    const product = await this.productRepo.findOne({ where: { id } });
+    if (!product) throw new NotFoundException('Product not found');
+    const nextStatus = opts.toStatus === 'draft' ? 'draft' : 'rejected';
+    const previousStatus = (product as any).status || null;
+    (product as any).status = nextStatus as any;
+    product.isBlocked = nextStatus === 'rejected' ? true : product.isBlocked;
+    await this.productRepo.save(product);
+    await this.audit.log({
+      actorId: opts.actorId ?? null,
+      action: 'ADMIN_PRODUCT_REJECT',
+      targetType: 'PRODUCT',
+      targetId: id,
+      reason: opts.reason ?? null,
+      meta: { previousStatus, nextStatus },
+    });
+    return this.findOne(id);
+  }
+
+  async bulkReject(
+    ids: number[],
+    opts: { actorId?: number | null; toStatus?: 'rejected' | 'draft'; reason?: string | null } = {},
+  ): Promise<{ updatedIds: number[]; notFoundIds: number[] }> {
+    const uniqueIds = Array.from(new Set((ids || []).map((n) => Number(n)).filter((n) => Number.isFinite(n) && n > 0)));
+    if (!uniqueIds.length) return { updatedIds: [], notFoundIds: [] };
+    const products = await this.productRepo.find({ where: { id: In(uniqueIds) } });
+    const foundIds = products.map((p) => p.id);
+    const notFoundIds = uniqueIds.filter((id) => !foundIds.includes(id));
+    const nextStatus = opts.toStatus === 'draft' ? 'draft' : 'rejected';
+    for (const p of products) {
+      const previousStatus = (p as any).status || null;
+      (p as any).status = nextStatus as any;
+      p.isBlocked = nextStatus === 'rejected' ? true : p.isBlocked;
+      await this.audit.log({
+        actorId: opts.actorId ?? null,
+        action: 'ADMIN_PRODUCT_REJECT',
+        targetType: 'PRODUCT',
+        targetId: p.id,
+        reason: opts.reason ?? null,
+        meta: { previousStatus, nextStatus, bulk: true },
+      });
+    }
+    if (products.length) await this.productRepo.save(products);
+    return { updatedIds: foundIds, notFoundIds };
   }
 
   /** Admin soft delete: hide product from public while retaining data. Idempotent. */

@@ -32,7 +32,10 @@ describe('VendorService', () => {
         return null;
       }
     }),
-    buildPublicUrl: j.fn((key: string) => `https://test-bucket.test-region.digitaloceanspaces.com/${key}`),
+    buildPublicUrl: j.fn(
+      (key: string) =>
+        `https://test-bucket.test-region.digitaloceanspaces.com/${key}`,
+    ),
     getSignedUrl: j.fn(),
   };
 
@@ -49,11 +52,12 @@ describe('VendorService', () => {
       distinct: j.fn().mockReturnThis(),
       getManyAndCount: j
         .fn()
-        .mockResolvedValue(
-          [[result].flat().filter(Boolean), ([result].flat().filter(Boolean)).length] as any,
-        ),
+        .mockResolvedValue([
+          [result].flat().filter(Boolean),
+          [result].flat().filter(Boolean).length,
+        ] as any),
       getMany: j.fn().mockResolvedValue([result].flat().filter(Boolean) as any),
-      getOne: j.fn().mockResolvedValue(result as any),
+      getOne: j.fn().mockResolvedValue(result),
       select: j.fn().mockReturnThis(),
       addSelect: j.fn().mockReturnThis(),
       groupBy: j.fn().mockReturnThis(),
@@ -112,7 +116,10 @@ describe('VendorService', () => {
         { provide: getRepositoryToken(Product), useValue: productRepoMock },
         { provide: getRepositoryToken(Order), useValue: orderRepoMock },
         { provide: getRepositoryToken(OrderItem), useValue: orderItemRepoMock },
-        { provide: getRepositoryToken(ProductImage), useValue: productImageRepoMock },
+        {
+          provide: getRepositoryToken(ProductImage),
+          useValue: productImageRepoMock,
+        },
         { provide: getRepositoryToken(Tag), useValue: tagRepoMock },
         { provide: NotificationsService, useValue: notificationsMock },
         { provide: DoSpacesService, useValue: doSpacesMock },
@@ -148,9 +155,7 @@ describe('VendorService', () => {
       },
     };
 
-    productRepoMock.createQueryBuilder = j.fn(() =>
-      makeQb(mockProduct),
-    );
+    productRepoMock.createQueryBuilder = j.fn(() => makeQb(mockProduct));
 
     const result: any = await service.getMyProduct(userId, productId);
 
@@ -161,7 +166,9 @@ describe('VendorService', () => {
     const attrs = result.attributes as Record<string, any>;
     // Alias backfills
     expect(typeof attrs.downloadUrl).toBe('string');
-    expect(attrs.downloadUrl).toMatch(/https:\/\/test-bucket\.test-region\.digitaloceanspaces\.com\/ebooks\/awesome-book\.pdf/);
+    expect(attrs.downloadUrl).toMatch(
+      /https:\/\/test-bucket\.test-region\.digitaloceanspaces\.com\/ebooks\/awesome-book\.pdf/,
+    );
     expect(attrs.downloadKey).toBe('ebooks/awesome-book.pdf');
     expect(attrs.format).toBe('PDF');
     expect(attrs.fileSizeMB).toBeCloseTo(7.14, 2);
@@ -176,7 +183,8 @@ describe('VendorService', () => {
           type: 'digital',
           download: {
             key: 'docs/book.pdf',
-            publicUrl: 'https://bucket.region.digitaloceanspaces.com/docs/book.pdf',
+            publicUrl:
+              'https://bucket.region.digitaloceanspaces.com/docs/book.pdf',
             size: 5 * 1024 * 1024,
             contentType: 'application/pdf',
             filename: 'book.pdf',
@@ -186,9 +194,7 @@ describe('VendorService', () => {
       },
     };
     productRepoMock.createQueryBuilder = j.fn(() => makeQb(product));
-    const normalized = await service
-      .getMyProduct(1, 99)
-      .catch(() => null);
+    const normalized = await service.getMyProduct(1, 99).catch(() => null);
 
     expect(normalized).toBeDefined();
     expect(normalized.attributes).toBeDefined();
@@ -196,7 +202,9 @@ describe('VendorService', () => {
     const attrs = normalized.attributes as Record<string, any>;
     // New alias backfills
     expect(typeof attrs.downloadUrl).toBe('string');
-    expect(attrs.downloadUrl).toMatch(/https:\/\/bucket\.region\.digitaloceanspaces\.com\/docs\/book\.pdf/);
+    expect(attrs.downloadUrl).toMatch(
+      /https:\/\/bucket\.region\.digitaloceanspaces\.com\/docs\/book\.pdf/,
+    );
     expect(attrs.downloadKey).toBe('docs/book.pdf');
     expect(attrs.format).toBe('PDF');
     expect(attrs.fileSizeMB).toBeCloseTo(5, 2);
@@ -204,7 +212,11 @@ describe('VendorService', () => {
   });
 
   it('createMyProduct saves images inside a transaction', async () => {
-    const user = { id: 1, verified: true, verificationStatus: VerificationStatus.APPROVED } as any;
+    const user = {
+      id: 1,
+      verified: true,
+      verificationStatus: VerificationStatus.APPROVED,
+    } as any;
     userRepoMock.findOneBy.mockResolvedValue(user);
 
     const txImageSave = j.fn(async (imgs: any[]) => imgs);
@@ -275,7 +287,7 @@ describe('VendorService', () => {
         getRepository: (entity: any) => {
           if (entity === Product)
             return {
-              findOne: j.fn().mockResolvedValue(product as any),
+              findOne: j.fn().mockResolvedValue(product),
               save: productSave,
             } as any;
           if (entity === ProductImage)
@@ -285,7 +297,11 @@ describe('VendorService', () => {
               create: (v: any) => v,
             } as any;
           if (entity === Tag)
-            return { find: j.fn().mockResolvedValue([] as any), save: j.fn(), create: (v: any) => v } as any;
+            return {
+              find: j.fn().mockResolvedValue([] as any),
+              save: j.fn(),
+              create: (v: any) => v,
+            } as any;
           if (entity === Category) return { findOne: j.fn() } as any;
           return {} as any;
         },
@@ -321,22 +337,24 @@ describe('VendorService', () => {
     const itemSave = j.fn(async (rows: any) => rows);
     const orderSave = j.fn(async (o: any) => o);
 
-    orderItemRepoMock.manager.transaction.mockImplementation(async (cb: any) => {
-      return cb({
-        getRepository: (entity: any) => {
-          if (entity === OrderItem)
-            return {
-              find: j.fn().mockResolvedValue([item] as any),
-              save: itemSave,
-            } as any;
-          if (entity === Order)
-            return {
-              save: orderSave,
-            } as any;
-          return {} as any;
-        },
-      });
-    });
+    orderItemRepoMock.manager.transaction.mockImplementation(
+      async (cb: any) => {
+        return cb({
+          getRepository: (entity: any) => {
+            if (entity === OrderItem)
+              return {
+                find: j.fn().mockResolvedValue([item] as any),
+                save: itemSave,
+              } as any;
+            if (entity === Order)
+              return {
+                save: orderSave,
+              } as any;
+            return {} as any;
+          },
+        });
+      },
+    );
 
     const res = await service.createShipment(5, 10, [1], {});
     expect(orderItemRepoMock.manager.transaction).toHaveBeenCalled();

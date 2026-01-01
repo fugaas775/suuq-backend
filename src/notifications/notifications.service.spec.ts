@@ -1,4 +1,11 @@
-import { beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import {
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  jest,
+} from '@jest/globals';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { NotificationsService } from './notifications.service';
@@ -20,11 +27,11 @@ const makeRepoMock = () => {
 
   const matchTokens = (criteria: any): string[] => {
     if (!criteria?.token) return [];
-    const t = criteria.token as any;
+    const t = criteria.token;
     if (Array.isArray(t)) return t;
     if (typeof t === 'object') {
-      if ('value' in t) return (t as any).value as string[];
-      if ('_value' in t) return (t as any)._value as string[];
+      if ('value' in t) return t.value as string[];
+      if ('_value' in t) return t._value as string[];
     }
     return [t];
   };
@@ -33,16 +40,18 @@ const makeRepoMock = () => {
     query: jest.fn(async (..._args: any[]) => {
       store.splice(0, store.length);
     }),
-    find: jest.fn(async (opts?: { where?: Partial<DeviceToken>; order?: any }) => {
-      const where = opts?.where || {};
-      let results = store.filter((t) =>
-        Object.entries(where).every(([k, v]) => (t as any)[k] === v),
-      );
-      if (opts?.order?.token === 'ASC') {
-        results = [...results].sort((a, b) => a.token.localeCompare(b.token));
-      }
-      return results;
-    }),
+    find: jest.fn(
+      async (opts?: { where?: Partial<DeviceToken>; order?: any }) => {
+        const where = opts?.where || {};
+        let results = store.filter((t) =>
+          Object.entries(where).every(([k, v]) => (t as any)[k] === v),
+        );
+        if (opts?.order?.token === 'ASC') {
+          results = [...results].sort((a, b) => a.token.localeCompare(b.token));
+        }
+        return results;
+      },
+    ),
     upsert: jest.fn(async (payload: DeviceToken, _conflictPaths: string[]) => {
       const existing = store.find((t) => t.token === payload.token);
       if (existing) {
@@ -50,7 +59,11 @@ const makeRepoMock = () => {
         existing.platform = payload.platform;
         return existing;
       }
-      store.push({ ...payload, id: idSeq++, createdAt: new Date() } as DeviceToken);
+      store.push({
+        ...payload,
+        id: idSeq++,
+        createdAt: new Date(),
+      } as DeviceToken);
       return payload;
     }),
     save: jest.fn(async (payload: Partial<DeviceToken>) => {
@@ -108,12 +121,24 @@ describe('NotificationsService', () => {
   });
 
   it('registers a device token once via upsert', async () => {
-    await service.registerDeviceToken({ userId: 1, token: 'tok', platform: 'ios' });
-    await service.registerDeviceToken({ userId: 2, token: 'tok', platform: 'android' });
+    await service.registerDeviceToken({
+      userId: 1,
+      token: 'tok',
+      platform: 'ios',
+    });
+    await service.registerDeviceToken({
+      userId: 2,
+      token: 'tok',
+      platform: 'android',
+    });
 
     const tokens = await repo.find();
     expect(tokens).toHaveLength(1);
-    expect(tokens[0]).toMatchObject({ userId: 2, token: 'tok', platform: 'android' });
+    expect(tokens[0]).toMatchObject({
+      userId: 2,
+      token: 'tok',
+      platform: 'android',
+    });
   });
 
   it('prunes invalid tokens after send', async () => {
@@ -128,7 +153,10 @@ describe('NotificationsService', () => {
         { success: true },
         {
           success: false,
-          error: { code: 'messaging/invalid-registration-token', message: 'invalid' },
+          error: {
+            code: 'messaging/invalid-registration-token',
+            message: 'invalid',
+          },
         },
       ],
     };

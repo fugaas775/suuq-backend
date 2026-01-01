@@ -107,7 +107,7 @@ export class Product {
   manage_stock?: boolean;
 
   @Column({ default: 'publish' })
-  status?: 'publish' | 'draft' | 'pending';
+  status?: 'publish' | 'draft' | 'pending' | 'pending_approval' | 'rejected';
 
   @OneToMany(() => Review, (review) => review.product)
   reviews!: Review[];
@@ -121,9 +121,18 @@ export class Product {
   viewCount!: number;
 
   // Product type classification (physical, digital, service, property)
-  @ApiProperty({ enum: ['physical', 'digital', 'service', 'property'], required: false })
+  @ApiProperty({
+    enum: ['physical', 'digital', 'service', 'property'],
+    required: false,
+  })
   @Expose()
-  @Column({ type: 'varchar', length: 16, name: 'product_type', nullable: true, default: 'physical' })
+  @Column({
+    type: 'varchar',
+    length: 16,
+    name: 'product_type',
+    nullable: true,
+    default: 'physical',
+  })
   productType?: 'physical' | 'digital' | 'service' | 'property' | null;
 
   // Listing type for property verticals: 'sale' | 'rent'
@@ -248,7 +257,8 @@ export class Product {
   get posterUrl(): string | undefined {
     const attrs = this.attributes;
     if (!attrs || typeof attrs !== 'object') return undefined;
-    const v = (attrs as Record<string, unknown>).posterUrl ?? (attrs as any).posterSrc;
+    const v =
+      (attrs as Record<string, unknown>).posterUrl ?? (attrs as any).posterSrc;
     return typeof v === 'string' ? v : undefined;
   }
 
@@ -268,7 +278,12 @@ export class Product {
   deletedByAdminId?: number | null;
 
   @Expose()
-  @Column({ type: 'varchar', length: 512, nullable: true, name: 'deleted_reason' })
+  @Column({
+    type: 'varchar',
+    length: 512,
+    nullable: true,
+    name: 'deleted_reason',
+  })
   deletedReason?: string | null;
 
   // Convenience: expose digital download key (object key), if present. Not intended for public clients.
@@ -307,7 +322,10 @@ export class Product {
   // Hydrate legacy Property & Real Estate fields from attributes on entity load for better prefill
   @AfterLoad()
   hydratePropertyFieldsFromAttributes() {
-    const attrs = (this.attributes && typeof this.attributes === 'object') ? (this.attributes as Record<string, any>) : undefined;
+    const attrs =
+      this.attributes && typeof this.attributes === 'object'
+        ? this.attributes
+        : undefined;
     if (!attrs) return;
 
     const pickString = (...keys: string[]): string | undefined => {
@@ -344,14 +362,26 @@ export class Product {
 
     // listingType: 'sale' | 'rent'
     if (this.listingType == null) {
-      const ltRaw = pickString('listingType', 'listing_type', 'type', 'sale_or_rent');
+      const ltRaw = pickString(
+        'listingType',
+        'listing_type',
+        'type',
+        'sale_or_rent',
+      );
       const lt = ltRaw ? ltRaw.toLowerCase() : undefined;
       if (lt === 'sale' || lt === 'sell') this.listingType = 'sale' as any;
-      else if (lt === 'rent' || lt === 'rental') this.listingType = 'rent' as any;
+      else if (lt === 'rent' || lt === 'rental')
+        this.listingType = 'rent' as any;
     }
     // listingCity
     if (this.listingCity == null) {
-      const city = pickString('listingCity', 'listing_city', 'city', 'location', 'area');
+      const city = pickString(
+        'listingCity',
+        'listing_city',
+        'city',
+        'location',
+        'area',
+      );
       if (city) this.listingCity = city;
     }
     // bedrooms
@@ -366,7 +396,14 @@ export class Product {
     }
     // sizeSqm
     if (this.sizeSqm == null) {
-      const n = pickNumber('sizeSqm', 'size_sqm', 'sqm', 'area', 'size', 'plot_area');
+      const n = pickNumber(
+        'sizeSqm',
+        'size_sqm',
+        'sqm',
+        'area',
+        'size',
+        'plot_area',
+      );
       if (typeof n === 'number') this.sizeSqm = n;
     }
     // furnished
@@ -376,13 +413,21 @@ export class Product {
     }
     // rentPeriod: 'day' | 'week' | 'month' | 'year'
     if (this.rentPeriod == null) {
-      const raw = pickString('rentPeriod', 'rent_period', 'period', 'rent_frequency');
+      const raw = pickString(
+        'rentPeriod',
+        'rent_period',
+        'period',
+        'rent_frequency',
+      );
       if (raw) {
         const s = raw.toLowerCase();
         if (['day', 'daily'].includes(s)) this.rentPeriod = 'day' as any;
-        else if (['week', 'weekly'].includes(s)) this.rentPeriod = 'week' as any;
-        else if (['month', 'monthly'].includes(s)) this.rentPeriod = 'month' as any;
-        else if (['year', 'yearly', 'annually', 'annual'].includes(s)) this.rentPeriod = 'year' as any;
+        else if (['week', 'weekly'].includes(s))
+          this.rentPeriod = 'week' as any;
+        else if (['month', 'monthly'].includes(s))
+          this.rentPeriod = 'month' as any;
+        else if (['year', 'yearly', 'annually', 'annual'].includes(s))
+          this.rentPeriod = 'year' as any;
       }
     }
   }
@@ -391,13 +436,18 @@ export class Product {
   @AfterLoad()
   private hydrateDigitalSchema() {
     try {
-      const attrs = (this.attributes && typeof this.attributes === 'object') ? { ...(this.attributes as any) } : {};
-      const { updated, changed, inferredType } = normalizeDigitalAttributes(attrs);
+      const attrs =
+        this.attributes && typeof this.attributes === 'object'
+          ? { ...(this.attributes as any) }
+          : {};
+      const { updated, changed, inferredType } =
+        normalizeDigitalAttributes(attrs);
       if (changed) this.attributes = updated;
       // Derive productType if not explicitly set
       if (!this.productType) {
         if (inferredType === 'digital') this.productType = 'digital';
-        else if (this.listingType || this.listingCity || this.bedrooms != null) this.productType = 'property';
+        else if (this.listingType || this.listingCity || this.bedrooms != null)
+          this.productType = 'property';
         else this.productType = 'physical';
       }
     } catch {

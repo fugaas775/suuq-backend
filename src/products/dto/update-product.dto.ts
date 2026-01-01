@@ -17,19 +17,39 @@ class DigitalLicenseDtoU {
   @IsOptional() @IsString() url?: string;
 }
 class DigitalDownloadDtoU {
-  @IsOptional() @IsString() @ApiPropertyOptional({ description: 'Object storage key (no host)', example: 'uploads/12345_file.pdf' }) key?: string;
+  @IsOptional()
+  @IsString()
+  @ApiPropertyOptional({
+    description: 'Object storage key (no host)',
+    example: 'uploads/12345_file.pdf',
+  })
+  key?: string;
   @IsOptional() @IsString() publicUrl?: string;
   @IsOptional() @Type(() => Number) @IsNumber() size?: number;
   @IsOptional() @IsString() contentType?: string;
   @IsOptional() @IsString() filename?: string;
   @IsOptional() @IsString() checksum?: string;
   @IsOptional() @Type(() => Boolean) @IsBoolean() licenseRequired?: boolean;
-  @IsOptional() @ValidateNested() @Type(() => DigitalLicenseDtoU) license?: DigitalLicenseDtoU;
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => DigitalLicenseDtoU)
+  license?: DigitalLicenseDtoU;
 }
 class DigitalAttributesDtoU {
-  @IsOptional() @IsIn(['digital']) @ApiPropertyOptional({ enum: ['digital'] }) type?: 'digital';
-  @IsOptional() @Type(() => Boolean) @IsBoolean() @ApiPropertyOptional({ description: 'Flag for free download eligibility' }) isFree?: boolean;
-  @IsOptional() @ValidateNested() @Type(() => DigitalDownloadDtoU) @ApiPropertyOptional({ description: 'Download metadata object' }) download?: DigitalDownloadDtoU;
+  @IsOptional()
+  @IsIn(['digital'])
+  @ApiPropertyOptional({ enum: ['digital'] })
+  type?: 'digital';
+  @IsOptional()
+  @Type(() => Boolean)
+  @IsBoolean()
+  @ApiPropertyOptional({ description: 'Flag for free download eligibility' })
+  isFree?: boolean;
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => DigitalDownloadDtoU)
+  @ApiPropertyOptional({ description: 'Download metadata object' })
+  download?: DigitalDownloadDtoU;
 }
 
 class ImageDto {
@@ -96,8 +116,8 @@ export class UpdateProductDto {
   manage_stock?: boolean;
 
   @IsOptional()
-  @IsIn(['publish', 'draft', 'pending'])
-  status?: 'publish' | 'draft' | 'pending';
+  @IsIn(['publish', 'draft', 'pending', 'pending_approval', 'rejected'])
+  status?: 'publish' | 'draft' | 'pending' | 'pending_approval' | 'rejected';
 
   // Property vertical: 'sale' | 'rent'
   @IsOptional()
@@ -136,10 +156,17 @@ export class UpdateProductDto {
   // Object storage key for digital products (alias to attributes.downloadKey)
   @IsOptional()
   @IsString()
-  @ApiPropertyOptional({ description: 'Object storage key for digital products; mirrors attributes.downloadKey', example: 'files/books/ebook.pdf' })
+  @ApiPropertyOptional({
+    description:
+      'Object storage key for digital products; mirrors attributes.downloadKey',
+    example: 'files/books/ebook.pdf',
+  })
   downloadKey?: string;
 
   @IsOptional()
-  @ApiPropertyOptional({ description: 'Arbitrary attributes bag; may include canonical digital structure under digital' })
+  @ApiPropertyOptional({
+    description:
+      'Arbitrary attributes bag; may include canonical digital structure under digital',
+  })
   attributes?: Record<string, any> & { digital?: DigitalAttributesDtoU };
 }

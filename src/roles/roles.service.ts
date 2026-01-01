@@ -1,7 +1,14 @@
-import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { RoleUpgradeRequest, RoleUpgradeStatus } from './entities/role-upgrade-request.entity';
+import {
+  RoleUpgradeRequest,
+  RoleUpgradeStatus,
+} from './entities/role-upgrade-request.entity';
 import { UsersService } from '../users/users.service';
 import { RequestRoleUpgradeDto } from './dto/request-upgrade.dto';
 import { UserRole } from '../auth/roles.enum';
@@ -17,7 +24,9 @@ export class RolesService {
   async requestUpgrade(userId: number, dto: RequestRoleUpgradeDto) {
     const user = await this.usersService.findById(userId);
     // Prevent duplicate pending requests for same user
-    const existing = await this.upgradeRepo.findOne({ where: { user: { id: userId }, status: RoleUpgradeStatus.PENDING } });
+    const existing = await this.upgradeRepo.findOne({
+      where: { user: { id: userId }, status: RoleUpgradeStatus.PENDING },
+    });
     if (existing) {
       return existing;
     }
@@ -71,7 +80,11 @@ export class RolesService {
     return req;
   }
 
-  async rejectRequest(requestId: number, reason: string | undefined, actedBy: string) {
+  async rejectRequest(
+    requestId: number,
+    reason: string | undefined,
+    actedBy: string,
+  ) {
     const req = await this.upgradeRepo.findOne({ where: { id: requestId } });
     if (!req) throw new NotFoundException('Request not found');
     if (req.status !== RoleUpgradeStatus.PENDING) {
@@ -88,21 +101,31 @@ export class RolesService {
    * - If a pending request exists, approve it (merging roles if provided).
    * - Otherwise, create an APPROVED request record and update the user's roles.
    */
-  async approveForUser(userId: number, roles: UserRole[] | undefined, actedBy: string) {
+  async approveForUser(
+    userId: number,
+    roles: UserRole[] | undefined,
+    actedBy: string,
+  ) {
     const user = await this.usersService.findById(userId);
-    const pending = await this.upgradeRepo.findOne({ where: { user: { id: userId }, status: RoleUpgradeStatus.PENDING } });
+    const pending = await this.upgradeRepo.findOne({
+      where: { user: { id: userId }, status: RoleUpgradeStatus.PENDING },
+    });
     const allowed = new Set<UserRole>([UserRole.VENDOR, UserRole.DELIVERER]);
     const sanitized = (roles || []).filter((r) => allowed.has(r));
 
     if (pending) {
       // Merge requested roles onto existing request
-      const mergedRoles = Array.from(new Set([...(pending.roles || []), ...sanitized]));
+      const mergedRoles = Array.from(
+        new Set([...(pending.roles || []), ...sanitized]),
+      );
       pending.roles = mergedRoles.length ? mergedRoles : pending.roles;
       pending.status = RoleUpgradeStatus.APPROVED;
       pending.decidedBy = actedBy;
       const saved = await this.upgradeRepo.save(pending);
 
-      const newRoles = Array.from(new Set([...(user.roles || []), ...saved.roles]));
+      const newRoles = Array.from(
+        new Set([...(user.roles || []), ...saved.roles]),
+      );
       await this.usersService.updateUserRoles(user.id, newRoles);
       return saved;
     }
@@ -115,7 +138,9 @@ export class RolesService {
       decidedBy: actedBy,
     });
     const saved = await this.upgradeRepo.save(request);
-    const newRoles = Array.from(new Set([...(user.roles || []), ...saved.roles]));
+    const newRoles = Array.from(
+      new Set([...(user.roles || []), ...saved.roles]),
+    );
     await this.usersService.updateUserRoles(user.id, newRoles);
     return saved;
   }
@@ -125,9 +150,15 @@ export class RolesService {
    * - If a pending request exists, mark as REJECTED with reason.
    * - Otherwise, create a REJECTED record for audit trail.
    */
-  async rejectForUser(userId: number, reason: string | undefined, actedBy: string) {
+  async rejectForUser(
+    userId: number,
+    reason: string | undefined,
+    actedBy: string,
+  ) {
     const user = await this.usersService.findById(userId);
-    const pending = await this.upgradeRepo.findOne({ where: { user: { id: userId }, status: RoleUpgradeStatus.PENDING } });
+    const pending = await this.upgradeRepo.findOne({
+      where: { user: { id: userId }, status: RoleUpgradeStatus.PENDING },
+    });
     if (pending) {
       pending.status = RoleUpgradeStatus.REJECTED;
       pending.decidedBy = actedBy;

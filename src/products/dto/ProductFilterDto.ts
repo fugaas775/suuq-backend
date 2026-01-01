@@ -57,7 +57,10 @@ export class ProductFilterDto {
         .map((v) => Number(v))
         .filter((n) => Number.isFinite(n) && n >= 1 && Number.isInteger(n));
     if (typeof value === 'string') {
-      const parts = value.split(',').map((s) => s.trim()).filter(Boolean);
+      const parts = value
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
       const nums = toPosInts(parts);
       return nums.length ? nums : undefined;
     }
@@ -81,7 +84,10 @@ export class ProductFilterDto {
         .map((v) => Number(v))
         .filter((n) => Number.isFinite(n) && n >= 1 && Number.isInteger(n));
     if (typeof value === 'string') {
-      const parts = value.split(',').map((s) => s.trim()).filter(Boolean);
+      const parts = value
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
       const nums = toPosInts(parts);
       return nums.length ? nums : undefined;
     }
@@ -106,7 +112,10 @@ export class ProductFilterDto {
         .map((v) => Number(v))
         .filter((n) => Number.isFinite(n) && n >= 1 && Number.isInteger(n));
     if (typeof value === 'string') {
-      const parts = value.split(',').map((s) => s.trim()).filter(Boolean);
+      const parts = value
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
       const nums = toPosInts(parts);
       return nums.length ? nums : undefined;
     }
@@ -332,7 +341,12 @@ export class ProductFilterDto {
   @Type(() => Number)
   @IsNumber()
   @Transform(({ value, obj }) => {
-    const raw = value ?? obj?.radius ?? obj?.radius_km ?? obj?.nearbyRadius ?? obj?.radiusKm;
+    const raw =
+      value ??
+      obj?.radius ??
+      obj?.radius_km ??
+      obj?.nearbyRadius ??
+      obj?.radiusKm;
     const n = Number(raw);
     return Number.isFinite(n) ? n : undefined;
   })

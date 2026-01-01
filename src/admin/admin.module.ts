@@ -35,6 +35,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
 import { SearchLog } from '../search/entities/search-log.entity';
 import { AdminUsersController } from './users.admin.controller';
 import { AdminAuditController } from './audit.admin.controller';
+import { CurrencyModule } from '../common/services/currency.module';
 
 @Module({
   // 2. Add UsersModule and OrdersModule here
@@ -49,6 +50,7 @@ import { AdminAuditController } from './audit.admin.controller';
     FeatureFlagsModule,
     SearchModule,
     NotificationsModule,
+    CurrencyModule,
     TypeOrmModule.forFeature([
       Product,
       Tag,

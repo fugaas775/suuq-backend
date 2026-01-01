@@ -1,6 +1,11 @@
 import { Exclude, Expose } from 'class-transformer';
 import { UserRole } from '../../auth/roles.enum';
-import { BusinessLicenseInfo, VerificationDocument, VerificationStatus, VerificationMethod } from '../../users/entities/user.entity';
+import {
+  BusinessLicenseInfo,
+  VerificationDocument,
+  VerificationStatus,
+  VerificationMethod,
+} from '../../users/entities/user.entity';
 
 @Exclude()
 export class AdminUserResponseDto {

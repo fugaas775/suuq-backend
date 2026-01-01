@@ -7,6 +7,9 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Order, OrderStatus } from '../orders/entities/order.entity';
 import { Product } from '../products/entities/product.entity';
+import { WalletService } from '../wallet/wallet.service';
+import { TransactionType } from '../wallet/entities/wallet-transaction.entity';
+import { SettingsService } from '../settings/settings.service';
 
 @Injectable()
 export class DelivererService {
@@ -15,6 +18,8 @@ export class DelivererService {
     private readonly orderRepository: Repository<Order>,
     @InjectRepository(Product)
     private readonly productRepository: Repository<Product>,
+    private readonly walletService: WalletService,
+    private readonly settingsService: SettingsService,
   ) {}
 
   async getMyAssignments(delivererId: number) {
@@ -70,7 +75,7 @@ export class DelivererService {
   ) {
     const order = await this.orderRepository.findOne({
       where: { id: orderId },
-      relations: ['deliverer', 'items', 'items.product'],
+      relations: ['deliverer', 'items', 'items.product', 'items.product.vendor'],
     });
     if (!order) throw new NotFoundException('Order not found');
     if (!order.deliverer || order.deliverer.id !== delivererId) {
@@ -86,6 +91,7 @@ export class DelivererService {
       newStatus === OrderStatus.DELIVERED &&
       Array.isArray(order.items)
     ) {
+      // 1. Increment Sales Count
       const productQuantities = new Map<number, number>();
       for (const it of order.items) {
         const pid = (it as any).product?.id;
@@ -108,6 +114,52 @@ export class DelivererService {
             .where('id = :productId', { productId })
             .execute();
         }
+      }
+
+      // 2. Credit Wallets (Vendor & Deliverer)
+      // Fetch dynamic settings (defaults: 10% commission, 50 base fee)
+      const commissionRateVal = await this.settingsService.getSetting('commission_rate', 10);
+      const COMMISSION_RATE = Number(commissionRateVal) / 100; 
+
+      // Group items by Vendor
+      const vendorEarnings = new Map<number, number>();
+      for (const item of order.items) {
+        const vendorId = (item.product as any)?.vendor?.id;
+        if (vendorId) {
+          const itemTotal = Number(item.price) * Number(item.quantity);
+          vendorEarnings.set(vendorId, (vendorEarnings.get(vendorId) || 0) + itemTotal);
+        }
+      }
+
+      // Credit Vendors
+      for (const [vendorId, total] of vendorEarnings.entries()) {
+        const commission = total * COMMISSION_RATE;
+        const earnings = total - commission;
+        if (earnings > 0) {
+          await this.walletService.creditWallet(
+            vendorId,
+            earnings,
+            TransactionType.EARNING,
+            order.id,
+            `Earnings for Order #${order.id}`
+          );
+        }
+      }
+
+      // Credit Deliverer
+      const deliveryFeeVal = await this.settingsService.getSetting('delivery_base_fee', 50);
+      const DELIVERY_FEE = Number(deliveryFeeVal);
+      const delivererCommission = DELIVERY_FEE * COMMISSION_RATE;
+      const delivererEarnings = DELIVERY_FEE - delivererCommission;
+      
+      if (delivererEarnings > 0) {
+        await this.walletService.creditWallet(
+          delivererId,
+          delivererEarnings,
+          TransactionType.EARNING,
+          order.id,
+          `Delivery Fee for Order #${order.id}`
+        );
       }
     }
 

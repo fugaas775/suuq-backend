@@ -24,9 +24,14 @@ function gteSemver(a: string, b: string): boolean {
 @Injectable()
 export class FeatureFlagsService {
   // Evaluate a flag for a given app version and optional user/device id for bucketing
-  isEnabled(flagName: string, appVersion: string | undefined, bucketId?: string): boolean {
+  isEnabled(
+    flagName: string,
+    appVersion: string | undefined,
+    bucketId?: string,
+  ): boolean {
     const prefix = `FEATURE_${flagName.toUpperCase()}`;
-    const enabled = (process.env[`${prefix}_ENABLED`] || 'false').toLowerCase() === 'true';
+    const enabled =
+      (process.env[`${prefix}_ENABLED`] || 'false').toLowerCase() === 'true';
     if (!enabled) return false;
 
     const minVersion = process.env[`${prefix}_MIN_VERSION`];
@@ -34,14 +39,18 @@ export class FeatureFlagsService {
       return false;
     }
 
-    const percent = Math.max(0, Math.min(100, parseInt(process.env[`${prefix}_PCT`] || '100', 10)));
+    const percent = Math.max(
+      0,
+      Math.min(100, parseInt(process.env[`${prefix}_PCT`] || '100', 10)),
+    );
     if (percent >= 100) return true;
     if (percent <= 0) return false;
 
     // Stable bucketing by bucketId (userId, deviceId). If not provided, randomize per-process.
     const seed = bucketId || process.env.HOSTNAME || 'default';
     let hash = 0;
-    for (let i = 0; i < seed.length; i++) hash = (hash * 31 + seed.charCodeAt(i)) >>> 0;
+    for (let i = 0; i < seed.length; i++)
+      hash = (hash * 31 + seed.charCodeAt(i)) >>> 0;
     const bucket = hash % 100;
     return bucket < percent;
   }

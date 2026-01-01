@@ -25,9 +25,7 @@ const sharpExec: any = (sharpModule as any)?.default ?? (sharpModule as any);
 
 @Controller('media')
 export class MediaController {
-  constructor(
-    private readonly doSpacesService: DoSpacesService,
-  ) {}
+  constructor(private readonly doSpacesService: DoSpacesService) {}
 
   @Post('upload')
   @UseGuards(JwtAuthGuard)
@@ -107,7 +105,9 @@ export class MediaController {
     }
 
     if (!isImage && !isVideo) {
-      throw new BadRequestException('Unsupported file type. Only images or videos are allowed.');
+      throw new BadRequestException(
+        'Unsupported file type. Only images or videos are allowed.',
+      );
     }
 
     const ts = Date.now();
@@ -122,15 +122,15 @@ export class MediaController {
 
     if (isImage) {
       // Derive lightweight variants for images only
-  const imageBuffer = await fs.promises.readFile(file.path);
-  const thumbBuffer = await sharpExec(imageBuffer).resize(200).toBuffer();
+      const imageBuffer = await fs.promises.readFile(file.path);
+      const thumbBuffer = await sharpExec(imageBuffer).resize(200).toBuffer();
       const thumbUrl = await this.doSpacesService.uploadFile(
         thumbBuffer,
         `thumb_${ts}_${file.originalname}`,
         mime,
       );
 
-  const lowResBuffer = await sharpExec(imageBuffer).resize(50).toBuffer();
+      const lowResBuffer = await sharpExec(imageBuffer).resize(50).toBuffer();
       const lowResUrl = await this.doSpacesService.uploadFile(
         lowResBuffer,
         `lowres_${ts}_${file.originalname}`,
@@ -150,7 +150,9 @@ export class MediaController {
     }
 
     if (isVideo) {
-        await fs.promises.mkdir('/tmp/uploads', { recursive: true }).catch(() => {});
+      await fs.promises
+        .mkdir('/tmp/uploads', { recursive: true })
+        .catch(() => {});
       // Try to generate a small poster thumbnail using ffmpeg (best-effort)
       let posterUrl: string | undefined;
       try {

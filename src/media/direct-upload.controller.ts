@@ -1,3 +1,4 @@
+/* eslint-disable prettier/prettier */
 import {
   BadRequestException,
   Body,
@@ -16,13 +17,13 @@ import * as path from 'path';
 import { fileTypeFromBuffer } from 'file-type';
 const execFile = promisify(_execFile);
 // Use require to avoid TS2349 in certain editor setups while keeping runtime interop safe
-// eslint-disable-next-line @typescript-eslint/no-var-requires
+// eslint-disable-next-line @typescript-eslint/no-require-imports
 const sharpAny: any = require('sharp');
 
 // Simple direct-upload flow:
 // 1) Client POST /api/media/request-signed-url with { filename, contentType }
-//    -> returns { key, putUrl, publicUrl }
-// 2) Client PUTs the file to putUrl
+//    -> returns { key, putUrl, signedUploadUrl, publicUrl }
+// 2) Client PUTs the file to putUrl (or signedUploadUrl)
 // 3) Client POST /api/media/finalize with { key, contentType, kind: 'image'|'video' }
 //    -> generates variants (thumb/lowres for images; poster for videos) and returns URLs
 
@@ -49,7 +50,7 @@ export class DirectUploadController {
       'Content-Type': contentType,
       // Do not send other headers (no ACL/Cache-Control/Content-Disposition) on client PUT
     } as const;
-    return { key, putUrl, publicUrl, expiresIn, requiredHeaders };
+    return { key, putUrl, signedUploadUrl: putUrl, publicUrl, expiresIn, requiredHeaders };
   }
 
   @Post('finalize')

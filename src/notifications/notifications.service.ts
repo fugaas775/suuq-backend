@@ -4,7 +4,10 @@ import { UsersService } from '../users/users.service';
 import { In, Repository } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DeviceToken } from './entities/device-token.entity';
-import type { FirebaseMessagingResponse, FirebaseAdmin } from './notifications.types';
+import type {
+  FirebaseMessagingResponse,
+  FirebaseAdmin,
+} from './notifications.types';
 
 @Injectable()
 export class NotificationsService {
@@ -51,13 +54,19 @@ export class NotificationsService {
       const messaging = this.firebase.messaging?.();
       if (!messaging?.sendEachForMulticast) {
         this.logger.error('Firebase messaging not available');
-        return { successCount: 0, failureCount: 0 } as FirebaseMessagingResponse;
+        return {
+          successCount: 0,
+          failureCount: 0,
+        } as FirebaseMessagingResponse;
       }
 
       const response = await messaging.sendEachForMulticast(message);
       if (!response) {
         this.logger.error('Firebase messaging not available');
-        return { successCount: 0, failureCount: 0 } as FirebaseMessagingResponse;
+        return {
+          successCount: 0,
+          failureCount: 0,
+        } as FirebaseMessagingResponse;
       }
       await this.pruneInvalidTokens(response, deviceTokens);
       this.logger.log(
@@ -111,7 +120,10 @@ export class NotificationsService {
 
     const invalidTokens = response.responses
       .map((res, idx) => ({ res, token: tokens[idx] }))
-      .filter(({ res }) => !res.success && res.error?.code && invalidCodes.has(res.error.code))
+      .filter(
+        ({ res }) =>
+          !res.success && res.error?.code && invalidCodes.has(res.error.code),
+      )
       .map(({ token }) => token)
       .filter(Boolean);
 

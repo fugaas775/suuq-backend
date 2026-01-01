@@ -11,7 +11,9 @@ describe('HomeService (Explore engine flag)', () => {
   let service: HomeService;
   const productsService = { findFiltered: jest.fn() } as any;
   const listingService = { list: jest.fn() } as any;
-  const curation = { getSection: jest.fn().mockResolvedValue({ items: [] }) } as any;
+  const curation = {
+    getSection: jest.fn().mockResolvedValue({ items: [] }),
+  } as any;
 
   beforeEach(async () => {
     process.env.HOME_EXPLORE_ENGINE_V2 = '1';
@@ -20,8 +22,14 @@ describe('HomeService (Explore engine flag)', () => {
         HomeService,
         { provide: ProductsService, useValue: productsService },
         { provide: ProductListingService, useValue: listingService },
-        { provide: getRepositoryToken(Category), useValue: { find: jest.fn().mockResolvedValue([]) } },
-        { provide: getRepositoryToken(User), useValue: { query: jest.fn().mockResolvedValue([]) } },
+        {
+          provide: getRepositoryToken(Category),
+          useValue: { find: jest.fn().mockResolvedValue([]) },
+        },
+        {
+          provide: getRepositoryToken(User),
+          useValue: { query: jest.fn().mockResolvedValue([]) },
+        },
         { provide: CurationService, useValue: curation },
       ],
     }).compile();
@@ -30,7 +38,13 @@ describe('HomeService (Explore engine flag)', () => {
   });
 
   it('uses listing engine when flag is on and maps cards internally', async () => {
-    listingService.list.mockResolvedValue({ items: [{ id: 1 }], total: 1, page: 1, perPage: 20, totalPages: 1 });
+    listingService.list.mockResolvedValue({
+      items: [{ id: 1 }],
+      total: 1,
+      page: 1,
+      perPage: 20,
+      totalPages: 1,
+    });
 
     const resp = await service.getV2HomeFeed({ page: 1, perPage: 1 });
 
@@ -42,7 +56,11 @@ describe('HomeService (Explore engine flag)', () => {
 
   it('falls back to ProductsService when flag is off', async () => {
     process.env.HOME_EXPLORE_ENGINE_V2 = '0';
-    productsService.findFiltered.mockResolvedValue({ items: [], total: 0, currentPage: 1 });
+    productsService.findFiltered.mockResolvedValue({
+      items: [],
+      total: 0,
+      currentPage: 1,
+    });
 
     const resp = await service.getV2HomeFeed({ page: 1, perPage: 1 });
 

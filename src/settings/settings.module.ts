@@ -10,5 +10,6 @@ import { UsersModule } from '../users/users.module';
   imports: [UsersModule, TypeOrmModule.forFeature([UiSetting, UserSettings])],
   providers: [SettingsService],
   controllers: [SettingsController],
+  exports: [SettingsService],
 })
 export class SettingsModule {}

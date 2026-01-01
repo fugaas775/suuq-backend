@@ -13,10 +13,18 @@ export class RolesGuard implements CanActivate {
     return process.env.ROLES_GUARD_DEBUG === '1';
   }
 
-  private maybeLog(requiredRoles: UserRole[] | undefined, user: any, granted: boolean) {
+  private maybeLog(
+    requiredRoles: UserRole[] | undefined,
+    user: any,
+    granted: boolean,
+  ) {
     // Always log denials at DEBUG (can be redirected by logger configuration)
     if (!granted) {
-      console.debug('[RolesGuard] DENY user roles=%s required=%s', JSON.stringify(user?.roles), JSON.stringify(requiredRoles));
+      console.debug(
+        '[RolesGuard] DENY user roles=%s required=%s',
+        JSON.stringify(user?.roles),
+        JSON.stringify(requiredRoles),
+      );
       return;
     }
     // Only log grants if explicit debug enabled and throttled (every 5s)
@@ -24,21 +32,29 @@ export class RolesGuard implements CanActivate {
       const now = Date.now();
       if (now - RolesGuard.lastVerboseLogAt > 5000) {
         RolesGuard.lastVerboseLogAt = now;
-        console.debug('[RolesGuard] grant user roles=%s satisfies required=%s', JSON.stringify(user?.roles), JSON.stringify(requiredRoles));
+        console.debug(
+          '[RolesGuard] grant user roles=%s satisfies required=%s',
+          JSON.stringify(user?.roles),
+          JSON.stringify(requiredRoles),
+        );
       }
     }
   }
 
   canActivate(context: ExecutionContext): boolean {
-    const requiredRoles = this.reflector.getAllAndOverride<UserRole[]>(ROLES_KEY, [
-      context.getHandler(),
-      context.getClass(),
-    ]);
+    const requiredRoles = this.reflector.getAllAndOverride<UserRole[]>(
+      ROLES_KEY,
+      [context.getHandler(), context.getClass()],
+    );
 
     if (!requiredRoles) {
       // No roles required – implicitly granted (do not log unless verbose)
       if (this.verboseEnabled()) {
-        this.maybeLog(undefined, context.switchToHttp().getRequest()?.user, true);
+        this.maybeLog(
+          undefined,
+          context.switchToHttp().getRequest()?.user,
+          true,
+        );
       }
       return true;
     }

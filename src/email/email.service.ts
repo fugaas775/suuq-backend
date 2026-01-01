@@ -13,10 +13,14 @@ export class EmailService {
   }
 
   private initTransport() {
-    const disableAll = this.configService.get<string>('EMAIL_DISABLE') === 'true';
-    const skipVerify = this.configService.get<string>('EMAIL_SKIP_VERIFY') === 'true';
+    const disableAll =
+      this.configService.get<string>('EMAIL_DISABLE') === 'true';
+    const skipVerify =
+      this.configService.get<string>('EMAIL_SKIP_VERIFY') === 'true';
     if (disableAll) {
-      this.logger.warn('Email disabled via EMAIL_DISABLE=true. All emails will be logged only.');
+      this.logger.warn(
+        'Email disabled via EMAIL_DISABLE=true. All emails will be logged only.',
+      );
       this.configOk = false;
       this.transporter = null;
       return;
@@ -30,9 +34,7 @@ export class EmailService {
       10,
     );
     const secureEnv = this.configService.get<string>('EMAIL_SECURE');
-    const secure = secureEnv
-      ? secureEnv === 'true'
-      : port === 465; // default heuristic
+    const secure = secureEnv ? secureEnv === 'true' : port === 465; // default heuristic
 
     if (!host || !user || !pass) {
       this.logger.warn(
@@ -76,13 +78,18 @@ export class EmailService {
       });
 
       // Optionally skip verify to avoid startup timeouts
-      const verifyOnStartup = this.configService.get<string>('EMAIL_VERIFY_ON_STARTUP') === 'true';
+      const verifyOnStartup =
+        this.configService.get<string>('EMAIL_VERIFY_ON_STARTUP') === 'true';
       if (skipVerify || !verifyOnStartup) {
         this.configOk = true; // assume OK; failures will be logged at send time
         if (skipVerify) {
-          this.logger.warn('EMAIL_SKIP_VERIFY=true: skipping SMTP verify on startup.');
+          this.logger.warn(
+            'EMAIL_SKIP_VERIFY=true: skipping SMTP verify on startup.',
+          );
         } else {
-          this.logger.log('Skipping SMTP verify on startup (set EMAIL_VERIFY_ON_STARTUP=true to enable).');
+          this.logger.log(
+            'Skipping SMTP verify on startup (set EMAIL_VERIFY_ON_STARTUP=true to enable).',
+          );
         }
       } else {
         // Proactively verify to fail fast instead of timing out later

@@ -1,4 +1,8 @@
-import { INestApplication, CanActivate, ExecutionContext } from '@nestjs/common';
+import {
+  INestApplication,
+  CanActivate,
+  ExecutionContext,
+} from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { Module, Controller } from '@nestjs/common';
@@ -18,9 +22,9 @@ class AllowGuard implements CanActivate {
 
 // Minimal mock for RolesService
 class RolesServiceMock {
-  private latest: any | null = null;
+  private latest: any = null;
 
-  setLatest(v: any | null) {
+  setLatest(v: any) {
     this.latest = v;
   }
 
@@ -43,9 +47,7 @@ class RolesServiceMock {
 
 @Module({
   controllers: [RolesController],
-  providers: [
-    { provide: RolesService, useClass: RolesServiceMock },
-  ],
+  providers: [{ provide: RolesService, useClass: RolesServiceMock }],
 })
 class TestRolesModule {}
 

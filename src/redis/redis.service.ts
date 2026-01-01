@@ -14,11 +14,15 @@ export class RedisService {
     // Only enable Redis if explicitly configured. Prevent noisy ECONNREFUSED logs
     // when no Redis is present by requiring REDIS_URL or REDIS_ENABLED=true.
     const url = this.config.get<string>('REDIS_URL');
-    const enabledFlag = (this.config.get<string>('REDIS_ENABLED') || '').toLowerCase();
+    const enabledFlag = (
+      this.config.get<string>('REDIS_ENABLED') || ''
+    ).toLowerCase();
     const enabled = !!url || enabledFlag === 'true';
 
     if (!enabled) {
-      this.logger.log('Redis disabled (set REDIS_URL or REDIS_ENABLED=true to enable)');
+      this.logger.log(
+        'Redis disabled (set REDIS_URL or REDIS_ENABLED=true to enable)',
+      );
       this.client = null;
       return;
     }
@@ -44,15 +48,13 @@ export class RedisService {
       this.client.on('connect', () => this.logger.log('Redis connected'));
 
       // Attempt a single connect; if it fails, disable gracefully
-      this.client
-        .connect()
-        .catch((e: any) => {
-          this.logger.warn(`Redis disabled: ${e?.message || e}`);
-          try {
-            this.client?.disconnect?.();
-          } catch {}
-          this.client = null;
-        });
+      this.client.connect().catch((e: any) => {
+        this.logger.warn(`Redis disabled: ${e?.message || e}`);
+        try {
+          this.client?.disconnect?.();
+        } catch {}
+        this.client = null;
+      });
     } catch (e: any) {
       this.logger.error(`Failed to init Redis: ${e?.message || e}`);
       this.client = null;

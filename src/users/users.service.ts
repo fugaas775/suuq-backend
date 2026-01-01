@@ -164,7 +164,6 @@ export class UsersService {
     ).trim();
     const explicitSearch = (filters?.search || '').trim();
     const term = aliasSearch || explicitSearch;
-    const hasAnySearch = !!term;
 
     // ---- Advanced field-specific filters (added for admin tokens) ----
     // These allow precise server-side matches instead of client-side fallbacks.

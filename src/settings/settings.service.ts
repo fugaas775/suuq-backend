@@ -52,6 +52,14 @@ export class SettingsService {
     return result;
   }
 
+  async getSetting(key: string, defaultValue: any = null): Promise<any> {
+    const setting = await this.uiSettingRepo.findOne({
+      where: { key },
+      cache: { id: `ui-setting-${key}`, milliseconds: 30000 },
+    });
+    return setting ? setting.value : defaultValue;
+  }
+
   async updateSetting(dto: UpdateUiSettingDto): Promise<UiSetting> {
     const key = dto.key;
     const setting = await this.uiSettingRepo.findOne({ where: { key } });
@@ -59,7 +67,10 @@ export class SettingsService {
       throw new NotFoundException(`Setting with key '${key}' not found.`);
     }
 
-    const arrayKeys = new Set(['home_search_placeholders', 'product_card_promos']);
+    const arrayKeys = new Set([
+      'home_search_placeholders',
+      'product_card_promos',
+    ]);
 
     if (arrayKeys.has(key)) {
       if (Array.isArray(dto.value)) {

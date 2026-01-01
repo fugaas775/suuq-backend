@@ -17,7 +17,7 @@ describe('Products cards (e2e)', () => {
 
     app = moduleFixture.createNestApplication();
     app.setGlobalPrefix('api');
-    const expressApp = app.getHttpAdapter().getInstance() as any;
+    const expressApp = app.getHttpAdapter().getInstance();
     if (expressApp?.set) expressApp.set('etag', false);
     app.useGlobalInterceptors(new EtagInterceptor(60));
     await app.init();

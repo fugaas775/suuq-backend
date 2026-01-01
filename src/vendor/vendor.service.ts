@@ -1808,12 +1808,15 @@ export class VendorService {
       .getOne();
     if (!order) throw new NotFoundException('Order not found');
     const items = order.items || [];
-    const allFromVendor =
+    // Relaxed check: Allow assignment if AT LEAST ONE item belongs to the vendor.
+    // This supports multi-vendor orders where each vendor manages their own portion.
+    const hasVendorItems =
       items.length > 0 &&
-      items.every((it) => (it.product as any)?.vendor?.id === vendorId);
-    if (!allFromVendor) {
+      items.some((it) => (it.product as any)?.vendor?.id === vendorId);
+
+    if (!hasVendorItems) {
       throw new ForbiddenException(
-        'Order contains items from other vendors; cannot assign deliverer',
+        'Order does not contain any items from this vendor',
       );
     }
 
@@ -1855,6 +1858,15 @@ export class VendorService {
         email: deliverer.email ?? null,
         phone: (deliverer as any)?.phoneNumber ?? null,
       },
+      // Add snake_case aliases for robust frontend parsing
+      assigned_deliverer: {
+        id: deliverer.id,
+        name: deliverer.displayName ?? null,
+        email: deliverer.email ?? null,
+        phone: (deliverer as any)?.phoneNumber ?? null,
+      },
+      deliverer_id: deliverer.id,
+      deliverer_name: deliverer.displayName ?? null,
       delivererSummary: {
         id: deliverer.id,
         name: deliverer.displayName ?? null,
@@ -2173,7 +2185,7 @@ export class VendorService {
       where: { id: vendorId },
     });
     const senderAddress = {
-      name: vendor?.fullName || 'Vendor',
+      name: vendor?.displayName || 'Vendor',
       street: 'Vendor Address', // TODO: Add address to User entity
       city: 'Vendor City',
       country: 'Vendor Country',

@@ -35,4 +35,9 @@ export class VendorProductsQueryDto {
     | 'price_desc'
     | 'name_asc'
     | 'name_desc';
+
+  @IsOptional()
+  @IsString()
+  @IsIn(['ETB', 'SOS', 'KES', 'DJF', 'USD'])
+  currency?: string;
 }

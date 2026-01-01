@@ -33,7 +33,9 @@ export class MediaMaintenanceService {
         }
       }
     } catch (e) {
-      this.log.warn(`cleanupTmpUploads failed: ${e instanceof Error ? e.message : e}`);
+      this.log.warn(
+        `cleanupTmpUploads failed: ${e instanceof Error ? e.message : e}`,
+      );
     }
   }
 
@@ -48,7 +50,11 @@ export class MediaMaintenanceService {
       let scanned = 0;
       let generated = 0;
       do {
-        const { keys, nextToken } = await this.doSpaces.listKeys('', 500, token);
+        const { keys, nextToken } = await this.doSpaces.listKeys(
+          '',
+          500,
+          token,
+        );
         token = nextToken;
         for (const key of keys) {
           // Simple heuristic: if key looks like a video and there is no poster_ sibling, generate it
@@ -57,11 +63,18 @@ export class MediaMaintenanceService {
           const exists = await this.doSpaces.headObjectExists(posterCandidate);
           if (exists) continue;
           const meta = await this.doSpaces.headObjectMeta(key);
-          if (typeof meta?.contentLength === 'number' && meta.contentLength > maxVideoBytes) {
+          if (
+            typeof meta?.contentLength === 'number' &&
+            meta.contentLength > maxVideoBytes
+          ) {
             continue;
           }
           // Generate poster best-effort
-          await this.buildAndUploadPoster(key, posterCandidate, maxVideoBytes).catch(() => {});
+          await this.buildAndUploadPoster(
+            key,
+            posterCandidate,
+            maxVideoBytes,
+          ).catch(() => {});
           generated++;
           // Soft cap per run to avoid long jobs
           if (generated >= 50) break;
@@ -69,13 +82,21 @@ export class MediaMaintenanceService {
         scanned += keys.length;
         if (generated >= 50) break;
       } while (token);
-      this.log.log(`backfillVideoPosters scanned=${scanned} generated=${generated}`);
+      this.log.log(
+        `backfillVideoPosters scanned=${scanned} generated=${generated}`,
+      );
     } catch (e) {
-      this.log.warn(`backfillVideoPosters failed: ${e instanceof Error ? e.message : e}`);
+      this.log.warn(
+        `backfillVideoPosters failed: ${e instanceof Error ? e.message : e}`,
+      );
     }
   }
 
-  private async buildAndUploadPoster(originalKey: string, posterKey: string, maxBytes: number): Promise<void> {
+  private async buildAndUploadPoster(
+    originalKey: string,
+    posterKey: string,
+    maxBytes: number,
+  ): Promise<void> {
     const fs = await import('fs');
     const tmpDir = '/tmp/uploads';
     await fs.promises.mkdir(tmpDir, { recursive: true }).catch(() => {});
@@ -89,10 +110,36 @@ export class MediaMaintenanceService {
     }
     const posterPath = path.join(tmpDir, `${posterKey.split('/').pop()}`);
     try {
-      const args = ['-y', '-hide_banner', '-loglevel', 'error', '-ss', '00:00:01.000', '-i', videoPath, '-frames:v', '1', '-vf', 'scale=320:-1', posterPath];
+      const args = [
+        '-y',
+        '-hide_banner',
+        '-loglevel',
+        'error',
+        '-ss',
+        '00:00:01.000',
+        '-i',
+        videoPath,
+        '-frames:v',
+        '1',
+        '-vf',
+        'scale=320:-1',
+        posterPath,
+      ];
       await execFile('ffmpeg', args, { timeout: 20000 });
     } catch {
-      const fallback = ['-y', '-hide_banner', '-loglevel', 'error', '-i', videoPath, '-frames:v', '1', '-vf', 'scale=320:-1', posterPath];
+      const fallback = [
+        '-y',
+        '-hide_banner',
+        '-loglevel',
+        'error',
+        '-i',
+        videoPath,
+        '-frames:v',
+        '1',
+        '-vf',
+        'scale=320:-1',
+        posterPath,
+      ];
       await execFile('ffmpeg', fallback, { timeout: 20000 });
     }
     const posterBuf = await fs.promises.readFile(posterPath);

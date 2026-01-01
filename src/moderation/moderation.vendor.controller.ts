@@ -1,4 +1,12 @@
-import { Controller, Patch, Param, Body, UseGuards, ParseIntPipe, ForbiddenException } from '@nestjs/common';
+import {
+  Controller,
+  Patch,
+  Param,
+  Body,
+  UseGuards,
+  ParseIntPipe,
+  ForbiddenException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ProductImageModeration } from './entities/product-image-moderation.entity';

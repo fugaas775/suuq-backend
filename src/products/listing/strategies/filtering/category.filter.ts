@@ -33,7 +33,9 @@ export class CategoryFilter implements IFilterStrategy {
     if (includeDescendants) {
       const baseIds = [...(categoryId || [])];
       if (categorySlug) {
-        const cat = await this.categoryRepository.findOne({ where: { slug: categorySlug } });
+        const cat = await this.categoryRepository.findOne({
+          where: { slug: categorySlug },
+        });
         if (cat) {
           baseIds.push(cat.id);
         }
@@ -44,21 +46,26 @@ export class CategoryFilter implements IFilterStrategy {
         for (const id of baseIds) {
           const root = await this.categoryRepository.findOne({ where: { id } });
           if (root) {
-            const descendants = await this.categoryRepository.findDescendants(root);
-            descendants.forEach(d => idSet.add(d.id));
+            const descendants =
+              await this.categoryRepository.findDescendants(root);
+            descendants.forEach((d) => idSet.add(d.id));
           }
         }
         idsToFilter = Array.from(idSet);
       }
     } else if (categorySlug && !idsToFilter.length) {
-        const cat = await this.categoryRepository.findOne({ where: { slug: categorySlug } });
-        if (cat) {
-            idsToFilter.push(cat.id);
-        }
+      const cat = await this.categoryRepository.findOne({
+        where: { slug: categorySlug },
+      });
+      if (cat) {
+        idsToFilter.push(cat.id);
+      }
     }
 
     if (idsToFilter.length > 0) {
-      query.andWhere('category.id IN (:...categoryIds)', { categoryIds: idsToFilter });
+      query.andWhere('category.id IN (:...categoryIds)', {
+        categoryIds: idsToFilter,
+      });
     }
 
     return query;

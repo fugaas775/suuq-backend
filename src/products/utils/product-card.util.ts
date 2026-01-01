@@ -39,9 +39,12 @@ function pruneNullish<T extends Record<string, any>>(obj: T): T {
   const out: any = Array.isArray(obj) ? [] : {};
   for (const [k, v] of Object.entries(obj)) {
     if (v === null || typeof v === 'undefined') continue;
-    if (Array.isArray(v)) out[k] = v.map((it) => (typeof it === 'object' && it !== null ? pruneNullish(it as any) : it));
+    if (Array.isArray(v))
+      out[k] = v.map((it) =>
+        typeof it === 'object' && it !== null ? pruneNullish(it) : it,
+      );
     else if (v instanceof Date) out[k] = v.toISOString();
-    else if (typeof v === 'object') out[k] = pruneNullish(v as any);
+    else if (typeof v === 'object') out[k] = pruneNullish(v);
     else out[k] = v;
   }
   return out as T;
@@ -67,11 +70,15 @@ export function toProductCard(p: Product): ProductCard {
   const primary = (() => {
     const images = Array.isArray((p as any).images) ? (p as any).images : [];
     if (images.length) {
-      const first = images[0] as any;
+      const first = images[0];
       return {
         src: first?.src ?? (p as any).imageUrl ?? null,
-        thumbnail: first?.thumbnailSrc ?? deriveVariant(first?.src ?? (p as any).imageUrl, 'thumb'),
-        lowRes: first?.lowResSrc ?? deriveVariant(first?.src ?? (p as any).imageUrl, 'lowres'),
+        thumbnail:
+          first?.thumbnailSrc ??
+          deriveVariant(first?.src ?? (p as any).imageUrl, 'thumb'),
+        lowRes:
+          first?.lowResSrc ??
+          deriveVariant(first?.src ?? (p as any).imageUrl, 'lowres'),
       } as PrimaryImage;
     }
     return (p as any).imageUrl
@@ -102,7 +109,8 @@ export function toProductCard(p: Product): ProductCard {
     currency: p.currency,
     primaryImage: primary,
     ratingSummary:
-      typeof (p as any).average_rating === 'number' || typeof (p as any).rating_count === 'number'
+      typeof (p as any).average_rating === 'number' ||
+      typeof (p as any).rating_count === 'number'
         ? {
             average: (p as any).average_rating ?? undefined,
             count: (p as any).rating_count ?? undefined,
@@ -112,7 +120,12 @@ export function toProductCard(p: Product): ProductCard {
     listingType: (p as any).listingType ?? null,
     listingCity: (p as any).listingCity ?? null,
     distanceKm: (p as any).distance_km ?? (p as any).distanceKm,
-    createdAt: p.createdAt instanceof Date ? p.createdAt.toISOString() : (typeof (p as any).createdAt === 'string' ? (p as any).createdAt : new Date().toISOString()),
+    createdAt:
+      p.createdAt instanceof Date
+        ? p.createdAt.toISOString()
+        : typeof (p as any).createdAt === 'string'
+          ? (p as any).createdAt
+          : new Date().toISOString(),
     vendor: vendor
       ? {
           id: vendor.id,

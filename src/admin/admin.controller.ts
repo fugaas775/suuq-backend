@@ -464,4 +464,29 @@ export class AdminController {
   async rejectWithdrawal(@Param('id', ParseIntPipe) id: number) {
     return this.withdrawalsService.rejectWithdrawal(id);
   }
+
+  // Fix for Admin/Vendor role conflict: Admin endpoints for item updates
+  @Patch('orders/:orderId/items/:itemId/status')
+  async updateOrderItemStatus(
+    @Param('orderId', ParseIntPipe) orderId: number,
+    @Param('itemId', ParseIntPipe) itemId: number,
+    @Body()
+    dto: import('../vendor/dto/update-order-item-status.dto').UpdateOrderItemStatusDto,
+  ) {
+    return this.ordersService.updateOrderItemStatus(
+      orderId,
+      itemId,
+      dto.status,
+    );
+  }
+
+  @Patch('orders/:orderId/items/:itemId/tracking')
+  async updateOrderItemTracking(
+    @Param('orderId', ParseIntPipe) orderId: number,
+    @Param('itemId', ParseIntPipe) itemId: number,
+    @Body()
+    dto: import('../vendor/dto/update-order-item-tracking.dto').UpdateOrderItemTrackingDto,
+  ) {
+    return this.ordersService.updateOrderItemTracking(orderId, itemId, dto);
+  }
 }

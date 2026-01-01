@@ -62,8 +62,12 @@ describe('V1 Products headers (e2e)', () => {
       // Derived variants should be returned when possible; if not derivable, they may be undefined
       // so we only assert they exist when src is in our expected DO Spaces format.
       if (typeof img.src === 'string' && /\/full_/.test(img.src)) {
-        expect(typeof img.thumbnail === 'string' && img.thumbnail.length > 0).toBe(true);
-        expect(typeof img.lowRes === 'string' && img.lowRes.length > 0).toBe(true);
+        expect(
+          typeof img.thumbnail === 'string' && img.thumbnail.length > 0,
+        ).toBe(true);
+        expect(typeof img.lowRes === 'string' && img.lowRes.length > 0).toBe(
+          true,
+        );
       }
     }
   });

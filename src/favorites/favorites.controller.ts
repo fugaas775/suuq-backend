@@ -25,7 +25,15 @@ import { RateLimitInterceptor } from '../common/interceptors/rate-limit.intercep
 
 @Controller('v1/favorites')
 @UseGuards(JwtAuthGuard, RequiredHeadersGuard)
-@UseInterceptors(new RateLimitInterceptor({ maxRps: 30, burst: 60, keyBy: 'userOrIp', scope: 'route', headers: true }))
+@UseInterceptors(
+  new RateLimitInterceptor({
+    maxRps: 30,
+    burst: 60,
+    keyBy: 'userOrIp',
+    scope: 'route',
+    headers: true,
+  }),
+)
 export class FavoritesController {
   constructor(private readonly favorites: FavoritesService) {}
 

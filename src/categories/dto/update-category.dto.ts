@@ -35,12 +35,22 @@ export class UpdateCategoryDto {
 
   @IsInt()
   @IsOptional()
-  @Transform(({ value }) => (value === '' ? null : value === null || value === undefined ? undefined : Number(value)))
+  @Transform(({ value }) =>
+    value === ''
+      ? null
+      : value === null || value === undefined
+        ? undefined
+        : Number(value),
+  )
   parentId?: number | null; // Allow setting parent to null for root categories
 
   @IsInt()
   @IsOptional()
   @Min(0)
-  @Transform(({ value }) => (value === null || value === undefined || value === '' ? undefined : Number(value)))
+  @Transform(({ value }) =>
+    value === null || value === undefined || value === ''
+      ? undefined
+      : Number(value),
+  )
   sortOrder?: number;
 }

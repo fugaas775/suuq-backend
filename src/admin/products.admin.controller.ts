@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Delete,
+  Get,
   HttpCode,
   HttpStatus,
   Param,
@@ -17,12 +18,81 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { UserRole } from '../auth/roles.enum';
 import { ProductsService } from '../products/products.service';
 import { SkipThrottle } from '@nestjs/throttler';
+import { Query } from '@nestjs/common';
 
 @UseGuards(AuthGuard('jwt'), RolesGuard)
 @SkipThrottle()
-@Controller('admin/products')
+@Controller([
+  'admin/products',
+  'admin/product-approvals',
+  'admin/product-approval',
+])
 export class AdminProductsController {
   constructor(private readonly products: ProductsService) {}
+
+  @Get()
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  async list(
+    @Query('status') status?: string,
+    @Query('page') page?: string,
+    @Query('per_page') perPage?: string,
+    @Query('q') q?: string,
+  ) {
+    return this.products.listForAdmin({
+      status,
+      page: Number(page),
+      perPage: Number(perPage),
+      q,
+    });
+  }
+
+  @Get('pending')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  async listPending() {
+    return this.products.listPendingApproval();
+  }
+
+  @Patch(':id/approve')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  async approve(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
+    const actorId = (req?.user?.id as number) || null;
+    return this.products.approveProduct(id, { actorId });
+  }
+
+  @Patch(':id/reject')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  async reject(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { status?: 'rejected' | 'draft'; reason?: string },
+    @Req() req: any,
+  ) {
+    const actorId = (req?.user?.id as number) || null;
+    const toStatus = body?.status === 'draft' ? 'draft' : 'rejected';
+    const reason = body?.reason ? String(body.reason) : null;
+    return this.products.rejectProduct(id, { actorId, toStatus, reason });
+  }
+
+  @Post('bulk-approve')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  async bulkApprove(@Body() body: { ids: number[] }, @Req() req: any) {
+    const actorId = (req?.user?.id as number) || null;
+    const ids = Array.isArray(body?.ids) ? body.ids : [];
+    return this.products.bulkApprove(ids, { actorId });
+  }
+
+  @Post('bulk-reject')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  async bulkReject(
+    @Body()
+    body: { ids: number[]; status?: 'rejected' | 'draft'; reason?: string },
+    @Req() req: any,
+  ) {
+    const actorId = (req?.user?.id as number) || null;
+    const ids = Array.isArray(body?.ids) ? body.ids : [];
+    const toStatus = body?.status === 'draft' ? 'draft' : 'rejected';
+    const reason = body?.reason ? String(body.reason) : null;
+    return this.products.bulkReject(ids, { actorId, toStatus, reason });
+  }
 
   // Soft delete: hide product; reversible via restore
   @Delete(':id')

@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
 import {
   Body,
   Controller,
@@ -12,8 +13,6 @@ import {
 import { ProductRequestsService } from './product-requests.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
-import { Roles } from '../common/decorators/roles.decorator';
-import { UserRole } from '../auth/roles.enum';
 import { CreateProductRequestDto } from './dto/create-product-request.dto';
 import { AuthenticatedRequest } from '../auth/auth.types';
 import { ListProductRequestQueryDto } from './dto/list-product-request-query.dto';
@@ -92,13 +91,13 @@ export class ProductRequestsController {
 
   // Lightweight analytics endpoints to satisfy mobile/Admin callers; currently no-op but keep for compatibility.
   @Post('search/log')
-  searchLog(@Body() body: any, @Req() req: AuthenticatedRequest) {
+  searchLog(@Body() _body: any, @Req() _req: AuthenticatedRequest) {
     // Future: persist search logs for analytics; for now acknowledge receipt to avoid 404s.
     return { ok: true };
   }
 
   @Post('analytics/zero-results')
-  analyticsZeroResults(@Body() body: any, @Req() req: AuthenticatedRequest) {
+  analyticsZeroResults(@Body() _body: any, @Req() _req: AuthenticatedRequest) {
     // Future: store zero-result analytics; for now acknowledge receipt to avoid 404s.
     return { ok: true };
   }
@@ -182,7 +181,7 @@ export class ProductRequestsController {
     'analytics/searches/zero',
     'analytics/searches/zero-results',
   ])
-  legacyAnalytics(@Body() body: any) {
+  legacyAnalytics(@Body() _body: any) {
     return { ok: true };
   }
 
@@ -195,7 +194,7 @@ export class ProductRequestsController {
     'v2/analytics/searches/zero',
     'v2/analytics/searches/zero-results',
   ])
-  legacyAnalyticsV2(@Body() body: any) {
+  legacyAnalyticsV2(@Body() _body: any) {
     return { ok: true };
   }
 }

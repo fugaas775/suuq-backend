@@ -1,4 +1,11 @@
-import { IsArray, ArrayNotEmpty, IsEnum, IsOptional, IsString, Length } from 'class-validator';
+import {
+  IsArray,
+  ArrayNotEmpty,
+  IsEnum,
+  IsOptional,
+  IsString,
+  Length,
+} from 'class-validator';
 import { UserRole } from '../../auth/roles.enum';
 
 export class RequestRoleUpgradeDto {

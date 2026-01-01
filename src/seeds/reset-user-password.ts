@@ -13,7 +13,9 @@ async function run() {
   const newPassword = (argPassword || process.env.RESET_PASSWORD || '').trim();
 
   if (!email) {
-    console.error('Usage: ts-node src/seeds/reset-user-password.ts <email> <newPassword>');
+    console.error(
+      'Usage: ts-node src/seeds/reset-user-password.ts <email> <newPassword>',
+    );
     console.error('Or set RESET_EMAIL and RESET_PASSWORD env vars.');
     await app.close();
     process.exit(1);

@@ -1,7 +1,5 @@
 export enum ShippingCarrier {
-  DHL = 'DHL',
-  FEDEX = 'FedEx',
-  UPS = 'UPS',
-  USPS = 'USPS',
+  S_CARRIER = 'S Carrier',
   OTHER = 'Other',
+  DELIVERER = 'Deliverer',
 }

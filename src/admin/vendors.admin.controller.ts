@@ -166,12 +166,17 @@ export class AdminVendorsController {
       return { items: items.map(mapItem), nextCursor };
     }
 
-    const { items, total, perPage, totalPages, page: currentPage } =
-      await this.audit.listForTargetPaged('vendor', id, {
-        page: p,
-        limit: l,
-        filters,
-      });
+    const {
+      items,
+      total,
+      perPage,
+      totalPages,
+      page: currentPage,
+    } = await this.audit.listForTargetPaged('vendor', id, {
+      page: p,
+      limit: l,
+      filters,
+    });
 
     return {
       items: items.map(mapItem),

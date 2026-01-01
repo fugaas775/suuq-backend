@@ -85,9 +85,7 @@ describe('VendorService.searchDeliverers (geo)', () => {
         .fn()
         .mockResolvedValue([seed as any, (seed as any).length]),
     };
-    jest
-      .spyOn(userRepo, 'createQueryBuilder')
-      .mockReturnValue(qb as any);
+    jest.spyOn(userRepo, 'createQueryBuilder').mockReturnValue(qb);
   });
 
   it('falls back when no origin (recent)', async () => {

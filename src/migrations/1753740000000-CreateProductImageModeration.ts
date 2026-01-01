@@ -1,6 +1,8 @@
 import { MigrationInterface, QueryRunner } from 'typeorm';
 
-export class CreateProductImageModeration1753740000000 implements MigrationInterface {
+export class CreateProductImageModeration1753740000000
+  implements MigrationInterface
+{
   name = 'CreateProductImageModeration1753740000000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
@@ -23,9 +25,15 @@ export class CreateProductImageModeration1753740000000 implements MigrationInter
         "updatedAt" TIMESTAMP NOT NULL DEFAULT now()
       );
     `);
-    await queryRunner.query(`CREATE INDEX "IDX_pim_status" ON "product_image_moderation" ("status")`);
-    await queryRunner.query(`CREATE INDEX "IDX_pim_productId" ON "product_image_moderation" ("productId")`);
-    await queryRunner.query(`CREATE INDEX "IDX_pim_productImageId" ON "product_image_moderation" ("productImageId")`);
+    await queryRunner.query(
+      `CREATE INDEX "IDX_pim_status" ON "product_image_moderation" ("status")`,
+    );
+    await queryRunner.query(
+      `CREATE INDEX "IDX_pim_productId" ON "product_image_moderation" ("productId")`,
+    );
+    await queryRunner.query(
+      `CREATE INDEX "IDX_pim_productImageId" ON "product_image_moderation" ("productImageId")`,
+    );
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {

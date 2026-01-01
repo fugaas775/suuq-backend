@@ -45,9 +45,8 @@ export class UsersController {
     @Query() filters: FindUsersQueryDto,
     @Query('meta') metaFlag?: string,
   ): Promise<any> {
-    const { users, total, page, pageSize } = await this.usersService.findAll(
-      filters,
-    );
+    const { users, total, page, pageSize } =
+      await this.usersService.findAll(filters);
     const data = users.map((user: any) =>
       plainToInstance(UserResponseDto, user, { excludeExtraneousValues: true }),
     );
@@ -244,7 +243,7 @@ export class UsersController {
           JSON.stringify(u.email || ''),
           JSON.stringify(u.displayName || ''),
           u.verificationStatus,
-            u.verified ? 'true' : 'false',
+          u.verified ? 'true' : 'false',
           JSON.stringify(u.verificationRejectionReason || ''),
           u.createdAt?.toISOString?.() || '',
         ].join(','),

@@ -23,7 +23,9 @@ export class NotificationsController {
   ) {
     const userId = req.user?.id;
     if (!userId) {
-      throw new UnauthorizedException('Authentication required to register device token.');
+      throw new UnauthorizedException(
+        'Authentication required to register device token.',
+      );
     }
     return this.notificationsService.registerDeviceToken({
       userId,

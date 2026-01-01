@@ -34,11 +34,14 @@ export class RateLimitInterceptor implements NestInterceptor {
   private readonly scope: KeyScope;
   private readonly headers: boolean;
 
-  constructor(maxRpsOrOptions?: number | RateLimitOptions, maybeOptions?: RateLimitOptions) {
+  constructor(
+    maxRpsOrOptions?: number | RateLimitOptions,
+    maybeOptions?: RateLimitOptions,
+  ) {
     const opts: RateLimitOptions =
       typeof maxRpsOrOptions === 'number'
         ? { maxRps: maxRpsOrOptions, ...(maybeOptions || {}) }
-        : (maxRpsOrOptions || {});
+        : maxRpsOrOptions || {};
 
     this.maxRps = Math.max(1, Math.floor(opts.maxRps ?? 30));
     this.burst = Math.max(1, Math.floor(opts.burst ?? this.maxRps));
@@ -70,7 +73,7 @@ export class RateLimitInterceptor implements NestInterceptor {
       else if (this.scope === 'route') {
         const base = (req.baseUrl || '').toString();
         const routePath = (req.route?.path || '').toString();
-        target = `${base}${routePath}` || (req.path || '');
+        target = `${base}${routePath}` || req.path || '';
       } else if (this.scope === 'path') {
         target = (req.path || req.url || '').toString().split('?')[0];
       } else if (this.scope === 'url') {
@@ -110,7 +113,10 @@ export class RateLimitInterceptor implements NestInterceptor {
       if (this.headers) {
         res.setHeader('Retry-After', Math.max(1, Math.ceil(retryMs / 1000)));
         res.setHeader('X-RateLimit-Limit', `${this.maxRps}`);
-        res.setHeader('X-RateLimit-Policy', `token-bucket; scope=${this.scope}; burst=${cap}; rate=${this.maxRps}/s`);
+        res.setHeader(
+          'X-RateLimit-Policy',
+          `token-bucket; scope=${this.scope}; burst=${cap}; rate=${this.maxRps}/s`,
+        );
         res.setHeader('X-RateLimit-Remaining', '0');
       }
       throw new HttpException('Rate limit exceeded', 429);
@@ -120,8 +126,14 @@ export class RateLimitInterceptor implements NestInterceptor {
     b.tokens -= 1;
     if (this.headers) {
       res.setHeader('X-RateLimit-Limit', `${this.maxRps}`);
-      res.setHeader('X-RateLimit-Policy', `token-bucket; scope=${this.scope}; burst=${cap}; rate=${this.maxRps}/s`);
-      res.setHeader('X-RateLimit-Remaining', `${Math.max(0, Math.floor(b.tokens))}`);
+      res.setHeader(
+        'X-RateLimit-Policy',
+        `token-bucket; scope=${this.scope}; burst=${cap}; rate=${this.maxRps}/s`,
+      );
+      res.setHeader(
+        'X-RateLimit-Remaining',
+        `${Math.max(0, Math.floor(b.tokens))}`,
+      );
     }
 
     return next.handle();

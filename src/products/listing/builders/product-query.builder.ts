@@ -34,7 +34,10 @@ export class ProductQueryBuilder {
     ]);
   }
 
-  async execute(page: number, perPage: number): Promise<{ items: Product[], total: number }> {
+  async execute(
+    page: number,
+    perPage: number,
+  ): Promise<{ items: Product[]; total: number }> {
     const [items, total] = await this.query
       .skip((page - 1) * perPage)
       .take(perPage)

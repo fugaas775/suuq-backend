@@ -28,7 +28,9 @@ export class CategoriesService {
       where: { parent: IsNull() },
       relations: ['children'],
       order: { sortOrder: 'ASC', name: 'ASC' },
-      ...(ttl ? { cache: { id: 'categories:roots:v1', milliseconds: ttl } } : {}),
+      ...(ttl
+        ? { cache: { id: 'categories:roots:v1', milliseconds: ttl } }
+        : {}),
     });
   }
 
@@ -59,7 +61,14 @@ export class CategoriesService {
       where,
       take,
       order: { name: 'ASC' },
-      ...(ttl ? { cache: { id: `categories:suggest:${term}:${take}`, milliseconds: Math.min(ttl, 15000) } } : {}),
+      ...(ttl
+        ? {
+            cache: {
+              id: `categories:suggest:${term}:${take}`,
+              milliseconds: Math.min(ttl, 15000),
+            },
+          }
+        : {}),
     });
     return cats.map((c) => ({
       id: c.id,
@@ -147,9 +156,7 @@ export class CategoriesService {
     const category = await this.findOne(id);
 
     // Normalize slug if provided to keep consistency with create()
-    const normalizedSlug = dto.slug
-      ? slugify(dto.slug)
-      : undefined;
+    const normalizedSlug = dto.slug ? slugify(dto.slug) : undefined;
 
     if (normalizedSlug && normalizedSlug !== category.slug) {
       const exists = await this.categoryRepo.findOne({
@@ -177,7 +184,9 @@ export class CategoriesService {
 
     const updatedCategory = this.categoryRepo.merge(category, {
       ...dto,
-      ...(typeof normalizedSlug !== 'undefined' ? { slug: normalizedSlug } : {}),
+      ...(typeof normalizedSlug !== 'undefined'
+        ? { slug: normalizedSlug }
+        : {}),
     });
 
     if (wasIconChanged) {

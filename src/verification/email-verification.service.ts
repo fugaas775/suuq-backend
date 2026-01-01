@@ -57,23 +57,32 @@ export class EmailVerificationService {
     }
     const user = await this.usersService.findByEmail(email);
     if (!user) {
-      throw new HttpException('User with this email does not exist.', HttpStatus.NOT_FOUND);
+      throw new HttpException(
+        'User with this email does not exist.',
+        HttpStatus.NOT_FOUND,
+      );
     }
 
     const sendKey = this.getSendKey(email);
     const client = this.redis.getClient();
     if (!client) {
-      throw new HttpException('Verification temporarily unavailable. Please try again shortly.', HttpStatus.SERVICE_UNAVAILABLE);
+      throw new HttpException(
+        'Verification temporarily unavailable. Please try again shortly.',
+        HttpStatus.SERVICE_UNAVAILABLE,
+      );
     }
 
     const ttl = await client.pttl(sendKey);
     if (ttl > 0) {
-      throw new HttpException('Please wait before requesting another code.', HttpStatus.TOO_MANY_REQUESTS);
+      throw new HttpException(
+        'Please wait before requesting another code.',
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
     }
 
-  const code = this.generateNumericOtp(OTP_LENGTH);
-  const saltHex = randomBytes(16).toString('hex');
-  const hashHex = this.hashOtp(saltHex, code);
+    const code = this.generateNumericOtp(OTP_LENGTH);
+    const saltHex = randomBytes(16).toString('hex');
+    const hashHex = this.hashOtp(saltHex, code);
 
     await this.emailService.send({
       to: email,
@@ -83,8 +92,8 @@ export class EmailVerificationService {
     });
 
     const codeKey = this.getCodeKey(email);
-  // Store salted hash to avoid keeping OTP in plaintext. Backward-compatible verify handles both formats.
-  await client.set(codeKey, `${saltHex}:${hashHex}`, 'PX', OTP_EXPIRY_MS);
+    // Store salted hash to avoid keeping OTP in plaintext. Backward-compatible verify handles both formats.
+    await client.set(codeKey, `${saltHex}:${hashHex}`, 'PX', OTP_EXPIRY_MS);
     await client.set(sendKey, '1', 'PX', RESEND_COOLDOWN_MS);
   }
 
@@ -94,7 +103,10 @@ export class EmailVerificationService {
     }
     const client = this.redis.getClient();
     if (!client) {
-      throw new HttpException('Verification temporarily unavailable. Please try again shortly.', HttpStatus.SERVICE_UNAVAILABLE);
+      throw new HttpException(
+        'Verification temporarily unavailable. Please try again shortly.',
+        HttpStatus.SERVICE_UNAVAILABLE,
+      );
     }
     const attemptsKey = this.getAttemptsKey(email);
 
@@ -104,7 +116,10 @@ export class EmailVerificationService {
     }
 
     if (attempts > MAX_ATTEMPTS) {
-      throw new HttpException('Too many verification attempts. Please try later.', HttpStatus.TOO_MANY_REQUESTS);
+      throw new HttpException(
+        'Too many verification attempts. Please try later.',
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
     }
 
     const codeKey = this.getCodeKey(email);
@@ -120,7 +135,10 @@ export class EmailVerificationService {
       const [saltHex, hashHex] = storedCode.split(':', 2);
       const computedHex = this.hashOtp(saltHex, code);
       try {
-        valid = timingSafeEqual(Buffer.from(hashHex, 'hex'), Buffer.from(computedHex, 'hex'));
+        valid = timingSafeEqual(
+          Buffer.from(hashHex, 'hex'),
+          Buffer.from(computedHex, 'hex'),
+        );
       } catch {
         valid = false;
       }

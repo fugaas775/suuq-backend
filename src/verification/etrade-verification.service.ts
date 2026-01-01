@@ -13,7 +13,8 @@ export interface BusinessLicenseInfo {
 
 @Injectable()
 export class ETradeVerificationService {
-  private readonly checkerUrl = 'https://etrade.gov.et/business-license-checker';
+  private readonly checkerUrl =
+    'https://etrade.gov.et/business-license-checker';
 
   async verifyLicense(licenseNumber: string): Promise<BusinessLicenseInfo> {
     try {
@@ -63,11 +64,15 @@ export class ETradeVerificationService {
       });
 
       if (Object.keys(extractedData).length < 6) {
-        throw new NotFoundException('Could not extract all required license details.');
+        throw new NotFoundException(
+          'Could not extract all required license details.',
+        );
       }
-      
+
       if (extractedData.status !== 'Valid') {
-        throw new NotFoundException(`License status is not 'Valid'. Current status: ${extractedData.status}`);
+        throw new NotFoundException(
+          `License status is not 'Valid'. Current status: ${extractedData.status}`,
+        );
       }
 
       return extractedData as BusinessLicenseInfo;

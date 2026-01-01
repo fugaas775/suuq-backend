@@ -1,7 +1,7 @@
 import { MigrationInterface, QueryRunner } from 'typeorm';
 
 export class AddProductsIndexes1727600000000 implements MigrationInterface {
-  name = 'AddProductsIndexes1727600000000'
+  name = 'AddProductsIndexes1727600000000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
     // Composite index for status + is_blocked for hot filters

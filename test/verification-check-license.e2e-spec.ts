@@ -1,4 +1,9 @@
-import { INestApplication, CanActivate, ExecutionContext } from '@nestjs/common';
+/* eslint-disable @typescript-eslint/unbound-method */
+import {
+  INestApplication,
+  CanActivate,
+  ExecutionContext,
+} from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { Module } from '@nestjs/common';
@@ -9,7 +14,10 @@ import { JwtAuthGuard } from '../src/auth/jwt-auth.guard';
 import { RolesGuard } from '../src/common/guards/roles.guard';
 import { UsersService } from '../src/users/users.service';
 import { ETradeVerificationService } from '../src/verification/etrade-verification.service';
-import { VerificationStatus, VerificationMethod } from '../src/users/entities/user.entity';
+import {
+  VerificationStatus,
+  VerificationMethod,
+} from '../src/users/entities/user.entity';
 
 class AllowGuard implements CanActivate {
   canActivate(context: ExecutionContext): boolean {
@@ -53,8 +61,10 @@ describe('Verification /check-license (e2e-lite)', () => {
     const moduleRef = await Test.createTestingModule({
       imports: [TestVerificationModule],
     })
-      .overrideProvider(UsersService).useValue(usersServiceMock)
-      .overrideProvider(ETradeVerificationService).useValue(etradeMock)
+      .overrideProvider(UsersService)
+      .useValue(usersServiceMock)
+      .overrideProvider(ETradeVerificationService)
+      .useValue(etradeMock)
       .overrideGuard(JwtAuthGuard)
       .useClass(AllowGuard)
       .overrideGuard(RolesGuard)
@@ -78,17 +88,22 @@ describe('Verification /check-license (e2e-lite)', () => {
 
     expect(res.body.tradeName).toBe('ACME Trading');
     expect(etradeMock.verifyLicense).toHaveBeenCalledWith('LIC-123');
-    expect(usersServiceMock.update).toHaveBeenCalledWith(99, expect.objectContaining({
-      verificationStatus: VerificationStatus.APPROVED,
-      verificationMethod: VerificationMethod.AUTOMATIC,
-      businessLicenseNumber: 'LIC-123',
-    }));
+    expect(usersServiceMock.update).toHaveBeenCalledWith(
+      99,
+      expect.objectContaining({
+        verificationStatus: VerificationStatus.APPROVED,
+        verificationMethod: VerificationMethod.AUTOMATIC,
+        businessLicenseNumber: 'LIC-123',
+      }),
+    );
   });
 
   it('POST /verification/check-license returns 404 for invalid license', async () => {
     // Arrange: cause next verification call to reject
     (etradeMock.verifyLicense as any).mockRejectedValueOnce(
-      new (require('@nestjs/common').NotFoundException)('License number not found or is invalid.'),
+      new (require('@nestjs/common').NotFoundException)(
+        'License number not found or is invalid.',
+      ),
     );
 
     const res = await request(app.getHttpServer())

@@ -48,6 +48,7 @@ import { ModerationModule } from './moderation/moderation.module';
 import { IdempotencyInterceptor } from './common/interceptors/idempotency.interceptor';
 import { FeatureFlagsModule } from './common/feature-flags/feature-flags.module';
 import { ProductRequestsModule } from './product-requests/product-requests.module';
+import { WalletModule } from './wallet/wallet.module';
 
 @Module({
   imports: [
@@ -187,6 +188,7 @@ import { ProductRequestsModule } from './product-requests/product-requests.modul
     SearchModule,
     ShippingModule,
     ProductRequestsModule,
+    WalletModule,
   ],
   controllers: [AppController],
   // Apply rate limiting globally

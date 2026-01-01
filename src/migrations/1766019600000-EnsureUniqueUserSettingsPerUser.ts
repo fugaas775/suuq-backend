@@ -1,6 +1,8 @@
 import { MigrationInterface, QueryRunner } from 'typeorm';
 
-export class EnsureUniqueUserSettingsPerUser1766019600000 implements MigrationInterface {
+export class EnsureUniqueUserSettingsPerUser1766019600000
+  implements MigrationInterface
+{
   name = 'EnsureUniqueUserSettingsPerUser1766019600000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {

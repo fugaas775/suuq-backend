@@ -34,13 +34,20 @@ describe('Categories (e2e)', () => {
     .fn<Promise<any[]>, []>()
     .mockResolvedValue(rootsWithChildren as any);
   const findBySlugMock = jest
-    .fn<Promise<any | null>, [string]>()
-    .mockImplementation(async (slug) =>
-      mockCategories.find((c) => c.slug === slug) || null,
+    .fn<Promise<any>, [string]>()
+    .mockImplementation(
+      async (slug) => mockCategories.find((c) => c.slug === slug) || null,
     );
   const suggestMock = jest
     .fn<
-      Promise<Array<{ id: number; name: string; slug: string; parentId: number | null }>>,
+      Promise<
+        Array<{
+          id: number;
+          name: string;
+          slug: string;
+          parentId: number | null;
+        }>
+      >,
       [string, number]
     >()
     .mockResolvedValue([
@@ -116,9 +123,7 @@ describe('Categories (e2e)', () => {
 
       // Body mirrors mock
       expect(res.body).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ slug: 'root' }),
-        ]),
+        expect.arrayContaining([expect.objectContaining({ slug: 'root' })]),
       );
     });
 
@@ -148,7 +153,9 @@ describe('Categories (e2e)', () => {
         .expect(200);
       const isNullish =
         res.body === null ||
-        (res.body && typeof res.body === 'object' && Object.keys(res.body).length === 0);
+        (res.body &&
+          typeof res.body === 'object' &&
+          Object.keys(res.body).length === 0);
       expect(isNullish).toBe(true);
     });
   });

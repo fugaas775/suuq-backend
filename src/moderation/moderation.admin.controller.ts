@@ -29,8 +29,8 @@ export class AdminModerationController {
     private pimRepo: Repository<ProductImageModeration>,
     @InjectRepository(ProductImage)
     private imgRepo: Repository<ProductImage>,
-  @InjectRepo(Product)
-  private productRepo: Repository<Product>,
+    @InjectRepo(Product)
+    private productRepo: Repository<Product>,
     private readonly scanner: ModerationScannerService,
   ) {}
 
@@ -42,7 +42,10 @@ export class AdminModerationController {
     @Query('status') statusRaw?: string,
   ) {
     const page = Math.max(parseInt(pageRaw || '1', 10) || 1, 1);
-    const perPage = Math.min(Math.max(parseInt(perPageRaw || '50', 10) || 50, 1), 200);
+    const perPage = Math.min(
+      Math.max(parseInt(perPageRaw || '50', 10) || 50, 1),
+      200,
+    );
     const sort = (sortRaw || 'confidence_desc').toLowerCase();
     const status = (statusRaw || 'flagged').toLowerCase();
     const order: any = {};
@@ -52,7 +55,8 @@ export class AdminModerationController {
     else order.createdAt = 'DESC';
 
     const where: any = {};
-    if (['flagged', 'pending', 'approved', 'rejected'].includes(status)) where.status = status;
+    if (['flagged', 'pending', 'approved', 'rejected'].includes(status))
+      where.status = status;
 
     const [items, total] = await this.pimRepo.findAndCount({
       where,
@@ -65,11 +69,17 @@ export class AdminModerationController {
 
   @Patch(':id/approve')
   async approve(@Param('id', ParseIntPipe) id: number) {
-    await this.pimRepo.update(id, { status: 'approved', reviewedAt: new Date() });
+    await this.pimRepo.update(id, {
+      status: 'approved',
+      reviewedAt: new Date(),
+    });
     const rec = await this.pimRepo.findOne({ where: { id } });
     if (rec) {
-      const remaining = await this.pimRepo.count({ where: { productId: rec.productId, status: 'flagged' } });
-      if (!remaining) await this.productRepo.update(rec.productId, { isBlocked: false });
+      const remaining = await this.pimRepo.count({
+        where: { productId: rec.productId, status: 'flagged' },
+      });
+      if (!remaining)
+        await this.productRepo.update(rec.productId, { isBlocked: false });
     }
     return { ok: true };
   }
@@ -79,9 +89,13 @@ export class AdminModerationController {
     @Param('id', ParseIntPipe) id: number,
     @Body('reason') reason?: string,
   ) {
-    await this.pimRepo.update(id, { status: 'rejected', reason: reason || null, reviewedAt: new Date() });
-  const rec = await this.pimRepo.findOne({ where: { id } });
-  if (rec) await this.productRepo.update(rec.productId, { isBlocked: true });
+    await this.pimRepo.update(id, {
+      status: 'rejected',
+      reason: reason || null,
+      reviewedAt: new Date(),
+    });
+    const rec = await this.pimRepo.findOne({ where: { id } });
+    if (rec) await this.productRepo.update(rec.productId, { isBlocked: true });
     return { ok: true };
   }
 
@@ -125,7 +139,10 @@ export class AdminModerationController {
   async rescan(@Param('id', ParseIntPipe) id: number) {
     const rec = await this.pimRepo.findOne({ where: { id } });
     if (!rec) return { ok: false };
-    const img = await this.imgRepo.findOne({ where: { id: rec.productImageId }, relations: ['product'] });
+    const img = await this.imgRepo.findOne({
+      where: { id: rec.productImageId },
+      relations: ['product'],
+    });
     if (!img) return { ok: false };
     await this.scanner.processImage(img);
     return { ok: true };

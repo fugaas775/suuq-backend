@@ -11,6 +11,12 @@ export class OrderItemResponseDto {
   @Expose() productImageUrl?: string | null;
   @Expose() quantity: number;
   @Expose() price: number;
+  @Expose() price_display?: {
+    amount: number | null;
+    currency: string;
+    convertedFrom?: string;
+    rate?: number;
+  };
 }
 
 export class OrderResponseDto {
@@ -21,6 +27,13 @@ export class OrderResponseDto {
   @Expose() paymentStatus: PaymentStatus;
   @Expose() createdAt: Date;
   @Expose() shippingAddress: any;
+  @Expose() currency?: string;
+  @Expose() total_display?: {
+    amount: number;
+    currency: string;
+    convertedFrom?: string;
+    rate?: number;
+  };
   @Expose() delivererId?: number;
   @Expose() delivererName?: string;
   @Expose() delivererEmail?: string;

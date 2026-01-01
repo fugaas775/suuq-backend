@@ -1,3 +1,4 @@
+/* eslint-disable no-empty, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, prettier/prettier */
 import { UserRole } from '../auth/roles.enum';
 import {
   Injectable,
@@ -24,6 +25,7 @@ import { plainToInstance } from 'class-transformer';
 import { OrderResponseDto } from './dto/order-response.dto';
 import { DoSpacesService } from '../media/do-spaces.service';
 import { AuditService } from '../audit/audit.service';
+import { CurrencyService } from '../common/services/currency.service';
 
 @Injectable()
 export class OrdersService {
@@ -168,17 +170,81 @@ export class OrdersService {
     return this.orderRepository.count();
   }
   private readonly logger = new Logger(OrdersService.name);
+  private readonly supportedCurrencies = ['ETB', 'SOS', 'KES', 'DJF', 'USD'];
 
   constructor(
     @InjectRepository(Order)
     private readonly orderRepository: Repository<Order>,
+    @InjectRepository(OrderItem)
+    private readonly orderItemRepository: Repository<OrderItem>,
     private readonly cartService: CartService,
     private readonly mpesaService: MpesaService,
     private readonly telebirrService: TelebirrService,
     private readonly notificationsService: NotificationsService,
   private readonly doSpaces: DoSpacesService,
   private readonly audit: AuditService,
+    private readonly currencyService: CurrencyService,
   ) {}
+
+  private normalizeCurrency(value?: string | null): string {
+    const upper = (value || '').trim().toUpperCase();
+    return this.supportedCurrencies.includes(upper) ? upper : 'ETB';
+  }
+
+  private convertPrice(
+    amount: number | null | undefined,
+    from: string,
+    to: string,
+  ): { amount: number | null; rate?: number } {
+    if (amount === null || amount === undefined) return { amount: null };
+    try {
+      const converted = this.currencyService.convert(amount, from, to);
+      const rate = this.currencyService.getRate(from, to);
+      return {
+        amount: converted,
+        rate: typeof rate === 'number' ? Math.round(rate * 1_000_000) / 1_000_000 : undefined,
+      };
+    } catch (err) {
+      this.logger.warn(`Currency convert failed from ${from} to ${to}: ${err instanceof Error ? err.message : String(err)}`);
+      return { amount, rate: undefined };
+    }
+  }
+
+  private mapOrderItem(item: OrderItem, target: string): OrderItem {
+    const productCurrency = (item.product as any)?.currency || 'ETB';
+    const { amount: priceConverted, rate } = this.convertPrice(item.price, productCurrency, target);
+    (item as any).price_display = {
+      amount: priceConverted ?? item.price ?? null,
+      currency: target,
+      convertedFrom: productCurrency,
+      rate,
+    };
+    (item as any).price = priceConverted ?? item.price;
+    (item as any).currency = target;
+    return item;
+  }
+
+  private mapOrder(order: Order, currency?: string): Order {
+    if (!order) return order;
+    const target = this.normalizeCurrency(currency);
+    this.logger.debug(`Order currency normalized: requested=${currency} applied=${target}`);
+    const mappedItems = (order.items || []).map((it) => this.mapOrderItem(it, target));
+    (order as any).items = mappedItems;
+
+    // Derive total in target currency from items to keep consistency
+    const totalConverted = mappedItems.reduce((sum, it) => {
+      const price = (it as any).price as number;
+      return sum + (typeof price === 'number' ? price * (it.quantity || 0) : 0);
+    }, 0);
+    (order as any).total_display = {
+      amount: Math.round(totalConverted * 100) / 100,
+      currency: target,
+      convertedFrom: (mappedItems[0]?.product as any)?.currency || 'ETB',
+      rate: (mappedItems[0] as any)?.price_display?.rate,
+    };
+    (order as any).currency = target;
+    return order;
+  }
 
   /**
    * Cancel an order as admin. Sets status to CANCELLED.
@@ -228,8 +294,9 @@ export class OrdersService {
   async createFromCart(
     userId: number,
     createOrderDto: CreateOrderDto,
+    currency?: string,
   ): Promise<any> {
-    const cart = await this.cartService.getCart(userId);
+    const cart = await this.cartService.getCart(userId, currency);
     if (cart.items.length === 0) {
       throw new BadRequestException(
         'Cannot create an order from an empty cart.',
@@ -248,7 +315,7 @@ export class OrdersService {
           actorId: userId,
           action: 'SELF_PURCHASE_BLOCKED',
           targetType: 'ORDER_SELF_PURCHASE',
-          targetId: (ids[0] as number) || 0,
+          targetId: ids[0] ?? 0,
           meta: { productIds: ids },
         });
       } catch {}
@@ -285,7 +352,7 @@ export class OrdersService {
       });
       const savedOrder = await this.orderRepository.save(newOrder);
       await this.cartService.clearCart(userId);
-      return savedOrder;
+      return this.mapOrder(savedOrder, currency);
     } else if (paymentMethod === 'MPESA') {
       if (!phoneNumber || !phoneNumber.trim()) {
         throw new BadRequestException(
@@ -301,14 +368,14 @@ export class OrdersService {
         paymentStatus: PaymentStatus.UNPAID,
         status: OrderStatus.PENDING,
       });
-      const savedOrder = await this.orderRepository.save(newOrder);
+        const savedOrder = await this.orderRepository.save(newOrder);
       await this.mpesaService.initiateStkPush(
         total,
         phoneNumber,
         savedOrder.id,
       );
       await this.cartService.clearCart(userId);
-      return savedOrder;
+      return this.mapOrder(savedOrder, currency);
     } else if (paymentMethod === 'TELEBIRR') {
       if (!phoneNumber || !phoneNumber.trim()) {
         throw new BadRequestException(
@@ -324,14 +391,14 @@ export class OrdersService {
         paymentStatus: PaymentStatus.UNPAID,
         status: OrderStatus.PENDING,
       });
-      const savedOrder = await this.orderRepository.save(newOrder);
+        const savedOrder = await this.orderRepository.save(newOrder);
       const checkoutUrl = await this.telebirrService.createPayment(
         total,
         savedOrder.id,
         phoneNumber,
       );
       await this.cartService.clearCart(userId);
-      return { order: savedOrder, checkoutUrl };
+        return { order: this.mapOrder(savedOrder, currency), checkoutUrl };
     } else {
       throw new BadRequestException(
         'Unsupported payment method. Only COD, MPESA, and TELEBIRR are currently supported.',
@@ -343,6 +410,7 @@ export class OrdersService {
     userId: number,
     page: number = 1,
     limit: number = 10,
+    currency?: string,
   ): Promise<{ data: OrderResponseDto[]; total: number }> {
     const qb = this.orderRepository
       .createQueryBuilder('order')
@@ -354,25 +422,29 @@ export class OrdersService {
       .skip((page - 1) * limit)
       .take(limit);
     const [orders, total] = await qb.getManyAndCount();
-    const response = orders.map((order) =>
-      plainToInstance(OrderResponseDto, {
-        ...order,
-        userId: order.user?.id,
-        delivererId: order.deliverer?.id,
+    const response = orders.map((order) => {
+      const mapped = this.mapOrder(order, currency);
+      return plainToInstance(OrderResponseDto, {
+        ...mapped,
+        userId: mapped.user?.id,
+        delivererId: mapped.deliverer?.id,
         items:
-          order.items?.map((item) => ({
+          mapped.items?.map((item) => ({
             productId: item.product?.id,
             productName: item.product?.name,
             productImageUrl: item.product?.imageUrl ?? null,
             quantity: item.quantity,
             price: item.price,
+            price_display: (item as any).price_display,
           })) || [],
-      }),
-    );
+        total_display: (mapped as any).total_display,
+        currency: (mapped as any).currency,
+      });
+    });
     return { data: response, total };
   }
 
-  async findOneForUser(userId: number, orderId: number): Promise<Order> {
+  async findOneForUser(userId: number, orderId: number, currency?: string): Promise<OrderResponseDto> {
     const order = await this.orderRepository.findOne({
       where: { id: orderId, user: { id: userId } },
       relations: ['items', 'items.product', 'deliverer'],
@@ -382,7 +454,23 @@ export class OrdersService {
         'Order not found or you do not have permission to view it.',
       );
     }
-    return order;
+    const mapped = this.mapOrder(order, currency);
+    return plainToInstance(OrderResponseDto, {
+      ...mapped,
+      userId: mapped.user?.id,
+      delivererId: mapped.deliverer?.id,
+      items:
+        mapped.items?.map((item) => ({
+          productId: item.product?.id,
+          productName: item.product?.name,
+          productImageUrl: item.product?.imageUrl ?? null,
+          quantity: item.quantity,
+          price: item.price,
+          price_display: (item as any).price_display,
+        })) || [],
+      total_display: (mapped as any).total_display,
+      currency: (mapped as any).currency,
+    });
   }
 
   /**
@@ -460,5 +548,81 @@ export class OrdersService {
     // If you later add payments/shipments tables, delete them here similarly.
 
     await this.orderRepository.delete(id);
+  }
+
+  // --- Admin Item Updates ---
+
+  private computeAggregateStatus(items: OrderItem[]): OrderStatus {
+    if (!items || items.length === 0) return OrderStatus.PENDING;
+    const statuses = new Set(items.map((i) => i.status));
+    if (statuses.has(OrderStatus.CANCELLED)) return OrderStatus.CANCELLED; // If any cancelled, order is partial/cancelled? Logic varies.
+    // Simple logic:
+    if (statuses.has(OrderStatus.DELIVERY_FAILED))
+      return OrderStatus.DELIVERY_FAILED;
+    if (
+      items.length > 0 &&
+      items.every((i) => i.status === OrderStatus.DELIVERED)
+    )
+      return OrderStatus.DELIVERED;
+    if (statuses.has(OrderStatus.OUT_FOR_DELIVERY))
+      return OrderStatus.OUT_FOR_DELIVERY;
+    if (statuses.has(OrderStatus.SHIPPED)) return OrderStatus.SHIPPED;
+    if (statuses.has(OrderStatus.PROCESSING)) return OrderStatus.PROCESSING;
+    return OrderStatus.PENDING;
+  }
+
+  async updateOrderItemStatus(
+    orderId: number,
+    itemId: number,
+    next: OrderStatus,
+  ) {
+    const item = await this.orderItemRepository.findOne({
+      where: { id: itemId, order: { id: orderId } } as any,
+      relations: ['order', 'order.items'],
+    });
+    if (!item) throw new NotFoundException('Order item not found');
+
+    // Admin can force status changes, but let's keep some sanity checks or allow all?
+    // For Admin, we usually allow overriding transitions.
+    
+    item.status = next;
+    if (next === OrderStatus.SHIPPED) item.shippedAt = new Date();
+    if (next === OrderStatus.DELIVERED) item.deliveredAt = new Date();
+    await this.orderItemRepository.save(item);
+
+    // Update aggregate order status based on all items
+    const freshItems = await this.orderItemRepository.find({
+      where: { order: { id: orderId } } as any,
+    });
+    const aggregate = this.computeAggregateStatus(freshItems);
+    if (item.order.status !== aggregate) {
+      item.order.status = aggregate;
+      await this.orderRepository.save(item.order);
+    }
+
+    return item;
+  }
+
+  async updateOrderItemTracking(
+    orderId: number,
+    itemId: number,
+    tracking: {
+      trackingCarrier?: string;
+      trackingNumber?: string;
+      trackingUrl?: string;
+    },
+  ) {
+    const item = await this.orderItemRepository.findOne({
+      where: { id: itemId, order: { id: orderId } } as any,
+    });
+    if (!item) throw new NotFoundException('Order item not found');
+
+    item.trackingCarrier =
+      tracking.trackingCarrier ?? item.trackingCarrier ?? null;
+    item.trackingNumber =
+      tracking.trackingNumber ?? item.trackingNumber ?? null;
+    item.trackingUrl = tracking.trackingUrl ?? item.trackingUrl ?? null;
+    await this.orderItemRepository.save(item);
+    return item;
   }
 }

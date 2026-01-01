@@ -5,7 +5,9 @@ import { VerifyEmailCodeDto } from './dto/verify-email-code.dto';
 
 @Controller('verification/email')
 export class EmailVerificationController {
-  constructor(private readonly emailVerificationService: EmailVerificationService) {}
+  constructor(
+    private readonly emailVerificationService: EmailVerificationService,
+  ) {}
 
   @Post('send')
   @HttpCode(HttpStatus.OK)

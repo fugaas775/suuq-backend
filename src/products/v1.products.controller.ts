@@ -85,7 +85,8 @@ export class ProductsV1Controller {
   @ApiOkResponse({ description: 'Lean product cards list with pagination.' })
   async list(
     @Query() filters: ProductFilterDto,
-    @Res({ passthrough: true }) res: Response,
+    @Query('currency') currency?: string,
+    @Res({ passthrough: true }) res?: Response,
   ) {
     const now = Date.now();
     // Guard against mobile image/camera search placeholders like "Search by image: <filename>"
@@ -104,7 +105,7 @@ export class ProductsV1Controller {
     }
     // Normalize category filters for stable behavior and cache keys:
     // Accept category, categories, or categoryId from DTO; coalesce into categoryId only
-    const norm: ProductFilterDto = { ...(filters as any) };
+    const norm: ProductFilterDto = { ...(filters as any), currency };
     const ids: number[] = [];
     if (Array.isArray((filters as any).categoryId))
       ids.push(...((filters as any).categoryId as number[]));
@@ -326,8 +327,9 @@ export class ProductsV1Controller {
   async detail(
     @Param('id', ParseIntPipe) id: number,
     @Query('view') view?: string,
+    @Query('currency') currency?: string,
   ) {
-    const product = await this.productsService.findOne(id);
+    const product = await this.productsService.findOne(id, currency);
     const mode = String(view || 'full').toLowerCase();
     if (mode === 'grid') {
       return toProductCard(product as any);

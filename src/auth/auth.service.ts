@@ -391,7 +391,7 @@ export class AuthService {
       });
     }
 
-    const user = await this.usersService.findById(verified.sub);
+    const user = await this.usersService.findById(Number(verified.sub));
     if (!user || !user.isActive) {
       throw new UnauthorizedException({
         code: 'USER_INACTIVE',

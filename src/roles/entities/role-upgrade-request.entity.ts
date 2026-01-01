@@ -53,7 +53,11 @@ export class RoleUpgradeRequest {
   @Column({ type: 'jsonb', nullable: true, default: '[]' })
   documents?: UpgradeDocument[] | null;
 
-  @Column({ type: 'enum', enum: RoleUpgradeStatus, default: RoleUpgradeStatus.PENDING })
+  @Column({
+    type: 'enum',
+    enum: RoleUpgradeStatus,
+    default: RoleUpgradeStatus.PENDING,
+  })
   status!: RoleUpgradeStatus;
 
   @Column({ type: 'text', nullable: true })

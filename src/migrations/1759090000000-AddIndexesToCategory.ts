@@ -13,9 +13,7 @@ export class AddIndexesToCategory1759090000000 implements MigrationInterface {
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(
-      'DROP INDEX IF EXISTS "IDX_category_sortOrder"',
-    );
+    await queryRunner.query('DROP INDEX IF EXISTS "IDX_category_sortOrder"');
     await queryRunner.query('DROP INDEX IF EXISTS "IDX_category_name"');
   }
 }

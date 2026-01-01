@@ -10,8 +10,8 @@ import { MediaMaintenanceService } from './media-maintenance.service';
 
 @Module({
   imports: [
-  // 2. Replace the complex MulterModule config with this simple one
-  ScheduleModule.forRoot(),
+    // 2. Replace the complex MulterModule config with this simple one
+    ScheduleModule.forRoot(),
     MulterModule.register({
       storage: diskStorage({
         destination: '/tmp/uploads',

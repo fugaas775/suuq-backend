@@ -14,9 +14,8 @@ export class VerificationService {
   ) {}
 
   async checkBusinessLicense(userId: number, licenseNumber: string) {
-    const licenseInfo = await this.etradeVerificationService.verifyLicense(
-      licenseNumber,
-    );
+    const licenseInfo =
+      await this.etradeVerificationService.verifyLicense(licenseNumber);
 
     await this.usersService.update(userId, {
       verificationStatus: VerificationStatus.APPROVED,

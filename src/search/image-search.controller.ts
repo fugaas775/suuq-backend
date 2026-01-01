@@ -20,11 +20,22 @@ import { toProductCard } from '../products/utils/product-card.util';
 import { MulterExceptionFilter } from '../media/multer-exception.filter';
 import { ImageSimilarityService } from './image-similarity.service';
 
-@UseInterceptors(new RateLimitInterceptor({ maxRps: 3, burst: 6, keyBy: 'userOrIp', scope: 'route', headers: true }))
+@UseInterceptors(
+  new RateLimitInterceptor({
+    maxRps: 3,
+    burst: 6,
+    keyBy: 'userOrIp',
+    scope: 'route',
+    headers: true,
+  }),
+)
 @SkipThrottle()
 @Controller('search')
 export class ImageSearchController {
-  constructor(private readonly products: ProductsService, private readonly sim: ImageSimilarityService) {}
+  constructor(
+    private readonly products: ProductsService,
+    private readonly sim: ImageSimilarityService,
+  ) {}
 
   /**
    * Temporary visual search endpoint (fallback mode):
@@ -47,19 +58,30 @@ export class ImageSearchController {
     @Res({ passthrough: true }) res?: Response,
   ) {
     // Support field name 'file' (client) or 'image' (older)
-    const file = (files || []).find((f) => f.fieldname === 'file') || (files || [])[0] || null;
-    const img = file || (files || []).find((f) => f.fieldname === 'image') || null;
+    const file =
+      (files || []).find((f) => f.fieldname === 'file') ||
+      (files || [])[0] ||
+      null;
+    const img =
+      file || (files || []).find((f) => f.fieldname === 'image') || null;
     if (!img) throw new BadRequestException('No image file provided.');
 
     // Validate size and mimetype
     const pipe = new ParseFilePipeBuilder()
-      .addMaxSizeValidator({ maxSize: 10 * 1024 * 1024, message: 'Please upload an image up to 10MB.' })
+      .addMaxSizeValidator({
+        maxSize: 10 * 1024 * 1024,
+        message: 'Please upload an image up to 10MB.',
+      })
       .build({ fileIsRequired: true });
     await pipe.transform(img as any);
     const mime = img?.mimetype || '';
-    if (!mime.startsWith('image/')) throw new BadRequestException('Only image uploads are supported.');
+    if (!mime.startsWith('image/'))
+      throw new BadRequestException('Only image uploads are supported.');
 
-    const perPage = Math.min(Math.max(parseInt(String(topK || '24'), 10) || 24, 1), 48);
+    const perPage = Math.min(
+      Math.max(parseInt(String(topK || '24'), 10) || 24, 1),
+      48,
+    );
 
     // For now, return a high-quality fallback feed (best_match, grid) and mark response headers
     // Try similarity first; fallback if we have no indexed phashes
@@ -81,7 +103,9 @@ export class ImageSearchController {
       res.setHeader('X-Image-Search-Mode', mode);
       res.setHeader('Cache-Control', 'no-store');
       const totalMs = Date.now() - t0;
-      const t = timings ? { ...timings, endToEndMs: totalMs } : { endToEndMs: totalMs };
+      const t = timings
+        ? { ...timings, endToEndMs: totalMs }
+        : { endToEndMs: totalMs };
       res.setHeader('X-Image-Search-Timing', JSON.stringify(t));
     }
 
@@ -89,13 +113,28 @@ export class ImageSearchController {
     let result: any;
     if (productIds && productIds.length) {
       // Fetch products by ids and map to cards; maintain original order
-      const products = await this.products.findManyByIds(productIds, { view: 'grid' });
+      const products = await this.products.findManyByIds(productIds, {
+        view: 'grid',
+      });
       const byId = new Map(products.map((p: any) => [p.id, p]));
-      items = productIds.map((id) => byId.get(id)).filter(Boolean).map(toProductCard);
-      result = { items, total: items.length, perPage, currentPage: 1, totalPages: 1 };
+      items = productIds
+        .map((id) => byId.get(id))
+        .filter(Boolean)
+        .map(toProductCard);
+      result = {
+        items,
+        total: items.length,
+        perPage,
+        currentPage: 1,
+        totalPages: 1,
+      };
     } else {
       // Fallback curated feed
-      result = await this.products.findFiltered({ perPage, sort: 'best_match', view: 'grid' } as any);
+      result = await this.products.findFiltered({
+        perPage,
+        sort: 'best_match',
+        view: 'grid',
+      } as any);
       items = (result.items || []).map(toProductCard);
       result = { ...result, items };
     }
@@ -103,7 +142,8 @@ export class ImageSearchController {
     // Clean up temp file if stored on disk (best-effort)
     try {
       const fs = await import('fs');
-      if ((img as any)?.path) void fs.promises.unlink((img as any).path).catch(() => {});
+      if ((img as any)?.path)
+        void fs.promises.unlink((img as any).path).catch(() => {});
     } catch {}
 
     return result;

@@ -14,7 +14,9 @@ export class AssignDelivererDto {
       obj?.assigneeId ??
       obj?.driverId ??
       obj?.courierId;
-    return val !== undefined && val !== null && val !== '' ? Number(val) : undefined;
+    return val !== undefined && val !== null && val !== ''
+      ? Number(val)
+      : undefined;
   })
   @IsInt({ message: 'delivererId must be an integer' })
   delivererId!: number;

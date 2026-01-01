@@ -10,6 +10,7 @@ import { MpesaModule } from '../mpesa/mpesa.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { MediaModule } from '../media/media.module';
 import { AuditModule } from '../audit/audit.module';
+import { CurrencyModule } from '../common/services/currency.module';
 // import { AdminOrdersController } from './admin-orders.controller'; // <-- DELETE THIS LINE
 
 @Module({
@@ -20,8 +21,9 @@ import { AuditModule } from '../audit/audit.module';
     TelebirrModule,
     MpesaModule,
     NotificationsModule,
-  MediaModule,
-  AuditModule,
+    MediaModule,
+    AuditModule,
+    CurrencyModule,
   ],
   controllers: [OrdersController],
   providers: [OrdersService],

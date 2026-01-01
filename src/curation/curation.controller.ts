@@ -14,6 +14,7 @@ export class CurationController {
     @Query('city') city?: string,
     @Query('region') region?: string,
     @Query('country') country?: string,
+    @Query('currency') currency?: string,
     @Query('view') view?: 'grid' | 'full',
   ) {
     const per = Math.min(Number(limit) || 10, 20);
@@ -23,11 +24,13 @@ export class CurationController {
         limit: per,
         cursor: null,
         view: v,
+        currency,
       }),
       this.curation.getSection('home-best', {
         limit: per,
         cursor: null,
         view: v,
+        currency,
       }),
     ]);
 
@@ -62,6 +65,7 @@ export class CurationController {
     @Param('key') key: string,
     @Query('limit') limit?: string,
     @Query('cursor') cursor?: string,
+    @Query('currency') currency?: string,
     @Query('view') view?: 'grid' | 'full',
   ) {
     const v = view === 'full' ? 'full' : 'grid';
@@ -69,6 +73,7 @@ export class CurationController {
       limit: Number(limit) || 20,
       cursor,
       view: v,
+      currency,
     });
     const items = res.items.map(normalizeProductImage);
     this.logger.log(

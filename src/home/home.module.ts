@@ -12,7 +12,7 @@ import { HomeV2Controller } from './v2.home.controller';
 @Module({
   imports: [
     forwardRef(() => ProductsModule),
-  CurationModule,
+    CurationModule,
     TypeOrmModule.forFeature([Category, User]),
   ],
   controllers: [HomeController, HomeV1Controller, HomeV2Controller],

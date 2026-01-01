@@ -23,7 +23,12 @@ export class CurationService {
 
   async getSection(
     key: string,
-    opts: { limit?: number; cursor?: string | null; view?: 'grid' | 'full' },
+    opts: {
+      limit?: number;
+      cursor?: string | null;
+      view?: 'grid' | 'full';
+      currency?: string;
+    },
   ) {
     // Only allow curated keys per requirement
     const tagKey = key === 'home-new' || key === 'home-best' ? key : null;
@@ -42,6 +47,7 @@ export class CurationService {
       sort: fallbackSort as any,
       tags: tagKey as any,
       view: opts.view,
+      currency: opts.currency,
     } as any);
     const nextCursor = page * limit < res.total ? encodeCursor(page + 1) : null;
     return {

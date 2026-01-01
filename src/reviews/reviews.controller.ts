@@ -12,7 +12,11 @@ import {
 } from '@nestjs/common';
 import { ReviewsService } from './reviews.service';
 import { CreateReviewDto } from './create-review.dto';
-import { Query, Controller as RootController, Get as RootGet } from '@nestjs/common';
+import {
+  Query,
+  Controller as RootController,
+  Get as RootGet,
+} from '@nestjs/common';
 import { SkipThrottle } from '@nestjs/throttler';
 import { UseInterceptors } from '@nestjs/common';
 import { RateLimitInterceptor } from '../common/interceptors/rate-limit.interceptor';
@@ -74,7 +78,10 @@ export class ReviewsController {
         res.setHeader('Last-Modified', cached.lastModified);
       }
       // Public cache for short period to allow client/proxy reuse
-      res.setHeader('Cache-Control', 'public, max-age=60, stale-while-revalidate=30');
+      res.setHeader(
+        'Cache-Control',
+        'public, max-age=60, stale-while-revalidate=30',
+      );
       return cached.data;
     }
 
@@ -82,15 +89,16 @@ export class ReviewsController {
     // Compute Last-Modified from newest review (if any)
     const lastModifiedDate = list?.length
       ? new Date(
-          Math.max(
-            ...list.map((r: any) => new Date(r.createdAt).getTime()),
-          ),
+          Math.max(...list.map((r: any) => new Date(r.createdAt).getTime())),
         )
       : undefined;
     const lastModified = lastModifiedDate?.toUTCString();
 
     if (lastModified) res.setHeader('Last-Modified', lastModified);
-    res.setHeader('Cache-Control', 'public, max-age=60, stale-while-revalidate=30');
+    res.setHeader(
+      'Cache-Control',
+      'public, max-age=60, stale-while-revalidate=30',
+    );
 
     // Cache the serialized data for a short period
     REVIEWS_CACHE.set(pid, {
@@ -133,7 +141,10 @@ export class ReviewsSummaryController {
       headers: true,
     }),
   )
-  async summary(@Query('ids') ids: string, @Res({ passthrough: true }) res: Response) {
+  async summary(
+    @Query('ids') ids: string,
+    @Res({ passthrough: true }) res: Response,
+  ) {
     const list = String(ids || '')
       .split(',')
       .map((s) => parseInt(s.trim(), 10))
@@ -141,7 +152,10 @@ export class ReviewsSummaryController {
     if (!list.length) return {};
     const data = await this.reviewsService.summaryBulk(list);
     // Allow brief caching of summaries as they change relatively infrequently
-    res.setHeader('Cache-Control', 'public, max-age=60, stale-while-revalidate=30');
+    res.setHeader(
+      'Cache-Control',
+      'public, max-age=60, stale-while-revalidate=30',
+    );
     return data;
   }
 }
