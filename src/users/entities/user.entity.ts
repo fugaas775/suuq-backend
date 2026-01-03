@@ -6,6 +6,11 @@ export enum VerificationStatus {
   SUSPENDED = 'SUSPENDED',
 }
 
+export enum SubscriptionTier {
+  FREE = 'free',
+  PRO = 'pro',
+}
+
 import {
   Entity,
   PrimaryGeneratedColumn, // <-- ADDED THIS
@@ -66,6 +71,13 @@ export class User {
     default: [UserRole.CUSTOMER],
   })
   roles!: UserRole[];
+
+  @Column({
+    type: 'enum',
+    enum: SubscriptionTier,
+    default: SubscriptionTier.FREE,
+  })
+  subscriptionTier!: SubscriptionTier;
 
   // --- Profile fields ---
   @Column({ nullable: true })
@@ -237,6 +249,9 @@ export class User {
 
   @Column({ type: 'varchar', length: 128, nullable: true })
   bankName?: string | null;
+
+  @Column({ type: 'varchar', length: 128, nullable: true })
+  bankAccountHolderName?: string | null;
 
   @Column({ type: 'varchar', length: 32, nullable: true })
   mobileMoneyNumber?: string | null;

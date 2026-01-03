@@ -1,14 +1,15 @@
-import { IsString, IsInt, IsOptional } from 'class-validator';
+import { IsString, IsOptional } from 'class-validator';
 
 export class RegisterDeviceTokenDto {
-  @IsInt()
-  @IsOptional()
-  userId?: number;
-
   @IsString()
   token: string;
 
   @IsString()
   @IsOptional()
   platform?: string;
+}
+
+export class UnregisterDeviceTokenDto {
+  @IsString()
+  token: string;
 }

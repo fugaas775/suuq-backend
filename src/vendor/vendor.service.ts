@@ -277,6 +277,7 @@ export class VendorService {
 
     const newProduct = this.productRepository.create({
       ...productData,
+      status: 'publish',
       vendor: vendor,
       category: categoryId ? { id: categoryId } : undefined,
       imageUrl: images && images.length > 0 ? images[0].src : null, // Set main display image
@@ -374,6 +375,10 @@ export class VendorService {
       // Extra safety: drop any computed keys if present
       if ('posterUrl' in productData) delete productData.posterUrl;
       if ('videoUrl' in productData) delete productData.videoUrl;
+      if ('status' in productData) delete productData.status;
+      if ('isFree' in productData) delete productData.isFree;
+      if ('downloadKey' in productData) delete productData.downloadKey;
+      if ('downloadUrl' in productData) delete productData.downloadUrl;
     }
     Object.assign(product, productData);
 
@@ -549,16 +554,42 @@ export class VendorService {
     // Update images if they were sent (delete old ones, add new ones)
     if (images) {
       product.imageUrl = images.length > 0 ? images[0].src : null;
-      await this.productImageRepository.delete({ product: { id: productId } });
 
-      const imageEntities = images.map((imageObj, index) =>
-        this.productImageRepository.create({
-          ...imageObj,
+      // Get currently stored images to handle ID preservation and cleanup
+      const existingImages = await this.productImageRepository.find({
+        where: { product: { id: productId } },
+      });
+
+      const existingIds = new Set(existingImages.map((img) => img.id));
+
+      // Determine which IDs from the payload are valid (exist in DB)
+      // If payload has an ID that is NOT in existingIds, strip it (treat as new)
+      const sanitizedImages = images.map((img, index) => {
+        const isExisting = img.id && existingIds.has(Number(img.id));
+        return this.productImageRepository.create({
+          ...img,
+          id: isExisting ? img.id : undefined, // Strip invalid/fake IDs
           product,
           sortOrder: index,
-        }),
+        });
+      });
+
+      // Determine IDs to delete (in DB but not in payload)
+      const payloadIds = new Set(
+        sanitizedImages.filter((img) => img.id).map((img) => img.id),
       );
-      await this.productImageRepository.save(imageEntities);
+      const idsToDelete = existingImages
+        .filter((img) => !payloadIds.has(img.id))
+        .map((img) => img.id);
+
+      if (idsToDelete.length > 0) {
+        await this.productImageRepository.delete(idsToDelete);
+      }
+
+      // Save (Update existing, Insert new)
+      const savedImages =
+        await this.productImageRepository.save(sanitizedImages);
+      product.images = savedImages;
     }
 
     await this.productRepository.save(product);
@@ -853,8 +884,16 @@ export class VendorService {
       .innerJoin('orderItem.product', 'product')
       .where('product.vendorId = :vendorId', { vendorId })
       .andWhere('o.createdAt >= :startDate', { startDate })
+      .andWhere('o.status IN (:...statuses)', {
+        statuses: [
+          OrderStatus.PROCESSING,
+          OrderStatus.SHIPPED,
+          OrderStatus.OUT_FOR_DELIVERY,
+          OrderStatus.DELIVERED,
+        ],
+      })
       .select('DATE(o.createdAt)', 'date')
-      .addSelect('SUM(o.total)', 'total')
+      .addSelect('SUM(orderItem.price * orderItem.quantity)', 'total')
       .addSelect('COUNT(DISTINCT o.id)', 'orderCount')
       .groupBy('DATE(o.createdAt)')
       .orderBy('date', 'ASC')
@@ -1036,8 +1075,30 @@ export class VendorService {
       .andWhere(':role = ANY(user.roles)', { role: UserRole.VENDOR })
       .getOne();
     if (!user) return null;
-    const { id, storeName, avatarUrl, displayName, createdAt } = user as any;
-    return { id, storeName, avatarUrl, displayName, createdAt };
+    const {
+      id,
+      storeName,
+      avatarUrl,
+      displayName,
+      createdAt,
+      bankName,
+      bankAccountNumber,
+      bankAccountHolderName,
+      mobileMoneyNumber,
+      mobileMoneyProvider,
+    } = user as any;
+    return {
+      id,
+      storeName,
+      avatarUrl,
+      displayName,
+      createdAt,
+      bankName: bankName || '',
+      bankAccountNumber: bankAccountNumber || '',
+      bankAccountHolderName: bankAccountHolderName || '',
+      mobileMoneyNumber: mobileMoneyNumber || '',
+      mobileMoneyProvider: mobileMoneyProvider || '',
+    };
   }
 
   async getDashboardOverview(userId: number) {
@@ -1052,7 +1113,27 @@ export class VendorService {
       .where('product.vendor.id = :userId', { userId })
       .getCount();
 
-    return { productCount, orderCount };
+    const { totalSales } = await this.orderRepository
+      .createQueryBuilder('order')
+      .innerJoin('order.items', 'orderItem')
+      .innerJoin('orderItem.product', 'product')
+      .where('product.vendor.id = :userId', { userId })
+      .andWhere('order.status IN (:...statuses)', {
+        statuses: [
+          OrderStatus.PROCESSING,
+          OrderStatus.SHIPPED,
+          OrderStatus.OUT_FOR_DELIVERY,
+          OrderStatus.DELIVERED,
+        ],
+      })
+      .select('SUM(orderItem.price * orderItem.quantity)', 'totalSales')
+      .getRawOne();
+
+    return {
+      productCount,
+      orderCount,
+      totalSales: parseFloat(totalSales) || 0,
+    };
   }
   async getVendorProducts(userId: number, currency?: string) {
     const target = this.normalizeCurrency(currency);
@@ -1502,27 +1583,57 @@ export class VendorService {
       `Vendor orders currency normalized: requested=${opts.currency} applied=${targetCurrency}`,
     );
 
-    const qb = this.orderRepository
+    // Step 1: Get distinct Order IDs and Total Count
+    const qbIds = this.orderRepository
       .createQueryBuilder('o')
+      .select(['o.id', 'o.createdAt'])
       .innerJoin('o.items', 'oi')
       .innerJoin('oi.product', 'p')
       .innerJoin('p.vendor', 'v')
+      .where('v.id = :vendorId', { vendorId });
+
+    if (opts.status) {
+      qbIds.andWhere('o.status = :status', { status: opts.status });
+    }
+
+    // We need distinct because joins with items multiply rows
+    qbIds.distinct(true);
+
+    const total = await qbIds.getCount();
+
+    // Get paginated IDs
+    const distinctResult = await qbIds
+      .orderBy('o.createdAt', 'DESC')
+      .skip((page - 1) * limit)
+      .take(limit)
+      .getRawMany();
+
+    this.logger.debug(
+      `Vendor orders raw distinct result: ${JSON.stringify(distinctResult)}`,
+    );
+
+    const orderIds = distinctResult.map((r) => r.o_id);
+    this.logger.debug(
+      `Vendor orders IDs found: ${JSON.stringify(orderIds)} (Total: ${total})`,
+    );
+
+    if (orderIds.length === 0) {
+      return { data: [], total };
+    }
+
+    // Step 2: Fetch full Order entities
+    const orders = await this.orderRepository
+      .createQueryBuilder('o')
       .leftJoinAndSelect('o.deliverer', 'deliverer')
       .leftJoinAndSelect('o.user', 'user')
       .leftJoinAndSelect('o.items', 'items')
       .leftJoinAndSelect('items.product', 'product')
       .leftJoinAndSelect('product.vendor', 'productVendor')
-      .where('v.id = :vendorId', { vendorId })
+      .where('o.id IN (:...ids)', { ids: orderIds })
       .orderBy('o.createdAt', 'DESC')
-      .distinct(true)
-      .skip((page - 1) * limit)
-      .take(limit);
+      .getMany();
 
-    if (opts.status) {
-      qb.andWhere('o.status = :status', { status: opts.status });
-    }
-
-    const [orders, total] = await qb.getManyAndCount();
+    this.logger.debug(`Vendor orders entities fetched: ${orders.length}`);
 
     // Filter items to only this vendor's products in the response and expose normalized deliverer fields
     const data = orders.map((o) => {
@@ -1659,6 +1770,7 @@ export class VendorService {
       .leftJoinAndSelect('o.user', 'user')
       .leftJoinAndSelect('o.items', 'items')
       .leftJoinAndSelect('items.product', 'product')
+      .addSelect('product.original_creator_contact')
       .leftJoinAndSelect('product.vendor', 'vendor')
       .where('o.id = :orderId', { orderId })
       .getOne();

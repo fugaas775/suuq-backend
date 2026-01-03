@@ -338,15 +338,16 @@ export class OrdersService {
     );
 
     // Payment method branching
-    const { paymentMethod, phoneNumber } = createOrderDto;
+    const paymentMethod = createOrderDto.paymentMethod.toUpperCase();
+    const { phoneNumber } = createOrderDto;
     let newOrder: Order;
-    if (paymentMethod === 'COD') {
+    if (paymentMethod === 'COD' || paymentMethod === 'BANK_TRANSFER') {
       newOrder = this.orderRepository.create({
         user: { id: userId } as User,
         items: orderItems,
         total: total,
         shippingAddress: createOrderDto.shippingAddress,
-        paymentMethod: PaymentMethod.COD,
+        paymentMethod: paymentMethod === 'COD' ? PaymentMethod.COD : PaymentMethod.BANK_TRANSFER,
         paymentStatus: PaymentStatus.UNPAID,
         status: OrderStatus.PENDING,
       });
@@ -401,7 +402,7 @@ export class OrdersService {
         return { order: this.mapOrder(savedOrder, currency), checkoutUrl };
     } else {
       throw new BadRequestException(
-        'Unsupported payment method. Only COD, MPESA, and TELEBIRR are currently supported.',
+        'Unsupported payment method. Only BANK_TRANSFER, COD, MPESA, and TELEBIRR are currently supported.',
       );
     }
   }
@@ -424,10 +425,14 @@ export class OrdersService {
     const [orders, total] = await qb.getManyAndCount();
     const response = orders.map((order) => {
       const mapped = this.mapOrder(order, currency);
+      const deliverer = mapped.deliverer;
       return plainToInstance(OrderResponseDto, {
         ...mapped,
         userId: mapped.user?.id,
         delivererId: mapped.deliverer?.id,
+        assignedDelivererId: deliverer?.id,
+        assignedDelivererName: deliverer?.displayName ?? null,
+        assignedDelivererPhone: deliverer?.phoneNumber ?? null,
         items:
           mapped.items?.map((item) => ({
             productId: item.product?.id,
@@ -455,10 +460,14 @@ export class OrdersService {
       );
     }
     const mapped = this.mapOrder(order, currency);
+    const deliverer = mapped.deliverer;
     return plainToInstance(OrderResponseDto, {
       ...mapped,
       userId: mapped.user?.id,
       delivererId: mapped.deliverer?.id,
+      assignedDelivererId: deliverer?.id,
+      assignedDelivererName: deliverer?.displayName ?? null,
+      assignedDelivererPhone: deliverer?.phoneNumber ?? null,
       items:
         mapped.items?.map((item) => ({
           productId: item.product?.id,

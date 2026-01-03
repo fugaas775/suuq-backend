@@ -6,7 +6,7 @@ import {
   IsOptional,
   IsIn,
 } from 'class-validator';
-import { Type } from 'class-transformer';
+import { Type, Transform } from 'class-transformer';
 
 class ShippingAddressDto {
   @IsString() @IsNotEmpty() fullName!: string;
@@ -23,7 +23,18 @@ export class CreateOrderDto {
   shippingAddress!: ShippingAddressDto;
 
   @IsString()
-  @IsIn(['COD', 'MPESA', 'TELEBIRR'])
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
+  @Transform(({ value }) => value?.toUpperCase())
+  @IsIn([
+    'COD',
+    'MPESA',
+    'TELEBIRR',
+    'BANK_TRANSFER',
+    'cod',
+    'mpesa',
+    'telebirr',
+    'bank_transfer',
+  ])
   paymentMethod!: string;
 
   // Required for MPESA/TELEBIRR, not needed for COD

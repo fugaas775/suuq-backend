@@ -26,18 +26,17 @@ import { SkipThrottle } from '@nestjs/throttler';
 import { OrdersService } from '../orders/orders.service';
 import { RolesGuard } from '../auth/roles.guard';
 import { AuthGuard } from '@nestjs/passport'; // Import the built-in guard
-import { WithdrawalsService } from '../withdrawals/withdrawals.service';
-import { WithdrawalStatus } from '../withdrawals/entities/withdrawal.entity';
 import { Roles } from '../common/decorators/roles.decorator';
 import { UserRole } from '../auth/roles.enum';
 import { CreateAdminDto } from './dto/create-admin.dto';
 import { BulkUserIdsDto } from './dto/bulk-user-ids.dto';
-import { ClassSerializerInterceptor, ParseEnumPipe } from '@nestjs/common';
+import { ClassSerializerInterceptor } from '@nestjs/common';
 import { plainToInstance } from 'class-transformer';
 import { AdminUserResponseDto } from './dto/admin-user-response.dto';
 import { FindUsersQueryDto } from '../users/dto/find-users-query.dto';
 import { Response } from 'express';
 import { CurrencyService } from '../common/services/currency.service';
+import { ProductsService } from '../products/products.service';
 
 // ✨ FINAL FIX: Use AuthGuard('jwt') to match your other working controllers
 @UseGuards(AuthGuard('jwt'), RolesGuard)
@@ -49,8 +48,8 @@ export class AdminController {
   constructor(
     private readonly usersService: UsersService,
     private readonly ordersService: OrdersService,
-    private readonly withdrawalsService: WithdrawalsService,
     private readonly currencyService: CurrencyService,
+    private readonly productsService: ProductsService,
   ) {}
 
   // Prefer a specific route before the generic :id matcher to avoid ParseIntPipe errors
@@ -138,9 +137,14 @@ export class AdminController {
     const docs = this.usersService.normalizeVerificationDocuments(
       (user as any).verificationDocuments,
     );
+
+    // Fetch product count for vendor stats
+    const productCount = await this.productsService.countByVendor(id);
+
     return {
       ...(dto as any),
       verificationDocuments: docs,
+      productCount,
     } as AdminUserResponseDto;
   }
 
@@ -410,7 +414,6 @@ export class AdminController {
       totalAdmins,
       totalRevenue,
       totalOrders,
-      pendingWithdrawals,
       fxSnapshot,
     ] = await Promise.all([
       this.usersService.countAll(),
@@ -419,7 +422,6 @@ export class AdminController {
       this.usersService.countByRole(UserRole.ADMIN),
       this.ordersService.getTotalRevenue(),
       this.ordersService.countAll(),
-      this.withdrawalsService.countPendingWithdrawals(),
       this.currencyService.getRatesSnapshot(),
     ]);
 
@@ -430,20 +432,10 @@ export class AdminController {
       totalAdmins,
       totalRevenue,
       totalOrders,
-      pendingWithdrawals,
       fxSource: fxSnapshot.source,
       fxUpdatedAt: fxSnapshot.updatedAt,
       fxLastFetchAt: fxSnapshot.lastFetchAt ?? null,
     };
-  }
-
-  // ================== WITHDRAWAL MANAGEMENT ENDPOINTS ==================
-  @Get('withdrawals')
-  async getAllWithdrawals(
-    @Query('status', new ParseEnumPipe(WithdrawalStatus, { optional: true }))
-    status?: WithdrawalStatus,
-  ) {
-    return this.withdrawalsService.getAllWithdrawals(status);
   }
 
   // ===== Helpers =====
@@ -453,16 +445,6 @@ export class AdminController {
       throw new BadRequestException('delivererId is required');
     }
     return delivererId;
-  }
-
-  @Patch('withdrawals/:id/approve')
-  async approveWithdrawal(@Param('id', ParseIntPipe) id: number) {
-    return this.withdrawalsService.approveWithdrawal(id);
-  }
-
-  @Patch('withdrawals/:id/reject')
-  async rejectWithdrawal(@Param('id', ParseIntPipe) id: number) {
-    return this.withdrawalsService.rejectWithdrawal(id);
   }
 
   // Fix for Admin/Vendor role conflict: Admin endpoints for item updates

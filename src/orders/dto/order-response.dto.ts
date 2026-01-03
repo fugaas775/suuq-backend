@@ -38,6 +38,9 @@ export class OrderResponseDto {
   @Expose() delivererName?: string;
   @Expose() delivererEmail?: string;
   @Expose() delivererPhone?: string;
+  @Expose() assignedDelivererId?: number;
+  @Expose() assignedDelivererName?: string;
+  @Expose() assignedDelivererPhone?: string;
   @Expose() userId: number;
   // For admin tables: vendors involved in this order
   @Expose() vendors?: Array<{

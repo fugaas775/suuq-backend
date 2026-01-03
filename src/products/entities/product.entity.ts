@@ -32,6 +32,15 @@ export class Product {
   @Column({ type: 'text', nullable: true })
   imageUrl: string | null;
 
+  @Expose()
+  get thumbnail(): string | null {
+    if (this.imageUrl) return this.imageUrl;
+    if (this.images && this.images.length > 0) {
+      return this.images[0].thumbnailSrc || this.images[0].src;
+    }
+    return null;
+  }
+
   @Column('decimal', {
     precision: 10,
     scale: 2,
@@ -92,6 +101,9 @@ export class Product {
 
   @Column({ nullable: true })
   rating_count?: number;
+
+  @Column({ type: 'json', nullable: true, select: false })
+  original_creator_contact?: Record<string, any>;
 
   @ManyToMany(() => Tag, (tag) => tag.products, { cascade: true })
   @JoinTable()

@@ -2,7 +2,6 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AdminController } from './admin.controller';
 import { RolesGuard } from '../auth/roles.guard';
-import { WithdrawalsModule } from '../withdrawals/withdrawals.module';
 
 // 1. Import the modules that provide the services you need
 import { UsersModule } from '../users/users.module';
@@ -36,18 +35,20 @@ import { SearchLog } from '../search/entities/search-log.entity';
 import { AdminUsersController } from './users.admin.controller';
 import { AdminAuditController } from './audit.admin.controller';
 import { CurrencyModule } from '../common/services/currency.module';
+import { WalletModule } from '../wallet/wallet.module';
+import { AdminWalletController } from './wallet.admin.controller';
 
 @Module({
   // 2. Add UsersModule and OrdersModule here
   imports: [
     UsersModule,
     OrdersModule,
-    WithdrawalsModule,
     ProductsModule,
     VendorModule,
     AuditModule,
     RolesModule,
     FeatureFlagsModule,
+    WalletModule,
     SearchModule,
     NotificationsModule,
     CurrencyModule,
@@ -74,6 +75,7 @@ import { CurrencyModule } from '../common/services/currency.module';
     AdminSearchLogController,
     AdminUsersController,
     AdminAuditController,
+    AdminWalletController,
   ],
   // 3. Remove the services from providers. They are now correctly provided by the imported modules.
   providers: [

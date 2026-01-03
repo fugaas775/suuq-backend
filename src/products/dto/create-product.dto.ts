@@ -8,6 +8,7 @@ import {
   IsNotEmpty,
   ValidateNested,
   IsInt,
+  IsObject,
 } from 'class-validator';
 import { Type, Transform } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
@@ -47,6 +48,9 @@ class DigitalDownloadDto {
   @IsOptional()
   @IsString()
   checksum?: string;
+  @IsOptional()
+  @IsObject()
+  original_creator_contact?: Record<string, any>;
   @IsOptional()
   @Type(() => Boolean)
   @IsBoolean()

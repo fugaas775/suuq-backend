@@ -51,9 +51,10 @@ export class FavoritesController {
     res.setHeader('ETag', etag);
     res.setHeader('Content-Location', req.originalUrl || req.url);
     if (ifNoneMatch && ifNoneMatch === etag) {
-      return res.status(304).end();
+      res.status(304).end();
+      return;
     }
-    return res.status(200).json(data);
+    res.json(data);
   }
 
   @Patch()
@@ -74,7 +75,7 @@ export class FavoritesController {
     );
     res.setHeader('ETag', data.etag);
     res.setHeader('Content-Location', req.originalUrl || req.url);
-    return res.status(200).json(data);
+    res.json(data);
   }
 
   @Put()
@@ -88,7 +89,7 @@ export class FavoritesController {
     const data = await this.favorites.put(userId, body, ifMatch);
     res.setHeader('ETag', data.etag);
     res.setHeader('Content-Location', req.originalUrl || req.url);
-    return res.status(200).json(data);
+    res.json(data);
   }
 
   @Delete()

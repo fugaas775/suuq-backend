@@ -26,7 +26,7 @@ import { UserRole } from '../auth/roles.enum';
 @Controller()
 export class VendorController {
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.VENDOR)
+  @Roles(UserRole.VENDOR, UserRole.CUSTOMER)
   @Get('vendor/sales-graph')
   async getSalesGraph(@Query('range') range: string, @Req() req: any) {
     const userId = req.user.id;
@@ -99,7 +99,7 @@ export class VendorController {
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.VENDOR)
+  @Roles(UserRole.VENDOR, UserRole.CUSTOMER)
   @Post('vendor/products')
   async createMyProduct(@Req() req: any, @Body() dto: CreateVendorProductDto) {
     return this.vendorService.createMyProduct(req.user.id, dto);
@@ -107,7 +107,7 @@ export class VendorController {
 
   // Fetch a single product owned by the current vendor (for edit prefill)
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.VENDOR)
+  @Roles(UserRole.VENDOR, UserRole.CUSTOMER)
   @Get('vendor/products/:productId')
   async getMyProduct(
     @Req() req: any,
@@ -129,7 +129,7 @@ export class VendorController {
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.VENDOR)
+  @Roles(UserRole.VENDOR, UserRole.CUSTOMER)
   @Delete('vendor/products/:productId')
   async deleteMyProduct(
     @Req() req: any,
@@ -139,7 +139,7 @@ export class VendorController {
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.VENDOR)
+  @Roles(UserRole.VENDOR, UserRole.CUSTOMER)
   @Patch('vendor/products/:productId')
   async updateMyProduct(
     @Req() req: any,
@@ -151,7 +151,7 @@ export class VendorController {
 
   // Quick publish/unpublish toggle
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.VENDOR)
+  @Roles(UserRole.VENDOR, UserRole.CUSTOMER)
   @Patch('vendor/products/:productId/publish')
   async togglePublish(
     @Req() req: any,
@@ -168,7 +168,7 @@ export class VendorController {
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.VENDOR)
+  @Roles(UserRole.VENDOR, UserRole.CUSTOMER)
   @Get('vendor/sales')
   getSales(@Req() req: any) {
     return this.vendorService.getSales(req.user.id);
@@ -176,7 +176,7 @@ export class VendorController {
 
   // Allow vendors to search available deliverers (users with DELIVERER role)
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.VENDOR)
+  @Roles(UserRole.VENDOR, UserRole.CUSTOMER)
   @Get('vendor/deliverers')
   async searchDeliverers(
     @Query('q') q?: string,
@@ -207,7 +207,7 @@ export class VendorController {
 
   // ===== Vendor Orders =====
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.VENDOR)
+  @Roles(UserRole.VENDOR, UserRole.CUSTOMER)
   @Get('vendor/orders')
   async getVendorOrders(
     @Req() req: any,
@@ -225,7 +225,7 @@ export class VendorController {
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.VENDOR)
+  @Roles(UserRole.VENDOR, UserRole.CUSTOMER)
   @Get('vendor/orders/:orderId')
   async getVendorOrder(
     @Req() req: any,
@@ -236,7 +236,7 @@ export class VendorController {
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.VENDOR)
+  @Roles(UserRole.VENDOR, UserRole.CUSTOMER)
   @Patch('vendor/orders/:orderId/status')
   async updateOrderStatus(
     @Req() req: any,
@@ -252,7 +252,7 @@ export class VendorController {
 
   // Vendor assigns a deliverer to an order they fully own
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.VENDOR)
+  @Roles(UserRole.VENDOR, UserRole.CUSTOMER)
   @Patch('vendor/orders/:orderId/assign-deliverer')
   async vendorAssignDeliverer(
     @Req() req: any,
@@ -282,7 +282,7 @@ export class VendorController {
 
   // ===== Item-level endpoints =====
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.VENDOR)
+  @Roles(UserRole.VENDOR, UserRole.CUSTOMER)
   @Get('vendor/orders/:orderId/items')
   async getVendorOrderItems(
     @Req() req: any,
@@ -292,7 +292,7 @@ export class VendorController {
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.VENDOR)
+  @Roles(UserRole.VENDOR, UserRole.CUSTOMER)
   @Patch('vendor/orders/:orderId/items/:itemId/status')
   async updateOrderItemStatus(
     @Req() req: any,
@@ -310,7 +310,7 @@ export class VendorController {
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.VENDOR)
+  @Roles(UserRole.VENDOR, UserRole.CUSTOMER)
   @Patch('vendor/orders/:orderId/items/:itemId/tracking')
   async updateOrderItemTracking(
     @Req() req: any,
@@ -328,7 +328,7 @@ export class VendorController {
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.VENDOR)
+  @Roles(UserRole.VENDOR, UserRole.CUSTOMER)
   @Post('vendor/orders/:orderId/shipments')
   async createShipment(
     @Req() req: any,
@@ -343,7 +343,7 @@ export class VendorController {
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.VENDOR)
+  @Roles(UserRole.VENDOR, UserRole.CUSTOMER)
   @Post('vendor/orders/:orderId/label')
   async generateLabel(
     @Req() req: any,

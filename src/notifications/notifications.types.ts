@@ -10,6 +10,7 @@ export type FirebaseMessagingResponse = {
 export type FirebaseMessagingClient = {
   sendEachForMulticast: (message: {
     notification: { title: string; body: string };
+    data?: Record<string, string>;
     tokens: string[];
   }) => Promise<FirebaseMessagingResponse>;
 };

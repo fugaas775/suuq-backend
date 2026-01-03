@@ -10,7 +10,11 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In, MoreThan, TreeRepository, IsNull } from 'typeorm';
 import { Category } from '../categories/entities/category.entity';
 import { Product } from './entities/product.entity';
-import { User } from '../users/entities/user.entity';
+import {
+  User,
+  VerificationStatus,
+  SubscriptionTier,
+} from '../users/entities/user.entity';
 import { Order } from '../orders/entities/order.entity';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
@@ -32,6 +36,7 @@ import { Review } from '../reviews/entities/review.entity';
 import { FavoritesService } from '../favorites/favorites.service';
 import { qbCacheIfEnabled } from '../common/utils/db-cache.util';
 import { CurrencyService } from '../common/services/currency.service';
+import { EmailService } from '../email/email.service';
 
 @Injectable()
 export class ProductsService {
@@ -58,6 +63,7 @@ export class ProductsService {
     private readonly geo: GeoResolverService,
     private readonly favorites: FavoritesService,
     private readonly currencyService: CurrencyService,
+    private readonly emailService: EmailService,
   ) {}
 
   // Simple in-memory cache for Property & Real Estate subtree ids
@@ -87,9 +93,16 @@ export class ProductsService {
     if (!product) return product;
     const from = product.currency || 'ETB';
     const price = this.convertAmount(product.price, from, targetCurrency);
-    const sale = this.convertAmount(product.sale_price as any, from, targetCurrency);
+    const sale = this.convertAmount(
+      product.sale_price as any,
+      from,
+      targetCurrency,
+    );
     const rate = this.currencyService.getRate(from, targetCurrency);
-    const roundedRate = typeof rate === 'number' ? Math.round(rate * 1_000_000) / 1_000_000 : undefined;
+    const roundedRate =
+      typeof rate === 'number'
+        ? Math.round(rate * 1_000_000) / 1_000_000
+        : undefined;
 
     (product as any).price = price ?? product.price;
     (product as any).sale_price = sale ?? product.sale_price;
@@ -115,7 +128,10 @@ export class ProductsService {
     return product;
   }
 
-  private applyCurrencyList(items: Product[], targetCurrency: string): Product[] {
+  private applyCurrencyList(
+    items: Product[],
+    targetCurrency: string,
+  ): Product[] {
     if (!Array.isArray(items) || !items.length) return items || [];
     return items.map((p) => this.applyCurrency(p, targetCurrency));
   }
@@ -348,9 +364,17 @@ export class ProductsService {
         return { src, thumbnailSrc: thumb, lowResSrc: low };
       })
       .filter(
-        (img): img is { src: string; thumbnailSrc: string; lowResSrc: string } =>
+        (
+          img,
+        ): img is { src: string; thumbnailSrc: string; lowResSrc: string } =>
           !!img,
       );
+  }
+
+  async countByVendor(vendorId: number): Promise<number> {
+    return this.productRepo.count({
+      where: { vendor: { id: vendorId } },
+    });
   }
 
   // ✅ NEW create method
@@ -380,6 +404,18 @@ export class ProductsService {
     const vendor = await this.userRepo.findOneBy({ id: vendorId });
     if (!vendor) {
       throw new NotFoundException('Vendor not found');
+    }
+
+    // Check subscription tier and product limit
+    if (vendor.subscriptionTier !== SubscriptionTier.PRO) {
+      const productCount = await this.productRepo.count({
+        where: { vendor: { id: vendorId } },
+      });
+      if (productCount >= 5) {
+        throw new ForbiddenException(
+          'Free vendors are limited to 5 products. Please upgrade to Pro for unlimited listings.',
+        );
+      }
     }
 
     // Enforce phone number presence for vendors (admins are exempt)
@@ -427,8 +463,20 @@ export class ProductsService {
 
     // Image URL host policy check removed in rollback
 
+    // Enforce verification for publishing
+    const isVerified =
+      vendor.verified === true ||
+      vendor.verificationStatus === VerificationStatus.APPROVED;
+
+    let status = rest.status;
+    // If status is 'publish' (or undefined defaulting to publish) but not verified, force pending_approval
+    if ((!status || status === 'publish') && !isVerified) {
+      status = 'pending_approval';
+    }
+
     const product = this.productRepo.create({
       ...rest,
+      status,
       vendor,
       category,
       currency: rest.currency || vendor.currency || 'USD',
@@ -1110,7 +1158,9 @@ export class ProductsService {
     currentPage: number;
     totalPages: number;
   }> {
-    const targetCurrency = this.normalizeCurrencyParam((filters as any).currency);
+    const targetCurrency = this.normalizeCurrencyParam(
+      (filters as any).currency,
+    );
     const {
       page = 1,
       perPage: rawPerPage = 20,
@@ -1188,8 +1238,13 @@ export class ProductsService {
           .split(',')
           .map((c: string) => c.trim().toUpperCase())
       : ['ET', 'SO', 'KE', 'DJ'];
-    const propertySubtreeIds = await this.getPropertySubtreeIds().catch(() => []);
-    const hasPropCats = Array.isArray(propertySubtreeIds) && propertySubtreeIds.length > 0 ? 1 : 0;
+    const propertySubtreeIds = await this.getPropertySubtreeIds().catch(
+      () => [],
+    );
+    const hasPropCats =
+      Array.isArray(propertySubtreeIds) && propertySubtreeIds.length > 0
+        ? 1
+        : 0;
 
     const applyFilters = (
       qb: any,
@@ -1200,12 +1255,14 @@ export class ProductsService {
           'product.id',
           'product.name',
           'product.price',
+          'product.sale_price',
           'product.currency',
           'product.imageUrl',
           'product.average_rating',
           'product.rating_count',
           'product.sales_count',
           'product.viewCount',
+          'product.productType',
           'product.listingType',
           'product.bedrooms',
           'product.listingCity',
@@ -1220,9 +1277,30 @@ export class ProductsService {
           'vendor.avatarUrl',
           'vendor.storeName',
           'vendor.verified',
+          'vendor.subscriptionTier',
           'category.id',
           'category.slug',
         ]);
+        // include images relation for grid so the card util can pick a valid image
+        // Optimize: use a subquery to fetch only the first image per product
+        qb.leftJoinAndMapMany(
+          'product.images',
+          (subQuery) => {
+            return subQuery
+              .select('pi.id', 'id')
+              .addSelect('pi.src', 'src')
+              .addSelect('pi.thumbnailSrc', 'thumbnailSrc')
+              .addSelect('pi.lowResSrc', 'lowResSrc')
+              .addSelect('pi.productId', 'productId')
+              .from(ProductImage, 'pi')
+              .distinctOn(['pi.productId'])
+              .orderBy('pi.productId')
+              .addOrderBy('pi.sortOrder', 'ASC')
+              .addOrderBy('pi.id', 'ASC');
+          },
+          'images',
+          'images."productId" = product.id',
+        );
       } else {
         qb.leftJoinAndSelect('product.tags', 'tag').leftJoinAndSelect(
           'product.images',
@@ -1258,9 +1336,14 @@ export class ProductsService {
               .split(',')
               .map((t) => t.trim())
               .filter(Boolean);
-        qb.innerJoin('product.tags', 'tagFilter', 'tagFilter.name IN (:...tagList)', {
-          tagList,
-        });
+        qb.innerJoin(
+          'product.tags',
+          'tagFilter',
+          'tagFilter.name IN (:...tagList)',
+          {
+            tagList,
+          },
+        );
       }
       if (priceMin !== undefined)
         qb.andWhere('product.price >= :priceMin', { priceMin });
@@ -1286,8 +1369,10 @@ export class ProductsService {
       const brMax = bedrooms_max ?? bedroomsMax;
       if (brExact !== undefined)
         qb.andWhere('product.bedrooms = :br', { br: brExact });
-      if (brMin !== undefined) qb.andWhere('product.bedrooms >= :brMin', { brMin });
-      if (brMax !== undefined) qb.andWhere('product.bedrooms <= :brMax', { brMax });
+      if (brMin !== undefined)
+        qb.andWhere('product.bedrooms >= :brMin', { brMin });
+      if (brMax !== undefined)
+        qb.andWhere('product.bedrooms <= :brMax', { brMax });
 
       const listingCityFilter = (filters as any).listing_city;
       if (listingCityFilter) {
@@ -1338,7 +1423,9 @@ export class ProductsService {
         const uc = userCountry || country || '';
         const ur = userRegion || region || '';
         const uci = userCity || city || '';
-        const eastAfricaSqlList = eastAfricaList.map((_, i) => `:ea${i}`).join(',');
+        const eastAfricaSqlList = eastAfricaList
+          .map((_, i) => `:ea${i}`)
+          .join(',');
         const geoRankExpr = `CASE 
           WHEN (:uci <> '' AND LOWER(product."listing_city") = LOWER(:uci) AND :hasProp = 1 AND category.id IN (:...propIds)) THEN 5
           WHEN (:uci <> '' AND LOWER(vendor."registrationCity") = LOWER(:uci)) THEN 4
@@ -1365,7 +1452,9 @@ export class ProductsService {
             region,
           });
         if (city)
-          qb.andWhere('LOWER(vendor.registrationCity) = LOWER(:city)', { city });
+          qb.andWhere('LOWER(vendor.registrationCity) = LOWER(:city)', {
+            city,
+          });
       }
 
       return { qb, addedGeoRank } as { qb: any; addedGeoRank: boolean };
@@ -1373,7 +1462,14 @@ export class ProductsService {
 
     const applySorting = (qb: any, addedGeoRank: boolean) => {
       if (sort === 'best_match') {
-        if (addedGeoRank) qb.orderBy('geo_rank', 'DESC');
+        // Priority for PRO vendors
+        qb.addSelect(
+          `CASE WHEN vendor.subscriptionTier = 'pro' THEN 1 ELSE 0 END`,
+          'vendor_tier_rank',
+        );
+        qb.orderBy('vendor_tier_rank', 'DESC');
+
+        if (addedGeoRank) qb.addOrderBy('geo_rank', 'DESC');
         qb.addOrderBy('product.sales_count', 'DESC', 'NULLS LAST')
           .addOrderBy('product.average_rating', 'DESC', 'NULLS LAST')
           .addOrderBy('product.rating_count', 'DESC', 'NULLS LAST')
@@ -1436,7 +1532,9 @@ export class ProductsService {
       const baseIds: number[] = [];
       if (categoryIds && categoryIds.length) baseIds.push(...categoryIds);
       else if (categorySlug) {
-        const found = await this.categoryRepo.findOne({ where: { slug: categorySlug } });
+        const found = await this.categoryRepo.findOne({
+          where: { slug: categorySlug },
+        });
         if (found?.id) baseIds.push(found.id);
       }
       if (baseIds.length) {
@@ -1517,8 +1615,12 @@ export class ProductsService {
       const total = primaryTotal + othersTotal;
       if (process.env.DEBUG_SQL === '1') {
         try {
-          this.logger.debug(`(categoryFirst) primary SQL => ${primaryQb.getSql()}`);
-          this.logger.debug(`(categoryFirst) others SQL => ${othersQb.getSql()}`);
+          this.logger.debug(
+            `(categoryFirst) primary SQL => ${primaryQb.getSql()}`,
+          );
+          this.logger.debug(
+            `(categoryFirst) others SQL => ${othersQb.getSql()}`,
+          );
         } catch {}
       }
       return {
@@ -1531,7 +1633,12 @@ export class ProductsService {
     }
 
     // Standard path
-    const catIdsForMain = includeDescendants && subtreeIds?.length ? subtreeIds : categoryIds.length && !includeDescendants && !categorySlug ? categoryIds : undefined;
+    const catIdsForMain =
+      includeDescendants && subtreeIds?.length
+        ? subtreeIds
+        : categoryIds.length && !includeDescendants && !categorySlug
+          ? categoryIds
+          : undefined;
     const categoryModeMain = catIdsForMain?.length ? 'in' : 'none';
     const qb = buildQb(categoryModeMain, catIdsForMain || undefined);
     qb.skip((page - 1) * perPage).take(perPage);
@@ -1955,7 +2062,8 @@ export class ProductsService {
     if (images) {
       const normalizedImages = this.normalizeImagesInput(images);
       // Image URL host policy check removed in rollback
-      product.imageUrl = normalizedImages.length > 0 ? normalizedImages[0].src : null;
+      product.imageUrl =
+        normalizedImages.length > 0 ? normalizedImages[0].src : null;
       await this.productImageRepo.delete({ product: { id } }); // Delete old images
       if (normalizedImages.length) {
         const imageEntities = normalizedImages.map((img, index) =>
@@ -2128,9 +2236,17 @@ export class ProductsService {
     perPage?: number;
     per_page?: number;
     q?: string;
-  }): Promise<{ items: Product[]; total: number; page: number; perPage: number }> {
+  }): Promise<{
+    items: Product[];
+    total: number;
+    page: number;
+    perPage: number;
+  }> {
     const page = Math.max(1, Number(opts?.page || 1));
-    const perPage = Math.min(Math.max(Number(opts?.perPage || opts?.per_page || 20), 1), 200);
+    const perPage = Math.min(
+      Math.max(Number(opts?.perPage || opts?.per_page || 20), 1),
+      200,
+    );
     const status = (opts?.status || 'pending_approval').trim();
     const q = (opts?.q || '').trim();
 
@@ -2147,7 +2263,9 @@ export class ProductsService {
     }
 
     if (q) {
-      qb.andWhere('(p.name ILIKE :q OR p.description ILIKE :q)', { q: `%${q}%` });
+      qb.andWhere('(p.name ILIKE :q OR p.description ILIKE :q)', {
+        q: `%${q}%`,
+      });
     }
 
     qb.orderBy('p.createdAt', 'DESC');
@@ -2166,11 +2284,46 @@ export class ProductsService {
     id: number,
     opts: { actorId?: number | null } = {},
   ): Promise<Product> {
-    const product = await this.productRepo.findOne({ where: { id } });
+    const product = await this.productRepo
+      .createQueryBuilder('p')
+      .leftJoinAndSelect('p.vendor', 'vendor')
+      .addSelect('p.original_creator_contact')
+      .where('p.id = :id', { id })
+      .getOne();
+
     if (!product) throw new NotFoundException('Product not found');
     const previousStatus = (product as any).status || null;
     (product as any).status = 'publish';
     product.isBlocked = false;
+
+    // Handle Guest/Customer product approval
+    if (product.original_creator_contact) {
+      // Find Suuq S Vendor
+      const suuqVendor = await this.userRepo.findOne({
+        where: [
+          { displayName: 'Suuq S Vendor' },
+          { storeName: 'Suuq S Vendor' },
+          { email: 'suuq.s.vendor@suuq.com' },
+        ],
+      });
+
+      if (suuqVendor) {
+        product.vendor = suuqVendor;
+      }
+
+      // Send email notification
+      const contact = product.original_creator_contact;
+      if (contact.email) {
+        const name = contact.name || 'User';
+        await this.emailService.send({
+          to: contact.email,
+          subject: 'Your Product has been Approved!',
+          text: `Hello ${name},\n\nYour product "${product.name}" has been approved by the Super Admin and is now live on Suuq S Vendor.\n\nThank you!`,
+          html: `<p>Hello ${name},</p><p>Your product "<strong>${product.name}</strong>" has been approved by the Super Admin and is now live on Suuq S Vendor.</p><p>Thank you!</p>`,
+        });
+      }
+    }
+
     await this.productRepo.save(product);
     await this.audit.log({
       actorId: opts.actorId ?? null,
@@ -2186,15 +2339,66 @@ export class ProductsService {
     ids: number[],
     opts: { actorId?: number | null } = {},
   ): Promise<{ updatedIds: number[]; notFoundIds: number[] }> {
-    const uniqueIds = Array.from(new Set((ids || []).map((n) => Number(n)).filter((n) => Number.isFinite(n) && n > 0)));
+    const uniqueIds = Array.from(
+      new Set(
+        (ids || [])
+          .map((n) => Number(n))
+          .filter((n) => Number.isFinite(n) && n > 0),
+      ),
+    );
     if (!uniqueIds.length) return { updatedIds: [], notFoundIds: [] };
-    const products = await this.productRepo.find({ where: { id: In(uniqueIds) } });
+    const products = await this.productRepo
+      .createQueryBuilder('p')
+      .leftJoinAndSelect('p.vendor', 'vendor')
+      .addSelect('p.original_creator_contact')
+      .where('p.id IN (:...ids)', { ids: uniqueIds })
+      .getMany();
+
     const foundIds = products.map((p) => p.id);
     const notFoundIds = uniqueIds.filter((id) => !foundIds.includes(id));
+
+    // Pre-fetch Suuq S Vendor if needed
+    let suuqVendor: User | null = null;
+    const needsVendorMove = products.some((p) => p.original_creator_contact);
+    if (needsVendorMove) {
+      suuqVendor = await this.userRepo.findOne({
+        where: [
+          { displayName: 'Suuq S Vendor' },
+          { storeName: 'Suuq S Vendor' },
+          { email: 'suuq.s.vendor@suuq.com' },
+        ],
+      });
+    }
+
     for (const p of products) {
       const previousStatus = (p as any).status || null;
       (p as any).status = 'publish';
       p.isBlocked = false;
+
+      if (p.original_creator_contact) {
+        if (suuqVendor) {
+          p.vendor = suuqVendor;
+        }
+        // Send email
+        const contact = p.original_creator_contact;
+        if (contact.email) {
+          const name = contact.name || 'User';
+          this.emailService
+            .send({
+              to: contact.email,
+              subject: 'Your Product has been Approved!',
+              text: `Hello ${name},\n\nYour product "${p.name}" has been approved by the Super Admin and is now live on Suuq S Vendor.\n\nThank you!`,
+              html: `<p>Hello ${name},</p><p>Your product "<strong>${p.name}</strong>" has been approved by the Super Admin and is now live on Suuq S Vendor.</p><p>Thank you!</p>`,
+            })
+            .catch((e) =>
+              this.logger.error(
+                `Failed to send approval email for product ${p.id}`,
+                e,
+              ),
+            );
+        }
+      }
+
       await this.audit.log({
         actorId: opts.actorId ?? null,
         action: 'ADMIN_PRODUCT_APPROVE',
@@ -2209,7 +2413,11 @@ export class ProductsService {
 
   async rejectProduct(
     id: number,
-    opts: { actorId?: number | null; toStatus?: 'rejected' | 'draft'; reason?: string | null } = {},
+    opts: {
+      actorId?: number | null;
+      toStatus?: 'rejected' | 'draft';
+      reason?: string | null;
+    } = {},
   ): Promise<Product> {
     const product = await this.productRepo.findOne({ where: { id } });
     if (!product) throw new NotFoundException('Product not found');
@@ -2231,11 +2439,23 @@ export class ProductsService {
 
   async bulkReject(
     ids: number[],
-    opts: { actorId?: number | null; toStatus?: 'rejected' | 'draft'; reason?: string | null } = {},
+    opts: {
+      actorId?: number | null;
+      toStatus?: 'rejected' | 'draft';
+      reason?: string | null;
+    } = {},
   ): Promise<{ updatedIds: number[]; notFoundIds: number[] }> {
-    const uniqueIds = Array.from(new Set((ids || []).map((n) => Number(n)).filter((n) => Number.isFinite(n) && n > 0)));
+    const uniqueIds = Array.from(
+      new Set(
+        (ids || [])
+          .map((n) => Number(n))
+          .filter((n) => Number.isFinite(n) && n > 0),
+      ),
+    );
     if (!uniqueIds.length) return { updatedIds: [], notFoundIds: [] };
-    const products = await this.productRepo.find({ where: { id: In(uniqueIds) } });
+    const products = await this.productRepo.find({
+      where: { id: In(uniqueIds) },
+    });
     const foundIds = products.map((p) => p.id);
     const notFoundIds = uniqueIds.filter((id) => !foundIds.includes(id));
     const nextStatus = opts.toStatus === 'draft' ? 'draft' : 'rejected';

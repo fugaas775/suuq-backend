@@ -22,10 +22,7 @@ export class PaymentsController {
   getPaymentMethods() {
     // This returns a static list of your payment methods.
     // You can make this dynamic later if needed.
-    return [
-      { id: 'telebirr', name: 'Telebirr', enabled: true },
-      { id: 'mpesa', name: 'M-Pesa', enabled: true },
-    ];
+    return [{ id: 'BANK_TRANSFER', name: 'Bank Transfer', enabled: true }];
   }
 
   @Post('telebirr-callback')

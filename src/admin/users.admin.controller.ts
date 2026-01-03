@@ -8,12 +8,23 @@ import { UserRole } from '../auth/roles.enum';
 import { UsersService } from '../users/users.service';
 import { FindUsersQueryDto } from '../users/dto/find-users-query.dto';
 import { UserResponseDto } from '../users/dto/user-response.dto';
+import { SubscriptionRequestStatus } from '../users/entities/subscription-request.entity';
 
 @UseGuards(AuthGuard('jwt'), RolesGuard)
 @SkipThrottle()
 @Controller('admin/users')
 export class AdminUsersController {
   constructor(private readonly usersService: UsersService) {}
+
+  @Get('subscription/requests')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  async listSubscriptionRequests(
+    @Query('page') page: number = 1,
+    @Query('limit') limit: number = 20,
+    @Query('status') status?: SubscriptionRequestStatus,
+  ) {
+    return this.usersService.findAllSubscriptionRequests(page, limit, status);
+  }
 
   @Get()
   @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)

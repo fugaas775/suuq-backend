@@ -2,6 +2,7 @@ import {
   Controller,
   Delete,
   Get,
+  Post,
   Param,
   ParseIntPipe,
   UseGuards,
@@ -29,6 +30,7 @@ import { Response } from 'express';
 import { UpdateOwnProfileDto } from './dto/update-own-profile.dto';
 import { ChangePasswordDto } from '../auth/dto/change-password.dto';
 import { Throttle } from '@nestjs/throttler';
+import { SubscriptionRequestDto } from './dto/subscription-request.dto';
 
 @Controller('users')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -254,5 +256,21 @@ export class UsersController {
       `attachment; filename="users-${Date.now()}.csv"`,
     );
     res.send(lines.join('\n'));
+  }
+
+  @Post('subscription/request')
+  async requestSubscription(@Req() req, @Body() dto: SubscriptionRequestDto) {
+    const userId = req.user?.id || req.user?.userId;
+    return this.usersService.requestSubscription(
+      userId,
+      dto.method,
+      dto.reference,
+    );
+  }
+
+  @Post('subscription/request/:id/approve')
+  @Roles(UserRole.ADMIN)
+  async approveSubscription(@Param('id') id: number) {
+    return this.usersService.approveSubscription(id);
   }
 }

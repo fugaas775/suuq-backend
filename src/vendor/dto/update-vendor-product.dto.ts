@@ -12,6 +12,10 @@ import { Type } from 'class-transformer';
 
 // Re-using the ImageDto definition for consistency
 class ImageDto {
+  @IsOptional()
+  @IsNumber()
+  id?: number;
+
   @IsString()
   src: string;
   @IsString()

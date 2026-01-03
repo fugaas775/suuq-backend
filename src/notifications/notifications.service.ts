@@ -27,10 +27,12 @@ export class NotificationsService {
     userId,
     title,
     body,
+    data,
   }: {
     userId: number;
     title: string;
     body: string;
+    data?: Record<string, string>;
   }) {
     const user = await this.usersService.findOne(userId);
     if (!user) {
@@ -47,6 +49,7 @@ export class NotificationsService {
     }
     const message = {
       notification: { title, body },
+      data,
       tokens: deviceTokens,
     } as const;
     // firebase-admin v13 uses sendEachForMulticast
@@ -104,6 +107,46 @@ export class NotificationsService {
       ['token'],
     );
 
+    return { success: true };
+  }
+
+  /**
+   * Unregister a device token (e.g. on logout).
+   */
+  async unregisterDeviceToken(token: string) {
+    await this.deviceTokenRepository.delete({ token });
+    return { success: true };
+  }
+
+  /**
+   * Subscribe a device to a topic.
+   */
+  async subscribeToTopic(token: string, topic: string) {
+    try {
+      const messaging = this.firebase.messaging?.();
+      if (messaging && 'subscribeToTopic' in messaging) {
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
+        await (messaging as any).subscribeToTopic([token], topic);
+      }
+    } catch (e) {
+      this.logger.warn(`Failed to subscribe to topic ${topic}: ${e}`);
+    }
+    return { success: true };
+  }
+
+  /**
+   * Unsubscribe a device from a topic.
+   */
+  async unsubscribeFromTopic(token: string, topic: string) {
+    try {
+      const messaging = this.firebase.messaging?.();
+      if (messaging && 'unsubscribeFromTopic' in messaging) {
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
+        await (messaging as any).unsubscribeFromTopic([token], topic);
+      }
+    } catch (e) {
+      this.logger.warn(`Failed to unsubscribe from topic ${topic}: ${e}`);
+    }
     return { success: true };
   }
 

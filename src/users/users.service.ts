@@ -8,7 +8,16 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, MoreThan } from 'typeorm';
-import { User, VerificationStatus } from './entities/user.entity'; // Import VerificationStatus enum
+import {
+  User,
+  VerificationStatus,
+  SubscriptionTier,
+} from './entities/user.entity'; // Import VerificationStatus enum
+import {
+  SubscriptionRequest,
+  SubscriptionRequestStatus,
+} from './entities/subscription-request.entity';
+import { WalletService } from '../wallet/wallet.service';
 import { UserRole } from '../auth/roles.enum';
 import { FindUsersQueryDto } from './dto/find-users-query.dto';
 import * as bcrypt from 'bcrypt';
@@ -19,6 +28,9 @@ export class UsersService {
   constructor(
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
+    @InjectRepository(SubscriptionRequest)
+    private readonly subscriptionRequestRepository: Repository<SubscriptionRequest>,
+    private readonly walletService: WalletService,
   ) {}
 
   /**
@@ -555,5 +567,104 @@ export class UsersService {
 
   async findByAppleId(sub: string): Promise<User | null> {
     return this.userRepository.findOne({ where: { appleId: sub } });
+  }
+
+  async requestSubscription(
+    userId: number,
+    method: string,
+    reference?: string,
+  ): Promise<any> {
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    if (user.subscriptionTier === SubscriptionTier.PRO) {
+      throw new BadRequestException('User is already PRO');
+    }
+
+    const PRO_PRICE = 1000; // Example price
+
+    if (method === 'WALLET') {
+      // Instant upgrade
+      await this.walletService.payWithWallet(
+        userId,
+        PRO_PRICE,
+        'Pro Subscription Upgrade',
+      );
+      user.subscriptionTier = SubscriptionTier.PRO;
+      return this.userRepository.save(user);
+    } else if (method === 'BANK_TRANSFER') {
+      if (!reference) {
+        throw new BadRequestException(
+          'Reference is required for bank transfer',
+        );
+      }
+      const request = this.subscriptionRequestRepository.create({
+        user,
+        method,
+        reference,
+        requestedTier: SubscriptionTier.PRO,
+        status: SubscriptionRequestStatus.PENDING,
+      });
+      return this.subscriptionRequestRepository.save(request);
+    } else {
+      throw new BadRequestException('Invalid payment method');
+    }
+  }
+
+  async approveSubscription(requestId: number): Promise<SubscriptionRequest> {
+    const request = await this.subscriptionRequestRepository.findOne({
+      where: { id: requestId },
+      relations: ['user'],
+    });
+
+    if (!request) {
+      throw new NotFoundException('Subscription request not found');
+    }
+
+    if (request.status !== SubscriptionRequestStatus.PENDING) {
+      throw new BadRequestException('Request is not pending');
+    }
+
+    request.status = SubscriptionRequestStatus.APPROVED;
+    await this.subscriptionRequestRepository.save(request);
+
+    const user = request.user;
+    user.subscriptionTier = request.requestedTier;
+    await this.userRepository.save(user);
+
+    return request;
+  }
+
+  async findAllSubscriptionRequests(
+    page: number = 1,
+    limit: number = 20,
+    status?: SubscriptionRequestStatus,
+  ): Promise<{
+    data: SubscriptionRequest[];
+    total: number;
+    page: number;
+    pages: number;
+  }> {
+    const query = this.subscriptionRequestRepository
+      .createQueryBuilder('request')
+      .leftJoinAndSelect('request.user', 'user')
+      .orderBy('request.createdAt', 'DESC')
+      .skip((page - 1) * limit)
+      .take(limit);
+
+    if (status) {
+      query.where('request.status = :status', { status });
+    }
+
+    const [data, total] = await query.getManyAndCount();
+
+    return {
+      data,
+      total,
+      page,
+      pages: Math.ceil(total / limit),
+    };
   }
 }

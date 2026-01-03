@@ -14,6 +14,7 @@ export enum PaymentMethod {
   STRIPE = 'STRIPE',
   MPESA = 'MPESA',
   TELEBIRR = 'TELEBIRR',
+  BANK_TRANSFER = 'BANK_TRANSFER',
 }
 
 export enum PaymentStatus {

@@ -19,6 +19,9 @@ export class AdminUserResponseDto {
   roles!: UserRole[];
 
   @Expose()
+  subscriptionTier?: string;
+
+  @Expose()
   displayName?: string;
 
   @Expose()
@@ -26,6 +29,9 @@ export class AdminUserResponseDto {
 
   @Expose()
   storeName?: string;
+
+  @Expose()
+  productCount?: number;
 
   @Expose()
   phoneCountryCode?: string;

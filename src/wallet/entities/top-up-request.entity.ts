@@ -8,29 +8,35 @@ import {
 } from 'typeorm';
 import { User } from '../../users/entities/user.entity';
 
-export enum WithdrawalStatus {
+export enum TopUpStatus {
   PENDING = 'PENDING',
   APPROVED = 'APPROVED',
   REJECTED = 'REJECTED',
 }
 
-@Entity('withdrawal')
-export class Withdrawal {
+@Entity('top_up_request')
+export class TopUpRequest {
   @PrimaryGeneratedColumn()
   id!: number;
 
   @Column('decimal', { precision: 10, scale: 2 })
   amount!: number;
 
+  @Column()
+  method!: string; // e.g., 'BANK_TRANSFER'
+
+  @Column()
+  reference!: string; // Transaction reference
+
   @Column({
     type: 'enum',
-    enum: WithdrawalStatus,
-    default: WithdrawalStatus.PENDING,
+    enum: TopUpStatus,
+    default: TopUpStatus.PENDING,
   })
-  status!: WithdrawalStatus;
+  status!: TopUpStatus;
 
   @ManyToOne(() => User, { eager: true })
-  vendor!: User;
+  user!: User;
 
   @CreateDateColumn()
   createdAt!: Date;

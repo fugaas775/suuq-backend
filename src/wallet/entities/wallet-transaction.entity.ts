@@ -12,6 +12,8 @@ export enum TransactionType {
   PAYOUT = 'PAYOUT',
   REFUND = 'REFUND',
   ADJUSTMENT = 'ADJUSTMENT',
+  DEPOSIT = 'DEPOSIT',
+  PAYMENT = 'PAYMENT',
 }
 
 @Entity('wallet_transaction')

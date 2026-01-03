@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access */
 import 'dotenv/config';
 import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
@@ -43,6 +44,7 @@ async function bootstrap() {
         beforeSend(event) {
           try {
             // Remove potentially sensitive headers
+
             const headers = (event.request as any)?.headers;
             if (headers) {
               const redactedHeaders = [
@@ -56,6 +58,7 @@ async function bootstrap() {
               }
             }
             // Remove request body
+
             if ((event.request as any)?.data) {
               (event.request as any).data = '[REDACTED]';
             }
@@ -63,7 +66,9 @@ async function bootstrap() {
             if (event.user) {
               event.user = { id: event.user?.id } as any;
             }
-          } catch {}
+          } catch {
+            // ignore
+          }
           return event;
         },
       });
@@ -118,7 +123,9 @@ async function bootstrap() {
     // Enables req.ip and secure cookies to work as expected
     try {
       expressApp.set('trust proxy', (process.env.TRUST_PROXY as any) ?? 1);
-    } catch {}
+    } catch {
+      // ignore
+    }
   }
   // Accept both JSON and application/x-www-form-urlencoded payloads
   app.use(urlencoded({ extended: true, limit: '50mb' }));
@@ -134,7 +141,9 @@ async function bootstrap() {
       ) {
         req.url = `/api${url}`;
       }
-    } catch {}
+    } catch {
+      // ignore
+    }
     next();
   });
   // Enable gzip compression for responses (disable by default in production; offload to Nginx)
@@ -143,6 +152,7 @@ async function bootstrap() {
   if (enableNodeCompression || process.env.NODE_ENV !== 'production') {
     const compressionFn: any =
       (compression as any)?.default || (compression as any);
+
     app.use(
       compressionFn({
         threshold: 1024,
@@ -261,7 +271,9 @@ async function bootstrap() {
             res.setHeader('Cache-Control', 'no-store');
           }
         }
-      } catch {}
+      } catch {
+        // ignore
+      }
       next();
     },
   );
@@ -309,7 +321,9 @@ async function bootstrap() {
                 (logData as any).headers[h] = '[REDACTED]';
             }
           }
-        } catch {}
+        } catch {
+          // ignore
+        }
         console.log(JSON.stringify(logData));
       } else {
         // Verbose logging in development
@@ -407,7 +421,9 @@ async function bootstrap() {
         parseInt(process.env.SOCKET_TIMEOUT_MS || '0', 10) || 0,
       );
     }
-  } catch {}
+  } catch {
+    // ignore
+  }
   // Request ID propagation
   app.use(
     (
@@ -446,12 +462,17 @@ async function bootstrap() {
     const enableDocs =
       (process.env.SWAGGER_ENABLED || 'false').toLowerCase() === 'true';
     if (enableDocs) {
-      const config = new DocumentBuilder()
+      const configBuilder = new DocumentBuilder()
         .setTitle('Suuq API')
         .setDescription('Suuq backend API')
         .setVersion(process.env.npm_package_version || '1.0.0')
-        .addBearerAuth()
-        .build();
+        .addBearerAuth();
+
+      if (process.env.API_URL) {
+        configBuilder.addServer(process.env.API_URL);
+      }
+
+      const config = configBuilder.build();
       const document = SwaggerModule.createDocument(app, config);
       SwaggerModule.setup('api/docs', app, document, {
         swaggerOptions: { persistAuthorization: true },
