@@ -81,8 +81,7 @@ export class OrdersService {
     const requestedOrderRaw =
       query.sortOrder || query.order || tokenOrder || 'DESC';
     const requestedOrder =
-      requestedOrderRaw &&
-      requestedOrderRaw.toString().toUpperCase() === 'ASC'
+      requestedOrderRaw && requestedOrderRaw.toString().toUpperCase() === 'ASC'
         ? 'ASC'
         : 'DESC';
 
@@ -181,8 +180,8 @@ export class OrdersService {
     private readonly mpesaService: MpesaService,
     private readonly telebirrService: TelebirrService,
     private readonly notificationsService: NotificationsService,
-  private readonly doSpaces: DoSpacesService,
-  private readonly audit: AuditService,
+    private readonly doSpaces: DoSpacesService,
+    private readonly audit: AuditService,
     private readonly currencyService: CurrencyService,
   ) {}
 
@@ -202,17 +201,26 @@ export class OrdersService {
       const rate = this.currencyService.getRate(from, to);
       return {
         amount: converted,
-        rate: typeof rate === 'number' ? Math.round(rate * 1_000_000) / 1_000_000 : undefined,
+        rate:
+          typeof rate === 'number'
+            ? Math.round(rate * 1_000_000) / 1_000_000
+            : undefined,
       };
     } catch (err) {
-      this.logger.warn(`Currency convert failed from ${from} to ${to}: ${err instanceof Error ? err.message : String(err)}`);
+      this.logger.warn(
+        `Currency convert failed from ${from} to ${to}: ${err instanceof Error ? err.message : String(err)}`,
+      );
       return { amount, rate: undefined };
     }
   }
 
   private mapOrderItem(item: OrderItem, target: string): OrderItem {
     const productCurrency = (item.product as any)?.currency || 'ETB';
-    const { amount: priceConverted, rate } = this.convertPrice(item.price, productCurrency, target);
+    const { amount: priceConverted, rate } = this.convertPrice(
+      item.price,
+      productCurrency,
+      target,
+    );
     (item as any).price_display = {
       amount: priceConverted ?? item.price ?? null,
       currency: target,
@@ -227,8 +235,12 @@ export class OrdersService {
   private mapOrder(order: Order, currency?: string): Order {
     if (!order) return order;
     const target = this.normalizeCurrency(currency);
-    this.logger.debug(`Order currency normalized: requested=${currency} applied=${target}`);
-    const mappedItems = (order.items || []).map((it) => this.mapOrderItem(it, target));
+    this.logger.debug(
+      `Order currency normalized: requested=${currency} applied=${target}`,
+    );
+    const mappedItems = (order.items || []).map((it) =>
+      this.mapOrderItem(it, target),
+    );
     (order as any).items = mappedItems;
 
     // Derive total in target currency from items to keep consistency
@@ -347,7 +359,10 @@ export class OrdersService {
         items: orderItems,
         total: total,
         shippingAddress: createOrderDto.shippingAddress,
-        paymentMethod: paymentMethod === 'COD' ? PaymentMethod.COD : PaymentMethod.BANK_TRANSFER,
+        paymentMethod:
+          paymentMethod === 'COD'
+            ? PaymentMethod.COD
+            : PaymentMethod.BANK_TRANSFER,
         paymentStatus: PaymentStatus.UNPAID,
         status: OrderStatus.PENDING,
       });
@@ -369,7 +384,7 @@ export class OrdersService {
         paymentStatus: PaymentStatus.UNPAID,
         status: OrderStatus.PENDING,
       });
-        const savedOrder = await this.orderRepository.save(newOrder);
+      const savedOrder = await this.orderRepository.save(newOrder);
       await this.mpesaService.initiateStkPush(
         total,
         phoneNumber,
@@ -392,14 +407,14 @@ export class OrdersService {
         paymentStatus: PaymentStatus.UNPAID,
         status: OrderStatus.PENDING,
       });
-        const savedOrder = await this.orderRepository.save(newOrder);
+      const savedOrder = await this.orderRepository.save(newOrder);
       const checkoutUrl = await this.telebirrService.createPayment(
         total,
         savedOrder.id,
         phoneNumber,
       );
       await this.cartService.clearCart(userId);
-        return { order: this.mapOrder(savedOrder, currency), checkoutUrl };
+      return { order: this.mapOrder(savedOrder, currency), checkoutUrl };
     } else {
       throw new BadRequestException(
         'Unsupported payment method. Only BANK_TRANSFER, COD, MPESA, and TELEBIRR are currently supported.',
@@ -449,10 +464,19 @@ export class OrdersService {
     return { data: response, total };
   }
 
-  async findOneForUser(userId: number, orderId: number, currency?: string): Promise<OrderResponseDto> {
+  async findOneForUser(
+    userId: number,
+    orderId: number,
+    currency?: string,
+  ): Promise<OrderResponseDto> {
     const order = await this.orderRepository.findOne({
       where: { id: orderId, user: { id: userId } },
-      relations: ['items', 'items.product', 'deliverer'],
+      relations: [
+        'items',
+        'items.product',
+        'items.product.vendor',
+        'deliverer',
+      ],
     });
     if (!order) {
       throw new NotFoundException(
@@ -460,6 +484,30 @@ export class OrdersService {
       );
     }
     const mapped = this.mapOrder(order, currency);
+
+    // Populate vendors list for frontend logic
+    type VendorLike = {
+      id?: number;
+      displayName?: string | null;
+      storeName?: string | null;
+    };
+    const vendorsMap = new Map<number, VendorLike & { id: number }>();
+    for (const it of order.items || []) {
+      const vendor = it.product?.vendor as VendorLike | undefined;
+      if (
+        vendor &&
+        typeof vendor.id === 'number' &&
+        !vendorsMap.has(vendor.id)
+      ) {
+        vendorsMap.set(vendor.id, {
+          id: vendor.id,
+          displayName: vendor.displayName ?? null,
+          storeName: vendor.storeName ?? null,
+        });
+      }
+    }
+    const vendors = Array.from(vendorsMap.values());
+
     const deliverer = mapped.deliverer;
     return plainToInstance(OrderResponseDto, {
       ...mapped,
@@ -468,6 +516,11 @@ export class OrdersService {
       assignedDelivererId: deliverer?.id,
       assignedDelivererName: deliverer?.displayName ?? null,
       assignedDelivererPhone: deliverer?.phoneNumber ?? null,
+      vendors,
+      vendorName:
+        vendors.length === 1
+          ? vendors[0].storeName || vendors[0].displayName || null
+          : null,
       items:
         mapped.items?.map((item) => ({
           productId: item.product?.id,
@@ -491,7 +544,12 @@ export class OrdersService {
     orderId: number,
     itemId: number,
     ttl?: string,
-  ): Promise<{ url: string; expiresIn: number; filename?: string; contentType?: string }>{
+  ): Promise<{
+    url: string;
+    expiresIn: number;
+    filename?: string;
+    contentType?: string;
+  }> {
     const order = await this.orderRepository.findOne({
       where: { id: orderId, user: { id: userId } },
       relations: ['items', 'items.product'],
@@ -503,26 +561,50 @@ export class OrdersService {
     const item = (order.items || []).find((it) => it.id === itemId);
     if (!item) throw new NotFoundException('Order item not found');
     const product = item.product as any;
-    const attrs: Record<string, any> | undefined = product?.attributes && typeof product.attributes === 'object' ? product.attributes : undefined;
+    const attrs: Record<string, any> | undefined =
+      product?.attributes && typeof product.attributes === 'object'
+        ? product.attributes
+        : undefined;
     const downloadKey: string | undefined = attrs?.downloadKey || undefined;
     if (!downloadKey || typeof downloadKey !== 'string') {
-      throw new BadRequestException('No digital download available for this item');
+      throw new BadRequestException(
+        'No digital download available for this item',
+      );
     }
 
     // Optional: basic rate-limit using audit logs (max 10 per day per orderItem)
     const now = new Date();
     const from = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-    const count = await this.audit.countForTargetSince('ORDER_ITEM_DOWNLOAD', itemId, from);
+    const count = await this.audit.countForTargetSince(
+      'ORDER_ITEM_DOWNLOAD',
+      itemId,
+      from,
+    );
     if (count >= 10) {
-      throw new BadRequestException('Daily download limit reached. Try again later.');
+      throw new BadRequestException(
+        'Daily download limit reached. Try again later.',
+      );
     }
 
     // Try to infer content type and filename from key
     const fileName = downloadKey.split('/').pop();
     const ext = (fileName?.split('.').pop() || '').toLowerCase();
-    const contentType = ext === 'pdf' ? 'application/pdf' : ext === 'epub' ? 'application/epub+zip' : ext === 'zip' ? 'application/zip' : undefined;
-    const ttlSecs = Math.max(60, Math.min(parseInt(String(ttl || '600'), 10) || 600, 3600));
-    const url = await this.doSpaces.getDownloadSignedUrl(downloadKey, ttlSecs, { contentType, filename: fileName });
+    const contentType =
+      ext === 'pdf'
+        ? 'application/pdf'
+        : ext === 'epub'
+          ? 'application/epub+zip'
+          : ext === 'zip'
+            ? 'application/zip'
+            : undefined;
+    const ttlSecs = Math.max(
+      60,
+      Math.min(parseInt(String(ttl || '600'), 10) || 600, 3600),
+    );
+    const url = await this.doSpaces.getDownloadSignedUrl(downloadKey, ttlSecs, {
+      contentType,
+      filename: fileName,
+    });
 
     // Log issuance
     await this.audit.log({
@@ -593,7 +675,7 @@ export class OrdersService {
 
     // Admin can force status changes, but let's keep some sanity checks or allow all?
     // For Admin, we usually allow overriding transitions.
-    
+
     item.status = next;
     if (next === OrderStatus.SHIPPED) item.shippedAt = new Date();
     if (next === OrderStatus.DELIVERED) item.deliveredAt = new Date();

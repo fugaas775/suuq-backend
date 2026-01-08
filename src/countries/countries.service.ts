@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Country } from './entities/country.entity';
 import { CreateCountryDto } from './dto/create-country.dto';
+import { translateEntities } from '../common/utils/translation.util';
 
 @Injectable()
 export class CountriesService {
@@ -18,14 +19,21 @@ export class CountriesService {
   }
 
   // This will be used by the Flutter app
-  findAll(search?: string) {
+  async findAll(search?: string, lang: string = 'en') {
+    let countries: Country[];
     if (search) {
-      return this.countryRepository
+      countries = await this.countryRepository
         .createQueryBuilder('country')
         .where('country.name ILIKE :search', { search: `%${search}%` })
         .getMany();
+    } else {
+      countries = await this.countryRepository.find();
     }
-    return this.countryRepository.find();
+
+    return translateEntities(countries, lang, {
+      name: 'nameTranslations',
+      description: 'descriptionTranslations',
+    });
   }
 
   // We'll also seed the initial data in the next step

@@ -113,6 +113,7 @@ export class AuthService {
       displayName: dto.displayName,
       avatarUrl: dto.avatarUrl,
       storeName: dto.storeName,
+      language: dto.language, // Map optional language
       roles: userRoles,
       isActive: true,
       registrationCountry: registrationCountryIso2,

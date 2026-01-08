@@ -1,4 +1,12 @@
-import { Controller, Get, Post, Body, Query, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Query,
+  UseGuards,
+  Headers,
+} from '@nestjs/common';
 import { CountriesService } from './countries.service';
 import { CreateCountryDto } from './dto/create-country.dto';
 import { AuthGuard } from '@nestjs/passport';
@@ -20,7 +28,11 @@ export class CountriesController {
 
   // Public endpoint for the app to fetch countries
   @Get()
-  findAll(@Query('search') search?: string) {
-    return this.countriesService.findAll(search);
+  findAll(
+    @Query('search') search?: string,
+    @Headers('accept-language') lang?: string,
+  ) {
+    // Default to 'en' if not provided
+    return this.countriesService.findAll(search, lang || 'en');
   }
 }

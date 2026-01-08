@@ -12,6 +12,7 @@ import { slugify } from 'transliteration';
 import { Product } from '../products/entities/product.entity';
 import { ILike } from 'typeorm';
 import { repoCacheTTL } from '../common/utils/db-cache.util';
+import { translateEntities } from '../common/utils/translation.util';
 
 @Injectable()
 export class CategoriesService {
@@ -21,6 +22,21 @@ export class CategoriesService {
     @InjectRepository(Product)
     private readonly productRepo: Repository<Product>,
   ) {}
+
+  async findByName(name: string): Promise<Category | null> {
+    const ttl = repoCacheTTL();
+    return this.categoryRepo.findOne({
+      where: { name: ILike(name.trim()) },
+      ...(ttl
+        ? {
+            cache: {
+              id: `categories:name:${slugify(name)}`,
+              milliseconds: ttl,
+            },
+          }
+        : {}),
+    });
+  }
 
   async findRoots(): Promise<Category[]> {
     const ttl = repoCacheTTL();
@@ -36,12 +52,14 @@ export class CategoriesService {
 
   // This method now returns the full Category entity.
   // The ClassSerializerInterceptor in the controller will handle the response format.
-  async findAll(perPage?: number): Promise<Category[]> {
-    return this.categoryRepo.find({
+  async findAll(perPage?: number, lang: string = 'en'): Promise<Category[]> {
+    const categories = await this.categoryRepo.find({
       order: { sortOrder: 'ASC', name: 'ASC' },
       take: perPage && perPage > 0 ? perPage : undefined,
       relations: ['parent'],
     });
+
+    return translateEntities(categories, lang, { name: 'nameTranslations' });
   }
 
   async suggest(
@@ -126,6 +144,7 @@ export class CategoriesService {
       iconUrl,
       iconName: dto.iconName,
       sortOrder: dto.sortOrder,
+      nameTranslations: dto.nameTranslations, // <-- Added translation map
       iconVersion: 0,
     });
 

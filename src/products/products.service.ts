@@ -1,4 +1,4 @@
-/* eslint-disable no-empty, @typescript-eslint/no-unused-vars, prettier/prettier */
+/* eslint-disable no-empty, @typescript-eslint/no-unused-vars */
 import {
   Injectable,
   NotFoundException,
@@ -1093,6 +1093,7 @@ export class ProductsService {
     productIds: number[],
     sessionKey: string,
     windowSeconds = 300,
+    meta?: { ip?: string; country?: string; city?: string },
   ): Promise<{ recorded: number; ignored: number }> {
     const cutoff = new Date(Date.now() - windowSeconds * 1000);
     // Deduplicate, keep positive ints, and cap batch to guard the table
@@ -1134,8 +1135,20 @@ export class ProductsService {
     const existingSet = new Set(existing.map((e) => e.productId));
     const toInsert = visibleIds.filter((id) => !existingSet.has(id));
     if (toInsert.length) {
+      let country = meta?.country;
+      const city = meta?.city;
+      if (!country && city) {
+        country = this.geo.resolveCountryFromCity(city) || undefined;
+      }
+
       const rows = toInsert.map((productId) =>
-        this.impressionRepo.create({ productId, sessionKey }),
+        this.impressionRepo.create({
+          productId,
+          sessionKey,
+          ipAddress: meta?.ip,
+          country,
+          city,
+        }),
       );
       await this.impressionRepo.save(rows);
       // Bulk increment view_count for new ones
@@ -1463,11 +1476,7 @@ export class ProductsService {
     const applySorting = (qb: any, addedGeoRank: boolean) => {
       if (sort === 'best_match') {
         // Priority for PRO vendors
-        qb.addSelect(
-          `CASE WHEN vendor.subscriptionTier = 'pro' THEN 1 ELSE 0 END`,
-          'vendor_tier_rank',
-        );
-        qb.orderBy('vendor_tier_rank', 'DESC');
+        qb.orderBy('vendor.subscriptionTier', 'DESC');
 
         if (addedGeoRank) qb.addOrderBy('geo_rank', 'DESC');
         qb.addOrderBy('product.sales_count', 'DESC', 'NULLS LAST')
@@ -1486,8 +1495,11 @@ export class ProductsService {
         );
         qb.addOrderBy('product.createdAt', 'DESC');
       } else if (!sort || sort === 'created_desc' || sort === '') {
+        // Priority for PRO vendors (default view) - Pro (P) > Free (F) => DESC
+        qb.orderBy('vendor.subscriptionTier', 'DESC');
+
         if (addedGeoRank) {
-          qb.orderBy('geo_rank', 'DESC');
+          qb.addOrderBy('geo_rank', 'DESC');
           qb.addOrderBy('product.sales_count', 'DESC', 'NULLS LAST')
             .addOrderBy('product.average_rating', 'DESC', 'NULLS LAST')
             .addOrderBy('product.createdAt', 'DESC');
@@ -2641,7 +2653,10 @@ export class ProductsService {
     return normalizeProductMedia(product) as any;
   }
 
-  async suggestNames(query: string, limit = 8): Promise<{ name: string }[]> {
+  async suggestNames(
+    query: string,
+    limit = 8,
+  ): Promise<{ name: string; isPro: boolean }[]> {
     const q = (query || '').trim();
     // Allow 1-character inputs; only block truly empty
     if (q.length === 0) return [];
@@ -2661,9 +2676,12 @@ export class ProductsService {
                  LOWER(p.name) AS lower_name,
                  1 AS prefix_boost,
                  CASE WHEN $1 = 1 AND p."categoryId" = ANY($4::int[]) THEN 1 ELSE 0 END AS property_boost,
+                 -- Add Vendor Tier Boost: 1000000 points if Pro
+                 CASE WHEN v."subscriptionTier" = 'pro' THEN 1000000 ELSE 0 END AS tier_boost,
                  (COALESCE(p.sales_count, 0) * 3 + COALESCE(p."view_count", 0))::bigint AS popularity,
                  p."createdAt" AS created_at
           FROM "product" p
+          LEFT JOIN "user" v ON p."vendorId" = v.id
           WHERE p.status = 'publish' AND p."isBlocked" = false AND p.name ILIKE $2
           LIMIT ${prePrefix}
         )
@@ -2673,35 +2691,49 @@ export class ProductsService {
                  LOWER(p.name) AS lower_name,
                  0 AS prefix_boost,
                  CASE WHEN $1 = 1 AND p."categoryId" = ANY($4::int[]) THEN 1 ELSE 0 END AS property_boost,
+                 -- Add Vendor Tier Boost: 1000000 points if Pro
+                 CASE WHEN v."subscriptionTier" = 'pro' THEN 1000000 ELSE 0 END AS tier_boost,
                  (COALESCE(p.sales_count, 0) * 3 + COALESCE(p."view_count", 0))::bigint AS popularity,
                  p."createdAt" AS created_at
           FROM "product" p
+          LEFT JOIN "user" v ON p."vendorId" = v.id
           WHERE p.status = 'publish' AND p."isBlocked" = false AND p.name ILIKE $3
           LIMIT ${preContain}
         )
       )
-      SELECT DISTINCT ON (lower_name) name
-      FROM candidates
-      ORDER BY lower_name, prefix_boost DESC, property_boost DESC, popularity DESC, created_at DESC
+      SELECT name, CASE WHEN tier_boost > 0 THEN true ELSE false END as "isPro"
+      FROM (
+        SELECT DISTINCT ON (lower_name) 
+          name, 
+          tier_boost, 
+          prefix_boost, 
+          property_boost, 
+          popularity, 
+          created_at
+        FROM candidates
+        ORDER BY lower_name, tier_boost DESC, prefix_boost DESC, property_boost DESC, popularity DESC, created_at DESC
+      ) q
+      ORDER BY tier_boost DESC, prefix_boost DESC, property_boost DESC, popularity DESC, created_at DESC
       LIMIT ${lim}
     `;
 
-    const rows: Array<{ name: string }> = await this.productRepo.query(sql, [
-      hasProp,
-      `${q}%`,
-      `%${q}%`,
-      propIds.length ? propIds : [0],
-    ]);
+    const rows: Array<{ name: string; isPro: boolean }> =
+      await this.productRepo.query(sql, [
+        hasProp,
+        `${q}%`,
+        `%${q}%`,
+        propIds.length ? propIds : [0],
+      ]);
 
     const seen = new Set<string>();
-    const out: { name: string }[] = [];
+    const out: { name: string; isPro: boolean }[] = [];
     for (const r of rows) {
       const name = (r?.name || '').trim();
       if (!name) continue;
       const key = name.toLowerCase();
       if (seen.has(key)) continue;
       seen.add(key);
-      out.push({ name });
+      out.push({ name, isPro: r.isPro });
       if (out.length >= lim) break;
     }
     return out;

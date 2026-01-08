@@ -4,6 +4,7 @@ import {
   IsUrl,
   IsNotEmpty,
   ValidateNested,
+  IsOptional,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -33,6 +34,11 @@ export class CreateCountryDto {
   @IsUrl()
   @IsNotEmpty()
   imageUrl!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @IsOptional()
+  defaultLanguage?: string;
 
   @IsString()
   @IsNotEmpty()

@@ -6,6 +6,7 @@ import { UserRole } from '../auth/roles.enum';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { SearchKeyword } from '../products/entities/search-keyword.entity';
+import { ProductImpression } from '../products/entities/product-impression.entity';
 import { Product } from '../products/entities/product.entity';
 import { GeoResolverService } from '../common/services/geo-resolver.service';
 import { SkipThrottle } from '@nestjs/throttler';
@@ -28,6 +29,8 @@ export class AdminAnalyticsController {
   constructor(
     @InjectRepository(SearchKeyword)
     private readonly keywordRepo: Repository<SearchKeyword>,
+    @InjectRepository(ProductImpression)
+    private readonly impressionRepo: Repository<ProductImpression>,
     @InjectRepository(Product)
     private readonly productRepo: Repository<Product>,
     private readonly geo: GeoResolverService,
@@ -41,11 +44,318 @@ export class AdminAnalyticsController {
       SO: 'Somalia',
       KE: 'Kenya',
       DJ: 'Djibouti',
+      US: 'USA',
     };
     return map[c] || null;
   }
   private cityToCountry(city?: string | null): string | null {
     return this.geo.resolveCountryFromCity(city);
+  }
+
+  @Get('admin/analytics/pro')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  async getAdminProAnalytics() {
+    // Platform-wide Analytics (Replicates Vendor Pro Analytics but global)
+
+    // 1. Impressions: Total views per product (All Time)
+    const impressionsRaw = await this.impressionRepo
+      .createQueryBuilder('impression')
+      .select('impression.productId', 'productId')
+      .addSelect('COUNT(impression.id)', 'count')
+      .innerJoin('product', 'p', 'p.id = impression.productId')
+      .groupBy('impression.productId')
+      .orderBy('count', 'DESC')
+      .limit(100) // Safety limit for global query
+      .getRawMany();
+
+    const productIds = impressionsRaw.map((i) => i.productId);
+    const productsMap = new Map<number, string>();
+
+    if (productIds.length > 0) {
+      const products = await this.productRepo.findByIds(productIds);
+      products.forEach((p) => productsMap.set(p.id, p.name));
+    }
+
+    const impressions = impressionsRaw.map((i) => ({
+      name: productsMap.get(i.productId) || 'Unknown Product',
+      views: Number(i.count),
+    }));
+
+    // Calculate Global Total Views (All Time)
+    // We use innerJoin to ensure consistency with other charts that filter out orphaned impressions
+    const totalImpressionViews = await this.impressionRepo
+      .createQueryBuilder('impression')
+      .innerJoin('product', 'p', 'p.id = impression.productId')
+      .getCount();
+
+    // 2. Visitor Locations (Real Data) - All Time
+    const visitorLocationsRaw = await this.impressionRepo
+      .createQueryBuilder('impression')
+      .select('impression.country', 'country')
+      .addSelect('COUNT(impression.id)', 'count')
+      .innerJoin('product', 'p', 'p.id = impression.productId')
+      .groupBy('impression.country')
+      .getRawMany();
+
+    const allowedCountries = [
+      'Ethiopia',
+      'Somalia',
+      'Kenya',
+      'Djibouti',
+      'United States',
+      'USA',
+    ];
+    const finalLocations = [];
+    let othersCount = 0;
+
+    for (const r of visitorLocationsRaw) {
+      if (!r.country) {
+        othersCount += Number(r.count);
+        continue;
+      }
+
+      if (
+        allowedCountries.some(
+          (allowed) => allowed.toLowerCase() === r.country.toLowerCase(),
+        )
+      ) {
+        finalLocations.push({ country: r.country, count: Number(r.count) });
+      } else {
+        othersCount += Number(r.count);
+      }
+    }
+
+    if (othersCount > 0) {
+      finalLocations.push({ country: 'Others', count: othersCount });
+    }
+
+    const visitorLocations = finalLocations.sort((a, b) => b.count - a.count);
+
+    // 3. Visitor Cities (Real Data) - All Time
+    const visitorCitiesRaw = await this.impressionRepo
+      .createQueryBuilder('impression')
+      .select('impression.city', 'city')
+      .addSelect('impression.country', 'country')
+      .addSelect('COUNT(impression.id)', 'count')
+      .innerJoin('product', 'p', 'p.id = impression.productId')
+      .groupBy('impression.city')
+      .addGroupBy('impression.country')
+      .getRawMany();
+
+    const allowedCitiesMap: Record<string, string[]> = {
+      ethiopia: [
+        'Addis Ababa',
+        'Dire Dawa',
+        "Mek'ele",
+        'Adama',
+        'Gondar',
+        'Bahir Dar',
+        'Jigjiga',
+        'Hawassa',
+        'Harar',
+        'Gode',
+        'Kelafo',
+        'Semara',
+        'Assosa',
+        'Gambela City',
+      ],
+      kenya: [
+        'Nairobi',
+        'Mombasa',
+        'Kisumu',
+        'Nakuru',
+        'Eldoret',
+        'Garissa',
+        'Wajir',
+      ],
+      somalia: [
+        'Mogadishu',
+        'Hargeisa',
+        'Kismayo',
+        'Bosaso',
+        'Baidoa',
+        'Beledweyne',
+        'Garowe',
+        'Wajaale',
+      ],
+      djibouti: ['Djibouti City', 'Ali Sabieh', 'Tadjoura', 'Dikhil'],
+      'united states': [
+        'Minneapolis',
+        'Seattle',
+        'Columbus',
+        'New York',
+        'Los Angeles',
+        'Chicago',
+        'Houston',
+      ],
+      usa: [
+        'Minneapolis',
+        'Seattle',
+        'Columbus',
+        'New York',
+        'Los Angeles',
+        'Chicago',
+        'Houston',
+      ],
+    };
+
+    const cityMap = new Map<
+      string,
+      { city: string; country: string; count: number }
+    >();
+
+    visitorCitiesRaw.forEach((r) => {
+      const cityName = (r.city || 'Others').trim();
+      let countryName = (r.country || 'Others').trim();
+
+      const count = Number(r.count);
+
+      const isCountryAllowed = allowedCountries.some(
+        (c) => c.toLowerCase() === countryName.toLowerCase(),
+      );
+      if (!isCountryAllowed) {
+        countryName = 'Others';
+      }
+
+      let finalCityName = cityName;
+
+      if (countryName !== 'Others') {
+        const lowerCountry = countryName.toLowerCase();
+        const allowedList = allowedCitiesMap[lowerCountry] || [];
+        const match = allowedList.find(
+          (c) => c.toLowerCase() === cityName.toLowerCase(),
+        );
+        if (match) {
+          finalCityName = match;
+        } else {
+          finalCityName = 'Others';
+        }
+      } else {
+        finalCityName = 'Others';
+      }
+
+      const key = `${countryName}||${finalCityName}`;
+      if (cityMap.has(key)) {
+        const existing = cityMap.get(key);
+        existing.count += count;
+      } else {
+        cityMap.set(key, { city: finalCityName, country: countryName, count });
+      }
+    });
+
+    // Ensure "Others" row exists for every country present
+    const countriesInResponse = new Set<string>();
+    for (const val of cityMap.values()) {
+      if (val.country !== 'Others') {
+        countriesInResponse.add(val.country);
+      }
+    }
+
+    for (const c of countriesInResponse) {
+      const key = `${c}||Others`;
+      if (!cityMap.has(key)) {
+        cityMap.set(key, { city: 'Others', country: c, count: 0 });
+      }
+    }
+
+    const visitorCities = Array.from(cityMap.values()).sort(
+      (a, b) => b.count - a.count,
+    );
+
+    // 4. Traffic Trends (Last 7 Days) - Real Data
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+    const trafficRaw = await this.impressionRepo
+      .createQueryBuilder('impression')
+      .select("TO_CHAR(impression.createdAt, 'YYYY-MM-DD')", 'date')
+      .addSelect('COUNT(impression.id)', 'count')
+      .innerJoin('product', 'p', 'p.id = impression.productId')
+      .where('impression.createdAt >= :date', { date: sevenDaysAgo })
+      .groupBy("TO_CHAR(impression.createdAt, 'YYYY-MM-DD')")
+      .orderBy('date', 'ASC')
+      .getRawMany();
+
+    // Fill in missing days
+    const trafficTrend = [];
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      const dateStr = d.toISOString().split('T')[0];
+      const found = trafficRaw.find((r) => r.date === dateStr);
+
+      const count = found ? Number(found.count) : 0;
+      trafficTrend.push({
+        date: dateStr,
+        count,
+      });
+    }
+
+    // 5. Platform Protocol: Vendor Analytics by Country
+    // Fetch aggregated data by Vendor + Country
+    const vendorStatsRaw = await this.impressionRepo
+      .createQueryBuilder('impression')
+      .select('u.displayName', 'vendorName')
+      .addSelect('u.email', 'vendorEmail')
+      .addSelect('impression.country', 'country')
+      .addSelect('COUNT(impression.id)', 'count')
+      .innerJoin('product', 'p', 'p.id = impression.productId')
+      .innerJoin('p.vendor', 'u')
+      .where('impression.country IS NOT NULL')
+      .groupBy('u.id')
+      .addGroupBy('impression.country')
+      .addOrderBy('count', 'DESC')
+      .limit(1000) // Increase limit to capture full vendor distribution before grouping
+      .getRawMany();
+
+    // Post-process to group by Vendor (avoiding redundancy in the table)
+    const vendorMap = new Map<
+      string,
+      {
+        vendor: string;
+        total: number;
+        countries: { name: string; count: number }[];
+      }
+    >();
+
+    vendorStatsRaw.forEach((r) => {
+      const vKey = r.vendorEmail || 'unknown';
+      const vName = r.vendorName || r.vendorEmail || 'Unknown Vendor';
+      const cName = r.country;
+      const count = Number(r.count);
+
+      if (!vendorMap.has(vKey)) {
+        vendorMap.set(vKey, { vendor: vName, total: 0, countries: [] });
+      }
+      const entry = vendorMap.get(vKey);
+      entry.total += count;
+      entry.countries.push({ name: cName, count });
+    });
+
+    const vendorCountryStats = Array.from(vendorMap.values())
+      .map((v) => {
+        // Sort countries for this vendor by volume
+        const topCountries = v.countries.sort((a, b) => b.count - a.count);
+        // Create display string (e.g., "Ethiopia, Somalia")
+        const countryDisplay = topCountries.map((c) => c.name).join(', ');
+
+        return {
+          vendor: v.vendor,
+          country: countryDisplay,
+          views: v.total,
+        };
+      })
+      .sort((a, b) => b.views - a.views) // Sort vendors by TOTAL views
+      .slice(0, 20); // Top 20 Vendors
+
+    return {
+      totalImpressionViews,
+      impressions,
+      visitorLocations,
+      visitorCities,
+      trafficTrend,
+      vendorCountryStats,
+    };
   }
 
   // Primary path
@@ -342,7 +652,7 @@ export class AdminAnalyticsController {
       }
     }
     // Rule: Country totals are the sum of city totals in the window (no double counting, no limit cut-off)
-    const allowed = new Set(['ET', 'SO', 'KE', 'DJ']);
+    const allowed = new Set(['ET', 'SO', 'KE', 'DJ', 'US']);
     const citiesRawAll = await this.keywordRepo
       .createQueryBuilder('k')
       .select('k.lastCity', 'name')
@@ -520,7 +830,7 @@ export class AdminAnalyticsController {
     qb.skip(skip).take(take);
     const [rows, total] = await qb.getManyAndCount();
     const items = rows.map((r) => {
-      const allowed = new Set(['ET', 'SO', 'KE', 'DJ']);
+      const allowed = new Set(['ET', 'SO', 'KE', 'DJ', 'US']);
       const lastCountry = ((r as any).lastCountry || '')
         .toString()
         .toUpperCase();

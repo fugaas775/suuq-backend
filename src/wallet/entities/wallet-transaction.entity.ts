@@ -14,6 +14,8 @@ export enum TransactionType {
   ADJUSTMENT = 'ADJUSTMENT',
   DEPOSIT = 'DEPOSIT',
   PAYMENT = 'PAYMENT',
+  SUBSCRIPTION = 'SUBSCRIPTION',
+  SUBSCRIPTION_RENEWAL = 'SUBSCRIPTION_RENEWAL',
 }
 
 @Entity('wallet_transaction')
@@ -32,6 +34,9 @@ export class WalletTransaction {
 
   @Column('decimal', { precision: 10, scale: 2 })
   amount: number;
+
+  @Column('decimal', { precision: 10, scale: 4, nullable: true })
+  fxRate: number;
 
   @Column({ nullable: true })
   orderId: number; // Reference to the Order ID if applicable

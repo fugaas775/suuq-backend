@@ -1,0 +1,15 @@
+                                          Table "public.country"
+         Column          |       Type        | Collation | Nullable |               Default               
+-------------------------+-------------------+-----------+----------+-------------------------------------
+ id                      | integer           |           | not null | nextval('country_id_seq'::regclass)
+ name                    | character varying |           | not null | 
+ flagUrl                 | character varying |           | not null | 
+ imageUrl                | character varying |           | not null | 
+ description             | text              |           | not null | 
+ supplies                | jsonb             |           | not null | '[]'::jsonb
+ nameTranslations        | jsonb             |           |          | 
+ descriptionTranslations | jsonb             |           |          | 
+Indexes:
+    "PK_bf6e37c231c4f4ea56dcd887269" PRIMARY KEY, btree (id)
+    "UQ_2c5aa339240c0c3ae97fcc9dc4c" UNIQUE CONSTRAINT, btree (name)
+

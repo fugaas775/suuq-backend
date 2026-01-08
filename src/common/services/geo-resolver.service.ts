@@ -99,16 +99,22 @@ export class GeoResolverService {
 
   private seedMinimal() {
     const seed: Array<CityRow> = [
-      { city: 'Addis Ababa', alt_names: ['Addis'], country_code: 'ET' },
-      { city: 'Jijiga', alt_names: [], country_code: 'ET' },
-      { city: 'Dire Dawa', alt_names: [], country_code: 'ET' },
-      { city: 'Hawassa', alt_names: [], country_code: 'ET' },
-      { city: 'Mogadishu', alt_names: ['Muqdisho'], country_code: 'SO' },
-      { city: 'Hargeisa', alt_names: [], country_code: 'SO' },
-      { city: 'Bosaso', alt_names: [], country_code: 'SO' },
-      { city: 'Nairobi', alt_names: [], country_code: 'KE' },
-      { city: 'Mombasa', alt_names: [], country_code: 'KE' },
-      { city: 'Djibouti', alt_names: ['Djibouti City'], country_code: 'DJ' },
+      { city: 'Addis Ababa', alt_names: ['Addis'], country_code: 'Ethiopia' },
+      { city: 'Jigjiga', alt_names: [], country_code: 'Ethiopia' },
+      { city: 'Dire Dawa', alt_names: [], country_code: 'Ethiopia' },
+      { city: 'Hawassa', alt_names: [], country_code: 'Ethiopia' },
+      { city: 'Mogadishu', alt_names: ['Muqdisho'], country_code: 'Somalia' },
+      { city: 'Hargeisa', alt_names: [], country_code: 'Somalia' },
+      { city: 'Bosaso', alt_names: [], country_code: 'Somalia' },
+      { city: 'Nairobi', alt_names: [], country_code: 'Kenya' },
+      { city: 'Mombasa', alt_names: [], country_code: 'Kenya' },
+      {
+        city: 'Djibouti City',
+        alt_names: ['Djibouti'],
+        country_code: 'Djibouti',
+      },
+      { city: 'New York', alt_names: ['NYC'], country_code: 'United States' },
+      { city: 'Minneapolis', alt_names: [], country_code: 'United States' },
     ];
     for (const row of seed) {
       const cc = row.country_code.toUpperCase();

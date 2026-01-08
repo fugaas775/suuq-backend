@@ -7,6 +7,7 @@ import { RolesGuard } from '../auth/roles.guard';
 import { UsersModule } from '../users/users.module';
 import { OrdersModule } from '../orders/orders.module';
 import { AdminCurationController } from './curation.controller';
+import { ProductImpression } from '../products/entities/product-impression.entity';
 import { Product } from '../products/entities/product.entity';
 import { Tag } from '../tags/tag.entity';
 import { ProductsModule } from '../products/products.module';
@@ -36,7 +37,8 @@ import { AdminUsersController } from './users.admin.controller';
 import { AdminAuditController } from './audit.admin.controller';
 import { CurrencyModule } from '../common/services/currency.module';
 import { WalletModule } from '../wallet/wallet.module';
-import { AdminWalletController } from './wallet.admin.controller';
+import { AdminWalletController } from './admin-wallet.controller';
+import { MetricsModule } from '../metrics/metrics.module';
 
 @Module({
   // 2. Add UsersModule and OrdersModule here
@@ -48,12 +50,14 @@ import { AdminWalletController } from './wallet.admin.controller';
     AuditModule,
     RolesModule,
     FeatureFlagsModule,
+    MetricsModule,
     WalletModule,
     SearchModule,
     NotificationsModule,
     CurrencyModule,
     TypeOrmModule.forFeature([
       Product,
+      ProductImpression,
       Tag,
       SearchKeyword,
       SearchLog,

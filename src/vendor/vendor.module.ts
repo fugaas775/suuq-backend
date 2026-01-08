@@ -7,6 +7,7 @@ import { User } from '../users/entities/user.entity';
 import { Product } from '../products/entities/product.entity';
 import { Order, OrderItem } from '../orders/entities/order.entity';
 import { ProductImage } from '../products/entities/product-image.entity'; // <-- 1. IMPORT ADDED
+import { ProductImpression } from '../products/entities/product-impression.entity';
 import { Tag } from '../tags/tag.entity';
 import { UsersModule } from '../users/users.module';
 import { NotificationsModule } from '../notifications/notifications.module';
@@ -27,6 +28,7 @@ import { ShippingModule } from '../shipping/shipping.module';
       Order,
       OrderItem,
       ProductImage,
+      ProductImpression,
       Tag,
       SearchKeyword,
     ]),

@@ -6,6 +6,7 @@ import {
   UseGuards,
   Req,
   Param,
+  Query,
 } from '@nestjs/common';
 import { WalletService } from './wallet.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -21,10 +22,10 @@ export class WalletController {
   constructor(private readonly walletService: WalletService) {}
 
   @Get()
-  async getWallet(@Req() req) {
+  async getWallet(@Req() req, @Query('currency') currency?: string) {
     // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment
     const userId = req.user?.id || req.user?.userId;
-    const wallet = await this.walletService.getWallet(userId);
+    const wallet = await this.walletService.getWallet(userId, currency);
     const transactions = await this.walletService.getTransactions(userId);
     return {
       balance: wallet.balance,
@@ -34,10 +35,10 @@ export class WalletController {
   }
 
   @Get('balance')
-  async getBalance(@Req() req) {
+  async getBalance(@Req() req, @Query('currency') currency?: string) {
     // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment
     const userId = req.user?.id || req.user?.userId;
-    const wallet = await this.walletService.getWallet(userId);
+    const wallet = await this.walletService.getWallet(userId, currency);
     return {
       balance: wallet.balance,
       currency: wallet.currency,
@@ -96,5 +97,11 @@ export class WalletController {
   @Roles(UserRole.ADMIN)
   async approveTopUp(@Param('id') id: number) {
     return this.walletService.approveTopUp(id);
+  }
+
+  @Post('top-up/:id/reject')
+  @Roles(UserRole.ADMIN)
+  async rejectTopUp(@Param('id') id: number) {
+    return this.walletService.rejectTopUp(id);
   }
 }

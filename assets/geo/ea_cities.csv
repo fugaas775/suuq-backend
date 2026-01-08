@@ -1,35 +1,45 @@
 city,alt_names,country_code
-Addis Ababa,Addis|Finfinne,ET
-Dire Dawa,,ET
-Jijiga,Jigjiga,ET
-Hawassa,Awassa,ET
-Bahir Dar,Bahar Dar|Bahir-Dar,ET
-Mekelle,Mekele,ET
-Gondar,Gonder,ET
-Adama,Nazret|Nazreth,ET
-Harar,Harer,ET
-Shashamane,Shashamanne,ET
+Addis Ababa,Addis|Finfinne,Ethiopia
+Dire Dawa,,Ethiopia
+Mek'ele,Mekele|Mekelle,Ethiopia
+Adama,Nazret|Nazreth,Ethiopia
+Gondar,Gonder,Ethiopia
+Bahir Dar,Bahar Dar|Bahir-Dar,Ethiopia
+Jigjiga,Jijiga,Ethiopia
+Hawassa,Awassa,Ethiopia
+Harar,Harer,Ethiopia
+Gode,,Ethiopia
+Kelafo,,Ethiopia
+Semara,,Ethiopia
+Assosa,Benishangul-Gumuz,Ethiopia
+Gambela City,Gambela,Ethiopia
 
-Mogadishu,Muqdisho,SO
-Hargeisa,Harqisa,SO
-Bosaso,Boosaaso,SO
-Kismayo,Kismaayo,SO
-Galkayo,Gaalkacyo,SO
-Baidoa,Baidoa|Baydhabo,SO
-Burao,Burco,SO
-Garowe,Garoowe,SO
+Nairobi,,Kenya
+Mombasa,,Kenya
+Kisumu,,Kenya
+Nakuru,,Kenya
+Eldoret,,Kenya
+Garissa,,Kenya
+Wajir,,Kenya
 
-Nairobi,Nairobii,KE
-Mombasa,,KE
-Kisumu,,KE
-Nakuru,,KE
-Eldoret,,KE
-Thika,,KE
-Malindi,,KE
-Machakos,,KE
+Mogadishu,Muqdisho,Somalia
+Hargeisa,Harqisa,Somalia
+Kismayo,Kismaayo,Somalia
+Bosaso,Boosaaso,Somalia
+Baidoa,Baydhabo,Somalia
+Beledweyne,Baladweyn,Somalia
+Garowe,Garoowe,Somalia
+Wajaale,Tog Wajaale,Somalia
 
-Djibouti,Djibouti City,DJ
-Ali Sabieh,Ali Sabih,DJ
-Tadjourah,,DJ
-Obock,Obok,DJ
-Arta,,DJ
+Djibouti City,Djibouti,Djibouti
+Ali Sabieh,,Djibouti
+Tadjoura,,Djibouti
+Dikhil,,Djibouti
+
+New York,NYC,United States
+Los Angeles,LA,United States
+Chicago,,United States
+Houston,,United States
+Minneapolis,,United States
+Seattle,,United States
+Columbus,,United States

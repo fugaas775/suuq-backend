@@ -16,6 +16,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { ProductsService } from './products.service';
+import { CategoriesService } from '../categories/categories.service';
 import { HomeService } from '../home/home.service';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { AuthGuard } from '@nestjs/passport';
@@ -48,6 +49,7 @@ export class ProductsController {
     private readonly productsService: ProductsService,
     private readonly homeService: HomeService,
     private readonly favoritesService: FavoritesService,
+    private readonly categoriesService: CategoriesService,
   ) {}
 
   // Public: return a short-lived signed attachment URL for free digital products
@@ -109,6 +111,9 @@ export class ProductsController {
         '',
     );
     const ua = String(req.headers['user-agent'] || '');
+    const city = String(req.headers['x-user-city'] || '');
+    const country = String(req.headers['x-user-country'] || '');
+
     const sessionId = dto.sessionId || '';
     const windowSeconds = Math.max(60, Number(dto.windowSeconds || 300));
     const sessionKey = this.productsService.deriveImpressionSessionKey(
@@ -120,6 +125,7 @@ export class ProductsController {
       dto.productIds,
       sessionKey,
       windowSeconds,
+      { ip, country, city },
     );
     return { recorded, ignored, windowSeconds };
   }
@@ -157,6 +163,37 @@ export class ProductsController {
         (filters as any).search = undefined as any;
         if (res) res.setHeader('X-Image-Search-Placeholder', '1');
       }
+
+      // Smart Category Detection: If query matches a category name, switch to category mode
+      if (
+        !isImageSearchPlaceholder &&
+        rawSearch.length >= 2 &&
+        (!filters.categoryId || filters.categoryId.length === 0)
+      ) {
+        try {
+          const matchedCategory =
+            await this.categoriesService.findByName(rawSearch);
+          if (matchedCategory) {
+            // Found a match! Switch from text search to category filter
+            (filters as any).search = undefined; // clear text search
+            filters.categoryId = [matchedCategory.id];
+
+            if (res) {
+              res.setHeader(
+                'X-Smart-Category-Detected',
+                String(matchedCategory.id),
+              );
+              res.setHeader(
+                'X-Smart-Category-Name',
+                encodeURIComponent(matchedCategory.name),
+              );
+            }
+          }
+        } catch {
+          // non-blocking
+        }
+      }
+
       // Role (if present)
       const role =
         (req?.user as { role?: string; roles?: string[] } | undefined)?.role ||

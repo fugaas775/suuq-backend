@@ -22,6 +22,7 @@ import { ReviewsModule } from '../reviews/reviews.module';
 import { ProductListingModule } from './listing/product-listing.module';
 import { GeoResolverService } from '../common/services/geo-resolver.service';
 import { EmailModule } from '../email/email.module';
+import { CategoriesModule } from '../categories/categories.module';
 
 @Module({
   imports: [
@@ -45,6 +46,7 @@ import { EmailModule } from '../email/email.module';
     ReviewsModule,
     ProductListingModule,
     EmailModule,
+    CategoriesModule,
   ],
   providers: [ProductsService, GeoResolverService],
   controllers: [ProductsController, ProductsV1Controller],

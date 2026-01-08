@@ -4,12 +4,19 @@ import { Transform } from 'class-transformer';
 export class UpdateCategoryDto {
   @IsString()
   @IsOptional()
-  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim() : value,
+  )
   name?: string;
+
+  @IsOptional()
+  nameTranslations?: Record<string, string>;
 
   @IsString()
   @IsOptional()
-  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim() : value,
+  )
   slug?: string;
 
   @IsString()
@@ -26,7 +33,9 @@ export class UpdateCategoryDto {
     message:
       'iconName must be alphanumeric with dashes/underscores, optional mdi: prefix',
   })
-  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim() : value,
+  )
   iconName?: string;
   /**
    * Only send iconName/iconUrl to perform icons-only edits.

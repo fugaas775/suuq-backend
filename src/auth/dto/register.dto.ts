@@ -27,6 +27,10 @@ export class RegisterDto {
   displayName?: string;
 
   @IsOptional()
+  @IsString()
+  language?: string;
+
+  @IsOptional()
   @IsArray()
   @IsEnum(UserRole, { each: true })
   roles?: UserRole[];

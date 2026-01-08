@@ -11,7 +11,7 @@ import {
   Index,
 } from 'typeorm';
 import { Product } from '../../products/entities/product.entity';
-import { Exclude } from 'class-transformer'; // <-- Import Exclude
+import { Exclude, Expose } from 'class-transformer'; // <-- Import Exclude
 
 @Entity()
 @Tree('closure-table')
@@ -25,6 +25,11 @@ export class Category {
 
   @Column({ unique: true })
   slug: string;
+
+  // e.g. { "am": "ቤት", "fr": "Maison" }
+  @Expose()
+  @Column({ name: 'name_translations', type: 'jsonb', nullable: true })
+  nameTranslations?: Record<string, string> | null;
 
   @Column({ nullable: true })
   iconUrl?: string;

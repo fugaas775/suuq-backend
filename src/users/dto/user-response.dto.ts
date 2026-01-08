@@ -1,5 +1,6 @@
 import { Expose, Exclude } from 'class-transformer';
 import { UserRole } from '../../auth/roles.enum';
+import { SubscriptionTier } from '../entities/user.entity';
 
 @Exclude()
 export class UserResponseDto {
@@ -36,6 +37,12 @@ export class UserResponseDto {
   roles!: UserRole[];
 
   @Expose()
+  subscriptionTier?: SubscriptionTier;
+
+  @Expose()
+  subscriptionExpiry?: Date | null;
+
+  @Expose()
   displayName?: string;
 
   @Expose()
@@ -43,6 +50,48 @@ export class UserResponseDto {
 
   @Expose()
   storeName?: string;
+
+  @Expose()
+  legalName?: string;
+
+  @Expose()
+  businessLicenseNumber?: string;
+
+  @Expose()
+  taxId?: string;
+
+  @Expose()
+  registrationCountry?: string;
+
+  @Expose()
+  registrationRegion?: string;
+
+  @Expose()
+  registrationCity?: string;
+
+  @Expose()
+  businessType?: string;
+
+  @Expose()
+  contactName?: string;
+
+  @Expose()
+  vendorPhoneNumber?: string;
+
+  @Expose()
+  vendorEmail?: string;
+
+  @Expose()
+  website?: string;
+
+  @Expose()
+  address?: string;
+
+  @Expose()
+  postalCode?: string;
+
+  @Expose()
+  vendorAvatarUrl?: string;
 
   // Friendly fallback name for vendor/autocomplete display
   @Expose()

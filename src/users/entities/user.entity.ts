@@ -79,12 +79,28 @@ export class User {
   })
   subscriptionTier!: SubscriptionTier;
 
+  @Column({ type: 'timestamp', nullable: true })
+  subscriptionExpiry?: Date | null;
+
+  @Column({ default: true })
+  autoRenew!: boolean;
+
+  @Column({ type: 'timestamp', nullable: true })
+  lastRenewalReminderAt?: Date | null;
+
+  @Column({ default: 0 })
+  renewalReminderCount!: number;
+
   // --- Profile fields ---
   @Column({ nullable: true })
   displayName?: string;
 
   @Column({ nullable: true })
   avatarUrl?: string;
+
+  // New language preference field
+  @Column({ default: 'en', length: 5 })
+  language!: string;
 
   @Column({ nullable: true })
   storeName?: string;

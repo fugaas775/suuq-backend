@@ -11,12 +11,19 @@ import { Transform } from 'class-transformer';
 export class CreateCategoryDto {
   @IsString()
   @IsNotEmpty()
-  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim() : value,
+  )
   name!: string;
+
+  @IsOptional()
+  nameTranslations?: Record<string, string>;
 
   @IsString()
   @IsOptional()
-  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim() : value,
+  )
   slug?: string;
 
   @IsString()
@@ -33,7 +40,9 @@ export class CreateCategoryDto {
     message:
       'iconName must be alphanumeric with dashes/underscores, optional mdi: prefix',
   })
-  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim() : value,
+  )
   iconName?: string;
   /**
    * icon fields: clients prefer iconUrl and fall back to iconName.

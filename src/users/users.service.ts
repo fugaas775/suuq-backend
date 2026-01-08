@@ -7,20 +7,26 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, MoreThan } from 'typeorm';
+import { Repository, MoreThan, In } from 'typeorm';
 import {
   User,
   VerificationStatus,
   SubscriptionTier,
+  VerificationMethod,
 } from './entities/user.entity'; // Import VerificationStatus enum
+import { RequestVerificationDto } from './dto/request-verification.dto';
 import {
   SubscriptionRequest,
   SubscriptionRequestStatus,
 } from './entities/subscription-request.entity';
+import { Wallet } from '../wallet/entities/wallet.entity';
 import { WalletService } from '../wallet/wallet.service';
+import { TransactionType } from '../wallet/entities/wallet-transaction.entity';
+import { CurrencyService } from '../common/services/currency.service';
 import { UserRole } from '../auth/roles.enum';
 import { FindUsersQueryDto } from './dto/find-users-query.dto';
 import * as bcrypt from 'bcrypt';
+import { UiSetting } from '../settings/entities/ui-setting.entity';
 
 @Injectable()
 export class UsersService {
@@ -30,8 +36,51 @@ export class UsersService {
     private readonly userRepository: Repository<User>,
     @InjectRepository(SubscriptionRequest)
     private readonly subscriptionRequestRepository: Repository<SubscriptionRequest>,
+    @InjectRepository(UiSetting)
+    private readonly uiSettingRepo: Repository<UiSetting>,
+    @InjectRepository(Wallet)
+    private readonly walletRepository: Repository<Wallet>,
     private readonly walletService: WalletService,
+    private readonly currencyService: CurrencyService,
   ) {}
+
+  /**
+   * Upgrade current user to VENDOR role (Unverified).
+   */
+  async upgradeToVendor(userId: number): Promise<User> {
+    const user = await this.findById(userId);
+    if (!user.roles.includes(UserRole.VENDOR)) {
+      user.roles.push(UserRole.VENDOR);
+      // Ensure verification status is UNVERIFIED initially if not set
+      if (!user.verificationStatus) {
+        user.verificationStatus = VerificationStatus.UNVERIFIED;
+      }
+      return this.userRepository.save(user);
+    }
+    return user;
+  }
+
+  /**
+   * Request verification (Licensed Vendor) by uploading documents.
+   */
+  async requestVerification(
+    userId: number,
+    dto: RequestVerificationDto,
+  ): Promise<User> {
+    const user = await this.findById(userId);
+
+    // Update verification documents
+    user.verificationDocuments = dto.documents;
+
+    if (dto.businessLicenseInfo) {
+      user.businessLicenseInfo = dto.businessLicenseInfo as any;
+    }
+
+    user.verificationStatus = VerificationStatus.PENDING;
+    user.verificationMethod = VerificationMethod.MANUAL;
+
+    return this.userRepository.save(user);
+  }
 
   /**
    * Update a user's roles (replace the roles array).
@@ -333,11 +382,27 @@ export class UsersService {
     const allowedFields: (keyof User)[] = [
       'displayName',
       'avatarUrl',
+      'language', // Allow language updates
       'storeName',
       'phoneCountryCode',
       'phoneNumber',
       'isPhoneVerified',
       'isActive',
+      // Vendor / Contact Fields
+      'legalName',
+      'businessLicenseNumber',
+      'taxId',
+      'registrationCountry',
+      'registrationRegion',
+      'registrationCity',
+      'businessType',
+      'contactName',
+      'vendorPhoneNumber',
+      'vendorEmail',
+      'website',
+      'address',
+      'postalCode',
+      'vendorAvatarUrl',
       // Verification fields for admin
       'verificationStatus',
       'verificationDocuments',
@@ -411,14 +476,12 @@ export class UsersService {
     const prevStatus = user.verificationStatus;
     user.verificationStatus = status;
     if (status === VerificationStatus.APPROVED) {
-      user.verified = true;
-      user.verifiedAt = user.verifiedAt || new Date();
       // Clear rejection metadata if previously rejected
       user.verificationRejectionReason = null;
     } else if (status === VerificationStatus.REJECTED) {
-      user.verified = false; // ensure false
       user.verificationRejectionReason = reason || null;
     }
+    this.updateVerifiedFlag(user);
     user.verificationReviewedBy = actedBy || null;
     user.verificationReviewedAt = new Date();
     user.updatedBy = actedBy;
@@ -573,6 +636,8 @@ export class UsersService {
     userId: number,
     method: string,
     reference?: string,
+    amount?: number,
+    currency?: string,
   ): Promise<any> {
     const user = await this.userRepository.findOne({ where: { id: userId } });
     if (!user) {
@@ -580,19 +645,81 @@ export class UsersService {
     }
 
     if (user.subscriptionTier === SubscriptionTier.PRO) {
-      throw new BadRequestException('User is already PRO');
+      // If expiry is null, treat as expiring soon (allow fix)
+      if (!user.subscriptionExpiry) {
+        // Proceed to renewal logic
+      } else {
+        // Allow renewal if expiring within 7 days
+        const isExpiringSoon =
+          user.subscriptionExpiry.getTime() - Date.now() <
+          7 * 24 * 60 * 60 * 1000;
+
+        if (!isExpiringSoon) {
+          // Return 201 Created structure for "Already Active"
+          // This is not an error, but a successful idempotent response
+          return { success: true, message: 'Already Active', tier: 'pro' };
+        }
+      }
     }
 
-    const PRO_PRICE = 1000; // Example price
+    // Fetch base price from UISettings
+    const basePriceSetting = await this.uiSettingRepo.findOne({
+      where: { key: 'vendor_subscription_base_price' },
+    });
+    const PRO_PRICE_USD = basePriceSetting
+      ? Number(basePriceSetting.value)
+      : 9.99;
 
     if (method === 'WALLET') {
+      // Get user's wallet to determine currency
+      const wallet = await this.walletService.getWallet(userId);
+      const walletCurrency = wallet.currency || 'ETB';
+
+      let amountToCharge: number;
+      let description = 'Pro Subscription Upgrade';
+      let fxRate = 1;
+
+      if (amount && currency) {
+        // Use frontend provided amount, converting if necessary
+        const conversion = this.currencyService.convertWithRate(
+          amount,
+          currency,
+          walletCurrency,
+        );
+        amountToCharge = conversion.amount;
+        fxRate = conversion.rate;
+        description += ` (${amount} ${currency})`;
+      } else {
+        // Fallback to backend calculation
+        const conversion = this.currencyService.convertWithRate(
+          PRO_PRICE_USD,
+          'USD',
+          walletCurrency,
+        );
+        amountToCharge = conversion.amount;
+        fxRate = conversion.rate;
+        description += ` (${PRO_PRICE_USD} USD)`;
+      }
+
       // Instant upgrade
       await this.walletService.payWithWallet(
         userId,
-        PRO_PRICE,
-        'Pro Subscription Upgrade',
+        amountToCharge,
+        description,
+        TransactionType.SUBSCRIPTION,
+        fxRate,
       );
       user.subscriptionTier = SubscriptionTier.PRO;
+
+      // Set expiry to 30 days from now
+      const now = new Date();
+      user.subscriptionExpiry = new Date(
+        now.getTime() + 30 * 24 * 60 * 60 * 1000,
+      );
+      user.autoRenew = true;
+
+      this.updateVerifiedFlag(user);
+
       return this.userRepository.save(user);
     } else if (method === 'BANK_TRANSFER') {
       if (!reference) {
@@ -604,6 +731,8 @@ export class UsersService {
         user,
         method,
         reference,
+        amount,
+        currency,
         requestedTier: SubscriptionTier.PRO,
         status: SubscriptionRequestStatus.PENDING,
       });
@@ -632,9 +761,28 @@ export class UsersService {
 
     const user = request.user;
     user.subscriptionTier = request.requestedTier;
+    this.updateVerifiedFlag(user);
     await this.userRepository.save(user);
 
     return request;
+  }
+
+  async rejectSubscription(requestId: number): Promise<SubscriptionRequest> {
+    const request = await this.subscriptionRequestRepository.findOne({
+      where: { id: requestId },
+      relations: ['user'],
+    });
+
+    if (!request) {
+      throw new NotFoundException('Subscription request not found');
+    }
+
+    if (request.status !== SubscriptionRequestStatus.PENDING) {
+      throw new BadRequestException('Request is not pending');
+    }
+
+    request.status = SubscriptionRequestStatus.REJECTED;
+    return this.subscriptionRequestRepository.save(request);
   }
 
   async findAllSubscriptionRequests(
@@ -666,5 +814,103 @@ export class UsersService {
       page,
       pages: Math.ceil(total / limit),
     };
+  }
+
+  async findActiveProUsers(
+    page: number = 1,
+    limit: number = 20,
+  ): Promise<{
+    data: any[];
+    total: number;
+    page: number;
+    pages: number;
+  }> {
+    const [data, total] = await this.userRepository.findAndCount({
+      where: { subscriptionTier: SubscriptionTier.PRO },
+      order: { subscriptionExpiry: 'ASC' },
+      skip: (page - 1) * limit,
+      take: limit,
+    });
+
+    // Fetch wallets for these users
+    const userIds = data.map((u) => u.id);
+    let wallets: Wallet[] = [];
+    if (userIds.length > 0) {
+      wallets = await this.walletRepository.find({
+        where: { user: { id: In(userIds) } },
+        relations: ['user'],
+      });
+    }
+
+    const enrichedData = data.map((user) => {
+      const wallet = wallets.find((w) => w.user?.id === user.id);
+      return {
+        ...user,
+        walletBalance: wallet ? Number(wallet.balance) : 0,
+        walletCurrency: wallet ? wallet.currency : user.currency || 'ETB',
+      };
+    });
+
+    return {
+      data: enrichedData,
+      total,
+      page,
+      pages: Math.ceil(total / limit),
+    };
+  }
+
+  async toggleAutoRenew(userId: number, enabled: boolean): Promise<User> {
+    const user = await this.findById(userId);
+    user.autoRenew = enabled;
+    return this.userRepository.save(user);
+  }
+
+  async extendSubscription(
+    userId: number,
+    days: number,
+    reason: string,
+  ): Promise<User> {
+    const user = await this.findById(userId);
+
+    const currentExpiry =
+      user.subscriptionExpiry && user.subscriptionExpiry > new Date()
+        ? user.subscriptionExpiry
+        : new Date();
+
+    const newExpiry = new Date(currentExpiry);
+    newExpiry.setDate(newExpiry.getDate() + days);
+
+    user.subscriptionExpiry = newExpiry;
+    user.subscriptionTier = SubscriptionTier.PRO; // Ensure they are PRO
+
+    await this.userRepository.save(user);
+
+    // Log this action (optional: could be a wallet transaction with 0 amount or a separate audit log)
+    // For now, we'll just log to console, but ideally this should be in an audit table.
+    // The prompt mentioned "saved into the transaction description".
+    // If we want to save it in WalletTransaction, we need to create a 0 amount transaction or similar.
+    // Let's create a 0 amount transaction for record keeping.
+
+    await this.walletService.creditWallet(
+      userId,
+      0,
+      TransactionType.SUBSCRIPTION,
+      undefined,
+      `[Manual Extension] - Reason: ${reason}`,
+    );
+
+    return user;
+  }
+
+  private updateVerifiedFlag(user: User) {
+    if (
+      user.subscriptionTier === SubscriptionTier.PRO ||
+      user.verificationStatus === VerificationStatus.APPROVED
+    ) {
+      user.verified = true;
+      if (!user.verifiedAt) user.verifiedAt = new Date();
+    } else {
+      user.verified = false;
+    }
   }
 }

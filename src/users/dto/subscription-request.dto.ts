@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, IsOptional } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsNumber } from 'class-validator';
 
 export class SubscriptionRequestDto {
   @IsString()
@@ -8,4 +8,12 @@ export class SubscriptionRequestDto {
   @IsString()
   @IsOptional()
   reference?: string;
+
+  @IsNumber()
+  @IsOptional()
+  amount?: number;
+
+  @IsString()
+  @IsOptional()
+  currency?: string;
 }

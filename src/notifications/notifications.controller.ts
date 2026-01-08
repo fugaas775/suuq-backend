@@ -7,8 +7,11 @@ import {
   UnauthorizedException,
   HttpCode,
   HttpStatus,
+  Param,
+  ParseIntPipe,
 } from '@nestjs/common';
 import { NotificationsService } from './notifications.service';
+import { ChurnRecoveryService } from '../users/churn-recovery.service';
 import {
   RegisterDeviceTokenDto,
   UnregisterDeviceTokenDto,
@@ -19,7 +22,17 @@ import { AuthenticatedRequest } from '../auth/auth.types';
 @UseGuards(JwtAuthGuard)
 @Controller('notifications')
 export class NotificationsController {
-  constructor(private readonly notificationsService: NotificationsService) {}
+  constructor(
+    private readonly notificationsService: NotificationsService,
+    private readonly churnRecoveryService: ChurnRecoveryService,
+  ) {}
+
+  @Post('remind-renewal/:userId')
+  @HttpCode(HttpStatus.OK)
+  async remindRenewal(@Param('userId', ParseIntPipe) userId: number) {
+    await this.churnRecoveryService.remindRenewal(userId);
+    return { message: 'Reminder sent successfully' };
+  }
 
   @Post('register-device')
   @HttpCode(HttpStatus.OK)

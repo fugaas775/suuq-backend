@@ -20,6 +20,7 @@ import {
 import { SkipThrottle } from '@nestjs/throttler';
 import { UseInterceptors } from '@nestjs/common';
 import { RateLimitInterceptor } from '../common/interceptors/rate-limit.interceptor';
+import { OptionalJwtAuthGuard } from '../auth/optional-jwt-auth.guard';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { Response } from 'express';
 
@@ -110,13 +111,17 @@ export class ReviewsController {
     return list;
   }
 
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(OptionalJwtAuthGuard)
   @Get('me')
   async findMine(
     @Param('productId', ParseIntPipe) productId: number,
     @Request() req: { user?: { id?: number } },
     @Res({ passthrough: true }) res: Response,
   ) {
+    if (!req.user?.id) {
+      res.status(204);
+      return;
+    }
     const review = await this.reviewsService.findMine(req.user.id, productId);
     if (!review) {
       res.status(204);

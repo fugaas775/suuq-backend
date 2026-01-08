@@ -32,6 +32,7 @@ export type ProductCard = {
     storeName: string;
     rating?: number | null;
     verified: boolean;
+    subscriptionTier?: string;
   };
 };
 
@@ -99,6 +100,7 @@ export function toProductCard(p: Product): ProductCard {
         storeName?: string | null;
         rating?: number | null;
         verified?: boolean;
+        subscriptionTier?: string;
       }
     | undefined;
 
@@ -135,6 +137,7 @@ export function toProductCard(p: Product): ProductCard {
           storeName: vendor.storeName ?? '',
           rating: vendor.rating ?? null,
           verified: !!vendor.verified,
+          subscriptionTier: vendor.subscriptionTier || 'free',
         }
       : undefined,
   };

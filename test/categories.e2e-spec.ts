@@ -91,7 +91,7 @@ describe('Categories (e2e)', () => {
 
       // Service should receive capped value 200
       expect(findAllMock).toHaveBeenCalledTimes(1);
-      expect(findAllMock).toHaveBeenCalledWith(200);
+      expect(findAllMock).toHaveBeenCalledWith(200, 'en');
 
       // Headers
       expect(res.headers['cache-control']).toBe('public, max-age=60');

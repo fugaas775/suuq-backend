@@ -147,7 +147,7 @@ export class DelivererService {
             earnings,
             TransactionType.EARNING,
             order.id,
-            `Earnings for Order #${order.id}`,
+            undefined, // Let client localize based on types
           );
         }
       }
@@ -167,7 +167,7 @@ export class DelivererService {
           delivererEarnings,
           TransactionType.EARNING,
           order.id,
-          `Delivery Fee for Order #${order.id}`,
+          undefined, // Let client localize
         );
       }
     }

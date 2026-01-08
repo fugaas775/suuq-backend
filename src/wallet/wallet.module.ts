@@ -6,10 +6,12 @@ import { Wallet } from './entities/wallet.entity';
 import { WalletTransaction } from './entities/wallet-transaction.entity';
 import { TopUpRequest } from './entities/top-up-request.entity';
 import { User } from '../users/entities/user.entity';
+import { CurrencyModule } from '../common/services/currency.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([Wallet, WalletTransaction, TopUpRequest, User]),
+    CurrencyModule,
   ],
   controllers: [WalletController],
   providers: [WalletService],

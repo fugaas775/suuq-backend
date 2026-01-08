@@ -28,6 +28,12 @@ export class SubscriptionRequest {
   @Column({ nullable: true })
   reference?: string; // For bank transfer
 
+  @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true })
+  amount?: number;
+
+  @Column({ nullable: true })
+  currency?: string;
+
   @Column({
     type: 'enum',
     enum: SubscriptionTier,

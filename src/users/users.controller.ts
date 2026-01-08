@@ -31,6 +31,11 @@ import { UpdateOwnProfileDto } from './dto/update-own-profile.dto';
 import { ChangePasswordDto } from '../auth/dto/change-password.dto';
 import { Throttle } from '@nestjs/throttler';
 import { SubscriptionRequestDto } from './dto/subscription-request.dto';
+import {
+  ToggleAutoRenewDto,
+  ExtendSubscriptionDto,
+} from './dto/subscription-actions.dto';
+import { RequestVerificationDto } from './dto/request-verification.dto';
 
 @Controller('users')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -115,6 +120,29 @@ export class UsersController {
     @Body() body: ChangePasswordDto,
   ) {
     return this.changeOwnPassword(req, body);
+  }
+
+  @Post('me/upgrade/vendor')
+  async upgradeToVendor(@Req() req: AuthenticatedRequest) {
+    const userId = req.user?.id;
+    if (!userId) throw new UnauthorizedException();
+    const user = await this.usersService.upgradeToVendor(userId);
+    return plainToInstance(UserResponseDto, user, {
+      excludeExtraneousValues: true,
+    });
+  }
+
+  @Post('me/verification/request')
+  async requestVerification(
+    @Req() req: AuthenticatedRequest,
+    @Body() dto: RequestVerificationDto,
+  ) {
+    const userId = req.user?.id;
+    if (!userId) throw new UnauthorizedException();
+    const user = await this.usersService.requestVerification(userId, dto);
+    return plainToInstance(UserResponseDto, user, {
+      excludeExtraneousValues: true,
+    });
   }
 
   @Get(':id')
@@ -261,16 +289,47 @@ export class UsersController {
   @Post('subscription/request')
   async requestSubscription(@Req() req, @Body() dto: SubscriptionRequestDto) {
     const userId = req.user?.id || req.user?.userId;
-    return this.usersService.requestSubscription(
+    const result = await this.usersService.requestSubscription(
       userId,
       dto.method,
       dto.reference,
+      dto.amount,
+      dto.currency,
     );
+
+    // If the service returns a plain object with success: true, it means "Already Active" or similar non-entity response
+    // We return it directly. NestJS defaults POST to 201 Created, which is appropriate here.
+    return result;
   }
 
   @Post('subscription/request/:id/approve')
   @Roles(UserRole.ADMIN)
   async approveSubscription(@Param('id') id: number) {
     return this.usersService.approveSubscription(id);
+  }
+
+  @Post('subscription/request/:id/reject')
+  @Roles(UserRole.ADMIN)
+  async rejectSubscription(@Param('id') id: number) {
+    return this.usersService.rejectSubscription(id);
+  }
+
+  @Patch('auto-renew')
+  async toggleAutoRenew(
+    @Req() req: AuthenticatedRequest,
+    @Body() dto: ToggleAutoRenewDto,
+  ) {
+    const userId = req.user?.id;
+    if (!userId) throw new UnauthorizedException();
+    return this.usersService.toggleAutoRenew(userId, dto.enabled);
+  }
+
+  @Post(':id/subscription/extend')
+  @Roles(UserRole.ADMIN)
+  async extendSubscription(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: ExtendSubscriptionDto,
+  ) {
+    return this.usersService.extendSubscription(id, dto.days, dto.reason);
   }
 }

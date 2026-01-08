@@ -2,14 +2,17 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
-  UnprocessableEntityException,
 } from '@nestjs/common';
 import { CreateVendorProductDto } from './dto/create-vendor-product.dto';
 import { FindAllVendorsDto } from './dto/find-all-vendors.dto';
 import { UpdateVendorProductDto } from './dto/update-vendor-product.dto';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Raw, ArrayContains, ILike, In } from 'typeorm';
-import { User, VerificationStatus } from '../users/entities/user.entity';
+import {
+  User,
+  VerificationStatus,
+  SubscriptionTier,
+} from '../users/entities/user.entity';
 import { Product } from '../products/entities/product.entity';
 import { Category } from '../categories/entities/category.entity';
 import { ProductImage } from '../products/entities/product-image.entity';
@@ -105,11 +108,31 @@ export class VendorService {
 
     (product as any).price = priceConverted ?? product.price;
     (product as any).currency = target;
+
+    // PROPERTY FORMATTING LOGIC
+    let suffix = '';
+    if (product.listingType === 'rent' && product.rentPeriod) {
+      suffix = ` / ${product.rentPeriod}`;
+    } else if (
+      product.listingType === 'sale' &&
+      product.productType === 'property' &&
+      product.sizeSqm
+    ) {
+      // For sales, we might want to display unit price or just show total.
+      // Frontend said: "For sales/others: / m² (calculating unit price display)."
+      // We will provide the suffix here, but the amount is still TOTAL.
+      // The frontend likely calculates unit price separately.
+      // We'll leave suffix empty for sale to avoid confusion with Total Price,
+      // or we can add a specific unit_suffix field.
+      // For now, let's stick to the requested " / month" style for rent which affects the main price.
+    }
+
     (product as any).price_display = {
       amount: priceConverted ?? product.price ?? null,
       currency: target,
       convertedFrom: from,
       rate,
+      suffix, // e.g. " / month"
     };
 
     if (saleConverted !== null && saleConverted !== undefined) {
@@ -140,25 +163,38 @@ export class VendorService {
       throw new NotFoundException(`Vendor with ID ${userId} not found.`);
     }
 
-    // Enforce verification before allowing product creation
-    const isApproved =
-      vendor.verified === true ||
-      vendor.verificationStatus === VerificationStatus.APPROVED;
-    if (!isApproved) {
-      // Use 422 for pending/rejected detail, else 403 as a strict default
-      if (
-        vendor.verificationStatus === VerificationStatus.PENDING ||
-        vendor.verificationStatus === VerificationStatus.REJECTED ||
-        vendor.verificationStatus === VerificationStatus.SUSPENDED ||
-        vendor.verificationStatus === VerificationStatus.UNVERIFIED
-      ) {
-        throw new UnprocessableEntityException({
-          error: 'Vendor is not verified to create products',
-          status: vendor.verificationStatus,
-          code: 'VENDOR_NOT_VERIFIED',
-        });
+    // --- Product Posting Limits ---
+    // Guests: Handled by AuthGuard (cannot reach here).
+    // Customers: 1 Product.
+    // Free Vendor (Verified or Unverified): 5 Products.
+    // Pro Vendor: Unlimited.
+
+    const productCount = await this.productRepository.count({
+      where: { vendor: { id: userId } },
+    });
+
+    // Check subscription tier
+    // Note: ensure access to SubscriptionTier enum or use string literal 'pro'/'free' if imported
+    const isPro = vendor.subscriptionTier === SubscriptionTier.PRO;
+    const isVendor = vendor.roles.includes(UserRole.VENDOR);
+
+    if (!isPro) {
+      if (isVendor) {
+        // limit 5
+        if (productCount >= 5) {
+          throw new ForbiddenException(
+            'Free vendors are limited to 5 products. Upgrade to Pro for unlimited listings.',
+          );
+        }
+      } else {
+        // limit 1
+        // Note: Customers can post 1 product to "try it out" or simply exist
+        if (productCount >= 1) {
+          throw new ForbiddenException(
+            'Customers are limited to 1 product. Become a Vendor to list more.',
+          );
+        }
       }
-      throw new ForbiddenException('Vendor is not verified to create products');
     }
 
     const {
@@ -869,7 +905,7 @@ export class VendorService {
     }
   }
 
-  async getSalesGraphData(vendorId: number, range: string) {
+  async getSalesGraphData(vendorId: number, range: string, status?: string) {
     const startDate = new Date();
     const r = String(range || '').toLowerCase();
     if (r === '365d') startDate.setDate(startDate.getDate() - 365);
@@ -878,6 +914,22 @@ export class VendorService {
     else if (r === '7d') startDate.setDate(startDate.getDate() - 7);
     else startDate.setDate(startDate.getDate() - 30);
 
+    let statuses = [
+      OrderStatus.PROCESSING,
+      OrderStatus.SHIPPED,
+      OrderStatus.OUT_FOR_DELIVERY,
+      OrderStatus.DELIVERED,
+    ];
+
+    if (status) {
+      // If a specific status is requested (e.g. DELIVERED), use only that
+      // Map string status to OrderStatus enum if needed, or just pass it if it matches
+      const s = status.toUpperCase();
+      if (Object.values(OrderStatus).includes(s as OrderStatus)) {
+        statuses = [s as OrderStatus];
+      }
+    }
+
     const salesData = await this.orderRepository
       .createQueryBuilder('o')
       .innerJoin('o.items', 'orderItem')
@@ -885,12 +937,7 @@ export class VendorService {
       .where('product.vendorId = :vendorId', { vendorId })
       .andWhere('o.createdAt >= :startDate', { startDate })
       .andWhere('o.status IN (:...statuses)', {
-        statuses: [
-          OrderStatus.PROCESSING,
-          OrderStatus.SHIPPED,
-          OrderStatus.OUT_FOR_DELIVERY,
-          OrderStatus.DELIVERED,
-        ],
+        statuses,
       })
       .select('DATE(o.createdAt)', 'date')
       .addSelect('SUM(orderItem.price * orderItem.quantity)', 'total')
@@ -1043,6 +1090,8 @@ export class VendorService {
         'supportedCurrencies',
         'registrationCountry',
         'registrationCity',
+        'subscriptionTier',
+        'subscriptionExpiry',
       ] as any,
     });
 
@@ -1054,6 +1103,8 @@ export class VendorService {
       verificationStatus: u.verificationStatus,
       isVerified: !!u.verified,
       rating: u.rating ?? 0,
+      subscriptionTier: (u as any).subscriptionTier || 'free',
+      subscriptionExpiry: (u as any).subscriptionExpiry || null,
       productCount: undefined, // placeholder; can join or compute later
       certificateCount: Array.isArray((u as any).verificationDocuments)
         ? (u as any).verificationDocuments.length
@@ -1086,6 +1137,9 @@ export class VendorService {
       bankAccountHolderName,
       mobileMoneyNumber,
       mobileMoneyProvider,
+      verified,
+      verificationStatus,
+      subscriptionTier,
     } = user as any;
     return {
       id,
@@ -1098,19 +1152,37 @@ export class VendorService {
       bankAccountHolderName: bankAccountHolderName || '',
       mobileMoneyNumber: mobileMoneyNumber || '',
       mobileMoneyProvider: mobileMoneyProvider || '',
+      verified: !!verified,
+      verificationStatus: verificationStatus || 'UNVERIFIED',
+      subscriptionTier: subscriptionTier || 'free',
     };
   }
 
-  async getDashboardOverview(userId: number) {
+  async getDashboardOverview(userId: number, status?: string) {
     const productCount = await this.productRepository.count({
       where: { vendor: { id: userId } },
     });
+
+    let statuses = [
+      OrderStatus.PROCESSING,
+      OrderStatus.SHIPPED,
+      OrderStatus.OUT_FOR_DELIVERY,
+      OrderStatus.DELIVERED,
+    ];
+
+    if (status) {
+      const s = status.toUpperCase();
+      if (Object.values(OrderStatus).includes(s as OrderStatus)) {
+        statuses = [s as OrderStatus];
+      }
+    }
 
     const orderCount = await this.orderRepository
       .createQueryBuilder('order')
       .innerJoin('order.items', 'orderItem')
       .innerJoin('orderItem.product', 'product')
       .where('product.vendor.id = :userId', { userId })
+      .andWhere('order.status IN (:...statuses)', { statuses })
       .getCount();
 
     const { totalSales } = await this.orderRepository
@@ -1119,12 +1191,7 @@ export class VendorService {
       .innerJoin('orderItem.product', 'product')
       .where('product.vendor.id = :userId', { userId })
       .andWhere('order.status IN (:...statuses)', {
-        statuses: [
-          OrderStatus.PROCESSING,
-          OrderStatus.SHIPPED,
-          OrderStatus.OUT_FOR_DELIVERY,
-          OrderStatus.DELIVERED,
-        ],
+        statuses,
       })
       .select('SUM(orderItem.price * orderItem.quantity)', 'totalSales')
       .getRawOne();
@@ -1341,6 +1408,8 @@ export class VendorService {
       registrationCity: user.registrationCity || null,
       createdAt: user.createdAt,
       supportedCurrencies: user.supportedCurrencies || [],
+      subscriptionTier: (user as any).subscriptionTier || 'free',
+      subscriptionExpiry: (user as any).subscriptionExpiry || null,
     };
 
     return {

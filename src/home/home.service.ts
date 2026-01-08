@@ -389,12 +389,21 @@ export class HomeService {
       slug: string;
       iconUrl: string | null;
       order: number | null;
+      nameTranslations?: Record<string, string> | null;
     }>;
     eastAfricaCountries: string[];
     defaultSorts: { homeAll: string; bestSellers: string; topRated: string };
   }> {
     // Featured categories ordered; include minimal fields for client chips/cards
     const categories = await this.categoryRepo.find({
+      select: [
+        'id',
+        'name',
+        'slug',
+        'iconUrl',
+        'sortOrder',
+        'nameTranslations', // <-- Make sure to select it
+      ],
       where: {},
       // TypeORM typing quirk: cast to any for name order only
 
@@ -408,6 +417,7 @@ export class HomeService {
         slug: c.slug,
         iconUrl: c.iconUrl,
         order: c.sortOrder,
+        nameTranslations: c.nameTranslations,
       })),
       eastAfricaCountries: ['ET', 'SO', 'KE', 'DJ'],
       defaultSorts: {

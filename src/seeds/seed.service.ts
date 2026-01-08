@@ -192,6 +192,7 @@ export class SeedService {
           'https://images.unsplash.com/photo-1578662996442-48f60103fc96?w=800',
         description:
           'Ethiopia is a landlocked country in the Horn of Africa. It is home to the source of the Blue Nile and has a rich cultural heritage dating back thousands of years.',
+        defaultLanguage: 'am',
         supplies: [
           {
             name: 'Coffee',
@@ -217,6 +218,7 @@ export class SeedService {
           'https://images.unsplash.com/photo-1516026672322-bc52d61a55d5?w=800',
         description:
           'Kenya is known for its diverse wildlife, stunning landscapes, and as a major hub for business and tourism in East Africa.',
+        defaultLanguage: 'sw',
         supplies: [
           {
             name: 'Tea',
@@ -236,12 +238,50 @@ export class SeedService {
         ],
       },
       {
+        name: 'Somalia',
+        flagUrl: 'https://flagcdn.com/w320/so.png',
+        imageUrl:
+          'https://images.unsplash.com/photo-1627394833282-3e3c0326e279?w=800',
+        description:
+          'Somalia is known for its longest coastline in mainland Africa and rich poetry culture.',
+        defaultLanguage: 'so',
+        supplies: [
+          {
+            name: 'Bananas',
+            icon: '🍌',
+            fact: 'Somalia is known for its sweet, small bananas exported worldwide.',
+          },
+          {
+            name: 'Frankincense',
+            icon: '🌲',
+            fact: 'Somalia is one of the largest producers of frankincense in the world.',
+          },
+        ],
+      },
+      {
+        name: 'Djibouti',
+        flagUrl: 'https://flagcdn.com/w320/dj.png',
+        imageUrl:
+          'https://images.unsplash.com/photo-1589569656209-4c8d55c70624?w=800',
+        description:
+          'Djibouti serves as a key trade gateway in the Horn of Africa, known for its unique geological landscapes.',
+        defaultLanguage: 'fr',
+        supplies: [
+          {
+            name: 'Salt',
+            icon: '🧂',
+            fact: "Lake Assal is the world's largest salt reserve.",
+          },
+        ],
+      },
+      {
         name: 'Uganda',
         flagUrl: 'https://flagcdn.com/w320/ug.png',
         imageUrl:
           'https://images.unsplash.com/photo-1605540436563-5bca919ae766?w=800',
         description:
           'Uganda, known as the "Pearl of Africa," is famous for its biodiversity, mountain gorillas, and the source of the White Nile.',
+        defaultLanguage: 'en',
         supplies: [
           {
             name: 'Coffee',
@@ -267,6 +307,7 @@ export class SeedService {
           'https://images.unsplash.com/photo-1516445317699-4b1ba76034e3?w=800',
         description:
           'Tanzania is home to Mount Kilimanjaro, the Serengeti, and Zanzibar, making it a diverse nation rich in natural wonders.',
+        defaultLanguage: 'sw',
         supplies: [
           {
             name: 'Coffee',
@@ -292,6 +333,7 @@ export class SeedService {
           'https://images.unsplash.com/photo-1574482620736-02dc07eb78f0?w=800',
         description:
           'Rwanda, the "Land of a Thousand Hills," is known for its remarkable recovery, clean cities, and mountain gorillas.',
+        defaultLanguage: 'en',
         supplies: [
           {
             name: 'Coffee',

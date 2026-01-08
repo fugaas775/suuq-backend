@@ -28,9 +28,17 @@ export class VendorController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.VENDOR, UserRole.CUSTOMER)
   @Get('vendor/sales-graph')
-  async getSalesGraph(@Query('range') range: string, @Req() req: any) {
+  async getSalesGraph(
+    @Query('range') range: string,
+    @Query('status') status: string,
+    @Req() req: any,
+  ) {
     const userId = req.user.id;
-    const graphData = await this.vendorService.getSalesGraphData(userId, range);
+    const graphData = await this.vendorService.getSalesGraphData(
+      userId,
+      range,
+      status,
+    );
     return { points: graphData };
   }
   constructor(private readonly vendorService: VendorService) {}
@@ -72,8 +80,11 @@ export class VendorController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.VENDOR)
   @Get('vendor/dashboard')
-  async getDashboardOverview(@Req() req: any) {
-    return this.vendorService.getDashboardOverview(req.user.id);
+  async getDashboardOverview(
+    @Req() req: any,
+    @Query('status') status?: string,
+  ) {
+    return this.vendorService.getDashboardOverview(req.user.id, status);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)

@@ -15,6 +15,7 @@ import {
   ClassSerializerInterceptor,
   Res,
   Req,
+  Headers,
 } from '@nestjs/common';
 import { CategoriesService } from './categories.service';
 import { CreateCategoryDto } from './dto/create-category.dto';
@@ -36,11 +37,12 @@ export class CategoriesController {
   async findAll(
     @Query('per_page', new DefaultValuePipe(0), ParseIntPipe) perPage: number,
     @Res({ passthrough: true }) res: Response,
+    @Headers('accept-language') lang?: string,
   ): Promise<Category[]> {
     // Cap per_page to a sane maximum
     const capped = Math.max(0, Math.min(perPage || 0, 200));
     res.setHeader('Cache-Control', 'public, max-age=60');
-    return this.categoriesService.findAll(capped);
+    return this.categoriesService.findAll(capped, lang || 'en');
   }
 
   // Suggest categories by name or slug (lightweight for dropdowns)

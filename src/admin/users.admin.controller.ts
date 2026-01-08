@@ -1,4 +1,12 @@
-import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Param,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { SkipThrottle } from '@nestjs/throttler';
 import { plainToInstance } from 'class-transformer';
@@ -8,13 +16,33 @@ import { UserRole } from '../auth/roles.enum';
 import { UsersService } from '../users/users.service';
 import { FindUsersQueryDto } from '../users/dto/find-users-query.dto';
 import { UserResponseDto } from '../users/dto/user-response.dto';
+import { ExtendSubscriptionDto } from '../users/dto/subscription-actions.dto';
 import { SubscriptionRequestStatus } from '../users/entities/subscription-request.entity';
+import { SubscriptionAnalyticsService } from '../metrics/subscription-analytics.service';
 
 @UseGuards(AuthGuard('jwt'), RolesGuard)
 @SkipThrottle()
 @Controller('admin/users')
 export class AdminUsersController {
-  constructor(private readonly usersService: UsersService) {}
+  constructor(
+    private readonly usersService: UsersService,
+    private readonly subscriptionAnalytics: SubscriptionAnalyticsService,
+  ) {}
+
+  @Get('subscription/analytics')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  async getSubscriptionAnalytics() {
+    return this.subscriptionAnalytics.getAnalytics();
+  }
+
+  @Get('subscription/active')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  async getActiveSubscriptions(
+    @Query('page') page: number = 1,
+    @Query('limit') limit: number = 20,
+  ) {
+    return this.usersService.findActiveProUsers(page, limit);
+  }
 
   @Get('subscription/requests')
   @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
@@ -24,6 +52,15 @@ export class AdminUsersController {
     @Query('status') status?: SubscriptionRequestStatus,
   ) {
     return this.usersService.findAllSubscriptionRequests(page, limit, status);
+  }
+
+  @Post('subscription/:userId/extend')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  async extendSubscription(
+    @Param('userId') userId: number,
+    @Body() dto: ExtendSubscriptionDto,
+  ) {
+    return this.usersService.extendSubscription(userId, dto.days, dto.reason);
   }
 
   @Get()
