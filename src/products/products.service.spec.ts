@@ -14,6 +14,8 @@ import { AuditService } from '../audit/audit.service';
 import { Review } from '../reviews/entities/review.entity';
 import { GeoResolverService } from '../common/services/geo-resolver.service';
 import { FavoritesService } from '../favorites/favorites.service';
+import { CurrencyService } from '../common/services/currency.service';
+import { EmailService } from '../email/email.service';
 
 describe('ProductsService', () => {
   let service: ProductsService;
@@ -77,6 +79,11 @@ describe('ProductsService', () => {
           provide: FavoritesService,
           useValue: { removeProductEverywhere: jest.fn() },
         },
+        {
+          provide: CurrencyService,
+          useValue: { convert: jest.fn(), getRate: jest.fn().mockReturnValue(1) },
+        },
+        { provide: EmailService, useValue: { send: jest.fn() } },
       ],
     }).compile();
 

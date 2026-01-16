@@ -25,8 +25,11 @@ export class TopUpRequest {
   @Column()
   method!: string; // e.g., 'BANK_TRANSFER'
 
-  @Column()
-  reference!: string; // Transaction reference
+  @Column({ nullable: true })
+  reference?: string; // Transaction reference
+
+  @Column({ nullable: true })
+  attachmentUrl?: string; // Image proof of transaction
 
   @Column({
     type: 'enum',
@@ -37,6 +40,9 @@ export class TopUpRequest {
 
   @ManyToOne(() => User, { eager: true })
   user!: User;
+
+  @Column('jsonb', { nullable: true })
+  metadata?: Record<string, any>;
 
   @CreateDateColumn()
   createdAt!: Date;

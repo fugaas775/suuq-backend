@@ -11,11 +11,12 @@ import { NotificationsModule } from '../notifications/notifications.module';
 import { MediaModule } from '../media/media.module';
 import { AuditModule } from '../audit/audit.module';
 import { CurrencyModule } from '../common/services/currency.module';
-// import { AdminOrdersController } from './admin-orders.controller'; // <-- DELETE THIS LINE
+import { EmailModule } from '../email/email.module';
+import { UiSetting } from '../settings/entities/ui-setting.entity';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Order, OrderItem]),
+    TypeOrmModule.forFeature([Order, OrderItem, UiSetting]),
     CartModule,
     ProductsModule,
     TelebirrModule,
@@ -24,6 +25,7 @@ import { CurrencyModule } from '../common/services/currency.module';
     MediaModule,
     AuditModule,
     CurrencyModule,
+    EmailModule,
   ],
   controllers: [OrdersController],
   providers: [OrdersService],

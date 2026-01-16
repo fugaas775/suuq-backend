@@ -10,9 +10,14 @@ import { Product } from '../products/entities/product.entity';
 import { WalletService } from '../wallet/wallet.service';
 import { TransactionType } from '../wallet/entities/wallet-transaction.entity';
 import { SettingsService } from '../settings/settings.service';
+import { EmailService } from '../email/email.service';
+import { CurrencyService } from '../common/services/currency.service';
+import { Logger } from '@nestjs/common';
 
 @Injectable()
 export class DelivererService {
+  private readonly logger = new Logger(DelivererService.name);
+
   constructor(
     @InjectRepository(Order)
     private readonly orderRepository: Repository<Order>,
@@ -20,6 +25,8 @@ export class DelivererService {
     private readonly productRepository: Repository<Product>,
     private readonly walletService: WalletService,
     private readonly settingsService: SettingsService,
+    private readonly emailService: EmailService,
+    private readonly currencyService: CurrencyService,
   ) {}
 
   async getMyAssignments(delivererId: number) {
@@ -90,6 +97,27 @@ export class DelivererService {
     order.status = newStatus;
     await this.orderRepository.save(order);
 
+    if (!wasDelivered && newStatus === OrderStatus.DELIVERED) {
+      // Need to re-fetch user for email if not in relations (or trust it's there via ManyToOne eager? Order.user is eager but query didn't request it explicitly, however eager loads unless disabled. Let's start with checking relations above... relations doesn't list 'user'. But entity has eager: true. So it should be there.)
+      // To be safe, let's ensure we have the user email.
+      if (!order.user) {
+        const orderWithUser = await this.orderRepository.findOne({
+          where: { id: orderId },
+          relations: ['user'],
+        });
+        if (orderWithUser && orderWithUser.user) {
+          order.user = orderWithUser.user;
+        }
+      }
+      this.emailService
+        .sendOrderDelivered(order)
+        .catch((e) =>
+          this.logger.error(
+            `Failed to send order delivered email: ${e.message}`,
+          ),
+        );
+    }
+
     // If transitioning to DELIVERED for the first time, increment product sales_count by item quantities
     if (
       !wasDelivered &&
@@ -123,10 +151,21 @@ export class DelivererService {
 
       // 2. Credit Wallets (Vendor & Deliverer)
       // Fetch dynamic settings (defaults: 50 base fee)
+      const deliveryFeeVal = await this.settingsService.getSetting(
+        'delivery_base_fee',
+        50,
+      );
+      const commissionPercent =
+        Number(
+          await this.settingsService.getSystemSetting(
+            'VENDOR_COMMISSION_PERCENT',
+          ),
+        ) || 5; // Default 5% commission
+      const orderCurrency = order.currency || 'ETB';
 
       // Group items by Vendor
       const vendorEarnings = new Map<number, number>();
-      for (const item of order.items) {
+      for (const item of order.items || []) {
         const vendorId = (item.product as any)?.vendor?.id;
         if (vendorId) {
           const itemTotal = Number(item.price) * Number(item.quantity);
@@ -139,36 +178,75 @@ export class DelivererService {
 
       // Credit Vendors
       for (const [vendorId, total] of vendorEarnings.entries()) {
-        // No commission for vendors (Free & Pro)
-        const earnings = total;
-        if (earnings > 0) {
-          await this.walletService.creditWallet(
-            vendorId,
-            earnings,
-            TransactionType.EARNING,
-            order.id,
-            undefined, // Let client localize based on types
-          );
+        const gross = total;
+        // Apply commission
+        const commission = gross * (commissionPercent / 100);
+        const net = gross - commission;
+
+        if (net > 0) {
+          try {
+            // Convert currency
+            const vendorWallet = await this.walletService.getWallet(vendorId);
+            const walletCurrency = vendorWallet.currency || 'KES';
+
+            let amountToCredit = net;
+            if (orderCurrency !== walletCurrency) {
+              amountToCredit = this.currencyService.convert(
+                net,
+                orderCurrency,
+                walletCurrency,
+              );
+            }
+
+            await this.walletService.creditWallet(
+              vendorId,
+              amountToCredit,
+              TransactionType.EARNING,
+              `Earnings from Order #${orderId} (${orderCurrency} ${net.toFixed(
+                2,
+              )})`,
+              order.id,
+            );
+          } catch (e: any) {
+            this.logger.error(
+              `Failed to credit vendor ${vendorId}: ${e.message}`,
+            );
+          }
         }
       }
 
       // Credit Deliverer
-      const deliveryFeeVal = await this.settingsService.getSetting(
-        'delivery_base_fee',
-        50,
-      );
       const DELIVERY_FEE = Number(deliveryFeeVal);
       // No commission on delivery fee
-      const delivererEarnings = DELIVERY_FEE;
+      if (DELIVERY_FEE > 0) {
+        try {
+          const delivererWallet =
+            await this.walletService.getWallet(delivererId);
+          const walletCurrency = delivererWallet.currency || 'KES';
+          // Assume Base Fee is in 'ETB' for EA market context
+          const baseFeeCurrency = 'ETB';
 
-      if (delivererEarnings > 0) {
-        await this.walletService.creditWallet(
-          delivererId,
-          delivererEarnings,
-          TransactionType.EARNING,
-          order.id,
-          undefined, // Let client localize
-        );
+          let amountToCredit = DELIVERY_FEE;
+          if (baseFeeCurrency !== walletCurrency) {
+            amountToCredit = this.currencyService.convert(
+              DELIVERY_FEE,
+              baseFeeCurrency,
+              walletCurrency,
+            );
+          }
+
+          await this.walletService.creditWallet(
+            delivererId,
+            amountToCredit,
+            TransactionType.EARNING,
+            `Delivery Fee for Order #${orderId}`,
+            order.id,
+          );
+        } catch (e: any) {
+          this.logger.error(
+            `Failed to credit deliverer ${delivererId}: ${e.message}`,
+          );
+        }
       }
     }
 

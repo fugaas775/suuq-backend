@@ -93,8 +93,13 @@ export class VendorController {
   async getVendorProducts(
     @Req() req: any,
     @Query('currency') currency?: string,
+    @Query('search') search?: string,
   ) {
-    return this.vendorService.getVendorProducts(req.user.id, currency);
+    return this.vendorService.getVendorProducts(
+      req.user.id,
+      currency,
+      search,
+    );
   }
 
   // New: managed listing with search + publish status filters and pagination

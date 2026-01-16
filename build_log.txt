@@ -1,0 +1,2052 @@
+yarn run v1.22.22
+$ nest build
+[96msrc/admin/analytics.controller.ts[0m:[93m57[0m:[93m1[0m - [91merror[0m[90m TS1068: [0mUnexpected token. A constructor, method, accessor, or property was expected.
+
+[7m57[0m import { OrderItem } from '../orders/entities/order.entity';
+[7m  [0m [91m~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m62[0m:[93m8[0m - [91merror[0m[90m TS1146: [0mDeclaration expected.
+
+[7m62[0m   async getSubscriptionAnalytics() {
+[7m  [0m [91m       [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m62[0m:[93m9[0m - [91merror[0m[90m TS2304: [0mCannot find name 'getSubscriptionAnalytics'.
+
+[7m62[0m   async getSubscriptionAnalytics() {
+[7m  [0m [91m        ~~~~~~~~~~~~~~~~~~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m62[0m:[93m36[0m - [91merror[0m[90m TS1005: [0m';' expected.
+
+[7m62[0m   async getSubscriptionAnalytics() {
+[7m  [0m [91m                                   ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m67[0m:[93m27[0m - [91merror[0m[90m TS2532: [0mObject is possibly 'undefined'.
+
+[7m67[0m     const orderItemRepo = this.dataSource.getRepository(OrderItem);
+[7m  [0m [91m                          ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m74[0m:[93m37[0m - [91merror[0m[90m TS2532: [0mObject is possibly 'undefined'.
+
+[7m74[0m     const activeSubscribers = await this.userRepo.count({
+[7m  [0m [91m                                    ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m103[0m:[93m3[0m - [91merror[0m[90m TS1128: [0mDeclaration or statement expected.
+
+[7m103[0m   private cityToCountry(city?: string | null): string | null {
+[7m   [0m [91m  ~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m103[0m:[93m11[0m - [91merror[0m[90m TS2304: [0mCannot find name 'cityToCountry'.
+
+[7m103[0m   private cityToCountry(city?: string | null): string | null {
+[7m   [0m [91m          ~~~~~~~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m103[0m:[93m25[0m - [91merror[0m[90m TS2304: [0mCannot find name 'city'.
+
+[7m103[0m   private cityToCountry(city?: string | null): string | null {
+[7m   [0m [91m                        ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m103[0m:[93m30[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m103[0m   private cityToCountry(city?: string | null): string | null {
+[7m   [0m [91m                             ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m103[0m:[93m32[0m - [91merror[0m[90m TS2693: [0m'string' only refers to a type, but is being used as a value here.
+
+[7m103[0m   private cityToCountry(city?: string | null): string | null {
+[7m   [0m [91m                               ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m103[0m:[93m41[0m - [91merror[0m[90m TS18050: [0mThe value 'null' cannot be used here.
+
+[7m103[0m   private cityToCountry(city?: string | null): string | null {
+[7m   [0m [91m                                        ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m103[0m:[93m46[0m - [91merror[0m[90m TS1005: [0m';' expected.
+
+[7m103[0m   private cityToCountry(city?: string | null): string | null {
+[7m   [0m [91m                                             ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m103[0m:[93m48[0m - [91merror[0m[90m TS2693: [0m'string' only refers to a type, but is being used as a value here.
+
+[7m103[0m   private cityToCountry(city?: string | null): string | null {
+[7m   [0m [91m                                               ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m103[0m:[93m57[0m - [91merror[0m[90m TS18050: [0mThe value 'null' cannot be used here.
+
+[7m103[0m   private cityToCountry(city?: string | null): string | null {
+[7m   [0m [91m                                                        ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m103[0m:[93m62[0m - [91merror[0m[90m TS1005: [0m';' expected.
+
+[7m103[0m   private cityToCountry(city?: string | null): string | null {
+[7m   [0m [91m                                                             ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m104[0m:[93m12[0m - [91merror[0m[90m TS2532: [0mObject is possibly 'undefined'.
+
+[7m104[0m     return this.geo.resolveCountryFromCity(city);
+[7m   [0m [91m           ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m109[0m:[93m8[0m - [91merror[0m[90m TS1146: [0mDeclaration expected.
+
+[7m109[0m   async getAdminProAnalytics() {
+[7m   [0m [91m       [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m109[0m:[93m9[0m - [91merror[0m[90m TS2304: [0mCannot find name 'getAdminProAnalytics'.
+
+[7m109[0m   async getAdminProAnalytics() {
+[7m   [0m [91m        ~~~~~~~~~~~~~~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m109[0m:[93m32[0m - [91merror[0m[90m TS1005: [0m';' expected.
+
+[7m109[0m   async getAdminProAnalytics() {
+[7m   [0m [91m                               ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m113[0m:[93m34[0m - [91merror[0m[90m TS2532: [0mObject is possibly 'undefined'.
+
+[7m113[0m     const impressionsRaw = await this.impressionRepo
+[7m   [0m [91m                                 ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m127[0m:[93m30[0m - [91merror[0m[90m TS2532: [0mObject is possibly 'undefined'.
+
+[7m127[0m       const products = await this.productRepo.findByIds(productIds);
+[7m   [0m [91m                             ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m138[0m:[93m40[0m - [91merror[0m[90m TS2532: [0mObject is possibly 'undefined'.
+
+[7m138[0m     const totalImpressionViews = await this.impressionRepo
+[7m   [0m [91m                                       ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m144[0m:[93m39[0m - [91merror[0m[90m TS2532: [0mObject is possibly 'undefined'.
+
+[7m144[0m     const visitorLocationsRaw = await this.impressionRepo
+[7m   [0m [91m                                      ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m187[0m:[93m36[0m - [91merror[0m[90m TS2532: [0mObject is possibly 'undefined'.
+
+[7m187[0m     const visitorCitiesRaw = await this.impressionRepo
+[7m   [0m [91m                                   ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m321[0m:[93m30[0m - [91merror[0m[90m TS2532: [0mObject is possibly 'undefined'.
+
+[7m321[0m     const trafficRaw = await this.impressionRepo
+[7m   [0m [91m                             ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m348[0m:[93m34[0m - [91merror[0m[90m TS2532: [0mObject is possibly 'undefined'.
+
+[7m348[0m     const vendorStatsRaw = await this.impressionRepo
+[7m   [0m [91m                                 ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m415[0m:[93m8[0m - [91merror[0m[90m TS1146: [0mDeclaration expected.
+
+[7m415[0m   async listKeywordsPrimary(
+[7m   [0m [91m       [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m415[0m:[93m9[0m - [91merror[0m[90m TS2304: [0mCannot find name 'listKeywordsPrimary'.
+
+[7m415[0m   async listKeywordsPrimary(
+[7m   [0m [91m        ~~~~~~~~~~~~~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m416[0m:[93m19[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m416[0m     @Query('page') page = 1,
+[7m   [0m [91m                  [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m416[0m:[93m20[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m416[0m     @Query('page') page = 1,
+[7m   [0m [91m                   ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m416[0m:[93m20[0m - [91merror[0m[90m TS2304: [0mCannot find name 'page'.
+
+[7m416[0m     @Query('page') page = 1,
+[7m   [0m [91m                   ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m417[0m:[93m22[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m417[0m     @Query('perPage') perPage = 20,
+[7m   [0m [91m                     [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m417[0m:[93m23[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m417[0m     @Query('perPage') perPage = 20,
+[7m   [0m [91m                      ~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m417[0m:[93m23[0m - [91merror[0m[90m TS2304: [0mCannot find name 'perPage'.
+
+[7m417[0m     @Query('perPage') perPage = 20,
+[7m   [0m [91m                      ~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m418[0m:[93m19[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m418[0m     @Query('from') from?: string,
+[7m   [0m [91m                  [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m418[0m:[93m20[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m418[0m     @Query('from') from?: string,
+[7m   [0m [91m                   ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m418[0m:[93m20[0m - [91merror[0m[90m TS2304: [0mCannot find name 'from'.
+
+[7m418[0m     @Query('from') from?: string,
+[7m   [0m [91m                   ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m418[0m:[93m25[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m418[0m     @Query('from') from?: string,
+[7m   [0m [91m                        ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m418[0m:[93m27[0m - [91merror[0m[90m TS2693: [0m'string' only refers to a type, but is being used as a value here.
+
+[7m418[0m     @Query('from') from?: string,
+[7m   [0m [91m                          ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m419[0m:[93m17[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m419[0m     @Query('to') to?: string,
+[7m   [0m [91m                [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m419[0m:[93m18[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m419[0m     @Query('to') to?: string,
+[7m   [0m [91m                 ~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m419[0m:[93m18[0m - [91merror[0m[90m TS2304: [0mCannot find name 'to'.
+
+[7m419[0m     @Query('to') to?: string,
+[7m   [0m [91m                 ~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m419[0m:[93m21[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m419[0m     @Query('to') to?: string,
+[7m   [0m [91m                    ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m419[0m:[93m23[0m - [91merror[0m[90m TS2693: [0m'string' only refers to a type, but is being used as a value here.
+
+[7m419[0m     @Query('to') to?: string,
+[7m   [0m [91m                      ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m420[0m:[93m25[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m420[0m     @Query('minSubmits') minSubmits: string = '1',
+[7m   [0m [91m                        [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m420[0m:[93m26[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m420[0m     @Query('minSubmits') minSubmits: string = '1',
+[7m   [0m [91m                         ~~~~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m420[0m:[93m26[0m - [91merror[0m[90m TS2552: [0mCannot find name 'minSubmits'. Did you mean 'onsubmit'?
+
+[7m420[0m     @Query('minSubmits') minSubmits: string = '1',
+[7m   [0m [91m                         ~~~~~~~~~~[0m
+
+  [96mnode_modules/typescript/lib/lib.dom.d.ts[0m:[93m39013[0m:[93m13[0m
+    [7m39013[0m declare var onsubmit: ((this: Window, ev: SubmitEvent) => any) | null;
+    [7m     [0m [96m            ~~~~~~~~[0m
+    'onsubmit' is declared here.
+[96msrc/admin/analytics.controller.ts[0m:[93m420[0m:[93m36[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m420[0m     @Query('minSubmits') minSubmits: string = '1',
+[7m   [0m [91m                                   ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m420[0m:[93m38[0m - [91merror[0m[90m TS2693: [0m'string' only refers to a type, but is being used as a value here.
+
+[7m420[0m     @Query('minSubmits') minSubmits: string = '1',
+[7m   [0m [91m                                     ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m421[0m:[93m16[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m421[0m     @Query('q') q?: string,
+[7m   [0m [91m               [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m421[0m:[93m17[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m421[0m     @Query('q') q?: string,
+[7m   [0m [91m                ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m421[0m:[93m17[0m - [91merror[0m[90m TS2304: [0mCannot find name 'q'.
+
+[7m421[0m     @Query('q') q?: string,
+[7m   [0m [91m                ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m421[0m:[93m19[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m421[0m     @Query('q') q?: string,
+[7m   [0m [91m                  ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m421[0m:[93m21[0m - [91merror[0m[90m TS2693: [0m'string' only refers to a type, but is being used as a value here.
+
+[7m421[0m     @Query('q') q?: string,
+[7m   [0m [91m                    ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m422[0m:[93m19[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m422[0m     @Query('sort') sort: SortKey = 'submit_desc',
+[7m   [0m [91m                  [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m422[0m:[93m20[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m422[0m     @Query('sort') sort: SortKey = 'submit_desc',
+[7m   [0m [91m                   ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m422[0m:[93m20[0m - [91merror[0m[90m TS2304: [0mCannot find name 'sort'.
+
+[7m422[0m     @Query('sort') sort: SortKey = 'submit_desc',
+[7m   [0m [91m                   ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m422[0m:[93m24[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m422[0m     @Query('sort') sort: SortKey = 'submit_desc',
+[7m   [0m [91m                       ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m422[0m:[93m26[0m - [91merror[0m[90m TS2693: [0m'SortKey' only refers to a type, but is being used as a value here.
+
+[7m422[0m     @Query('sort') sort: SortKey = 'submit_desc',
+[7m   [0m [91m                         ~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m423[0m:[93m19[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m423[0m     @Query('city') city?: string,
+[7m   [0m [91m                  [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m423[0m:[93m20[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m423[0m     @Query('city') city?: string,
+[7m   [0m [91m                   ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m423[0m:[93m20[0m - [91merror[0m[90m TS2304: [0mCannot find name 'city'.
+
+[7m423[0m     @Query('city') city?: string,
+[7m   [0m [91m                   ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m423[0m:[93m25[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m423[0m     @Query('city') city?: string,
+[7m   [0m [91m                        ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m423[0m:[93m27[0m - [91merror[0m[90m TS2693: [0m'string' only refers to a type, but is being used as a value here.
+
+[7m423[0m     @Query('city') city?: string,
+[7m   [0m [91m                          ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m424[0m:[93m22[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m424[0m     @Query('country') country?: string,
+[7m   [0m [91m                     [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m424[0m:[93m23[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m424[0m     @Query('country') country?: string,
+[7m   [0m [91m                      ~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m424[0m:[93m23[0m - [91merror[0m[90m TS2304: [0mCannot find name 'country'.
+
+[7m424[0m     @Query('country') country?: string,
+[7m   [0m [91m                      ~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m424[0m:[93m31[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m424[0m     @Query('country') country?: string,
+[7m   [0m [91m                              ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m424[0m:[93m33[0m - [91merror[0m[90m TS2693: [0m'string' only refers to a type, but is being used as a value here.
+
+[7m424[0m     @Query('country') country?: string,
+[7m   [0m [91m                                ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m425[0m:[93m21[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m425[0m     @Query('vendor') vendor?: string,
+[7m   [0m [91m                    [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m425[0m:[93m22[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m425[0m     @Query('vendor') vendor?: string,
+[7m   [0m [91m                     ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m425[0m:[93m22[0m - [91merror[0m[90m TS2304: [0mCannot find name 'vendor'.
+
+[7m425[0m     @Query('vendor') vendor?: string,
+[7m   [0m [91m                     ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m425[0m:[93m29[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m425[0m     @Query('vendor') vendor?: string,
+[7m   [0m [91m                            ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m425[0m:[93m31[0m - [91merror[0m[90m TS2693: [0m'string' only refers to a type, but is being used as a value here.
+
+[7m425[0m     @Query('vendor') vendor?: string,
+[7m   [0m [91m                              ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m426[0m:[93m5[0m - [91merror[0m[90m TS1005: [0m';' expected.
+
+[7m426[0m   ) {
+[7m   [0m [91m    ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m427[0m:[93m12[0m - [91merror[0m[90m TS2532: [0mObject is possibly 'undefined'.
+
+[7m427[0m     return this.listKeywords(
+[7m   [0m [91m           ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m443[0m:[93m8[0m - [91merror[0m[90m TS1146: [0mDeclaration expected.
+
+[7m443[0m   async listKeywordsAlias1(
+[7m   [0m [91m       [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m443[0m:[93m9[0m - [91merror[0m[90m TS2304: [0mCannot find name 'listKeywordsAlias1'.
+
+[7m443[0m   async listKeywordsAlias1(
+[7m   [0m [91m        ~~~~~~~~~~~~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m444[0m:[93m19[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m444[0m     @Query('page') page = 1,
+[7m   [0m [91m                  [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m444[0m:[93m20[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m444[0m     @Query('page') page = 1,
+[7m   [0m [91m                   ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m444[0m:[93m20[0m - [91merror[0m[90m TS2304: [0mCannot find name 'page'.
+
+[7m444[0m     @Query('page') page = 1,
+[7m   [0m [91m                   ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m445[0m:[93m22[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m445[0m     @Query('perPage') perPage = 20,
+[7m   [0m [91m                     [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m445[0m:[93m23[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m445[0m     @Query('perPage') perPage = 20,
+[7m   [0m [91m                      ~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m445[0m:[93m23[0m - [91merror[0m[90m TS2304: [0mCannot find name 'perPage'.
+
+[7m445[0m     @Query('perPage') perPage = 20,
+[7m   [0m [91m                      ~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m446[0m:[93m19[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m446[0m     @Query('from') from?: string,
+[7m   [0m [91m                  [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m446[0m:[93m20[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m446[0m     @Query('from') from?: string,
+[7m   [0m [91m                   ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m446[0m:[93m20[0m - [91merror[0m[90m TS2304: [0mCannot find name 'from'.
+
+[7m446[0m     @Query('from') from?: string,
+[7m   [0m [91m                   ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m446[0m:[93m25[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m446[0m     @Query('from') from?: string,
+[7m   [0m [91m                        ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m446[0m:[93m27[0m - [91merror[0m[90m TS2693: [0m'string' only refers to a type, but is being used as a value here.
+
+[7m446[0m     @Query('from') from?: string,
+[7m   [0m [91m                          ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m447[0m:[93m17[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m447[0m     @Query('to') to?: string,
+[7m   [0m [91m                [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m447[0m:[93m18[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m447[0m     @Query('to') to?: string,
+[7m   [0m [91m                 ~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m447[0m:[93m18[0m - [91merror[0m[90m TS2304: [0mCannot find name 'to'.
+
+[7m447[0m     @Query('to') to?: string,
+[7m   [0m [91m                 ~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m447[0m:[93m21[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m447[0m     @Query('to') to?: string,
+[7m   [0m [91m                    ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m447[0m:[93m23[0m - [91merror[0m[90m TS2693: [0m'string' only refers to a type, but is being used as a value here.
+
+[7m447[0m     @Query('to') to?: string,
+[7m   [0m [91m                      ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m448[0m:[93m25[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m448[0m     @Query('minSubmits') minSubmits: string = '1',
+[7m   [0m [91m                        [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m448[0m:[93m26[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m448[0m     @Query('minSubmits') minSubmits: string = '1',
+[7m   [0m [91m                         ~~~~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m448[0m:[93m26[0m - [91merror[0m[90m TS2304: [0mCannot find name 'minSubmits'.
+
+[7m448[0m     @Query('minSubmits') minSubmits: string = '1',
+[7m   [0m [91m                         ~~~~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m448[0m:[93m36[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m448[0m     @Query('minSubmits') minSubmits: string = '1',
+[7m   [0m [91m                                   ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m448[0m:[93m38[0m - [91merror[0m[90m TS2693: [0m'string' only refers to a type, but is being used as a value here.
+
+[7m448[0m     @Query('minSubmits') minSubmits: string = '1',
+[7m   [0m [91m                                     ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m449[0m:[93m16[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m449[0m     @Query('q') q?: string,
+[7m   [0m [91m               [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m449[0m:[93m17[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m449[0m     @Query('q') q?: string,
+[7m   [0m [91m                ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m449[0m:[93m17[0m - [91merror[0m[90m TS2304: [0mCannot find name 'q'.
+
+[7m449[0m     @Query('q') q?: string,
+[7m   [0m [91m                ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m449[0m:[93m19[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m449[0m     @Query('q') q?: string,
+[7m   [0m [91m                  ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m449[0m:[93m21[0m - [91merror[0m[90m TS2693: [0m'string' only refers to a type, but is being used as a value here.
+
+[7m449[0m     @Query('q') q?: string,
+[7m   [0m [91m                    ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m450[0m:[93m19[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m450[0m     @Query('sort') sort: SortKey = 'submit_desc',
+[7m   [0m [91m                  [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m450[0m:[93m20[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m450[0m     @Query('sort') sort: SortKey = 'submit_desc',
+[7m   [0m [91m                   ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m450[0m:[93m20[0m - [91merror[0m[90m TS2304: [0mCannot find name 'sort'.
+
+[7m450[0m     @Query('sort') sort: SortKey = 'submit_desc',
+[7m   [0m [91m                   ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m450[0m:[93m24[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m450[0m     @Query('sort') sort: SortKey = 'submit_desc',
+[7m   [0m [91m                       ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m450[0m:[93m26[0m - [91merror[0m[90m TS2693: [0m'SortKey' only refers to a type, but is being used as a value here.
+
+[7m450[0m     @Query('sort') sort: SortKey = 'submit_desc',
+[7m   [0m [91m                         ~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m451[0m:[93m19[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m451[0m     @Query('city') city?: string,
+[7m   [0m [91m                  [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m451[0m:[93m20[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m451[0m     @Query('city') city?: string,
+[7m   [0m [91m                   ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m451[0m:[93m20[0m - [91merror[0m[90m TS2304: [0mCannot find name 'city'.
+
+[7m451[0m     @Query('city') city?: string,
+[7m   [0m [91m                   ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m451[0m:[93m25[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m451[0m     @Query('city') city?: string,
+[7m   [0m [91m                        ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m451[0m:[93m27[0m - [91merror[0m[90m TS2693: [0m'string' only refers to a type, but is being used as a value here.
+
+[7m451[0m     @Query('city') city?: string,
+[7m   [0m [91m                          ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m452[0m:[93m22[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m452[0m     @Query('country') country?: string,
+[7m   [0m [91m                     [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m452[0m:[93m23[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m452[0m     @Query('country') country?: string,
+[7m   [0m [91m                      ~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m452[0m:[93m23[0m - [91merror[0m[90m TS2304: [0mCannot find name 'country'.
+
+[7m452[0m     @Query('country') country?: string,
+[7m   [0m [91m                      ~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m452[0m:[93m31[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m452[0m     @Query('country') country?: string,
+[7m   [0m [91m                              ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m452[0m:[93m33[0m - [91merror[0m[90m TS2693: [0m'string' only refers to a type, but is being used as a value here.
+
+[7m452[0m     @Query('country') country?: string,
+[7m   [0m [91m                                ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m453[0m:[93m21[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m453[0m     @Query('vendor') vendor?: string,
+[7m   [0m [91m                    [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m453[0m:[93m22[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m453[0m     @Query('vendor') vendor?: string,
+[7m   [0m [91m                     ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m453[0m:[93m22[0m - [91merror[0m[90m TS2304: [0mCannot find name 'vendor'.
+
+[7m453[0m     @Query('vendor') vendor?: string,
+[7m   [0m [91m                     ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m453[0m:[93m29[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m453[0m     @Query('vendor') vendor?: string,
+[7m   [0m [91m                            ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m453[0m:[93m31[0m - [91merror[0m[90m TS2693: [0m'string' only refers to a type, but is being used as a value here.
+
+[7m453[0m     @Query('vendor') vendor?: string,
+[7m   [0m [91m                              ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m454[0m:[93m5[0m - [91merror[0m[90m TS1005: [0m';' expected.
+
+[7m454[0m   ) {
+[7m   [0m [91m    ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m455[0m:[93m12[0m - [91merror[0m[90m TS2532: [0mObject is possibly 'undefined'.
+
+[7m455[0m     return this.listKeywords(
+[7m   [0m [91m           ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m470[0m:[93m8[0m - [91merror[0m[90m TS1146: [0mDeclaration expected.
+
+[7m470[0m   async listKeywordsAlias2(
+[7m   [0m [91m       [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m470[0m:[93m9[0m - [91merror[0m[90m TS2304: [0mCannot find name 'listKeywordsAlias2'.
+
+[7m470[0m   async listKeywordsAlias2(
+[7m   [0m [91m        ~~~~~~~~~~~~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m471[0m:[93m19[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m471[0m     @Query('page') page = 1,
+[7m   [0m [91m                  [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m471[0m:[93m20[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m471[0m     @Query('page') page = 1,
+[7m   [0m [91m                   ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m471[0m:[93m20[0m - [91merror[0m[90m TS2304: [0mCannot find name 'page'.
+
+[7m471[0m     @Query('page') page = 1,
+[7m   [0m [91m                   ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m472[0m:[93m22[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m472[0m     @Query('perPage') perPage = 20,
+[7m   [0m [91m                     [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m472[0m:[93m23[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m472[0m     @Query('perPage') perPage = 20,
+[7m   [0m [91m                      ~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m472[0m:[93m23[0m - [91merror[0m[90m TS2304: [0mCannot find name 'perPage'.
+
+[7m472[0m     @Query('perPage') perPage = 20,
+[7m   [0m [91m                      ~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m473[0m:[93m19[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m473[0m     @Query('from') from?: string,
+[7m   [0m [91m                  [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m473[0m:[93m20[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m473[0m     @Query('from') from?: string,
+[7m   [0m [91m                   ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m473[0m:[93m20[0m - [91merror[0m[90m TS2304: [0mCannot find name 'from'.
+
+[7m473[0m     @Query('from') from?: string,
+[7m   [0m [91m                   ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m473[0m:[93m25[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m473[0m     @Query('from') from?: string,
+[7m   [0m [91m                        ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m473[0m:[93m27[0m - [91merror[0m[90m TS2693: [0m'string' only refers to a type, but is being used as a value here.
+
+[7m473[0m     @Query('from') from?: string,
+[7m   [0m [91m                          ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m474[0m:[93m17[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m474[0m     @Query('to') to?: string,
+[7m   [0m [91m                [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m474[0m:[93m18[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m474[0m     @Query('to') to?: string,
+[7m   [0m [91m                 ~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m474[0m:[93m18[0m - [91merror[0m[90m TS2304: [0mCannot find name 'to'.
+
+[7m474[0m     @Query('to') to?: string,
+[7m   [0m [91m                 ~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m474[0m:[93m21[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m474[0m     @Query('to') to?: string,
+[7m   [0m [91m                    ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m474[0m:[93m23[0m - [91merror[0m[90m TS2693: [0m'string' only refers to a type, but is being used as a value here.
+
+[7m474[0m     @Query('to') to?: string,
+[7m   [0m [91m                      ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m475[0m:[93m25[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m475[0m     @Query('minSubmits') minSubmits: string = '1',
+[7m   [0m [91m                        [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m475[0m:[93m26[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m475[0m     @Query('minSubmits') minSubmits: string = '1',
+[7m   [0m [91m                         ~~~~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m475[0m:[93m26[0m - [91merror[0m[90m TS2304: [0mCannot find name 'minSubmits'.
+
+[7m475[0m     @Query('minSubmits') minSubmits: string = '1',
+[7m   [0m [91m                         ~~~~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m475[0m:[93m36[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m475[0m     @Query('minSubmits') minSubmits: string = '1',
+[7m   [0m [91m                                   ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m475[0m:[93m38[0m - [91merror[0m[90m TS2693: [0m'string' only refers to a type, but is being used as a value here.
+
+[7m475[0m     @Query('minSubmits') minSubmits: string = '1',
+[7m   [0m [91m                                     ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m476[0m:[93m16[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m476[0m     @Query('q') q?: string,
+[7m   [0m [91m               [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m476[0m:[93m17[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m476[0m     @Query('q') q?: string,
+[7m   [0m [91m                ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m476[0m:[93m17[0m - [91merror[0m[90m TS2304: [0mCannot find name 'q'.
+
+[7m476[0m     @Query('q') q?: string,
+[7m   [0m [91m                ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m476[0m:[93m19[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m476[0m     @Query('q') q?: string,
+[7m   [0m [91m                  ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m476[0m:[93m21[0m - [91merror[0m[90m TS2693: [0m'string' only refers to a type, but is being used as a value here.
+
+[7m476[0m     @Query('q') q?: string,
+[7m   [0m [91m                    ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m477[0m:[93m19[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m477[0m     @Query('sort') sort: SortKey = 'submit_desc',
+[7m   [0m [91m                  [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m477[0m:[93m20[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m477[0m     @Query('sort') sort: SortKey = 'submit_desc',
+[7m   [0m [91m                   ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m477[0m:[93m20[0m - [91merror[0m[90m TS2304: [0mCannot find name 'sort'.
+
+[7m477[0m     @Query('sort') sort: SortKey = 'submit_desc',
+[7m   [0m [91m                   ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m477[0m:[93m24[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m477[0m     @Query('sort') sort: SortKey = 'submit_desc',
+[7m   [0m [91m                       ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m477[0m:[93m26[0m - [91merror[0m[90m TS2693: [0m'SortKey' only refers to a type, but is being used as a value here.
+
+[7m477[0m     @Query('sort') sort: SortKey = 'submit_desc',
+[7m   [0m [91m                         ~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m478[0m:[93m19[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m478[0m     @Query('city') city?: string,
+[7m   [0m [91m                  [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m478[0m:[93m20[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m478[0m     @Query('city') city?: string,
+[7m   [0m [91m                   ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m478[0m:[93m20[0m - [91merror[0m[90m TS2304: [0mCannot find name 'city'.
+
+[7m478[0m     @Query('city') city?: string,
+[7m   [0m [91m                   ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m478[0m:[93m25[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m478[0m     @Query('city') city?: string,
+[7m   [0m [91m                        ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m478[0m:[93m27[0m - [91merror[0m[90m TS2693: [0m'string' only refers to a type, but is being used as a value here.
+
+[7m478[0m     @Query('city') city?: string,
+[7m   [0m [91m                          ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m479[0m:[93m22[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m479[0m     @Query('country') country?: string,
+[7m   [0m [91m                     [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m479[0m:[93m23[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m479[0m     @Query('country') country?: string,
+[7m   [0m [91m                      ~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m479[0m:[93m23[0m - [91merror[0m[90m TS2304: [0mCannot find name 'country'.
+
+[7m479[0m     @Query('country') country?: string,
+[7m   [0m [91m                      ~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m479[0m:[93m31[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m479[0m     @Query('country') country?: string,
+[7m   [0m [91m                              ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m479[0m:[93m33[0m - [91merror[0m[90m TS2693: [0m'string' only refers to a type, but is being used as a value here.
+
+[7m479[0m     @Query('country') country?: string,
+[7m   [0m [91m                                ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m480[0m:[93m21[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m480[0m     @Query('vendor') vendor?: string,
+[7m   [0m [91m                    [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m480[0m:[93m22[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m480[0m     @Query('vendor') vendor?: string,
+[7m   [0m [91m                     ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m480[0m:[93m22[0m - [91merror[0m[90m TS2304: [0mCannot find name 'vendor'.
+
+[7m480[0m     @Query('vendor') vendor?: string,
+[7m   [0m [91m                     ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m480[0m:[93m29[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m480[0m     @Query('vendor') vendor?: string,
+[7m   [0m [91m                            ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m480[0m:[93m31[0m - [91merror[0m[90m TS2693: [0m'string' only refers to a type, but is being used as a value here.
+
+[7m480[0m     @Query('vendor') vendor?: string,
+[7m   [0m [91m                              ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m481[0m:[93m5[0m - [91merror[0m[90m TS1005: [0m';' expected.
+
+[7m481[0m   ) {
+[7m   [0m [91m    ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m482[0m:[93m12[0m - [91merror[0m[90m TS2532: [0mObject is possibly 'undefined'.
+
+[7m482[0m     return this.listKeywords(
+[7m   [0m [91m           ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m498[0m:[93m8[0m - [91merror[0m[90m TS1146: [0mDeclaration expected.
+
+[7m498[0m   async listKeywordsAlias3(
+[7m   [0m [91m       [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m498[0m:[93m9[0m - [91merror[0m[90m TS2304: [0mCannot find name 'listKeywordsAlias3'.
+
+[7m498[0m   async listKeywordsAlias3(
+[7m   [0m [91m        ~~~~~~~~~~~~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m499[0m:[93m19[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m499[0m     @Query('page') page = 1,
+[7m   [0m [91m                  [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m499[0m:[93m20[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m499[0m     @Query('page') page = 1,
+[7m   [0m [91m                   ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m499[0m:[93m20[0m - [91merror[0m[90m TS2304: [0mCannot find name 'page'.
+
+[7m499[0m     @Query('page') page = 1,
+[7m   [0m [91m                   ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m500[0m:[93m22[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m500[0m     @Query('perPage') perPage = 20,
+[7m   [0m [91m                     [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m500[0m:[93m23[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m500[0m     @Query('perPage') perPage = 20,
+[7m   [0m [91m                      ~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m500[0m:[93m23[0m - [91merror[0m[90m TS2304: [0mCannot find name 'perPage'.
+
+[7m500[0m     @Query('perPage') perPage = 20,
+[7m   [0m [91m                      ~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m501[0m:[93m19[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m501[0m     @Query('from') from?: string,
+[7m   [0m [91m                  [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m501[0m:[93m20[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m501[0m     @Query('from') from?: string,
+[7m   [0m [91m                   ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m501[0m:[93m20[0m - [91merror[0m[90m TS2304: [0mCannot find name 'from'.
+
+[7m501[0m     @Query('from') from?: string,
+[7m   [0m [91m                   ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m501[0m:[93m25[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m501[0m     @Query('from') from?: string,
+[7m   [0m [91m                        ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m501[0m:[93m27[0m - [91merror[0m[90m TS2693: [0m'string' only refers to a type, but is being used as a value here.
+
+[7m501[0m     @Query('from') from?: string,
+[7m   [0m [91m                          ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m502[0m:[93m17[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m502[0m     @Query('to') to?: string,
+[7m   [0m [91m                [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m502[0m:[93m18[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m502[0m     @Query('to') to?: string,
+[7m   [0m [91m                 ~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m502[0m:[93m18[0m - [91merror[0m[90m TS2304: [0mCannot find name 'to'.
+
+[7m502[0m     @Query('to') to?: string,
+[7m   [0m [91m                 ~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m502[0m:[93m21[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m502[0m     @Query('to') to?: string,
+[7m   [0m [91m                    ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m502[0m:[93m23[0m - [91merror[0m[90m TS2693: [0m'string' only refers to a type, but is being used as a value here.
+
+[7m502[0m     @Query('to') to?: string,
+[7m   [0m [91m                      ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m503[0m:[93m25[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m503[0m     @Query('minSubmits') minSubmits: string = '1',
+[7m   [0m [91m                        [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m503[0m:[93m26[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m503[0m     @Query('minSubmits') minSubmits: string = '1',
+[7m   [0m [91m                         ~~~~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m503[0m:[93m26[0m - [91merror[0m[90m TS2304: [0mCannot find name 'minSubmits'.
+
+[7m503[0m     @Query('minSubmits') minSubmits: string = '1',
+[7m   [0m [91m                         ~~~~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m503[0m:[93m36[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m503[0m     @Query('minSubmits') minSubmits: string = '1',
+[7m   [0m [91m                                   ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m503[0m:[93m38[0m - [91merror[0m[90m TS2693: [0m'string' only refers to a type, but is being used as a value here.
+
+[7m503[0m     @Query('minSubmits') minSubmits: string = '1',
+[7m   [0m [91m                                     ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m504[0m:[93m16[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m504[0m     @Query('q') q?: string,
+[7m   [0m [91m               [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m504[0m:[93m17[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m504[0m     @Query('q') q?: string,
+[7m   [0m [91m                ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m504[0m:[93m17[0m - [91merror[0m[90m TS2304: [0mCannot find name 'q'.
+
+[7m504[0m     @Query('q') q?: string,
+[7m   [0m [91m                ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m504[0m:[93m19[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m504[0m     @Query('q') q?: string,
+[7m   [0m [91m                  ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m504[0m:[93m21[0m - [91merror[0m[90m TS2693: [0m'string' only refers to a type, but is being used as a value here.
+
+[7m504[0m     @Query('q') q?: string,
+[7m   [0m [91m                    ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m505[0m:[93m19[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m505[0m     @Query('sort') sort: SortKey = 'submit_desc',
+[7m   [0m [91m                  [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m505[0m:[93m20[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m505[0m     @Query('sort') sort: SortKey = 'submit_desc',
+[7m   [0m [91m                   ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m505[0m:[93m20[0m - [91merror[0m[90m TS2304: [0mCannot find name 'sort'.
+
+[7m505[0m     @Query('sort') sort: SortKey = 'submit_desc',
+[7m   [0m [91m                   ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m505[0m:[93m24[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m505[0m     @Query('sort') sort: SortKey = 'submit_desc',
+[7m   [0m [91m                       ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m505[0m:[93m26[0m - [91merror[0m[90m TS2693: [0m'SortKey' only refers to a type, but is being used as a value here.
+
+[7m505[0m     @Query('sort') sort: SortKey = 'submit_desc',
+[7m   [0m [91m                         ~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m506[0m:[93m19[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m506[0m     @Query('city') city?: string,
+[7m   [0m [91m                  [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m506[0m:[93m20[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m506[0m     @Query('city') city?: string,
+[7m   [0m [91m                   ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m506[0m:[93m20[0m - [91merror[0m[90m TS2304: [0mCannot find name 'city'.
+
+[7m506[0m     @Query('city') city?: string,
+[7m   [0m [91m                   ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m506[0m:[93m25[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m506[0m     @Query('city') city?: string,
+[7m   [0m [91m                        ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m506[0m:[93m27[0m - [91merror[0m[90m TS2693: [0m'string' only refers to a type, but is being used as a value here.
+
+[7m506[0m     @Query('city') city?: string,
+[7m   [0m [91m                          ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m507[0m:[93m22[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m507[0m     @Query('country') country?: string,
+[7m   [0m [91m                     [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m507[0m:[93m23[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m507[0m     @Query('country') country?: string,
+[7m   [0m [91m                      ~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m507[0m:[93m23[0m - [91merror[0m[90m TS2304: [0mCannot find name 'country'.
+
+[7m507[0m     @Query('country') country?: string,
+[7m   [0m [91m                      ~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m507[0m:[93m31[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m507[0m     @Query('country') country?: string,
+[7m   [0m [91m                              ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m507[0m:[93m33[0m - [91merror[0m[90m TS2693: [0m'string' only refers to a type, but is being used as a value here.
+
+[7m507[0m     @Query('country') country?: string,
+[7m   [0m [91m                                ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m508[0m:[93m21[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m508[0m     @Query('vendor') vendor?: string,
+[7m   [0m [91m                    [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m508[0m:[93m22[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m508[0m     @Query('vendor') vendor?: string,
+[7m   [0m [91m                     ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m508[0m:[93m22[0m - [91merror[0m[90m TS2304: [0mCannot find name 'vendor'.
+
+[7m508[0m     @Query('vendor') vendor?: string,
+[7m   [0m [91m                     ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m508[0m:[93m29[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m508[0m     @Query('vendor') vendor?: string,
+[7m   [0m [91m                            ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m508[0m:[93m31[0m - [91merror[0m[90m TS2693: [0m'string' only refers to a type, but is being used as a value here.
+
+[7m508[0m     @Query('vendor') vendor?: string,
+[7m   [0m [91m                              ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m509[0m:[93m5[0m - [91merror[0m[90m TS1005: [0m';' expected.
+
+[7m509[0m   ) {
+[7m   [0m [91m    ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m510[0m:[93m12[0m - [91merror[0m[90m TS2532: [0mObject is possibly 'undefined'.
+
+[7m510[0m     return this.listKeywords(
+[7m   [0m [91m           ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m525[0m:[93m8[0m - [91merror[0m[90m TS1146: [0mDeclaration expected.
+
+[7m525[0m   async listKeywordsAlias4(
+[7m   [0m [91m       [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m525[0m:[93m9[0m - [91merror[0m[90m TS2304: [0mCannot find name 'listKeywordsAlias4'.
+
+[7m525[0m   async listKeywordsAlias4(
+[7m   [0m [91m        ~~~~~~~~~~~~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m526[0m:[93m19[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m526[0m     @Query('page') page = 1,
+[7m   [0m [91m                  [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m526[0m:[93m20[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m526[0m     @Query('page') page = 1,
+[7m   [0m [91m                   ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m526[0m:[93m20[0m - [91merror[0m[90m TS2304: [0mCannot find name 'page'.
+
+[7m526[0m     @Query('page') page = 1,
+[7m   [0m [91m                   ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m527[0m:[93m22[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m527[0m     @Query('perPage') perPage = 20,
+[7m   [0m [91m                     [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m527[0m:[93m23[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m527[0m     @Query('perPage') perPage = 20,
+[7m   [0m [91m                      ~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m527[0m:[93m23[0m - [91merror[0m[90m TS2304: [0mCannot find name 'perPage'.
+
+[7m527[0m     @Query('perPage') perPage = 20,
+[7m   [0m [91m                      ~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m528[0m:[93m19[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m528[0m     @Query('from') from?: string,
+[7m   [0m [91m                  [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m528[0m:[93m20[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m528[0m     @Query('from') from?: string,
+[7m   [0m [91m                   ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m528[0m:[93m20[0m - [91merror[0m[90m TS2304: [0mCannot find name 'from'.
+
+[7m528[0m     @Query('from') from?: string,
+[7m   [0m [91m                   ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m528[0m:[93m25[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m528[0m     @Query('from') from?: string,
+[7m   [0m [91m                        ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m528[0m:[93m27[0m - [91merror[0m[90m TS2693: [0m'string' only refers to a type, but is being used as a value here.
+
+[7m528[0m     @Query('from') from?: string,
+[7m   [0m [91m                          ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m529[0m:[93m17[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m529[0m     @Query('to') to?: string,
+[7m   [0m [91m                [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m529[0m:[93m18[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m529[0m     @Query('to') to?: string,
+[7m   [0m [91m                 ~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m529[0m:[93m18[0m - [91merror[0m[90m TS2304: [0mCannot find name 'to'.
+
+[7m529[0m     @Query('to') to?: string,
+[7m   [0m [91m                 ~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m529[0m:[93m21[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m529[0m     @Query('to') to?: string,
+[7m   [0m [91m                    ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m529[0m:[93m23[0m - [91merror[0m[90m TS2693: [0m'string' only refers to a type, but is being used as a value here.
+
+[7m529[0m     @Query('to') to?: string,
+[7m   [0m [91m                      ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m530[0m:[93m25[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m530[0m     @Query('minSubmits') minSubmits?: string,
+[7m   [0m [91m                        [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m530[0m:[93m26[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m530[0m     @Query('minSubmits') minSubmits?: string,
+[7m   [0m [91m                         ~~~~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m530[0m:[93m26[0m - [91merror[0m[90m TS2304: [0mCannot find name 'minSubmits'.
+
+[7m530[0m     @Query('minSubmits') minSubmits?: string,
+[7m   [0m [91m                         ~~~~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m530[0m:[93m37[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m530[0m     @Query('minSubmits') minSubmits?: string,
+[7m   [0m [91m                                    ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m530[0m:[93m39[0m - [91merror[0m[90m TS2693: [0m'string' only refers to a type, but is being used as a value here.
+
+[7m530[0m     @Query('minSubmits') minSubmits?: string,
+[7m   [0m [91m                                      ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m531[0m:[93m16[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m531[0m     @Query('q') q?: string,
+[7m   [0m [91m               [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m531[0m:[93m17[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m531[0m     @Query('q') q?: string,
+[7m   [0m [91m                ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m531[0m:[93m17[0m - [91merror[0m[90m TS2304: [0mCannot find name 'q'.
+
+[7m531[0m     @Query('q') q?: string,
+[7m   [0m [91m                ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m531[0m:[93m19[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m531[0m     @Query('q') q?: string,
+[7m   [0m [91m                  ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m531[0m:[93m21[0m - [91merror[0m[90m TS2693: [0m'string' only refers to a type, but is being used as a value here.
+
+[7m531[0m     @Query('q') q?: string,
+[7m   [0m [91m                    ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m532[0m:[93m19[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m532[0m     @Query('sort') sort: SortKey = 'submit_desc',
+[7m   [0m [91m                  [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m532[0m:[93m20[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m532[0m     @Query('sort') sort: SortKey = 'submit_desc',
+[7m   [0m [91m                   ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m532[0m:[93m20[0m - [91merror[0m[90m TS2304: [0mCannot find name 'sort'.
+
+[7m532[0m     @Query('sort') sort: SortKey = 'submit_desc',
+[7m   [0m [91m                   ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m532[0m:[93m24[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m532[0m     @Query('sort') sort: SortKey = 'submit_desc',
+[7m   [0m [91m                       ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m532[0m:[93m26[0m - [91merror[0m[90m TS2693: [0m'SortKey' only refers to a type, but is being used as a value here.
+
+[7m532[0m     @Query('sort') sort: SortKey = 'submit_desc',
+[7m   [0m [91m                         ~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m533[0m:[93m19[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m533[0m     @Query('city') city?: string,
+[7m   [0m [91m                  [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m533[0m:[93m20[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m533[0m     @Query('city') city?: string,
+[7m   [0m [91m                   ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m533[0m:[93m20[0m - [91merror[0m[90m TS2304: [0mCannot find name 'city'.
+
+[7m533[0m     @Query('city') city?: string,
+[7m   [0m [91m                   ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m533[0m:[93m25[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m533[0m     @Query('city') city?: string,
+[7m   [0m [91m                        ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m533[0m:[93m27[0m - [91merror[0m[90m TS2693: [0m'string' only refers to a type, but is being used as a value here.
+
+[7m533[0m     @Query('city') city?: string,
+[7m   [0m [91m                          ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m534[0m:[93m22[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m534[0m     @Query('country') country?: string,
+[7m   [0m [91m                     [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m534[0m:[93m23[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m534[0m     @Query('country') country?: string,
+[7m   [0m [91m                      ~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m534[0m:[93m23[0m - [91merror[0m[90m TS2304: [0mCannot find name 'country'.
+
+[7m534[0m     @Query('country') country?: string,
+[7m   [0m [91m                      ~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m534[0m:[93m31[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m534[0m     @Query('country') country?: string,
+[7m   [0m [91m                              ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m534[0m:[93m33[0m - [91merror[0m[90m TS2693: [0m'string' only refers to a type, but is being used as a value here.
+
+[7m534[0m     @Query('country') country?: string,
+[7m   [0m [91m                                ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m535[0m:[93m21[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m535[0m     @Query('vendor') vendor?: string,
+[7m   [0m [91m                    [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m535[0m:[93m22[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m535[0m     @Query('vendor') vendor?: string,
+[7m   [0m [91m                     ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m535[0m:[93m22[0m - [91merror[0m[90m TS2304: [0mCannot find name 'vendor'.
+
+[7m535[0m     @Query('vendor') vendor?: string,
+[7m   [0m [91m                     ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m535[0m:[93m29[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m535[0m     @Query('vendor') vendor?: string,
+[7m   [0m [91m                            ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m535[0m:[93m31[0m - [91merror[0m[90m TS2693: [0m'string' only refers to a type, but is being used as a value here.
+
+[7m535[0m     @Query('vendor') vendor?: string,
+[7m   [0m [91m                              ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m536[0m:[93m5[0m - [91merror[0m[90m TS1005: [0m';' expected.
+
+[7m536[0m   ) {
+[7m   [0m [91m    ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m537[0m:[93m12[0m - [91merror[0m[90m TS2532: [0mObject is possibly 'undefined'.
+
+[7m537[0m     return this.listKeywords(
+[7m   [0m [91m           ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m552[0m:[93m3[0m - [91merror[0m[90m TS1128: [0mDeclaration or statement expected.
+
+[7m552[0m   private windowStart(window: 'day' | 'week' | 'month'): Date {
+[7m   [0m [91m  ~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m552[0m:[93m11[0m - [91merror[0m[90m TS2304: [0mCannot find name 'windowStart'.
+
+[7m552[0m   private windowStart(window: 'day' | 'week' | 'month'): Date {
+[7m   [0m [91m          ~~~~~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m552[0m:[93m29[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m552[0m   private windowStart(window: 'day' | 'week' | 'month'): Date {
+[7m   [0m [91m                            ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m552[0m:[93m31[0m - [91merror[0m[90m TS2362: [0mThe left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
+
+[7m552[0m   private windowStart(window: 'day' | 'week' | 'month'): Date {
+[7m   [0m [91m                              ~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m552[0m:[93m39[0m - [91merror[0m[90m TS2363: [0mThe right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
+
+[7m552[0m   private windowStart(window: 'day' | 'week' | 'month'): Date {
+[7m   [0m [91m                                      ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m552[0m:[93m48[0m - [91merror[0m[90m TS2363: [0mThe right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
+
+[7m552[0m   private windowStart(window: 'day' | 'week' | 'month'): Date {
+[7m   [0m [91m                                               ~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m552[0m:[93m56[0m - [91merror[0m[90m TS1005: [0m';' expected.
+
+[7m552[0m   private windowStart(window: 'day' | 'week' | 'month'): Date {
+[7m   [0m [91m                                                       ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m552[0m:[93m58[0m - [91merror[0m[90m TS1434: [0mUnexpected keyword or identifier.
+
+[7m552[0m   private windowStart(window: 'day' | 'week' | 'month'): Date {
+[7m   [0m [91m                                                         ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m554[0m:[93m9[0m - [91merror[0m[90m TS2367: [0mThis comparison appears to be unintentional because the types 'Window & typeof globalThis' and 'string' have no overlap.
+
+[7m554[0m     if (window === 'day') return new Date(now.getTime() - 24 * 60 * 60 * 1000);
+[7m   [0m [91m        ~~~~~~~~~~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m555[0m:[93m9[0m - [91merror[0m[90m TS2367: [0mThis comparison appears to be unintentional because the types 'Window & typeof globalThis' and 'string' have no overlap.
+
+[7m555[0m     if (window === 'week')
+[7m   [0m [91m        ~~~~~~~~~~~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m560[0m:[93m3[0m - [91merror[0m[90m TS1128: [0mDeclaration or statement expected.
+
+[7m560[0m   private async topKeywords(window: 'day' | 'week' | 'month', limit = 100) {
+[7m   [0m [91m  ~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m560[0m:[93m11[0m - [91merror[0m[90m TS1434: [0mUnexpected keyword or identifier.
+
+[7m560[0m   private async topKeywords(window: 'day' | 'week' | 'month', limit = 100) {
+[7m   [0m [91m          ~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m560[0m:[93m11[0m - [91merror[0m[90m TS2304: [0mCannot find name 'async'.
+
+[7m560[0m   private async topKeywords(window: 'day' | 'week' | 'month', limit = 100) {
+[7m   [0m [91m          ~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m560[0m:[93m17[0m - [91merror[0m[90m TS2304: [0mCannot find name 'topKeywords'.
+
+[7m560[0m   private async topKeywords(window: 'day' | 'week' | 'month', limit = 100) {
+[7m   [0m [91m                ~~~~~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m560[0m:[93m35[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m560[0m   private async topKeywords(window: 'day' | 'week' | 'month', limit = 100) {
+[7m   [0m [91m                                  ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m560[0m:[93m37[0m - [91merror[0m[90m TS2362: [0mThe left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
+
+[7m560[0m   private async topKeywords(window: 'day' | 'week' | 'month', limit = 100) {
+[7m   [0m [91m                                    ~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m560[0m:[93m45[0m - [91merror[0m[90m TS2363: [0mThe right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
+
+[7m560[0m   private async topKeywords(window: 'day' | 'week' | 'month', limit = 100) {
+[7m   [0m [91m                                            ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m560[0m:[93m54[0m - [91merror[0m[90m TS2363: [0mThe right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
+
+[7m560[0m   private async topKeywords(window: 'day' | 'week' | 'month', limit = 100) {
+[7m   [0m [91m                                                     ~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m560[0m:[93m63[0m - [91merror[0m[90m TS2304: [0mCannot find name 'limit'.
+
+[7m560[0m   private async topKeywords(window: 'day' | 'week' | 'month', limit = 100) {
+[7m   [0m [91m                                                              ~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m560[0m:[93m76[0m - [91merror[0m[90m TS1005: [0m';' expected.
+
+[7m560[0m   private async topKeywords(window: 'day' | 'week' | 'month', limit = 100) {
+[7m   [0m [91m                                                                           ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m561[0m:[93m18[0m - [91merror[0m[90m TS2532: [0mObject is possibly 'undefined'.
+
+[7m561[0m     const from = this.windowStart(window);
+[7m   [0m [91m                 ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m562[0m:[93m43[0m - [91merror[0m[90m TS2304: [0mCannot find name 'limit'.
+
+[7m562[0m     const take = Math.min(Math.max(Number(limit) || 100, 1), 200);
+[7m   [0m [91m                                          ~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m563[0m:[93m16[0m - [91merror[0m[90m TS2532: [0mObject is possibly 'undefined'.
+
+[7m563[0m     const qb = this.keywordRepo
+[7m   [0m [91m               ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m574[0m:[93m3[0m - [91merror[0m[90m TS1128: [0mDeclaration or statement expected.
+
+[7m574[0m   private async topAggregations(window: 'day' | 'week' | 'month', limit = 10) {
+[7m   [0m [91m  ~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m574[0m:[93m11[0m - [91merror[0m[90m TS1434: [0mUnexpected keyword or identifier.
+
+[7m574[0m   private async topAggregations(window: 'day' | 'week' | 'month', limit = 10) {
+[7m   [0m [91m          ~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m574[0m:[93m11[0m - [91merror[0m[90m TS2304: [0mCannot find name 'async'.
+
+[7m574[0m   private async topAggregations(window: 'day' | 'week' | 'month', limit = 10) {
+[7m   [0m [91m          ~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m574[0m:[93m17[0m - [91merror[0m[90m TS2304: [0mCannot find name 'topAggregations'.
+
+[7m574[0m   private async topAggregations(window: 'day' | 'week' | 'month', limit = 10) {
+[7m   [0m [91m                ~~~~~~~~~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m574[0m:[93m39[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m574[0m   private async topAggregations(window: 'day' | 'week' | 'month', limit = 10) {
+[7m   [0m [91m                                      ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m574[0m:[93m41[0m - [91merror[0m[90m TS2362: [0mThe left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
+
+[7m574[0m   private async topAggregations(window: 'day' | 'week' | 'month', limit = 10) {
+[7m   [0m [91m                                        ~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m574[0m:[93m49[0m - [91merror[0m[90m TS2363: [0mThe right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
+
+[7m574[0m   private async topAggregations(window: 'day' | 'week' | 'month', limit = 10) {
+[7m   [0m [91m                                                ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m574[0m:[93m58[0m - [91merror[0m[90m TS2363: [0mThe right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
+
+[7m574[0m   private async topAggregations(window: 'day' | 'week' | 'month', limit = 10) {
+[7m   [0m [91m                                                         ~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m574[0m:[93m67[0m - [91merror[0m[90m TS2304: [0mCannot find name 'limit'.
+
+[7m574[0m   private async topAggregations(window: 'day' | 'week' | 'month', limit = 10) {
+[7m   [0m [91m                                                                  ~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m574[0m:[93m79[0m - [91merror[0m[90m TS1005: [0m';' expected.
+
+[7m574[0m   private async topAggregations(window: 'day' | 'week' | 'month', limit = 10) {
+[7m   [0m [91m                                                                              ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m575[0m:[93m18[0m - [91merror[0m[90m TS2532: [0mObject is possibly 'undefined'.
+
+[7m575[0m     const from = this.windowStart(window);
+[7m   [0m [91m                 ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m576[0m:[93m43[0m - [91merror[0m[90m TS2304: [0mCannot find name 'limit'.
+
+[7m576[0m     const take = Math.min(Math.max(Number(limit) || 10, 1), 50);
+[7m   [0m [91m                                          ~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m580[0m:[93m26[0m - [91merror[0m[90m TS2532: [0mObject is possibly 'undefined'.
+
+[7m580[0m     const recent = await this.keywordRepo
+[7m   [0m [91m                         ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m612[0m:[93m27[0m - [91merror[0m[90m TS2532: [0mObject is possibly 'undefined'.
+
+[7m612[0m       const topKw = await this.keywordRepo
+[7m   [0m [91m                          ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m623[0m:[93m28[0m - [91merror[0m[90m TS2532: [0mObject is possibly 'undefined'.
+
+[7m623[0m         const dist = await this.productRepo
+[7m   [0m [91m                           ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m658[0m:[93m29[0m - [91merror[0m[90m TS2532: [0mObject is possibly 'undefined'.
+
+[7m658[0m     const citiesRaw = await this.keywordRepo
+[7m   [0m [91m                            ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m669[0m:[93m20[0m - [91merror[0m[90m TS2532: [0mObject is possibly 'undefined'.
+
+[7m669[0m       const code = this.cityToCountry(r.name) || null;
+[7m   [0m [91m                   ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m708[0m:[93m32[0m - [91merror[0m[90m TS2532: [0mObject is possibly 'undefined'.
+
+[7m708[0m     const citiesRawAll = await this.keywordRepo
+[7m   [0m [91m                               ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m718[0m:[93m20[0m - [91merror[0m[90m TS2532: [0mObject is possibly 'undefined'.
+
+[7m718[0m       const code = this.cityToCountry(r.name);
+[7m   [0m [91m                   ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m728[0m:[93m15[0m - [91merror[0m[90m TS2532: [0mObject is possibly 'undefined'.
+
+[7m728[0m         name: this.countryName(code) || code,
+[7m   [0m [91m              ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m742[0m:[93m8[0m - [91merror[0m[90m TS1146: [0mDeclaration expected.
+
+[7m742[0m   async topKeywordsPrimary(
+[7m   [0m [91m       [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m742[0m:[93m9[0m - [91merror[0m[90m TS2304: [0mCannot find name 'topKeywordsPrimary'.
+
+[7m742[0m   async topKeywordsPrimary(
+[7m   [0m [91m        ~~~~~~~~~~~~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m743[0m:[93m21[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m743[0m     @Query('window') window: 'day' | 'week' | 'month' = 'day',
+[7m   [0m [91m                    [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m743[0m:[93m22[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m743[0m     @Query('window') window: 'day' | 'week' | 'month' = 'day',
+[7m   [0m [91m                     ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m743[0m:[93m28[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m743[0m     @Query('window') window: 'day' | 'week' | 'month' = 'day',
+[7m   [0m [91m                           ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m743[0m:[93m30[0m - [91merror[0m[90m TS2362: [0mThe left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
+
+[7m743[0m     @Query('window') window: 'day' | 'week' | 'month' = 'day',
+[7m   [0m [91m                             ~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m743[0m:[93m38[0m - [91merror[0m[90m TS2363: [0mThe right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
+
+[7m743[0m     @Query('window') window: 'day' | 'week' | 'month' = 'day',
+[7m   [0m [91m                                     ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m743[0m:[93m47[0m - [91merror[0m[90m TS2363: [0mThe right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
+
+[7m743[0m     @Query('window') window: 'day' | 'week' | 'month' = 'day',
+[7m   [0m [91m                                              ~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m743[0m:[93m55[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m743[0m     @Query('window') window: 'day' | 'week' | 'month' = 'day',
+[7m   [0m [91m                                                      ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m744[0m:[93m20[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m744[0m     @Query('limit') limit = 100,
+[7m   [0m [91m                   [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m744[0m:[93m21[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m744[0m     @Query('limit') limit = 100,
+[7m   [0m [91m                    ~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m744[0m:[93m21[0m - [91merror[0m[90m TS2304: [0mCannot find name 'limit'.
+
+[7m744[0m     @Query('limit') limit = 100,
+[7m   [0m [91m                    ~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m745[0m:[93m5[0m - [91merror[0m[90m TS1005: [0m';' expected.
+
+[7m745[0m   ) {
+[7m   [0m [91m    ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m746[0m:[93m12[0m - [91merror[0m[90m TS2532: [0mObject is possibly 'undefined'.
+
+[7m746[0m     return this.topKeywords(window, Number(limit));
+[7m   [0m [91m           ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m750[0m:[93m8[0m - [91merror[0m[90m TS1146: [0mDeclaration expected.
+
+[7m750[0m   async topKeywordsSummary(@Query('limit') limit = 100) {
+[7m   [0m [91m       [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m750[0m:[93m9[0m - [91merror[0m[90m TS2304: [0mCannot find name 'topKeywordsSummary'.
+
+[7m750[0m   async topKeywordsSummary(@Query('limit') limit = 100) {
+[7m   [0m [91m        ~~~~~~~~~~~~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m750[0m:[93m43[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m750[0m   async topKeywordsSummary(@Query('limit') limit = 100) {
+[7m   [0m [91m                                          [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m750[0m:[93m44[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m750[0m   async topKeywordsSummary(@Query('limit') limit = 100) {
+[7m   [0m [91m                                           ~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m750[0m:[93m44[0m - [91merror[0m[90m TS2304: [0mCannot find name 'limit'.
+
+[7m750[0m   async topKeywordsSummary(@Query('limit') limit = 100) {
+[7m   [0m [91m                                           ~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m750[0m:[93m57[0m - [91merror[0m[90m TS1005: [0m';' expected.
+
+[7m750[0m   async topKeywordsSummary(@Query('limit') limit = 100) {
+[7m   [0m [91m                                                        ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m751[0m:[93m43[0m - [91merror[0m[90m TS2304: [0mCannot find name 'limit'.
+
+[7m751[0m     const take = Math.min(Math.max(Number(limit) || 100, 1), 200);
+[7m   [0m [91m                                          ~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m753[0m:[93m7[0m - [91merror[0m[90m TS2532: [0mObject is possibly 'undefined'.
+
+[7m753[0m       this.topKeywords('day', take),
+[7m   [0m [91m      ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m754[0m:[93m7[0m - [91merror[0m[90m TS2532: [0mObject is possibly 'undefined'.
+
+[7m754[0m       this.topKeywords('week', take),
+[7m   [0m [91m      ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m755[0m:[93m7[0m - [91merror[0m[90m TS2532: [0mObject is possibly 'undefined'.
+
+[7m755[0m       this.topKeywords('month', take),
+[7m   [0m [91m      ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m756[0m:[93m7[0m - [91merror[0m[90m TS2532: [0mObject is possibly 'undefined'.
+
+[7m756[0m       this.topAggregations('day', Math.min(10, take)),
+[7m   [0m [91m      ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m757[0m:[93m7[0m - [91merror[0m[90m TS2532: [0mObject is possibly 'undefined'.
+
+[7m757[0m       this.topAggregations('week', Math.min(10, take)),
+[7m   [0m [91m      ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m758[0m:[93m7[0m - [91merror[0m[90m TS2532: [0mObject is possibly 'undefined'.
+
+[7m758[0m       this.topAggregations('month', Math.min(10, take)),
+[7m   [0m [91m      ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m771[0m:[93m8[0m - [91merror[0m[90m TS1146: [0mDeclaration expected.
+
+[7m771[0m   async topKeywordsAlias1(
+[7m   [0m [91m       [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m771[0m:[93m9[0m - [91merror[0m[90m TS2304: [0mCannot find name 'topKeywordsAlias1'.
+
+[7m771[0m   async topKeywordsAlias1(
+[7m   [0m [91m        ~~~~~~~~~~~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m772[0m:[93m21[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m772[0m     @Query('window') timeWindow: 'day' | 'week' | 'month' = 'day',
+[7m   [0m [91m                    [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m772[0m:[93m22[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m772[0m     @Query('window') timeWindow: 'day' | 'week' | 'month' = 'day',
+[7m   [0m [91m                     ~~~~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m772[0m:[93m22[0m - [91merror[0m[90m TS2304: [0mCannot find name 'timeWindow'.
+
+[7m772[0m     @Query('window') timeWindow: 'day' | 'week' | 'month' = 'day',
+[7m   [0m [91m                     ~~~~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m772[0m:[93m32[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m772[0m     @Query('window') timeWindow: 'day' | 'week' | 'month' = 'day',
+[7m   [0m [91m                               ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m772[0m:[93m34[0m - [91merror[0m[90m TS2362: [0mThe left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
+
+[7m772[0m     @Query('window') timeWindow: 'day' | 'week' | 'month' = 'day',
+[7m   [0m [91m                                 ~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m772[0m:[93m42[0m - [91merror[0m[90m TS2363: [0mThe right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
+
+[7m772[0m     @Query('window') timeWindow: 'day' | 'week' | 'month' = 'day',
+[7m   [0m [91m                                         ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m772[0m:[93m51[0m - [91merror[0m[90m TS2363: [0mThe right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
+
+[7m772[0m     @Query('window') timeWindow: 'day' | 'week' | 'month' = 'day',
+[7m   [0m [91m                                                  ~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m772[0m:[93m59[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m772[0m     @Query('window') timeWindow: 'day' | 'week' | 'month' = 'day',
+[7m   [0m [91m                                                          ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m773[0m:[93m20[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m773[0m     @Query('limit') limit = 100,
+[7m   [0m [91m                   [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m773[0m:[93m21[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m773[0m     @Query('limit') limit = 100,
+[7m   [0m [91m                    ~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m773[0m:[93m21[0m - [91merror[0m[90m TS2304: [0mCannot find name 'limit'.
+
+[7m773[0m     @Query('limit') limit = 100,
+[7m   [0m [91m                    ~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m774[0m:[93m5[0m - [91merror[0m[90m TS1005: [0m';' expected.
+
+[7m774[0m   ) {
+[7m   [0m [91m    ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m775[0m:[93m12[0m - [91merror[0m[90m TS2532: [0mObject is possibly 'undefined'.
+
+[7m775[0m     return this.topKeywords(timeWindow, Number(limit));
+[7m   [0m [91m           ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m779[0m:[93m8[0m - [91merror[0m[90m TS1146: [0mDeclaration expected.
+
+[7m779[0m   async topKeywordsAlias2(
+[7m   [0m [91m       [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m779[0m:[93m9[0m - [91merror[0m[90m TS2304: [0mCannot find name 'topKeywordsAlias2'.
+
+[7m779[0m   async topKeywordsAlias2(
+[7m   [0m [91m        ~~~~~~~~~~~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m780[0m:[93m21[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m780[0m     @Query('window') timeWindow: 'day' | 'week' | 'month' = 'day',
+[7m   [0m [91m                    [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m780[0m:[93m22[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m780[0m     @Query('window') timeWindow: 'day' | 'week' | 'month' = 'day',
+[7m   [0m [91m                     ~~~~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m780[0m:[93m22[0m - [91merror[0m[90m TS2304: [0mCannot find name 'timeWindow'.
+
+[7m780[0m     @Query('window') timeWindow: 'day' | 'week' | 'month' = 'day',
+[7m   [0m [91m                     ~~~~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m780[0m:[93m32[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m780[0m     @Query('window') timeWindow: 'day' | 'week' | 'month' = 'day',
+[7m   [0m [91m                               ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m780[0m:[93m34[0m - [91merror[0m[90m TS2362: [0mThe left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
+
+[7m780[0m     @Query('window') timeWindow: 'day' | 'week' | 'month' = 'day',
+[7m   [0m [91m                                 ~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m780[0m:[93m42[0m - [91merror[0m[90m TS2363: [0mThe right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
+
+[7m780[0m     @Query('window') timeWindow: 'day' | 'week' | 'month' = 'day',
+[7m   [0m [91m                                         ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m780[0m:[93m51[0m - [91merror[0m[90m TS2363: [0mThe right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
+
+[7m780[0m     @Query('window') timeWindow: 'day' | 'week' | 'month' = 'day',
+[7m   [0m [91m                                                  ~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m780[0m:[93m59[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m780[0m     @Query('window') timeWindow: 'day' | 'week' | 'month' = 'day',
+[7m   [0m [91m                                                          ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m781[0m:[93m20[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m781[0m     @Query('limit') limit = 100,
+[7m   [0m [91m                   [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m781[0m:[93m21[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m781[0m     @Query('limit') limit = 100,
+[7m   [0m [91m                    ~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m781[0m:[93m21[0m - [91merror[0m[90m TS2304: [0mCannot find name 'limit'.
+
+[7m781[0m     @Query('limit') limit = 100,
+[7m   [0m [91m                    ~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m782[0m:[93m5[0m - [91merror[0m[90m TS1005: [0m';' expected.
+
+[7m782[0m   ) {
+[7m   [0m [91m    ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m783[0m:[93m12[0m - [91merror[0m[90m TS2532: [0mObject is possibly 'undefined'.
+
+[7m783[0m     return this.topKeywords(timeWindow, Number(limit));
+[7m   [0m [91m           ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m788[0m:[93m8[0m - [91merror[0m[90m TS1146: [0mDeclaration expected.
+
+[7m788[0m   async topKeywordsAlias3(
+[7m   [0m [91m       [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m788[0m:[93m9[0m - [91merror[0m[90m TS2304: [0mCannot find name 'topKeywordsAlias3'.
+
+[7m788[0m   async topKeywordsAlias3(
+[7m   [0m [91m        ~~~~~~~~~~~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m789[0m:[93m21[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m789[0m     @Query('window') timeWindow: 'day' | 'week' | 'month' = 'day',
+[7m   [0m [91m                    [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m789[0m:[93m22[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m789[0m     @Query('window') timeWindow: 'day' | 'week' | 'month' = 'day',
+[7m   [0m [91m                     ~~~~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m789[0m:[93m22[0m - [91merror[0m[90m TS2304: [0mCannot find name 'timeWindow'.
+
+[7m789[0m     @Query('window') timeWindow: 'day' | 'week' | 'month' = 'day',
+[7m   [0m [91m                     ~~~~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m789[0m:[93m32[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m789[0m     @Query('window') timeWindow: 'day' | 'week' | 'month' = 'day',
+[7m   [0m [91m                               ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m789[0m:[93m34[0m - [91merror[0m[90m TS2362: [0mThe left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
+
+[7m789[0m     @Query('window') timeWindow: 'day' | 'week' | 'month' = 'day',
+[7m   [0m [91m                                 ~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m789[0m:[93m42[0m - [91merror[0m[90m TS2363: [0mThe right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
+
+[7m789[0m     @Query('window') timeWindow: 'day' | 'week' | 'month' = 'day',
+[7m   [0m [91m                                         ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m789[0m:[93m51[0m - [91merror[0m[90m TS2363: [0mThe right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
+
+[7m789[0m     @Query('window') timeWindow: 'day' | 'week' | 'month' = 'day',
+[7m   [0m [91m                                                  ~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m789[0m:[93m59[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m789[0m     @Query('window') timeWindow: 'day' | 'week' | 'month' = 'day',
+[7m   [0m [91m                                                          ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m790[0m:[93m20[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m790[0m     @Query('limit') limit = 100,
+[7m   [0m [91m                   [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m790[0m:[93m21[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m790[0m     @Query('limit') limit = 100,
+[7m   [0m [91m                    ~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m790[0m:[93m21[0m - [91merror[0m[90m TS2304: [0mCannot find name 'limit'.
+
+[7m790[0m     @Query('limit') limit = 100,
+[7m   [0m [91m                    ~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m791[0m:[93m5[0m - [91merror[0m[90m TS1005: [0m';' expected.
+
+[7m791[0m   ) {
+[7m   [0m [91m    ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m792[0m:[93m12[0m - [91merror[0m[90m TS2532: [0mObject is possibly 'undefined'.
+
+[7m792[0m     return this.topKeywords(timeWindow, Number(limit));
+[7m   [0m [91m           ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m796[0m:[93m8[0m - [91merror[0m[90m TS1146: [0mDeclaration expected.
+
+[7m796[0m   async topKeywordsAlias4(
+[7m   [0m [91m       [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m796[0m:[93m9[0m - [91merror[0m[90m TS2304: [0mCannot find name 'topKeywordsAlias4'.
+
+[7m796[0m   async topKeywordsAlias4(
+[7m   [0m [91m        ~~~~~~~~~~~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m797[0m:[93m21[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m797[0m     @Query('window') timeWindow: 'day' | 'week' | 'month' = 'day',
+[7m   [0m [91m                    [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m797[0m:[93m22[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m797[0m     @Query('window') timeWindow: 'day' | 'week' | 'month' = 'day',
+[7m   [0m [91m                     ~~~~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m797[0m:[93m22[0m - [91merror[0m[90m TS2304: [0mCannot find name 'timeWindow'.
+
+[7m797[0m     @Query('window') timeWindow: 'day' | 'week' | 'month' = 'day',
+[7m   [0m [91m                     ~~~~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m797[0m:[93m32[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m797[0m     @Query('window') timeWindow: 'day' | 'week' | 'month' = 'day',
+[7m   [0m [91m                               ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m797[0m:[93m34[0m - [91merror[0m[90m TS2362: [0mThe left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
+
+[7m797[0m     @Query('window') timeWindow: 'day' | 'week' | 'month' = 'day',
+[7m   [0m [91m                                 ~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m797[0m:[93m42[0m - [91merror[0m[90m TS2363: [0mThe right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
+
+[7m797[0m     @Query('window') timeWindow: 'day' | 'week' | 'month' = 'day',
+[7m   [0m [91m                                         ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m797[0m:[93m51[0m - [91merror[0m[90m TS2363: [0mThe right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
+
+[7m797[0m     @Query('window') timeWindow: 'day' | 'week' | 'month' = 'day',
+[7m   [0m [91m                                                  ~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m797[0m:[93m59[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m797[0m     @Query('window') timeWindow: 'day' | 'week' | 'month' = 'day',
+[7m   [0m [91m                                                          ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m798[0m:[93m20[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m798[0m     @Query('limit') limit = 100,
+[7m   [0m [91m                   [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m798[0m:[93m21[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m798[0m     @Query('limit') limit = 100,
+[7m   [0m [91m                    ~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m798[0m:[93m21[0m - [91merror[0m[90m TS2304: [0mCannot find name 'limit'.
+
+[7m798[0m     @Query('limit') limit = 100,
+[7m   [0m [91m                    ~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m799[0m:[93m5[0m - [91merror[0m[90m TS1005: [0m';' expected.
+
+[7m799[0m   ) {
+[7m   [0m [91m    ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m800[0m:[93m12[0m - [91merror[0m[90m TS2532: [0mObject is possibly 'undefined'.
+
+[7m800[0m     return this.topKeywords(timeWindow, Number(limit));
+[7m   [0m [91m           ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m805[0m:[93m8[0m - [91merror[0m[90m TS1146: [0mDeclaration expected.
+
+[7m805[0m   async aggregationsPrimary(
+[7m   [0m [91m       [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m805[0m:[93m9[0m - [91merror[0m[90m TS2304: [0mCannot find name 'aggregationsPrimary'.
+
+[7m805[0m   async aggregationsPrimary(
+[7m   [0m [91m        ~~~~~~~~~~~~~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m806[0m:[93m21[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m806[0m     @Query('window') timeWindow: 'day' | 'week' | 'month' = 'week',
+[7m   [0m [91m                    [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m806[0m:[93m22[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m806[0m     @Query('window') timeWindow: 'day' | 'week' | 'month' = 'week',
+[7m   [0m [91m                     ~~~~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m806[0m:[93m22[0m - [91merror[0m[90m TS2304: [0mCannot find name 'timeWindow'.
+
+[7m806[0m     @Query('window') timeWindow: 'day' | 'week' | 'month' = 'week',
+[7m   [0m [91m                     ~~~~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m806[0m:[93m32[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m806[0m     @Query('window') timeWindow: 'day' | 'week' | 'month' = 'week',
+[7m   [0m [91m                               ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m806[0m:[93m34[0m - [91merror[0m[90m TS2362: [0mThe left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
+
+[7m806[0m     @Query('window') timeWindow: 'day' | 'week' | 'month' = 'week',
+[7m   [0m [91m                                 ~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m806[0m:[93m42[0m - [91merror[0m[90m TS2363: [0mThe right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
+
+[7m806[0m     @Query('window') timeWindow: 'day' | 'week' | 'month' = 'week',
+[7m   [0m [91m                                         ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m806[0m:[93m51[0m - [91merror[0m[90m TS2363: [0mThe right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
+
+[7m806[0m     @Query('window') timeWindow: 'day' | 'week' | 'month' = 'week',
+[7m   [0m [91m                                                  ~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m806[0m:[93m59[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m806[0m     @Query('window') timeWindow: 'day' | 'week' | 'month' = 'week',
+[7m   [0m [91m                                                          ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m807[0m:[93m20[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m807[0m     @Query('limit') limit = 10,
+[7m   [0m [91m                   [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m807[0m:[93m21[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m807[0m     @Query('limit') limit = 10,
+[7m   [0m [91m                    ~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m807[0m:[93m21[0m - [91merror[0m[90m TS2304: [0mCannot find name 'limit'.
+
+[7m807[0m     @Query('limit') limit = 10,
+[7m   [0m [91m                    ~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m808[0m:[93m5[0m - [91merror[0m[90m TS1005: [0m';' expected.
+
+[7m808[0m   ) {
+[7m   [0m [91m    ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m809[0m:[93m12[0m - [91merror[0m[90m TS2532: [0mObject is possibly 'undefined'.
+
+[7m809[0m     return this.topAggregations(timeWindow, Number(limit));
+[7m   [0m [91m           ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m814[0m:[93m8[0m - [91merror[0m[90m TS1146: [0mDeclaration expected.
+
+[7m814[0m   async aggregationsAlias1(
+[7m   [0m [91m       [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m814[0m:[93m9[0m - [91merror[0m[90m TS2304: [0mCannot find name 'aggregationsAlias1'.
+
+[7m814[0m   async aggregationsAlias1(
+[7m   [0m [91m        ~~~~~~~~~~~~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m815[0m:[93m21[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m815[0m     @Query('window') timeWindow: 'day' | 'week' | 'month' = 'week',
+[7m   [0m [91m                    [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m815[0m:[93m22[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m815[0m     @Query('window') timeWindow: 'day' | 'week' | 'month' = 'week',
+[7m   [0m [91m                     ~~~~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m815[0m:[93m22[0m - [91merror[0m[90m TS2304: [0mCannot find name 'timeWindow'.
+
+[7m815[0m     @Query('window') timeWindow: 'day' | 'week' | 'month' = 'week',
+[7m   [0m [91m                     ~~~~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m815[0m:[93m32[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m815[0m     @Query('window') timeWindow: 'day' | 'week' | 'month' = 'week',
+[7m   [0m [91m                               ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m815[0m:[93m34[0m - [91merror[0m[90m TS2362: [0mThe left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
+
+[7m815[0m     @Query('window') timeWindow: 'day' | 'week' | 'month' = 'week',
+[7m   [0m [91m                                 ~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m815[0m:[93m42[0m - [91merror[0m[90m TS2363: [0mThe right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
+
+[7m815[0m     @Query('window') timeWindow: 'day' | 'week' | 'month' = 'week',
+[7m   [0m [91m                                         ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m815[0m:[93m51[0m - [91merror[0m[90m TS2363: [0mThe right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
+
+[7m815[0m     @Query('window') timeWindow: 'day' | 'week' | 'month' = 'week',
+[7m   [0m [91m                                                  ~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m815[0m:[93m59[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m815[0m     @Query('window') timeWindow: 'day' | 'week' | 'month' = 'week',
+[7m   [0m [91m                                                          ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m816[0m:[93m20[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m816[0m     @Query('limit') limit = 10,
+[7m   [0m [91m                   [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m816[0m:[93m21[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m816[0m     @Query('limit') limit = 10,
+[7m   [0m [91m                    ~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m816[0m:[93m21[0m - [91merror[0m[90m TS2304: [0mCannot find name 'limit'.
+
+[7m816[0m     @Query('limit') limit = 10,
+[7m   [0m [91m                    ~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m817[0m:[93m5[0m - [91merror[0m[90m TS1005: [0m';' expected.
+
+[7m817[0m   ) {
+[7m   [0m [91m    ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m818[0m:[93m12[0m - [91merror[0m[90m TS2532: [0mObject is possibly 'undefined'.
+
+[7m818[0m     return this.topAggregations(timeWindow, Number(limit));
+[7m   [0m [91m           ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m822[0m:[93m8[0m - [91merror[0m[90m TS1146: [0mDeclaration expected.
+
+[7m822[0m   async aggregationsAlias2(
+[7m   [0m [91m       [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m822[0m:[93m9[0m - [91merror[0m[90m TS2304: [0mCannot find name 'aggregationsAlias2'.
+
+[7m822[0m   async aggregationsAlias2(
+[7m   [0m [91m        ~~~~~~~~~~~~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m823[0m:[93m21[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m823[0m     @Query('window') timeWindow: 'day' | 'week' | 'month' = 'week',
+[7m   [0m [91m                    [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m823[0m:[93m22[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m823[0m     @Query('window') timeWindow: 'day' | 'week' | 'month' = 'week',
+[7m   [0m [91m                     ~~~~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m823[0m:[93m22[0m - [91merror[0m[90m TS2304: [0mCannot find name 'timeWindow'.
+
+[7m823[0m     @Query('window') timeWindow: 'day' | 'week' | 'month' = 'week',
+[7m   [0m [91m                     ~~~~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m823[0m:[93m32[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m823[0m     @Query('window') timeWindow: 'day' | 'week' | 'month' = 'week',
+[7m   [0m [91m                               ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m823[0m:[93m34[0m - [91merror[0m[90m TS2362: [0mThe left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
+
+[7m823[0m     @Query('window') timeWindow: 'day' | 'week' | 'month' = 'week',
+[7m   [0m [91m                                 ~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m823[0m:[93m42[0m - [91merror[0m[90m TS2363: [0mThe right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
+
+[7m823[0m     @Query('window') timeWindow: 'day' | 'week' | 'month' = 'week',
+[7m   [0m [91m                                         ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m823[0m:[93m51[0m - [91merror[0m[90m TS2363: [0mThe right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
+
+[7m823[0m     @Query('window') timeWindow: 'day' | 'week' | 'month' = 'week',
+[7m   [0m [91m                                                  ~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m823[0m:[93m59[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m823[0m     @Query('window') timeWindow: 'day' | 'week' | 'month' = 'week',
+[7m   [0m [91m                                                          ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m824[0m:[93m20[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m824[0m     @Query('limit') limit = 10,
+[7m   [0m [91m                   [0m
+[96msrc/admin/analytics.controller.ts[0m:[93m824[0m:[93m21[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m824[0m     @Query('limit') limit = 10,
+[7m   [0m [91m                    ~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m824[0m:[93m21[0m - [91merror[0m[90m TS2304: [0mCannot find name 'limit'.
+
+[7m824[0m     @Query('limit') limit = 10,
+[7m   [0m [91m                    ~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m825[0m:[93m5[0m - [91merror[0m[90m TS1005: [0m';' expected.
+
+[7m825[0m   ) {
+[7m   [0m [91m    ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m826[0m:[93m12[0m - [91merror[0m[90m TS2532: [0mObject is possibly 'undefined'.
+
+[7m826[0m     return this.topAggregations(timeWindow, Number(limit));
+[7m   [0m [91m           ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m829[0m:[93m3[0m - [91merror[0m[90m TS1128: [0mDeclaration or statement expected.
+
+[7m829[0m   private async listKeywords(
+[7m   [0m [91m  ~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m829[0m:[93m11[0m - [91merror[0m[90m TS1434: [0mUnexpected keyword or identifier.
+
+[7m829[0m   private async listKeywords(
+[7m   [0m [91m          ~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m829[0m:[93m11[0m - [91merror[0m[90m TS2304: [0mCannot find name 'async'.
+
+[7m829[0m   private async listKeywords(
+[7m   [0m [91m          ~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m829[0m:[93m17[0m - [91merror[0m[90m TS2304: [0mCannot find name 'listKeywords'.
+
+[7m829[0m   private async listKeywords(
+[7m   [0m [91m                ~~~~~~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m830[0m:[93m5[0m - [91merror[0m[90m TS2304: [0mCannot find name 'page'.
+
+[7m830[0m     page = 1,
+[7m   [0m [91m    ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m831[0m:[93m5[0m - [91merror[0m[90m TS2304: [0mCannot find name 'perPage'.
+
+[7m831[0m     perPage = 20,
+[7m   [0m [91m    ~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m832[0m:[93m5[0m - [91merror[0m[90m TS2304: [0mCannot find name 'from'.
+
+[7m832[0m     from?: string,
+[7m   [0m [91m    ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m832[0m:[93m10[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m832[0m     from?: string,
+[7m   [0m [91m         ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m832[0m:[93m12[0m - [91merror[0m[90m TS2693: [0m'string' only refers to a type, but is being used as a value here.
+
+[7m832[0m     from?: string,
+[7m   [0m [91m           ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m833[0m:[93m5[0m - [91merror[0m[90m TS2304: [0mCannot find name 'to'.
+
+[7m833[0m     to?: string,
+[7m   [0m [91m    ~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m833[0m:[93m8[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m833[0m     to?: string,
+[7m   [0m [91m       ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m833[0m:[93m10[0m - [91merror[0m[90m TS2693: [0m'string' only refers to a type, but is being used as a value here.
+
+[7m833[0m     to?: string,
+[7m   [0m [91m         ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m834[0m:[93m5[0m - [91merror[0m[90m TS2304: [0mCannot find name 'minSubmits'.
+
+[7m834[0m     minSubmits: string = '1',
+[7m   [0m [91m    ~~~~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m834[0m:[93m15[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m834[0m     minSubmits: string = '1',
+[7m   [0m [91m              ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m834[0m:[93m17[0m - [91merror[0m[90m TS2693: [0m'string' only refers to a type, but is being used as a value here.
+
+[7m834[0m     minSubmits: string = '1',
+[7m   [0m [91m                ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m835[0m:[93m5[0m - [91merror[0m[90m TS2304: [0mCannot find name 'q'.
+
+[7m835[0m     q?: string,
+[7m   [0m [91m    ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m835[0m:[93m7[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m835[0m     q?: string,
+[7m   [0m [91m      ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m835[0m:[93m9[0m - [91merror[0m[90m TS2693: [0m'string' only refers to a type, but is being used as a value here.
+
+[7m835[0m     q?: string,
+[7m   [0m [91m        ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m836[0m:[93m5[0m - [91merror[0m[90m TS2304: [0mCannot find name 'sort'.
+
+[7m836[0m     sort: SortKey = 'submit_desc',
+[7m   [0m [91m    ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m836[0m:[93m9[0m - [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m836[0m     sort: SortKey = 'submit_desc',
+[7m   [0m [91m        ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m836[0m:[93m11[0m - [91merror[0m[90m TS2693: [0m'SortKey' only refers to a type, but is being used as a value here.
+
+[7m836[0m     sort: SortKey = 'submit_desc',
+[7m   [0m [91m          ~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m837[0m:[93m5[0m - [91merror[0m[90m TS2304: [0mCannot find name 'city'.
+
+[7m837[0m     city?: string,
+[7m   [0m [91m    ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m837[0m:[93m10[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m837[0m     city?: string,
+[7m   [0m [91m         ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m837[0m:[93m12[0m - [91merror[0m[90m TS2693: [0m'string' only refers to a type, but is being used as a value here.
+
+[7m837[0m     city?: string,
+[7m   [0m [91m           ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m838[0m:[93m5[0m - [91merror[0m[90m TS2304: [0mCannot find name 'country'.
+
+[7m838[0m     country?: string,
+[7m   [0m [91m    ~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m838[0m:[93m13[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m838[0m     country?: string,
+[7m   [0m [91m            ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m838[0m:[93m15[0m - [91merror[0m[90m TS2693: [0m'string' only refers to a type, but is being used as a value here.
+
+[7m838[0m     country?: string,
+[7m   [0m [91m              ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m839[0m:[93m5[0m - [91merror[0m[90m TS2304: [0mCannot find name 'vendor'.
+
+[7m839[0m     vendor?: string,
+[7m   [0m [91m    ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m839[0m:[93m12[0m - [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m839[0m     vendor?: string,
+[7m   [0m [91m           ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m839[0m:[93m14[0m - [91merror[0m[90m TS2693: [0m'string' only refers to a type, but is being used as a value here.
+
+[7m839[0m     vendor?: string,
+[7m   [0m [91m             ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m840[0m:[93m5[0m - [91merror[0m[90m TS1005: [0m';' expected.
+
+[7m840[0m   ) {
+[7m   [0m [91m    ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m841[0m:[93m43[0m - [91merror[0m[90m TS2304: [0mCannot find name 'perPage'.
+
+[7m841[0m     const take = Math.min(Math.max(Number(perPage) || 20, 1), 100);
+[7m   [0m [91m                                          ~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m842[0m:[93m35[0m - [91merror[0m[90m TS2304: [0mCannot find name 'page'.
+
+[7m842[0m     const skip = (Math.max(Number(page) || 1, 1) - 1) * take;
+[7m   [0m [91m                                  ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m843[0m:[93m16[0m - [91merror[0m[90m TS2532: [0mObject is possibly 'undefined'.
+
+[7m843[0m     const qb = this.keywordRepo.createQueryBuilder('k');
+[7m   [0m [91m               ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m846[0m:[93m22[0m - [91merror[0m[90m TS2304: [0mCannot find name 'from'.
+
+[7m846[0m     const fromDate = from ? new Date(from) : undefined;
+[7m   [0m [91m                     ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m846[0m:[93m38[0m - [91merror[0m[90m TS2304: [0mCannot find name 'from'.
+
+[7m846[0m     const fromDate = from ? new Date(from) : undefined;
+[7m   [0m [91m                                     ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m847[0m:[93m20[0m - [91merror[0m[90m TS2304: [0mCannot find name 'to'.
+
+[7m847[0m     const toDate = to ? new Date(to) : undefined;
+[7m   [0m [91m                   ~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m847[0m:[93m34[0m - [91merror[0m[90m TS2304: [0mCannot find name 'to'.
+
+[7m847[0m     const toDate = to ? new Date(to) : undefined;
+[7m   [0m [91m                                 ~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m852[0m:[93m27[0m - [91merror[0m[90m TS2304: [0mCannot find name 'minSubmits'.
+
+[7m852[0m     const minSub = Number(minSubmits);
+[7m   [0m [91m                          ~~~~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m858[0m:[93m9[0m - [91merror[0m[90m TS2304: [0mCannot find name 'q'.
+
+[7m858[0m     if (q && q.trim()) {
+[7m   [0m [91m        ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m858[0m:[93m14[0m - [91merror[0m[90m TS2304: [0mCannot find name 'q'.
+
+[7m858[0m     if (q && q.trim()) {
+[7m   [0m [91m             ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m860[0m:[93m17[0m - [91merror[0m[90m TS2304: [0mCannot find name 'q'.
+
+[7m860[0m         kw: `%${q.trim()}%`,
+[7m   [0m [91m                ~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m864[0m:[93m9[0m - [91merror[0m[90m TS2304: [0mCannot find name 'city'.
+
+[7m864[0m     if (city && city.trim())
+[7m   [0m [91m        ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m864[0m:[93m17[0m - [91merror[0m[90m TS2304: [0mCannot find name 'city'.
+
+[7m864[0m     if (city && city.trim())
+[7m   [0m [91m                ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m865[0m:[93m57[0m - [91merror[0m[90m TS2304: [0mCannot find name 'city'.
+
+[7m865[0m       qb.andWhere('k.lastCity ILIKE :city', { city: `%${city.trim()}%` });
+[7m   [0m [91m                                                        ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m866[0m:[93m9[0m - [91merror[0m[90m TS2304: [0mCannot find name 'country'.
+
+[7m866[0m     if (country && country.trim())
+[7m   [0m [91m        ~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m866[0m:[93m20[0m - [91merror[0m[90m TS2304: [0mCannot find name 'country'.
+
+[7m866[0m     if (country && country.trim())
+[7m   [0m [91m                   ~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m868[0m:[93m13[0m - [91merror[0m[90m TS2304: [0mCannot find name 'country'.
+
+[7m868[0m         ct: country.trim().toUpperCase(),
+[7m   [0m [91m            ~~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m870[0m:[93m9[0m - [91merror[0m[90m TS2304: [0mCannot find name 'vendor'.
+
+[7m870[0m     if (vendor && vendor.trim())
+[7m   [0m [91m        ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m870[0m:[93m19[0m - [91merror[0m[90m TS2304: [0mCannot find name 'vendor'.
+
+[7m870[0m     if (vendor && vendor.trim())
+[7m   [0m [91m                  ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m871[0m:[93m59[0m - [91merror[0m[90m TS2304: [0mCannot find name 'vendor'.
+
+[7m871[0m       qb.andWhere('k.lastVendorName ILIKE :vn', { vn: `%${vendor.trim()}%` });
+[7m   [0m [91m                                                          ~~~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m875[0m:[93m9[0m - [91merror[0m[90m TS2304: [0mCannot find name 'sort'.
+
+[7m875[0m     if (sort === 'submit_asc') qb.orderBy('k.submitCount', 'ASC');
+[7m   [0m [91m        ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m876[0m:[93m14[0m - [91merror[0m[90m TS2304: [0mCannot find name 'sort'.
+
+[7m876[0m     else if (sort === 'total_desc') qb.orderBy('k.totalCount', 'DESC');
+[7m   [0m [91m             ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m877[0m:[93m14[0m - [91merror[0m[90m TS2304: [0mCannot find name 'sort'.
+
+[7m877[0m     else if (sort === 'total_asc') qb.orderBy('k.totalCount', 'ASC');
+[7m   [0m [91m             ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m878[0m:[93m14[0m - [91merror[0m[90m TS2304: [0mCannot find name 'sort'.
+
+[7m878[0m     else if (sort === 'last_desc') qb.orderBy('k.lastSeenAt', 'DESC');
+[7m   [0m [91m             ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m879[0m:[93m14[0m - [91merror[0m[90m TS2304: [0mCannot find name 'sort'.
+
+[7m879[0m     else if (sort === 'last_asc') qb.orderBy('k.lastSeenAt', 'ASC');
+[7m   [0m [91m             ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m891[0m:[93m26[0m - [91merror[0m[90m TS2532: [0mObject is possibly 'undefined'.
+
+[7m891[0m         const fromCity = this.cityToCountry((r as any).lastCity);
+[7m   [0m [91m                         ~~~~[0m
+[96msrc/admin/analytics.controller.ts[0m:[93m910[0m:[93m1[0m - [91merror[0m[90m TS1128: [0mDeclaration or statement expected.
+
+[7m910[0m }
+[7m   [0m [91m~[0m
+
+Found 510 error(s).
+
+error Command failed with exit code 1.
+info Visit https://yarnpkg.com/en/docs/cli/run for documentation about this command.

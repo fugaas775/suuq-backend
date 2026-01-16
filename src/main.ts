@@ -136,8 +136,8 @@ async function bootstrap() {
     try {
       const url = req.url || '';
       if (
-        url.startsWith('/product-requests') &&
-        !url.startsWith('/api/product-requests')
+        (url.startsWith('/product-requests') || url.startsWith('/withdrawals')) &&
+        !url.startsWith('/api')
       ) {
         req.url = `/api${url}`;
       }
@@ -147,9 +147,10 @@ async function bootstrap() {
     next();
   });
   // Enable gzip compression for responses (disable by default in production; offload to Nginx)
+  // UPDATED: Enabled by default to ensure compression even if Nginx is misconfigured
   const enableNodeCompression =
-    (process.env.ENABLE_NODE_COMPRESSION || '').toLowerCase() === 'true';
-  if (enableNodeCompression || process.env.NODE_ENV !== 'production') {
+    (process.env.ENABLE_NODE_COMPRESSION || 'true').toLowerCase() === 'true';
+  if (enableNodeCompression) {
     const compressionFn: any =
       (compression as any)?.default || (compression as any);
 

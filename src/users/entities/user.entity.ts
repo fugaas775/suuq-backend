@@ -11,6 +11,11 @@ export enum SubscriptionTier {
   PRO = 'pro',
 }
 
+export enum BusinessModel {
+  SUBSCRIPTION = 'SUBSCRIPTION',
+  COMMISSION = 'COMMISSION',
+}
+
 import {
   Entity,
   PrimaryGeneratedColumn, // <-- ADDED THIS
@@ -25,6 +30,7 @@ import { UserRole } from '../../auth/roles.enum';
 import { Exclude } from 'class-transformer';
 import { Product } from '../../products/entities/product.entity';
 import { Review } from '../../reviews/entities/review.entity';
+import { Notification } from '../../notifications/entities/notification.entity';
 
 export interface BusinessLicenseInfo {
   tradeName: string;
@@ -79,6 +85,26 @@ export class User {
   })
   subscriptionTier!: SubscriptionTier;
 
+  @Column({
+    type: 'enum',
+    enum: BusinessModel,
+    default: BusinessModel.COMMISSION,
+  })
+  businessModel!: BusinessModel;
+
+  @Column({
+    type: 'decimal',
+    precision: 5,
+    scale: 2,
+    default: 0.05, // 5%
+    transformer: {
+      to: (value: number) => value,
+      from: (value: string | number) =>
+        typeof value === 'string' ? parseFloat(value) : value,
+    },
+  })
+  commissionRate!: number;
+
   @Column({ type: 'timestamp', nullable: true })
   subscriptionExpiry?: Date | null;
 
@@ -94,6 +120,12 @@ export class User {
   // --- Profile fields ---
   @Column({ nullable: true })
   displayName?: string;
+
+  @Column({ default: false })
+  telebirrVerified!: boolean;
+
+  @Column({ type: 'timestamp', nullable: true })
+  telebirrVerifiedAt?: Date | null;
 
   @Column({ nullable: true })
   avatarUrl?: string;
@@ -226,6 +258,9 @@ export class User {
   @OneToMany(() => Review, (review) => review.user)
   reviews!: Review[];
 
+  @OneToMany(() => Notification, (notification) => notification.recipient)
+  notifications: Notification[];
+
   // --- Vendor currency (for unified vendor logic) ---
   @Column({ type: 'varchar', length: 3, nullable: true })
   currency?: string | null;
@@ -241,6 +276,12 @@ export class User {
 
   @Column({ type: 'int', nullable: true, default: 0 })
   numberOfSales?: number | null;
+
+  @Column({ type: 'int', array: true, nullable: true })
+  interestedCategoryIds?: number[];
+
+  @Column({ type: 'timestamp', nullable: true })
+  interestedCategoriesLastUpdated?: Date | null;
 
   // --- Optional location for proximity sorting (deliverers/vendors) ---
   @Column({ type: 'float', nullable: true })
@@ -271,6 +312,9 @@ export class User {
 
   @Column({ type: 'varchar', length: 32, nullable: true })
   mobileMoneyNumber?: string | null;
+
+  @Column({ type: 'varchar', length: 32, nullable: true })
+  telebirrAccount?: string | null;
 
   @Column({ type: 'varchar', length: 32, nullable: true })
   mobileMoneyProvider?: string | null;

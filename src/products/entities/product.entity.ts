@@ -34,11 +34,13 @@ export class Product {
 
   @Expose()
   get thumbnail(): string | null {
-    if (this.imageUrl) return this.imageUrl;
+    // Optimized: prefer the generated thumbnail from the images relation.
+    // This ensures list views don't download full-res images (imageUrl).
     if (this.images && this.images.length > 0) {
-      return this.images[0].thumbnailSrc || this.images[0].src;
+      const img = this.images[0];
+      return img.thumbnailSrc || img.src;
     }
-    return null;
+    return this.imageUrl || null;
   }
 
   @Column('decimal', {

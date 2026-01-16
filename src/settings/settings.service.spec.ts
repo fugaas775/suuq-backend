@@ -3,6 +3,7 @@ import { SettingsService } from './settings.service';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { UserSettings } from './entities/user-settings.entity';
 import { UiSetting } from './entities/ui-setting.entity';
+import { SystemSetting } from './entities/system-setting.entity';
 import { UsersService } from '../users/users.service';
 
 describe('SettingsService', () => {
@@ -14,6 +15,7 @@ describe('SettingsService', () => {
         SettingsService,
         { provide: getRepositoryToken(UserSettings), useValue: {} },
         { provide: getRepositoryToken(UiSetting), useValue: {} },
+        { provide: getRepositoryToken(SystemSetting), useValue: {} },
         { provide: UsersService, useValue: {} },
       ],
     }).compile();

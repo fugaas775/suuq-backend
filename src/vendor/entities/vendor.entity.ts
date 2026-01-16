@@ -43,6 +43,9 @@ export class Vendor {
   @Column({ type: 'varchar', length: 32, nullable: true })
   phone_number?: string | null;
 
+  @Column({ type: 'varchar', length: 32, nullable: true })
+  telebirr_account?: string | null;
+
   @Column({ type: 'varchar', length: 255, nullable: true })
   email?: string | null;
 

@@ -5,16 +5,19 @@ import {
   Param,
   ParseIntPipe,
   Patch,
+  Post,
   Query,
   UseGuards,
   Req,
   ForbiddenException,
+  BadRequestException,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { UserRole } from '../auth/roles.enum';
 import { VendorService } from '../vendor/vendor.service';
+import { UsersService } from '../users/users.service';
 import {
   AuditFilters,
   AuditService,
@@ -31,8 +34,33 @@ import { SkipThrottle } from '@nestjs/throttler';
 export class AdminVendorsController {
   constructor(
     private readonly vendorService: VendorService,
+    private readonly usersService: UsersService,
     private readonly audit: AuditService,
   ) {}
+
+  @Post(':id/confirm-telebirr')
+  async confirmTelebirr(
+    @Param('id', ParseIntPipe) id: number,
+    @Body('status') status: 'APPROVED' | 'REJECTED',
+    @Req() req: any,
+  ) {
+    if (!['APPROVED', 'REJECTED'].includes(status)) {
+        throw new BadRequestException('Status must be APPROVED or REJECTED');
+    }
+
+    const user = await this.usersService.confirmTelebirrAccount(id, status);
+
+    await this.audit.log({
+        action: 'vendor.telebirr.verification',
+        targetType: 'vendor',
+        targetId: id,
+        meta: { status, telebirrAccount: user.telebirrAccount || 'CLEARED' },
+        actorId: req?.user?.id ?? null,
+        actorEmail: req?.user?.email ?? null,
+    });
+
+    return { ok: true, telebirrVerified: user.telebirrVerified };
+  }
 
   @Get()
   async list(
@@ -45,6 +73,7 @@ export class AdminVendorsController {
     @Query('country') country?: string,
     @Query('region') region?: string,
     @Query('city') city?: string,
+    @Query('subscriptionTier') subscriptionTier?: 'free' | 'pro',
     @Query('minSales') minSales?: string,
     @Query('minRating') minRating?: string,
     @Query('meta') metaFlag?: string,
@@ -67,6 +96,7 @@ export class AdminVendorsController {
       country,
       region,
       city,
+      subscriptionTier,
       minSales: Number.isFinite(minSalesNum as any) ? minSalesNum : undefined,
       minRating: Number.isFinite(minRatingNum as any)
         ? minRatingNum
@@ -86,6 +116,7 @@ export class AdminVendorsController {
   @Get('search')
   async search(
     @Query('q') q?: string,
+    @Query('subscriptionTier') subscriptionTier?: 'free' | 'pro',
     @Query('limit') limit?: string,
     @Query('meta') metaFlag?: string,
   ) {
@@ -94,6 +125,7 @@ export class AdminVendorsController {
       page: 1,
       limit: l,
       search: q,
+      subscriptionTier,
       sort: 'recent',
       role: 'VENDOR',
     } as any);

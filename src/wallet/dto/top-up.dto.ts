@@ -6,8 +6,10 @@ import {
   IsOptional,
   IsObject,
 } from 'class-validator';
+import { Transform } from 'class-transformer';
 
 export class TopUpDto {
+  @Transform(({ value }) => Number(value))
   @IsNumber()
   @Min(1)
   amount: number;
@@ -16,9 +18,9 @@ export class TopUpDto {
   @IsNotEmpty()
   method: string;
 
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  reference: string;
+  reference?: string;
 
   @IsOptional()
   @IsObject()
@@ -27,4 +29,8 @@ export class TopUpDto {
     email: string;
     name: string;
   };
+
+  @IsOptional()
+  @IsObject()
+  metadata?: Record<string, any>;
 }

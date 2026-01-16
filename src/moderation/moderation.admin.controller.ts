@@ -113,6 +113,29 @@ export class AdminModerationController {
     return { success: true, message: 'Product blocked and report resolved' };
   }
 
+  @Patch(['reports/:id/restore-product', 'reports/:id/restore'])
+  async restoreProductFromReport(
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    const report = await this.reportRepo.findOne({
+      where: { id },
+      relations: ['product'],
+    });
+    if (!report) throw new Error('Report not found');
+
+    if (!report.product) throw new Error('Product not associated with this report');
+
+    // Unblock the product
+    await this.productRepo.update(report.product.id, { isBlocked: false });
+
+    // Optionally update report status if logic requires it, 
+    // but usually 'reviewed' is fine as past tense.
+    // If you want to indicate it's "re-reviewed" or similar, do it here.
+    // For now, we assume restoring might be correcting a mistake or mercy.
+    
+    return { success: true, message: 'Product restored (unblocked)' };
+  }
+
   // --- Existing Image Moderation Endpoints ---
 
   @Get('queue')

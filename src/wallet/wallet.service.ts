@@ -2,6 +2,8 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  Inject,
+  forwardRef,
 } from '@nestjs/common';
 /* eslint-disable @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment */
 import { InjectRepository } from '@nestjs/typeorm';
@@ -18,8 +20,10 @@ import {
   TransactionType,
 } from './entities/wallet-transaction.entity';
 import { TopUpRequest, TopUpStatus } from './entities/top-up-request.entity';
+import { UiSetting } from '../settings/entities/ui-setting.entity';
 import { User, SubscriptionTier } from '../users/entities/user.entity';
 import { CurrencyService } from '../common/services/currency.service';
+import { UsersService } from '../users/users.service';
 
 @Injectable()
 export class WalletService {
@@ -32,8 +36,12 @@ export class WalletService {
     private readonly topUpRequestRepository: Repository<TopUpRequest>,
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
+    @InjectRepository(UiSetting)
+    private readonly uiSettingRepository: Repository<UiSetting>,
     private readonly dataSource: DataSource,
     private readonly currencyService: CurrencyService,
+    @Inject(forwardRef(() => UsersService))
+    private readonly usersService: UsersService,
   ) {}
 
   async getWallet(userId: number, requestedCurrency?: string): Promise<Wallet> {
@@ -75,7 +83,20 @@ export class WalletService {
         balance: 0,
         currency,
       });
-      await this.walletRepository.save(wallet);
+      try {
+        await this.walletRepository.save(wallet);
+      } catch (err) {
+        // Handle race condition: wallet might have been created by another process
+        if (err.code === '23505') {
+          wallet = await this.walletRepository.findOne({
+            where: { user: { id: userId } },
+            relations: ['user'],
+          });
+          if (!wallet) throw err; // Should not happen if it was a duplicate key error
+        } else {
+          throw err;
+        }
+      }
     } else {
       // Sync currency if user preference changed
       if (user.currency && wallet.currency !== user.currency) {
@@ -171,6 +192,102 @@ export class WalletService {
     await this.walletRepository.update(walletId, { balance: roundedBalance });
   }
 
+  async creditWallet(
+    userId: number,
+    amount: number,
+    type: TransactionType,
+    description?: string,
+    orderId?: number,
+    externalManager?: EntityManager,
+  ): Promise<WalletTransaction> {
+    const run = async (manager: EntityManager) => {
+      let wallet = await manager.findOne(Wallet, {
+        where: { user: { id: userId } },
+      });
+      if (!wallet) {
+        // Create if not exists (lazy load logic handled in getWallet, but we need it inside transaction here)
+        // For simplicity, we assume getWallet handled creation before, or we fail.
+        // But better to create on the fly if user receives money.
+        const user = await manager.findOne(User, { where: { id: userId } });
+        if (!user) throw new NotFoundException('User not found');
+        
+        let currency = user.currency;
+        if (!currency) {
+            // Default heuristics
+            if (user.registrationCountry === 'ET') currency = 'ETB';
+            else if (user.registrationCountry === 'DJ') currency = 'DJF';
+            else if (user.registrationCountry === 'SO') currency = 'SOS';
+            else currency = 'KES';
+        }
+        
+        wallet = manager.create(Wallet, {
+            user,
+            balance: 0,
+            currency
+        });
+        wallet = await manager.save(wallet);
+      }
+
+      const tx = manager.create(WalletTransaction, {
+        wallet,
+        amount: Math.abs(amount), // Credit is positive
+        type,
+        description,
+        orderId,
+      });
+
+      await manager.save(tx);
+      
+      wallet.balance = Number(wallet.balance) + Number(amount);
+      await manager.save(wallet);
+
+      return tx;
+    };
+
+    if (externalManager) return run(externalManager);
+    return this.dataSource.transaction(run);
+  }
+
+  async debitWallet(
+    userId: number,
+    amount: number,
+    type: TransactionType,
+    description?: string,
+    orderId?: number,
+    externalManager?: EntityManager,
+  ): Promise<WalletTransaction> {
+    const run = async (manager: EntityManager) => {
+      const wallet = await manager.findOne(Wallet, {
+        where: { user: { id: userId } },
+        lock: { mode: 'pessimistic_write' }, // Lock for safety
+      });
+
+      if (!wallet) throw new NotFoundException('Wallet not found');
+
+      if (Number(wallet.balance) < Number(amount)) {
+        throw new BadRequestException('Insufficient wallet balance');
+      }
+
+      const tx = manager.create(WalletTransaction, {
+        wallet,
+        amount: -Math.abs(amount), // Debit is negative
+        type,
+        description,
+        orderId,
+      });
+
+      await manager.save(tx);
+
+      wallet.balance = Number(wallet.balance) - Number(amount);
+      await manager.save(wallet);
+
+      return tx;
+    };
+
+    if (externalManager) return run(externalManager);
+    return this.dataSource.transaction(run);
+  }
+
   private async migrateWalletCurrency(wallet: Wallet, targetCurrency: string) {
     if (wallet.currency === targetCurrency) return;
 
@@ -207,89 +324,15 @@ export class WalletService {
     });
   }
 
-  // Helper to credit wallet (to be used by OrderService)
-  async creditWallet(
-    userId: number,
-    amount: number,
-    type: TransactionType,
-    orderId?: number,
-    description?: string,
-  ): Promise<void> {
-    const wallet = await this.getWallet(userId);
-    wallet.balance = Number(wallet.balance) + amount;
-    await this.walletRepository.save(wallet);
 
-    const transaction = this.transactionRepository.create({
-      wallet,
-      type,
-      amount,
-      orderId,
-      // No description stored for internal types so client can localize.
-      // Or we store a fallback EN string, but client should prefer type.
-      description: description || null,
-    });
-    await this.transactionRepository.save(transaction);
-  }
-
-  async debitWallet(
-    userId: number,
-    amount: number,
-    type: TransactionType,
-    description?: string,
-    manager?: EntityManager,
-  ): Promise<void> {
-    const executeDebit = async (entityManager: EntityManager) => {
-      const wallet = await entityManager.findOne(Wallet, {
-        where: { user: { id: userId } },
-        lock: { mode: 'pessimistic_write' },
-      });
-
-      if (!wallet) {
-        throw new NotFoundException('Wallet not found');
-      }
-
-      if (Number(wallet.balance) < amount) {
-        throw new BadRequestException('Insufficient balance');
-      }
-
-      // Round to 2 decimal places to avoid floating point errors
-      const newBalance = Number(wallet.balance) - amount;
-      wallet.balance = Math.round(newBalance * 100) / 100;
-
-      await entityManager.save(wallet);
-
-      const transaction = this.transactionRepository.create({
-        wallet,
-        type,
-        amount: -amount,
-        description: description || null,
-      });
-      await entityManager.save(WalletTransaction, transaction);
-    };
-
-    if (manager) {
-      await executeDebit(manager);
-    } else {
-      const queryRunner = this.dataSource.createQueryRunner();
-      await queryRunner.connect();
-      await queryRunner.startTransaction();
-      try {
-        await executeDebit(queryRunner.manager);
-        await queryRunner.commitTransaction();
-      } catch (err) {
-        await queryRunner.rollbackTransaction();
-        throw err;
-      } finally {
-        await queryRunner.release();
-      }
-    }
-  }
 
   async requestTopUp(
     userId: number,
     amount: number,
     method: string,
-    reference: string,
+    reference?: string,
+    metadata?: Record<string, any>,
+    attachmentUrl?: string,
   ): Promise<TopUpRequest> {
     const user = await this.userRepository.findOne({ where: { id: userId } });
     if (!user) {
@@ -301,7 +344,9 @@ export class WalletService {
       amount,
       method,
       reference,
+      attachmentUrl,
       status: TopUpStatus.PENDING,
+      metadata: metadata || {},
     });
 
     return this.topUpRequestRepository.save(topUpRequest);
@@ -341,10 +386,10 @@ export class WalletService {
   async getWalletStats() {
     const totalTransactions = await this.transactionRepository.count();
 
-    const activeSubscriptions = await this.userRepository.count({
+    // Replaced Active Subscriptions with Certified Vendors count
+    const certifiedVendors = await this.userRepository.count({
       where: {
-        subscriptionTier: SubscriptionTier.PRO,
-        subscriptionExpiry: MoreThan(new Date()),
+        verified: true,
       },
     });
 
@@ -353,22 +398,26 @@ export class WalletService {
       .select('SUM(tx.amount)', 'total')
       .where('tx.type IN (:...types)', {
         types: [
-          TransactionType.SUBSCRIPTION,
-          TransactionType.SUBSCRIPTION_RENEWAL,
+          TransactionType.SUBSCRIPTION, // include legacy subs
+          TransactionType.COMMISSION, // if we track commission as tx
+          // Note: Commission is currently calculated on OrderItem and might not be a WalletTransaction yet
+          // unless we create one. For now, this just tracks wallet movement.
         ],
       })
-      .getRawOne<{ total: any }>();
-
-    const totalRevenue = revenueResult
-      ? parseFloat(revenueResult.total || '0')
-      : 0;
+      .getRawOne();
+      
+    // Ideally we should also sum order_item.commission for "Collected Commission"
+    // But this method seems to be about Wallet Transactions specifically.
+    // Let's repurpose "activeSubscriptions" to "certifiedVendors"
 
     return {
       totalTransactions,
-      activeSubscriptions,
-      totalRevenue,
+      activeSubscriptions: certifiedVendors, // Aliased for frontend compatibility
+      certifiedVendors,
+      revenue: Number(revenueResult?.total) || 0,
     };
   }
+
 
   async findAllTransactions(
     page: number = 1,
@@ -475,12 +524,70 @@ export class WalletService {
       await queryRunner.manager.save(transaction);
 
       await queryRunner.commitTransaction();
+      
+      // Post-transaction auto-action: Check for pending auto-subscriptions
+      // This handles cases where user previously tried to subscribe but had insufficient funds.
+      this.usersService.processPendingWalletSubscription(request.user.id).catch(err => {
+        console.error(`Error processing pending subscription after top-up: ${err.message}`);
+      });
+      
+      // Also process explicit metadata-based auto-actions (legacy support)
+      await this.processAutoAction(request, walletEntity);
+      
       return request;
     } catch (err) {
       await queryRunner.rollbackTransaction();
       throw err;
     } finally {
       await queryRunner.release();
+    }
+  }
+
+  private async processAutoAction(request: TopUpRequest, wallet: Wallet): Promise<void> {
+    if (request.metadata && request.metadata.auto_action === 'upgrade_pro') {
+      console.log(`[AutoAction] Processing auto-upgrade for user ${request.user.id}`);
+      try {
+        // 1. Get Price
+        const setting = await this.uiSettingRepository.findOne({ where: { key: 'vendor_subscription_base_price' } });
+        
+        if (!setting) {
+            console.warn('[AutoAction] vendor_subscription_base_price not set in DB. Upgrade aborted.');
+            return;
+        }
+
+        const rawPrice = Number(setting.value); 
+        const priceCurrency = 'USD';
+        
+        // 2. Convert to Wallet Currency
+        const walletCurrency = wallet.currency || 'KES'; // Default if missing
+        
+        const convertedPrice = this.currencyService.convert(rawPrice, priceCurrency, walletCurrency);
+        const finalPrice = Math.ceil(convertedPrice); // Round up to be safe/clean
+
+        console.log(`[AutoAction] Price: ${rawPrice} ${priceCurrency} -> ${finalPrice} ${walletCurrency}`);
+
+        // 3. Check Balance
+        if (Number(wallet.balance) >= finalPrice) {
+          // 4. Deduct
+          await this.debitWallet(request.user.id, finalPrice, TransactionType.SUBSCRIPTION, 'Pro Plan Upgrade (Auto)');
+          
+          // 5. Update User Subscription
+          const user = await this.userRepository.findOne({ where: { id: request.user.id } });
+          if (user) {
+            user.subscriptionTier = SubscriptionTier.PRO;
+            // Set expiry to 30 days from now
+            const expiry = new Date();
+            expiry.setDate(expiry.getDate() + 30);
+            user.subscriptionExpiry = expiry;
+            await this.userRepository.save(user);
+            console.log(`[AutoAction] User ${user.id} upgraded to PRO automatically.`);
+          }
+        } else {
+          console.warn(`[AutoAction] Insufficient balance for auto-upgrade. Req: ${finalPrice} ${walletCurrency}, Has: ${wallet.balance}`);
+        }
+      } catch (e) {
+        console.error('[AutoAction] Failed to auto-upgrade:', e);
+      }
     }
   }
 

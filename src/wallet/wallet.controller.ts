@@ -7,8 +7,13 @@ import {
   Req,
   Param,
   Query,
+  UseInterceptors,
+  UploadedFile,
+  BadRequestException,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { WalletService } from './wallet.service';
+import { DoSpacesService } from '../media/do-spaces.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -19,7 +24,10 @@ import { PaymentDto } from './dto/payment.dto';
 @Controller('wallet')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class WalletController {
-  constructor(private readonly walletService: WalletService) {}
+  constructor(
+    private readonly walletService: WalletService,
+    private readonly doSpacesService: DoSpacesService,
+  ) {}
 
   @Get()
   async getWallet(@Req() req, @Query('currency') currency?: string) {
@@ -53,7 +61,12 @@ export class WalletController {
   }
 
   @Post('top-up')
-  async requestTopUp(@Req() req, @Body() topUpDto: TopUpDto) {
+  @UseInterceptors(FileInterceptor('image'))
+  async requestTopUp(
+    @Req() req,
+    @Body() topUpDto: TopUpDto,
+    @UploadedFile() image?: Express.Multer.File,
+  ) {
     // Fix: Use req.user.id (from JwtStrategy) instead of req.user.userId
     // Also log the user object to debug
     // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
@@ -74,11 +87,28 @@ export class WalletController {
       throw new Error('User ID could not be resolved from token or body');
     }
 
+    let attachmentUrl: string | undefined;
+    if (image) {
+      attachmentUrl = await this.doSpacesService.uploadFile(
+        image.buffer,
+        image.originalname,
+        image.mimetype,
+      );
+    }
+
+    if (!topUpDto.reference && !attachmentUrl) {
+      throw new BadRequestException(
+        'Either transaction reference or image proof must be provided.',
+      );
+    }
+
     return this.walletService.requestTopUp(
       userId,
       topUpDto.amount,
       topUpDto.method,
       topUpDto.reference,
+      topUpDto.metadata,
+      attachmentUrl,
     );
   }
 

@@ -14,30 +14,18 @@ export class SubscriptionsController {
 
   @Get('plans')
   async getPlans() {
-    // Fetch base price
-    const basePriceSetting = await this.uiSettingRepo.findOne({
-      where: { key: 'vendor_subscription_base_price' },
-    });
-    const basePrice = basePriceSetting ? Number(basePriceSetting.value) : 9.99;
-
-    // Fetch rates
-    const ratesSnapshot = this.currencyService.getRatesSnapshot();
-    const rates = ratesSnapshot.rates;
-
-    // Calculate localized prices
-    const prices: Record<string, number> = {
-      USD: basePrice,
-    };
-
-    for (const [currency, rate] of Object.entries(rates)) {
-      if (currency !== 'USD') {
-        prices[currency] = Math.round(basePrice * Number(rate) * 100) / 100;
-      }
-    }
-
+    // Deprecated: No more paid subscriptions.
+    // Returning 0 prices to signal "Free" or "All Commission" model to legacy clients.
     return {
-      prices,
-      renewalType: 'WALLET_AUTO',
+      prices: {
+        USD: 0,
+        ETB: 0,
+        KES: 0,
+        SOS: 0,
+        DJF: 0,
+      },
+      renewalType: 'NONE',
+      message: 'Subscriptions are now free. Commission applies per order.',
     };
   }
 }

@@ -11,13 +11,13 @@ async function run() {
   const settings = [
     {
       key: 'vendor_subscription_base_price',
-      value: 2000,
-      description: 'Base price for vendor subscription (e.g. 2000 ETB)',
+      value: 9.99,
+      description: 'Base price for vendor subscription in USD',
     },
     {
       key: 'vendor_subscription_fees',
-      value: 150,
-      description: 'Additional fees for vendor subscription',
+      value: 0.50,
+      description: 'Additional fees for vendor subscription in USD',
     },
   ];
 

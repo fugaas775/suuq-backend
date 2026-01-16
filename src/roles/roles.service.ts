@@ -75,7 +75,13 @@ export class RolesService {
     await this.upgradeRepo.save(req);
     // Merge roles onto user (dedupe)
     const user = await this.usersService.findById(req.user.id);
-    const newRoles = Array.from(new Set([...(user.roles || []), ...req.roles]));
+    let newRoles = Array.from(new Set([...(user.roles || []), ...req.roles]));
+
+    // Fix: Remove CUSTOMER if VENDOR is present
+    if (newRoles.includes(UserRole.VENDOR)) {
+      newRoles = newRoles.filter((r) => r !== UserRole.CUSTOMER);
+    }
+    
     await this.usersService.updateUserRoles(user.id, newRoles);
     return req;
   }
@@ -123,9 +129,12 @@ export class RolesService {
       pending.decidedBy = actedBy;
       const saved = await this.upgradeRepo.save(pending);
 
-      const newRoles = Array.from(
+      let newRoles = Array.from(
         new Set([...(user.roles || []), ...saved.roles]),
       );
+      if (newRoles.includes(UserRole.VENDOR)) {
+        newRoles = newRoles.filter((r) => r !== UserRole.CUSTOMER);
+      }
       await this.usersService.updateUserRoles(user.id, newRoles);
       return saved;
     }
@@ -138,9 +147,12 @@ export class RolesService {
       decidedBy: actedBy,
     });
     const saved = await this.upgradeRepo.save(request);
-    const newRoles = Array.from(
+    let newRoles = Array.from(
       new Set([...(user.roles || []), ...saved.roles]),
     );
+    if (newRoles.includes(UserRole.VENDOR)) {
+      newRoles = newRoles.filter((r) => r !== UserRole.CUSTOMER);
+    }
     await this.usersService.updateUserRoles(user.id, newRoles);
     return saved;
   }

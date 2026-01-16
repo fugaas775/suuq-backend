@@ -120,7 +120,15 @@ export class AuthService {
       businessLicenseNumber: dto.businessLicenseNumber,
     };
 
-    return this.usersService.create(userToCreateData);
+    const createdUser = await this.usersService.create(userToCreateData);
+    if (createdUser && createdUser.email) {
+      this.emailService
+        .sendWelcomeEmail(createdUser)
+        .catch((e) =>
+          this.logger.error(`Failed to send welcome email: ${e.message}`),
+        );
+    }
+    return createdUser;
   }
 
   /**

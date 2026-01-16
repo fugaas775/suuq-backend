@@ -6,11 +6,12 @@ import { APP_GUARD } from '@nestjs/core';
 import { APP_INTERCEPTOR } from '@nestjs/core';
 // import { ThrottlerGuard } from '@nestjs/throttler';
 import { AdminThrottlerGuard } from './common/guards/admin-throttler.guard';
-import { ConfigModule } from '@nestjs/config';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { dataSourceOptions } from './ormconfig';
+import { BullModule } from '@nestjs/bullmq';
 
 // Import all your feature modules
 import { UsersModule } from './users/users.module';
@@ -57,6 +58,15 @@ import { WithdrawalsModule } from './withdrawals/withdrawals.module';
     ConfigModule.forRoot({ isGlobal: true, envFilePath: '.env' }),
     ScheduleModule.forRoot(),
     TypeOrmModule.forRoot(dataSourceOptions), // Use the simplified, direct config
+    BullModule.forRootAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: async (configService: ConfigService) => ({
+        connection: {
+          url: configService.get('REDIS_URL') || 'redis://localhost:6379',
+        },
+      }),
+    }),
     // Global Cache (Redis if configured, else in-memory)
     CacheModule.registerAsync({
       isGlobal: true,

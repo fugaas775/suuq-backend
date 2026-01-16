@@ -15,6 +15,8 @@ import { Review } from '../reviews/entities/review.entity';
 import { FavoritesService } from '../favorites/favorites.service';
 import { GeoResolverService } from '../common/services/geo-resolver.service';
 import { UserRole } from '../auth/roles.enum';
+import { CurrencyService } from '../common/services/currency.service';
+import { EmailService } from '../email/email.service';
 
 describe('ProductsService.deleteProduct media cleanup', () => {
   let service: ProductsService;
@@ -84,6 +86,8 @@ describe('ProductsService.deleteProduct media cleanup', () => {
           provide: GeoResolverService,
           useValue: { resolveCountryFromCity: jest.fn() },
         },
+        { provide: CurrencyService, useValue: { convert: jest.fn() } },
+        { provide: EmailService, useValue: { send: jest.fn() } },
       ],
     }).compile();
 

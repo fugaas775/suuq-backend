@@ -202,7 +202,23 @@ describe('UsersService.findAll filtering (in-memory integration)', () => {
       }),
     ];
     const fakeRepo: any = new FakeUserRepository(seed);
-    service = new UsersService(fakeRepo);
+    // Mocks for other dependencies
+    const mockSubscriptionRepo: any = { find: jest.fn(), findOne: jest.fn(), save: jest.fn() };
+    const mockUiSettingRepo: any = { find: jest.fn(), findOne: jest.fn(), save: jest.fn() };
+    const mockWalletRepo: any = { find: jest.fn(), findOne: jest.fn(), save: jest.fn() };
+    const mockWalletService: any = { createWallet: jest.fn() };
+    const mockCurrencyService: any = { convert: jest.fn() };
+    const mockNotificationsService: any = { sendToUser: jest.fn() };
+
+    service = new UsersService(
+        fakeRepo,
+        mockSubscriptionRepo,
+        mockUiSettingRepo,
+        mockWalletRepo,
+        mockWalletService,
+        mockCurrencyService,
+        mockNotificationsService
+    );
   });
 
   it('Active Vendor with Docs (active=1&role=VENDOR&hasdocs=true)', async () => {

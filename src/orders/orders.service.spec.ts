@@ -1,13 +1,14 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { OrdersService } from './orders.service';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { Order } from './entities/order.entity';
+import { Order, OrderItem } from './entities/order.entity';
 import { CartService } from '../cart/cart.service';
 import { MpesaService } from '../mpesa/mpesa.service';
 import { TelebirrService } from '../telebirr/telebirr.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { DoSpacesService } from '../media/do-spaces.service';
 import { AuditService } from '../audit/audit.service';
+import { CurrencyService } from '../common/services/currency.service';
 
 describe('OrdersService', () => {
   let service: OrdersService;
@@ -17,12 +18,14 @@ describe('OrdersService', () => {
       providers: [
         OrdersService,
         { provide: getRepositoryToken(Order), useValue: {} },
+        { provide: getRepositoryToken(OrderItem), useValue: {} },
         { provide: CartService, useValue: {} },
         { provide: MpesaService, useValue: {} },
         { provide: TelebirrService, useValue: {} },
         { provide: NotificationsService, useValue: {} },
         { provide: DoSpacesService, useValue: {} },
         { provide: AuditService, useValue: {} },
+        { provide: CurrencyService, useValue: { convert: jest.fn() } },
       ],
     }).compile();
 

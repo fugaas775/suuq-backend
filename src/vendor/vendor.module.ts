@@ -17,10 +17,13 @@ import { SearchKeyword } from '../products/entities/search-keyword.entity';
 import { VendorAnalyticsController } from './vendor-analytics.controller';
 import { CurrencyModule } from '../common/services/currency.module';
 import { ShippingModule } from '../shipping/shipping.module';
+import { UserReport } from '../moderation/entities/user-report.entity';
+import { SettingsModule } from '../settings/settings.module';
 
 @Module({
   imports: [
     ShippingModule,
+    SettingsModule,
     // ✨ 2. PRODUCTIMAGE ENTITY ADDED HERE
     TypeOrmModule.forFeature([
       User,
@@ -31,6 +34,7 @@ import { ShippingModule } from '../shipping/shipping.module';
       ProductImpression,
       Tag,
       SearchKeyword,
+      UserReport,
     ]),
     forwardRef(() => UsersModule),
     forwardRef(() => ProductsModule),

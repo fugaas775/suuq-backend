@@ -171,6 +171,41 @@ export class ProductRequestsController {
     return this.productRequests.rejectOffer(user.id, id, offerId, body);
   }
 
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Get(':id')
+  async getOne(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const request = await this.productRequests.findOne(id);
+    const user = req.user;
+
+    let adminNote: string | null = null;
+    let forwardDetails: any = null;
+
+    // If vendor, attach forwarding details (note from admin, etc)
+    if (user.roles?.includes('VENDOR')) {
+      const forward = await this.productRequests.getForwardDetails(id, user.id);
+      if (forward) {
+        adminNote = forward.note || null;
+        forwardDetails = forward;
+      }
+    }
+
+    // Flatten guest contact info for convenience if present
+    const metadata: any = request.metadata || {};
+    const guestContact = metadata.guestContact || {};
+
+    return {
+      ...request,
+      adminNote, // Injected for vendors
+      forwardedAt: forwardDetails?.forwardedAt || null,
+      guestName: guestContact.name || null,
+      guestEmail: guestContact.email || null,
+      guestPhone: guestContact.phone || null,
+    };
+  }
+
   // --- Analytics/search logging compatibility endpoints (v1/v2, alt paths) ---
   @Post([
     'search/log',

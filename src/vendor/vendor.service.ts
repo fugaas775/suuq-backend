@@ -3,6 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { SettingsService } from '../settings/settings.service';
 import { CreateVendorProductDto } from './dto/create-vendor-product.dto';
 import { FindAllVendorsDto } from './dto/find-all-vendors.dto';
 import { UpdateVendorProductDto } from './dto/update-vendor-product.dto';
@@ -36,6 +37,7 @@ import { Logger } from '@nestjs/common';
 import { CurrencyService } from '../common/services/currency.service';
 import { ShippingService } from '../shipping/shipping.service';
 import { GenerateLabelDto } from './dto/generate-label.dto';
+import { UserReport } from '../moderation/entities/user-report.entity';
 
 @Injectable()
 export class VendorService {
@@ -52,10 +54,13 @@ export class VendorService {
     private readonly productImageRepository: Repository<ProductImage>,
     @InjectRepository(Tag)
     private readonly tagRepository: Repository<Tag>,
+    @InjectRepository(UserReport)
+    private readonly userReportRepository: Repository<UserReport>,
     private readonly notificationsService: NotificationsService,
     private readonly doSpacesService: DoSpacesService,
     private readonly currencyService: CurrencyService,
     private readonly shippingService: ShippingService,
+    private readonly settingsService: SettingsService,
   ) {}
 
   private readonly logger = new Logger(VendorService.name);
@@ -180,18 +185,24 @@ export class VendorService {
 
     if (!isPro) {
       if (isVendor) {
-        // limit 5
-        if (productCount >= 5) {
+        const freeLimitRaw = await this.settingsService.getSystemSetting('limit.free_vendor_products');
+        const freeLimit = freeLimitRaw ? Number(freeLimitRaw) : 5;
+
+        // limit 5 (default)
+        if (productCount >= freeLimit) {
           throw new ForbiddenException(
-            'Free vendors are limited to 5 products. Upgrade to Pro for unlimited listings.',
+            `Free vendors are limited to ${freeLimit} products. Upgrade to Pro for unlimited listings.`,
           );
         }
       } else {
-        // limit 1
+        const customerLimitRaw = await this.settingsService.getSystemSetting('limit.customer_products');
+        const customerLimit = customerLimitRaw ? Number(customerLimitRaw) : 1;
+
+        // limit 1 (default)
         // Note: Customers can post 1 product to "try it out" or simply exist
-        if (productCount >= 1) {
+        if (productCount >= customerLimit) {
           throw new ForbiddenException(
-            'Customers are limited to 1 product. Become a Vendor to list more.',
+            `Customers are limited to ${customerLimit} product. Become a Vendor to list more.`,
           );
         }
       }
@@ -645,6 +656,9 @@ export class VendorService {
     if (!product) {
       throw new NotFoundException('Product not found or not owned by user');
     }
+    // Manually delete related reports to handle FK constraint if not cascading on DB
+    await this.userReportRepository.delete({ product: { id: productId } });
+    
     await this.productRepository.delete(productId);
     return { deleted: true };
   }
@@ -962,6 +976,7 @@ export class VendorService {
       country?: string;
       region?: string;
       city?: string;
+      subscriptionTier?: 'free' | 'pro';
       minSales?: number;
       minRating?: number;
     },
@@ -980,6 +995,7 @@ export class VendorService {
       country,
       region,
       city,
+      subscriptionTier,
       minSales,
       minRating,
     } = findAllVendorsDto;
@@ -988,20 +1004,33 @@ export class VendorService {
     let findOptions: any;
 
     if (search) {
-      // If there is a search term, create OR conditions for displayName and storeName
+      // If there is a search term, create OR conditions for displayName, storeName, and ID
+      const commonCriteria = {
+        roles: ArrayContains([UserRole.VENDOR]),
+        isActive: true,
+      };
+
+      const whereConditions: any[] = [
+        {
+          ...commonCriteria,
+          displayName: ILike(`%${search}%`),
+        },
+        {
+          ...commonCriteria,
+          storeName: ILike(`%${search}%`),
+        },
+      ];
+
+      // If strictly numeric, also match exact ID
+      if (!Number.isNaN(Number(search)) && search.trim() !== '') {
+        whereConditions.push({
+          ...commonCriteria,
+          id: Number(search),
+        });
+      }
+
       findOptions = {
-        where: [
-          {
-            roles: ArrayContains([UserRole.VENDOR]),
-            isActive: true,
-            displayName: ILike(`%${search}%`),
-          },
-          {
-            roles: ArrayContains([UserRole.VENDOR]),
-            isActive: true,
-            storeName: ILike(`%${search}%`),
-          },
-        ],
+        where: whereConditions,
       };
     } else {
       // If there is no search term, find all vendors
@@ -1027,6 +1056,16 @@ export class VendorService {
             verificationStatus,
           }))
         : { ...findOptions.where, verificationStatus };
+    }
+
+    if (subscriptionTier) {
+      const tier = subscriptionTier.toLowerCase();
+      findOptions.where = Array.isArray(findOptions.where)
+        ? findOptions.where.map((w: any) => ({
+            ...w,
+            subscriptionTier: tier,
+          }))
+        : { ...findOptions.where, subscriptionTier: tier };
     }
 
     // Apply geo filters (case-insensitive equals) when provided
@@ -1202,14 +1241,19 @@ export class VendorService {
       totalSales: parseFloat(totalSales) || 0,
     };
   }
-  async getVendorProducts(userId: number, currency?: string) {
+  async getVendorProducts(userId: number, currency?: string, search?: string) {
     const target = this.normalizeCurrency(currency);
     this.logger.debug(
       `Vendor products currency normalized: requested=${currency} applied=${target}`,
     );
     // Eagerly load product relations
+    const where: any = { vendor: { id: userId } };
+    if (search && search.trim().length > 0) {
+      where.name = ILike(`%${search.trim()}%`);
+    }
+
     const products = await this.productRepository.find({
-      where: { vendor: { id: userId } },
+      where,
       relations: ['images', 'category', 'tags'],
     });
     try {
@@ -1648,9 +1692,6 @@ export class VendorService {
     const page = opts.page && opts.page > 0 ? opts.page : 1;
     const limit = opts.limit && opts.limit > 0 ? Math.min(opts.limit, 100) : 20;
     const targetCurrency = this.normalizeCurrency(opts.currency);
-    this.logger.debug(
-      `Vendor orders currency normalized: requested=${opts.currency} applied=${targetCurrency}`,
-    );
 
     // Step 1: Get distinct Order IDs and Total Count
     const qbIds = this.orderRepository
@@ -1677,14 +1718,7 @@ export class VendorService {
       .take(limit)
       .getRawMany();
 
-    this.logger.debug(
-      `Vendor orders raw distinct result: ${JSON.stringify(distinctResult)}`,
-    );
-
     const orderIds = distinctResult.map((r) => r.o_id);
-    this.logger.debug(
-      `Vendor orders IDs found: ${JSON.stringify(orderIds)} (Total: ${total})`,
-    );
 
     if (orderIds.length === 0) {
       return { data: [], total };
@@ -1701,8 +1735,6 @@ export class VendorService {
       .where('o.id IN (:...ids)', { ids: orderIds })
       .orderBy('o.createdAt', 'DESC')
       .getMany();
-
-    this.logger.debug(`Vendor orders entities fetched: ${orders.length}`);
 
     // Filter items to only this vendor's products in the response and expose normalized deliverer fields
     const data = orders.map((o) => {

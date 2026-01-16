@@ -406,14 +406,15 @@ export class ProductsService {
       throw new NotFoundException('Vendor not found');
     }
 
-    // Check subscription tier and product limit
-    if (vendor.subscriptionTier !== SubscriptionTier.PRO) {
+    // Check certification status and product limit
+    // "Certified" (Verified) vendors have unlimited; "Uncertified" (Unverified) are limited to 5.
+    if (!vendor.verified) {
       const productCount = await this.productRepo.count({
         where: { vendor: { id: vendorId } },
       });
       if (productCount >= 5) {
         throw new ForbiddenException(
-          'Free vendors are limited to 5 products. Please upgrade to Pro for unlimited listings.',
+          'Uncertified vendors are limited to 5 products. Please verify your business to become Certified for unlimited listings.',
         );
       }
     }
@@ -984,7 +985,8 @@ export class ProductsService {
         country = explicitCountry.toUpperCase();
       } else if (city) {
         const cc = this.geo?.resolveCountryFromCity(city) || null;
-        country = cc ? cc.toUpperCase() : null;
+        // Ensure strictly 2-char code to satisfy varchar(2) constraint
+        country = (cc && cc.length === 2) ? cc.toUpperCase() : null;
       }
       // Normalize vendorHits array: ensure each item has proper country code normalization
       let vendorHitsJson: string | null = null;
@@ -1002,7 +1004,7 @@ export class ProductsService {
             if (raw && /^[a-zA-Z]{2}$/.test(raw)) vc = raw.toUpperCase();
             else if (city) {
               const cc = this.geo?.resolveCountryFromCity(city) || null;
-              if (cc) vc = cc.toUpperCase();
+              if (cc && cc.length === 2) vc = cc.toUpperCase();
             }
             return {
               name,

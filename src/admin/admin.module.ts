@@ -39,10 +39,15 @@ import { CurrencyModule } from '../common/services/currency.module';
 import { WalletModule } from '../wallet/wallet.module';
 import { AdminWalletController } from './admin-wallet.controller';
 import { MetricsModule } from '../metrics/metrics.module';
+import { AdminNotificationsController } from './notifications.admin.controller';
+import { AdminSystemController } from './admin-system.controller';
+import { EmailModule } from '../email/email.module';
+import { BullModule } from '@nestjs/bullmq';
 
 @Module({
   // 2. Add UsersModule and OrdersModule here
   imports: [
+    BullModule.registerQueue({ name: 'emails' }, { name: 'notifications' }),
     UsersModule,
     OrdersModule,
     ProductsModule,
@@ -55,6 +60,7 @@ import { MetricsModule } from '../metrics/metrics.module';
     SearchModule,
     NotificationsModule,
     CurrencyModule,
+    EmailModule,
     TypeOrmModule.forFeature([
       Product,
       ProductImpression,
@@ -80,6 +86,8 @@ import { MetricsModule } from '../metrics/metrics.module';
     AdminUsersController,
     AdminAuditController,
     AdminWalletController,
+    AdminNotificationsController,
+    AdminSystemController,
   ],
   // 3. Remove the services from providers. They are now correctly provided by the imported modules.
   providers: [

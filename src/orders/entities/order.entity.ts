@@ -14,6 +14,10 @@ export enum PaymentMethod {
   STRIPE = 'STRIPE',
   MPESA = 'MPESA',
   TELEBIRR = 'TELEBIRR',
+  EBIRR = 'EBIRR',
+  CBE = 'CBE',
+  WAAFI = 'WAAFI',
+  DMONEY = 'DMONEY',
   BANK_TRANSFER = 'BANK_TRANSFER',
 }
 
@@ -91,6 +95,22 @@ export class Order {
     phoneNumber: string;
   };
 
+  @Column({ name: 'currency', type: 'char', length: 3, default: 'USD' })
+  currency!: string;
+
+  @Column('decimal', {
+    name: 'exchange_rate',
+    precision: 10,
+    scale: 4,
+    default: 1.0,
+    transformer: {
+      to: (value: number) => value,
+      from: (value: string | number) =>
+        typeof value === 'string' ? parseFloat(value) : value,
+    },
+  })
+  exchangeRate!: number;
+
   @CreateDateColumn()
   createdAt!: Date;
 }
@@ -117,6 +137,30 @@ export class OrderItem {
     },
   })
   price!: number; // Price at the time of purchase
+
+  @Column('decimal', {
+    precision: 10,
+    scale: 2,
+    default: 0,
+    transformer: {
+      to: (value: number) => value,
+      from: (value: string | number) =>
+        typeof value === 'string' ? parseFloat(value) : value,
+    },
+  })
+  commission!: number;
+
+  @Column('decimal', {
+    precision: 10,
+    scale: 2,
+    default: 0,
+    transformer: {
+      to: (value: number) => value,
+      from: (value: string | number) =>
+        typeof value === 'string' ? parseFloat(value) : value,
+    },
+  })
+  vendorPayout!: number;
 
   @Column({
     type: 'enum',

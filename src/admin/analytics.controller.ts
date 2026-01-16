@@ -4,12 +4,15 @@ import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { UserRole } from '../auth/roles.enum';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, DataSource, MoreThan, LessThan } from 'typeorm';
 import { SearchKeyword } from '../products/entities/search-keyword.entity';
 import { ProductImpression } from '../products/entities/product-impression.entity';
 import { Product } from '../products/entities/product.entity';
+import { User, SubscriptionTier } from '../users/entities/user.entity';
 import { GeoResolverService } from '../common/services/geo-resolver.service';
 import { SkipThrottle } from '@nestjs/throttler';
+import { UiSetting } from '../settings/entities/ui-setting.entity';
+import { OrderItem } from '../orders/entities/order.entity';
 
 type SortKey =
   | 'submit_desc'
@@ -33,7 +36,10 @@ export class AdminAnalyticsController {
     private readonly impressionRepo: Repository<ProductImpression>,
     @InjectRepository(Product)
     private readonly productRepo: Repository<Product>,
+    @InjectRepository(User)
+    private readonly userRepo: Repository<User>,
     private readonly geo: GeoResolverService,
+    private readonly dataSource: DataSource,
   ) {}
 
   private countryName(code?: string | null): string | null {
@@ -48,6 +54,49 @@ export class AdminAnalyticsController {
     };
     return map[c] || null;
   }
+
+  @Get('admin/analytics/subscriptions')
+  async getSubscriptionAnalytics() {
+    // Deprecated Endpoint: Now repurposed for Commission Analytics
+    // Returns structure compatible with new "Commission" frontend logic
+
+    // 1. Commission Collected (Total Sum of 'commission' column in OrderItems)
+    const orderItemRepo = this.dataSource.getRepository(OrderItem);
+    const { totalCommission } = await orderItemRepo
+      .createQueryBuilder('item')
+      .select('SUM(item.commission)', 'totalCommission')
+      .getRawOne();
+    
+    // 2. Active Certified Vendors (formerly "Active Subscribers")
+    const activeSubscribers = await this.userRepo.count({
+      where: {
+        verified: true, // Only count Verified/Certified vendors
+      },
+    });
+
+    // 3. Normalized "MRR" (Commission Revenue in last 30 days)
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    
+    const { recentCommission } = await orderItemRepo
+      .createQueryBuilder('item')
+      .select('SUM(item.commission)', 'recentCommission')
+      .leftJoin('item.order', 'order')
+      .where('order.createdAt > :date', { date: thirtyDaysAgo })
+      .getRawOne();
+
+    return {
+      totalMrr: Number(recentCommission || 0), // Aliased to MRR for compatibility
+      activeSubscribers, // Aliased to Certified Count
+      commissionCollected: Number(totalCommission || 0),
+      
+      // Snake_case aliases
+      total_mrr: Number(recentCommission || 0),
+      active_subscribers: activeSubscribers,
+      total_commission: Number(totalCommission || 0),
+    };
+  }
+
   private cityToCountry(city?: string | null): string | null {
     return this.geo.resolveCountryFromCity(city);
   }
@@ -717,61 +766,61 @@ export class AdminAnalyticsController {
   // Aliases to be resilient with the admin client
   @Get('admin/analytics/search-keywords/top')
   async topKeywordsAlias1(
-    @Query('window') window: 'day' | 'week' | 'month' = 'day',
+    @Query('window') timeWindow: 'day' | 'week' | 'month' = 'day',
     @Query('limit') limit = 100,
   ) {
-    return this.topKeywords(window, Number(limit));
+    return this.topKeywords(timeWindow, Number(limit));
   }
 
   @Get('admin/search/keywords/top')
   async topKeywordsAlias2(
-    @Query('window') window: 'day' | 'week' | 'month' = 'day',
+    @Query('window') timeWindow: 'day' | 'week' | 'month' = 'day',
     @Query('limit') limit = 100,
   ) {
-    return this.topKeywords(window, Number(limit));
+    return this.topKeywords(timeWindow, Number(limit));
   }
 
   // Non-admin prefixed aliases (client fallbacks)
   @Get('analytics/search-keywords/top')
   async topKeywordsAlias3(
-    @Query('window') window: 'day' | 'week' | 'month' = 'day',
+    @Query('window') timeWindow: 'day' | 'week' | 'month' = 'day',
     @Query('limit') limit = 100,
   ) {
-    return this.topKeywords(window, Number(limit));
+    return this.topKeywords(timeWindow, Number(limit));
   }
 
   @Get('analytics/search/keywords/top')
   async topKeywordsAlias4(
-    @Query('window') window: 'day' | 'week' | 'month' = 'day',
+    @Query('window') timeWindow: 'day' | 'week' | 'month' = 'day',
     @Query('limit') limit = 100,
   ) {
-    return this.topKeywords(window, Number(limit));
+    return this.topKeywords(timeWindow, Number(limit));
   }
 
   // Aggregation endpoints (separate cards in UI)
   @Get('admin/search-keywords/aggregations')
   async aggregationsPrimary(
-    @Query('window') window: 'day' | 'week' | 'month' = 'week',
+    @Query('window') timeWindow: 'day' | 'week' | 'month' = 'week',
     @Query('limit') limit = 10,
   ) {
-    return this.topAggregations(window, Number(limit));
+    return this.topAggregations(timeWindow, Number(limit));
   }
 
   // Aliases for aggregations
   @Get('admin/analytics/search-keywords/aggregations')
   async aggregationsAlias1(
-    @Query('window') window: 'day' | 'week' | 'month' = 'week',
+    @Query('window') timeWindow: 'day' | 'week' | 'month' = 'week',
     @Query('limit') limit = 10,
   ) {
-    return this.topAggregations(window, Number(limit));
+    return this.topAggregations(timeWindow, Number(limit));
   }
 
   @Get('analytics/search-keywords/aggregations')
   async aggregationsAlias2(
-    @Query('window') window: 'day' | 'week' | 'month' = 'week',
+    @Query('window') timeWindow: 'day' | 'week' | 'month' = 'week',
     @Query('limit') limit = 10,
   ) {
-    return this.topAggregations(window, Number(limit));
+    return this.topAggregations(timeWindow, Number(limit));
   }
 
   private async listKeywords(

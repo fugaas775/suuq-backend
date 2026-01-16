@@ -5,6 +5,8 @@ import {
   Logger,
   BadRequestException,
   UnauthorizedException,
+  Inject,
+  forwardRef,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, MoreThan, In } from 'typeorm';
@@ -12,6 +14,7 @@ import {
   User,
   VerificationStatus,
   SubscriptionTier,
+  BusinessModel,
   VerificationMethod,
 } from './entities/user.entity'; // Import VerificationStatus enum
 import { RequestVerificationDto } from './dto/request-verification.dto';
@@ -27,6 +30,7 @@ import { UserRole } from '../auth/roles.enum';
 import { FindUsersQueryDto } from './dto/find-users-query.dto';
 import * as bcrypt from 'bcrypt';
 import { UiSetting } from '../settings/entities/ui-setting.entity';
+import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class UsersService {
@@ -40,8 +44,11 @@ export class UsersService {
     private readonly uiSettingRepo: Repository<UiSetting>,
     @InjectRepository(Wallet)
     private readonly walletRepository: Repository<Wallet>,
+    @Inject(forwardRef(() => WalletService))
     private readonly walletService: WalletService,
     private readonly currencyService: CurrencyService,
+    @Inject(forwardRef(() => NotificationsService))
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   /**
@@ -49,14 +56,26 @@ export class UsersService {
    */
   async upgradeToVendor(userId: number): Promise<User> {
     const user = await this.findById(userId);
+    let changed = false;
+
     if (!user.roles.includes(UserRole.VENDOR)) {
       user.roles.push(UserRole.VENDOR);
+      changed = true;
+    }
+
+    if (user.roles.includes(UserRole.CUSTOMER)) {
+      user.roles = user.roles.filter((role) => role !== UserRole.CUSTOMER);
+      changed = true;
+    }
+
+    if (changed) {
       // Ensure verification status is UNVERIFIED initially if not set
       if (!user.verificationStatus) {
         user.verificationStatus = VerificationStatus.UNVERIFIED;
       }
       return this.userRepository.save(user);
     }
+    
     return user;
   }
 
@@ -90,6 +109,12 @@ export class UsersService {
     if (!user) {
       throw new NotFoundException('User not found');
     }
+
+    // Enforce logic: If VENDOR is present, remove CUSTOMER
+    if (newRoles.includes(UserRole.VENDOR)) {
+      newRoles = newRoles.filter((role) => role !== UserRole.CUSTOMER);
+    }
+
     user.roles = newRoles;
     return this.userRepository.save(user);
   }
@@ -357,6 +382,18 @@ export class UsersService {
   }
 
   /**
+   * Find users by role for notifications (unlimited).
+   */
+  async findRecipientsByRole(role: UserRole): Promise<User[]> {
+    return this.userRepository
+      .createQueryBuilder('user')
+      .where('user.roles @> :role', { role: [role] })
+      .andWhere('user.isActive = :isActive', { isActive: true }) // Only active users
+      .select(['user.id', 'user.email']) // specific fields
+      .getMany();
+  }
+
+  /**
    * Count all users in the database.
    */
   async countAll(): Promise<number> {
@@ -403,18 +440,66 @@ export class UsersService {
       'address',
       'postalCode',
       'vendorAvatarUrl',
+      'telebirrAccount', // Added
       // Verification fields for admin
       'verificationStatus',
       'verificationDocuments',
       'verified',
       'verifiedAt',
+      'interestedCategoryIds',
+      'interestedCategoriesLastUpdated',
     ];
+    
+    // Custom Logic for Interest Updates
+    if (data.interestedCategoryIds !== undefined) {
+      if (!Array.isArray(data.interestedCategoryIds)) {
+        throw new BadRequestException('interestedCategoryIds must be an array');
+      }
+      if (data.interestedCategoryIds.length > 3) {
+        throw new BadRequestException('You can select a maximum of 3 top-level categories.');
+      }
+
+      // We need the full user object to check subscription and last update time
+      const user = await this.findById(id);
+
+      if (user.subscriptionTier !== SubscriptionTier.PRO) {
+         throw new BadRequestException('Customizing interest categories is a Pro Vendor feature.');
+      }
+
+      // Check frequency (3 months = approx 90 days)
+      if (user.interestedCategoriesLastUpdated) {
+        const now = new Date();
+        const lastUpdate = new Date(user.interestedCategoriesLastUpdated);
+        const diffTime = Math.abs(now.getTime() - lastUpdate.getTime());
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+        const COOLDOWN_DAYS = 90;
+
+        // If trying to CHANGE the categories (allow re-submitting same list effectively, but better to just strict block update)
+        // Checking strictly if it's a cooldown period.
+        if (diffDays < COOLDOWN_DAYS) {
+           throw new BadRequestException(
+             `You can only update your interest categories once every 3 months. Next update available in ${COOLDOWN_DAYS - diffDays} days.`
+           );
+        }
+      }
+      
+      // If validation passes, update timestamp
+      data.interestedCategoriesLastUpdated = new Date();
+    }
+
     const updateData: Partial<User> = {};
     for (const key of allowedFields) {
       if (data[key] !== undefined) {
         (updateData as any)[key] = data[key];
       }
     }
+    
+    // Reset Telebirr verification if account changes
+    if (data.telebirrAccount && data.telebirrAccount !== (await this.findById(id)).telebirrAccount) {
+        updateData.telebirrVerified = false; 
+        updateData.telebirrVerifiedAt = null;
+    }
+
     // If admin sets verificationStatus to APPROVED, set verified to true
     if (data.verificationStatus === VerificationStatus.APPROVED) {
       updateData.verified = true;
@@ -490,6 +575,34 @@ export class UsersService {
       `Verification status changed: userId=${userId} prev=${prevStatus} status=${status} reason=${reason || 'n/a'} by=${actedBy || 'system'}`,
     );
     return saved;
+  }
+
+  /**
+   * Admin action: Confirm or Reject Telebirr Account
+   */
+  async confirmTelebirrAccount(
+    userId: number,
+    status: 'APPROVED' | 'REJECTED',
+  ): Promise<User> {
+    const user = await this.findById(userId);
+    
+    if (status === 'APPROVED') {
+        if (!user.telebirrAccount) {
+            throw new BadRequestException('User has no Telebirr account to verify');
+        }
+        user.telebirrVerified = true;
+        user.telebirrVerifiedAt = new Date();
+    } else {
+        // REJECTED
+        user.telebirrVerified = false;
+        user.telebirrVerifiedAt = null;
+        // Optionally clear the account or leave it for them to fix. 
+        // User request says: "Clears the telebirrAccount or sends a notification"
+        // I'll clear it.
+        user.telebirrAccount = null; 
+    }
+    
+    return this.userRepository.save(user);
   }
 
   /**
@@ -639,108 +752,15 @@ export class UsersService {
     amount?: number,
     currency?: string,
   ): Promise<any> {
-    const user = await this.userRepository.findOne({ where: { id: userId } });
-    if (!user) {
-      throw new NotFoundException('User not found');
-    }
-
-    if (user.subscriptionTier === SubscriptionTier.PRO) {
-      // If expiry is null, treat as expiring soon (allow fix)
-      if (!user.subscriptionExpiry) {
-        // Proceed to renewal logic
-      } else {
-        // Allow renewal if expiring within 7 days
-        const isExpiringSoon =
-          user.subscriptionExpiry.getTime() - Date.now() <
-          7 * 24 * 60 * 60 * 1000;
-
-        if (!isExpiringSoon) {
-          // Return 201 Created structure for "Already Active"
-          // This is not an error, but a successful idempotent response
-          return { success: true, message: 'Already Active', tier: 'pro' };
-        }
-      }
-    }
-
-    // Fetch base price from UISettings
-    const basePriceSetting = await this.uiSettingRepo.findOne({
-      where: { key: 'vendor_subscription_base_price' },
-    });
-    const PRO_PRICE_USD = basePriceSetting
-      ? Number(basePriceSetting.value)
-      : 9.99;
-
-    if (method === 'WALLET') {
-      // Get user's wallet to determine currency
-      const wallet = await this.walletService.getWallet(userId);
-      const walletCurrency = wallet.currency || 'ETB';
-
-      let amountToCharge: number;
-      let description = 'Pro Subscription Upgrade';
-      let fxRate = 1;
-
-      if (amount && currency) {
-        // Use frontend provided amount, converting if necessary
-        const conversion = this.currencyService.convertWithRate(
-          amount,
-          currency,
-          walletCurrency,
-        );
-        amountToCharge = conversion.amount;
-        fxRate = conversion.rate;
-        description += ` (${amount} ${currency})`;
-      } else {
-        // Fallback to backend calculation
-        const conversion = this.currencyService.convertWithRate(
-          PRO_PRICE_USD,
-          'USD',
-          walletCurrency,
-        );
-        amountToCharge = conversion.amount;
-        fxRate = conversion.rate;
-        description += ` (${PRO_PRICE_USD} USD)`;
-      }
-
-      // Instant upgrade
-      await this.walletService.payWithWallet(
-        userId,
-        amountToCharge,
-        description,
-        TransactionType.SUBSCRIPTION,
-        fxRate,
-      );
-      user.subscriptionTier = SubscriptionTier.PRO;
-
-      // Set expiry to 30 days from now
-      const now = new Date();
-      user.subscriptionExpiry = new Date(
-        now.getTime() + 30 * 24 * 60 * 60 * 1000,
-      );
-      user.autoRenew = true;
-
-      this.updateVerifiedFlag(user);
-
-      return this.userRepository.save(user);
-    } else if (method === 'BANK_TRANSFER') {
-      if (!reference) {
-        throw new BadRequestException(
-          'Reference is required for bank transfer',
-        );
-      }
-      const request = this.subscriptionRequestRepository.create({
-        user,
-        method,
-        reference,
-        amount,
-        currency,
-        requestedTier: SubscriptionTier.PRO,
-        status: SubscriptionRequestStatus.PENDING,
-      });
-      return this.subscriptionRequestRepository.save(request);
-    } else {
-      throw new BadRequestException('Invalid payment method');
-    }
+    // Deprecated: Subscriptions are removed in favor of Commission + Verification
+    throw new BadRequestException(
+      'Subscriptions are no longer required. All vendors operate on a Commission model. Please submit your business documents to get Certified (Verified) status for premium features.',
+    );
   }
+
+  /* Deprecated Logic kept for reference but disabled
+  async requestSubscriptionLegacy(...) { ... }
+  */
 
   async approveSubscription(requestId: number): Promise<SubscriptionRequest> {
     const request = await this.subscriptionRequestRepository.findOne({
@@ -895,7 +915,6 @@ export class UsersService {
       userId,
       0,
       TransactionType.SUBSCRIPTION,
-      undefined,
       `[Manual Extension] - Reason: ${reason}`,
     );
 
@@ -903,14 +922,23 @@ export class UsersService {
   }
 
   private updateVerifiedFlag(user: User) {
-    if (
-      user.subscriptionTier === SubscriptionTier.PRO ||
-      user.verificationStatus === VerificationStatus.APPROVED
-    ) {
+    if (user.verificationStatus === VerificationStatus.APPROVED) {
       user.verified = true;
+      // Sync legacy tier for analytics compatibility
+      user.subscriptionTier = SubscriptionTier.PRO; 
       if (!user.verifiedAt) user.verifiedAt = new Date();
     } else {
       user.verified = false;
+      user.subscriptionTier = SubscriptionTier.FREE;
     }
+  }
+
+  /**
+   * Called by WalletService after a successful top-up.
+   * Checks if user has a pending WALLET_AUTO subscription request.
+   */
+  async processPendingWalletSubscription(userId: number) {
+    // Deprecated: No more auto-subscription logic.
+    return;
   }
 }

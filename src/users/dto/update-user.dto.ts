@@ -1,10 +1,15 @@
-import { IsOptional, IsString, IsEmail, IsEnum } from 'class-validator';
+import { IsOptional, IsString, IsEmail, IsEnum, IsArray, IsNumber } from 'class-validator';
 import { UserRole } from '../../auth/roles.enum';
 
 export class UpdateUserDto {
   @IsOptional()
   @IsString()
   displayName?: string;
+
+  @IsOptional()
+  @IsArray()
+  @IsNumber({}, { each: true })
+  interestedCategoryIds?: number[];
 
   @IsOptional()
   @IsString()

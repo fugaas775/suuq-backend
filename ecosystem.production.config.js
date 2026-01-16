@@ -50,7 +50,7 @@ module.exports = {
         // To enable for specific IDs: set env DEBUG_ATTRS_PRODUCT_IDS="82,83" at deploy time.
         DEBUG_ATTRS_PRODUCT_IDS: process.env.DEBUG_ATTRS_PRODUCT_IDS || '',
         // Temporarily disable Firebase until credentials are configured
-        FIREBASE_DISABLED: 'true',
+        FIREBASE_DISABLED: 'false',
         // Twilio Verify credentials (read from system env/PM2) – do not commit secrets
         TWILIO_ACCOUNT_SID: process.env.TWILIO_ACCOUNT_SID,
         TWILIO_AUTH_TOKEN: process.env.TWILIO_AUTH_TOKEN,

@@ -5,6 +5,7 @@ import { Repository } from 'typeorm';
 import { UpdateSettingsDto } from './dto/update-settings.dto';
 import { UsersService } from '../users/users.service';
 import { UiSetting } from './entities/ui-setting.entity';
+import { SystemSetting } from './entities/system-setting.entity';
 import { UpdateUiSettingDto } from './dto/update-ui-setting.dto';
 
 @Injectable()
@@ -15,7 +16,29 @@ export class SettingsService {
     private usersService: UsersService,
     @InjectRepository(UiSetting)
     private readonly uiSettingRepo: Repository<UiSetting>,
+    @InjectRepository(SystemSetting)
+    private readonly systemSettingRepo: Repository<SystemSetting>,
   ) {}
+
+  async getSystemSetting(key: string): Promise<any> {
+    const setting = await this.systemSettingRepo.findOne({
+      where: { key },
+      // Cache briefly to avoid hitting DB constantly for hot config
+      cache: { id: `sys-setting-${key}`, milliseconds: 60000 },
+    });
+    return setting ? setting.value : null;
+  }
+
+  async setSystemSetting(key: string, value: any, description?: string): Promise<SystemSetting> {
+    let setting = await this.systemSettingRepo.findOne({ where: { key } });
+    if (!setting) {
+      setting = this.systemSettingRepo.create({ key, value, description });
+    } else {
+      setting.value = value;
+      if (description) setting.description = description;
+    }
+    return this.systemSettingRepo.save(setting);
+  }
 
   async getUserSettings(
     userId: number,

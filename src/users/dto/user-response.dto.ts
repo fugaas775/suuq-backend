@@ -40,6 +40,12 @@ export class UserResponseDto {
   subscriptionTier?: SubscriptionTier;
 
   @Expose()
+  businessModel?: string;
+
+  @Expose()
+  commissionRate?: number;
+
+  @Expose()
   subscriptionExpiry?: Date | null;
 
   @Expose()
@@ -119,6 +125,15 @@ export class UserResponseDto {
 
   @Expose()
   isPhoneVerified?: boolean;
+
+  @Expose()
+  telebirrAccount?: string;
+
+  @Expose()
+  telebirrVerified?: boolean;
+
+  @Expose()
+  telebirrVerifiedAt?: Date | null;
 
   @Expose()
   createdAt?: Date; // helpful for sorting / UI display

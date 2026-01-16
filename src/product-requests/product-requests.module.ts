@@ -9,6 +9,7 @@ import { Category } from '../categories/entities/category.entity';
 import { Product } from '../products/entities/product.entity';
 import { User } from '../users/entities/user.entity';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { EmailModule } from '../email/email.module';
 
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
       User,
     ]),
     NotificationsModule,
+    EmailModule,
   ],
   controllers: [ProductRequestsController],
   providers: [ProductRequestsService],

@@ -125,6 +125,12 @@ export class AuthController {
     const userId = req.user?.id;
     if (!userId) throw new UnauthorizedException();
 
+    // Normalize Telebirr fail-safes from client
+    if (!data.telebirrAccount) {
+        if (data.telebirr_account) data.telebirrAccount = data.telebirr_account;
+        else if (data.telebirrMobile) data.telebirrAccount = data.telebirrMobile;
+    }
+
     const user = await usersService.update(userId, data);
     return plainToInstance(UserResponseDto, user, {
       excludeExtraneousValues: true,

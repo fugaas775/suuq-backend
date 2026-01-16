@@ -9,6 +9,7 @@ import {
   Query,
   Req,
   UseGuards,
+  BadRequestException,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { RolesGuard } from '../auth/roles.guard';
@@ -16,12 +17,13 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { UserRole } from '../auth/roles.enum';
 import { AuthenticatedRequest } from '../auth/auth.types';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { ProductRequest } from '../product-requests/entities/product-request.entity';
 import { ProductRequestForward } from '../product-requests/entities/product-request-forward.entity';
 import { AdminForwardProductRequestDto } from './dto/admin-forward-product-request.dto';
 import { SkipThrottle } from '@nestjs/throttler';
 import { NotificationsService } from '../notifications/notifications.service';
+import { User, SubscriptionTier } from '../users/entities/user.entity';
 
 @UseGuards(AuthGuard('jwt'), RolesGuard)
 @SkipThrottle()
@@ -32,6 +34,8 @@ export class AdminProductRequestsController {
     private readonly requestRepo: Repository<ProductRequest>,
     @InjectRepository(ProductRequestForward)
     private readonly forwardRepo: Repository<ProductRequestForward>,
+    @InjectRepository(User)
+    private readonly userRepo: Repository<User>,
     private readonly notifications: NotificationsService,
   ) {}
 
@@ -155,6 +159,29 @@ export class AdminProductRequestsController {
       (vid) => !alreadyForwardedVendorIds.has(vid),
     );
 
+    // Validate that all candidates are PRO vendors
+    if (toCreate.length > 0) {
+      const candidates = await this.userRepo.find({
+        where: { id: In(toCreate) },
+        select: ['id', 'subscriptionTier'],
+      });
+      const validMap = new Map<number, boolean>();
+      for (const c of candidates) {
+        if (c.subscriptionTier === SubscriptionTier.PRO) {
+          validMap.set(c.id, true);
+        }
+      }
+
+      const invalidIds = toCreate.filter((vid) => !validMap.has(vid));
+      if (invalidIds.length > 0) {
+        throw new BadRequestException(
+          `Cannot forward to non-PRO vendors: ${invalidIds.join(
+            ', ',
+          )}. Only PRO vendors can receive forwarded requests.`,
+        );
+      }
+    }
+
     if (!toCreate.length) {
       const forwards = await this.forwardRepo.find({
         where: { requestId: id },
@@ -264,6 +291,10 @@ export class AdminProductRequestsController {
         userId: vendorId,
         title: titleText,
         body,
+        data: {
+          type: 'PRODUCT_REQUEST_FORWARD',
+          requestId: String(requestId),
+        },
       });
     }
   }

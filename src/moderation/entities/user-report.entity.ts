@@ -18,7 +18,7 @@ export class UserReport {
   @Index()
   reporter: User;
 
-  @ManyToOne(() => Product, { nullable: false })
+  @ManyToOne(() => Product, { nullable: false, onDelete: 'CASCADE' })
   @Index()
   product: Product;
 

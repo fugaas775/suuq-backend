@@ -284,10 +284,10 @@ export class FavoritesService {
     );
     if (!list.length) return out;
     const sql = `
-      SELECT elem::int AS product_id, COUNT(*)::bigint AS cnt
-      FROM favorites f, unnest(f.ids) AS elem
-      WHERE elem = ANY($1::int[])
-      GROUP BY elem
+      SELECT u.pid AS product_id, COUNT(*)::bigint AS cnt
+      FROM unnest($1::int[]) AS u(pid)
+      JOIN favorites f ON u.pid = ANY(f.ids)
+      GROUP BY u.pid
     `;
     try {
       const rows: Array<{ product_id: number; cnt: string }> =

@@ -47,7 +47,7 @@ describe('ProductsV1Controller detail', () => {
 
   it('returns full product payload by default', async () => {
     const result = await controller.detail(42, 'full');
-    expect(mockProductsService.findOne).toHaveBeenCalledWith(42);
+    expect(mockProductsService.findOne).toHaveBeenCalledWith(42, undefined);
     expect(result).toBe(product);
   });
 

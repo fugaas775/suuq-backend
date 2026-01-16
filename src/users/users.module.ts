@@ -18,7 +18,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
   imports: [
     TypeOrmModule.forFeature([User, SubscriptionRequest, UiSetting, Wallet]),
     forwardRef(() => ProductsModule),
-    WalletModule,
+    forwardRef(() => WalletModule),
     CurrencyModule,
     forwardRef(() => NotificationsModule),
   ],

@@ -1,7 +1,12 @@
-import { IsOptional, IsString } from 'class-validator';
+import { IsOptional, IsString, IsArray, IsNumber } from 'class-validator';
 
 // Safe subset for self-service profile updates; excludes roles/email/password
 export class UpdateOwnProfileDto {
+  @IsOptional()
+  @IsArray()
+  @IsNumber({}, { each: true })
+  interestedCategoryIds?: number[];
+
   @IsOptional()
   @IsString()
   displayName?: string;
@@ -82,4 +87,16 @@ export class UpdateOwnProfileDto {
   @IsOptional()
   @IsString()
   vendorAvatarUrl?: string;
+
+  @IsOptional()
+  @IsString()
+  telebirrAccount?: string;
+
+  @IsOptional()
+  @IsString()
+  telebirr_account?: string;
+
+  @IsOptional()
+  @IsString()
+  telebirrMobile?: string;
 }

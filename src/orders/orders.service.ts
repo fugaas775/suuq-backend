@@ -19,13 +19,15 @@ import { CreateOrderDto } from './dto/create-order.dto';
 import { CartService } from '../cart/cart.service';
 import { MpesaService } from '../mpesa/mpesa.service';
 import { TelebirrService } from '../telebirr/telebirr.service';
-import { User } from '../users/entities/user.entity';
+import { User, BusinessModel } from '../users/entities/user.entity';
 import { NotificationsService } from '../notifications/notifications.service';
 import { plainToInstance } from 'class-transformer';
 import { OrderResponseDto } from './dto/order-response.dto';
 import { DoSpacesService } from '../media/do-spaces.service';
 import { AuditService } from '../audit/audit.service';
 import { CurrencyService } from '../common/services/currency.service';
+import { EmailService } from '../email/email.service';
+import { UiSetting } from '../settings/entities/ui-setting.entity';
 
 @Injectable()
 export class OrdersService {
@@ -53,7 +55,13 @@ export class OrdersService {
       .leftJoinAndSelect('product.vendor', 'vendor');
 
     if (query.status) {
-      qb.andWhere('order.status = :status', { status: query.status });
+      const statuses = query.status
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+      if (statuses.length > 0) {
+        qb.andWhere('order.status IN (:...statuses)', { statuses });
+      }
     }
 
     // Server-side sorting so admin always sees deterministic newest-first pages
@@ -139,11 +147,16 @@ export class OrdersService {
           vendors.length === 1
             ? vendors[0].storeName || vendors[0].displayName || null
             : null,
-        items: (order.items || []).map((item) => ({
-          productId: item.product?.id,
-          quantity: item.quantity,
-          price: item.price,
-        })),
+        items: (order.items || []).map((item) => {
+          const product = item.product;
+          return {
+            productId: product?.id,
+            productName: product?.name,
+            productImageUrl: product?.thumbnail || product?.imageUrl || null,
+            quantity: item.quantity,
+            price: item.price,
+          };
+        }),
       });
     });
     return { data: response, total };
@@ -176,6 +189,8 @@ export class OrdersService {
     private readonly orderRepository: Repository<Order>,
     @InjectRepository(OrderItem)
     private readonly orderItemRepository: Repository<OrderItem>,
+    @InjectRepository(UiSetting)
+    private readonly uiSettingRepo: Repository<UiSetting>,
     private readonly cartService: CartService,
     private readonly mpesaService: MpesaService,
     private readonly telebirrService: TelebirrService,
@@ -183,7 +198,71 @@ export class OrdersService {
     private readonly doSpaces: DoSpacesService,
     private readonly audit: AuditService,
     private readonly currencyService: CurrencyService,
+    private readonly emailService: EmailService,
   ) {}
+
+  private async sendConfirmationForOrder(orderId: number) {
+    try {
+      const order = await this.orderRepository.findOne({
+        where: { id: orderId },
+        relations: ['user', 'items', 'items.product', 'items.product.vendor'],
+      });
+      if (order) {
+        // Run in background to not block response
+        this.emailService
+          .sendOrderConfirmation(order)
+          .catch((e) =>
+            this.logger.error(
+              `Failed to send order confirmation email: ${e.message}`,
+            ),
+          );
+        
+        // Also notify vendors
+        this.notifyVendorsOfOrder(order).catch((e) =>
+            this.logger.error(`Failed to notify vendors: ${e.message}`),
+        );
+      }
+    } catch (e) {
+      this.logger.error(
+        `Failed to load order for confirmation email: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    }
+  }
+
+  private async notifyVendorsOfOrder(order: Order) {
+    if (!order.items || order.items.length === 0) return;
+
+    // Group items by vendor
+    const vendorItems = new Map<number, { vendor: User; items: any[] }>();
+
+    for (const item of order.items) {
+      const vendor = item.product?.vendor;
+      if (vendor && vendor.email) {
+        if (!vendorItems.has(vendor.id)) {
+          vendorItems.set(vendor.id, { vendor, items: [] });
+        }
+        vendorItems.get(vendor.id)?.items.push({
+          productName: item.product.name,
+          quantity: item.quantity,
+          price: item.price, // Note: This is base price. Ideally we use display price if available, but for vendor notification base/stored price is usually OK or we need to pass currency.
+        });
+      }
+    }
+
+    const currency = order.currency || 'ETB';
+
+    for (const { vendor, items } of vendorItems.values()) {
+        await this.emailService.sendVendorNewOrderEmail(
+            vendor.email,
+            vendor.displayName || 'Vendor',
+            order.id,
+            items,
+            currency
+        );
+    }
+  }
 
   private normalizeCurrency(value?: string | null): string {
     const upper = (value || '').trim().toUpperCase();
@@ -277,12 +356,18 @@ export class OrdersService {
     order.status = OrderStatus.CANCELLED;
     // TODO: Add restocking logic here if needed
     await this.orderRepository.save(order);
+    this.emailService
+      .sendOrderCancelled(order)
+      .catch((e) =>
+        this.logger.error(`Failed to send order cancelled email: ${e.message}`),
+      );
     return order;
   }
 
   async assignDeliverer(orderId: number, delivererId: number) {
     const order = await this.orderRepository.findOne({
       where: { id: orderId },
+      relations: ['items', 'items.product', 'items.product.vendor'],
     });
     if (!order) throw new NotFoundException('Order not found');
     const deliverer = await this.orderRepository.manager.findOne(User, {
@@ -300,6 +385,35 @@ export class OrdersService {
       title: 'New Delivery Assigned',
       body: `You have been assigned to deliver order #${orderId}`,
     });
+
+    if (deliverer.email) {
+      // Gather pickup info
+      const stores = new Set<string>();
+      (order.items || []).forEach((item) => {
+        const v = item.product?.vendor;
+        if (v && (v.storeName || v.displayName)) {
+          stores.add(v.storeName || v.displayName || 'Unknown Vendor');
+        }
+      });
+      this.emailService
+        .sendDelivererAssignmentEmail(
+          deliverer,
+          order.id,
+          Array.from(stores),
+        )
+        .catch((e) =>
+          this.logger.error(
+            `Failed to send deliverer assignment email: ${e.message}`,
+          ),
+        );
+    }
+
+    // Send email to customer
+    this.emailService
+      .sendOrderShipped(order)
+      .catch((e) =>
+        this.logger.error(`Failed to send order shipped email: ${e.message}`),
+      );
     return order;
   }
 
@@ -336,11 +450,42 @@ export class OrdersService {
       );
     }
 
+    const globalCommissionSetting = await this.uiSettingRepo.findOne({
+      where: { key: 'vendor_commission_percentage' },
+    });
+    // Default to 5% (0.05) if not set. Setting value expected as integer 5 or decimal 0.05?
+    // User said "Vendor Commission Percentage (%)". Usually implies 5 for 5%.
+    // Safely handle both: if > 1, assume percent (e.g. 5) -> divide by 100.
+    const rawVal = globalCommissionSetting ? Number(globalCommissionSetting.value) : 5; 
+    const globalRate = rawVal > 1 ? rawVal / 100 : rawVal;
+
     const orderItems = cart.items.map((item) => {
       const orderItem = new OrderItem();
       orderItem.product = item.product;
       orderItem.quantity = item.quantity;
       orderItem.price = Number(item.product.price);
+
+      // --- Commission Logic (All Vendors are Commission Based) ---
+      const vendor = item.product.vendor;
+      const lineTotal = orderItem.price * orderItem.quantity;
+      
+      // Fetch Global Commission or specific
+      let defaultRate = 0.05;
+      
+      // Inline Fetch - ideal to optimize later 
+      // Note: We can't await inside synchronous map without Promise.all
+      // Doing this check outside map is better.
+      // logic continues below...
+
+      // Use vendor-specific rate or default
+      const rate = (vendor && vendor.commissionRate) 
+        ? Number(vendor.commissionRate) 
+        : globalRate; // Use the fetched global rate
+
+      orderItem.commission = Math.round(lineTotal * rate * 100) / 100;
+      orderItem.vendorPayout = Math.round((lineTotal - orderItem.commission) * 100) / 100;
+      // -------------------------
+
       return orderItem;
     });
 
@@ -349,25 +494,40 @@ export class OrdersService {
       0,
     );
 
+    // Currency Snapshot
+    const currencyCode = this.normalizeCurrency(currency);
+    const exchangeRate = this.currencyService.getRate('USD', currencyCode) ?? 1.0;
+
     // Payment method branching
     const paymentMethod = createOrderDto.paymentMethod.toUpperCase();
     const { phoneNumber } = createOrderDto;
     let newOrder: Order;
-    if (paymentMethod === 'COD' || paymentMethod === 'BANK_TRANSFER') {
+
+    const manualMethods = [
+      'COD',
+      'BANK_TRANSFER',
+      'EBIRR',
+      'CBE',
+      'WAAFI',
+      'DMONEY',
+    ];
+
+    if (manualMethods.includes(paymentMethod)) {
       newOrder = this.orderRepository.create({
         user: { id: userId } as User,
         items: orderItems,
         total: total,
         shippingAddress: createOrderDto.shippingAddress,
         paymentMethod:
-          paymentMethod === 'COD'
-            ? PaymentMethod.COD
-            : PaymentMethod.BANK_TRANSFER,
+          PaymentMethod[paymentMethod as keyof typeof PaymentMethod],
         paymentStatus: PaymentStatus.UNPAID,
         status: OrderStatus.PENDING,
+        currency: currencyCode,
+        exchangeRate: exchangeRate,
       });
       const savedOrder = await this.orderRepository.save(newOrder);
       await this.cartService.clearCart(userId);
+      this.sendConfirmationForOrder(savedOrder.id);
       return this.mapOrder(savedOrder, currency);
     } else if (paymentMethod === 'MPESA') {
       if (!phoneNumber || !phoneNumber.trim()) {
@@ -383,6 +543,8 @@ export class OrdersService {
         paymentMethod: PaymentMethod.MPESA,
         paymentStatus: PaymentStatus.UNPAID,
         status: OrderStatus.PENDING,
+        currency: currencyCode,
+        exchangeRate: exchangeRate,
       });
       const savedOrder = await this.orderRepository.save(newOrder);
       await this.mpesaService.initiateStkPush(
@@ -391,6 +553,7 @@ export class OrdersService {
         savedOrder.id,
       );
       await this.cartService.clearCart(userId);
+      this.sendConfirmationForOrder(savedOrder.id);
       return this.mapOrder(savedOrder, currency);
     } else if (paymentMethod === 'TELEBIRR') {
       if (!phoneNumber || !phoneNumber.trim()) {
@@ -406,18 +569,28 @@ export class OrdersService {
         paymentMethod: PaymentMethod.TELEBIRR,
         paymentStatus: PaymentStatus.UNPAID,
         status: OrderStatus.PENDING,
+        currency: currencyCode,
+        exchangeRate: exchangeRate,
       });
       const savedOrder = await this.orderRepository.save(newOrder);
-      const checkoutUrl = await this.telebirrService.createPayment(
-        total,
-        savedOrder.id,
-        phoneNumber,
+      
+      // Updated Telebirr Integration
+      const paymentResponse = await this.telebirrService.createOrder(
+        total.toFixed(2),
+        `ORDER-${savedOrder.id}`,
       );
+      
+      // paymentResponse should contain receiveCode or toPayUrl
+      const receiveCode = paymentResponse.receiveCode || paymentResponse.toPayUrl || paymentResponse;
+
       await this.cartService.clearCart(userId);
-      return { order: this.mapOrder(savedOrder, currency), checkoutUrl };
+      this.sendConfirmationForOrder(savedOrder.id);
+      
+      // Return receiveCode for the App SDK
+      return { order: this.mapOrder(savedOrder, currency), receiveCode, checkoutUrl: receiveCode }; 
     } else {
       throw new BadRequestException(
-        'Unsupported payment method. Only BANK_TRANSFER, COD, MPESA, and TELEBIRR are currently supported.',
+        `Unsupported payment method: ${paymentMethod}. Supported: BANK_TRANSFER, COD, MPESA, TELEBIRR, EBIRR, CBE, WAAFI, DMONEY.`,
       );
     }
   }

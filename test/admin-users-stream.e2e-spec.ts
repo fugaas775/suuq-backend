@@ -20,6 +20,9 @@ class AllowGuard implements CanActivate {
   }
 }
 
+import { CurrencyService } from '../src/common/services/currency.service';
+import { ProductsService } from '../src/products/products.service';
+
 describe('GET /admin/users/stream (e2e)', () => {
   let app: INestApplication;
   let calls = 0;
@@ -75,7 +78,8 @@ describe('GET /admin/users/stream (e2e)', () => {
         { provide: UsersService, useValue: usersServiceMock },
         // Unused in this test but required by controller constructor
         { provide: OrdersService, useValue: {} },
-        { provide: WithdrawalsService, useValue: {} },
+        { provide: CurrencyService, useValue: {} },
+        { provide: ProductsService, useValue: {} },
       ],
     })
       .overrideGuard(RolesGuard)

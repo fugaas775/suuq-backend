@@ -8,8 +8,10 @@ import {
 } from '@jest/globals';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
+import { getQueueToken } from '@nestjs/bullmq';
 import { NotificationsService } from './notifications.service';
 import { DeviceToken } from './entities/device-token.entity';
+import { Notification } from './entities/notification.entity';
 import { UsersService } from '../users/users.service';
 import type { FirebaseMessagingResponse } from './notifications.types';
 
@@ -91,15 +93,23 @@ describe('NotificationsService', () => {
   let repo: ReturnType<typeof makeRepoMock>;
   let usersService: jest.Mocked<{
     findOne: (id: number) => Promise<{ id: number } | null>;
+    findRecipientsByRole: (role: any) => Promise<any[]>;
   }>;
   let firebaseMock: ReturnType<typeof makeFirebaseMock>;
 
   beforeAll(async () => {
     usersService = {
       findOne: jest.fn<(id: number) => Promise<{ id: number } | null>>(),
+      findRecipientsByRole: jest.fn<() => Promise<any[]>>().mockResolvedValue([]),
     } as any;
     firebaseMock = makeFirebaseMock({ successCount: 0, failureCount: 0 });
     repo = makeRepoMock();
+
+    const notificationRepoMock = {
+      create: jest.fn((dto: any) => dto),
+      save: jest.fn(async (items: any[]) => items),
+      findAndCount: jest.fn(async () => [[], 0]),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -107,6 +117,13 @@ describe('NotificationsService', () => {
         { provide: 'FIREBASE_ADMIN', useFactory: () => firebaseMock },
         { provide: UsersService, useValue: usersService },
         { provide: getRepositoryToken(DeviceToken), useValue: repo },
+        { provide: getRepositoryToken(Notification), useValue: notificationRepoMock },
+        {
+          provide: getQueueToken('notifications'),
+          useValue: {
+            add: jest.fn(),
+          },
+        },
       ],
     }).compile();
 

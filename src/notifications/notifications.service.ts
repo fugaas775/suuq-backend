@@ -1,9 +1,13 @@
 /* eslint-disable @typescript-eslint/no-base-to-string */
-import { Injectable, Inject, Logger, NotFoundException } from '@nestjs/common';
+import { Injectable, Inject, Logger, NotFoundException, forwardRef } from '@nestjs/common';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
 import { UsersService } from '../users/users.service';
 import { In, Repository } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DeviceToken } from './entities/device-token.entity';
+import { Notification, NotificationType } from './entities/notification.entity';
+import { UserRole } from '../auth/roles.enum';
 import type {
   FirebaseMessagingResponse,
   FirebaseAdmin,
@@ -17,7 +21,11 @@ export class NotificationsService {
     @Inject('FIREBASE_ADMIN') private readonly firebase: FirebaseAdmin,
     @InjectRepository(DeviceToken)
     private readonly deviceTokenRepository: Repository<DeviceToken>,
+    @InjectRepository(Notification)
+    private readonly notificationRepository: Repository<Notification>,
+    @Inject(forwardRef(() => UsersService))
     private readonly usersService: UsersService,
+    @InjectQueue('notifications') private readonly queue: Queue,
   ) {}
 
   /**
@@ -86,6 +94,89 @@ export class NotificationsService {
   }
 
   /**
+   * Persist notification to DB and send Push.
+   */
+  async createAndDispatch(opts: {
+    userId: number;
+    title: string;
+    body: string;
+    type?: NotificationType;
+    data?: Record<string, any>;
+  }) {
+    // 1. Persist
+    const rawType = opts.type ? opts.type.toString().toUpperCase() : NotificationType.SYSTEM;
+    const type = (Object.values(NotificationType).includes(rawType as NotificationType))
+        ? (rawType as NotificationType)
+        : NotificationType.SYSTEM;
+
+    const notification = this.notificationRepository.create({
+      recipient: { id: opts.userId },
+      title: opts.title,
+      body: opts.body,
+      type,
+      data: opts.data || {},
+    });
+    await this.notificationRepository.save(notification);
+
+    // 2. Push (fire and forget or await)
+    // We convert data to string map for FCM
+    const fcmData = opts.data
+      ? Object.entries(opts.data).reduce((acc, [k, v]) => {
+          acc[k] = String(v);
+          return acc;
+        }, {} as Record<string, string>)
+      : undefined;
+
+    return this.sendToUser({
+      userId: opts.userId,
+      title: opts.title,
+      body: opts.body,
+      data: fcmData,
+    });
+  }
+
+  async findAllForUser(
+    userId: number,
+    page = 1,
+    limit = 20,
+  ): Promise<{ data: Notification[]; total: number }> {
+    const [data, total] = await this.notificationRepository.findAndCount({
+      where: { recipient: { id: userId } },
+      order: { createdAt: 'DESC' },
+      take: limit,
+      skip: (page - 1) * limit,
+    });
+    return { data, total };
+  }
+
+  async markAsRead(notificationId: number, userId: number) {
+    const notification = await this.notificationRepository.findOne({
+      where: { id: notificationId, recipient: { id: userId } },
+    });
+    if (!notification) {
+      throw new NotFoundException('Notification not found');
+    }
+    notification.isRead = true;
+    notification.readAt = new Date();
+    return this.notificationRepository.save(notification);
+  }
+
+  async markAllAsRead(userId: number) {
+    await this.notificationRepository.update(
+      { recipient: { id: userId }, isRead: false },
+      { isRead: true, readAt: new Date() },
+    );
+    return { success: true };
+  }
+
+  async delete(notificationId: number, userId: number) {
+     return this.notificationRepository.delete({
+       id: notificationId,
+       recipient: { id: userId },
+     });
+  }
+
+  /**
    * Register a device token for a user.
    */
   async registerDeviceToken(dto: {
@@ -148,6 +239,50 @@ export class NotificationsService {
       this.logger.warn(`Failed to unsubscribe from topic ${topic}: ${e}`);
     }
     return { success: true };
+  }
+
+  async findAll({
+    page = 1,
+    limit = 20,
+  }: {
+    page?: number;
+    limit?: number;
+  }) {
+    const [items, total] = await this.notificationRepository.findAndCount({
+      relations: ['recipient'],
+      select: {
+        id: true,
+        title: true,
+        body: true,
+        type: true,
+        data: true,
+        isRead: true,
+        readAt: true,
+        createdAt: true,
+        recipient: {
+          id: true,
+          email: true,
+          displayName: true,
+        },
+      },
+      order: { createdAt: 'DESC' },
+      take: limit,
+      skip: (page - 1) * limit,
+    });
+    return { items, total };
+  }
+
+  async broadcastToRole(opts: {
+    role: UserRole;
+    title: string;
+    body: string;
+    type?: NotificationType;
+    data?: Record<string, any>;
+  }) {
+    // Queue the job
+    await this.queue.add('broadcast', opts);
+    this.logger.log(`Queued broadcast job for role ${opts.role}`);
+    return { success: true, queued: true };
   }
 
   private async pruneInvalidTokens(
