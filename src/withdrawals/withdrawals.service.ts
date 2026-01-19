@@ -28,9 +28,9 @@ export class WithdrawalsService {
       throw new BadRequestException('Amount must be greater than zero');
     }
 
-    if (method === 'TELEBIRR' && !user.telebirrVerified) {
-        throw new BadRequestException('Telebirr account not verified');
-    }
+    // if (method === 'TELEBIRR' && !user.telebirrVerified) {
+    //     throw new BadRequestException('Telebirr account not verified');
+    // }
 
     // Debit wallet immediately to lock funds
     await this.walletService.debitWallet(

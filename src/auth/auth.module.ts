@@ -7,6 +7,7 @@ import { AuthController } from './auth.controller';
 import { JwtStrategy } from './jwt.strategy';
 import { UsersModule } from '../users/users.module';
 import { EmailModule } from '../email/email.module';
+import { RedisModule } from '../redis/redis.module';
 
 @Global() // 2. Add the @Global() decorator
 @Module({
@@ -21,6 +22,7 @@ import { EmailModule } from '../email/email.module';
       }),
     }),
     EmailModule,
+    RedisModule,
   ],
   providers: [AuthService, JwtStrategy, ConfigService],
   controllers: [AuthController],

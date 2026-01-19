@@ -144,6 +144,18 @@ export class CreateProductDto {
   manage_stock?: boolean;
 
   @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @ApiPropertyOptional({ description: 'Minimum Order Quantity', default: 1 })
+  moq?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @ApiPropertyOptional({ description: 'Dispatch time in days (0 = Ready to Ship)' })
+  dispatchDays?: number;
+
+  @IsOptional()
   @IsIn(['publish', 'draft', 'pending', 'pending_approval', 'rejected'])
   status?: 'publish' | 'draft' | 'pending' | 'pending_approval' | 'rejected';
 

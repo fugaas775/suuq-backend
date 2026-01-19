@@ -28,6 +28,7 @@ import { AuditService } from '../audit/audit.service';
 import { CurrencyService } from '../common/services/currency.service';
 import { EmailService } from '../email/email.service';
 import { UiSetting } from '../settings/entities/ui-setting.entity';
+import { ProductsService } from '../products/products.service';
 
 @Injectable()
 export class OrdersService {
@@ -191,6 +192,7 @@ export class OrdersService {
     private readonly orderItemRepository: Repository<OrderItem>,
     @InjectRepository(UiSetting)
     private readonly uiSettingRepo: Repository<UiSetting>,
+    private readonly productsService: ProductsService,
     private readonly cartService: CartService,
     private readonly mpesaService: MpesaService,
     private readonly telebirrService: TelebirrService,
@@ -422,20 +424,45 @@ export class OrdersService {
     createOrderDto: CreateOrderDto,
     currency?: string,
   ): Promise<any> {
-    const cart = await this.cartService.getCart(userId, currency);
-    if (cart.items.length === 0) {
-      throw new BadRequestException(
-        'Cannot create an order from an empty cart.',
-      );
+    let itemsToProcess: Array<{ product: any; quantity: number; attributes?: any }> = [];
+    const isDirectOrder = createOrderDto.items && createOrderDto.items.length > 0;
+
+    if (isDirectOrder) {
+      if (!createOrderDto.items) throw new BadRequestException('No items provided');
+      const ids = createOrderDto.items.map((i) => i.productId);
+      const products = await this.productsService.findManyByIds(ids, { view: 'full' });
+      
+      // Map DTO items to entities with validation
+      itemsToProcess = createOrderDto.items.map((dtoItem) => {
+        const product = products.find((p) => p.id === dtoItem.productId);
+        if (!product) {
+          throw new BadRequestException(`Product with ID ${dtoItem.productId} not found`);
+        }
+        return {
+          product,
+          quantity: dtoItem.quantity || 1,
+          attributes: dtoItem.attributes || {},
+        };
+      });
+    } else {
+      // Cart Mode
+      const cart = await this.cartService.getCart(userId, currency);
+      if (cart.items.length === 0) {
+        throw new BadRequestException('Cannot create an order from an empty cart.');
+      }
+      itemsToProcess = cart.items.map((ci) => ({
+        product: ci.product,
+        quantity: ci.quantity,
+        attributes: {}, // Cart items in this codebase do not yet store attributes
+      }));
     }
 
-    // Prevent self-purchase: if any cart item belongs to the same user (vendor), block order creation
-    const selfOwned = cart.items.filter(
+    // Prevent self-purchase: if any item belongs to the same user (vendor), block order creation
+    const selfOwned = itemsToProcess.filter(
       (ci) => ci.product?.vendor && ci.product.vendor.id === userId,
     );
     if (selfOwned.length) {
       const ids = selfOwned.map((i) => i.product?.id).filter(Boolean);
-      // Audit the blocked self-purchase attempt (pick first product id as targetId fallback)
       try {
         await this.audit.log({
           actorId: userId,
@@ -459,10 +486,11 @@ export class OrdersService {
     const rawVal = globalCommissionSetting ? Number(globalCommissionSetting.value) : 5; 
     const globalRate = rawVal > 1 ? rawVal / 100 : rawVal;
 
-    const orderItems = cart.items.map((item) => {
+    const orderItems = itemsToProcess.map((item) => {
       const orderItem = new OrderItem();
       orderItem.product = item.product;
       orderItem.quantity = item.quantity;
+      orderItem.attributes = item.attributes || {};
       orderItem.price = Number(item.product.price);
 
       // --- Commission Logic (All Vendors are Commission Based) ---
@@ -526,7 +554,7 @@ export class OrdersService {
         exchangeRate: exchangeRate,
       });
       const savedOrder = await this.orderRepository.save(newOrder);
-      await this.cartService.clearCart(userId);
+      if (!isDirectOrder) await this.cartService.clearCart(userId);
       this.sendConfirmationForOrder(savedOrder.id);
       return this.mapOrder(savedOrder, currency);
     } else if (paymentMethod === 'MPESA') {
@@ -552,7 +580,7 @@ export class OrdersService {
         phoneNumber,
         savedOrder.id,
       );
-      await this.cartService.clearCart(userId);
+      if (!isDirectOrder) await this.cartService.clearCart(userId);
       this.sendConfirmationForOrder(savedOrder.id);
       return this.mapOrder(savedOrder, currency);
     } else if (paymentMethod === 'TELEBIRR') {
@@ -583,7 +611,7 @@ export class OrdersService {
       // paymentResponse should contain receiveCode or toPayUrl
       const receiveCode = paymentResponse.receiveCode || paymentResponse.toPayUrl || paymentResponse;
 
-      await this.cartService.clearCart(userId);
+      if (!isDirectOrder) await this.cartService.clearCart(userId);
       this.sendConfirmationForOrder(savedOrder.id);
       
       // Return receiveCode for the App SDK

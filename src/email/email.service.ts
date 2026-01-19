@@ -580,4 +580,20 @@ export class EmailService {
     };
     await this.send(mail);
   }
+
+  async sendEmailChangeCode(to: string, code: string) {
+    if (!to) return;
+    const mail = {
+      to,
+      subject: 'Verification Code for Email Change',
+      text: `Your verification code to change your email is: ${code}\n\nThis code will expire in 10 minutes.\n\nIf you did not request this, please change your password immediately.`,
+      html: `
+        <h2>Email Change Verification</h2>
+        <p>Your verification code is: <strong>${code}</strong></p>
+        <p>This code will expire in 10 minutes.</p>
+        <p>If you did not request this, please change your password immediately.</p>
+      `,
+    };
+    await this.send(mail);
+  }
 }

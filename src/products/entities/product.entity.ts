@@ -69,6 +69,9 @@ export class Product {
   @Column({ default: false })
   featured!: boolean;
 
+  @Column({ type: 'timestamp', nullable: true })
+  featuredExpiresAt?: Date;
+
   @ManyToOne(() => User, (user) => user.products, {
     eager: false,
     nullable: false,
@@ -129,6 +132,16 @@ export class Product {
   // Per-product sales counter used for Best Sellers sorting
   @Column('int', { default: 0 })
   sales_count!: number;
+
+  // Minimum Order Quantity (MOQ)
+  @Expose()
+  @Column('int', { default: 1, name: 'moq' })
+  moq?: number;
+
+  // Dispatch / Processing time in days
+  @Expose()
+  @Column('int', { nullable: true, name: 'dispatch_days' })
+  dispatchDays?: number;
 
   // Viewers counter for vendor analytics (DB column: view_count)
   @Column('int', { default: 0, name: 'view_count' })

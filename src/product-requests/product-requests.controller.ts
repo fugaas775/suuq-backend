@@ -172,6 +172,19 @@ export class ProductRequestsController {
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
+  @Get('zero-search')
+  getZeroSearchRequests(@Query() query: any) {
+    // Placeholder to fix routing collision with :id param
+    return {
+      items: [],
+      total: 0,
+      page: Number(query.page) || 1,
+      limit: Number(query.limit) || 20,
+      totalPages: 0,
+    };
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
   @Get(':id')
   async getOne(
     @Param('id', ParseIntPipe) id: number,

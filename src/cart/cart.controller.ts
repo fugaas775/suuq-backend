@@ -46,6 +46,7 @@ export class CartController {
       addToCartDto.productId,
       addToCartDto.quantity,
       currency,
+      addToCartDto.attributes,
     );
   }
 

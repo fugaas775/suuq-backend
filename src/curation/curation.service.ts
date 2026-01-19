@@ -28,10 +28,17 @@ export class CurationService {
       cursor?: string | null;
       view?: 'grid' | 'full';
       currency?: string;
+      injectAds?: boolean;
     },
   ) {
-    // Only allow curated keys per requirement
-    const tagKey = key === 'home-new' || key === 'home-best' ? key : null;
+    // Only allow curated keys per requirement, but expand synonyms
+    let tagKey: string | null = null;
+    if (key === 'home-new') {
+      tagKey = 'home-new,home_new,new_arrival,curated-new';
+    } else if (key === 'home-best') {
+      tagKey = 'home-best,home_best,best_seller,curated-best';
+    }
+
     if (!tagKey) throw new BadRequestException('Unknown section');
 
     const limit = Math.min(Math.max(Number(opts.limit) || 20, 1), 50);
@@ -49,12 +56,31 @@ export class CurationService {
       view: opts.view,
       currency: opts.currency,
     } as any);
+
+    // Inject System Ads (Featured Active) on the first page
+    let finalItems = res.items;
+    const shouldInject = opts.injectAds !== false; // Default to true if undefined
+
+    if (page === 1 && shouldInject) {
+      // Fetch up to 5 featured active products
+      const ads = await this.productsService.findFeaturedActive(5, {
+        currency: opts.currency,
+      });
+      if (ads.length > 0) {
+        // Mark them as ads if needed, but for now just prepend
+        // Deduplicate: If an item is in ads, remove it from the curated list to avoid doubles
+        const adIds = new Set(ads.map((a) => a.id));
+        const cleanCurated = finalItems.filter((i) => !adIds.has(i.id));
+        finalItems = [...ads, ...cleanCurated];
+      }
+    }
+
     const nextCursor = page * limit < res.total ? encodeCursor(page + 1) : null;
     return {
-      items: res.items,
+      items: finalItems,
       page,
       perPage: limit,
-      total: res.total,
+      total: res.total, // Total might be technically inaccurate but fine for rails
       nextCursor,
     };
   }

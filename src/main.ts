@@ -357,6 +357,9 @@ async function bootstrap() {
       .getHttpAdapter()
       .getInstance() as import('express').Express;
     http.get('/pdown', (_req, res) => res.status(200).send('OK'));
+    // Handle root path to stop 404 logs from health checks
+    http.get('/', (_req, res) => res.status(200).send('Suuq API'));
+    http.post('/', (_req, res) => res.status(200).send('Suuq API'));
     // Quiet common probes
     http.get('/robots.txt', (_req, res) => {
       res.type('text/plain').status(200).send('User-agent: *\nDisallow: /');

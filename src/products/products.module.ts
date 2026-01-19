@@ -10,6 +10,7 @@ import { Category } from '../categories/entities/category.entity'; // 1. Import 
 import { Review } from '../reviews/entities/review.entity';
 import { ProductImpression } from './entities/product-impression.entity';
 import { SearchKeyword } from './entities/search-keyword.entity';
+import { MediaCleanupTask } from '../media/entities/media-cleanup-task.entity';
 import { ProductsService } from './products.service';
 import { ProductsController } from './products.controller';
 import { ProductsV1Controller } from './v1.products.controller';
@@ -36,6 +37,7 @@ import { CategoriesModule } from '../categories/categories.module';
       ProductImpression,
       SearchKeyword,
       Review,
+      MediaCleanupTask,
     ]),
     CurrencyModule,
     forwardRef(() => UsersModule),

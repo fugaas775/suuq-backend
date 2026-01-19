@@ -18,6 +18,7 @@ import { UsersModule } from './users/users.module';
 import { AuthModule } from './auth/auth.module';
 import { ProductsModule } from './products/products.module';
 import { OrdersModule } from './orders/orders.module';
+import { EbirrModule } from './ebirr/ebirr.module';
 import { DelivererModule } from './deliverer/deliverer.module';
 import { CategoriesModule } from './categories/categories.module';
 import { SettingsModule } from './settings/settings.module';
@@ -52,6 +53,7 @@ import { FeatureFlagsModule } from './common/feature-flags/feature-flags.module'
 import { ProductRequestsModule } from './product-requests/product-requests.module';
 import { WalletModule } from './wallet/wallet.module';
 import { WithdrawalsModule } from './withdrawals/withdrawals.module';
+import { ChatModule } from './chat/chat.module';
 
 @Module({
   imports: [
@@ -171,6 +173,7 @@ import { WithdrawalsModule } from './withdrawals/withdrawals.module';
     // List all your feature modules
     UsersModule,
     AuthModule,
+    EbirrModule,
     ProductsModule,
     EmailModule,
     OrdersModule,
@@ -203,6 +206,7 @@ import { WithdrawalsModule } from './withdrawals/withdrawals.module';
     ProductRequestsModule,
     WalletModule,
     WithdrawalsModule,
+    ChatModule,
   ],
   controllers: [AppController],
   // Apply rate limiting globally

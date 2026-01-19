@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
 import { MediaController } from './media.controller';
 import { DirectUploadController } from './direct-upload.controller';
 import { MulterModule } from '@nestjs/platform-express';
@@ -6,10 +7,12 @@ import { DoSpacesService } from './do-spaces.service';
 import { diskStorage } from 'multer';
 import { ScheduleModule } from '@nestjs/schedule';
 import { MediaMaintenanceService } from './media-maintenance.service';
-// import { ContentModerationService } from '../moderation/content-moderation.service';
+import { MediaCleanupTask } from './entities/media-cleanup-task.entity';
+import { UiSetting } from '../settings/entities/ui-setting.entity';
 
 @Module({
   imports: [
+    TypeOrmModule.forFeature([MediaCleanupTask, UiSetting]),
     // 2. Replace the complex MulterModule config with this simple one
     ScheduleModule.forRoot(),
     MulterModule.register({

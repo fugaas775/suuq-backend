@@ -33,6 +33,10 @@ export type ProductCard = {
     rating?: number | null;
     verified: boolean;
     subscriptionTier?: string;
+
+    // Vendor tenure and location info for feed display
+    registeredAt?: string;
+    country?: string | null;
   };
 };
 
@@ -101,6 +105,10 @@ export function toProductCard(p: Product): ProductCard {
         rating?: number | null;
         verified?: boolean;
         subscriptionTier?: string;
+        vendorPhoneNumber?: string | null;
+        phoneNumber?: string | null;
+        createdAt?: Date | string;
+        registrationCountry?: string | null;
       }
     | undefined;
 
@@ -138,6 +146,13 @@ export function toProductCard(p: Product): ProductCard {
           rating: vendor.rating ?? null,
           verified: !!vendor.verified,
           subscriptionTier: vendor.subscriptionTier || 'free',
+          registeredAt:
+            vendor.createdAt instanceof Date
+              ? vendor.createdAt.toISOString()
+              : typeof vendor.createdAt === 'string'
+                ? vendor.createdAt
+                : undefined,
+          country: vendor.registrationCountry || undefined,
         }
       : undefined,
   };

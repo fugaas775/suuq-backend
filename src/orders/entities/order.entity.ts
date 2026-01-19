@@ -124,6 +124,9 @@ export class OrderItem {
   @ManyToOne(() => Product, { eager: true })
   product!: Product;
 
+  @Column('jsonb', { default: {} })
+  attributes!: Record<string, any>;
+
   @Column()
   quantity!: number;
 

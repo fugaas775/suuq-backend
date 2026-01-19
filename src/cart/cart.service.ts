@@ -161,6 +161,7 @@ export class CartService {
     productId: number,
     quantity: number,
     currency?: string,
+    attributes: Record<string, any> = {},
   ): Promise<Cart> {
     const cart = await this.getCart(userId, currency);
     const product = await this.productRepository.findOneBy({ id: productId });
@@ -168,9 +169,14 @@ export class CartService {
       throw new NotFoundException('Product not found');
     }
 
-    const existingItem = cart.items.find(
-      (item) => item.product.id === productId,
-    );
+    // Sort keys to ensure consistent stringify comparison
+    const attrString = JSON.stringify(attributes || {}, Object.keys(attributes || {}).sort());
+
+    const existingItem = cart.items.find((item) => {
+       if (item.product.id !== productId) return false;
+       const itemAttrString = JSON.stringify(item.attributes || {}, Object.keys(item.attributes || {}).sort());
+       return itemAttrString === attrString;
+    });
 
     if (existingItem) {
       existingItem.quantity += quantity;
@@ -180,6 +186,7 @@ export class CartService {
         cart,
         product,
         quantity,
+        attributes: attributes || {},
       });
       await this.cartItemRepository.save(newItem);
     }

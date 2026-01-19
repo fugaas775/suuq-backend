@@ -21,6 +21,7 @@ import { ConfigService } from '@nestjs/config';
 import { EmailService } from '../email/email.service';
 import { AppleAuthDto } from './dto/apple-auth.dto';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
+import { RedisService } from '../redis/redis.service';
 
 @Injectable()
 export class AuthService {
@@ -33,6 +34,7 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
     private readonly emailService: EmailService,
+    private readonly redisService: RedisService,
   ) {
     const googleClientId = this.configService.get<string>(
       'GOOGLE_WEB_CLIENT_ID',
@@ -508,5 +510,61 @@ export class AuthService {
     });
 
     return { message: 'Password has been successfully reset.' };
+  }
+
+  async requestEmailChange(userId: number, newEmail: string) {
+    const user = await this.usersService.findById(userId);
+    if (!user) throw new UnauthorizedException('User not found');
+
+    if (user.email === newEmail) {
+      throw new ConflictException('New email is same as current email');
+    }
+
+    const existingUser = await this.usersService.findByEmail(newEmail);
+    if (existingUser) {
+      throw new ConflictException('Email already in use');
+    }
+
+    // Generate 6 digit code
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    
+    // Store in Redis with 10 mins expiry
+    const key = `auth:change-email:${userId}`;
+    const client = this.redisService.getClient();
+    if (client) {
+      await client.set(key, JSON.stringify({ code, newEmail }), 'EX', 600);
+    } else {
+        throw new InternalServerErrorException('Service unavailable (Redis)');
+    }
+
+    // Send to CURRENT email
+    await this.emailService.sendEmailChangeCode(user.email, code);
+
+    return { message: 'Verification code sent to current email' };
+  }
+
+  async verifyEmailChange(userId: number, code: string) {
+    const key = `auth:change-email:${userId}`;
+    const client = this.redisService.getClient();
+    if (!client) throw new InternalServerErrorException('Service unavailable (Redis)');
+
+    const dataStr = await client.get(key);
+    
+    if (!dataStr) {
+      throw new BadRequestException('Verification code expired or invalid');
+    }
+
+    const data = JSON.parse(dataStr);
+    if (data.code !== code) {
+      throw new BadRequestException('Invalid verification code');
+    }
+
+    // Update email
+    await this.usersService.update(userId, { email: data.newEmail });
+    
+    // Clear Redis
+    await client.del(key);
+
+    return { message: 'Email updated successfully' };
   }
 }

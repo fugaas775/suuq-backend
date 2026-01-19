@@ -5,6 +5,8 @@ import {
   ValidateNested,
   IsOptional,
   IsIn,
+  IsNumber,
+  IsArray,
 } from 'class-validator';
 import { Type, Transform } from 'class-transformer';
 
@@ -16,11 +18,30 @@ class ShippingAddressDto {
   @IsString() @IsNotEmpty() phoneNumber!: string;
 }
 
+class OrderItemDto {
+  @IsNumber()
+  productId!: number;
+
+  @IsNumber()
+  @IsOptional()
+  quantity?: number;
+
+  @IsOptional()
+  @IsObject()
+  attributes?: Record<string, any>;
+}
+
 export class CreateOrderDto {
   @IsObject()
   @ValidateNested()
   @Type(() => ShippingAddressDto)
   shippingAddress!: ShippingAddressDto;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => OrderItemDto)
+  items?: OrderItemDto[];
 
   @IsString()
   // eslint-disable-next-line @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access

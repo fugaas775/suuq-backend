@@ -9,7 +9,9 @@ import {
   UseGuards,
   Req,
   ParseIntPipe,
+  Res,
 } from '@nestjs/common';
+import { Response } from 'express';
 import { WithdrawalsService } from './withdrawals.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
@@ -50,11 +52,14 @@ export class WithdrawalsController {
   @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
   @Get('admin/list')
   async getAllWithdrawals(
-    @Query('status') status?: WithdrawalStatus,
+    @Query('status') status: WithdrawalStatus | undefined,
     @Query('page') page = 1,
     @Query('limit') limit = 20,
+    @Res({ passthrough: true }) res: Response,
   ) {
-    return this.withdrawalsService.findAll({ status, page, limit });
+    const { items, total } = await this.withdrawalsService.findAll({ status, page, limit });
+    res.header('X-Total-Count', total.toString());
+    return items;
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)

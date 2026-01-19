@@ -25,6 +25,8 @@ import { AuthenticatedRequest } from '../common/interfaces/authenticated-request
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { AppleAuthDto } from './dto/apple-auth.dto';
 import { UpdateOwnProfileDto } from '../users/dto/update-own-profile.dto';
+import { RequestEmailChangeDto } from './dto/request-email-change.dto';
+import { VerifyEmailChangeDto } from './dto/verify-email-change.dto';
 
 @Controller('auth')
 export class AuthController {
@@ -152,6 +154,26 @@ export class AuthController {
     if (!next) throw new Error('New password is required.');
     await this.authService.changePassword(userId, current, next);
     return { success: true };
+  }
+
+  @Post('email/change/request')
+  @UseGuards(JwtAuthGuard)
+  async requestEmailChange(
+    @Request() req: AuthenticatedRequest,
+    @Body() dto: RequestEmailChangeDto,
+  ) {
+    if (!req.user?.id) throw new UnauthorizedException();
+    return this.authService.requestEmailChange(req.user.id, dto.newEmail);
+  }
+
+  @Post('email/change/verify')
+  @UseGuards(JwtAuthGuard)
+  async verifyEmailChange(
+    @Request() req: AuthenticatedRequest,
+    @Body() dto: VerifyEmailChangeDto,
+  ) {
+    if (!req.user?.id) throw new UnauthorizedException();
+    return this.authService.verifyEmailChange(req.user.id, dto.code);
   }
 
   @Post('forgot-password')

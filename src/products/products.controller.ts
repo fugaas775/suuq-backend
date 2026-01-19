@@ -39,6 +39,9 @@ import { FavoritesService } from '../favorites/favorites.service';
 import { Response } from 'express';
 import { createHash } from 'crypto';
 import { toProductCard } from './utils/product-card.util';
+import { Public } from '../common/decorators/public.decorator';
+
+import { OptionalJwtAuthGuard } from '../auth/optional-jwt-auth.guard';
 
 @UseInterceptors(ClassSerializerInterceptor)
 @Controller('products')
@@ -624,12 +627,13 @@ export class ProductsController {
 
   // Aggregated home feed: avoid collision with ':id' by defining here
   @Get('home')
+  @UseGuards(OptionalJwtAuthGuard)
   @Header('Cache-Control', 'public, max-age=60')
   @Header('Deprecation', 'true')
   @Header('Sunset', 'Wed, 31 Dec 2025 23:59:59 GMT')
   async homeFeed(
     @Query() q: any,
-    @Req() req: Request,
+    @Req() req: Request & { user?: any },
     @Res({ passthrough: true }) res: Response,
   ) {
     const perSection = Math.min(Number(q.limit || q.per_page) || 10, 20);
@@ -640,12 +644,17 @@ export class ProductsController {
     const city = q.user_city || q.userCity || q.city;
     const region = q.user_region || q.userRegion || q.region;
     const country = q.user_country || q.userCountry || q.country;
+    
+    // Extract User ID if available via Optional Auth
+    const userId = req.user?.id ? Number(req.user.id) : undefined;
+
     const data = await this.homeService.getHomeFeed({
       perSection,
       userCity: city,
       userRegion: region,
       userCountry: country,
       view: v,
+      userId,
     });
 
     // Compute and set a lightweight ETag based on list IDs + timestamps
@@ -898,6 +907,17 @@ export class ProductsController {
     @Query('currency') currency?: string,
   ) {
     return this.productsService.findOne(id, currency);
+  }
+
+  // Experimental: Contextual feed with Focus, Ads, and Related products
+  @Public()
+  @Get(':id/contextual-feed')
+  @Header('Cache-Control', 'public, max-age=15')
+  async getContextualFeed(
+    @Param('id', ParseIntPipe) id: number,
+    @Query('currency') currency?: string,
+  ) {
+    return this.productsService.getContextualFeed(id, currency);
   }
 
   // Related products for a given product id

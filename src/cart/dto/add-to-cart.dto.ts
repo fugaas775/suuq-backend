@@ -1,4 +1,4 @@
-import { IsInt, IsPositive } from 'class-validator';
+import { IsInt, IsPositive, IsOptional, IsObject } from 'class-validator';
 
 export class AddToCartDto {
   @IsInt()
@@ -7,4 +7,9 @@ export class AddToCartDto {
   @IsInt()
   @IsPositive()
   quantity: number = 1;
+
+  @IsOptional()
+  @IsObject()
+  attributes?: Record<string, any>;
 }
+

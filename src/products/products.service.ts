@@ -24,6 +24,7 @@ import { TieredProductsDto } from './dto/tiered-products.dto';
 import { Tag } from '../tags/tag.entity';
 import { ProductImpression } from './entities/product-impression.entity';
 import { SearchKeyword } from './entities/search-keyword.entity';
+import { MediaCleanupTask } from '../media/entities/media-cleanup-task.entity';
 import { createHash } from 'crypto';
 import { normalizeProductMedia } from '../common/utils/media-url.util';
 import { normalizeDigitalAttributes } from '../common/utils/digital.util';
@@ -58,6 +59,8 @@ export class ProductsService {
     private readonly searchKeywordRepo: Repository<SearchKeyword>,
     @InjectRepository(Review)
     private readonly reviewRepo: Repository<Review>,
+    @InjectRepository(MediaCleanupTask)
+    private readonly cleanupRepo: Repository<MediaCleanupTask>,
     private readonly doSpaces: DoSpacesService,
     private readonly audit: AuditService,
     private readonly geo: GeoResolverService,
@@ -844,6 +847,163 @@ export class ProductsService {
   // - Prefer same category subtree; then same vendor; then shared tags
   // - Exclude the base product
   // - Optional exact city match for property listings when provided
+
+  /**
+   * Generates a contextual feed starting with the focus product (full detail),
+   * followed by simulated "Ads" (e.g., promoted/popular items),
+   * followed by related products.
+   *
+   * Design:
+   * Index 0: Focus Product (Detailed)
+   * Index 1-2: Ad Products (Card View)
+   * Index 3+: Related Products (Card View)
+   */
+  async getContextualFeed(id: number, currency?: string): Promise<any[]> {
+    // 1. Fetch Focus Product (Detailed)
+    // findOne handles view counting, normalization, etc.
+    const focus = await this.findOne(id, currency);
+
+    // 2. Fetch Ad Products (Random selection from popular)
+    const targetCurrency = this.normalizeCurrencyParam(currency);
+    const adsQb = this.productRepo
+      .createQueryBuilder('product')
+      .leftJoinAndSelect('product.vendor', 'vendor')
+      .leftJoinAndSelect('product.category', 'category')
+      .leftJoinAndSelect('product.images', 'images')
+      .where('product.status = :status', { status: 'publish' })
+      .andWhere('product.isBlocked = false')
+      .andWhere('product.id <> :pid', { pid: id })
+      // Prioritize "Featured" (Paid/Sponsored) products first for monetization
+      .orderBy('product.featured', 'DESC')
+      // Then fallback to high viewCount as a proxy for popularity
+      .addOrderBy('product.viewCount', 'DESC')
+      .limit(20);
+
+    // Lean select for Ads (same as related)
+    adsQb.select([
+      'product.id',
+      'product.name',
+      'product.price',
+      'product.currency',
+      'product.description',
+      'product.status',
+      'product.isBlocked',
+      'product.featured',
+      'product.featuredExpiresAt',
+      'product.imageUrl',
+      'product.average_rating',
+      'product.rating_count',
+      'product.sales_count',
+      'product.createdAt',
+      'product.listingType',
+      'product.listingCity',
+      'product.viewCount', // Needed for ad selection, though usually hidden
+      'vendor.id',
+      'vendor.roles',
+      'vendor.storeName',
+      'vendor.displayName',
+      'vendor.email',
+      'vendor.avatarUrl',
+      'vendor.verified',
+      'vendor.subscriptionTier',
+      'vendor.createdAt',
+      'category.id',
+      'category.slug',
+    ]);
+
+    const adCandidates = await adsQb.getMany();
+
+    // "System Ad" Implementation (Income Generating Logic):
+    // 1. Separate Paid (Featured) from Free (High Traffic) candidates.
+    // Respect expiration if set
+    const now = new Date();
+    const paidAds = adCandidates.filter(
+      (p) =>
+        p.featured &&
+        (!p.featuredExpiresAt || new Date(p.featuredExpiresAt) > now),
+    );
+    const fillerAds = adCandidates.filter(
+      (p) =>
+        !p.featured ||
+        (p.featuredExpiresAt && new Date(p.featuredExpiresAt) <= now),
+    );
+
+    // 2. Shuffle internally to rotate inventory, but strictly respect paid priority.
+    // Paid ads always come before fillers.
+    const sortedCandidates = [
+      ...paidAds.sort(() => 0.5 - Math.random()),
+      ...fillerAds.sort(() => 0.5 - Math.random()),
+    ];
+
+    // 3. Select top 2 slots for the feed
+    const ads = sortedCandidates.slice(0, 2);
+
+    const adsNormalized = await this.applyCurrencyList(
+      ads.map((p) => normalizeProductMedia(p as any)) as any,
+      targetCurrency,
+    );
+
+    // 3. Fetch Related Products
+    const related = await this.findRelatedProducts(id, { limit: 12, currency });
+
+    // 4. Combine into a unified feed
+    // Clients can render 'focus' as the detailed view header, and others as grid items
+    const rawFeed = [
+      { ...focus, feedType: 'focus' },
+      // Mark as 'system-ad' for client-side "Sponsored" badging
+      ...adsNormalized.map((p) => ({ ...p, feedType: 'system-ad' })),
+      ...related.map((p) => ({ ...p, feedType: 'related' })),
+    ];
+
+    // 5. Sanitize Nulls for Flutter clients
+    // Ensure critical string fields are never null
+    return rawFeed.map((item) => {
+      const placeholder =
+        'https://suuq-media.ams3.digitaloceanspaces.com/placeholder_1000.jpg';
+      const safeImage = item.imageUrl || placeholder;
+
+      // Defensive Vendor Sanitation (Partial Objects from Select)
+      let safeVendor = item.vendor;
+      if (safeVendor) {
+        safeVendor = {
+          ...safeVendor,
+          roles: safeVendor.roles || ['VENDOR'],
+          storeName: safeVendor.storeName || 'Suuq Vendor',
+          displayName: safeVendor.displayName || 'Vendor',
+          verified: !!safeVendor.verified,
+        };
+      }
+
+      // Defensive Category Sanitation
+      let safeCategory = item.category;
+      if (safeCategory) {
+        safeCategory = {
+          ...safeCategory,
+          name: safeCategory.name || 'Category',
+          slug: safeCategory.slug || 'category',
+        };
+      } else {
+        safeCategory = {
+          id: 0,
+          name: 'Uncategorized',
+          slug: 'uncategorized',
+        };
+      }
+
+      return {
+        ...item, // Spread original properties
+        name: item.name || 'Untitled',
+        description: item.description || '',
+        imageUrl: safeImage,
+        image: safeImage, // Alias for Flutter compatibility
+        status: item.status || 'publish',
+        feedType: String(item.feedType || 'related'), // Ensure string
+        vendor: safeVendor,
+        category: safeCategory,
+      };
+    });
+  }
+
   // - Return lean normalized media for client usage
   async findRelatedProducts(
     productId: number,
@@ -906,6 +1066,10 @@ export class ProductsService {
       'product.name',
       'product.price',
       'product.currency',
+      'product.description',
+      'product.status',
+      'product.isBlocked',
+      'product.featured',
       'product.imageUrl',
       'product.average_rating',
       'product.rating_count',
@@ -914,11 +1078,14 @@ export class ProductsService {
       'product.listingType',
       'product.listingCity',
       'vendor.id',
+      'vendor.roles',
       'vendor.storeName',
       'vendor.displayName',
       'vendor.email',
       'vendor.avatarUrl',
       'vendor.verified',
+      'vendor.subscriptionTier',
+      'vendor.createdAt',
       'category.id',
       'category.slug',
     ]);
@@ -1166,6 +1333,36 @@ export class ProductsService {
     return { recorded, ignored };
   }
 
+  /**
+   * Fetch active featured (system-ad) products.
+   * Respects featuredExpiresAt > NOW.
+   */
+  async findFeaturedActive(
+    limit: number,
+    opts?: { currency?: string },
+  ): Promise<Product[]> {
+    const now = new Date();
+    const products = await this.productRepo
+      .createQueryBuilder('product')
+      .leftJoinAndSelect('product.vendor', 'vendor')
+      .leftJoinAndSelect('product.category', 'category')
+      .where('product.featured = :featured', { featured: true })
+      .andWhere(
+        '(product.featuredExpiresAt IS NULL OR product.featuredExpiresAt > :now)',
+        { now },
+      )
+      .andWhere('product.status = :status', { status: 'publish' })
+      .andWhere('product.isBlocked = :blocked', { blocked: false })
+      .orderBy('product.id', 'DESC')
+      .take(limit)
+      .getMany();
+
+    if (opts?.currency) {
+      return this.applyCurrencyList(products, opts.currency);
+    }
+    return products;
+  }
+
   async findFiltered(filters: ProductFilterDto): Promise<{
     items: Product[];
     total: number;
@@ -1286,11 +1483,15 @@ export class ProductsService {
           'product.furnished',
           'product.rentPeriod',
           'product.createdAt',
+          'product.moq',
+          'product.dispatchDays',
           'vendor.id',
           'vendor.email',
           'vendor.displayName',
           'vendor.avatarUrl',
           'vendor.storeName',
+          'vendor.createdAt',
+          'vendor.registrationCountry',
           'vendor.verified',
           'vendor.subscriptionTier',
           'category.id',
@@ -2207,9 +2408,16 @@ export class ProductsService {
         if (key) keys.add(key);
       }
 
-      // 3) Delete objects best-effort (do not block product deletion on failures)
-      for (const key of Array.from(keys)) {
-        await this.doSpaces.deleteObject(key).catch(() => {});
+      // 3) Offload deletion to Sunday Cron using MediaCleanupTask
+      const tasks = Array.from(keys).map((key) =>
+        this.cleanupRepo.create({
+          key,
+          reasonType: 'product_delete',
+          reasonId: String(id),
+        }),
+      );
+      if (tasks.length > 0) {
+        await this.cleanupRepo.save(tasks);
       }
     } catch {
       // ignore cleanup errors

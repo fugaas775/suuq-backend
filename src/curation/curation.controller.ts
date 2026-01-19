@@ -1,6 +1,16 @@
-import { Controller, Get, Header, Param, Query, Logger } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Header,
+  Param,
+  Query,
+  Logger,
+  UseInterceptors,
+  ClassSerializerInterceptor,
+} from '@nestjs/common';
 import { CurationService } from './curation.service';
 
+@UseInterceptors(ClassSerializerInterceptor)
 @Controller('curation')
 export class CurationController {
   private readonly logger = new Logger(CurationController.name);
@@ -25,17 +35,19 @@ export class CurationController {
         cursor: null,
         view: v,
         currency,
+        injectAds: true,
       }),
       this.curation.getSection('home-best', {
         limit: per,
         cursor: null,
         view: v,
         currency,
+        injectAds: false,
       }),
     ]);
 
-    const newItems = newSec.items.map(normalizeProductImage);
-    const bestItems = bestSec.items.map(normalizeProductImage);
+    const newItems = newSec.items.map((i) => normalizeProductImage(i));
+    const bestItems = bestSec.items.map((i) => normalizeProductImage(i));
 
     this.logger.log(
       `home counts newArrivals=${newItems.length} bestSellers=${bestItems.length} limit=${per}`,
@@ -69,13 +81,19 @@ export class CurationController {
     @Query('view') view?: 'grid' | 'full',
   ) {
     const v = view === 'full' ? 'full' : 'grid';
+    // Logic: Enable ads for 'home-new', disable for 'home-best' (pure organic)
+    const shouldInject = key === 'home-new'; 
+
     const res = await this.curation.getSection(key, {
       limit: Number(limit) || 20,
       cursor,
       view: v,
       currency,
+      injectAds: shouldInject,
     });
-    const items = res.items.map(normalizeProductImage);
+    // If view is full (feed style), prefer high-res images. Otherwise optimized thumbnails.
+    const preferHighRes = v === 'full';
+    const items = res.items.map(i => normalizeProductImage(i, preferHighRes));
     this.logger.log(
       `section=${key} count=${items.length} limit=${limit ?? ''} cursor=${cursor ?? ''}`,
     );
@@ -83,16 +101,28 @@ export class CurationController {
   }
 }
 
-function normalizeProductImage(p: any) {
+function normalizeProductImage(p: any, preferHighRes = false) {
   // pick: thumbnailSrc || images[0].src || product.imageUrl
   let url: string | null = null;
   const firstImage =
     Array.isArray(p.images) && p.images.length ? p.images[0] : null;
-  url =
-    (firstImage?.thumbnailSrc as string) ||
-    (firstImage?.src as string) ||
-    (p.imageUrl as string) ||
-    null;
+
+  if (preferHighRes) {
+    // Prefer full src, fallback to thumb
+    url =
+      (firstImage?.src as string) ||
+      (firstImage?.thumbnailSrc as string) ||
+      (p.imageUrl as string) ||
+      null;
+  } else {
+    // Prefer thumb, fallback to src
+    url =
+      (firstImage?.thumbnailSrc as string) ||
+      (firstImage?.src as string) ||
+      (p.imageUrl as string) ||
+      null;
+  }
+  
   if (url) {
     p.imageUrl = absolutize(url);
   }
