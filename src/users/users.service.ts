@@ -512,6 +512,20 @@ export class UsersService {
   }
 
   /**
+   * Directly update email (system use only, e.g. after verification).
+   * Bypasses allowedFields filter.
+   */
+  async updateEmail(id: number, email: string): Promise<User> {
+    const existing = await this.userRepository.findOne({ where: { email } });
+    if (existing && existing.id !== id) {
+      throw new ConflictException('Email already in use');
+    }
+    
+    await this.userRepository.update(id, { email });
+    return this.findById(id);
+  }
+
+  /**
    * Normalize verificationDocuments into a standard array of { url, name }.
    * Handles legacy stringified JSON and null/undefined.
    */

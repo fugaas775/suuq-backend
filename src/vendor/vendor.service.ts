@@ -1134,21 +1134,42 @@ export class VendorService {
       ] as any,
     });
 
-    const items = users.map((u) => ({
-      id: u.id,
-      displayName: u.displayName,
-      storeName: u.storeName,
-      avatarUrl: u.avatarUrl,
-      verificationStatus: u.verificationStatus,
-      isVerified: !!u.verified,
-      rating: u.rating ?? 0,
-      subscriptionTier: (u as any).subscriptionTier || 'free',
-      subscriptionExpiry: (u as any).subscriptionExpiry || null,
-      productCount: undefined, // placeholder; can join or compute later
-      certificateCount: Array.isArray((u as any).verificationDocuments)
-        ? (u as any).verificationDocuments.length
-        : undefined,
-    }));
+    const items = users.map((u) => {
+      let yearsOnPlatform: string | number | null = null;
+      if (u.verified && u.verifiedAt) {
+        const now = new Date();
+        const start = new Date(u.verifiedAt);
+        const diffMs = now.getTime() - start.getTime();
+        const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+
+        if (diffDays < 30) {
+          yearsOnPlatform = `${Math.max(0, diffDays)} Days`;
+        } else if (diffDays < 365) {
+          const m = Math.max(1, Math.floor(diffDays / 30.44));
+          yearsOnPlatform = `${m} Month${m !== 1 ? 's' : ''}`;
+        } else {
+          yearsOnPlatform = (diffDays / 365.25).toFixed(1) + ' Years';
+        }
+      }
+
+      return {
+        id: u.id,
+        displayName: u.displayName,
+        storeName: u.storeName,
+        avatarUrl: u.avatarUrl,
+        verificationStatus: u.verificationStatus,
+        isVerified: !!u.verified,
+        rating: u.rating ?? 0,
+        createdAt: u.createdAt,
+        yearsOnPlatform,
+        subscriptionTier: (u as any).subscriptionTier || 'free',
+        subscriptionExpiry: (u as any).subscriptionExpiry || null,
+        productCount: undefined, // placeholder; can join or compute later
+        certificateCount: Array.isArray((u as any).verificationDocuments)
+          ? (u as any).verificationDocuments.length
+          : undefined,
+      };
+    });
 
     return {
       items,
@@ -1179,13 +1200,33 @@ export class VendorService {
       verified,
       verificationStatus,
       subscriptionTier,
+      verifiedAt,
     } = user as any;
+
+    let yearsOnPlatform: string | number | null = null;
+    if (verified && verifiedAt) {
+      const now = new Date();
+      const start = new Date(verifiedAt);
+      const diffMs = now.getTime() - start.getTime();
+      const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+
+      if (diffDays < 30) {
+        yearsOnPlatform = `${Math.max(0, diffDays)} Days`;
+      } else if (diffDays < 365) {
+        const m = Math.max(1, Math.floor(diffDays / 30.44));
+        yearsOnPlatform = `${m} Month${m !== 1 ? 's' : ''}`;
+      } else {
+        yearsOnPlatform = (diffDays / 365.25).toFixed(1) + ' Years';
+      }
+    }
+
     return {
       id,
       storeName,
       avatarUrl,
       displayName,
       createdAt,
+      yearsOnPlatform,
       bankName: bankName || '',
       bankAccountNumber: bankAccountNumber || '',
       bankAccountHolderName: bankAccountHolderName || '',

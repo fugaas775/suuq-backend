@@ -162,6 +162,96 @@ export class Product {
   })
   productType?: 'physical' | 'digital' | 'service' | 'property' | null;
 
+  // --- Explicit Type Flags ---
+  @Expose()
+  get isDigital(): boolean {
+    return this.productType === 'digital';
+  }
+
+  @Expose()
+  get isService(): boolean {
+    return this.productType === 'service';
+  }
+
+  @Expose()
+  get isProperty(): boolean {
+    return this.productType === 'property';
+  }
+
+  @Expose()
+  get isPhysical(): boolean {
+    return !this.productType || this.productType === 'physical';
+  }
+
+  // --- Digital Fields ---
+  @Expose()
+  get downloadUrl(): string | undefined {
+    return this.getAttribute<string>('downloadUrl');
+  }
+
+  @Expose()
+  get format(): string | undefined {
+    return this.getAttribute<string>('format');
+  }
+
+  @Expose()
+  get fileSizeMB(): number | undefined {
+    return this.getAttribute<number>('fileSizeMB');
+  }
+
+  @Expose()
+  get licenseRequired(): boolean | undefined {
+    return this.getAttribute<boolean>('licenseRequired');
+  }
+
+  // --- Service Fields ---
+  @Expose()
+  get deliveryMethod(): string | undefined {
+    return this.getAttribute<string>('deliveryMethod');
+  }
+
+  @Expose()
+  get durationValue(): number | undefined {
+    return this.getAttribute<number>('durationValue');
+  }
+
+  @Expose()
+  get durationUnit(): string | undefined {
+    return this.getAttribute<string>('durationUnit');
+  }
+
+  @Expose()
+  get fulfillmentText(): string | undefined {
+    return this.getAttribute<string>('fulfillmentText');
+  }
+
+  // --- Property Fields ---
+  @Expose()
+  get viewingText(): string | undefined {
+    return this.getAttribute<string>('viewingText');
+  }
+
+  // --- Physical Fields ---
+  @Expose()
+  get shippingCost(): number | undefined {
+    return this.getAttribute<number>('shippingCost');
+  }
+
+  @Expose()
+  get shippingNotes(): string | undefined {
+    return this.getAttribute<string>('shippingNotes');
+  }
+
+  // Feed Type (Injected by Controller/Service)
+  @Expose()
+  feedType?: string;
+
+  private getAttribute<T>(key: string): T | undefined {
+    const attrs = this.attributes;
+    if (!attrs || typeof attrs !== 'object') return undefined;
+    return (attrs as Record<string, unknown>)[key] as T;
+  }
+
   // Listing type for property verticals: 'sale' | 'rent'
   @Expose()
   @Column({ type: 'varchar', length: 10, nullable: true, name: 'listing_type' })
@@ -324,6 +414,69 @@ export class Product {
 
   // Convenience: expose free flag for digital items
   @Expose()
+  get is_free(): boolean {
+    return this.price === 0;
+  }
+
+  // Changing Text / Info Text for Product Card
+  // Priority: Low Stock > Discount > Sold Count > New > Popular > Rental > Location
+  @Expose()
+  get info_text(): string | null {
+    // 1. Low Stock (Urgency)
+    if (this.manage_stock && this.stock_quantity && this.stock_quantity <= 5 && this.stock_quantity > 0) {
+       return `Only ${this.stock_quantity} left!`;
+    }
+
+    // 2. Discount
+    if (this.sale_price && this.price && this.sale_price < this.price) {
+      const discount = Math.round(((this.price - this.sale_price) / this.price) * 100);
+      if (discount > 0) return `${discount}% OFF`;
+    }
+
+    // 3. Sold Count (User Request)
+    if (this.sales_count > 0) {
+      if (this.sales_count >= 1000) return `${(this.sales_count/1000).toFixed(1)}k+ sold`;
+      return `${this.sales_count} sold`;
+    }
+
+    // 4. New Arrival (Freshness - last 7 days)
+    // Basic check assuming createdAt is occupied.
+    if (this.createdAt) {
+      const now = new Date().getTime();
+      const created = this.createdAt instanceof Date ? this.createdAt.getTime() : new Date(this.createdAt).getTime();
+      const diffDays = (now - created) / (1000 * 3600 * 24);
+      if (diffDays <= 7) return 'New Arrival';
+    }
+
+    // 5. Views (Popularity)
+    if (this.viewCount >= 1000) {
+       return `${(this.viewCount/1000).toFixed(1)}k views`;
+    }
+
+    // 6. Rental Period
+    if (this.listingType === 'rent' && this.rentPeriod) {
+       // "Day" -> "Daily", "Week" -> "Weekly", "Month" -> "Monthly", "Year" -> "Yearly"
+       if (this.rentPeriod === 'day') return 'Daily';
+       if (this.rentPeriod === 'week') return 'Weekly';
+       if (this.rentPeriod === 'month') return 'Monthly';
+       if (this.rentPeriod === 'year') return 'Yearly';
+       return this.rentPeriod;
+    }
+    
+    // 7. Location (if set)
+    if (this.listingCity) {
+      return this.listingCity;
+    }
+
+    // 8. MOQ
+    if (this.moq && this.moq > 1) {
+      return `Min. Order: ${this.moq}`;
+    }
+
+    return null;
+  }
+
+  @Expose()
   get isFree(): boolean | undefined {
     const attrs = this.attributes;
     if (!attrs || typeof attrs !== 'object') return undefined;
@@ -476,6 +629,11 @@ export class Product {
         else if (this.listingType || this.listingCity || this.bedrooms != null)
           this.productType = 'property';
         else this.productType = 'physical';
+      }
+
+      // Enforce logic: Digital/Service/Property have no dispatch days (avoid default "3-10 days" logic)
+      if (['digital', 'service', 'property'].includes(this.productType || '')) {
+        this.dispatchDays = undefined;
       }
     } catch {
       // ignore normalization errors; leave attributes untouched

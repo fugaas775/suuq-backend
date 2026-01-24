@@ -124,11 +124,12 @@ export class ProductsController {
       ua,
       sessionId,
     );
+    const userId = req.user?.id ? Number(req.user.id) : undefined;
     const { recorded, ignored } = await this.productsService.recordImpressions(
       dto.productIds,
       sessionKey,
       windowSeconds,
-      { ip, country, city },
+      { ip, country, city, userId },
     );
     return { recorded, ignored, windowSeconds };
   }
@@ -866,6 +867,18 @@ export class ProductsController {
       Number(page) || 1,
       Number(perPage) || 20,
     );
+  }
+
+  @Get(':id/recent-viewers')
+  async getRecentViewers(
+    @Param('id') id: string,
+    @Query('limit') limit = 5,
+  ): Promise<{ avatars: string[] }> {
+    const avatars = await this.productsService.getRecentViewers(
+      Number(id),
+      Number(limit) || 5,
+    );
+    return { avatars };
   }
 
   // Likes count endpoint(s) for compatibility with mobile client

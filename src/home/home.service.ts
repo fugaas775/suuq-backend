@@ -262,7 +262,12 @@ export class HomeService {
     // 2) Curated sections (parallel via tags home-new/home-best)
     const curatedPromise = Promise.all([
       this.curation
-        .getSection('home-new', { limit: 10, cursor: null, view: 'grid' })
+        .getSection('home-new', {
+          limit: 10,
+          cursor: null,
+          view: 'grid',
+          currency,
+        })
         .catch((e) => {
           this.logger.error('Failed to get curatedNew section', e);
           errors.push({
@@ -272,7 +277,12 @@ export class HomeService {
           return { items: [] } as any;
         }),
       this.curation
-        .getSection('home-best', { limit: 10, cursor: null, view: 'grid' })
+        .getSection('home-best', {
+          limit: 10,
+          cursor: null,
+          view: 'grid',
+          currency,
+        })
         .catch((e) => {
           this.logger.error('Failed to get curatedBest section', e);
           errors.push({

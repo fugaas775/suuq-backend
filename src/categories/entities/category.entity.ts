@@ -9,6 +9,7 @@ import {
   CreateDateColumn,
   UpdateDateColumn,
   Index,
+  AfterLoad,
 } from 'typeorm';
 import { Product } from '../../products/entities/product.entity';
 import { Exclude, Expose } from 'class-transformer'; // <-- Import Exclude
@@ -44,6 +45,30 @@ export class Category {
   @Column({ type: 'int', default: 0 })
   @Index()
   sortOrder: number;
+
+  @AfterLoad()
+  encodeIconUrl() {
+    if (this.iconUrl) {
+      const parts = this.iconUrl.split('?');
+      const base = parts[0];
+      const qs = parts.slice(1).join('?');
+
+      const lastSlashIndex = base.lastIndexOf('/');
+      if (lastSlashIndex !== -1) {
+        const path = base.substring(0, lastSlashIndex + 1);
+        const file = base.substring(lastSlashIndex + 1);
+        // Ensure filename is strictly encoded (spaces, parens, &, etc)
+        // Try to decode first to avoid double encoding if already partial
+        let safeFile = file;
+        try {
+          safeFile = encodeURIComponent(decodeURIComponent(file));
+        } catch {
+          safeFile = encodeURIComponent(file);
+        }
+        this.iconUrl = `${path}${safeFile}${qs ? '?' + qs : ''}`;
+      }
+    }
+  }
 
   @TreeChildren({ cascade: true }) // Added cascade for easier management
   children?: Category[];

@@ -27,6 +27,7 @@ import { AppleAuthDto } from './dto/apple-auth.dto';
 import { UpdateOwnProfileDto } from '../users/dto/update-own-profile.dto';
 import { RequestEmailChangeDto } from './dto/request-email-change.dto';
 import { VerifyEmailChangeDto } from './dto/verify-email-change.dto';
+import { VerifyIdentityDto } from './dto/verify-identity.dto';
 
 @Controller('auth')
 export class AuthController {
@@ -173,7 +174,24 @@ export class AuthController {
     @Body() dto: VerifyEmailChangeDto,
   ) {
     if (!req.user?.id) throw new UnauthorizedException();
-    return this.authService.verifyEmailChange(req.user.id, dto.code);
+    return this.authService.verifyEmailChange(req.user.id, dto.code, dto.newEmail);
+  }
+
+  @Post('identity/verify-request')
+  @UseGuards(JwtAuthGuard)
+  async requestIdentityVerification(@Request() req: AuthenticatedRequest) {
+    if (!req.user?.id) throw new UnauthorizedException();
+    return this.authService.requestIdentityVerification(req.user.id);
+  }
+
+  @Post('identity/verify')
+  @UseGuards(JwtAuthGuard)
+  async verifyIdentityVerification(
+    @Request() req: AuthenticatedRequest,
+    @Body() dto: VerifyIdentityDto,
+  ) {
+    if (!req.user?.id) throw new UnauthorizedException();
+    return this.authService.verifyIdentityVerification(req.user.id, dto.code);
   }
 
   @Post('forgot-password')

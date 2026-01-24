@@ -43,6 +43,8 @@ import { AdminNotificationsController } from './notifications.admin.controller';
 import { AdminSystemController } from './admin-system.controller';
 import { EmailModule } from '../email/email.module';
 import { BullModule } from '@nestjs/bullmq';
+import { EbirrTransaction } from '../payments/entities/ebirr-transaction.entity';
+import { AdminEbirrAuditController } from './ebirr-audit.controller';
 
 @Module({
   // 2. Add UsersModule and OrdersModule here
@@ -71,6 +73,7 @@ import { BullModule } from '@nestjs/bullmq';
       ProductRequest,
       ProductRequestForward,
       User,
+      EbirrTransaction,
     ]),
   ],
   controllers: [
@@ -88,6 +91,7 @@ import { BullModule } from '@nestjs/bullmq';
     AdminWalletController,
     AdminNotificationsController,
     AdminSystemController,
+    AdminEbirrAuditController,
   ],
   // 3. Remove the services from providers. They are now correctly provided by the imported modules.
   providers: [

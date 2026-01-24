@@ -28,6 +28,7 @@ import { VendorModule } from './vendor/vendor.module';
 import { CountriesModule } from './countries/countries.module';
 import { MpesaModule } from './mpesa/mpesa.module';
 import { PaymentsModule } from './payments/payments.module';
+import { CallbacksModule } from './callbacks/callbacks.module';
 import { ReviewsModule } from './reviews/reviews.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { FirebaseModule } from './firebase/firebase.module';
@@ -186,6 +187,7 @@ import { ChatModule } from './chat/chat.module';
     CountriesModule,
     MpesaModule,
     PaymentsModule,
+    CallbacksModule,
     ReviewsModule,
     NotificationsModule,
     FirebaseModule,

@@ -51,15 +51,22 @@ export class CreateOrderDto {
     'MPESA',
     'TELEBIRR',
     'BANK_TRANSFER',
+    'EBIRR',
     'cod',
     'mpesa',
     'telebirr',
     'bank_transfer',
+    'ebirr',
   ])
   paymentMethod!: string;
 
-  // Required for MPESA/TELEBIRR, not needed for COD
+  // Required for MPESA/TELEBIRR/EBIRR, not needed for COD
   @IsString()
   @IsOptional()
   phoneNumber?: string;
+
+  // Required for Flutter compatibility (mobile money input often sent as mpesaPhone)
+  @IsString()
+  @IsOptional()
+  mpesaPhone?: string;
 }

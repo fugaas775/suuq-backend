@@ -7,7 +7,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, In, MoreThan, TreeRepository, IsNull } from 'typeorm';
+import { Repository, In, MoreThan, TreeRepository, IsNull, Not } from 'typeorm';
 import { Category } from '../categories/entities/category.entity';
 import { Product } from './entities/product.entity';
 import {
@@ -198,6 +198,10 @@ export class ProductsService {
         'product.average_rating',
         'product.rating_count',
         'product.sales_count',
+        'product.stock_quantity',
+        'product.manage_stock',
+        'product.sale_price',
+        'product.moq',
         'product.viewCount',
         'product.listingType',
         'product.bedrooms',
@@ -208,6 +212,13 @@ export class ProductsService {
         'product.rentPeriod',
         'product.createdAt',
         'vendor.id',
+        'vendor.displayName',
+        'vendor.storeName',
+        'vendor.verified',
+        'vendor.verifiedAt',
+        'vendor.subscriptionTier',
+        'vendor.createdAt',
+        'vendor.avatarUrl',
         'category.id',
         'category.slug',
       ]);
@@ -907,6 +918,7 @@ export class ProductsService {
       'vendor.verified',
       'vendor.subscriptionTier',
       'vendor.createdAt',
+      'vendor.verifiedAt',
       'category.id',
       'category.slug',
     ]);
@@ -1086,6 +1098,7 @@ export class ProductsService {
       'vendor.verified',
       'vendor.subscriptionTier',
       'vendor.createdAt',
+      'vendor.verifiedAt',
       'category.id',
       'category.slug',
     ]);
@@ -1262,7 +1275,7 @@ export class ProductsService {
     productIds: number[],
     sessionKey: string,
     windowSeconds = 300,
-    meta?: { ip?: string; country?: string; city?: string },
+    meta?: { ip?: string; country?: string; city?: string; userId?: number },
   ): Promise<{ recorded: number; ignored: number }> {
     const cutoff = new Date(Date.now() - windowSeconds * 1000);
     // Deduplicate, keep positive ints, and cap batch to guard the table
@@ -1317,6 +1330,7 @@ export class ProductsService {
           ipAddress: meta?.ip,
           country,
           city,
+          userId: meta?.userId,
         }),
       );
       await this.impressionRepo.save(rows);
@@ -2947,5 +2961,30 @@ export class ProductsService {
       if (out.length >= lim) break;
     }
     return out;
+  }
+
+  async getRecentViewers(productId: number, limit = 5): Promise<string[]> {
+    const impressions = await this.impressionRepo.find({
+      where: { productId, userId: Not(IsNull()) },
+      relations: ['user'],
+      order: { createdAt: 'DESC' },
+      take: 20, // Fetch more to handle potential duplicate users
+    });
+
+    const uniqueAvatars = new Set<string>();
+    const avatars: string[] = [];
+
+    for (const imp of impressions) {
+      if (imp.user) {
+        const avatar = imp.user.vendorAvatarUrl || imp.user.avatarUrl;
+        if (avatar && !uniqueAvatars.has(avatar)) {
+          uniqueAvatars.add(avatar);
+          avatars.push(avatar);
+        }
+      }
+      if (avatars.length >= limit) break;
+    }
+
+    return avatars;
   }
 }

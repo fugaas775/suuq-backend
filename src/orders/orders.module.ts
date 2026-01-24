@@ -13,6 +13,9 @@ import { AuditModule } from '../audit/audit.module';
 import { CurrencyModule } from '../common/services/currency.module';
 import { EmailModule } from '../email/email.module';
 import { UiSetting } from '../settings/entities/ui-setting.entity';
+import { EbirrModule } from '../ebirr/ebirr.module';
+import { UsersModule } from '../users/users.module';
+import { WalletModule } from '../wallet/wallet.module';
 
 @Module({
   imports: [
@@ -20,12 +23,15 @@ import { UiSetting } from '../settings/entities/ui-setting.entity';
     CartModule,
     ProductsModule,
     TelebirrModule,
+    EbirrModule,
+    UsersModule,
     MpesaModule,
     NotificationsModule,
     MediaModule,
     AuditModule,
     CurrencyModule,
     EmailModule,
+    WalletModule,
   ],
   controllers: [OrdersController],
   providers: [OrdersService],

@@ -36,8 +36,55 @@ export type ProductCard = {
 
     // Vendor tenure and location info for feed display
     registeredAt?: string;
+    verifiedTenure?: string;
     country?: string | null;
   };
+  // Dynamic info text for the card (e.g. "5 sold", "20% OFF", "New")
+  infoText?: string | null;
+
+  // Metrics for compact rows and guards
+  viewCount?: number;
+  salesCount?: number;
+
+  // Explicit Type Flags
+  isDigital?: boolean;
+  isService?: boolean;
+  isProperty?: boolean;
+  productType?: string | null;
+
+  // Digital
+  downloadUrl?: string;
+  format?: string;
+  fileSizeMB?: number;
+  licenseRequired?: boolean;
+  isFree?: boolean;
+
+  // Service
+  deliveryMethod?: string;
+  durationValue?: number;
+  durationUnit?: string;
+  fulfillmentText?: string;
+
+  // Property
+  rentPeriod?: string | null;
+  priceUnit?: string | null; // Added: e.g. "M2", "Acre"
+  viewingText?: string;
+  bedrooms?: number | null;
+  bathrooms?: number | null;
+  sizeSqm?: number | null;
+  furnished?: boolean | null;
+
+  // Service
+  servicePriceUnit?: string | null; // Added: e.g. "hour", "job"
+
+  // Physical
+  dispatchDays?: number | null;
+  stock_quantity?: number;
+  shippingCost?: number;
+  shippingNotes?: string;
+  moq?: number;
+
+  feedType?: string;
 };
 
 function pruneNullish<T extends Record<string, any>>(obj: T): T {
@@ -108,9 +155,28 @@ export function toProductCard(p: Product): ProductCard {
         vendorPhoneNumber?: string | null;
         phoneNumber?: string | null;
         createdAt?: Date | string;
+        verifiedAt?: Date | string;
         registrationCountry?: string | null;
       }
     | undefined;
+
+  let verifiedTenure: string | undefined;
+  if (vendor?.verified && vendor.verifiedAt) {
+    const now = new Date();
+    const start = new Date(vendor.verifiedAt);
+    const diffMs = now.getTime() - start.getTime();
+    if (diffMs > 0) {
+      const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+      if (diffDays < 30) {
+        verifiedTenure = `${Math.max(0, diffDays)} Days`;
+      } else if (diffDays < 365) {
+        const m = Math.max(1, Math.floor(diffDays / 30.44));
+        verifiedTenure = `${m} Month${m !== 1 ? 's' : ''}`;
+      } else {
+        verifiedTenure = (diffDays / 365.25).toFixed(1) + ' Years';
+      }
+    }
+  }
 
   const card: ProductCard = {
     id: p.id,
@@ -152,9 +218,53 @@ export function toProductCard(p: Product): ProductCard {
               : typeof vendor.createdAt === 'string'
                 ? vendor.createdAt
                 : undefined,
+          verifiedTenure,
           country: vendor.registrationCountry || undefined,
         }
       : undefined,
+    infoText: (p as any).info_text ?? null,
+
+    // Metrics
+    viewCount: (p as any).viewCount || (p as any).view_count || 0,
+    salesCount: (p as any).sales_count || 0,
+
+    // Explicit Type Flags
+    isDigital: p.isDigital,
+    isService: p.isService,
+    isProperty: p.isProperty,
+    productType: p.productType,
+
+    // Digital
+    downloadUrl: p.downloadUrl,
+    format: p.format,
+    fileSizeMB: p.fileSizeMB,
+    licenseRequired: p.licenseRequired,
+    isFree: p.isFree,
+
+    // Service
+    deliveryMethod: p.deliveryMethod,
+    durationValue: p.durationValue,
+    durationUnit: p.durationUnit,
+    fulfillmentText: p.fulfillmentText,
+    servicePriceUnit: p.attributes?.servicePriceUnit, // Added
+
+    // Property
+    rentPeriod: p.rentPeriod, // specific to property
+    priceUnit: p.attributes?.priceUnit, // Added
+    viewingText: p.viewingText,
+    bedrooms: p.bedrooms,
+    bathrooms: p.bathrooms,
+    sizeSqm: p.sizeSqm,
+    furnished: p.furnished,
+
+    // Physical
+    dispatchDays: p.dispatchDays,
+    stock_quantity: p.stock_quantity,
+    shippingCost: p.shippingCost,
+    shippingNotes: p.shippingNotes,
+    moq: p.moq,
+
+    feedType: (p as any).feedType,
   };
 
   return pruneNullish(card);

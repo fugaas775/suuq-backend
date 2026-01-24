@@ -27,6 +27,10 @@ export function absolutize(
 export function normalizeProductMedia<T extends Record<string, any>>(p: T): T {
   if (!p || typeof p !== 'object') return p;
   const out: any = { ...p };
+  // Preserve prototype so getters/methods (like info_text) remain accessible
+  if (p.constructor !== Object && Object.getPrototypeOf(p)) {
+    Object.setPrototypeOf(out, Object.getPrototypeOf(p));
+  }
   // Bubble up computed distance if present under various aliases
   if (out.distanceKm == null) {
     const d = out.distance_km ?? out.distancekm ?? out.distance;

@@ -4,7 +4,10 @@ import {
   Column,
   CreateDateColumn,
   Index,
+  ManyToOne,
+  JoinColumn,
 } from 'typeorm';
+import { User } from '../../users/entities/user.entity';
 
 @Entity()
 @Index(['productId', 'sessionKey'])
@@ -14,6 +17,13 @@ export class ProductImpression {
 
   @Column('int')
   productId!: number;
+
+  @Column({ type: 'int', nullable: true })
+  userId?: number;
+
+  @ManyToOne(() => User, { onDelete: 'SET NULL', nullable: true })
+  @JoinColumn({ name: 'userId' })
+  user?: User;
 
   @Column({ type: 'varchar', length: 45, nullable: true })
   ipAddress?: string;

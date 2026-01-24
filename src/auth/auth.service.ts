@@ -516,12 +516,13 @@ export class AuthService {
     const user = await this.usersService.findById(userId);
     if (!user) throw new UnauthorizedException('User not found');
 
-    if (user.email === newEmail) {
-      throw new ConflictException('New email is same as current email');
-    }
+    // Allow requesting change to same email (can be used for identity verification)
+    // if (user.email === newEmail) {
+    //   throw new ConflictException('New email is same as current email');
+    // }
 
     const existingUser = await this.usersService.findByEmail(newEmail);
-    if (existingUser) {
+    if (existingUser && existingUser.id !== userId) {
       throw new ConflictException('Email already in use');
     }
 
@@ -543,7 +544,7 @@ export class AuthService {
     return { message: 'Verification code sent to current email' };
   }
 
-  async verifyEmailChange(userId: number, code: string) {
+  async verifyEmailChange(userId: number, code: string, newEmail: string) {
     const key = `auth:change-email:${userId}`;
     const client = this.redisService.getClient();
     if (!client) throw new InternalServerErrorException('Service unavailable (Redis)');
@@ -559,12 +560,55 @@ export class AuthService {
       throw new BadRequestException('Invalid verification code');
     }
 
+    if (data.newEmail !== newEmail) {
+        throw new BadRequestException('Email does not match the requested change');
+    }
+
     // Update email
-    await this.usersService.update(userId, { email: data.newEmail });
+    await this.usersService.updateEmail(userId, data.newEmail);
     
     // Clear Redis
     await client.del(key);
 
     return { message: 'Email updated successfully' };
+  }
+
+  // --- Identity Verification (repurposing email logic without changing email) ---
+
+  async requestIdentityVerification(userId: number) {
+    const user = await this.usersService.findById(userId);
+    if (!user) throw new UnauthorizedException('User not found');
+
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    const key = `auth:identity-verify:${userId}`;
+    const client = this.redisService.getClient();
+    if (client) {
+        await client.set(key, code, 'EX', 600); // 10 mins
+    } else {
+        throw new InternalServerErrorException('Service unavailable (Redis)');
+    }
+
+    await this.emailService.sendIdentityVerificationCode(user.email, code);
+    return { message: 'Verification code sent to current email' };
+  }
+
+  async verifyIdentityVerification(userId: number, code: string) {
+    const key = `auth:identity-verify:${userId}`;
+    const client = this.redisService.getClient();
+    if (!client) throw new InternalServerErrorException('Service unavailable (Redis)');
+
+    const savedCode = await client.get(key);
+    if (!savedCode) {
+        throw new BadRequestException('Verification code expired or invalid');
+    }
+    if (savedCode !== code) {
+        throw new BadRequestException('Invalid verification code');
+    }
+
+    // Success - consume code
+    await client.del(key);
+
+    // Ideally return a short-lived token, but for now just success 
+    return { message: 'Identity verified successfully', success: true };
   }
 }

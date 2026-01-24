@@ -596,4 +596,20 @@ export class EmailService {
     };
     await this.send(mail);
   }
+
+  async sendIdentityVerificationCode(to: string, code: string) {
+    if (!to) return;
+    const mail = {
+      to,
+      subject: 'Verification Code for Identity',
+      text: `Your identity verification code is: ${code}\n\nThis code will expire in 10 minutes.\n\nIf you did not request this, please change your password immediately.`,
+      html: `
+        <h2>Identity Verification</h2>
+        <p>Your verification code is: <strong>${code}</strong></p>
+        <p>This code will expire in 10 minutes.</p>
+        <p>If you did not request this, please change your password immediately.</p>
+      `,
+    };
+    await this.send(mail);
+  }
 }

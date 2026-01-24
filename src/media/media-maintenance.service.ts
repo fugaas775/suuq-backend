@@ -372,7 +372,9 @@ export class MediaMaintenanceService {
         for (let i = 0; i < candidates.length; i += CHUNK) {
             const chunk = candidates.slice(i, i + CHUNK);
             await Promise.all(chunk.map(async (key) => {
-                const term = `%${key}`;
+                // Use %key% to handle query params like ?v=1 in DB URLs
+                const term = `%${key}%`;
+                
                 const pCount = await this.dataSource.query(
                     `SELECT 1 FROM product WHERE "imageUrl" LIKE $1 LIMIT 1`, 
                     [term]
@@ -390,6 +392,13 @@ export class MediaMaintenanceService {
                     [term]
                 );
                 if (attrCount.length > 0) return;
+
+                // Also check Category icons
+                const catCount = await this.dataSource.query(
+                    `SELECT 1 FROM category WHERE "iconUrl" LIKE $1 LIMIT 1`,
+                    [term]
+                );
+                if (catCount.length > 0) return;
 
                 try {
                    this.log.debug(`Deleting historical orphan: ${key}`);

@@ -85,15 +85,33 @@ export class AdminAnalyticsController {
       .where('order.createdAt > :date', { date: thirtyDaysAgo })
       .getRawOne();
 
+    // 4. Ebirr Commission Breakdown
+    // Ebirr Fee is 1% of the transaction volume for EBIRR orders
+    const { ebirrFees } = await orderItemRepo
+      .createQueryBuilder('item')
+      .leftJoin('item.order', 'order')
+      .where("order.paymentMethod = 'EBIRR'")
+      .select('SUM(item.price * item.quantity * 0.01)', 'ebirrFees')
+      .getRawOne();
+
+    const totalEbirrFees = Number(ebirrFees || 0);
+    const totalPlatformRevenue = Number(totalCommission || 0) - totalEbirrFees;
+
     return {
       totalMrr: Number(recentCommission || 0), // Aliased to MRR for compatibility
       activeSubscribers, // Aliased to Certified Count
       commissionCollected: Number(totalCommission || 0),
       
+      // Breakdown for Super Admin
+      ebirrFees: totalEbirrFees,
+      platformRevenue: totalPlatformRevenue,
+
       // Snake_case aliases
       total_mrr: Number(recentCommission || 0),
       active_subscribers: activeSubscribers,
       total_commission: Number(totalCommission || 0),
+      ebirr_fees: totalEbirrFees,
+      platform_revenue: totalPlatformRevenue,
     };
   }
 
