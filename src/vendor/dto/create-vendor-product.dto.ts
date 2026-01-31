@@ -97,6 +97,24 @@ export class CreateVendorProductDto {
   @Type(() => ImageDto)
   images?: ImageDto[];
 
+  @IsOptional()
+  @Type(() => Boolean)
+  @IsBoolean()
+  featured?: boolean;
+
+  @IsOptional()
+  @IsString()
+  featuredExpiresAt?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  featuredPaidAmount?: number;
+
+  @IsOptional()
+  @IsString()
+  featuredPaidCurrency?: string;
+
   // Tags as array of names (e.g., selected subcategory labels)
   @IsOptional()
   @IsArray()

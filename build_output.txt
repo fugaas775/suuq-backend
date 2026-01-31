@@ -1,0 +1,3 @@
+yarn run v1.22.22
+$ nest build
+Done in 16.41s.

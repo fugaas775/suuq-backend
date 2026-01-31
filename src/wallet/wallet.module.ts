@@ -11,12 +11,15 @@ import { UiSetting } from '../settings/entities/ui-setting.entity';
 import { MediaModule } from '../media/media.module';
 import { UsersModule } from '../users/users.module';
 
+import { PayoutLog } from './entities/payout-log.entity';
+
 @Module({
   imports: [
     TypeOrmModule.forFeature([
       Wallet,
       WalletTransaction,
       TopUpRequest,
+      PayoutLog,
       User,
       UiSetting,
     ]),

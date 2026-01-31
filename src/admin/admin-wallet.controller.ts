@@ -69,6 +69,15 @@ export class AdminWalletController {
     return this.walletService.findAllTopUpRequests(page, limit, status);
   }
 
+  @Get('payouts')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  async listPayouts(
+    @Query('page') page: number = 1,
+    @Query('limit') limit: number = 20,
+  ) {
+    return this.walletService.getAllPayouts(page, limit);
+  }
+
   @Get('stats')
   @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
   async getWalletStats() {

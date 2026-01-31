@@ -72,6 +72,15 @@ export class Product {
   @Column({ type: 'timestamp', nullable: true })
   featuredExpiresAt?: Date;
 
+  @Column('decimal', { precision: 10, scale: 2, nullable: true })
+  featuredPaidAmount?: number;
+
+  @Column({ name: 'featuredPaidCurrency', length: 3, nullable: true })
+  featuredPaidCurrency?: string;
+
+  // Runtime field for attaching recent viewer avatars (for featured products)
+  featuredRecentViewers?: string[];
+
   @ManyToOne(() => User, (user) => user.products, {
     eager: false,
     nullable: false,
@@ -423,19 +432,27 @@ export class Product {
   @Expose()
   get info_text(): string | null {
     // 1. Low Stock (Urgency)
-    if (this.manage_stock && this.stock_quantity && this.stock_quantity <= 5 && this.stock_quantity > 0) {
-       return `Only ${this.stock_quantity} left!`;
+    if (
+      this.manage_stock &&
+      this.stock_quantity &&
+      this.stock_quantity <= 5 &&
+      this.stock_quantity > 0
+    ) {
+      return `Only ${this.stock_quantity} left!`;
     }
 
     // 2. Discount
     if (this.sale_price && this.price && this.sale_price < this.price) {
-      const discount = Math.round(((this.price - this.sale_price) / this.price) * 100);
+      const discount = Math.round(
+        ((this.price - this.sale_price) / this.price) * 100,
+      );
       if (discount > 0) return `${discount}% OFF`;
     }
 
     // 3. Sold Count (User Request)
     if (this.sales_count > 0) {
-      if (this.sales_count >= 1000) return `${(this.sales_count/1000).toFixed(1)}k+ sold`;
+      if (this.sales_count >= 1000)
+        return `${(this.sales_count / 1000).toFixed(1)}k+ sold`;
       return `${this.sales_count} sold`;
     }
 
@@ -443,26 +460,29 @@ export class Product {
     // Basic check assuming createdAt is occupied.
     if (this.createdAt) {
       const now = new Date().getTime();
-      const created = this.createdAt instanceof Date ? this.createdAt.getTime() : new Date(this.createdAt).getTime();
+      const created =
+        this.createdAt instanceof Date
+          ? this.createdAt.getTime()
+          : new Date(this.createdAt).getTime();
       const diffDays = (now - created) / (1000 * 3600 * 24);
       if (diffDays <= 7) return 'New Arrival';
     }
 
     // 5. Views (Popularity)
     if (this.viewCount >= 1000) {
-       return `${(this.viewCount/1000).toFixed(1)}k views`;
+      return `${(this.viewCount / 1000).toFixed(1)}k views`;
     }
 
     // 6. Rental Period
     if (this.listingType === 'rent' && this.rentPeriod) {
-       // "Day" -> "Daily", "Week" -> "Weekly", "Month" -> "Monthly", "Year" -> "Yearly"
-       if (this.rentPeriod === 'day') return 'Daily';
-       if (this.rentPeriod === 'week') return 'Weekly';
-       if (this.rentPeriod === 'month') return 'Monthly';
-       if (this.rentPeriod === 'year') return 'Yearly';
-       return this.rentPeriod;
+      // "Day" -> "Daily", "Week" -> "Weekly", "Month" -> "Monthly", "Year" -> "Yearly"
+      if (this.rentPeriod === 'day') return 'Daily';
+      if (this.rentPeriod === 'week') return 'Weekly';
+      if (this.rentPeriod === 'month') return 'Monthly';
+      if (this.rentPeriod === 'year') return 'Yearly';
+      return this.rentPeriod;
     }
-    
+
     // 7. Location (if set)
     if (this.listingCity) {
       return this.listingCity;

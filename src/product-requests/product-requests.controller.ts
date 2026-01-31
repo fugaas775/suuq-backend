@@ -1,7 +1,9 @@
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access */
 /* eslint-disable @typescript-eslint/no-unused-vars */
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   ParseIntPipe,
@@ -20,6 +22,9 @@ import { UpdateProductRequestStatusDto } from './dto/update-product-request-stat
 import { ListProductRequestFeedDto } from './dto/list-product-request-feed.dto';
 import { CreateProductRequestOfferDto } from './dto/create-product-request-offer.dto';
 import { RespondOfferDto } from './dto/respond-offer.dto';
+import { DeleteProductRequestsDto } from './dto/delete-product-requests.dto';
+import { Roles } from '../common/decorators/roles.decorator';
+import { UserRole } from '../auth/roles.enum';
 
 @Controller([
   'product-requests',
@@ -34,6 +39,20 @@ export class ProductRequestsController {
   @Post('guest')
   createAsGuest(@Body() dto: CreateProductRequestDto) {
     return this.productRequests.createGuestRequest(dto);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  @Post('delete-batch')
+  deleteBatch(@Body() dto: DeleteProductRequestsDto) {
+    return this.productRequests.deleteBatch(dto.ids);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  @Delete(':id')
+  delete(@Param('id', ParseIntPipe) id: number) {
+    return this.productRequests.delete(id);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
@@ -135,6 +154,16 @@ export class ProductRequestsController {
   ) {
     const user = req.user;
     return this.productRequests.createOffer(user.id, user.roles, id, dto);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Post(':id/offers/withdraw')
+  withdrawOffer(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const user = req.user;
+    return this.productRequests.withdrawOffer(user.id, id);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)

@@ -26,6 +26,7 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { ClassSerializerInterceptor } from '@nestjs/common';
 import { CacheInterceptor, CacheTTL } from '@nestjs/cache-manager';
 import { CreateProductDto } from './dto/create-product.dto';
+import { PromoteProductDto } from './dto/promote-product.dto';
 import { UserRole } from '../auth/roles.enum';
 import { ProductFilterDto } from './dto/ProductFilterDto';
 import { TieredProductsDto } from './dto/tiered-products.dto';
@@ -41,6 +42,8 @@ import { createHash } from 'crypto';
 import { toProductCard } from './utils/product-card.util';
 import { Public } from '../common/decorators/public.decorator';
 
+import { BoostPricingService } from './boost-pricing.service';
+
 import { OptionalJwtAuthGuard } from '../auth/optional-jwt-auth.guard';
 
 @UseInterceptors(ClassSerializerInterceptor)
@@ -50,6 +53,7 @@ export class ProductsController {
 
   constructor(
     private readonly productsService: ProductsService,
+    private readonly boostPricingService: BoostPricingService,
     private readonly homeService: HomeService,
     private readonly favoritesService: FavoritesService,
     private readonly categoriesService: CategoriesService,
@@ -645,7 +649,7 @@ export class ProductsController {
     const city = q.user_city || q.userCity || q.city;
     const region = q.user_region || q.userRegion || q.region;
     const country = q.user_country || q.userCountry || q.country;
-    
+
     // Extract User ID if available via Optional Auth
     const userId = req.user?.id ? Number(req.user.id) : undefined;
 
@@ -994,6 +998,21 @@ export class ProductsController {
     return this.productsService.updateProduct(id, updateProductDto, req.user);
   }
 
+  @Post(':id/promote')
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @Roles(UserRole.VENDOR)
+  promote(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() promoteProductDto: PromoteProductDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.productsService.promoteProduct(
+      id,
+      promoteProductDto.tier,
+      req.user,
+    );
+  }
+
   @Delete(':id')
   @UseGuards(AuthGuard('jwt'), RolesGuard)
   @Roles(UserRole.VENDOR, UserRole.ADMIN, UserRole.SUPER_ADMIN)
@@ -1019,5 +1038,10 @@ export class ProductsController {
     @Body('featured', ParseBoolPipe) featured: boolean, // Use correct pipe
   ) {
     return this.productsService.toggleFeatureStatus(id, featured);
+  }
+
+  @Get('boost-pricing')
+  getBoostPricing(@Query('currency') currency: string = 'ETB') {
+    return this.boostPricingService.getBoostPricesForCountry(currency);
   }
 }

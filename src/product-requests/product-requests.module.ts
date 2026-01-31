@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ProductRequestsService } from './product-requests.service';
+import { ProductRequestsCronService } from './product-requests-cron.service';
 import { ProductRequestsController } from './product-requests.controller';
 import { ProductRequest } from './entities/product-request.entity';
 import { ProductRequestOffer } from './entities/product-request-offer.entity';
@@ -25,7 +26,7 @@ import { EmailModule } from '../email/email.module';
     EmailModule,
   ],
   controllers: [ProductRequestsController],
-  providers: [ProductRequestsService],
+  providers: [ProductRequestsService, ProductRequestsCronService],
   exports: [ProductRequestsService],
 })
 export class ProductRequestsModule {}

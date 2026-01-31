@@ -124,22 +124,14 @@ export class UpdateProductDto {
   @IsOptional()
   @Type(() => Number)
   @IsInt()
-  @ApiPropertyOptional({ description: 'Dispatch time in days (0 = Ready to Ship)' })
+  @ApiPropertyOptional({
+    description: 'Dispatch time in days (0 = Ready to Ship)',
+  })
   dispatchDays?: number;
 
   @IsOptional()
   @IsIn(['publish', 'draft', 'pending', 'pending_approval', 'rejected'])
   status?: 'publish' | 'draft' | 'pending' | 'pending_approval' | 'rejected';
-
-  @IsOptional()
-  @IsBoolean()
-  @ApiPropertyOptional()
-  featured?: boolean;
-
-  @IsOptional()
-  @Type(() => Date)
-  @ApiPropertyOptional()
-  featuredExpiresAt?: Date;
 
   // Property vertical: 'sale' | 'rent'
   @IsOptional()

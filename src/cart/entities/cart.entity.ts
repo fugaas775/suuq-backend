@@ -31,7 +31,7 @@ export class CartItem {
   @PrimaryGeneratedColumn()
   id!: number;
 
-  @ManyToOne(() => Product, { eager: true })
+  @ManyToOne(() => Product, { eager: true, onDelete: 'CASCADE' })
   product!: Product;
 
   @Column('jsonb', { default: {} })

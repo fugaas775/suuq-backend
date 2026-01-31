@@ -1,5 +1,12 @@
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access */
 /* eslint-disable @typescript-eslint/no-base-to-string */
-import { Injectable, Inject, Logger, NotFoundException, forwardRef } from '@nestjs/common';
+import {
+  Injectable,
+  Inject,
+  Logger,
+  NotFoundException,
+  forwardRef,
+} from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { UsersService } from '../users/users.service';
@@ -36,11 +43,13 @@ export class NotificationsService {
     title,
     body,
     data,
+    image,
   }: {
     userId: number;
     title: string;
     body: string;
     data?: Record<string, string>;
+    image?: string;
   }) {
     const user = await this.usersService.findOne(userId);
     if (!user) {
@@ -56,7 +65,7 @@ export class NotificationsService {
       return { successCount: 0, failureCount: 0 };
     }
     const message = {
-      notification: { title, body },
+      notification: { title, body, image },
       data,
       tokens: deviceTokens,
     } as const;
@@ -102,36 +111,54 @@ export class NotificationsService {
     body: string;
     type?: NotificationType;
     data?: Record<string, any>;
+    image?: string;
   }) {
     // 1. Persist
-    const rawType = opts.type ? opts.type.toString().toUpperCase() : NotificationType.SYSTEM;
-    const type = (Object.values(NotificationType).includes(rawType as NotificationType))
-        ? (rawType as NotificationType)
-        : NotificationType.SYSTEM;
+    const rawType = opts.type
+      ? opts.type.toString().toUpperCase()
+      : NotificationType.SYSTEM;
+    const type = Object.values(NotificationType).includes(
+      rawType as NotificationType,
+    )
+      ? (rawType as NotificationType)
+      : NotificationType.SYSTEM;
+
+    const notificationData = opts.data || {};
+    if (opts.image) {
+      notificationData['image'] = opts.image;
+    }
 
     const notification = this.notificationRepository.create({
       recipient: { id: opts.userId },
       title: opts.title,
       body: opts.body,
       type,
-      data: opts.data || {},
+      data: notificationData,
     });
     await this.notificationRepository.save(notification);
 
     // 2. Push (fire and forget or await)
     // We convert data to string map for FCM
     const fcmData = opts.data
-      ? Object.entries(opts.data).reduce((acc, [k, v]) => {
-          acc[k] = String(v);
-          return acc;
-        }, {} as Record<string, string>)
-      : undefined;
+      ? Object.entries(opts.data).reduce(
+          (acc, [k, v]) => {
+            acc[k] = String(v);
+            return acc;
+          },
+          {} as Record<string, string>,
+        )
+      : {};
+
+    // Explicitly add 'type' to the helper payload so Flutter's NotificationService
+    // can detect it easily (for routing optimization).
+    fcmData['type'] = type;
 
     return this.sendToUser({
       userId: opts.userId,
       title: opts.title,
       body: opts.body,
       data: fcmData,
+      image: opts.image,
     });
   }
 
@@ -170,10 +197,15 @@ export class NotificationsService {
   }
 
   async delete(notificationId: number, userId: number) {
-     return this.notificationRepository.delete({
-       id: notificationId,
-       recipient: { id: userId },
-     });
+    return this.notificationRepository.delete({
+      id: notificationId,
+      recipient: { id: userId },
+    });
+  }
+
+  async deleteBatch(ids: number[]) {
+    if (!ids.length) return;
+    return this.notificationRepository.delete({ id: In(ids) });
   }
 
   /**
@@ -216,7 +248,7 @@ export class NotificationsService {
     try {
       const messaging = this.firebase.messaging?.();
       if (messaging && 'subscribeToTopic' in messaging) {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-call
         await (messaging as any).subscribeToTopic([token], topic);
       }
     } catch (e) {
@@ -232,7 +264,7 @@ export class NotificationsService {
     try {
       const messaging = this.firebase.messaging?.();
       if (messaging && 'unsubscribeFromTopic' in messaging) {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-call
         await (messaging as any).unsubscribeFromTopic([token], topic);
       }
     } catch (e) {
@@ -244,11 +276,20 @@ export class NotificationsService {
   async findAll({
     page = 1,
     limit = 20,
+    type,
+    userId,
   }: {
     page?: number;
     limit?: number;
+    type?: NotificationType;
+    userId?: number;
   }) {
+    const where: any = {};
+    if (type) where.type = type;
+    if (userId) where.recipient = { id: userId };
+
     const [items, total] = await this.notificationRepository.findAndCount({
+      where,
       relations: ['recipient'],
       select: {
         id: true,
@@ -278,6 +319,7 @@ export class NotificationsService {
     body: string;
     type?: NotificationType;
     data?: Record<string, any>;
+    image?: string;
   }) {
     // Queue the job
     await this.queue.add('broadcast', opts);

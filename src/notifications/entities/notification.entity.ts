@@ -13,6 +13,9 @@ export enum NotificationType {
   ORDER = 'ORDER',
   PROMOTION = 'PROMOTION',
   ACCOUNT = 'ACCOUNT',
+  PRODUCT_REQUEST = 'PRODUCT_REQUEST',
+  ADMIN_BROADCAST = 'ADMIN_BROADCAST',
+  CHAT = 'CHAT',
 }
 
 @Entity()

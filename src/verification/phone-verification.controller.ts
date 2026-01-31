@@ -85,11 +85,20 @@ export class PhoneVerificationController {
     // Persist to user profile
     const userId = req.user?.id;
     if (userId) {
-      await this.usersService.update(userId, {
-        phoneCountryCode: result.countryCode || undefined,
-        phoneNumber: result.nationalNumber || normalized.replace(/^\+/, ''),
-        isPhoneVerified: true,
-      } as any);
+      try {
+        await this.usersService.update(userId, {
+          phoneCountryCode: result.countryCode || undefined,
+          phoneNumber: result.nationalNumber || normalized.replace(/^\+/, ''),
+          isPhoneVerified: true,
+        } as any);
+      } catch (error) {
+        // If phone is taken, we still return success for the verification itself,
+        // allowing the user to proceed with the Verified phone number in the flow
+        // even if it couldn't be linked to their account permanently.
+        if (error.status !== HttpStatus.CONFLICT) {
+          throw error;
+        }
+      }
     }
 
     // Reset attempt counter on success

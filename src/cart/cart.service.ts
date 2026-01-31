@@ -92,8 +92,21 @@ export class CartService {
       from,
       targetCurrency,
     );
+
     const unit = priceConverted ?? product.price ?? 0;
-    const subtotal = Math.round(unit * (item.quantity || 0) * 100) / 100;
+
+    // Use sale price if available and lower than regular price
+    const hasSale =
+      product.sale_price &&
+      product.sale_price > 0 &&
+      product.sale_price < product.price;
+    // Prefer converted sale price, fallback to raw sale price if conversion failed but sale exists (edge case), else unit
+    const priceToUse = hasSale ? (saleConverted ?? product.sale_price) : unit;
+
+    // Ensure we don't return null/undefined for math
+    const finalUnit = priceToUse ?? 0;
+
+    const subtotal = Math.round(finalUnit * (item.quantity || 0) * 100) / 100;
 
     itemWithDisplay.product.price_display = {
       amount: priceConverted ?? product.price ?? null,
@@ -115,8 +128,20 @@ export class CartService {
       convertedFrom: from,
       rate,
     };
-    itemWithDisplay.product.price = priceConverted ?? product.price;
-    itemWithDisplay.product.sale_price = saleConverted ?? product.sale_price;
+    itemWithDisplay.product.price =
+      priceConverted !== null && priceConverted !== undefined
+        ? Number(priceConverted)
+        : product.price
+          ? Number(product.price)
+          : 0;
+
+    itemWithDisplay.product.sale_price =
+      saleConverted !== null && saleConverted !== undefined
+        ? Number(saleConverted)
+        : product.sale_price
+          ? Number(product.sale_price)
+          : undefined;
+
     itemWithDisplay.product.currency = targetCurrency;
     return itemWithDisplay;
   }
@@ -170,12 +195,18 @@ export class CartService {
     }
 
     // Sort keys to ensure consistent stringify comparison
-    const attrString = JSON.stringify(attributes || {}, Object.keys(attributes || {}).sort());
+    const attrString = JSON.stringify(
+      attributes || {},
+      Object.keys(attributes || {}).sort(),
+    );
 
     const existingItem = cart.items.find((item) => {
-       if (item.product.id !== productId) return false;
-       const itemAttrString = JSON.stringify(item.attributes || {}, Object.keys(item.attributes || {}).sort());
-       return itemAttrString === attrString;
+      if (item.product.id !== productId) return false;
+      const itemAttrString = JSON.stringify(
+        item.attributes || {},
+        Object.keys(item.attributes || {}).sort(),
+      );
+      return itemAttrString === attrString;
     });
 
     if (existingItem) {

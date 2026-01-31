@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return */
 import { Injectable, Logger } from '@nestjs/common';
 import { ProductsService } from '../products/products.service';
@@ -30,12 +31,15 @@ export class HomeService {
     private readonly listingService: ProductListingService,
   ) {}
 
-  async getRecommended(userId: number, opts: { perSection: number; currency?: string }) {
+  async getRecommended(
+    userId: number,
+    opts: { perSection: number; currency?: string },
+  ) {
     try {
       // 1. Get Category IDs from Favorites
       const fav = await this.favoriteRepo.findOne({ where: { userId } });
       const favProductIds = fav?.ids || [];
-      
+
       // 2. Get Category IDs from recent Orders (limit 5)
       const orders = await this.orderRepo.find({
         where: { user: { id: userId } },
@@ -45,29 +49,30 @@ export class HomeService {
       });
 
       const categoryCounts = new Map<number, number>();
-      
+
       // Tally from orders
-      orders.forEach(o => {
-        o.items?.forEach(i => {
-           const catId = i.product?.category?.id;
-           if (catId) categoryCounts.set(catId, (categoryCounts.get(catId) || 0) + 3); // High weight
+      orders.forEach((o) => {
+        o.items?.forEach((i) => {
+          const catId = i.product?.category?.id;
+          if (catId)
+            categoryCounts.set(catId, (categoryCounts.get(catId) || 0) + 3); // High weight
         });
       });
 
       // Tally from favorites (we need product details, fetch lightweight)
       if (favProductIds.length > 0) {
-        // We can't easily get category without fetching products. 
+        // We can't easily get category without fetching products.
         // Let's just fetch the last 10 favorited products to guess preference.
-        const recentFavIds = favProductIds.slice(-10); 
+        const recentFavIds = favProductIds.slice(-10);
         // Use productsService (or repo if available, but service is cleaner)
         // We cheat and use an internal query helper or just rely on 'findFiltered' being too heavy.
         // Actually, let's skip fetching products to save time and rely on Orders + fallback.
         // OR: If we really want "Inspired by you", favorites are key.
-        // Let's assumptively skip implementation complexity here and stick to Orders + Trending Fallback for now 
+        // Let's assumptively skip implementation complexity here and stick to Orders + Trending Fallback for now
         // unless I have a lightweight way.
         // Wait, I can use productsService.findByIds if it exists.
       }
-      
+
       // If no signals, return null to trigger fallback
       if (categoryCounts.size === 0) return null;
 
@@ -75,7 +80,7 @@ export class HomeService {
       const topCategories = Array.from(categoryCounts.entries())
         .sort((a, b) => b[1] - a[1])
         .slice(0, 3)
-        .map(e => e[0]);
+        .map((e) => e[0]);
 
       if (topCategories.length === 0) return null;
 
@@ -86,9 +91,8 @@ export class HomeService {
         perPage: opts.perSection,
         currency: opts.currency,
       });
-      
-      return res.items;
 
+      return res.items;
     } catch (e) {
       this.logger.error('Failed to get personal recommendations', e);
       return null;
@@ -107,8 +111,15 @@ export class HomeService {
     view?: 'grid' | 'full';
     userId?: number;
   }) {
-    const { perSection, userCity, userRegion, userCountry, currency, view, userId } =
-      opts;
+    const {
+      perSection,
+      userCity,
+      userRegion,
+      userCountry,
+      currency,
+      view,
+      userId,
+    } = opts;
 
     // Build base filters per section
     const base: Pick<
@@ -124,19 +135,22 @@ export class HomeService {
     // TRIGGER PERSONALIZATION
     let recommendedPromise: Promise<any>;
     if (userId) {
-       recommendedPromise = this.getRecommended(userId, { perSection, currency }).then(items => {
-         if (items && items.length > 0) return { items };
-         // Fallback inside the promise if null
-         return this.productsService.findFiltered({
-            ...base,
-            sort: 'sales_desc', // Trending
-            currency,
-            view,
-          });
-       });
+      recommendedPromise = this.getRecommended(userId, {
+        perSection,
+        currency,
+      }).then((items) => {
+        if (items && items.length > 0) return { items };
+        // Fallback inside the promise if null
+        return this.productsService.findFiltered({
+          ...base,
+          sort: 'sales_desc', // Trending
+          currency,
+          view,
+        });
+      });
     } else {
-       // Anonymous: Trending
-       recommendedPromise = this.productsService.findFiltered({
+      // Anonymous: Trending
+      recommendedPromise = this.productsService.findFiltered({
         ...base,
         sort: 'sales_desc',
         currency,
@@ -293,6 +307,21 @@ export class HomeService {
         }),
     ]);
 
+    // 2.5) Featured Products (for Carousel) - uses ProductsService to ensure consistent expiry logic
+    const featuredProductsPromise = this.productsService
+      .findFiltered({
+        page: 1,
+        perPage: 8,
+        featured: true,
+        view: 'grid',
+        currency,
+        sort: 'created_desc',
+      } as any)
+      .catch((e) => {
+        this.logger.error('Failed to get featuredProducts', e);
+        return { items: [] } as any;
+      });
+
     // 3) Explore products: use new engine behind flag, fallback to legacy service
     const explorePromise = (async () => {
       const useV2 = String(process.env.HOME_EXPLORE_ENGINE_V2 || '1') === '1';
@@ -439,17 +468,22 @@ export class HomeService {
       }
     })();
 
-    const [config, curated, explore, vendorList] = await Promise.all([
-      configPromise,
-      curatedPromise,
-      explorePromise,
-      vendorsPromise,
-    ]);
+    const [config, curated, explore, vendorList, featuredProdList] =
+      await Promise.all([
+        configPromise,
+        curatedPromise,
+        explorePromise,
+        vendorsPromise,
+        featuredProductsPromise,
+      ]);
 
     const [curatedNew, curatedBest] = curated;
 
     const payload: any = {
       featuredCategories: config.featuredCategories,
+      featuredProducts: (featuredProdList.items || []).map((p: any) =>
+        toProductCard(p),
+      ),
       curatedNew: {
         key: 'home-new',
         title: 'New Arrivals',

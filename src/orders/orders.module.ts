@@ -16,10 +16,18 @@ import { UiSetting } from '../settings/entities/ui-setting.entity';
 import { EbirrModule } from '../ebirr/ebirr.module';
 import { UsersModule } from '../users/users.module';
 import { WalletModule } from '../wallet/wallet.module';
+import { Message } from '../chat/entities/message.entity';
+import { Conversation } from '../chat/entities/conversation.entity';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Order, OrderItem, UiSetting]),
+    TypeOrmModule.forFeature([
+      Order,
+      OrderItem,
+      UiSetting,
+      Message,
+      Conversation,
+    ]),
     CartModule,
     ProductsModule,
     TelebirrModule,

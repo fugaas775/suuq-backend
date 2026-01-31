@@ -432,6 +432,7 @@ export class AdminController {
       totalAdmins,
       totalRevenue,
       totalOrders,
+      currency: 'ETB',
       fxSource: fxSnapshot.source,
       fxUpdatedAt: fxSnapshot.updatedAt,
       fxLastFetchAt: fxSnapshot.lastFetchAt ?? null,

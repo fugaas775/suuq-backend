@@ -11,7 +11,11 @@ import {
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { ChatService } from './chat.service';
-import { StartConversationDto, SendMessageDto } from './dto/chat.dto';
+import {
+  StartConversationDto,
+  SendMessageDto,
+  CreateOfferDto,
+} from './dto/chat.dto';
 import { AuthenticatedRequest } from '../auth/auth.types';
 import { UserRole } from '../auth/roles.enum';
 
@@ -25,15 +29,20 @@ export class ChatController {
     @Body() dto: StartConversationDto,
     @Req() req: AuthenticatedRequest,
   ) {
-    const roles = (typeof req.user.roles === 'string' ? [req.user.roles] : req.user.roles || []) as UserRole[];
+    const roles = (
+      typeof req.user.roles === 'string'
+        ? [req.user.roles]
+        : req.user.roles || []
+    ) as UserRole[];
     return this.chatService.startConversation(
       req.user.id,
-      { 
-        productId: dto.productId, 
-        orderId: dto.orderId, 
-        initialMessage: dto.initialMessage 
+      {
+        productId: dto.productId,
+        orderId: dto.orderId,
+        initialMessage: dto.initialMessage,
+        autoOffer: dto.autoOffer,
       },
-      roles
+      roles,
     );
   }
 
@@ -59,6 +68,15 @@ export class ChatController {
     @Body() dto: SendMessageDto,
     @Req() req: AuthenticatedRequest,
   ) {
-    return this.chatService.sendMessage(id, req.user.id, dto.content);
+    return this.chatService.sendMessage(id, req.user.id, dto.content, dto.type);
+  }
+
+  @Post(':id/offer')
+  async createOffer(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: CreateOfferDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.chatService.createOffer(id, req.user.id, dto);
   }
 }

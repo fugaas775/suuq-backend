@@ -19,6 +19,11 @@ import {
   WalletTransaction,
   TransactionType,
 } from './entities/wallet-transaction.entity';
+import {
+  PayoutLog,
+  PayoutProvider,
+  PayoutStatus,
+} from './entities/payout-log.entity';
 import { TopUpRequest, TopUpStatus } from './entities/top-up-request.entity';
 import { UiSetting } from '../settings/entities/ui-setting.entity';
 import { User, SubscriptionTier } from '../users/entities/user.entity';
@@ -32,6 +37,8 @@ export class WalletService {
     private readonly walletRepository: Repository<Wallet>,
     @InjectRepository(WalletTransaction)
     private readonly transactionRepository: Repository<WalletTransaction>,
+    @InjectRepository(PayoutLog)
+    private readonly payoutLogRepository: Repository<PayoutLog>,
     @InjectRepository(TopUpRequest)
     private readonly topUpRequestRepository: Repository<TopUpRequest>,
     @InjectRepository(User)
@@ -43,6 +50,51 @@ export class WalletService {
     @Inject(forwardRef(() => UsersService))
     private readonly usersService: UsersService,
   ) {}
+
+  async logPayout(data: {
+    vendorId: number;
+    amount: number;
+    currency: string;
+    phoneNumber: string;
+    provider: PayoutProvider;
+    transactionReference: string;
+    orderId?: number;
+    orderItemId?: number;
+    status?: PayoutStatus;
+  }): Promise<PayoutLog> {
+    const payout = this.payoutLogRepository.create({
+      vendor: { id: data.vendorId },
+      amount: data.amount,
+      currency: data.currency,
+      phoneNumber: data.phoneNumber,
+      provider: data.provider,
+      transactionReference: data.transactionReference,
+      orderId: data.orderId,
+      orderItemId: data.orderItemId,
+      status: data.status || PayoutStatus.SUCCESS,
+    });
+    return this.payoutLogRepository.save(payout);
+  }
+
+  async getPayouts(userId: number): Promise<PayoutLog[]> {
+    return this.payoutLogRepository.find({
+      where: { vendor: { id: userId } },
+      order: { createdAt: 'DESC' },
+    });
+  }
+
+  async getAllPayouts(
+    page = 1,
+    limit = 20,
+  ): Promise<{ data: PayoutLog[]; total: number }> {
+    const [data, total] = await this.payoutLogRepository.findAndCount({
+      relations: ['vendor'], // Include vendor details for Admin context
+      order: { createdAt: 'DESC' },
+      skip: (page - 1) * limit,
+      take: limit,
+    });
+    return { data, total };
+  }
 
   async getWallet(userId: number, requestedCurrency?: string): Promise<Wallet> {
     let wallet = await this.walletRepository.findOne({
@@ -210,20 +262,20 @@ export class WalletService {
         // But better to create on the fly if user receives money.
         const user = await manager.findOne(User, { where: { id: userId } });
         if (!user) throw new NotFoundException('User not found');
-        
+
         let currency = user.currency;
         if (!currency) {
-            // Default heuristics
-            if (user.registrationCountry === 'ET') currency = 'ETB';
-            else if (user.registrationCountry === 'DJ') currency = 'DJF';
-            else if (user.registrationCountry === 'SO') currency = 'SOS';
-            else currency = 'KES';
+          // Default heuristics
+          if (user.registrationCountry === 'ET') currency = 'ETB';
+          else if (user.registrationCountry === 'DJ') currency = 'DJF';
+          else if (user.registrationCountry === 'SO') currency = 'SOS';
+          else currency = 'KES';
         }
-        
+
         wallet = manager.create(Wallet, {
-            user,
-            balance: 0,
-            currency
+          user,
+          balance: 0,
+          currency,
         });
         wallet = await manager.save(wallet);
       }
@@ -237,7 +289,7 @@ export class WalletService {
       });
 
       await manager.save(tx);
-      
+
       wallet.balance = Number(wallet.balance) + Number(amount);
       await manager.save(wallet);
 
@@ -324,8 +376,6 @@ export class WalletService {
     });
   }
 
-
-
   async requestTopUp(
     userId: number,
     amount: number,
@@ -405,7 +455,7 @@ export class WalletService {
         ],
       })
       .getRawOne();
-      
+
     // Ideally we should also sum order_item.commission for "Collected Commission"
     // But this method seems to be about Wallet Transactions specifically.
     // Let's repurpose "activeSubscriptions" to "certifiedVendors"
@@ -417,7 +467,6 @@ export class WalletService {
       revenue: Number(revenueResult?.total) || 0,
     };
   }
-
 
   async findAllTransactions(
     page: number = 1,
@@ -524,16 +573,20 @@ export class WalletService {
       await queryRunner.manager.save(transaction);
 
       await queryRunner.commitTransaction();
-      
+
       // Post-transaction auto-action: Check for pending auto-subscriptions
       // This handles cases where user previously tried to subscribe but had insufficient funds.
-      this.usersService.processPendingWalletSubscription(request.user.id).catch(err => {
-        console.error(`Error processing pending subscription after top-up: ${err.message}`);
-      });
-      
+      this.usersService
+        .processPendingWalletSubscription(request.user.id)
+        .catch((err) => {
+          console.error(
+            `Error processing pending subscription after top-up: ${err.message}`,
+          );
+        });
+
       // Also process explicit metadata-based auto-actions (legacy support)
       await this.processAutoAction(request, walletEntity);
-      
+
       return request;
     } catch (err) {
       await queryRunner.rollbackTransaction();
@@ -543,36 +596,58 @@ export class WalletService {
     }
   }
 
-  private async processAutoAction(request: TopUpRequest, wallet: Wallet): Promise<void> {
+  private async processAutoAction(
+    request: TopUpRequest,
+    wallet: Wallet,
+  ): Promise<void> {
     if (request.metadata && request.metadata.auto_action === 'upgrade_pro') {
-      console.log(`[AutoAction] Processing auto-upgrade for user ${request.user.id}`);
+      console.log(
+        `[AutoAction] Processing auto-upgrade for user ${request.user.id}`,
+      );
       try {
         // 1. Get Price
-        const setting = await this.uiSettingRepository.findOne({ where: { key: 'vendor_subscription_base_price' } });
-        
+        const setting = await this.uiSettingRepository.findOne({
+          where: { key: 'vendor_subscription_base_price' },
+        });
+
         if (!setting) {
-            console.warn('[AutoAction] vendor_subscription_base_price not set in DB. Upgrade aborted.');
-            return;
+          console.warn(
+            '[AutoAction] vendor_subscription_base_price not set in DB. Upgrade aborted.',
+          );
+          return;
         }
 
-        const rawPrice = Number(setting.value); 
+        const rawPrice = Number(setting.value);
         const priceCurrency = 'USD';
-        
+
         // 2. Convert to Wallet Currency
         const walletCurrency = wallet.currency || 'KES'; // Default if missing
-        
-        const convertedPrice = this.currencyService.convert(rawPrice, priceCurrency, walletCurrency);
+
+        const convertedPrice = this.currencyService.convert(
+          rawPrice,
+          priceCurrency,
+          walletCurrency,
+        );
         const finalPrice = Math.ceil(convertedPrice); // Round up to be safe/clean
 
-        console.log(`[AutoAction] Price: ${rawPrice} ${priceCurrency} -> ${finalPrice} ${walletCurrency}`);
+        console.log(
+          `[AutoAction] Price: ${rawPrice} ${priceCurrency} -> ${finalPrice} ${walletCurrency}`,
+        );
 
         // 3. Check Balance
         if (Number(wallet.balance) >= finalPrice) {
           // 4. Deduct
-          await this.debitWallet(request.user.id, finalPrice, TransactionType.SUBSCRIPTION, 'Pro Plan Upgrade (Auto)');
-          
+          await this.debitWallet(
+            request.user.id,
+            finalPrice,
+            TransactionType.SUBSCRIPTION,
+            'Pro Plan Upgrade (Auto)',
+          );
+
           // 5. Update User Subscription
-          const user = await this.userRepository.findOne({ where: { id: request.user.id } });
+          const user = await this.userRepository.findOne({
+            where: { id: request.user.id },
+          });
           if (user) {
             user.subscriptionTier = SubscriptionTier.PRO;
             // Set expiry to 30 days from now
@@ -580,10 +655,14 @@ export class WalletService {
             expiry.setDate(expiry.getDate() + 30);
             user.subscriptionExpiry = expiry;
             await this.userRepository.save(user);
-            console.log(`[AutoAction] User ${user.id} upgraded to PRO automatically.`);
+            console.log(
+              `[AutoAction] User ${user.id} upgraded to PRO automatically.`,
+            );
           }
         } else {
-          console.warn(`[AutoAction] Insufficient balance for auto-upgrade. Req: ${finalPrice} ${walletCurrency}, Has: ${wallet.balance}`);
+          console.warn(
+            `[AutoAction] Insufficient balance for auto-upgrade. Req: ${finalPrice} ${walletCurrency}, Has: ${wallet.balance}`,
+          );
         }
       } catch (e) {
         console.error('[AutoAction] Failed to auto-upgrade:', e);

@@ -1,6 +1,7 @@
 import {
   Column,
   CreateDateColumn,
+  DeleteDateColumn,
   Entity,
   Index,
   JoinColumn,
@@ -160,6 +161,9 @@ export class ProductRequest {
 
   @UpdateDateColumn({ name: 'updated_at' })
   updatedAt!: Date;
+
+  @DeleteDateColumn({ name: 'deleted_at', select: false })
+  deletedAt?: Date;
 
   // Loaded via QueryBuilder relation count mapping when needed
   offerCount?: number;

@@ -17,13 +17,18 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { UserRole } from '../auth/roles.enum';
 import { AuthenticatedRequest } from '../auth/auth.types';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { In, Repository, ArrayContains } from 'typeorm';
 import { ProductRequest } from '../product-requests/entities/product-request.entity';
 import { ProductRequestForward } from '../product-requests/entities/product-request-forward.entity';
 import { AdminForwardProductRequestDto } from './dto/admin-forward-product-request.dto';
+import { AdminForwardToAllVerifiedDto } from './dto/admin-forward-all-verified.dto';
 import { SkipThrottle } from '@nestjs/throttler';
 import { NotificationsService } from '../notifications/notifications.service';
-import { User, SubscriptionTier } from '../users/entities/user.entity';
+import {
+  User,
+  SubscriptionTier,
+  VerificationStatus,
+} from '../users/entities/user.entity';
 
 @UseGuards(AuthGuard('jwt'), RolesGuard)
 @SkipThrottle()
@@ -224,6 +229,78 @@ export class AdminProductRequestsController {
       ...request,
       forwards: forwards.map((f) => this.mapForwardWithUsers(f)),
     };
+  }
+
+  @Post(':id/forward-all-verified')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  async forwardToAllVerified(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: AdminForwardToAllVerifiedDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const adminId = req.user?.id;
+    if (!adminId) {
+      throw new Error('Admin identity required');
+    }
+
+    const request = await this.requestRepo.findOne({ where: { id } });
+    if (!request) {
+      return null;
+    }
+
+    // 1. Find all Verified Vendors
+    // Assuming "Verified" means verificationStatus: APPROVED and role: VENDOR
+    // NOTE: We do NOT enforce SubscriptionTier.PRO here, based on user request "Licensed Vendors (Verified Vendors)".
+    // If strict PRO enforcement is needed globally, filtering logic should be updated below.
+    const verifiedVendors = await this.userRepo.find({
+      select: { id: true },
+      where: {
+        verificationStatus: VerificationStatus.APPROVED,
+        roles: ArrayContains([UserRole.VENDOR]),
+      },
+    });
+
+    const candidateIds = verifiedVendors.map((v) => v.id);
+
+    if (!candidateIds.length) {
+      return this.getOne(id); // Just return the detail view if no candidates
+    }
+
+    // 2. Filter out already forwarded
+    const existing = await this.forwardRepo.find({
+      where: { requestId: id },
+    });
+    const alreadyForwardedIds = new Set(existing.map((f) => f.vendorId));
+    const toCreate = candidateIds.filter(
+      (vid) => !alreadyForwardedIds.has(vid),
+    );
+
+    if (!toCreate.length) {
+      return this.getOne(id);
+    }
+
+    // 3. Batch Create
+    const newForwards = toCreate.map((vendorId) =>
+      this.forwardRepo.create({
+        request: { id } as ProductRequest,
+        requestId: id,
+        vendor: { id: vendorId } as any,
+        vendorId,
+        forwardedByAdmin: { id: adminId } as any,
+        forwardedByAdminId: adminId,
+        note: dto.note || null,
+        channel: dto.channel || null,
+      }),
+    );
+
+    await this.forwardRepo.save(newForwards);
+
+    // 4. Notify
+    this.notifyVendorsOnForward(id, request?.title, toCreate).catch(
+      () => undefined,
+    );
+
+    return this.getOne(id);
   }
 
   @Delete(':requestId/forwards/:forwardId')

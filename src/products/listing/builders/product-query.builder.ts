@@ -25,6 +25,8 @@ export class ProductQueryBuilder {
       'product.bedrooms',
       'product.listingCity',
       'product.createdAt',
+      'product.featured',
+      'product.featuredExpiresAt',
       'vendor.id',
       'vendor.storeName',
       'vendor.displayName',

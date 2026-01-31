@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/await-thenable */
 /* eslint-disable no-empty, @typescript-eslint/no-unused-vars */
 import {
   Injectable,
@@ -28,6 +29,8 @@ import { MediaCleanupTask } from '../media/entities/media-cleanup-task.entity';
 import { createHash } from 'crypto';
 import { normalizeProductMedia } from '../common/utils/media-url.util';
 import { normalizeDigitalAttributes } from '../common/utils/digital.util';
+import { NotificationsService } from '../notifications/notifications.service';
+import { NotificationType } from '../notifications/entities/notification.entity';
 import { GeoResolverService } from '../common/services/geo-resolver.service';
 import { UserRole } from '../auth/roles.enum';
 // import { assertAllowedMediaUrl } from '../common/utils/media-policy.util';
@@ -38,6 +41,7 @@ import { FavoritesService } from '../favorites/favorites.service';
 import { qbCacheIfEnabled } from '../common/utils/db-cache.util';
 import { CurrencyService } from '../common/services/currency.service';
 import { EmailService } from '../email/email.service';
+import { BOOST_OPTIONS, BoostTier } from './boost-pricing.service';
 
 @Injectable()
 export class ProductsService {
@@ -67,6 +71,7 @@ export class ProductsService {
     private readonly favorites: FavoritesService,
     private readonly currencyService: CurrencyService,
     private readonly emailService: EmailService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   // Simple in-memory cache for Property & Real Estate subtree ids
@@ -203,6 +208,8 @@ export class ProductsService {
         'product.sale_price',
         'product.moq',
         'product.viewCount',
+        'product.featured',
+        'product.featuredExpiresAt',
         'product.listingType',
         'product.bedrooms',
         'product.listingCity',
@@ -411,6 +418,10 @@ export class ProductsService {
       downloadKey,
       ...rest
     } = data;
+
+    // Security: Prevent creating featured products directly
+    delete (rest as any).featured;
+    delete (rest as any).featuredExpiresAt;
 
     const legacyImage = (rest as any).imageUrl || (rest as any).image_url;
     const normalizedImages = this.normalizeImagesInput(images, legacyImage);
@@ -1166,7 +1177,7 @@ export class ProductsService {
       } else if (city) {
         const cc = this.geo?.resolveCountryFromCity(city) || null;
         // Ensure strictly 2-char code to satisfy varchar(2) constraint
-        country = (cc && cc.length === 2) ? cc.toUpperCase() : null;
+        country = cc && cc.length === 2 ? cc.toUpperCase() : null;
       }
       // Normalize vendorHits array: ensure each item has proper country code normalization
       let vendorHitsJson: string | null = null;
@@ -1488,6 +1499,8 @@ export class ProductsService {
           'product.rating_count',
           'product.sales_count',
           'product.viewCount',
+          'product.featured',
+          'product.featuredExpiresAt',
           'product.productType',
           'product.listingType',
           'product.bedrooms',
@@ -1557,8 +1570,17 @@ export class ProductsService {
         qb.andWhere('category.id IN (:...categoryIds)', { categoryIds });
 
       if (vendorId) qb.andWhere('vendor.id = :vendorId', { vendorId });
-      if (typeof featured === 'boolean')
-        qb.andWhere('product.featured = :featured', { featured });
+      if (typeof featured === 'boolean') {
+        if (featured) {
+          qb.andWhere('product.featured = :featured', {
+            featured: true,
+          }).andWhere(
+            '(product.featuredExpiresAt IS NULL OR product.featuredExpiresAt > NOW())',
+          );
+        } else {
+          qb.andWhere('product.featured = :featured', { featured: false });
+        }
+      }
       if (tags) {
         const tagList = Array.isArray(tags)
           ? (tags as string[]).map((t) => String(t).trim())
@@ -2268,6 +2290,7 @@ export class ProductsService {
       downloadKey,
       ...rest
     } = updateData;
+
     // Update simple properties
     Object.assign(product, rest);
 
@@ -2356,6 +2379,59 @@ export class ProductsService {
     return this.findOne(id);
   }
 
+  async promoteProduct(
+    id: number,
+    tier: BoostTier,
+    user: { id: number },
+  ): Promise<Product> {
+    const product = await this.productRepo.findOne({
+      where: { id },
+      relations: ['vendor'],
+    });
+
+    if (!product) {
+      throw new NotFoundException(`Product with ID ${id} not found`);
+    }
+    if (product.vendor.id !== user.id) {
+      throw new ForbiddenException('You can only promote your own products.');
+    }
+
+    const option = BOOST_OPTIONS.find((o) => o.tier === tier);
+    if (!option) {
+      throw new BadRequestException('Invalid boost tier');
+    }
+
+    const durationMs = option.durationDays * 24 * 60 * 60 * 1000;
+    const now = Date.now();
+    let currentExpiry = product.featuredExpiresAt
+      ? new Date(product.featuredExpiresAt).getTime()
+      : now;
+    if (currentExpiry < now) {
+      currentExpiry = now;
+    }
+
+    product.featured = true;
+    product.featuredExpiresAt = new Date(currentExpiry + durationMs);
+
+    // Record value of the boost
+    try {
+      const paidAmount = this.currencyService.convert(
+        option.basePriceETB,
+        'ETB',
+        product.currency || 'ETB',
+      );
+      product.featuredPaidAmount = paidAmount;
+      product.featuredPaidCurrency = product.currency || 'ETB';
+    } catch (e) {
+      // Fallback if conversion fails
+      product.featuredPaidAmount = option.basePriceETB;
+      product.featuredPaidCurrency = 'ETB';
+    }
+
+    await this.productRepo.save(product);
+    return this.findOne(id);
+  }
+
   async deleteProduct(
     id: number,
     user: Pick<User, 'id' | 'roles'>,
@@ -2373,8 +2449,11 @@ export class ProductsService {
     const hasOrders = await this.orderRepo.count({
       where: { items: { product: { id } } },
     });
-    if (hasOrders > 0)
-      throw new BadRequestException('Cannot delete product with active orders');
+    if (hasOrders > 0) {
+      // Soft delete if orders exist to preserve history
+      await this.productRepo.update(id, { deletedAt: new Date() });
+      return { deleted: true };
+    }
     // Best-effort media cleanup before deleting DB rows
     try {
       // 1) Collect candidate URLs/keys
@@ -2472,6 +2551,7 @@ export class ProductsService {
     perPage?: number;
     per_page?: number;
     q?: string;
+    featured?: boolean;
   }): Promise<{
     items: Product[];
     total: number;
@@ -2485,6 +2565,9 @@ export class ProductsService {
     );
     const status = (opts?.status || 'pending_approval').trim();
     const q = (opts?.q || '').trim();
+    // FEATURED FILTER: If "Active Ads" page requests only featured, allow ignoring status
+    const filterFeatured =
+      typeof opts?.featured === 'boolean' ? opts.featured : undefined;
 
     const qb = this.productRepo
       .createQueryBuilder('p')
@@ -2494,8 +2577,14 @@ export class ProductsService {
       .leftJoinAndSelect('p.images', 'images')
       .where('p.deletedAt IS NULL');
 
-    if (status) {
+    // Only apply status filter if not explicitly looking for all active featured items
+    // OR if status refers to "publish" etc.
+    if (status && status !== 'all') {
       qb.andWhere('p.status = :status', { status });
+    }
+
+    if (filterFeatured !== undefined) {
+      qb.andWhere('p.featured = :featured', { featured: filterFeatured });
     }
 
     if (q) {
@@ -2514,6 +2603,72 @@ export class ProductsService {
       page,
       perPage,
     };
+  }
+
+  async searchBasic(
+    q: string,
+  ): Promise<Array<{ id: number; name: string; imageUrl: string | null }>> {
+    if (!q || !q.trim()) return [];
+
+    // Simple search for published or active products, returning minimal data
+    const qb = this.productRepo
+      .createQueryBuilder('p')
+      .select(['p.id', 'p.name'])
+      .leftJoinAndSelect('p.images', 'images')
+      .where('p.deletedAt IS NULL');
+
+    // Prioritize "publish" but maybe allow finding anything if needed?
+    // For notification "Find Product Image", we likely want valid public products.
+    qb.andWhere('p.status = :status', { status: 'publish' });
+
+    qb.andWhere('(p.name ILIKE :q)', { q: `%${q}%` });
+    qb.take(20);
+
+    const results = await qb.getMany();
+    return results.map((p) => {
+      const normalized = normalizeProductMedia(p as any);
+      return {
+        id: p.id,
+        name: p.name,
+        imageUrl: normalized.imageUrl || null,
+      };
+    });
+  }
+
+  // Admin Override for Featured Status
+  async adminSetFeatured(
+    id: number,
+    featured: boolean,
+    expiresAt?: Date,
+    amountPaid?: number,
+    currency?: string,
+  ): Promise<Product> {
+    const product = await this.productRepo.findOne({ where: { id } });
+    if (!product) {
+      throw new NotFoundException(`Product ID ${id} not found`);
+    }
+
+    product.featured = featured;
+    if (featured) {
+      // If featured is true, use provided date or default to 7 days (Admin default)
+      if (expiresAt) {
+        product.featuredExpiresAt = expiresAt;
+      } else if (!product.featuredExpiresAt) {
+        const d = new Date();
+        d.setDate(d.getDate() + 7);
+        product.featuredExpiresAt = d;
+      }
+      // Save amount info
+      if (typeof amountPaid === 'number')
+        product.featuredPaidAmount = amountPaid;
+      if (typeof currency === 'string') product.featuredPaidCurrency = currency;
+    } else {
+      product.featuredExpiresAt = null;
+      product.featuredPaidAmount = null;
+      product.featuredPaidCurrency = null;
+    }
+
+    return this.productRepo.save(product);
   }
 
   async approveProduct(
@@ -2568,6 +2723,23 @@ export class ProductsService {
       targetId: id,
       meta: { previousStatus, nextStatus: 'publish' },
     });
+
+    // Notify normal vendor if not guest product
+    if (product.vendor && !product.original_creator_contact) {
+      await this.notifications.createAndDispatch({
+        userId: product.vendor.id,
+        title: 'Product Approved',
+        body: `Your product "${product.name}" is now live!`,
+        type: NotificationType.SYSTEM,
+        data: {
+          productId: String(id),
+          route: `/product-detail?id=${id}`,
+          click_action: 'FLUTTER_NOTIFICATION_CLICK',
+        },
+        image: product.imageUrl || undefined,
+      });
+    }
+
     return this.findOne(id);
   }
 
@@ -2868,19 +3040,37 @@ export class ProductsService {
   }
 
   async toggleFeatureStatus(id: number, featured: boolean): Promise<Product> {
-    await this.productRepo.update(id, { featured });
+    // Fetch the product first to check expiry
     const product = await this.productRepo.findOne({
       where: { id },
       relations: ['vendor', 'category', 'tags', 'images'],
     });
     if (!product) throw new NotFoundException('Product not found');
-    return normalizeProductMedia(product) as any;
+
+    const update: Partial<Product> = { featured };
+    if (featured) {
+      // If no expiry is set, default to 3 days from now
+      if (!product.featuredExpiresAt) {
+        const now = new Date();
+        const expires = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000);
+        update.featuredExpiresAt = expires;
+      }
+    } else {
+      // Optionally clear expiry when unfeaturing
+      update.featuredExpiresAt = null;
+    }
+    await this.productRepo.update(id, update);
+    const updated = await this.productRepo.findOne({
+      where: { id },
+      relations: ['vendor', 'category', 'tags', 'images'],
+    });
+    return normalizeProductMedia(updated) as any;
   }
 
   async suggestNames(
     query: string,
     limit = 8,
-  ): Promise<{ name: string; isPro: boolean }[]> {
+  ): Promise<{ name: string; isPro: boolean; isFeatured: boolean }[]> {
     const q = (query || '').trim();
     // Allow 1-character inputs; only block truly empty
     if (q.length === 0) return [];
@@ -2900,8 +3090,10 @@ export class ProductsService {
                  LOWER(p.name) AS lower_name,
                  1 AS prefix_boost,
                  CASE WHEN $1 = 1 AND p."categoryId" = ANY($4::int[]) THEN 1 ELSE 0 END AS property_boost,
-                 -- Add Vendor Tier Boost: 1000000 points if Pro
-                 CASE WHEN v."subscriptionTier" = 'pro' THEN 1000000 ELSE 0 END AS tier_boost,
+                 -- Add Vendor Tier Boost: 1000000 points if Pro or Verified
+                 CASE WHEN v."subscriptionTier" = 'pro' OR v."verificationStatus" = 'APPROVED' THEN 1000000 ELSE 0 END AS tier_boost,
+                 CASE WHEN p.featured = true THEN 2000000 ELSE 0 END AS featured_boost,
+                 p.featured,
                  (COALESCE(p.sales_count, 0) * 3 + COALESCE(p."view_count", 0))::bigint AS popularity,
                  p."createdAt" AS created_at
           FROM "product" p
@@ -2915,8 +3107,10 @@ export class ProductsService {
                  LOWER(p.name) AS lower_name,
                  0 AS prefix_boost,
                  CASE WHEN $1 = 1 AND p."categoryId" = ANY($4::int[]) THEN 1 ELSE 0 END AS property_boost,
-                 -- Add Vendor Tier Boost: 1000000 points if Pro
-                 CASE WHEN v."subscriptionTier" = 'pro' THEN 1000000 ELSE 0 END AS tier_boost,
+                 -- Add Vendor Tier Boost: 1000000 points if Pro or Verified
+                 CASE WHEN v."subscriptionTier" = 'pro' OR v."verificationStatus" = 'APPROVED' THEN 1000000 ELSE 0 END AS tier_boost,
+                 CASE WHEN p.featured = true THEN 2000000 ELSE 0 END AS featured_boost,
+                 p.featured,
                  (COALESCE(p.sales_count, 0) * 3 + COALESCE(p."view_count", 0))::bigint AS popularity,
                  p."createdAt" AS created_at
           FROM "product" p
@@ -2925,39 +3119,50 @@ export class ProductsService {
           LIMIT ${preContain}
         )
       )
-      SELECT name, CASE WHEN tier_boost > 0 THEN true ELSE false END as "isPro"
+      SELECT name, 
+             CASE WHEN tier_boost > 0 THEN true ELSE false END as "isPro",
+             featured as "isFeatured"
       FROM (
         SELECT DISTINCT ON (lower_name) 
           name, 
           tier_boost, 
+          featured_boost,
           prefix_boost, 
           property_boost, 
           popularity, 
-          created_at
+          created_at,
+          featured
         FROM candidates
-        ORDER BY lower_name, tier_boost DESC, prefix_boost DESC, property_boost DESC, popularity DESC, created_at DESC
+        ORDER BY lower_name, featured_boost DESC, tier_boost DESC, prefix_boost DESC, property_boost DESC, popularity DESC, created_at DESC
       ) q
-      ORDER BY tier_boost DESC, prefix_boost DESC, property_boost DESC, popularity DESC, created_at DESC
+      ORDER BY featured_boost DESC, tier_boost DESC, prefix_boost DESC, property_boost DESC, popularity DESC, created_at DESC
       LIMIT ${lim}
     `;
 
-    const rows: Array<{ name: string; isPro: boolean }> =
-      await this.productRepo.query(sql, [
-        hasProp,
-        `${q}%`,
-        `%${q}%`,
-        propIds.length ? propIds : [0],
-      ]);
+    const rows: Array<{
+      name: string;
+      isPro: boolean;
+      isFeatured: boolean;
+    }> = await this.productRepo.query(sql, [
+      hasProp,
+      `${q}%`,
+      `%${q}%`,
+      propIds.length ? propIds : [0],
+    ]);
 
     const seen = new Set<string>();
-    const out: { name: string; isPro: boolean }[] = [];
+    const out: {
+      name: string;
+      isPro: boolean;
+      isFeatured: boolean;
+    }[] = [];
     for (const r of rows) {
       const name = (r?.name || '').trim();
       if (!name) continue;
       const key = name.toLowerCase();
       if (seen.has(key)) continue;
       seen.add(key);
-      out.push({ name, isPro: r.isPro });
+      out.push({ name, isPro: r.isPro, isFeatured: !!r.isFeatured });
       if (out.length >= lim) break;
     }
     return out;

@@ -7,6 +7,7 @@ import {
   ValidateNested,
   IsInt,
   IsIn,
+  IsDate,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -92,6 +93,20 @@ export class UpdateVendorProductDto {
   @IsOptional()
   @IsBoolean()
   featured?: boolean;
+
+  @IsOptional()
+  @Type(() => Date)
+  @IsDate()
+  featuredExpiresAt?: Date;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  featuredPaidAmount?: number;
+
+  @IsOptional()
+  @IsString()
+  featuredPaidCurrency?: string;
 
   @IsOptional()
   @IsString()

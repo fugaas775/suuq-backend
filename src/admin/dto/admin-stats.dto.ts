@@ -5,6 +5,7 @@ export class AdminStatsDto {
   totalAdmins: number;
   totalRevenue: number;
   totalOrders: number;
+  currency?: string;
   fxSource?: string;
   fxUpdatedAt?: string;
   fxLastFetchAt?: string | null;

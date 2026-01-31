@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
 import {
   ForbiddenException,
   Injectable,
@@ -8,13 +9,14 @@ import { CreateVendorProductDto } from './dto/create-vendor-product.dto';
 import { FindAllVendorsDto } from './dto/find-all-vendors.dto';
 import { UpdateVendorProductDto } from './dto/update-vendor-product.dto';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Raw, ArrayContains, ILike, In } from 'typeorm';
+import { Repository, Raw, ArrayContains, ILike, In, IsNull } from 'typeorm';
 import {
   User,
   VerificationStatus,
   SubscriptionTier,
 } from '../users/entities/user.entity';
 import { Product } from '../products/entities/product.entity';
+import { ProductImpression } from '../products/entities/product-impression.entity';
 import { Category } from '../categories/entities/category.entity';
 import { ProductImage } from '../products/entities/product-image.entity';
 import { Order, OrderItem } from '../orders/entities/order.entity';
@@ -56,6 +58,8 @@ export class VendorService {
     private readonly tagRepository: Repository<Tag>,
     @InjectRepository(UserReport)
     private readonly userReportRepository: Repository<UserReport>,
+    @InjectRepository(ProductImpression)
+    private readonly impressionRepo: Repository<ProductImpression>,
     private readonly notificationsService: NotificationsService,
     private readonly doSpacesService: DoSpacesService,
     private readonly currencyService: CurrencyService,
@@ -180,12 +184,17 @@ export class VendorService {
 
     // Check subscription tier
     // Note: ensure access to SubscriptionTier enum or use string literal 'pro'/'free' if imported
-    const isPro = vendor.subscriptionTier === SubscriptionTier.PRO;
+    // If the vendor is verified (approved), they are treated as PRO (unlimited)
+    const isPro =
+      vendor.subscriptionTier === SubscriptionTier.PRO ||
+      vendor.verificationStatus === VerificationStatus.APPROVED;
     const isVendor = vendor.roles.includes(UserRole.VENDOR);
 
     if (!isPro) {
       if (isVendor) {
-        const freeLimitRaw = await this.settingsService.getSystemSetting('limit.free_vendor_products');
+        const freeLimitRaw = await this.settingsService.getSystemSetting(
+          'limit.free_vendor_products',
+        );
         const freeLimit = freeLimitRaw ? Number(freeLimitRaw) : 5;
 
         // limit 5 (default)
@@ -195,7 +204,9 @@ export class VendorService {
           );
         }
       } else {
-        const customerLimitRaw = await this.settingsService.getSystemSetting('limit.customer_products');
+        const customerLimitRaw = await this.settingsService.getSystemSetting(
+          'limit.customer_products',
+        );
         const customerLimit = customerLimitRaw ? Number(customerLimitRaw) : 1;
 
         // limit 1 (default)
@@ -221,6 +232,10 @@ export class VendorService {
       rentPeriod,
       attributes,
       tags,
+      featured,
+      featuredExpiresAt,
+      featuredPaidAmount, // Destructure
+      featuredPaidCurrency, // Destructure
       ...productData
     } = dto as any;
 
@@ -339,7 +354,23 @@ export class VendorService {
       productType:
         productData.productType ||
         (resolvedListingType ? 'property' : undefined),
-    });
+    } as Product); // Assert as Product
+
+    // Handle initial featured state if provided during creation
+    if (featured) {
+      newProduct.featured = true;
+      if (featuredExpiresAt) {
+        newProduct.featuredExpiresAt = new Date(featuredExpiresAt);
+      } else {
+        const d = new Date();
+        d.setDate(d.getDate() + 3); // Default 3 days if not specified
+        newProduct.featuredExpiresAt = d;
+      }
+      if (typeof featuredPaidAmount === 'number')
+        newProduct.featuredPaidAmount = featuredPaidAmount;
+      if (typeof featuredPaidCurrency === 'string')
+        newProduct.featuredPaidCurrency = featuredPaidCurrency;
+    }
 
     // 1. Save the main product to get its ID
     const savedProduct = (await this.productRepository.save(
@@ -414,6 +445,10 @@ export class VendorService {
       rentPeriod,
       attributes,
       tags,
+      featured,
+      featuredExpiresAt,
+      featuredPaidAmount, // Destructure
+      featuredPaidCurrency, // Destructure
       ...productData
     } = dto as any;
 
@@ -428,6 +463,40 @@ export class VendorService {
       if ('downloadUrl' in productData) delete productData.downloadUrl;
     }
     Object.assign(product, productData);
+
+    // [Fix] Handle featured status and expiration
+    if (typeof featured === 'boolean') {
+      product.featured = featured;
+      if (featured) {
+        if (featuredExpiresAt) {
+          product.featuredExpiresAt = new Date(featuredExpiresAt);
+        } else if (!product.featuredExpiresAt) {
+          // Fallback: Default to 3 days if not provided
+          const date = new Date();
+          date.setDate(date.getDate() + 3);
+          product.featuredExpiresAt = date;
+        }
+
+        // Save Amount
+        if (typeof featuredPaidAmount === 'number')
+          product.featuredPaidAmount = featuredPaidAmount;
+        if (typeof featuredPaidCurrency === 'string')
+          product.featuredPaidCurrency = featuredPaidCurrency;
+      } else {
+        product.featuredExpiresAt = null;
+        product.featuredPaidAmount = null;
+        product.featuredPaidCurrency = null;
+      }
+    } else {
+      // Case: Partial update (e.g. extending date or updating amount only)
+      if (featuredExpiresAt) {
+        product.featuredExpiresAt = new Date(featuredExpiresAt);
+      }
+      if (typeof featuredPaidAmount === 'number')
+        product.featuredPaidAmount = featuredPaidAmount;
+      if (typeof featuredPaidCurrency === 'string')
+        product.featuredPaidCurrency = featuredPaidCurrency;
+    }
 
     // Merge property fields
     const resolvedListingType: 'sale' | 'rent' | undefined = (() => {
@@ -656,10 +725,16 @@ export class VendorService {
     if (!product) {
       throw new NotFoundException('Product not found or not owned by user');
     }
-    // Manually delete related reports to handle FK constraint if not cascading on DB
-    await this.userReportRepository.delete({ product: { id: productId } });
-    
-    await this.productRepository.delete(productId);
+    // Soft delete to preserve integrity
+    await this.productRepository.update(productId, { deletedAt: new Date() });
+
+    // Legacy cleanup if needed (e.g. reports) - though soft delete keeps product, so reports might stay?
+    // If we want to hide reviews/etc for soft-deleted products, we rely on product.deleted_at checks in those queries.
+    // Keeping manual delete of reports as it was there?
+    // User reports on a deleted product might be irrelevant.
+    // await this.userReportRepository.delete({ product: { id: productId } });
+    // Leaving existing logic but replacing hard delete with soft update
+
     return { deleted: true };
   }
 
@@ -1288,7 +1363,7 @@ export class VendorService {
       `Vendor products currency normalized: requested=${currency} applied=${target}`,
     );
     // Eagerly load product relations
-    const where: any = { vendor: { id: userId } };
+    const where: any = { vendor: { id: userId }, deletedAt: IsNull() };
     if (search && search.trim().length > 0) {
       where.name = ILike(`%${search.trim()}%`);
     }
@@ -1333,6 +1408,7 @@ export class VendorService {
       .leftJoinAndSelect('product.category', 'category')
       .leftJoinAndSelect('product.tags', 'tags')
       .where('product.vendorId = :userId', { userId })
+      .andWhere('product.deletedAt IS NULL')
       .skip((page - 1) * limit)
       .take(limit);
 
@@ -1378,6 +1454,46 @@ export class VendorService {
       // ignore normalization errors and return raw items
     }
     items = this.applyCurrencyToProducts(items, targetCurrency);
+
+    // [New] Populate recent viewers for featured products
+    // This allows the frontend to show avatars on the "My Products" card overlay
+    if (items.length > 0) {
+      await Promise.all(
+        items.map(async (item) => {
+          if (item.featured) {
+            try {
+              const impressions = await this.impressionRepo.find({
+                where: {
+                  productId: item.id,
+                  userId: Raw((alias) => `${alias} IS NOT NULL`),
+                },
+                relations: ['user'],
+                order: { createdAt: 'DESC' },
+                take: 30, // fetching enough to filter unique
+              });
+              const seen = new Set<number>();
+              const avatars: string[] = [];
+              for (const imp of impressions) {
+                if (
+                  imp.user &&
+                  imp.user.id &&
+                  !seen.has(imp.user.id) &&
+                  imp.user.avatarUrl
+                ) {
+                  seen.add(imp.user.id);
+                  avatars.push(imp.user.avatarUrl);
+                  if (avatars.length >= 4) break; // Limit 4 avatars
+                }
+              }
+              item.featuredRecentViewers = avatars;
+            } catch (err) {
+              // ignore errors, just don't show avatars
+            }
+          }
+        }),
+      );
+    }
+
     const totalPages = Math.ceil(total / limit) || 1;
     return { items, total, page, limit, totalPages };
   }
@@ -1941,10 +2057,20 @@ export class VendorService {
         productCurrency,
         targetCurrency,
       );
+      // Convert vendorPayout (which is line total) to target currency
+      const { amount: payoutConverted } = this.convertPrice(
+        it.vendorPayout,
+        productCurrency,
+        targetCurrency,
+      );
+
       const priceToUse = priceConverted ?? it.price;
+      const payoutToUse = payoutConverted ?? it.vendorPayout;
+
       return {
         ...it,
         price: priceToUse,
+        vendorPayout: payoutToUse,
         currency: targetCurrency,
         price_display: {
           amount: priceToUse ?? null,
@@ -1970,6 +2096,15 @@ export class VendorService {
           : Number(it.quantity || 0);
       return sum + price * quantity;
     }, 0);
+
+    const vendorNetPayout = vendorItems.reduce((sum, it: any) => {
+      const payout =
+        typeof it.vendorPayout === 'number'
+          ? it.vendorPayout
+          : Number(it.vendorPayout || 0);
+      return sum + payout;
+    }, 0);
+
     const vendorSubtotalDisplay = {
       amount: Math.round(vendorSubtotal * 100) / 100,
       currency: targetCurrency,
@@ -2025,6 +2160,7 @@ export class VendorService {
       items: vendorItems,
       vendorItemCount,
       vendorSubtotal,
+      vendorNetAmount: vendorNetPayout,
       statusSummary,
       isSingleVendorOrder:
         (order.items || []).length > 0 &&

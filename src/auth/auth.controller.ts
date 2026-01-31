@@ -130,14 +130,27 @@ export class AuthController {
 
     // Normalize Telebirr fail-safes from client
     if (!data.telebirrAccount) {
-        if (data.telebirr_account) data.telebirrAccount = data.telebirr_account;
-        else if (data.telebirrMobile) data.telebirrAccount = data.telebirrMobile;
+      if (data.telebirr_account) data.telebirrAccount = data.telebirr_account;
+      else if (data.telebirrMobile) data.telebirrAccount = data.telebirrMobile;
     }
 
-    const user = await usersService.update(userId, data);
-    return plainToInstance(UserResponseDto, user, {
-      excludeExtraneousValues: true,
-    });
+    try {
+      const user = await usersService.update(userId, data);
+      return plainToInstance(UserResponseDto, user, {
+        excludeExtraneousValues: true,
+      });
+    } catch (err) {
+      if (err.status === HttpStatus.CONFLICT) {
+        // If phone or other unique field exists, we suppress the error to allow
+        // the checkout flow (shipping saving) to proceed without blocking the user.
+        // We return the user's current state without the conflicting update.
+        const user = await usersService.findOne(userId);
+        return plainToInstance(UserResponseDto, user, {
+          excludeExtraneousValues: true,
+        });
+      }
+      throw err;
+    }
   }
 
   // Change password for the current user
@@ -174,7 +187,11 @@ export class AuthController {
     @Body() dto: VerifyEmailChangeDto,
   ) {
     if (!req.user?.id) throw new UnauthorizedException();
-    return this.authService.verifyEmailChange(req.user.id, dto.code, dto.newEmail);
+    return this.authService.verifyEmailChange(
+      req.user.id,
+      dto.code,
+      dto.newEmail,
+    );
   }
 
   @Post('identity/verify-request')
@@ -208,8 +225,9 @@ export class AuthController {
 
   @Get('verify')
   @UseGuards(JwtAuthGuard)
-  verify(@Request() req: AuthenticatedRequest) {
-    return plainToInstance(UserResponseDto, req.user, {
+  async verify(@Request() req: AuthenticatedRequest) {
+    const user = await this.authService.getUsersService().findById(req.user.id);
+    return plainToInstance(UserResponseDto, user, {
       excludeExtraneousValues: true,
     });
   }

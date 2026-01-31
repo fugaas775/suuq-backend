@@ -1,0 +1,114 @@
+                                                        Table "public.user"
+             Column              |             Type             | Collation | Nullable |                  Default                   
+---------------------------------+------------------------------+-----------+----------+--------------------------------------------
+ id                              | integer                      |           | not null | nextval('user_id_seq'::regclass)
+ email                           | character varying            |           | not null | 
+ firebaseUid                     | character varying            |           |          | 
+ password                        | character varying            |           |          | 
+ roles                           | text[]                       |           | not null | '{CUSTOMER}'::text[]
+ displayName                     | character varying            |           |          | 
+ avatarUrl                       | character varying            |           |          | 
+ storeName                       | character varying            |           |          | 
+ legalName                       | character varying(255)       |           |          | 
+ businessLicenseNumber           | character varying(128)       |           |          | 
+ taxId                           | character varying(128)       |           |          | 
+ registrationCountry             | character varying(2)         |           |          | 
+ registrationRegion              | character varying(128)       |           |          | 
+ registrationCity                | character varying(128)       |           |          | 
+ businessType                    | character varying(64)        |           |          | 
+ contactName                     | character varying(128)       |           |          | 
+ vendorPhoneNumber               | character varying(32)        |           |          | 
+ vendorEmail                     | character varying(255)       |           |          | 
+ website                         | character varying(255)       |           |          | 
+ address                         | character varying(255)       |           |          | 
+ postalCode                      | character varying(32)        |           |          | 
+ vendorAvatarUrl                 | character varying(255)       |           |          | 
+ phoneCountryCode                | character varying(10)        |           |          | 
+ phoneNumber                     | character varying(20)        |           |          | 
+ isPhoneVerified                 | boolean                      |           | not null | false
+ isActive                        | boolean                      |           | not null | true
+ googleId                        | character varying            |           |          | 
+ currency                        | character varying(3)         |           |          | 
+ yearsOnPlatform                 | integer                      |           |          | 
+ lastLoginAt                     | timestamp without time zone  |           |          | 
+ rating                          | double precision             |           |          | '0'::double precision
+ numberOfSales                   | integer                      |           |          | 0
+ preferredLanguage               | character varying(8)         |           |          | 
+ supportedCurrencies             | text                         |           |          | 
+ timezone                        | character varying(64)        |           |          | 
+ bankAccountNumber               | character varying(64)        |           |          | 
+ bankName                        | character varying(128)       |           |          | 
+ mobileMoneyNumber               | character varying(32)        |           |          | 
+ mobileMoneyProvider             | character varying(32)        |           |          | 
+ passwordResetToken              | character varying            |           |          | 
+ passwordResetExpires            | timestamp without time zone  |           |          | 
+ createdAt                       | timestamp without time zone  |           | not null | now()
+ updatedAt                       | timestamp without time zone  |           | not null | now()
+ deletedAt                       | timestamp without time zone  |           |          | 
+ updatedBy                       | character varying            |           |          | 
+ deletedBy                       | character varying            |           |          | 
+ verificationStatus              | user_verificationstatus_enum |           | not null | 'UNVERIFIED'::user_verificationstatus_enum
+ verified                        | boolean                      |           | not null | false
+ verifiedAt                      | timestamp without time zone  |           |          | 
+ verificationDocuments           | jsonb                        |           |          | '[]'::jsonb
+ locationLat                     | double precision             |           |          | 
+ locationLng                     | double precision             |           |          | 
+ verificationRejectionReason     | text                         |           |          | 
+ verificationReviewedBy          | character varying(255)       |           |          | 
+ verificationReviewedAt          | timestamp without time zone  |           |          | 
+ businessLicenseInfo             | jsonb                        |           |          | 
+ verificationMethod              | user_verificationmethod_enum |           | not null | 'NONE'::user_verificationmethod_enum
+ appleId                         | character varying            |           |          | 
+ bankAccountHolderName           | character varying(128)       |           |          | 
+ subscriptionTier                | user_subscriptiontier_enum   |           | not null | 'free'::user_subscriptiontier_enum
+ subscriptionExpiry              | timestamp without time zone  |           |          | 
+ autoRenew                       | boolean                      |           | not null | true
+ lastRenewalReminderAt           | timestamp without time zone  |           |          | 
+ renewalReminderCount            | integer                      |           | not null | 0
+ language                        | character varying(5)         |           | not null | 'en'::character varying
+ interestedCategoryIds           | integer[]                    |           |          | 
+ interestedCategoriesLastUpdated | timestamp without time zone  |           |          | 
+ telebirrAccount                 | character varying(32)        |           |          | 
+ telebirrVerified                | boolean                      |           | not null | false
+ telebirrVerifiedAt              | timestamp without time zone  |           |          | 
+ businessModel                   | user_businessmodel_enum      |           | not null | 'COMMISSION'::user_businessmodel_enum
+ commissionRate                  | numeric(5,2)                 |           | not null | 0.05
+Indexes:
+    "PK_cace4a159ff9f2512dd42373760" PRIMARY KEY, btree (id)
+    "IDX_470355432cc67b2c470c30bef7" btree ("googleId")
+    "IDX_905432b2c46bdcfe1a0dd3cdef" btree ("firebaseUid")
+    "IDX_909a03b328747bd46fc52eb66d" btree ("appleId")
+    "IDX_e12875dfb3b1d92d7d7c5377e2" btree (email)
+    "UQ_905432b2c46bdcfe1a0dd3cdeff" UNIQUE CONSTRAINT, btree ("firebaseUid")
+    "UQ_e12875dfb3b1d92d7d7c5377e22" UNIQUE CONSTRAINT, btree (email)
+    "idx_user_displayname_trgm" gin (lower("displayName"::text) gin_trgm_ops)
+    "idx_user_email_trgm" gin (lower(email::text) gin_trgm_ops)
+Referenced by:
+    TABLE "review" CONSTRAINT "FK_1337f93918c70837d3cea105d39" FOREIGN KEY ("userId") REFERENCES "user"(id)
+    TABLE "user_report" CONSTRAINT "FK_142ad20f8e4e5385b548940b62c" FOREIGN KEY ("reporterId") REFERENCES "user"(id)
+    TABLE ""order"" CONSTRAINT "FK_1ad3b78be190313a5d9438961ed" FOREIGN KEY ("delivererId") REFERENCES "user"(id)
+    TABLE "wallet" CONSTRAINT "FK_35472b1fe48b6330cd349709564" FOREIGN KEY ("userId") REFERENCES "user"(id)
+    TABLE "subscription_request" CONSTRAINT "FK_4793d9b49ec86c4f1140c3dcaa6" FOREIGN KEY ("userId") REFERENCES "user"(id)
+    TABLE "product_request_offer" CONSTRAINT "FK_49da389463329c7f5adb3b86ad1" FOREIGN KEY (seller_id) REFERENCES "user"(id)
+    TABLE "conversation" CONSTRAINT "FK_4ca3d8a73b4ef8519ff4c3de8a7" FOREIGN KEY ("buyerId") REFERENCES "user"(id)
+    TABLE "product_impression" CONSTRAINT "FK_5745616022b9f0348088098f646" FOREIGN KEY ("userId") REFERENCES "user"(id) ON DELETE SET NULL
+    TABLE "product_request" CONSTRAINT "FK_6f91af727460788bc1865436006" FOREIGN KEY (buyer_id) REFERENCES "user"(id)
+    TABLE "cart" CONSTRAINT "FK_756f53ab9466eb52a52619ee019" FOREIGN KEY ("userId") REFERENCES "user"(id) ON DELETE CASCADE
+    TABLE "withdrawals" CONSTRAINT "FK_79a3949e02a4652fb2b2a0ccd4e" FOREIGN KEY ("userId") REFERENCES "user"(id)
+    TABLE "supply_outreach_task" CONSTRAINT "FK_86609be9c48729b985962171667" FOREIGN KEY (assigned_vendor_id) REFERENCES "user"(id)
+    TABLE "product_image_moderation" CONSTRAINT "FK_8f2d4f2ad0887eb7d4d716b8992" FOREIGN KEY ("reviewedById") REFERENCES "user"(id)
+    TABLE "product" CONSTRAINT "FK_921582066aa70b502e78ea92012" FOREIGN KEY ("vendorId") REFERENCES "user"(id)
+    TABLE "user_settings" CONSTRAINT "FK_986a2b6d3c05eb4091bb8066f78" FOREIGN KEY ("userId") REFERENCES "user"(id) ON DELETE CASCADE
+    TABLE "payout_log" CONSTRAINT "FK_9af208dc3f34e4bd254c38057d8" FOREIGN KEY ("vendorId") REFERENCES "user"(id)
+    TABLE "conversation" CONSTRAINT "FK_a9d6f5e62c7f7d560b0d10e31f0" FOREIGN KEY ("delivererId") REFERENCES "user"(id)
+    TABLE "notification" CONSTRAINT "FK_ab7cbe7a013ecac5da0a8f88884" FOREIGN KEY ("recipientId") REFERENCES "user"(id) ON DELETE CASCADE
+    TABLE "withdrawal" CONSTRAINT "FK_b0e331b589a5c8a8ef5c5fd864c" FOREIGN KEY ("vendorId") REFERENCES "user"(id)
+    TABLE "conversation" CONSTRAINT "FK_b13072faa2e7e7e6c2674066277" FOREIGN KEY ("vendorId") REFERENCES "user"(id)
+    TABLE "message" CONSTRAINT "FK_bc096b4e18b1f9508197cd98066" FOREIGN KEY ("senderId") REFERENCES "user"(id)
+    TABLE "product_request_forward" CONSTRAINT "FK_ca8fb0a3eb91ec901d5997497b4" FOREIGN KEY (vendor_id) REFERENCES "user"(id)
+    TABLE ""order"" CONSTRAINT "FK_caabe91507b3379c7ba73637b84" FOREIGN KEY ("userId") REFERENCES "user"(id)
+    TABLE "role_upgrade_request" CONSTRAINT "FK_d4172a4992b11a3dd491129cadb" FOREIGN KEY (user_id) REFERENCES "user"(id) ON DELETE CASCADE
+    TABLE "top_up_request" CONSTRAINT "FK_d720160633c094e8073b383f934" FOREIGN KEY ("userId") REFERENCES "user"(id)
+    TABLE "supply_outreach_task" CONSTRAINT "FK_ea772dc1de92daa6af0861b33f3" FOREIGN KEY (created_by_admin_id) REFERENCES "user"(id)
+    TABLE "product_request_forward" CONSTRAINT "FK_ec6d01fa9ffecaab138fd35e7d2" FOREIGN KEY (forwarded_by_admin_id) REFERENCES "user"(id)
+

@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
 import {
   Injectable,
   NotFoundException,
@@ -30,6 +31,7 @@ import { UserRole } from '../auth/roles.enum';
 import { FindUsersQueryDto } from './dto/find-users-query.dto';
 import * as bcrypt from 'bcrypt';
 import { UiSetting } from '../settings/entities/ui-setting.entity';
+import { parsePhoneNumberFromString } from 'libphonenumber-js';
 import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
@@ -75,7 +77,7 @@ export class UsersService {
       }
       return this.userRepository.save(user);
     }
-    
+
     return user;
   }
 
@@ -449,21 +451,25 @@ export class UsersService {
       'interestedCategoryIds',
       'interestedCategoriesLastUpdated',
     ];
-    
+
     // Custom Logic for Interest Updates
     if (data.interestedCategoryIds !== undefined) {
       if (!Array.isArray(data.interestedCategoryIds)) {
         throw new BadRequestException('interestedCategoryIds must be an array');
       }
       if (data.interestedCategoryIds.length > 3) {
-        throw new BadRequestException('You can select a maximum of 3 top-level categories.');
+        throw new BadRequestException(
+          'You can select a maximum of 3 top-level categories.',
+        );
       }
 
       // We need the full user object to check subscription and last update time
       const user = await this.findById(id);
 
       if (user.subscriptionTier !== SubscriptionTier.PRO) {
-         throw new BadRequestException('Customizing interest categories is a Pro Vendor feature.');
+        throw new BadRequestException(
+          'Customizing interest categories is a Pro Vendor feature.',
+        );
       }
 
       // Check frequency (3 months = approx 90 days)
@@ -477,14 +483,52 @@ export class UsersService {
         // If trying to CHANGE the categories (allow re-submitting same list effectively, but better to just strict block update)
         // Checking strictly if it's a cooldown period.
         if (diffDays < COOLDOWN_DAYS) {
-           throw new BadRequestException(
-             `You can only update your interest categories once every 3 months. Next update available in ${COOLDOWN_DAYS - diffDays} days.`
-           );
+          throw new BadRequestException(
+            `You can only update your interest categories once every 3 months. Next update available in ${COOLDOWN_DAYS - diffDays} days.`,
+          );
         }
       }
-      
+
       // If validation passes, update timestamp
       data.interestedCategoriesLastUpdated = new Date();
+    }
+
+    // Check for phone number uniqueness to prevent duplicate verified accounts
+    if (data.phoneNumber) {
+      // Normalize: simple valid E.164 check if country/region known, or just raw format
+      if (data.phoneCountryCode) {
+        // Example: +251 + 911223344
+        const combined =
+          (data.phoneCountryCode.startsWith('+') ? '' : '+') +
+          data.phoneCountryCode +
+          data.phoneNumber;
+        const parsed = parsePhoneNumberFromString(combined);
+        if (parsed && parsed.isValid()) {
+          // Standardize to national format or remove leading zeros to match potential verify service normalization
+          // But here we just keep it simple or store clean inputs
+          data.phoneNumber = parsed.nationalNumber; // Strip country code part from phone number field
+        }
+      }
+
+      const qb = this.userRepository
+        .createQueryBuilder('user')
+        .where('user.phoneNumber = :phoneNumber', {
+          phoneNumber: data.phoneNumber,
+        })
+        .andWhere('user.id != :id', { id });
+
+      if (data.phoneCountryCode) {
+        qb.andWhere('user.phoneCountryCode = :phoneCountryCode', {
+          phoneCountryCode: data.phoneCountryCode,
+        });
+      }
+
+      const count = await qb.getCount();
+      if (count > 0) {
+        throw new ConflictException(
+          'This phone number is already linked to another account.',
+        );
+      }
     }
 
     const updateData: Partial<User> = {};
@@ -493,11 +537,14 @@ export class UsersService {
         (updateData as any)[key] = data[key];
       }
     }
-    
+
     // Reset Telebirr verification if account changes
-    if (data.telebirrAccount && data.telebirrAccount !== (await this.findById(id)).telebirrAccount) {
-        updateData.telebirrVerified = false; 
-        updateData.telebirrVerifiedAt = null;
+    if (
+      data.telebirrAccount &&
+      data.telebirrAccount !== (await this.findById(id)).telebirrAccount
+    ) {
+      updateData.telebirrVerified = false;
+      updateData.telebirrVerifiedAt = null;
     }
 
     // If admin sets verificationStatus to APPROVED, set verified to true
@@ -520,7 +567,7 @@ export class UsersService {
     if (existing && existing.id !== id) {
       throw new ConflictException('Email already in use');
     }
-    
+
     await this.userRepository.update(id, { email });
     return this.findById(id);
   }
@@ -599,23 +646,23 @@ export class UsersService {
     status: 'APPROVED' | 'REJECTED',
   ): Promise<User> {
     const user = await this.findById(userId);
-    
+
     if (status === 'APPROVED') {
-        if (!user.telebirrAccount) {
-            throw new BadRequestException('User has no Telebirr account to verify');
-        }
-        user.telebirrVerified = true;
-        user.telebirrVerifiedAt = new Date();
+      if (!user.telebirrAccount) {
+        throw new BadRequestException('User has no Telebirr account to verify');
+      }
+      user.telebirrVerified = true;
+      user.telebirrVerifiedAt = new Date();
     } else {
-        // REJECTED
-        user.telebirrVerified = false;
-        user.telebirrVerifiedAt = null;
-        // Optionally clear the account or leave it for them to fix. 
-        // User request says: "Clears the telebirrAccount or sends a notification"
-        // I'll clear it.
-        user.telebirrAccount = null; 
+      // REJECTED
+      user.telebirrVerified = false;
+      user.telebirrVerifiedAt = null;
+      // Optionally clear the account or leave it for them to fix.
+      // User request says: "Clears the telebirrAccount or sends a notification"
+      // I'll clear it.
+      user.telebirrAccount = null;
     }
-    
+
     return this.userRepository.save(user);
   }
 
@@ -939,7 +986,7 @@ export class UsersService {
     if (user.verificationStatus === VerificationStatus.APPROVED) {
       user.verified = true;
       // Sync legacy tier for analytics compatibility
-      user.subscriptionTier = SubscriptionTier.PRO; 
+      user.subscriptionTier = SubscriptionTier.PRO;
       if (!user.verifiedAt) user.verifiedAt = new Date();
     } else {
       user.verified = false;

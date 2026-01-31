@@ -24,9 +24,12 @@ import { ProductListingModule } from './listing/product-listing.module';
 import { GeoResolverService } from '../common/services/geo-resolver.service';
 import { EmailModule } from '../email/email.module';
 import { CategoriesModule } from '../categories/categories.module';
+import { BoostPricingService } from './boost-pricing.service';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
   imports: [
+    NotificationsModule,
     TypeOrmModule.forFeature([
       Product,
       ProductImage,
@@ -50,8 +53,8 @@ import { CategoriesModule } from '../categories/categories.module';
     EmailModule,
     CategoriesModule,
   ],
-  providers: [ProductsService, GeoResolverService],
+  providers: [ProductsService, GeoResolverService, BoostPricingService],
   controllers: [ProductsController, ProductsV1Controller],
-  exports: [ProductsService, ProductListingModule],
+  exports: [ProductsService, ProductListingModule, BoostPricingService],
 })
 export class ProductsModule {}

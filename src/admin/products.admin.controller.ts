@@ -30,6 +30,12 @@ import { Query } from '@nestjs/common';
 export class AdminProductsController {
   constructor(private readonly products: ProductsService) {}
 
+  @Get('search-basic')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  async searchBasic(@Query('q') q: string) {
+    return this.products.searchBasic(q);
+  }
+
   @Get()
   @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
   async list(
@@ -37,12 +43,15 @@ export class AdminProductsController {
     @Query('page') page?: string,
     @Query('per_page') perPage?: string,
     @Query('q') q?: string,
+    @Query('featured') featured?: string,
   ) {
     return this.products.listForAdmin({
       status,
       page: Number(page),
       perPage: Number(perPage),
       q,
+      featured:
+        featured === 'true' ? true : featured === 'false' ? false : undefined,
     });
   }
 
@@ -70,6 +79,28 @@ export class AdminProductsController {
     const toStatus = body?.status === 'draft' ? 'draft' : 'rejected';
     const reason = body?.reason ? String(body.reason) : null;
     return this.products.rejectProduct(id, { actorId, toStatus, reason });
+  }
+
+  @Patch(':id/feature')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  async feature(
+    @Param('id', ParseIntPipe) id: number,
+    @Body()
+    body: {
+      featured: boolean;
+      expiresAt?: string;
+      amountPaid?: number;
+      currency?: string;
+    },
+  ) {
+    const expires = body.expiresAt ? new Date(body.expiresAt) : undefined;
+    return this.products.adminSetFeatured(
+      id,
+      !!body.featured,
+      expires,
+      body.amountPaid,
+      body.currency,
+    );
   }
 
   @Post('bulk-approve')

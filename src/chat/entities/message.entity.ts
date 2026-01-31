@@ -8,6 +8,13 @@ import {
 import { User } from '../../users/entities/user.entity';
 import { Conversation } from './conversation.entity';
 
+export enum MessageType {
+  TEXT = 'text',
+  IMAGE = 'image',
+  OFFER = 'offer',
+  SYSTEM = 'system',
+}
+
 @Entity()
 export class Message {
   @PrimaryGeneratedColumn()
@@ -20,6 +27,13 @@ export class Message {
 
   @ManyToOne(() => User, { nullable: false, eager: true })
   sender!: User;
+
+  @Column({
+    type: 'enum',
+    enum: MessageType,
+    default: MessageType.TEXT,
+  })
+  type!: MessageType;
 
   @Column('text')
   content!: string;

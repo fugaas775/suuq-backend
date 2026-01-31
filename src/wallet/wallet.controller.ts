@@ -60,6 +60,13 @@ export class WalletController {
     return this.walletService.getTransactions(userId);
   }
 
+  @Get('payouts')
+  async getPayouts(@Req() req) {
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment
+    const userId = req.user?.id || req.user?.userId;
+    return this.walletService.getPayouts(userId);
+  }
+
   @Post('top-up')
   @UseInterceptors(FileInterceptor('image'))
   async requestTopUp(
