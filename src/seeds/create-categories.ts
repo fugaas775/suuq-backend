@@ -1,8 +1,10 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from '../app.module';
 import { CategoriesService } from '../categories/categories.service';
+import { Logger } from '@nestjs/common';
 
 async function bootstrap() {
+  const logger = new Logger('CreateCategories');
   const app = await NestFactory.createApplicationContext(AppModule);
   const categoriesService = app.get(CategoriesService);
 
@@ -110,7 +112,7 @@ async function bootstrap() {
     parentId: toysGames.id,
   });
 
-  console.log('Hierarchical categories seeded.');
+  logger.log('Hierarchical categories seeded.');
 
   await app.close();
 }

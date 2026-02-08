@@ -47,6 +47,36 @@ export class DelivererController {
 
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.DELIVERER)
+  @Patch('deliverer/orders/:orderId/accept')
+  async acceptAssignment(
+    @Req() req: any,
+    @Param('orderId', ParseIntPipe) orderId: number,
+  ) {
+    return this.delivererService.acceptAssignment(req.user.id, orderId);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.DELIVERER)
+  @Patch('deliverer/orders/:orderId/reject')
+  async rejectAssignment(
+    @Req() req: any,
+    @Param('orderId', ParseIntPipe) orderId: number,
+  ) {
+    return this.delivererService.rejectAssignment(req.user.id, orderId);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.DELIVERER)
+  @Patch('deliverer/orders/:orderId/pickup')
+  async confirmPickup(
+    @Req() req: any,
+    @Param('orderId', ParseIntPipe) orderId: number,
+  ) {
+    return this.delivererService.confirmPickup(req.user.id, orderId);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.DELIVERER)
   @Patch('deliverer/orders/:orderId/status')
   async updateDeliveryStatus(
     @Req() req: any,

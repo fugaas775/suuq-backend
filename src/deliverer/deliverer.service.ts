@@ -5,7 +5,11 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { Order, OrderStatus } from '../orders/entities/order.entity';
+import {
+  Order,
+  OrderStatus,
+  DeliveryAcceptanceStatus,
+} from '../orders/entities/order.entity';
 import { Product } from '../products/entities/product.entity';
 import { WalletService } from '../wallet/wallet.service';
 import { TransactionType } from '../wallet/entities/wallet-transaction.entity';
@@ -13,6 +17,9 @@ import { SettingsService } from '../settings/settings.service';
 import { EmailService } from '../email/email.service';
 import { CurrencyService } from '../common/services/currency.service';
 import { Logger } from '@nestjs/common';
+import { NotificationsService } from '../notifications/notifications.service';
+import { NotificationType } from '../notifications/entities/notification.entity';
+import { buildOrderStatusNotification } from '../orders/order-notifications.util';
 
 @Injectable()
 export class DelivererService {
@@ -27,7 +34,65 @@ export class DelivererService {
     private readonly settingsService: SettingsService,
     private readonly emailService: EmailService,
     private readonly currencyService: CurrencyService,
+    private readonly notificationsService: NotificationsService,
   ) {}
+
+  private async notifyOrderStatusChange(order: Order, status: OrderStatus) {
+    let userId = order?.user?.id;
+    if (!userId) {
+      const withUser = await this.orderRepository.findOne({
+        where: { id: order.id },
+        relations: ['user'],
+      });
+      userId = withUser?.user?.id;
+    }
+
+    if (!userId) return;
+
+    const payload = buildOrderStatusNotification(order.id, status);
+    await this.notificationsService.createAndDispatch({
+      userId,
+      title: payload.title,
+      body: payload.body,
+      type: NotificationType.ORDER,
+      data: payload.data,
+    });
+  }
+
+  private async notifyVendorsStatusChange(order: Order, status: OrderStatus) {
+    if (!order.items || order.items.length === 0) return;
+
+    // Identify unique vendors involved in the order
+    const vendorIds = new Set<number>();
+    order.items.forEach((item) => {
+      const v = (item.product as any)?.vendor;
+      if (v?.id) vendorIds.add(v.id);
+    });
+
+    const statusTitle =
+      status === OrderStatus.OUT_FOR_DELIVERY
+        ? 'Order Picked Up'
+        : 'Order Update';
+    const statusBody =
+      status === OrderStatus.OUT_FOR_DELIVERY
+        ? `Order #${order.id} has been picked up by the deliverer.`
+        : `Order #${order.id} status updated to ${status}.`;
+
+    for (const vendorId of vendorIds) {
+      await this.notificationsService.createAndDispatch({
+        userId: vendorId,
+        title: statusTitle,
+        body: statusBody,
+        type: NotificationType.ORDER,
+        data: {
+          type: 'vendor_order',
+          id: String(order.id),
+          route: `/vendor-order-detail?id=${order.id}`,
+          click_action: 'FLUTTER_NOTIFICATION_CLICK',
+        },
+      });
+    }
+  }
 
   async getMyAssignments(delivererId: number) {
     const orders = await this.orderRepository
@@ -75,6 +140,106 @@ export class DelivererService {
     });
   }
 
+  async acceptAssignment(delivererId: number, orderId: number) {
+    const order = await this.orderRepository.findOne({
+      where: { id: orderId },
+      relations: ['deliverer'],
+    });
+
+    if (!order) throw new NotFoundException('Order not found');
+    if (!order.deliverer || order.deliverer.id !== delivererId) {
+      throw new ForbiddenException('You are not assigned to this order');
+    }
+
+    if (order.deliveryAcceptanceStatus === DeliveryAcceptanceStatus.ACCEPTED) {
+      return order; // Already accepted
+    }
+
+    order.deliveryAcceptanceStatus = DeliveryAcceptanceStatus.ACCEPTED;
+    // Ensure status is SHIPPED (it should be, but just in case)
+    order.status = OrderStatus.SHIPPED;
+
+    await this.orderRepository.save(order);
+
+    // Optionally notify vendor/admin that order is accepted
+    // For now, no specific notification needed unless requested.
+
+    return order;
+  }
+
+  async rejectAssignment(delivererId: number, orderId: number) {
+    const order = await this.orderRepository.findOne({
+      where: { id: orderId },
+      relations: ['deliverer'],
+    });
+
+    if (!order) throw new NotFoundException('Order not found');
+    if (!order.deliverer || order.deliverer.id !== delivererId) {
+      throw new ForbiddenException('You are not assigned to this order');
+    }
+
+    // Reset assignment
+    order.deliverer = undefined; // Nullify logic might vary based on cascading
+    // or set delivererId = null if TypeORM handles it.
+    // Usually assigning null to relation works if nullable: true.
+    order.deliveryAcceptanceStatus = DeliveryAcceptanceStatus.REJECTED;
+    order.status = OrderStatus.PROCESSING; // Revert status so it appears back in "Ready to ship" lists
+
+    // Use query builder to nullify delivererId to be safe with FKs
+    await this.orderRepository
+      .createQueryBuilder()
+      .update(Order)
+      .set({
+        deliverer: null,
+        status: OrderStatus.PROCESSING,
+        deliveryAcceptanceStatus: DeliveryAcceptanceStatus.REJECTED,
+      })
+      .where('id = :id', { id: orderId })
+      .execute();
+
+    return { success: true };
+  }
+
+  async confirmPickup(delivererId: number, orderId: number) {
+    const order = await this.orderRepository.findOne({
+      where: { id: orderId },
+      relations: [
+        'deliverer',
+        'user',
+        'items',
+        'items.product',
+        'items.product.vendor',
+      ],
+    });
+
+    if (!order) throw new NotFoundException('Order not found');
+    if (!order.deliverer || order.deliverer.id !== delivererId) {
+      throw new ForbiddenException('You are not assigned to this order');
+    }
+
+    // Ensure it was accepted
+    if (order.deliveryAcceptanceStatus !== DeliveryAcceptanceStatus.ACCEPTED) {
+      throw new ForbiddenException(
+        'You must accept the assignment before picking up.',
+      );
+    }
+
+    if (order.status === OrderStatus.OUT_FOR_DELIVERY) {
+      return order; // Already picked up
+    }
+
+    order.status = OrderStatus.OUT_FOR_DELIVERY;
+    await this.orderRepository.save(order);
+
+    // Notify Customer
+    await this.notifyOrderStatusChange(order, OrderStatus.OUT_FOR_DELIVERY);
+
+    // Notify Vendors
+    await this.notifyVendorsStatusChange(order, OrderStatus.OUT_FOR_DELIVERY);
+
+    return order;
+  }
+
   async updateDeliveryStatus(
     delivererId: number,
     orderId: number,
@@ -84,6 +249,7 @@ export class DelivererService {
       where: { id: orderId },
       relations: [
         'deliverer',
+        'user',
         'items',
         'items.product',
         'items.product.vendor',
@@ -96,6 +262,7 @@ export class DelivererService {
     const wasDelivered = order.status === OrderStatus.DELIVERED;
     order.status = newStatus;
     await this.orderRepository.save(order);
+    await this.notifyOrderStatusChange(order, newStatus);
 
     if (!wasDelivered && newStatus === OrderStatus.DELIVERED) {
       // Need to re-fetch user for email if not in relations (or trust it's there via ManyToOne eager? Order.user is eager but query didn't request it explicitly, however eager loads unless disabled. Let's start with checking relations above... relations doesn't list 'user'. But entity has eager: true. So it should be there.)

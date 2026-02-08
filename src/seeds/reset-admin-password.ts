@@ -3,8 +3,10 @@ import { AppModule } from '../app.module';
 import { UsersService } from '../users/users.service';
 import { UserRole } from '../auth/roles.enum';
 import * as bcrypt from 'bcrypt';
+import { Logger } from '@nestjs/common';
 
 async function run() {
+  const logger = new Logger('ResetAdminPassword');
   const app = await NestFactory.createApplicationContext(AppModule);
   const users = app.get(UsersService);
   const email = process.env.ADMIN_EMAIL || 'admin@suuq.com';
@@ -12,7 +14,7 @@ async function run() {
   try {
     const user = await users.findByEmail(email);
     if (!user) {
-      console.log(`Admin not found for ${email}. Creating...`);
+      logger.log(`Admin not found for ${email}. Creating...`);
       const created = await users.create({
         email,
         password: newPassword,
@@ -21,9 +23,9 @@ async function run() {
         isActive: true,
         verified: true,
       });
-      console.log(`Created admin id=${created.id}`);
+      logger.log(`Created admin id=${created.id}`);
     } else {
-      console.log(
+      logger.log(
         `Found admin id=${user.id}. Forcing password reset and role sync...`,
       );
       user.password = await bcrypt.hash(newPassword, 10);
@@ -35,11 +37,11 @@ async function run() {
       (user as any).roles = Array.from(roles);
       (user as any).isActive = true;
       await (users as any).userRepository.save(user);
-      console.log('Updated password and roles.');
+      logger.log('Updated password and roles.');
     }
-    console.log(`Use credentials -> email: ${email}, password: ${newPassword}`);
+    logger.log(`Use credentials -> email: ${email}, password: ${newPassword}`);
   } catch (e: any) {
-    console.error('Reset failed:', e?.message || e);
+    logger.error('Reset failed:', e?.message || e);
   } finally {
     await app.close();
   }

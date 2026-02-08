@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Order, OrderItem } from './entities/order.entity';
 import { OrdersController } from './orders.controller';
@@ -31,7 +31,7 @@ import { Conversation } from '../chat/entities/conversation.entity';
     CartModule,
     ProductsModule,
     TelebirrModule,
-    EbirrModule,
+    forwardRef(() => EbirrModule),
     UsersModule,
     MpesaModule,
     NotificationsModule,

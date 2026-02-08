@@ -47,8 +47,18 @@ export class OrderResponseDto {
     id: number;
     displayName?: string | null;
     storeName?: string | null;
+    legalName?: string | null;
+    email?: string | null;
+    firstName?: string | null;
+    lastName?: string | null;
+    vendorPhoneNumber?: string | null;
+    certificationStatus?: string;
   }>;
   // Convenience for single-vendor orders
   @Expose() vendorName?: string | null;
+  @Expose() storeName?: string | null;
+  @Expose() legalName?: string | null;
+  @Expose() businessName?: string | null;
+
   @Expose() @Type(() => OrderItemResponseDto) items: OrderItemResponseDto[];
 }

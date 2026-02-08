@@ -31,6 +31,10 @@ export class FindAllVendorsDto {
   city?: string;
 
   @IsOptional()
+  @IsString()
+  certificationStatus?: 'certified' | 'uncertified';
+
+  @IsOptional()
   @Type(() => Number)
   @IsNumber()
   minSales?: number;

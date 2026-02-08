@@ -1,14 +1,3 @@
-// Debug info (avoid logging secrets in clear text)
-console.log(
-  'DEBUG DB_PASSWORD:',
-  typeof process.env.DB_PASSWORD,
-  process.env.DB_PASSWORD ? '[REDACTED]' : '<missing>',
-);
-console.log(
-  'DEBUG DB_DATABASE:',
-  typeof process.env.DB_DATABASE,
-  process.env.DB_DATABASE,
-);
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';

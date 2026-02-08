@@ -86,14 +86,91 @@ export class WalletService {
   async getAllPayouts(
     page = 1,
     limit = 20,
+    status?: PayoutStatus,
   ): Promise<{ data: PayoutLog[]; total: number }> {
+    const where: any = {};
+    if (status) {
+      where.status = status;
+    }
     const [data, total] = await this.payoutLogRepository.findAndCount({
+      where,
       relations: ['vendor'], // Include vendor details for Admin context
       order: { createdAt: 'DESC' },
       skip: (page - 1) * limit,
       take: limit,
     });
     return { data, total };
+  }
+
+  async updatePayoutStatus(
+    id: number,
+    status: PayoutStatus,
+    reference?: string,
+  ): Promise<PayoutLog> {
+    const payout = await this.payoutLogRepository.findOne({ where: { id } });
+    if (!payout) throw new NotFoundException('Payout not found');
+
+    payout.status = status;
+    if (reference) {
+      payout.transactionReference = reference;
+    }
+    return this.payoutLogRepository.save(payout);
+  }
+
+  async deletePayout(id: number): Promise<void> {
+    const result = await this.payoutLogRepository.delete(id);
+    if (!result.affected) {
+      throw new NotFoundException('Payout not found');
+    }
+  }
+
+  async deletePayouts(ids: number[]): Promise<number> {
+    const result = await this.payoutLogRepository.delete(ids);
+    return result.affected || 0;
+  }
+
+  async exportPendingPayouts(): Promise<string> {
+    const payouts = await this.payoutLogRepository.find({
+      where: { status: PayoutStatus.PENDING },
+      relations: ['vendor'],
+      order: { createdAt: 'ASC' },
+    });
+
+    const header = [
+      'Payout ID',
+      'Vendor ID',
+      'Vendor Name',
+      'Vendor Phone',
+      'Amount',
+      'Currency',
+      'Provider',
+      'System Ref',
+      'Created At',
+    ].join(',');
+
+    const rows = payouts.map((p) => {
+      const name = (
+        p.vendor.legalName ||
+        p.vendor.displayName ||
+        p.vendor.email ||
+        ''
+      )
+        .trim()
+        .replace(/"/g, '""');
+      return [
+        p.id,
+        p.vendor.id,
+        `"${name}"`,
+        p.vendor.phoneNumber || '',
+        p.amount,
+        p.currency,
+        p.provider || 'EBIRR',
+        p.transactionReference,
+        p.createdAt.toISOString(),
+      ].join(',');
+    });
+
+    return [header, ...rows].join('\n');
   }
 
   async getWallet(userId: number, requestedCurrency?: string): Promise<Wallet> {

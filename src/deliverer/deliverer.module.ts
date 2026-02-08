@@ -8,6 +8,7 @@ import { WalletModule } from '../wallet/wallet.module';
 import { SettingsModule } from '../settings/settings.module';
 import { EmailModule } from '../email/email.module';
 import { CurrencyModule } from '../common/services/currency.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { CurrencyModule } from '../common/services/currency.module';
     SettingsModule,
     EmailModule,
     CurrencyModule,
+    NotificationsModule,
   ],
   controllers: [DelivererController],
   providers: [DelivererService],

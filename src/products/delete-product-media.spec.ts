@@ -8,6 +8,7 @@ import { Order } from '../orders/entities/order.entity';
 import { Tag } from '../tags/tag.entity';
 import { Category } from '../categories/entities/category.entity';
 import { ProductImpression } from './entities/product-impression.entity';
+import { MediaCleanupTask } from '../media/entities/media-cleanup-task.entity';
 import { SearchKeyword } from './entities/search-keyword.entity';
 import { DoSpacesService } from '../media/do-spaces.service';
 import { AuditService } from '../audit/audit.service';
@@ -17,6 +18,7 @@ import { GeoResolverService } from '../common/services/geo-resolver.service';
 import { UserRole } from '../auth/roles.enum';
 import { CurrencyService } from '../common/services/currency.service';
 import { EmailService } from '../email/email.service';
+import { NotificationsService } from '../notifications/notifications.service';
 
 describe('ProductsService.deleteProduct media cleanup', () => {
   let service: ProductsService;
@@ -31,8 +33,13 @@ describe('ProductsService.deleteProduct media cleanup', () => {
   const tagRepo = {};
   const categoryRepo = {};
   const impressionRepo = {};
+  const cleanupRepo = {
+    create: jest.fn((dto) => dto),
+    save: jest.fn(),
+  };
   const searchKeywordRepo = {};
   const reviewRepo = { delete: jest.fn() };
+  const notificationsMock = { sendToUser: jest.fn() };
   const favorites = {
     removeProductEverywhere: jest.fn().mockResolvedValue(0),
   } as unknown as FavoritesService;
@@ -78,6 +85,10 @@ describe('ProductsService.deleteProduct media cleanup', () => {
           provide: getRepositoryToken(SearchKeyword),
           useValue: searchKeywordRepo,
         },
+        {
+          provide: getRepositoryToken(MediaCleanupTask),
+          useValue: cleanupRepo,
+        },
         { provide: getRepositoryToken(Review), useValue: reviewRepo },
         { provide: DoSpacesService, useValue: doSpaces },
         { provide: AuditService, useValue: audit },
@@ -88,6 +99,7 @@ describe('ProductsService.deleteProduct media cleanup', () => {
         },
         { provide: CurrencyService, useValue: { convert: jest.fn() } },
         { provide: EmailService, useValue: { send: jest.fn() } },
+        { provide: NotificationsService, useValue: notificationsMock },
       ],
     }).compile();
 
@@ -134,17 +146,20 @@ describe('ProductsService.deleteProduct media cleanup', () => {
     expect(orderRepo.count).toHaveBeenCalled();
     expect(productRepo.delete).toHaveBeenCalledWith(42);
 
-    // Validate deleteObject was called for deduped set of keys
-    const deletedKeys = (doSpaces.deleteObject as any).mock.calls.map(
-      (c: any[]) => c[0],
-    );
+    // Validate cleanupRepo.save was called for deduped set of keys
+    expect(cleanupRepo.save).toHaveBeenCalled();
+    const savedTasks =
+      (cleanupRepo.save as any).mock.calls.length > 0
+        ? (cleanupRepo.save as any).mock.calls[0][0]
+        : [];
+    const deletedKeys = savedTasks.map((t: any) => t.key);
+
     const expectKeys = [
       'images/main.jpg',
       'images/img1.jpg',
       'images/img1-thumb.jpg',
       'images/img1-low.jpg',
-      'downloads/file1.zip', // from urlToKey
-      'downloads/file1.zip', // from explicit key in attributes (may be deduped by Set in impl)
+      'downloads/file1.zip',
       'videos/v1.mp4',
       'videos/v1.jpg',
     ];

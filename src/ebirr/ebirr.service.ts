@@ -1,5 +1,11 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unused-vars */
-import { Injectable, Logger, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  BadRequestException,
+  Inject,
+  forwardRef,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, LessThan } from 'typeorm';
 import { ebirrConfig } from './ebirr.config';
@@ -9,6 +15,8 @@ import {
   PaymentStatus,
   OrderStatus,
 } from '../orders/entities/order.entity';
+import { OrdersService } from '../orders/orders.service';
+import { RedisService } from '../redis/redis.service';
 import axios from 'axios';
 import { v4 as uuidv4 } from 'uuid';
 import { Cron, CronExpression } from '@nestjs/schedule';
@@ -24,10 +32,26 @@ export class EbirrService {
     private readonly ebirrTransactionRepo: Repository<EbirrTransaction>,
     @InjectRepository(Order)
     private readonly orderRepo: Repository<Order>,
+    @Inject(forwardRef(() => OrdersService))
+    private readonly ordersService: OrdersService,
+    private readonly redisService: RedisService,
   ) {}
 
   @Cron(CronExpression.EVERY_MINUTE)
   async checkPendingTransactions() {
+    // Locking to prevent multiple instances from running this job simultaneously
+    const client = this.redisService.getClient();
+    if (client) {
+      const lockKey = 'lock:ebirr:check-pending';
+      // Try to acquire lock for 55 seconds (since it runs every minute)
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-call
+      const acquired = await client.set(lockKey, 'locked', 'NX', 'EX', 55);
+      if (!acquired) {
+        // Silently skip if locked
+        return;
+      }
+    }
+
     this.logger.log('Checking for pending Ebirr transactions...');
     const tenMinutesAgo = subMinutes(new Date(), 10);
 
@@ -207,6 +231,19 @@ export class EbirrService {
       }
     }
 
+    if (!formattedPhone) {
+      throw new BadRequestException(
+        'phoneNumber is required for Ebirr payments.',
+      );
+    }
+
+    // Ebirr requires MSISDN in 2519XXXXXXXX format; fail fast on invalid input.
+    if (!(formattedPhone.startsWith('2519') && formattedPhone.length === 12)) {
+      throw new BadRequestException(
+        'Invalid Ebirr phone number; use 2519XXXXXXXX format.',
+      );
+    }
+
     // Check if Order is already PAID to prevent double payment
     let orderId: number;
     // Attempt to extract numeric Order ID from invoiceId (e.g. "INV-97" -> 97)
@@ -248,7 +285,7 @@ export class EbirrService {
         apiUserId: ebirrConfig.apiUserId,
         // returnUrl: defined below
         payerInfo: {
-          accountNo: formattedPhone || '251911223344', // Fallback or strict requirement
+          accountNo: formattedPhone,
         },
         transactionInfo: {
           referenceId: referenceId,
@@ -424,14 +461,12 @@ export class EbirrService {
 
       if (tx.invoiceId) {
         const orderId = parseInt(tx.invoiceId);
-        const order = await this.orderRepo.findOne({ where: { id: orderId } });
-        if (order && order.paymentStatus !== PaymentStatus.PAID) {
-          order.paymentStatus = PaymentStatus.PAID;
-          order.status = OrderStatus.PROCESSING; // OrderStatus.PAID does not exist, moving to PROCESSING
-          await this.orderRepo.save(order);
-          this.logger.log(`Order ${orderId} marked as PAID via Ebirr callback`);
-
-          // Emit event: order_paid (Skipped: Socket.io gateway not configured/installed)
+        try {
+          await this.ordersService.completeOrderFromPaymentCallback(orderId);
+        } catch (error) {
+          this.logger.error(
+            `Failed to complete order ${orderId} in Ebirr callback: ${error.message}`,
+          );
         }
       }
     } else {

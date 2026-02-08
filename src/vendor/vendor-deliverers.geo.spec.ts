@@ -6,6 +6,7 @@ import { User } from '../users/entities/user.entity';
 import { Product } from '../products/entities/product.entity';
 import { Order, OrderItem } from '../orders/entities/order.entity';
 import { ProductImage } from '../products/entities/product-image.entity';
+import { ProductImpression } from '../products/entities/product-impression.entity';
 import { NotificationsService } from '../notifications/notifications.service';
 import { Tag } from '../tags/tag.entity';
 import { DoSpacesService } from '../media/do-spaces.service';
@@ -71,6 +72,10 @@ describe('VendorService.searchDeliverers (geo)', () => {
         { provide: getRepositoryToken(OrderItem), useClass: Repository },
         { provide: getRepositoryToken(ProductImage), useClass: Repository },
         { provide: getRepositoryToken(Tag), useClass: Repository },
+        {
+          provide: getRepositoryToken(ProductImpression),
+          useClass: Repository,
+        },
         { provide: getRepositoryToken(UserReport), useValue: {} },
         { provide: NotificationsService, useValue: { sendToUser: jest.fn() } },
         { provide: DoSpacesService, useValue: {} },

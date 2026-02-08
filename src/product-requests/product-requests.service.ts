@@ -165,16 +165,16 @@ export class ProductRequestsService {
     this.notifySuperAdminsOnCreate(saved).catch(() => undefined);
 
     if (user.email) {
-      this.emailService
-        .sendProductRequestCreated(user, saved)
-        .catch(() => {});
+      this.emailService.sendProductRequestCreated(user, saved).catch(() => {});
     }
 
     return this.findRequestForBuyer(buyerId, saved.id, { includeOffers: true });
   }
 
   /** Create a product request on behalf of a guest (unauthenticated) user. */
-  async createGuestRequest(dto: CreateProductRequestDto): Promise<ProductRequest> {
+  async createGuestRequest(
+    dto: CreateProductRequestDto,
+  ): Promise<ProductRequest> {
     const guestEmail = dto.guestEmail?.trim();
     const guestPhone = dto.guestPhone?.trim();
     const guestName = dto.guestName?.trim() || 'Guest';
@@ -191,7 +191,10 @@ export class ProductRequestsService {
       guestName,
     });
 
-    const metadata = dto.metadata && typeof dto.metadata === 'object' ? { ...dto.metadata } : {};
+    const metadata =
+      dto.metadata && typeof dto.metadata === 'object'
+        ? { ...dto.metadata }
+        : {};
     metadata.guestContact = {
       name: guestName,
       email: guestEmail,
@@ -693,10 +696,17 @@ export class ProductRequestsService {
       );
     }
 
-    const currency = this.normalizeCurrency(dto.currency, [
+    // Currency Safety: If request has a specific currency, enforce it.
+    if (request.currency && dto.currency && dto.currency !== request.currency) {
+      throw new BadRequestException(
+        `Offer currency (${dto.currency}) must match the buyer's requested currency (${request.currency})`,
+      );
+    }
+
+    const currency = this.normalizeCurrency(request.currency || dto.currency, [
       product?.currency,
-      request.currency,
     ]);
+
     const offer = this.offerRepo.create({
       request: { id: requestId } as ProductRequest,
       requestId,
@@ -904,7 +914,9 @@ export class ProductRequestsService {
     const request = await this.requestRepo.findOne({
       where: { id: requestId },
     });
-    const seller = await this.userRepo.findOne({ where: { id: offer.sellerId } });
+    const seller = await this.userRepo.findOne({
+      where: { id: offer.sellerId },
+    });
     if (seller && seller.email && request) {
       this.emailService
         .sendOfferStatusChange(seller, { ...offer, request }, 'REJECTED')

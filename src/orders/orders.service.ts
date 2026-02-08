@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-enum-comparison, @typescript-eslint/no-floating-promises, @typescript-eslint/no-unused-vars */
+/* eslint-disable @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-floating-promises, @typescript-eslint/no-unused-vars */
 /* eslint-disable no-empty, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, prettier/prettier */
 import { UserRole } from '../auth/roles.enum';
 import {
@@ -15,13 +15,14 @@ import {
   OrderStatus,
   PaymentMethod,
   PaymentStatus,
+  DeliveryAcceptanceStatus,
 } from './entities/order.entity';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { CartService } from '../cart/cart.service';
 import { MpesaService } from '../mpesa/mpesa.service';
 import { TelebirrService } from '../telebirr/telebirr.service';
 import { EbirrService } from '../ebirr/ebirr.service';
-import { User, BusinessModel } from '../users/entities/user.entity';
+import { User, BusinessModel, resolveCertificationStatus } from '../users/entities/user.entity';
 import { NotificationsService } from '../notifications/notifications.service';
 import { NotificationType } from '../notifications/entities/notification.entity';
 import { plainToInstance } from 'class-transformer';
@@ -39,6 +40,7 @@ import { PayoutProvider, PayoutStatus } from '../wallet/entities/payout-log.enti
 import { Message, MessageType } from '../chat/entities/message.entity';
 import { MoreThan, In } from 'typeorm';
 import { subMinutes } from 'date-fns';
+import { buildOrderStatusNotification } from './order-notifications.util';
 
 @Injectable()
 export class OrdersService {
@@ -59,6 +61,7 @@ export class OrdersService {
   }): Promise<{ data: OrderResponseDto[]; total: number }> {
     const qb = this.orderRepository
       .createQueryBuilder('order')
+      .withDeleted() // Include soft-deleted records (e.g. deleted vendors/products)
       .leftJoinAndSelect('order.user', 'user')
       .leftJoinAndSelect('order.deliverer', 'deliverer')
       .leftJoinAndSelect('order.items', 'items')
@@ -122,10 +125,16 @@ export class OrdersService {
         id?: number;
         displayName?: string | null;
         storeName?: string | null;
+        legalName?: string | null;
+        email?: string | null;
+        firstName?: string | null; // Note: Entity might not have these if strict User entity
+        lastName?: string | null;
+        vendorPhoneNumber?: string | null;
+        certificationStatus?: string;
       };
       const vendorsMap = new Map<number, VendorLike & { id: number }>();
       for (const it of order.items || []) {
-        const vendor = it.product?.vendor as VendorLike | undefined;
+        const vendor = it.product?.vendor as any;
         if (
           vendor &&
           typeof vendor.id === 'number' &&
@@ -135,6 +144,12 @@ export class OrdersService {
             id: vendor.id,
             displayName: vendor.displayName ?? null,
             storeName: vendor.storeName ?? null,
+            legalName: vendor.legalName ?? null,
+            email: vendor.vendorEmail || vendor.email || null, // Prefer vendorEmail
+            firstName: vendor.firstName ?? null,
+            lastName: vendor.lastName ?? null,
+            vendorPhoneNumber: vendor.vendorPhoneNumber || vendor.phoneNumber || null,
+            certificationStatus: resolveCertificationStatus(vendor),
           });
         }
       }
@@ -156,8 +171,17 @@ export class OrdersService {
         vendors,
         vendorName:
           vendors.length === 1
-            ? vendors[0].storeName || vendors[0].displayName || null
+            ? vendors[0].storeName || 
+              vendors[0].displayName || 
+              vendors[0].legalName || 
+              vendors[0].firstName || 
+              (vendors[0].email ? `Vendor (${vendors[0].email})` : null) ||
+              (vendors[0].vendorPhoneNumber ? `Vendor (${vendors[0].vendorPhoneNumber})` : null) ||
+              `Vendor (ID: ${vendors[0].id})`
             : null,
+        storeName: vendors.length === 1 ? vendors[0].storeName : null,
+        legalName: vendors.length === 1 ? vendors[0].legalName : null,
+        businessName: vendors.length === 1 ? (vendors[0].storeName || vendors[0].legalName) : null,
         items: (order.items || []).map((item) => {
           const product = item.product;
           return {
@@ -278,6 +302,28 @@ export class OrdersService {
             items,
             currency
         );
+
+        // Push notification to vendor app/dashboard
+        try {
+          await this.notificationsService.createAndDispatch({
+            userId: vendor.id,
+            title: 'New Order Received!',
+            body: `You have a new order #${order.id}`,
+            type: NotificationType.ORDER,
+            data: {
+              type: 'vendor_order',
+              id: String(order.id),
+              route: `/vendor-order-detail?id=${order.id}`,
+              click_action: 'FLUTTER_NOTIFICATION_CLICK',
+            },
+          });
+        } catch (e) {
+          this.logger.warn(
+            `Failed to send vendor push for order ${order.id} to vendor ${vendor.id}: ${
+              e instanceof Error ? e.message : String(e)
+            }`,
+          );
+        }
     }
   }
 
@@ -441,6 +487,22 @@ export class OrdersService {
     });
   }
 
+  private async notifyOrderStatusChange(order: Order, status: OrderStatus) {
+    if (!order) return;
+
+    const userId = order.user?.id;
+    if (!userId) return;
+
+    const payload = buildOrderStatusNotification(order.id, status);
+    await this.notificationsService.createAndDispatch({
+      userId,
+      title: payload.title,
+      body: payload.body,
+      type: NotificationType.ORDER,
+      data: payload.data,
+    });
+  }
+
   /**
    * Cancel an order as admin. Sets status to CANCELLED.
    */
@@ -460,6 +522,7 @@ export class OrdersService {
     order.status = OrderStatus.CANCELLED;
     // TODO: Add restocking logic here if needed
     await this.orderRepository.save(order);
+    await this.notifyOrderStatusChange(order, OrderStatus.CANCELLED);
     this.emailService
       .sendOrderCancelled(order)
       .catch((e) =>
@@ -471,7 +534,7 @@ export class OrdersService {
   async assignDeliverer(orderId: number, delivererId: number) {
     const order = await this.orderRepository.findOne({
       where: { id: orderId },
-      relations: ['items', 'items.product', 'items.product.vendor'],
+      relations: ['items', 'items.product', 'items.product.vendor', 'user'],
     });
     if (!order) throw new NotFoundException('Order not found');
     const deliverer = await this.orderRepository.manager.findOne(User, {
@@ -481,18 +544,37 @@ export class OrdersService {
       throw new BadRequestException('User is not a deliverer');
     }
     order.deliverer = deliverer;
+    // Do NOT set SHIPPED immediately. Wait for acceptance.
+    // order.status = OrderStatus.SHIPPED; 
+    order.deliveryAcceptanceStatus = DeliveryAcceptanceStatus.PENDING;
+
+    await this.orderRepository.save(order);
+    
+    // Instead of notifying buyer of SHIPPED, we might wait. 
+    // BUT current flow expects "Assigned" -> "Shipped". 
+    // To preserve buyer visibility that something happened, we can keep SHIPPED or leave it PROCESSING.
+    // If we leave it PROCESSING, the buyer doesn't know a driver is assigned.
+    // Let's set it to SHIPPED to maintain backward compatibility for now, 
+    // but the deliverer has to ACCEPT to proceed to OUT_FOR_DELIVERY.
+    // Wait, if we set SHIPPED, the deliverer filters might hide "Pending" if they only look for SHIPPED.
+    // Let's set it to SHIPPED.
     order.status = OrderStatus.SHIPPED;
     await this.orderRepository.save(order);
+    
+    // Notify buyer
+    await this.notifyOrderStatusChange(order, OrderStatus.SHIPPED);
+
     // Send notification to deliverer
     await this.notificationsService.createAndDispatch({
       userId: delivererId,
-      title: 'New Delivery Assigned',
-      body: `You have been assigned to deliver order #${orderId}`,
+      title: 'New Delivery Request',
+      body: `You have a new delivery request order #${orderId}. Please Accept or Reject.`,
       type: NotificationType.ORDER,
       data: {
         orderId: String(orderId),
-        route: `/order-detail?id=${orderId}`,
+        route: `/deliverer/orders/${orderId}`, 
         click_action: 'FLUTTER_NOTIFICATION_CLICK',
+        action: 'request_acceptance'
       },
     });
 
@@ -842,6 +924,18 @@ export class OrdersService {
       });
       const savedOrder = await this.orderRepository.save(newOrder);
 
+      // Normalize to 2519XXXXXXXX and fail fast instead of silently defaulting server-side
+      let formattedPhone = phoneNumber.replace(/\+/g, '');
+      if (formattedPhone.startsWith('09')) {
+        formattedPhone = '251' + formattedPhone.substring(1);
+      } else if (formattedPhone.startsWith('9')) {
+        formattedPhone = '251' + formattedPhone;
+      }
+      if (!(formattedPhone && formattedPhone.startsWith('2519') && formattedPhone.length === 12)) {
+        throw new BadRequestException('Invalid Ebirr phone number; use 2519XXXXXXXX format.');
+      }
+      phoneNumber = formattedPhone;
+
       let paymentResponse;
       try {
         paymentResponse = await this.ebirrService.initiatePayment({
@@ -1176,7 +1270,7 @@ export class OrdersService {
   ) {
     const item = await this.orderItemRepository.findOne({
       where: { id: itemId, order: { id: orderId } } as any,
-      relations: ['order', 'order.items'],
+      relations: ['order', 'order.items', 'order.user'],
     });
     if (!item) throw new NotFoundException('Order item not found');
 
@@ -1196,6 +1290,7 @@ export class OrdersService {
     if (item.order.status !== aggregate) {
       item.order.status = aggregate;
       await this.orderRepository.save(item.order);
+      await this.notifyOrderStatusChange(item.order, aggregate);
     }
 
     return item;
@@ -1222,6 +1317,14 @@ export class OrdersService {
     item.trackingUrl = tracking.trackingUrl ?? item.trackingUrl ?? null;
     await this.orderItemRepository.save(item);
     return item;
+  }
+
+  /**
+   * Called by EbirrService or other payment services when a callback confirms payment.
+   */
+  async completeOrderFromPaymentCallback(orderId: number): Promise<Order> {
+    this.logger.log(`Completing order ${orderId} triggered by payment callback/webhook.`);
+    return this.triggerPostPaymentProcessing(orderId);
   }
 
   /**
@@ -1305,89 +1408,23 @@ export class OrdersService {
       for (const item of order.items) {
         if (item.vendorPayout > 0 && item.product?.vendor?.id) {
           try {
-            // BRANCH: Direct Payout for EBIRR
-            if (order.paymentMethod === 'EBIRR') {
-               const vendor = item.product.vendor;
-               // Ensure we have a phone number to pay to
-               if (!vendor.phoneNumber) {
-                  throw new Error(`Vendor ${vendor.id} has no phone number for payout.`);
-               }
-               
-               this.logger.log(`Initiating Direct Payout for Order #${order.id} to ${vendor.phoneNumber}`);
-               // Call B2C Payout
-               const payoutRef = `PAYOUT-${order.id}-${item.id}`;
-               await this.ebirrService.sendPayout({
-                  phoneNumber: vendor.phoneNumber,
-                  amount: item.vendorPayout,
-                  referenceId: payoutRef,
-                  remark: `Order #${order.id}`
-               });
-               
-               // Log the payout
-               await this.walletService.logPayout({
-                  vendorId: vendor.id,
-                  amount: item.vendorPayout,
-                  currency: order.currency || 'ETB',
-                  phoneNumber: vendor.phoneNumber,
-                  provider: PayoutProvider.EBIRR,
-                  transactionReference: payoutRef,
-                  orderId: order.id,
-                  orderItemId: item.id
-               });
-
-               this.logger.log(`Direct Payout Success for Order #${order.id} Item ${item.id}`);
-
-            } else {
-               // STANDARD: Credit Internal Wallet (Telebirr, etc.)
-               await this.walletService.creditWallet(
-                 item.product.vendor.id,
-                 item.vendorPayout,
-                 TransactionType.EARNING,
-                 `Payout for Order #${order.id} - ${item.product.name.substring(0, 20)}...`,
-                 order.id,
-               );
-               this.logger.log(`Credited vendor ${item.product.vendor.id} amount ${item.vendorPayout} for item ${item.id}`);
-            }
+            // STANDARD: Credit Internal Wallet for all providers (Ebirr, Telebirr, etc.)
+            // We do NOT create PayoutLogs here anymore, as that creates double-entries in Admin
+            // (One PayoutLog per order + One Withdrawal Request per user action).
+            // The Single Source of Truth for Payouts is now the Withdrawal Request.
+            await this.walletService.creditWallet(
+              item.product.vendor.id,
+              item.vendorPayout,
+              TransactionType.EARNING,
+              `Payout for Order #${order.id} - ${item.product.name.substring(0, 20)}...`,
+              order.id,
+            );
+            this.logger.log(
+              `Credited vendor ${item.product.vendor.id} amount ${item.vendorPayout} for item ${item.id}`,
+            );
           } catch (e) {
-                this.logger.error(`Payout/Credit Failed for Item ${item.id}: ${e.message}`);
-                // FALLBACK: If direct payout fails, should we credit wallet?
-                // For now, let's keep it simple: log validation error.
-                // It is CRITICAL to credit wallet if external API fails, or track manually.
-                
-                // Safety Net: Credit Wallet if Payout Failed to avoid vendor loss
-                if (order.paymentMethod === 'EBIRR') {
-                    // Log failure to PayoutLog so Admin knows!
-                    try {
-                        const payoutRef = `PAYOUT-${order.id}-${item.id}`;
-                        await this.walletService.logPayout({
-                            vendorId: item.product.vendor.id,
-                            amount: item.vendorPayout,
-                            currency: order.currency || 'ETB',
-                            phoneNumber: item.product.vendor.phoneNumber || '',
-                            provider: PayoutProvider.EBIRR,
-                            transactionReference: payoutRef,
-                            orderId: order.id,
-                            orderItemId: item.id,
-                            status: PayoutStatus.FAILED,
-                        });
-                    } catch (logErr) {
-                         this.logger.error(`Failed to log Payout Error: ${logErr.message}`);
-                    }
-
-                    this.logger.warn(`Direct Payout failed. Falling back to Internal Wallet Credit for Order #${order.id}`);
-                    try {
-                        await this.walletService.creditWallet(
-                            item.product.vendor.id,
-                            item.vendorPayout,
-                            TransactionType.EARNING,
-                            `FALLBACK: Payout for Order #${order.id} (Ebirr API Failed)`,
-                            order.id,
-                        );
-                    } catch (innerE) {
-                        this.logger.error(`CRITICAL: Even Fallback Credit Failed for Item ${item.id}: ${innerE.message}`);
-                    }
-                }
-            } 
+            this.logger.error(`Payout/Credit Failed for Item ${item.id}: ${e.message}`);
+          }
         }
       }
     }

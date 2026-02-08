@@ -1714,8 +1714,8 @@ export class ProductsService {
 
     const applySorting = (qb: any, addedGeoRank: boolean) => {
       if (sort === 'best_match') {
-        // Priority for PRO vendors
-        qb.orderBy('vendor.subscriptionTier', 'DESC');
+        // Priority for Certified vendors
+        qb.orderBy('vendor.verified', 'DESC');
 
         if (addedGeoRank) qb.addOrderBy('geo_rank', 'DESC');
         qb.addOrderBy('product.sales_count', 'DESC', 'NULLS LAST')
@@ -1734,8 +1734,8 @@ export class ProductsService {
         );
         qb.addOrderBy('product.createdAt', 'DESC');
       } else if (!sort || sort === 'created_desc' || sort === '') {
-        // Priority for PRO vendors (default view) - Pro (P) > Free (F) => DESC
-        qb.orderBy('vendor.subscriptionTier', 'DESC');
+        // Priority for Certified vendors (default view) - Certified (true) before Uncertified
+        qb.orderBy('vendor.verified', 'DESC');
 
         if (addedGeoRank) {
           qb.addOrderBy('geo_rank', 'DESC');
@@ -3070,7 +3070,15 @@ export class ProductsService {
   async suggestNames(
     query: string,
     limit = 8,
-  ): Promise<{ name: string; isPro: boolean; isFeatured: boolean }[]> {
+  ): Promise<
+    {
+      name: string;
+      isCertified: boolean;
+      isFeatured: boolean;
+      // Legacy alias kept for backward compatibility
+      isPro: boolean;
+    }[]
+  > {
     const q = (query || '').trim();
     // Allow 1-character inputs; only block truly empty
     if (q.length === 0) return [];
@@ -3090,8 +3098,8 @@ export class ProductsService {
                  LOWER(p.name) AS lower_name,
                  1 AS prefix_boost,
                  CASE WHEN $1 = 1 AND p."categoryId" = ANY($4::int[]) THEN 1 ELSE 0 END AS property_boost,
-                 -- Add Vendor Tier Boost: 1000000 points if Pro or Verified
-                 CASE WHEN v."subscriptionTier" = 'pro' OR v."verificationStatus" = 'APPROVED' THEN 1000000 ELSE 0 END AS tier_boost,
+                 -- Certification boost: verified vendors are prioritized (legacy PRO kept for compatibility)
+                 CASE WHEN v."verificationStatus" = 'APPROVED' OR v."subscriptionTier" = 'pro' THEN 1000000 ELSE 0 END AS tier_boost,
                  CASE WHEN p.featured = true THEN 2000000 ELSE 0 END AS featured_boost,
                  p.featured,
                  (COALESCE(p.sales_count, 0) * 3 + COALESCE(p."view_count", 0))::bigint AS popularity,
@@ -3107,8 +3115,8 @@ export class ProductsService {
                  LOWER(p.name) AS lower_name,
                  0 AS prefix_boost,
                  CASE WHEN $1 = 1 AND p."categoryId" = ANY($4::int[]) THEN 1 ELSE 0 END AS property_boost,
-                 -- Add Vendor Tier Boost: 1000000 points if Pro or Verified
-                 CASE WHEN v."subscriptionTier" = 'pro' OR v."verificationStatus" = 'APPROVED' THEN 1000000 ELSE 0 END AS tier_boost,
+                 -- Certification boost: verified vendors are prioritized (legacy PRO kept for compatibility)
+                 CASE WHEN v."verificationStatus" = 'APPROVED' OR v."subscriptionTier" = 'pro' THEN 1000000 ELSE 0 END AS tier_boost,
                  CASE WHEN p.featured = true THEN 2000000 ELSE 0 END AS featured_boost,
                  p.featured,
                  (COALESCE(p.sales_count, 0) * 3 + COALESCE(p."view_count", 0))::bigint AS popularity,
@@ -3119,9 +3127,10 @@ export class ProductsService {
           LIMIT ${preContain}
         )
       )
-      SELECT name, 
-             CASE WHEN tier_boost > 0 THEN true ELSE false END as "isPro",
-             featured as "isFeatured"
+            SELECT name, 
+              CASE WHEN tier_boost > 0 THEN true ELSE false END as "isCertified",
+              CASE WHEN tier_boost > 0 THEN true ELSE false END as "isPro",
+              featured as "isFeatured"
       FROM (
         SELECT DISTINCT ON (lower_name) 
           name, 
@@ -3141,6 +3150,7 @@ export class ProductsService {
 
     const rows: Array<{
       name: string;
+      isCertified: boolean;
       isPro: boolean;
       isFeatured: boolean;
     }> = await this.productRepo.query(sql, [
@@ -3153,6 +3163,7 @@ export class ProductsService {
     const seen = new Set<string>();
     const out: {
       name: string;
+      isCertified: boolean;
       isPro: boolean;
       isFeatured: boolean;
     }[] = [];
@@ -3162,7 +3173,12 @@ export class ProductsService {
       const key = name.toLowerCase();
       if (seen.has(key)) continue;
       seen.add(key);
-      out.push({ name, isPro: r.isPro, isFeatured: !!r.isFeatured });
+      out.push({
+        name,
+        isCertified: !!r.isCertified,
+        isPro: !!r.isPro,
+        isFeatured: !!r.isFeatured,
+      });
       if (out.length >= lim) break;
     }
     return out;

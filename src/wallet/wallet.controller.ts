@@ -75,10 +75,6 @@ export class WalletController {
     @UploadedFile() image?: Express.Multer.File,
   ) {
     // Fix: Use req.user.id (from JwtStrategy) instead of req.user.userId
-    // Also log the user object to debug
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-    console.log('TopUp Request User:', req.user);
-    console.log('TopUp Body UserDetails:', topUpDto.userDetails);
 
     // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment
     const tokenUserId = req.user?.id || req.user?.userId;

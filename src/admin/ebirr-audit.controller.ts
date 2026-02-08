@@ -1,4 +1,12 @@
-import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Query,
+  UseGuards,
+  Delete,
+  Body,
+  BadRequestException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { EbirrTransaction } from '../payments/entities/ebirr-transaction.entity';
@@ -43,5 +51,16 @@ export class AdminEbirrAuditController {
       page: Number(page),
       last_page: Math.ceil(total / limit),
     };
+  }
+
+  @Delete('transactions')
+  @Roles(UserRole.SUPER_ADMIN)
+  async deleteTransactions(@Body('ids') ids: number[]) {
+    if (!Array.isArray(ids) || ids.length === 0) {
+      throw new BadRequestException('ids array is required');
+    }
+
+    const result = await this.ebirrRepo.delete(ids);
+    return { deleted: result.affected || 0 };
   }
 }

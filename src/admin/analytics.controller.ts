@@ -4,15 +4,18 @@ import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { UserRole } from '../auth/roles.enum';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, DataSource, MoreThan, LessThan } from 'typeorm';
+import { Repository, DataSource } from 'typeorm';
 import { SearchKeyword } from '../products/entities/search-keyword.entity';
 import { ProductImpression } from '../products/entities/product-impression.entity';
 import { Product } from '../products/entities/product.entity';
-import { User, SubscriptionTier } from '../users/entities/user.entity';
+import { User } from '../users/entities/user.entity';
 import { GeoResolverService } from '../common/services/geo-resolver.service';
 import { SkipThrottle } from '@nestjs/throttler';
-import { UiSetting } from '../settings/entities/ui-setting.entity';
-import { OrderItem } from '../orders/entities/order.entity';
+import {
+  OrderItem,
+  PaymentStatus,
+  PaymentMethod,
+} from '../orders/entities/order.entity';
 
 type SortKey =
   | 'submit_desc'
@@ -60,13 +63,20 @@ export class AdminAnalyticsController {
     // Deprecated Endpoint: Now repurposed for Commission Analytics
     // Returns structure compatible with new "Commission" frontend logic
 
-    // 1. Commission Collected (Total Sum of 'commission' column in OrderItems)
+    // Use paid orders only to avoid inflating metrics with unpaid/cancelled carts
     const orderItemRepo = this.dataSource.getRepository(OrderItem);
-    const { totalCommission } = await orderItemRepo
+    const paidQuery = orderItemRepo
       .createQueryBuilder('item')
+      .leftJoin('item.order', 'order')
+      .where('order.paymentStatus = :paid', { paid: PaymentStatus.PAID });
+
+    // 1. Commission Collected (Total Sum of 'commission' column in paid OrderItems)
+    const { totalCommission, totalGrossSales } = await paidQuery
+      .clone()
       .select('SUM(item.commission)', 'totalCommission')
+      .addSelect('SUM(item.price * item.quantity)', 'totalGrossSales')
       .getRawOne();
-    
+
     // 2. Active Certified Vendors (formerly "Active Subscribers")
     const activeSubscribers = await this.userRepo.count({
       where: {
@@ -77,41 +87,41 @@ export class AdminAnalyticsController {
     // 3. Normalized "MRR" (Commission Revenue in last 30 days)
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-    
-    const { recentCommission } = await orderItemRepo
-      .createQueryBuilder('item')
+
+    const { recentCommission } = await paidQuery
+      .clone()
       .select('SUM(item.commission)', 'recentCommission')
-      .leftJoin('item.order', 'order')
-      .where('order.createdAt > :date', { date: thirtyDaysAgo })
+      .andWhere('order.createdAt > :date', { date: thirtyDaysAgo })
       .getRawOne();
 
-    // 4. Ebirr Commission Breakdown
-    // Ebirr Fee is 1% of the transaction volume for EBIRR orders
-    const { ebirrFees } = await orderItemRepo
-      .createQueryBuilder('item')
-      .leftJoin('item.order', 'order')
-      .where("order.paymentMethod = 'EBIRR'")
+    // 4. Ebirr Commission Breakdown (1% of paid EBIRR volume)
+    const { ebirrFees } = await paidQuery
+      .clone()
+      .andWhere('order.paymentMethod = :pm', { pm: PaymentMethod.EBIRR })
       .select('SUM(item.price * item.quantity * 0.01)', 'ebirrFees')
       .getRawOne();
 
     const totalEbirrFees = Number(ebirrFees || 0);
-    const totalPlatformRevenue = Number(totalCommission || 0) - totalEbirrFees;
+    const grossCommission = Number(totalCommission || 0);
+    const platformRevenueNet = grossCommission - totalEbirrFees;
 
     return {
       totalMrr: Number(recentCommission || 0), // Aliased to MRR for compatibility
       activeSubscribers, // Aliased to Certified Count
-      commissionCollected: Number(totalCommission || 0),
-      
+      commissionCollected: grossCommission,
+      grossSales: Number(totalGrossSales || 0),
+
       // Breakdown for Super Admin
       ebirrFees: totalEbirrFees,
-      platformRevenue: totalPlatformRevenue,
+      platformRevenue: platformRevenueNet,
 
       // Snake_case aliases
       total_mrr: Number(recentCommission || 0),
       active_subscribers: activeSubscribers,
-      total_commission: Number(totalCommission || 0),
+      total_commission: grossCommission,
+      gross_sales: Number(totalGrossSales || 0),
       ebirr_fees: totalEbirrFees,
-      platform_revenue: totalPlatformRevenue,
+      platform_revenue: platformRevenueNet,
     };
   }
 

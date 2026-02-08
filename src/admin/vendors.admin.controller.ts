@@ -45,18 +45,18 @@ export class AdminVendorsController {
     @Req() req: any,
   ) {
     if (!['APPROVED', 'REJECTED'].includes(status)) {
-        throw new BadRequestException('Status must be APPROVED or REJECTED');
+      throw new BadRequestException('Status must be APPROVED or REJECTED');
     }
 
     const user = await this.usersService.confirmTelebirrAccount(id, status);
 
     await this.audit.log({
-        action: 'vendor.telebirr.verification',
-        targetType: 'vendor',
-        targetId: id,
-        meta: { status, telebirrAccount: user.telebirrAccount || 'CLEARED' },
-        actorId: req?.user?.id ?? null,
-        actorEmail: req?.user?.email ?? null,
+      action: 'vendor.telebirr.verification',
+      targetType: 'vendor',
+      targetId: id,
+      meta: { status, telebirrAccount: user.telebirrAccount || 'CLEARED' },
+      actorId: req?.user?.id ?? null,
+      actorEmail: req?.user?.email ?? null,
     });
 
     return { ok: true, telebirrVerified: user.telebirrVerified };
@@ -70,6 +70,8 @@ export class AdminVendorsController {
     @Query('sort') sort?: 'name' | 'recent' | 'popular' | 'verifiedAt',
     @Query('verificationStatus')
     verificationStatus?: 'APPROVED' | 'PENDING' | 'REJECTED',
+    @Query('certificationStatus')
+    certificationStatus?: 'certified' | 'uncertified',
     @Query('country') country?: string,
     @Query('region') region?: string,
     @Query('city') city?: string,
@@ -92,6 +94,7 @@ export class AdminVendorsController {
       search: q,
       sort: sort || 'recent',
       verificationStatus,
+      certificationStatus,
       role: 'VENDOR',
       country,
       region,
@@ -116,6 +119,8 @@ export class AdminVendorsController {
   @Get('search')
   async search(
     @Query('q') q?: string,
+    @Query('certificationStatus')
+    certificationStatus?: 'certified' | 'uncertified',
     @Query('subscriptionTier') subscriptionTier?: 'free' | 'pro',
     @Query('limit') limit?: string,
     @Query('meta') metaFlag?: string,
@@ -125,6 +130,7 @@ export class AdminVendorsController {
       page: 1,
       limit: l,
       search: q,
+      certificationStatus,
       subscriptionTier,
       sort: 'recent',
       role: 'VENDOR',

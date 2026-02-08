@@ -2,8 +2,10 @@ import { NestFactory } from '@nestjs/core';
 import { AppModule } from '../app.module';
 import { ProductsService } from '../products/products.service';
 import { CategoriesService } from '../categories/categories.service';
+import { Logger } from '@nestjs/common';
 
 async function bootstrap() {
+  const logger = new Logger('CreateProducts');
   const app = await NestFactory.createApplicationContext(AppModule);
   const productsService = app.get(ProductsService);
   const categoriesService = app.get(CategoriesService);
@@ -218,7 +220,7 @@ async function bootstrap() {
     },
   ];
 
-  console.log('Starting to seed products...');
+  logger.log('Starting to seed products...');
 
   let seededCount = 0;
   let errorCount = 0;
@@ -233,19 +235,21 @@ async function bootstrap() {
         status: 'publish',
       });
 
-      console.log(`✅ Seeded: ${product.name} (ID: ${product.id})`);
+      logger.log(`✅ Seeded: ${product.name} (ID: ${product.id})`);
       seededCount++;
     } catch (err) {
-      console.error(`❌ Failed to seed ${productData.name}:`, err.message);
+      logger.error(`❌ Failed to seed ${productData.name}:`, err.message);
       errorCount++;
     }
   }
 
-  console.log(`\n🎉 Seeding completed!`);
-  console.log(`✅ Successfully seeded: ${seededCount} products`);
-  console.log(`❌ Failed to seed: ${errorCount} products`);
+  logger.log(`\n🎉 Seeding completed!`);
+  logger.log(`✅ Successfully seeded: ${seededCount} products`);
+  logger.log(`❌ Failed to seed: ${errorCount} products`);
 
   await app.close();
 }
 
-bootstrap().catch(console.error);
+bootstrap().catch((err) => {
+  new Logger('CreateProducts').error(err);
+});

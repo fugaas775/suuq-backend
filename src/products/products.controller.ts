@@ -82,11 +82,6 @@ export class ProductsController {
     @Body() createProductDto: CreateProductDto,
     @Req() req: AuthenticatedRequest,
   ) {
-    if (process.env.NODE_ENV !== 'production') {
-      const bodyString = JSON.stringify(req.body ?? {});
-      console.log('Raw request body:', bodyString);
-      console.log('Parsed DTO:', JSON.stringify(createProductDto));
-    }
     const roles = Array.isArray(req.user?.roles) ? req.user.roles : [];
     const isCustomerOrGuest =
       roles.includes(UserRole.CUSTOMER) || roles.includes(UserRole.GUEST);

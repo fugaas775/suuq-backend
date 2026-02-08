@@ -8,7 +8,6 @@ import {
   ParseFilePipe,
   MaxFileSizeValidator,
   FileTypeValidator,
-  Body,
 } from '@nestjs/common';
 import { FilesInterceptor } from '@nestjs/platform-express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -20,7 +19,6 @@ import {
   VerificationDocument,
 } from '../users/entities/user.entity';
 import { DoSpacesService } from '../media/do-spaces.service';
-import { VerificationService } from './verification.service';
 import { VerificationMethod } from '../users/entities/user.entity';
 
 @Controller('verification')
@@ -28,22 +26,7 @@ export class VerificationController {
   constructor(
     private readonly usersService: UsersService,
     private readonly doSpacesService: DoSpacesService,
-    private readonly verificationService: VerificationService,
   ) {}
-
-  @Post('check-license')
-  @UseGuards(JwtAuthGuard)
-  // Allow any authenticated user to check license as part of upgrade flow
-  async checkLicense(
-    @Req() req,
-    @Body('businessLicenseNumber') businessLicenseNumber: string,
-  ) {
-    const userId = req.user.id;
-    return this.verificationService.checkBusinessLicense(
-      userId,
-      businessLicenseNumber,
-    );
-  }
 
   @Post('request')
   @UseGuards(JwtAuthGuard)

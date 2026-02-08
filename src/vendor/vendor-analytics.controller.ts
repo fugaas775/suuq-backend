@@ -15,7 +15,7 @@ import { Repository } from 'typeorm';
 import { SearchKeyword } from '../products/entities/search-keyword.entity';
 import { ProductImpression } from '../products/entities/product-impression.entity';
 import { Product } from '../products/entities/product.entity';
-import { User, SubscriptionTier } from '../users/entities/user.entity';
+import { User, isCertifiedVendor } from '../users/entities/user.entity';
 import { SkipThrottle } from '@nestjs/throttler';
 
 type ZeroDemandQuery = {
@@ -57,11 +57,13 @@ export class VendorAnalyticsController {
       throw new ForbiddenException('User not found');
     }
 
-    // Gatekeeper: Ensure user is PRO
-    console.log(`[Analytics] User ${userId} tier: ${user.subscriptionTier}`);
-    if (user.subscriptionTier !== SubscriptionTier.PRO) {
+    // Gatekeeper: Ensure user is Certified (legacy: Pro)
+    console.log(
+      `[Analytics] User ${userId} certification: ${isCertifiedVendor(user)}`,
+    );
+    if (!isCertifiedVendor(user)) {
       throw new ForbiddenException(
-        `This feature is available for Pro subscribers only. Current tier: ${user.subscriptionTier}`,
+        'This feature is available for Certified vendors only. Please complete and verify your business license.',
       );
     }
 

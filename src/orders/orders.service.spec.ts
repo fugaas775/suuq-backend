@@ -9,6 +9,13 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { DoSpacesService } from '../media/do-spaces.service';
 import { AuditService } from '../audit/audit.service';
 import { CurrencyService } from '../common/services/currency.service';
+import { UiSetting } from '../settings/entities/ui-setting.entity';
+import { Message } from '../chat/entities/message.entity';
+import { ProductsService } from '../products/products.service';
+import { EbirrService } from '../ebirr/ebirr.service';
+import { EmailService } from '../email/email.service';
+import { UsersService } from '../users/users.service';
+import { WalletService } from '../wallet/wallet.service';
 
 describe('OrdersService', () => {
   let service: OrdersService;
@@ -25,6 +32,13 @@ describe('OrdersService', () => {
         { provide: NotificationsService, useValue: {} },
         { provide: DoSpacesService, useValue: {} },
         { provide: AuditService, useValue: {} },
+        { provide: getRepositoryToken(UiSetting), useValue: {} },
+        { provide: getRepositoryToken(Message), useValue: {} },
+        { provide: ProductsService, useValue: {} },
+        { provide: EbirrService, useValue: {} },
+        { provide: EmailService, useValue: {} },
+        { provide: UsersService, useValue: {} },
+        { provide: WalletService, useValue: {} },
         { provide: CurrencyService, useValue: { convert: jest.fn() } },
       ],
     }).compile();

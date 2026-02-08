@@ -9,6 +9,8 @@ import { Tag } from '../tags/tag.entity';
 import { Category } from '../categories/entities/category.entity';
 import { ProductImpression } from './entities/product-impression.entity';
 import { SearchKeyword } from './entities/search-keyword.entity';
+import { MediaCleanupTask } from '../media/entities/media-cleanup-task.entity';
+import { NotificationsService } from '../notifications/notifications.service';
 import { DoSpacesService } from '../media/do-spaces.service';
 import { AuditService } from '../audit/audit.service';
 import { Review } from '../reviews/entities/review.entity';
@@ -45,6 +47,16 @@ describe('ProductsService', () => {
         { provide: getRepositoryToken(ProductImpression), useValue: {} },
         { provide: getRepositoryToken(SearchKeyword), useValue: {} },
         { provide: getRepositoryToken(Review), useValue: {} },
+        { provide: getRepositoryToken(MediaCleanupTask), useValue: {} },
+        { provide: NotificationsService, useValue: { sendToUser: jest.fn() } },
+        { provide: AuditService, useValue: { log: jest.fn() } },
+        {
+          provide: GeoResolverService,
+          useValue: { resolveCountryFromCity: jest.fn() },
+        },
+        { provide: FavoritesService, useValue: {} },
+        { provide: CurrencyService, useValue: { convert: jest.fn() } },
+        { provide: EmailService, useValue: { send: jest.fn() } },
         {
           provide: DoSpacesService,
           useValue: {
@@ -81,7 +93,10 @@ describe('ProductsService', () => {
         },
         {
           provide: CurrencyService,
-          useValue: { convert: jest.fn(), getRate: jest.fn().mockReturnValue(1) },
+          useValue: {
+            convert: jest.fn(),
+            getRate: jest.fn().mockReturnValue(1),
+          },
         },
         { provide: EmailService, useValue: { send: jest.fn() } },
       ],

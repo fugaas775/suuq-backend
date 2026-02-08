@@ -11,9 +11,12 @@ import { UpdateVendorProductDto } from './dto/update-vendor-product.dto';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Raw, ArrayContains, ILike, In, IsNull } from 'typeorm';
 import {
+  CertificationStatus,
   User,
   VerificationStatus,
   SubscriptionTier,
+  isCertifiedVendor,
+  resolveCertificationStatus,
 } from '../users/entities/user.entity';
 import { Product } from '../products/entities/product.entity';
 import { ProductImpression } from '../products/entities/product-impression.entity';
@@ -24,7 +27,10 @@ import {
   OrderStatus,
   PaymentMethod,
   PaymentStatus,
+  DeliveryAcceptanceStatus,
 } from '../orders/entities/order.entity';
+import { NotificationType } from '../notifications/entities/notification.entity';
+import { buildOrderStatusNotification } from '../orders/order-notifications.util';
 import { normalizeProductMedia } from '../common/utils/media-url.util';
 import { UserRole } from '../auth/roles.enum';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -99,6 +105,28 @@ export class VendorService {
       );
       return { amount, rate: undefined };
     }
+  }
+
+  private async notifyOrderStatusChange(order: Order, status: OrderStatus) {
+    let userId = order?.user?.id;
+    if (!userId) {
+      const withUser = await this.orderRepository.findOne({
+        where: { id: order.id },
+        relations: ['user'],
+      });
+      userId = withUser?.user?.id;
+    }
+
+    if (!userId) return;
+
+    const payload = buildOrderStatusNotification(order.id, status);
+    await this.notificationsService.createAndDispatch({
+      userId,
+      title: payload.title,
+      body: payload.body,
+      type: NotificationType.ORDER,
+      data: payload.data,
+    });
   }
 
   private applyCurrencyToProduct(product: Product, target: string): Product {
@@ -182,15 +210,11 @@ export class VendorService {
       where: { vendor: { id: userId } },
     });
 
-    // Check subscription tier
-    // Note: ensure access to SubscriptionTier enum or use string literal 'pro'/'free' if imported
-    // If the vendor is verified (approved), they are treated as PRO (unlimited)
-    const isPro =
-      vendor.subscriptionTier === SubscriptionTier.PRO ||
-      vendor.verificationStatus === VerificationStatus.APPROVED;
+    // Certification gate: Certified (verified) vendors get unlimited slots; others are limited.
+    const isCertified = isCertifiedVendor(vendor);
     const isVendor = vendor.roles.includes(UserRole.VENDOR);
 
-    if (!isPro) {
+    if (!isCertified) {
       if (isVendor) {
         const freeLimitRaw = await this.settingsService.getSystemSetting(
           'limit.free_vendor_products',
@@ -200,7 +224,7 @@ export class VendorService {
         // limit 5 (default)
         if (productCount >= freeLimit) {
           throw new ForbiddenException(
-            `Free vendors are limited to ${freeLimit} products. Upgrade to Pro for unlimited listings.`,
+            `Uncertified vendors are limited to ${freeLimit} products. Submit and verify your business license to become Certified for unlimited listings.`,
           );
         }
       } else {
@@ -1052,6 +1076,7 @@ export class VendorService {
       region?: string;
       city?: string;
       subscriptionTier?: 'free' | 'pro';
+      certificationStatus?: 'certified' | 'uncertified';
       minSales?: number;
       minRating?: number;
     },
@@ -1071,6 +1096,7 @@ export class VendorService {
       region,
       city,
       subscriptionTier,
+      certificationStatus,
       minSales,
       minRating,
     } = findAllVendorsDto;
@@ -1131,6 +1157,22 @@ export class VendorService {
             verificationStatus,
           }))
         : { ...findOptions.where, verificationStatus };
+    }
+
+    if (certificationStatus) {
+      const normalized = certificationStatus.toLowerCase();
+      const target =
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-enum-comparison
+        normalized === CertificationStatus.CERTIFIED
+          ? CertificationStatus.CERTIFIED
+          : CertificationStatus.UNCERTIFIED;
+      const shouldBeVerified = target === CertificationStatus.CERTIFIED;
+      findOptions.where = Array.isArray(findOptions.where)
+        ? findOptions.where.map((w: any) => ({
+            ...w,
+            verified: shouldBeVerified,
+          }))
+        : { ...findOptions.where, verified: shouldBeVerified };
     }
 
     if (subscriptionTier) {
@@ -1237,8 +1279,12 @@ export class VendorService {
         rating: u.rating ?? 0,
         createdAt: u.createdAt,
         yearsOnPlatform,
-        subscriptionTier: (u as any).subscriptionTier || 'free',
+        subscriptionTier: isCertifiedVendor(u)
+          ? SubscriptionTier.PRO
+          : (u as any).subscriptionTier || SubscriptionTier.FREE,
         subscriptionExpiry: (u as any).subscriptionExpiry || null,
+        certificationStatus: resolveCertificationStatus(u),
+        isCertified: isCertifiedVendor(u),
         productCount: undefined, // placeholder; can join or compute later
         certificateCount: Array.isArray((u as any).verificationDocuments)
           ? (u as any).verificationDocuments.length
@@ -1295,6 +1341,11 @@ export class VendorService {
       }
     }
 
+    const certificationStatus = resolveCertificationStatus({
+      verified,
+      verificationStatus,
+    });
+
     return {
       id,
       storeName,
@@ -1309,13 +1360,15 @@ export class VendorService {
       mobileMoneyProvider: mobileMoneyProvider || '',
       verified: !!verified,
       verificationStatus: verificationStatus || 'UNVERIFIED',
+      certificationStatus,
+      isCertified: isCertifiedVendor({ verified, verificationStatus }),
       subscriptionTier: subscriptionTier || 'free',
     };
   }
 
   async getDashboardOverview(userId: number, status?: string) {
     const productCount = await this.productRepository.count({
-      where: { vendor: { id: userId } },
+      where: { vendor: { id: userId }, deletedAt: IsNull() },
     });
 
     let statuses = [
@@ -1611,6 +1664,8 @@ export class VendorService {
       supportedCurrencies: user.supportedCurrencies || [],
       subscriptionTier: (user as any).subscriptionTier || 'free',
       subscriptionExpiry: (user as any).subscriptionExpiry || null,
+      certificationStatus: resolveCertificationStatus(user),
+      isCertified: isCertifiedVendor(user),
     };
 
     return {
@@ -2221,14 +2276,25 @@ export class VendorService {
     // Set deliverer and advance status to SHIPPED
     (order as any).deliverer = deliverer as any;
     order.status = OrderStatus.SHIPPED;
+    // Set acceptance status to PENDING
+    order.deliveryAcceptanceStatus = DeliveryAcceptanceStatus.PENDING;
+
     await this.orderRepository.save(order);
+    await this.notifyOrderStatusChange(order, OrderStatus.SHIPPED);
 
     // Notify deliverer
     try {
-      await this.notificationsService.sendToUser({
+      await this.notificationsService.createAndDispatch({
         userId: delivererId,
-        title: 'New Delivery Assigned',
-        body: `You have been assigned order #${orderId}`,
+        title: 'New Delivery Request',
+        body: `You have a new delivery request order #${orderId}. Please Accept or Reject.`,
+        type: NotificationType.ORDER,
+        data: {
+          orderId: String(orderId),
+          route: `/deliverer/orders/${orderId}`,
+          click_action: 'FLUTTER_NOTIFICATION_CLICK',
+          action: 'request_acceptance',
+        },
       });
     } catch {
       // ignore notification failures
@@ -2282,6 +2348,7 @@ export class VendorService {
       .leftJoinAndSelect('o.items', 'items')
       .leftJoinAndSelect('items.product', 'product')
       .leftJoinAndSelect('product.vendor', 'vendor')
+      .leftJoinAndSelect('o.user', 'user')
       .where('o.id = :orderId', { orderId })
       .getOne();
 
@@ -2326,6 +2393,7 @@ export class VendorService {
 
     order.status = status;
     await this.orderRepository.save(order);
+    await this.notifyOrderStatusChange(order, status);
     return order;
   }
 
@@ -2370,7 +2438,13 @@ export class VendorService {
   ) {
     const item = await this.orderItemRepository.findOne({
       where: { id: itemId, order: { id: orderId } } as any,
-      relations: ['product', 'product.vendor', 'order', 'order.items'],
+      relations: [
+        'product',
+        'product.vendor',
+        'order',
+        'order.items',
+        'order.user',
+      ],
     });
     if (!item) throw new NotFoundException('Order item not found');
     if ((item.product as any)?.vendor?.id !== vendorId) {
@@ -2427,6 +2501,7 @@ export class VendorService {
     if (item.order.status !== aggregate) {
       item.order.status = aggregate;
       await this.orderRepository.save(item.order);
+      await this.notifyOrderStatusChange(item.order, aggregate);
     }
 
     return item;

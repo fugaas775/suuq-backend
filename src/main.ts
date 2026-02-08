@@ -92,9 +92,10 @@ async function bootstrap() {
           styleSrc: [
             "'self'",
             "'unsafe-inline'", // Swagger UI injects inline styles
+            'https://fonts.googleapis.com',
           ],
-          imgSrc: ["'self'", 'data:'],
-          fontSrc: ["'self'", 'data:'],
+          imgSrc: ["'self'", 'data:', 'https:', 'http:'],
+          fontSrc: ["'self'", 'data:', 'https://fonts.gstatic.com'],
           connectSrc: ["'self'"],
           objectSrc: ["'none'"],
           frameAncestors: ["'none'"],
@@ -136,7 +137,8 @@ async function bootstrap() {
     try {
       const url = req.url || '';
       if (
-        (url.startsWith('/product-requests') || url.startsWith('/withdrawals')) &&
+        (url.startsWith('/product-requests') ||
+          url.startsWith('/withdrawals')) &&
         !url.startsWith('/api')
       ) {
         req.url = `/api${url}`;
@@ -325,26 +327,7 @@ async function bootstrap() {
         } catch {
           // ignore
         }
-        console.log(JSON.stringify(logData));
-      } else {
-        // Verbose logging in development
-        console.log('--- Logging middleware triggered ---');
-        console.log(`[${req.method}] ${req.url} (ID: ${requestId})`);
-        console.log('Request headers:', req.headers);
-
-        // Do not attempt to log body for multipart/form-data
-        const contentType = req.headers['content-type'];
-        if (contentType && contentType.includes('multipart/form-data')) {
-          console.log('Incoming request body: <multipart/form-data stream>');
-        } else if (typeof req.body !== 'undefined') {
-          const bodyString = JSON.stringify(req.body as unknown);
-          console.log(
-            'Incoming request body:',
-            bodyString === '{}' ? '<empty object>' : bodyString,
-          );
-        } else {
-          console.log('Incoming request body: <undefined>');
-        }
+        Logger.log(JSON.stringify(logData), 'Request');
       }
 
       next();
@@ -491,6 +474,6 @@ async function bootstrap() {
   const host = process.env.HOST || '0.0.0.0';
   await app.listen(port, host);
   const appUrl = await app.getUrl();
-  console.log(`Application is running on: ${appUrl}`);
+  Logger.log(`Application is running on: ${appUrl}`, 'Bootstrap');
 }
 void bootstrap();

@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Patch,
+  Delete,
   Body,
   Param,
   Query,
@@ -57,9 +58,27 @@ export class WithdrawalsController {
     @Query('limit') limit = 20,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const { items, total } = await this.withdrawalsService.findAll({ status, page, limit });
+    const { items, total } = await this.withdrawalsService.findAll({
+      status,
+      page,
+      limit,
+    });
     res.header('X-Total-Count', total.toString());
     return items;
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.SUPER_ADMIN)
+  @Delete('admin/bulk')
+  async deleteWithdrawals(@Body('ids') ids: number[]) {
+    return this.withdrawalsService.deleteWithdrawals(ids);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.SUPER_ADMIN)
+  @Delete('admin/:id')
+  async deleteWithdrawal(@Param('id', ParseIntPipe) id: number) {
+    return this.withdrawalsService.deleteWithdrawal(id);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)

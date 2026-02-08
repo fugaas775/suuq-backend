@@ -5,6 +5,8 @@ import {
   VerificationDocument,
   VerificationStatus,
   VerificationMethod,
+  CertificationStatus,
+  resolveCertificationStatus,
 } from '../../users/entities/user.entity';
 
 @Exclude()
@@ -20,6 +22,16 @@ export class AdminUserResponseDto {
 
   @Expose()
   subscriptionTier?: string;
+
+  @Expose()
+  get certificationStatus(): CertificationStatus {
+    return resolveCertificationStatus(this as any);
+  }
+
+  @Expose()
+  get isCertified(): boolean {
+    return this.certificationStatus === CertificationStatus.CERTIFIED;
+  }
 
   @Expose()
   displayName?: string;

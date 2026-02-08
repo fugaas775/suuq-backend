@@ -10,6 +10,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { Tag } from '../tags/tag.entity';
 import { DoSpacesService } from '../media/do-spaces.service';
 import { Category } from '../categories/entities/category.entity';
+import { ProductImpression } from '../products/entities/product-impression.entity';
 import { VerificationStatus } from '../users/entities/user.entity';
 import { UserReport } from '../moderation/entities/user-report.entity';
 import { CurrencyService } from '../common/services/currency.service';
@@ -126,6 +127,7 @@ describe('VendorService', () => {
           useValue: productImageRepoMock,
         },
         { provide: getRepositoryToken(Tag), useValue: tagRepoMock },
+        { provide: getRepositoryToken(ProductImpression), useValue: {} },
         { provide: getRepositoryToken(UserReport), useValue: {} },
         { provide: NotificationsService, useValue: notificationsMock },
         { provide: DoSpacesService, useValue: doSpacesMock },
@@ -243,7 +245,7 @@ describe('VendorService', () => {
     tagRepoMock.save = txTagSave;
     tagRepoMock.find = j.fn().mockResolvedValue([]);
     tagRepoMock.create = (v: any) => v;
-    
+
     // Also internal findOneOrFail call at end of createMyProduct
     productRepoMock.findOneOrFail.mockResolvedValue({
       id: 555,
@@ -261,9 +263,9 @@ describe('VendorService', () => {
       categoryId: 1,
     };
 
-     // Mock settings svc call if needed
+    // Mock settings svc call if needed
     const getSysSetting = (service as any).settingsService.getSystemSetting;
-    (getSysSetting as any).mockResolvedValue('5');
+    getSysSetting.mockResolvedValue('5');
 
     await service.createMyProduct(1, dto);
 
@@ -272,14 +274,20 @@ describe('VendorService', () => {
     expect(txImageSave).toHaveBeenCalled();
     // Verify 2 images were saved (either in one call or multiple)
     // If bulk save:
-    if (txImageSave.mock.calls.length === 1 && Array.isArray(txImageSave.mock.calls[0][0])) {
-         expect(txImageSave.mock.calls[0][0].length).toBe(2);
+    if (
+      txImageSave.mock.calls.length === 1 &&
+      Array.isArray(txImageSave.mock.calls[0][0])
+    ) {
+      expect(txImageSave.mock.calls[0][0].length).toBe(2);
     } else {
-        // If individual saves or multiple batches
-         const totalSaved = txImageSave.mock.calls.reduce((acc: number, call: any[]) => {
-             return acc + (Array.isArray(call[0]) ? call[0].length : 1);
-         }, 0);
-         expect(totalSaved).toBe(2);
+      // If individual saves or multiple batches
+      const totalSaved = txImageSave.mock.calls.reduce(
+        (acc: number, call: any[]) => {
+          return acc + (Array.isArray(call[0]) ? call[0].length : 1);
+        },
+        0,
+      );
+      expect(totalSaved).toBe(2);
     }
   });
 
@@ -296,7 +304,7 @@ describe('VendorService', () => {
     const imageDelete = j.fn();
     const imageSave = j.fn();
     const productSave = j.fn(async (p: any) => p);
-    
+
     productRepoMock.findOne = j.fn().mockResolvedValue(product);
 
     productRepoMock.manager.transaction.mockImplementation(async (cb: any) => {

@@ -4,8 +4,10 @@ import { SettingsService } from '../settings/settings.service';
 import { UiSetting } from '../settings/entities/ui-setting.entity';
 import { Repository } from 'typeorm';
 import { getRepositoryToken } from '@nestjs/typeorm';
+import { Logger } from '@nestjs/common';
 
 async function run() {
+  const logger = new Logger('SeedAppVersions');
   const app = await NestFactory.createApplicationContext(AppModule);
   const uiSettingRepo = app.get<Repository<UiSetting>>(
     getRepositoryToken(UiSetting),
@@ -60,10 +62,10 @@ async function run() {
   for (const s of settings) {
     const existing = await uiSettingRepo.findOne({ where: { key: s.key } });
     if (existing) {
-      console.log(`Setting ${s.key} already exists. Skipping.`);
+      logger.log(`Setting ${s.key} already exists. Skipping.`);
     } else {
       await uiSettingRepo.save(uiSettingRepo.create(s));
-      console.log(`Created setting ${s.key}`);
+      logger.log(`Created setting ${s.key}`);
     }
   }
 

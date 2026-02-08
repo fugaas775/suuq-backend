@@ -17,6 +17,7 @@ import {
   SubscriptionTier,
   BusinessModel,
   VerificationMethod,
+  isCertifiedVendor,
 } from './entities/user.entity'; // Import VerificationStatus enum
 import { RequestVerificationDto } from './dto/request-verification.dto';
 import {
@@ -466,9 +467,9 @@ export class UsersService {
       // We need the full user object to check subscription and last update time
       const user = await this.findById(id);
 
-      if (user.subscriptionTier !== SubscriptionTier.PRO) {
+      if (!isCertifiedVendor(user)) {
         throw new BadRequestException(
-          'Customizing interest categories is a Pro Vendor feature.',
+          'Customizing interest categories is available for Certified vendors. Please verify your business to continue.',
         );
       }
 

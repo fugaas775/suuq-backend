@@ -11,6 +11,31 @@ export enum SubscriptionTier {
   PRO = 'pro',
 }
 
+export enum CertificationStatus {
+  CERTIFIED = 'certified',
+  UNCERTIFIED = 'uncertified',
+}
+
+export const isCertifiedVendor = (
+  user:
+    | Pick<User, 'verified' | 'verificationStatus'>
+    | { verified?: boolean; verificationStatus?: VerificationStatus },
+): boolean => {
+  return (
+    !!user?.verified || user?.verificationStatus === VerificationStatus.APPROVED
+  );
+};
+
+export const resolveCertificationStatus = (
+  user:
+    | Pick<User, 'verified' | 'verificationStatus'>
+    | { verified?: boolean; verificationStatus?: VerificationStatus },
+): CertificationStatus => {
+  return isCertifiedVendor(user)
+    ? CertificationStatus.CERTIFIED
+    : CertificationStatus.UNCERTIFIED;
+};
+
 export enum BusinessModel {
   SUBSCRIPTION = 'SUBSCRIPTION',
   COMMISSION = 'COMMISSION',

@@ -92,6 +92,15 @@ export class NotificationsService {
       this.logger.log(
         `Sent notification to user ${userId}: ${response.successCount} success, ${response.failureCount} failure`,
       );
+      if (response.failureCount > 0) {
+        response.responses.forEach((resp, idx) => {
+          if (!resp.success) {
+            this.logger.error(
+              `Notification Error [Token Index ${idx}]: ${resp.error?.code} - ${resp.error?.message}`,
+            );
+          }
+        });
+      }
       return response;
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -150,8 +159,11 @@ export class NotificationsService {
       : {};
 
     // Explicitly add 'type' to the helper payload so Flutter's NotificationService
-    // can detect it easily (for routing optimization).
-    fcmData['type'] = type;
+    // can detect it easily (for routing optimization). Respect any caller-provided
+    // type (e.g. lowercase 'order') to keep mobile routing stable.
+    if (!('type' in fcmData)) {
+      fcmData['type'] = type;
+    }
 
     return this.sendToUser({
       userId: opts.userId,

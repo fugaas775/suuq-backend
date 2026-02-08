@@ -3,18 +3,20 @@ import { AppModule } from '../../app.module';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { Category } from '../../categories/entities/category.entity';
 import { TreeRepository } from 'typeorm';
+import { Logger } from '@nestjs/common';
 
 async function bootstrap() {
+  const logger = new Logger('SeedCategories');
   const app = await NestFactory.createApplicationContext(AppModule);
   const categoryRepo = app.get<TreeRepository<Category>>(
     getRepositoryToken(Category),
   );
 
-  console.log('--- Seeding Production Categories for Suuq Marketplace ---');
+  logger.log('--- Seeding Production Categories for Suuq Marketplace ---');
 
   // Clear the table to ensure a clean seed.
   // In a real production environment, you might migrate data instead of clearing.
-  console.log('Clearing existing categories...');
+  logger.log('Clearing existing categories...');
   await categoryRepo.query(
     'TRUNCATE "category_closure" RESTART IDENTITY CASCADE;',
   );
@@ -75,7 +77,7 @@ async function bootstrap() {
   ];
 
   await categoryRepo.save(parents);
-  console.log('✅ Top-level categories created.');
+  logger.log('✅ Top-level categories created.');
 
   // --- 2. Define and Create Child Categories ---
   const [
@@ -285,9 +287,9 @@ async function bootstrap() {
   ];
 
   await categoryRepo.save(children);
-  console.log('✅ Sub-categories created.');
+  logger.log('✅ Sub-categories created.');
 
-  console.log('🎉 Production category seeding complete!');
+  logger.log('🎉 Production category seeding complete!');
   await app.close();
 }
 

@@ -1,6 +1,10 @@
 import { Expose, Exclude } from 'class-transformer';
 import { UserRole } from '../../auth/roles.enum';
-import { SubscriptionTier } from '../entities/user.entity';
+import {
+  CertificationStatus,
+  SubscriptionTier,
+  resolveCertificationStatus,
+} from '../entities/user.entity';
 
 @Exclude()
 export class UserResponseDto {
@@ -38,6 +42,16 @@ export class UserResponseDto {
 
   @Expose()
   subscriptionTier?: SubscriptionTier;
+
+  @Expose()
+  get certificationStatus(): CertificationStatus {
+    return resolveCertificationStatus(this as any);
+  }
+
+  @Expose()
+  get isCertified(): boolean {
+    return this.certificationStatus === CertificationStatus.CERTIFIED;
+  }
 
   @Expose()
   businessModel?: string;

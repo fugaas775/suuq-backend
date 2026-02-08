@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ProductsController } from './products.controller';
 import { ProductsService } from './products.service';
+import { BoostPricingService } from './boost-pricing.service';
 import { HomeService } from '../home/home.service';
 import { FavoritesService } from '../favorites/favorites.service';
 import { CategoriesService } from '../categories/categories.service';
@@ -14,6 +15,7 @@ describe('ProductsController', () => {
       controllers: [ProductsController],
       providers: [
         { provide: ProductsService, useValue: {} },
+        { provide: BoostPricingService, useValue: {} },
         { provide: HomeService, useValue: {} },
         { provide: FavoritesService, useValue: {} },
         { provide: CategoriesService, useValue: {} },

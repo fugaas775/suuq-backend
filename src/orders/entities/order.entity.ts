@@ -37,6 +37,12 @@ export enum OrderStatus {
   CANCELLED = 'CANCELLED',
 }
 
+export enum DeliveryAcceptanceStatus {
+  PENDING = 'PENDING',
+  ACCEPTED = 'ACCEPTED',
+  REJECTED = 'REJECTED',
+}
+
 // Define Order first, because OrderItem depends on it
 @Entity('order')
 export class Order {
@@ -85,6 +91,13 @@ export class Order {
     default: OrderStatus.PENDING,
   })
   status!: OrderStatus;
+
+  @Column({
+    type: 'enum',
+    enum: DeliveryAcceptanceStatus,
+    nullable: true,
+  })
+  deliveryAcceptanceStatus?: DeliveryAcceptanceStatus | null;
 
   @Column('jsonb')
   shippingAddress!: {
