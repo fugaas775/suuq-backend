@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-floating-promises, @typescript-eslint/no-unused-vars */
-/* eslint-disable no-empty, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, prettier/prettier */
+/* eslint-disable no-empty, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access */
 import { UserRole } from '../auth/roles.enum';
 import {
   Injectable,
@@ -22,7 +22,11 @@ import { CartService } from '../cart/cart.service';
 import { MpesaService } from '../mpesa/mpesa.service';
 import { TelebirrService } from '../telebirr/telebirr.service';
 import { EbirrService } from '../ebirr/ebirr.service';
-import { User, BusinessModel, resolveCertificationStatus } from '../users/entities/user.entity';
+import {
+  User,
+  BusinessModel,
+  resolveCertificationStatus,
+} from '../users/entities/user.entity';
 import { NotificationsService } from '../notifications/notifications.service';
 import { NotificationType } from '../notifications/entities/notification.entity';
 import { plainToInstance } from 'class-transformer';
@@ -36,7 +40,10 @@ import { ProductsService } from '../products/products.service';
 import { UsersService } from '../users/users.service';
 import { WalletService } from '../wallet/wallet.service';
 import { TransactionType } from '../wallet/entities/wallet-transaction.entity';
-import { PayoutProvider, PayoutStatus } from '../wallet/entities/payout-log.entity';
+import {
+  PayoutProvider,
+  PayoutStatus,
+} from '../wallet/entities/payout-log.entity';
 import { Message, MessageType } from '../chat/entities/message.entity';
 import { MoreThan, In } from 'typeorm';
 import { subMinutes } from 'date-fns';
@@ -148,7 +155,8 @@ export class OrdersService {
             email: vendor.vendorEmail || vendor.email || null, // Prefer vendorEmail
             firstName: vendor.firstName ?? null,
             lastName: vendor.lastName ?? null,
-            vendorPhoneNumber: vendor.vendorPhoneNumber || vendor.phoneNumber || null,
+            vendorPhoneNumber:
+              vendor.vendorPhoneNumber || vendor.phoneNumber || null,
             certificationStatus: resolveCertificationStatus(vendor),
           });
         }
@@ -171,17 +179,22 @@ export class OrdersService {
         vendors,
         vendorName:
           vendors.length === 1
-            ? vendors[0].storeName || 
-              vendors[0].displayName || 
-              vendors[0].legalName || 
-              vendors[0].firstName || 
+            ? vendors[0].storeName ||
+              vendors[0].displayName ||
+              vendors[0].legalName ||
+              vendors[0].firstName ||
               (vendors[0].email ? `Vendor (${vendors[0].email})` : null) ||
-              (vendors[0].vendorPhoneNumber ? `Vendor (${vendors[0].vendorPhoneNumber})` : null) ||
+              (vendors[0].vendorPhoneNumber
+                ? `Vendor (${vendors[0].vendorPhoneNumber})`
+                : null) ||
               `Vendor (ID: ${vendors[0].id})`
             : null,
         storeName: vendors.length === 1 ? vendors[0].storeName : null,
         legalName: vendors.length === 1 ? vendors[0].legalName : null,
-        businessName: vendors.length === 1 ? (vendors[0].storeName || vendors[0].legalName) : null,
+        businessName:
+          vendors.length === 1
+            ? vendors[0].storeName || vendors[0].legalName
+            : null,
         items: (order.items || []).map((item) => {
           const product = item.product;
           return {
@@ -257,10 +270,10 @@ export class OrdersService {
               `Failed to send order confirmation email: ${e.message}`,
             ),
           );
-        
+
         // Also notify vendors
         this.notifyVendorsOfOrder(order).catch((e) =>
-            this.logger.error(`Failed to notify vendors: ${e.message}`),
+          this.logger.error(`Failed to notify vendors: ${e.message}`),
         );
       }
     } catch (e) {
@@ -295,35 +308,35 @@ export class OrdersService {
     const currency = order.currency || 'ETB';
 
     for (const { vendor, items } of vendorItems.values()) {
-        await this.emailService.sendVendorNewOrderEmail(
-            vendor.email,
-            vendor.displayName || 'Vendor',
-            order.id,
-            items,
-            currency
-        );
+      await this.emailService.sendVendorNewOrderEmail(
+        vendor.email,
+        vendor.displayName || 'Vendor',
+        order.id,
+        items,
+        currency,
+      );
 
-        // Push notification to vendor app/dashboard
-        try {
-          await this.notificationsService.createAndDispatch({
-            userId: vendor.id,
-            title: 'New Order Received!',
-            body: `You have a new order #${order.id}`,
-            type: NotificationType.ORDER,
-            data: {
-              type: 'vendor_order',
-              id: String(order.id),
-              route: `/vendor-order-detail?id=${order.id}`,
-              click_action: 'FLUTTER_NOTIFICATION_CLICK',
-            },
-          });
-        } catch (e) {
-          this.logger.warn(
-            `Failed to send vendor push for order ${order.id} to vendor ${vendor.id}: ${
-              e instanceof Error ? e.message : String(e)
-            }`,
-          );
-        }
+      // Push notification to vendor app/dashboard
+      try {
+        await this.notificationsService.createAndDispatch({
+          userId: vendor.id,
+          title: 'New Order Received!',
+          body: `You have a new order #${order.id}`,
+          type: NotificationType.ORDER,
+          data: {
+            type: 'vendor_order',
+            id: String(order.id),
+            route: `/vendor-order-detail?id=${order.id}`,
+            click_action: 'FLUTTER_NOTIFICATION_CLICK',
+          },
+        });
+      } catch (e) {
+        this.logger.warn(
+          `Failed to send vendor push for order ${order.id} to vendor ${vendor.id}: ${
+            e instanceof Error ? e.message : String(e)
+          }`,
+        );
+      }
     }
   }
 
@@ -364,7 +377,8 @@ export class OrdersService {
       productCurrency,
       target,
     );
-    const displayedPrice = priceConverted !== null ? Number(priceConverted) : rawPrice;
+    const displayedPrice =
+      priceConverted !== null ? Number(priceConverted) : rawPrice;
 
     (item as any).price_display = {
       amount: displayedPrice,
@@ -391,29 +405,42 @@ export class OrdersService {
     // Derive total in target currency from items to keep consistency
     const totalConverted = mappedItems.reduce((sum, it) => {
       const price = Number((it as any).price);
-      return sum + (typeof price === 'number' && !isNaN(price) ? price * (it.quantity || 0) : 0);
+      return (
+        sum +
+        (typeof price === 'number' && !isNaN(price)
+          ? price * (it.quantity || 0)
+          : 0)
+      );
     }, 0);
-    
+
     let finalAmount = Math.round(totalConverted * 100) / 100;
 
     // Safety fallback: If recalculation yields 0 but DB has a valid total, restore it.
     // This protects against missing items or conversion glitches.
     const originalTotal = Number(order.total);
     if (finalAmount === 0 && originalTotal > 0) {
-        this.logger.warn(`mapOrder Correction: Recalculated total is 0 (Items: ${mappedItems.length}), but DB total is ${originalTotal}. Restoring...`);
-        
-        // Attempt to convert the original DB total to the target currency
-        const storedCurrency = order.currency || 'ETB';
-        const { amount: restoredAmount } = this.convertPrice(originalTotal, storedCurrency, target);
-        
-        if (restoredAmount && restoredAmount > 0) {
-            finalAmount = Number(restoredAmount);
-            this.logger.log(`mapOrder: Restored total to ${finalAmount} ${target}`);
-        } else {
-            // If conversion fails (e.g. rate 0), fallback to original raw value as last resort
-            finalAmount = originalTotal;
-            this.logger.warn(`mapOrder: conversion failed, using raw DB total ${finalAmount}`);
-        }
+      this.logger.warn(
+        `mapOrder Correction: Recalculated total is 0 (Items: ${mappedItems.length}), but DB total is ${originalTotal}. Restoring...`,
+      );
+
+      // Attempt to convert the original DB total to the target currency
+      const storedCurrency = order.currency || 'ETB';
+      const { amount: restoredAmount } = this.convertPrice(
+        originalTotal,
+        storedCurrency,
+        target,
+      );
+
+      if (restoredAmount && restoredAmount > 0) {
+        finalAmount = Number(restoredAmount);
+        this.logger.log(`mapOrder: Restored total to ${finalAmount} ${target}`);
+      } else {
+        // If conversion fails (e.g. rate 0), fallback to original raw value as last resort
+        finalAmount = originalTotal;
+        this.logger.warn(
+          `mapOrder: conversion failed, using raw DB total ${finalAmount}`,
+        );
+      }
     }
 
     (order as any).total_display = {
@@ -426,14 +453,18 @@ export class OrdersService {
     // This ensures consistency for the frontend which might use .total instead of .total_display
     (order as any).total = finalAmount;
     (order as any).currency = target;
-    
-    this.logger.debug(`mapOrder: id=${order.id} finalAmount=${finalAmount} originalTotal=${originalTotal} items=${mappedItems.length}`);
+
+    this.logger.debug(
+      `mapOrder: id=${order.id} finalAmount=${finalAmount} originalTotal=${originalTotal} items=${mappedItems.length}`,
+    );
     return order;
   }
 
   public mapToResponseDto(order: Order, currency?: string): OrderResponseDto {
     const mapped = this.mapOrder(order, currency);
-    this.logger.debug(`mapToResponseDto: id=${mapped.id} total=${mapped.total} total_display=${JSON.stringify((mapped as any).total_display)}`);
+    this.logger.debug(
+      `mapToResponseDto: id=${mapped.id} total=${mapped.total} total_display=${JSON.stringify((mapped as any).total_display)}`,
+    );
 
     // Populate vendors list for frontend logic
     type VendorLike = {
@@ -545,22 +576,22 @@ export class OrdersService {
     }
     order.deliverer = deliverer;
     // Do NOT set SHIPPED immediately. Wait for acceptance.
-    // order.status = OrderStatus.SHIPPED; 
+    // order.status = OrderStatus.SHIPPED;
     order.deliveryAcceptanceStatus = DeliveryAcceptanceStatus.PENDING;
 
     await this.orderRepository.save(order);
-    
-    // Instead of notifying buyer of SHIPPED, we might wait. 
-    // BUT current flow expects "Assigned" -> "Shipped". 
+
+    // Instead of notifying buyer of SHIPPED, we might wait.
+    // BUT current flow expects "Assigned" -> "Shipped".
     // To preserve buyer visibility that something happened, we can keep SHIPPED or leave it PROCESSING.
     // If we leave it PROCESSING, the buyer doesn't know a driver is assigned.
-    // Let's set it to SHIPPED to maintain backward compatibility for now, 
+    // Let's set it to SHIPPED to maintain backward compatibility for now,
     // but the deliverer has to ACCEPT to proceed to OUT_FOR_DELIVERY.
     // Wait, if we set SHIPPED, the deliverer filters might hide "Pending" if they only look for SHIPPED.
     // Let's set it to SHIPPED.
     order.status = OrderStatus.SHIPPED;
     await this.orderRepository.save(order);
-    
+
     // Notify buyer
     await this.notifyOrderStatusChange(order, OrderStatus.SHIPPED);
 
@@ -572,9 +603,9 @@ export class OrdersService {
       type: NotificationType.ORDER,
       data: {
         orderId: String(orderId),
-        route: `/deliverer/orders/${orderId}`, 
+        route: `/deliverer/orders/${orderId}`,
         click_action: 'FLUTTER_NOTIFICATION_CLICK',
-        action: 'request_acceptance'
+        action: 'request_acceptance',
       },
     });
 
@@ -588,11 +619,7 @@ export class OrdersService {
         }
       });
       this.emailService
-        .sendDelivererAssignmentEmail(
-          deliverer,
-          order.id,
-          Array.from(stores),
-        )
+        .sendDelivererAssignmentEmail(deliverer, order.id, Array.from(stores))
         .catch((e) =>
           this.logger.error(
             `Failed to send deliverer assignment email: ${e.message}`,
@@ -614,48 +641,62 @@ export class OrdersService {
     createOrderDto: CreateOrderDto,
     currency?: string,
   ): Promise<any> {
-    let itemsToProcess: Array<{ product: any; quantity: number; attributes?: any }> = [];
-    const isDirectOrder = createOrderDto.items && createOrderDto.items.length > 0;
+    let itemsToProcess: Array<{
+      product: any;
+      quantity: number;
+      attributes?: any;
+    }> = [];
+    const isDirectOrder =
+      createOrderDto.items && createOrderDto.items.length > 0;
 
     // Check for Duplicate Order Prevention
     // If an order was created in the last 2 minutes for this user with status PENDING or PAID
     // This is valid for both Cart and Direct orders.
     // Ideally we would hash the content, but recent time based check is a good heuristic.
     const recentOrder = await this.orderRepository.findOne({
-        where: {
-            user: { id: userId },
-            status: In([OrderStatus.PENDING, OrderStatus.PROCESSING]),
-            createdAt: MoreThan(subMinutes(new Date(), 2)),
-        },
-        relations: ['items', 'items.product']
+      where: {
+        user: { id: userId },
+        status: In([OrderStatus.PENDING, OrderStatus.PROCESSING]),
+        createdAt: MoreThan(subMinutes(new Date(), 2)),
+      },
+      relations: ['items', 'items.product'],
     });
 
     if (recentOrder) {
-        // We could be more specific: check if items match. But blocking is safer for now.
-        // Or if the payment status is PAID, definitely block.
-        if (recentOrder.paymentStatus === PaymentStatus.PAID) {
-             throw new BadRequestException('You have a recently paid order. Please wait a moment.');
-        }
-        // If UNPAID, maybe they are retrying? But the user asked to prevent double payments.
-        // If it is UNPAID, we might return the existing order instead of creating a new one?
-        // For now, let's just log it.
-        this.logger.warn(`User ${userId} attempting order creation but has recent order ${recentOrder.id}`);
-        
-        // Strict Mode: if recent order exists and is less than 30 seconds old, block.
-        // const isTooSooon = recentOrder.created_at > subSeconds(new Date(), 30);
-        // if (isTooTooSooon) throw new BadRequestException('Please wait before placing another order.');
+      // We could be more specific: check if items match. But blocking is safer for now.
+      // Or if the payment status is PAID, definitely block.
+      if (recentOrder.paymentStatus === PaymentStatus.PAID) {
+        throw new BadRequestException(
+          'You have a recently paid order. Please wait a moment.',
+        );
+      }
+      // If UNPAID, maybe they are retrying? But the user asked to prevent double payments.
+      // If it is UNPAID, we might return the existing order instead of creating a new one?
+      // For now, let's just log it.
+      this.logger.warn(
+        `User ${userId} attempting order creation but has recent order ${recentOrder.id}`,
+      );
+
+      // Strict Mode: if recent order exists and is less than 30 seconds old, block.
+      // const isTooSooon = recentOrder.created_at > subSeconds(new Date(), 30);
+      // if (isTooTooSooon) throw new BadRequestException('Please wait before placing another order.');
     }
 
     if (isDirectOrder) {
-      if (!createOrderDto.items) throw new BadRequestException('No items provided');
+      if (!createOrderDto.items)
+        throw new BadRequestException('No items provided');
       const ids = createOrderDto.items.map((i) => i.productId);
-      const products = await this.productsService.findManyByIds(ids, { view: 'full' });
-      
+      const products = await this.productsService.findManyByIds(ids, {
+        view: 'full',
+      });
+
       // Map DTO items to entities with validation
       itemsToProcess = createOrderDto.items.map((dtoItem) => {
         const product = products.find((p) => p.id === dtoItem.productId);
         if (!product) {
-          throw new BadRequestException(`Product with ID ${dtoItem.productId} not found`);
+          throw new BadRequestException(
+            `Product with ID ${dtoItem.productId} not found`,
+          );
         }
         return {
           product,
@@ -667,7 +708,9 @@ export class OrdersService {
       // Cart Mode
       const cart = await this.cartService.getCart(userId, currency);
       if (cart.items.length === 0) {
-        throw new BadRequestException('Cannot create an order from an empty cart.');
+        throw new BadRequestException(
+          'Cannot create an order from an empty cart.',
+        );
       }
       itemsToProcess = cart.items.map((ci) => ({
         product: ci.product,
@@ -713,82 +756,111 @@ export class OrdersService {
     // Default to 5% (0.05) if not set. Setting value expected as integer 5 or decimal 0.05?
     // User said "Vendor Commission Percentage (%)". Usually implies 5 for 5%.
     // Safely handle both: if > 1, assume percent (e.g. 5) -> divide by 100.
-    const rawVal = globalCommissionSetting ? Number(globalCommissionSetting.value) : 5; 
+    const rawVal = globalCommissionSetting
+      ? Number(globalCommissionSetting.value)
+      : 5;
     const globalRate = rawVal > 1 ? rawVal / 100 : rawVal;
 
-    const orderItems = await Promise.all(itemsToProcess.map(async (item) => {
-      const orderItem = new OrderItem();
-      orderItem.product = item.product;
-      orderItem.quantity = item.quantity;
-      orderItem.attributes = item.attributes || {};
-      
-      let finalPrice = Number(item.product.price);
-      
-      // Use sale price if available and lower than regular price
-      if (item.product.sale_price && Number(item.product.sale_price) > 0 && Number(item.product.sale_price) < finalPrice) {
-        finalPrice = Number(item.product.sale_price);
-      }
+    const orderItems = await Promise.all(
+      itemsToProcess.map(async (item) => {
+        const orderItem = new OrderItem();
+        orderItem.product = item.product;
+        orderItem.quantity = item.quantity;
+        orderItem.attributes = item.attributes || {};
 
-      if (item.attributes && (item.attributes.offerId || item.attributes.offer_id)) {
-        try {
-           const oId = item.attributes.offerId || item.attributes.offer_id;
-           this.logger.log(`[OfferLogic] Checking offer ${oId} for product ${item.product.id}`);
-           const msg = await this.messageRepo.findOne({ 
-               where: { id: Number(oId) }, 
-           });
-           
-           if (!msg) {
-             this.logger.warn(`[OfferLogic] Message ${oId} not found`);
-           } else if (msg.type !== MessageType.OFFER) {
-             this.logger.warn(`[OfferLogic] Message ${oId} is not an OFFER (type=${msg.type})`);
-           } else {
-               const content = JSON.parse(msg.content);
-               // Support both string/int comparisons
-               if (String(content.productId) === String(item.product.id)) {
-                   finalPrice = Number(content.price);
-                   this.logger.log(`[OfferLogic] Applied offer price ${finalPrice} (was ${item.product.price})`);
-               } else {
-                   this.logger.warn(`[OfferLogic] Product Mismatch: content.productId=${content.productId} vs item.product.id=${item.product.id}`);
-               }
-           }
-        } catch(e) {
-            this.logger.warn(`[OfferLogic] Failed to apply offer price: ${e.message}`);
+        let finalPrice = Number(item.product.price);
+
+        // Use sale price if available and lower than regular price
+        if (
+          item.product.sale_price &&
+          Number(item.product.sale_price) > 0 &&
+          Number(item.product.sale_price) < finalPrice
+        ) {
+          finalPrice = Number(item.product.sale_price);
         }
-      }
-      orderItem.price = finalPrice;
 
-      // --- Commission Logic (All Vendors are Commission Based) ---
-      const vendor = item.product.vendor;
-      const lineTotal = orderItem.price * orderItem.quantity;
-      
-      // Fetch Global Commission or specific
-      const defaultRate = 0.05;
-      
-      // Inline Fetch - ideal to optimize later 
-      // Note: We can't await inside synchronous map without Promise.all
-      // Doing this check outside map is better.
-      // logic continues below...
+        if (
+          item.attributes &&
+          (item.attributes.offerId || item.attributes.offer_id)
+        ) {
+          try {
+            const oId = item.attributes.offerId || item.attributes.offer_id;
+            this.logger.log(
+              `[OfferLogic] Checking offer ${oId} for product ${item.product.id}`,
+            );
+            const msg = await this.messageRepo.findOne({
+              where: { id: Number(oId) },
+            });
 
-      // Use vendor-specific rate or default
-      let rate = (vendor && vendor.commissionRate) 
-        ? Number(vendor.commissionRate) 
-        : globalRate; // Use the fetched global rate
+            if (!msg) {
+              this.logger.warn(`[OfferLogic] Message ${oId} not found`);
+            } else if (msg.type !== MessageType.OFFER) {
+              this.logger.warn(
+                `[OfferLogic] Message ${oId} is not an OFFER (type=${msg.type})`,
+              );
+            } else {
+              const content = JSON.parse(msg.content);
+              // Support both string/int comparisons
+              if (String(content.productId) === String(item.product.id)) {
+                finalPrice = Number(content.price);
+                this.logger.log(
+                  `[OfferLogic] Applied offer price ${finalPrice} (was ${item.product.price})`,
+                );
+              } else {
+                this.logger.warn(
+                  `[OfferLogic] Product Mismatch: content.productId=${content.productId} vs item.product.id=${item.product.id}`,
+                );
+              }
+            }
+          } catch (e) {
+            this.logger.warn(
+              `[OfferLogic] Failed to apply offer price: ${e.message}`,
+            );
+          }
+        }
+        orderItem.price = finalPrice;
 
-      // EBIRR Commission Logic: Vendor 94%, Platform 5%, Ebirr 1%
-      // Total deduction = Base Rate (5%) + 1% = 6%
-      // However, Ebirr deducts their 1% AT SOURCE (before settling to us).
-      // So if we deduct 6% from the vendor, we are effectively covering the Ebirr fee from the vendor's share.
-      // This is correct as per business logic: Vendor pays the gateway fee.
-      if (createOrderDto.paymentMethod === 'EBIRR') {
-        rate += 0.01; 
-      }
+        // --- Commission Logic (All Vendors are Commission Based) ---
+        const vendor = item.product.vendor;
+        const lineTotal = orderItem.price * orderItem.quantity;
 
-      orderItem.commission = Math.round(lineTotal * rate * 100) / 100;
-      orderItem.vendorPayout = Math.round((lineTotal - orderItem.commission) * 100) / 100;
-      // -------------------------
+        // Fetch Global Commission or specific
+        const defaultRate = 0.05;
 
-      return orderItem;
-    }));
+        // Inline Fetch - ideal to optimize later
+        // Note: We can't await inside synchronous map without Promise.all
+        // Doing this check outside map is better.
+        // logic continues below...
+
+        // Use vendor-specific rate or default
+        const platformRate =
+          vendor && vendor.commissionRate
+            ? Number(vendor.commissionRate)
+            : globalRate; // Use the fetched global rate
+
+        // EBIRR Commission Logic: Vendor 94%, Platform 5%, Ebirr 1%
+        // Total deduction = Base Rate (5%) + 1% = 6%
+        // However, Ebirr deducts their 1% AT SOURCE (before settling to us).
+        // So if we deduct 6% from the vendor, we are effectively covering the Ebirr fee from the vendor's share.
+        // This is correct as per business logic: Vendor pays the gateway fee.
+        let gatewayRate = 0;
+        if (createOrderDto.paymentMethod === 'EBIRR') {
+          gatewayRate = 0.01;
+        }
+
+        const rate = platformRate + gatewayRate;
+
+        orderItem.platformFee =
+          Math.round(lineTotal * platformRate * 100) / 100;
+        orderItem.gatewayFee = Math.round(lineTotal * gatewayRate * 100) / 100;
+        orderItem.commission = Math.round(lineTotal * rate * 100) / 100;
+        orderItem.vendorPayout =
+          Math.round((lineTotal - orderItem.commission) * 100) / 100;
+        // -------------------------
+
+        return orderItem;
+      }),
+    );
 
     const total = orderItems.reduce(
       (sum: number, item: OrderItem) => sum + item.price * item.quantity,
@@ -801,13 +873,17 @@ export class OrdersService {
       ? this.normalizeCurrency(lockedCurrency)
       : this.normalizeCurrency(currency);
 
-    const exchangeRate = this.currencyService.getRate('USD', currencyCode) ?? 1.0;
+    const exchangeRate =
+      this.currencyService.getRate('USD', currencyCode) ?? 1.0;
 
     // Payment method branching
     const paymentMethod = createOrderDto.paymentMethod.toUpperCase();
     let phoneNumber = createOrderDto.phoneNumber || createOrderDto.mpesaPhone;
 
-    if (!phoneNumber && ['EBIRR', 'MPESA', 'TELEBIRR'].includes(paymentMethod)) {
+    if (
+      !phoneNumber &&
+      ['EBIRR', 'MPESA', 'TELEBIRR'].includes(paymentMethod)
+    ) {
       const user = await this.usersService.findOne(userId);
       if (user?.phoneNumber) {
         phoneNumber = user.phoneNumber;
@@ -816,13 +892,7 @@ export class OrdersService {
 
     let newOrder: Order;
 
-    const manualMethods = [
-      'COD',
-      'BANK_TRANSFER',
-      'CBE',
-      'WAAFI',
-      'DMONEY',
-    ];
+    const manualMethods = ['COD', 'BANK_TRANSFER', 'CBE', 'WAAFI', 'DMONEY'];
 
     if (manualMethods.includes(paymentMethod)) {
       newOrder = this.orderRepository.create({
@@ -869,7 +939,9 @@ export class OrdersService {
       return this.mapOrder(savedOrder, currency);
     } else if (paymentMethod === 'TELEBIRR') {
       // TELEBIRR TEMPORARILY DISABLED
-      throw new BadRequestException('Telebirr payment is temporarily disabled. Please use Ebirr or other methods.');
+      throw new BadRequestException(
+        'Telebirr payment is temporarily disabled. Please use Ebirr or other methods.',
+      );
       /*
       if (!phoneNumber || !phoneNumber.trim()) {
         throw new BadRequestException(
@@ -910,7 +982,7 @@ export class OrdersService {
           'phoneNumber is required for EBIRR payments.',
         );
       }
-      
+
       newOrder = this.orderRepository.create({
         user: { id: userId } as User,
         items: orderItems,
@@ -931,8 +1003,16 @@ export class OrdersService {
       } else if (formattedPhone.startsWith('9')) {
         formattedPhone = '251' + formattedPhone;
       }
-      if (!(formattedPhone && formattedPhone.startsWith('2519') && formattedPhone.length === 12)) {
-        throw new BadRequestException('Invalid Ebirr phone number; use 2519XXXXXXXX format.');
+      if (
+        !(
+          formattedPhone &&
+          formattedPhone.startsWith('2519') &&
+          formattedPhone.length === 12
+        )
+      ) {
+        throw new BadRequestException(
+          'Invalid Ebirr phone number; use 2519XXXXXXXX format.',
+        );
       }
       phoneNumber = formattedPhone;
 
@@ -946,12 +1026,19 @@ export class OrdersService {
         });
       } catch (error) {
         const msg = error.message || '';
-        if (msg.includes('declined by the user') || msg.includes('Insufficient balance')) {
-            this.logger.warn(`Ebirr payment rejected/failed for order ${savedOrder.id}: ${msg}`);
+        if (
+          msg.includes('declined by the user') ||
+          msg.includes('Insufficient balance')
+        ) {
+          this.logger.warn(
+            `Ebirr payment rejected/failed for order ${savedOrder.id}: ${msg}`,
+          );
         } else {
-            this.logger.error(`Ebirr payment system error for order ${savedOrder.id}: ${msg}`);
+          this.logger.error(
+            `Ebirr payment system error for order ${savedOrder.id}: ${msg}`,
+          );
         }
-        
+
         savedOrder.status = OrderStatus.CANCELLED;
         savedOrder.paymentStatus = PaymentStatus.FAILED;
         await this.orderRepository.save(savedOrder);
@@ -963,41 +1050,54 @@ export class OrdersService {
       // Explicitly load relations needed for DTO mapping
       const fullOrder = await this.orderRepository.findOne({
         where: { id: savedOrder.id },
-        relations: ['items', 'items.product', 'items.product.vendor', 'user', 'deliverer'],
+        relations: [
+          'items',
+          'items.product',
+          'items.product.vendor',
+          'user',
+          'deliverer',
+        ],
       });
 
       // Ebirr Web Checkout Flow:
       // The responseCode will likely be "200" or similar, indicating the URL is ready.
       // We do NOT mark as PAID here. We rely on a webhook callback (TODO) or user return.
       // For now, we return the checkoutUrl so the app can create a WebView.
-      
-      this.logger.log(`Ebirr initiated. Response: ${JSON.stringify(paymentResponse)}`);
+
+      this.logger.log(
+        `Ebirr initiated. Response: ${JSON.stringify(paymentResponse)}`,
+      );
 
       // NEW HANDLING: If the payment is auto-approved (e.g. Test Env or Pre-auth), mark as PAID immediately.
       // Ebirr response structure based on logs: { errorCode: "0", responseMsg: "RCS_SUCCESS", params: { state: "APPROVED", ... } }
       if (
-        paymentResponse.errorCode === '0' && 
-        paymentResponse.params && 
+        paymentResponse.errorCode === '0' &&
+        paymentResponse.params &&
         paymentResponse.params.state === 'APPROVED'
       ) {
-        this.logger.log(`Ebirr payment auto-approved for Order #${savedOrder.id}. Updating status to PAID.`);
+        this.logger.log(
+          `Ebirr payment auto-approved for Order #${savedOrder.id}. Updating status to PAID.`,
+        );
         await this.triggerPostPaymentProcessing(savedOrder.id);
       }
 
       // If toPayUrl is missing, we pass the whole response.
       // let receiveCode = paymentResponse.toPayUrl; // ERROR: Ebirr response is object, not string logic
-      
+
       // Fix: Ensure checkoutUrl is strictly a string (URL) or null.
       // Ebirr "Push" does not provide a URL.
       let checkoutUrl: string | null = null;
-      if (paymentResponse.toPayUrl && typeof paymentResponse.toPayUrl === 'string') {
-          checkoutUrl = paymentResponse.toPayUrl;
+      if (
+        paymentResponse.toPayUrl &&
+        typeof paymentResponse.toPayUrl === 'string'
+      ) {
+        checkoutUrl = paymentResponse.toPayUrl;
       }
-      
+
       // If auto-approved (Test Env), we can provide a dummy success URL if client logic expects one.
       // But better to leave it null for PUSH.
       if (!checkoutUrl && savedOrder.paymentStatus === PaymentStatus.PAID) {
-          // Optional: checkoutUrl = "https://suuqs.com/success";
+        // Optional: checkoutUrl = "https://suuqs.com/success";
       }
 
       // receiveCode can store the full object for SDK/Debug
@@ -1007,9 +1107,14 @@ export class OrdersService {
       // However, Suuq architecture usually clears cart on order creation to avoid double inventory lock.
       // We stick to clearing cart for now.
       if (!isDirectOrder) await this.cartService.clearCart(userId);
-      
-      const responseOrder = this.mapToResponseDto(fullOrder || savedOrder, currency);
-      this.logger.debug(`Returning Order DTO for Web Checkout: id=${responseOrder.id}`);
+
+      const responseOrder = this.mapToResponseDto(
+        fullOrder || savedOrder,
+        currency,
+      );
+      this.logger.debug(
+        `Returning Order DTO for Web Checkout: id=${responseOrder.id}`,
+      );
 
       return {
         order: responseOrder,
@@ -1323,7 +1428,9 @@ export class OrdersService {
    * Called by EbirrService or other payment services when a callback confirms payment.
    */
   async completeOrderFromPaymentCallback(orderId: number): Promise<Order> {
-    this.logger.log(`Completing order ${orderId} triggered by payment callback/webhook.`);
+    this.logger.log(
+      `Completing order ${orderId} triggered by payment callback/webhook.`,
+    );
     return this.triggerPostPaymentProcessing(orderId);
   }
 
@@ -1331,23 +1438,28 @@ export class OrdersService {
    * Called by the OrdersCallbackController when Ebirr redirects user after payment.
    */
   async verifyAndCompleteEbirrOrder(query: any): Promise<Order | null> {
-    this.logger.log(`Processing Ebirr Redirect Callback: ${JSON.stringify(query)}`);
-    
+    this.logger.log(
+      `Processing Ebirr Redirect Callback: ${JSON.stringify(query)}`,
+    );
+
     // Attempt to resolve referenceId (REF-{id}) from common keys
-    let refId = query.referenceId || query.refId || query.ReferenceId || query.ref;
-    
+    let refId =
+      query.referenceId || query.refId || query.ReferenceId || query.ref;
+
     if (!refId) {
-       // Fallback scan
-       for (const val of Object.values(query)) {
-          if (typeof val === 'string' && val.startsWith('REF-')) {
-            refId = val;
-            break;
-          }
-       }
+      // Fallback scan
+      for (const val of Object.values(query)) {
+        if (typeof val === 'string' && val.startsWith('REF-')) {
+          refId = val;
+          break;
+        }
+      }
     }
 
     if (!refId) {
-      this.logger.warn('Ebirr Callback: Could not extract referenceId from query params.');
+      this.logger.warn(
+        'Ebirr Callback: Could not extract referenceId from query params.',
+      );
       // return null to indicate failure to identify
       return null;
     }
@@ -1362,10 +1474,10 @@ export class OrdersService {
       where: { id: orderId },
       relations: ['user', 'items', 'items.product', 'items.product.vendor'],
     });
-    
+
     if (!order) {
-       this.logger.error(`Order not found for ID ${orderId}`);
-       return null;
+      this.logger.error(`Order not found for ID ${orderId}`);
+      return null;
     }
 
     if (order.paymentStatus === PaymentStatus.PAID) {
@@ -1383,26 +1495,38 @@ export class OrdersService {
    */
   private async triggerPostPaymentProcessing(orderId: number): Promise<Order> {
     const order = await this.orderRepository.findOne({
-        where: { id: orderId },
-        relations: ['user', 'items', 'items.product', 'items.product.vendor'],
+      where: { id: orderId },
+      relations: ['user', 'items', 'items.product', 'items.product.vendor'],
     });
 
     if (!order) {
-        throw new NotFoundException(`Order ${orderId} not found during processing.`);
+      throw new NotFoundException(
+        `Order ${orderId} not found during processing.`,
+      );
     }
 
     if (order.paymentStatus === PaymentStatus.PAID) {
-        this.logger.warn(`Order ${order.id} is already processed.`);
-        return order;
+      this.logger.warn(`Order ${order.id} is already processed.`);
+      return order;
     }
 
     // Mark as PAID
     order.paymentStatus = PaymentStatus.PAID;
     order.status = OrderStatus.PROCESSING;
+
+    // Sync item status to PROCESSING
+    if (order.items) {
+      order.items.forEach((item) => {
+        if (item.status === OrderStatus.PENDING) {
+          item.status = OrderStatus.PROCESSING;
+        }
+      });
+    }
+
     await this.orderRepository.save(order);
 
     this.logger.log(`Order ${order.id} marked as PAID. Triggering payouts.`);
-    
+
     // Automate Vendor Payouts
     if (order.items) {
       for (const item of order.items) {
@@ -1423,7 +1547,9 @@ export class OrdersService {
               `Credited vendor ${item.product.vendor.id} amount ${item.vendorPayout} for item ${item.id}`,
             );
           } catch (e) {
-            this.logger.error(`Payout/Credit Failed for Item ${item.id}: ${e.message}`);
+            this.logger.error(
+              `Payout/Credit Failed for Item ${item.id}: ${e.message}`,
+            );
           }
         }
       }
@@ -1431,7 +1557,7 @@ export class OrdersService {
 
     // Send confirmation email asynchronously
     this.sendConfirmationForOrder(order.id);
-    
+
     return order;
   }
 }

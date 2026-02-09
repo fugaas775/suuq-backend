@@ -178,6 +178,30 @@ export class OrderItem {
   })
   vendorPayout!: number;
 
+  @Column('decimal', {
+    precision: 10,
+    scale: 2,
+    default: 0,
+    transformer: {
+      to: (value: number) => value,
+      from: (value: string | number) =>
+        typeof value === 'string' ? parseFloat(value) : value,
+    },
+  })
+  platformFee!: number;
+
+  @Column('decimal', {
+    precision: 10,
+    scale: 2,
+    default: 0,
+    transformer: {
+      to: (value: number) => value,
+      from: (value: string | number) =>
+        typeof value === 'string' ? parseFloat(value) : value,
+    },
+  })
+  gatewayFee!: number;
+
   @Column({
     type: 'enum',
     enum: OrderStatus,
