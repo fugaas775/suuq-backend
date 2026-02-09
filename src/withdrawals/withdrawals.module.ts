@@ -3,14 +3,15 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { WithdrawalsController } from './withdrawals.controller';
 import { WithdrawalsService } from './withdrawals.service';
 import { Withdrawal } from './entities/withdrawal.entity';
+import { Wallet } from '../wallet/entities/wallet.entity';
 import { WalletModule } from '../wallet/wallet.module';
 import { EmailModule } from '../email/email.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Withdrawal]),
+    TypeOrmModule.forFeature([Withdrawal, Wallet]),
     WalletModule,
-    EmailModule
+    EmailModule,
   ],
   controllers: [WithdrawalsController],
   providers: [WithdrawalsService],

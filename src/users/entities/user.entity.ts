@@ -363,6 +363,9 @@ export class User {
   @DeleteDateColumn({ nullable: true })
   deletedAt?: Date;
 
+  // Virtual property for admin withdrawals view
+  walletBalance?: number;
+
   @Column({ nullable: true })
   updatedBy?: string;
 

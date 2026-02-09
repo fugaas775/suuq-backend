@@ -5,9 +5,10 @@ import {
   Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, In } from 'typeorm';
 import { Withdrawal, WithdrawalStatus } from './entities/withdrawal.entity';
 import { WalletService } from '../wallet/wallet.service';
+import { Wallet } from '../wallet/entities/wallet.entity';
 import { TransactionType } from '../wallet/entities/wallet-transaction.entity';
 import { User } from '../users/entities/user.entity';
 import { EmailService } from '../email/email.service';
@@ -19,6 +20,8 @@ export class WithdrawalsService {
   constructor(
     @InjectRepository(Withdrawal)
     private readonly withdrawalRepository: Repository<Withdrawal>,
+    @InjectRepository(Wallet)
+    private readonly walletRepository: Repository<Wallet>,
     private readonly walletService: WalletService,
     private readonly emailService: EmailService,
   ) {}
@@ -105,6 +108,33 @@ export class WithdrawalsService {
     }
 
     const [items, total] = await qb.getManyAndCount();
+
+    // Manually fetch and map wallet balances to ensure reliability
+    const userIds = [
+      ...new Set(items.map((item) => item.user?.id).filter(Boolean)),
+    ];
+
+    if (userIds.length > 0) {
+      const wallets = await this.walletRepository.find({
+        where: { user: { id: In(userIds) } },
+        relations: ['user'],
+      });
+
+      const walletMap = new Map<number, number>();
+      wallets.forEach((w) => {
+        walletMap.set(w.user.id, Number(w.balance || 0));
+      });
+
+      items.forEach((item) => {
+        if (item.user && walletMap.has(item.user.id)) {
+          item.user.walletBalance = walletMap.get(item.user.id);
+          // Also attach wallet object as frontend might check that too
+
+          (item.user as any).wallet = { balance: item.user.walletBalance };
+        }
+      });
+    }
+
     return { items, total };
   }
 
