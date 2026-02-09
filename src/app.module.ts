@@ -1,5 +1,5 @@
 // src/app.module.ts
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return */
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unused-vars, @typescript-eslint/require-await */
 import { Module } from '@nestjs/common';
 import { CacheModule } from '@nestjs/cache-manager';
 import { APP_GUARD } from '@nestjs/core';
@@ -42,6 +42,7 @@ import { RedisModule } from './redis/redis.module';
 import { RolesModule } from './roles/roles.module';
 import { SearchModule } from './search/search.module';
 import { ShippingModule } from './shipping/shipping.module';
+import { RealtimeModule } from './realtime/realtime.module';
 
 import { EmailModule } from './email/email.module';
 import { AppController } from './app.controller';

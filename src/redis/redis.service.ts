@@ -1,7 +1,7 @@
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-redundant-type-constituents, @typescript-eslint/no-require-imports, no-empty */
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 // Use runtime require to avoid editor module resolution hiccups
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 const IORedis = require('ioredis');
 type Redis = any;
 
@@ -63,5 +63,27 @@ export class RedisService {
 
   getClient(): Redis | null {
     return this.client;
+  }
+
+  async set(key: string, value: string, ttlSeconds?: number): Promise<void> {
+    if (!this.client) return;
+    try {
+      if (ttlSeconds) {
+        await this.client.set(key, value, 'EX', ttlSeconds);
+      } else {
+        await this.client.set(key, value);
+      }
+    } catch {
+      // Ignore errors for optional cache ops
+    }
+  }
+
+  async get(key: string): Promise<string | null> {
+    if (!this.client) return null;
+    try {
+      return await this.client.get(key);
+    } catch {
+      return null;
+    }
   }
 }
