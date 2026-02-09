@@ -480,6 +480,9 @@ export class DelivererService {
         storeName?: string | null;
         phone?: string | null;
         phoneCountryCode?: string | null;
+        locationLat?: number | null;
+        locationLng?: number | null;
+        address?: string | null;
       }
     >();
     for (const it of order.items || []) {
@@ -491,10 +494,16 @@ export class DelivererService {
           storeName: v.storeName || null,
           phone: v.vendorPhoneNumber || v.phoneNumber || null,
           phoneCountryCode: v.phoneCountryCode || null,
+          // Add address details for pickup
+          locationLat: v.locationLat || null,
+          locationLng: v.locationLng || null,
+          address: v.address || 'Vendor Address',
         });
       }
     }
     const vendors = Array.from(vendorsMap.values());
+    const customer = order.user;
+
     return {
       ...order,
       vendors,
@@ -502,6 +511,11 @@ export class DelivererService {
         vendors.length === 1
           ? vendors[0].storeName || vendors[0].displayName || null
           : null,
+      customerName: customer?.displayName || 'Customer',
+      customerPhone: customer?.phoneNumber || null,
+      customerLocationLat: customer?.locationLat || null,
+      customerLocationLng: customer?.locationLng || null,
+      shippingAddress: order.shippingAddress,
     } as any;
   }
 }

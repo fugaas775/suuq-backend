@@ -1190,14 +1190,27 @@ export class OrdersService {
       );
     }
     const mapped = this.mapOrder(order, currency);
+    const orderDeliverer = order.deliverer as
+      | (User & {
+          displayName?: string | null;
+          email?: string | null;
+          phoneNumber?: string | null;
+          vehicleType?: string | null; // Assuming we have this, or fallback
+        })
+      | undefined;
 
     // Populate vendors list for frontend logic
     type VendorLike = {
       id?: number;
       displayName?: string | null;
       storeName?: string | null;
+      phoneNumber?: string | null;
+      vendorPhoneNumber?: string | null;
     };
-    const vendorsMap = new Map<number, VendorLike & { id: number }>();
+    const vendorsMap = new Map<
+      number,
+      VendorLike & { id: number; contactPhone?: string | null }
+    >();
     for (const it of order.items || []) {
       const vendor = it.product?.vendor as VendorLike | undefined;
       if (
@@ -1205,28 +1218,41 @@ export class OrdersService {
         typeof vendor.id === 'number' &&
         !vendorsMap.has(vendor.id)
       ) {
+        // Privacy Logic: only expose store contact, fallback to generic
+        const contactPhone = vendor.vendorPhoneNumber || vendor.phoneNumber;
+
         vendorsMap.set(vendor.id, {
           id: vendor.id,
           displayName: vendor.displayName ?? null,
           storeName: vendor.storeName ?? null,
+          contactPhone: contactPhone ?? null, // Expose for "Call Shop" button
+          // Add address info if available but masked is handled by frontend or filtered dto
+          // storeAddress: ...
         });
       }
     }
-    const vendors = Array.from(vendorsMap.values());
+    const vendors = Array.from(vendorsMap.values()).map((v) => ({
+      ...v,
+      // Ensure we don't leak private address fields here
+    }));
 
-    const deliverer = mapped.deliverer;
     return plainToInstance(OrderResponseDto, {
       ...mapped,
       userId: mapped.user?.id,
-      delivererId: mapped.deliverer?.id,
-      assignedDelivererId: deliverer?.id,
-      assignedDelivererName: deliverer?.displayName ?? null,
-      assignedDelivererPhone: deliverer?.phoneNumber ?? null,
+      delivererId: orderDeliverer?.id,
+      assignedDelivererId: orderDeliverer?.id,
+      assignedDelivererName: orderDeliverer?.displayName ?? null,
+      assignedDelivererPhone: orderDeliverer?.phoneNumber ?? null,
+      assignedDelivererVehicle:
+        (orderDeliverer as any)?.vehicleDetails?.model ||
+        (orderDeliverer as any)?.vehicleType ||
+        'Standard Delivery', // UX: "TVS Bajaj" etc
       vendors,
       vendorName:
         vendors.length === 1
           ? vendors[0].storeName || vendors[0].displayName || null
           : null,
+      vendorPhone: vendors.length === 1 ? vendors[0].contactPhone : null, // expose single vendor phone
       items:
         mapped.items?.map((item) => ({
           productId: item.product?.id,

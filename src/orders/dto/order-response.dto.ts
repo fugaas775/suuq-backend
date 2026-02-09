@@ -41,6 +41,7 @@ export class OrderResponseDto {
   @Expose() assignedDelivererId?: number;
   @Expose() assignedDelivererName?: string;
   @Expose() assignedDelivererPhone?: string;
+  @Expose() assignedDelivererVehicle?: string; // e.g. "Toyota Corolla" or "Bajaj"
   @Expose() userId: number;
   // For admin tables: vendors involved in this order
   @Expose() vendors?: Array<{
