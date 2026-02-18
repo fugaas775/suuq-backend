@@ -52,11 +52,13 @@ export class CreateOrderDto {
     'TELEBIRR',
     'BANK_TRANSFER',
     'EBIRR',
+    'CREDIT',
     'cod',
     'mpesa',
     'telebirr',
     'bank_transfer',
     'ebirr',
+    'credit',
   ])
   paymentMethod!: string;
 

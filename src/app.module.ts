@@ -56,6 +56,8 @@ import { ProductRequestsModule } from './product-requests/product-requests.modul
 import { WalletModule } from './wallet/wallet.module';
 import { WithdrawalsModule } from './withdrawals/withdrawals.module';
 import { ChatModule } from './chat/chat.module';
+import { PromotionsModule } from './promotions/promotions.module';
+import { CreditModule } from './credit/credit.module';
 
 @Module({
   imports: [
@@ -210,6 +212,8 @@ import { ChatModule } from './chat/chat.module';
     WalletModule,
     WithdrawalsModule,
     ChatModule,
+    PromotionsModule,
+    CreditModule,
   ],
   controllers: [AppController],
   // Apply rate limiting globally

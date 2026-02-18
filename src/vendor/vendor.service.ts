@@ -23,6 +23,7 @@ import { ProductImpression } from '../products/entities/product-impression.entit
 import { Category } from '../categories/entities/category.entity';
 import { ProductImage } from '../products/entities/product-image.entity';
 import { Order, OrderItem } from '../orders/entities/order.entity';
+import { Dispute } from '../orders/entities/dispute.entity';
 import {
   OrderStatus,
   PaymentMethod,
@@ -46,6 +47,7 @@ import { CurrencyService } from '../common/services/currency.service';
 import { ShippingService } from '../shipping/shipping.service';
 import { GenerateLabelDto } from './dto/generate-label.dto';
 import { UserReport } from '../moderation/entities/user-report.entity';
+import { EmailService } from '../email/email.service';
 
 @Injectable()
 export class VendorService {
@@ -56,6 +58,8 @@ export class VendorService {
     private readonly productRepository: Repository<Product>,
     @InjectRepository(Order)
     private readonly orderRepository: Repository<Order>,
+    @InjectRepository(Dispute)
+    private readonly disputeRepository: Repository<Dispute>,
     @InjectRepository(OrderItem)
     private readonly orderItemRepository: Repository<OrderItem>,
     @InjectRepository(ProductImage)
@@ -71,6 +75,7 @@ export class VendorService {
     private readonly currencyService: CurrencyService,
     private readonly shippingService: ShippingService,
     private readonly settingsService: SettingsService,
+    private readonly emailService: EmailService,
   ) {}
 
   private readonly logger = new Logger(VendorService.name);
@@ -194,10 +199,22 @@ export class VendorService {
   async createMyProduct(
     userId: number,
     dto: CreateVendorProductDto,
+    creator?: Partial<User>,
   ): Promise<Product> {
     const vendor = await this.userRepository.findOneBy({ id: userId });
     if (!vendor) {
       throw new NotFoundException(`Vendor with ID ${userId} not found.`);
+    }
+
+    let createdById: number | undefined;
+    let createdByName: string | undefined;
+
+    if (creator && creator.id && creator.id !== vendor.id) {
+      createdById = creator.id;
+      createdByName =
+        creator.displayName ||
+        (creator as any).contactName ||
+        (creator.email ? creator.email.split('@')[0] : 'Staff');
     }
 
     // --- Product Posting Limits ---
@@ -365,6 +382,8 @@ export class VendorService {
       ...productData,
       status: 'publish',
       vendor: vendor,
+      createdById,
+      createdByName,
       category: categoryId ? { id: categoryId } : undefined,
       imageUrl: images && images.length > 0 ? images[0].src : null, // Set main display image
       listingType: resolvedListingType,
@@ -1302,9 +1321,9 @@ export class VendorService {
   async getPublicProfile(userId: number) {
     // ... (Your existing code is preserved)
     const user = await this.userRepository
-      .createQueryBuilder('user')
-      .where('user.id = :id', { id: userId })
-      .andWhere(':role = ANY(user.roles)', { role: UserRole.VENDOR })
+      .createQueryBuilder('u')
+      .where('u.id = :id', { id: userId })
+      .andWhere(':role = ANY(u.roles)', { role: UserRole.VENDOR })
       .getOne();
     if (!user) return null;
     const {
@@ -1380,7 +1399,14 @@ export class VendorService {
 
     if (status) {
       const s = status.toUpperCase();
-      if (Object.values(OrderStatus).includes(s as OrderStatus)) {
+      if (s === 'FAILED') {
+        statuses = [
+          OrderStatus.CANCELLED,
+          OrderStatus.CANCELLED_BY_BUYER,
+          OrderStatus.CANCELLED_BY_SELLER,
+          OrderStatus.DELIVERY_FAILED,
+        ];
+      } else if (Object.values(OrderStatus).includes(s as OrderStatus)) {
         statuses = [s as OrderStatus];
       }
     }
@@ -1460,6 +1486,8 @@ export class VendorService {
       .leftJoinAndSelect('product.images', 'images')
       .leftJoinAndSelect('product.category', 'category')
       .leftJoinAndSelect('product.tags', 'tags')
+      .leftJoinAndSelect('product.vendor', 'vendor')
+      .addSelect('product.original_creator_contact')
       .where('product.vendorId = :userId', { userId })
       .andWhere('product.deletedAt IS NULL')
       .skip((page - 1) * limit)
@@ -1681,8 +1709,6 @@ export class VendorService {
     status: VerificationStatus,
     _reason?: string,
   ): Promise<User> {
-    // Mark optional reason as intentionally unused
-    void _reason;
     const user = await this.userRepository.findOne({ where: { id: userId } });
     if (!user) {
       throw new NotFoundException(`Vendor with ID ${userId} not found.`);
@@ -1691,6 +1717,9 @@ export class VendorService {
     if (!Array.isArray(user.roles) || !user.roles.includes(UserRole.VENDOR)) {
       throw new ForbiddenException('User is not a vendor.');
     }
+
+    const oldStatus = user.verificationStatus;
+
     user.verificationStatus = status;
     if (status === VerificationStatus.APPROVED) {
       user.verified = true;
@@ -1701,7 +1730,66 @@ export class VendorService {
       user.verifiedAt = null;
     }
     // Note: reason is currently not persisted; could be logged or stored if schema adds a field.
-    return await this.userRepository.save(user);
+    const savedUser = await this.userRepository.save(user);
+
+    // Send notifications if status changed
+    if (oldStatus !== status) {
+      try {
+        if (status === VerificationStatus.APPROVED) {
+          const subject = 'Your Business Verification has been Approved!';
+          const body =
+            'Congratulations! Your business verification for Suuq has been approved. You now have full access to vendor features.';
+
+          // In-App
+          await this.notificationsService.createAndDispatch({
+            userId: user.id,
+            title: 'Verification Approved',
+            body: body,
+            type: NotificationType.ACCOUNT,
+            data: { status: 'APPROVED' },
+          });
+
+          // Email
+          if (user.email) {
+            await this.emailService.send({
+              to: user.email,
+              subject,
+              text: body,
+              html: `<p>${body}</p>`,
+            });
+          }
+        } else if (status === VerificationStatus.REJECTED) {
+          const subject = 'Your Business Verification has been Rejected';
+          const reasonText = _reason ? ` Reason: ${_reason}` : '';
+          const body = `We regret to inform you that your business verification for Suuq has been rejected.${reasonText}`;
+
+          // In-App
+          await this.notificationsService.createAndDispatch({
+            userId: user.id,
+            title: 'Verification Rejected',
+            body: body,
+            type: NotificationType.ACCOUNT,
+            data: { status: 'REJECTED', reason: _reason },
+          });
+
+          // Email
+          if (user.email) {
+            await this.emailService.send({
+              to: user.email,
+              subject,
+              text: body,
+              html: `<p>${body}</p>`,
+            });
+          }
+        }
+      } catch (err) {
+        this.logger.error(
+          `Failed to send verification notification to user ${userId}: ${err}`,
+        );
+      }
+    }
+
+    return savedUser;
   }
 
   // Admin: activate/deactivate a vendor
@@ -1752,14 +1840,14 @@ export class VendorService {
         : undefined;
 
     const qb = this.userRepository
-      .createQueryBuilder('user')
-      .where(':role = ANY(user.roles)', { role: UserRole.DELIVERER })
-      .andWhere('user.isActive = true')
-      .orderBy('user.displayName', 'ASC');
+      .createQueryBuilder('u')
+      .where(':role = ANY(u.roles)', { role: UserRole.DELIVERER })
+      .andWhere('u.isActive = true')
+      .orderBy('u.displayName', 'ASC');
 
     if (q) {
       qb.andWhere(
-        '(user.displayName ILIKE :q OR user.email ILIKE :q OR user."phoneNumber" ILIKE :q)',
+        '(u.displayName ILIKE :q OR u.email ILIKE :q OR u.phoneNumber ILIKE :q)',
         { q: `%${q}%` },
       );
     }
@@ -1855,15 +1943,15 @@ export class VendorService {
     }>
   > {
     const qb = this.userRepository
-      .createQueryBuilder('user')
-      .where(':role = ANY(user.roles)', { role: UserRole.VENDOR })
-      .andWhere('user.isActive = true')
-      .orderBy('user.displayName', 'ASC')
+      .createQueryBuilder('u')
+      .where(':role = ANY(u.roles)', { role: UserRole.VENDOR })
+      .andWhere('u.isActive = true')
+      .orderBy('u.displayName', 'ASC')
       .take(Math.min(Math.max(Number(limit) || 10, 1), 50));
 
     const term = (q || '').trim();
     if (term) {
-      qb.andWhere('(user.displayName ILIKE :q OR user.storeName ILIKE :q)', {
+      qb.andWhere('(u.displayName ILIKE :q OR u.storeName ILIKE :q)', {
         q: `%${term}%`,
       });
     }
@@ -1915,7 +2003,18 @@ export class VendorService {
       .where('v.id = :vendorId', { vendorId });
 
     if (opts.status) {
-      qbIds.andWhere('o.status = :status', { status: opts.status });
+      // Fix for "in.(A,B)" syntax sent by frontend filters
+      const statusStr = opts.status as unknown as string;
+      const match = statusStr.match && statusStr.match(/^in\.\((.*)\)$/);
+
+      if (match) {
+        const statuses = match[1].split(',').map((s) => s.trim());
+        if (statuses.length > 0) {
+          qbIds.andWhere('o.status IN (:...statuses)', { statuses });
+        }
+      } else {
+        qbIds.andWhere('o.status = :status', { status: opts.status });
+      }
     }
 
     // We need distinct because joins with items multiply rows
@@ -2366,13 +2465,22 @@ export class VendorService {
 
     const current = order.status;
     const allowedNext: Record<OrderStatus, OrderStatus[]> = {
-      [OrderStatus.PENDING]: [OrderStatus.PROCESSING],
-      [OrderStatus.PROCESSING]: [OrderStatus.SHIPPED],
+      [OrderStatus.PENDING]: [
+        OrderStatus.PROCESSING,
+        OrderStatus.CANCELLED_BY_SELLER,
+      ],
+      [OrderStatus.PROCESSING]: [
+        OrderStatus.SHIPPED,
+        OrderStatus.CANCELLED_BY_SELLER,
+      ],
       [OrderStatus.SHIPPED]: [],
       [OrderStatus.OUT_FOR_DELIVERY]: [],
       [OrderStatus.DELIVERED]: [],
       [OrderStatus.DELIVERY_FAILED]: [],
       [OrderStatus.CANCELLED]: [],
+      [OrderStatus.CANCELLED_BY_BUYER]: [],
+      [OrderStatus.CANCELLED_BY_SELLER]: [],
+      [OrderStatus.DISPUTED]: [],
     };
 
     const canGo = allowedNext[current]?.includes(status);
@@ -2452,8 +2560,14 @@ export class VendorService {
     }
 
     const allowedNext: Record<OrderStatus, OrderStatus[]> = {
-      [OrderStatus.PENDING]: [OrderStatus.PROCESSING],
-      [OrderStatus.PROCESSING]: [OrderStatus.SHIPPED],
+      [OrderStatus.PENDING]: [
+        OrderStatus.PROCESSING,
+        OrderStatus.CANCELLED_BY_SELLER,
+      ],
+      [OrderStatus.PROCESSING]: [
+        OrderStatus.SHIPPED,
+        OrderStatus.CANCELLED_BY_SELLER,
+      ],
       [OrderStatus.SHIPPED]: [
         OrderStatus.OUT_FOR_DELIVERY,
         OrderStatus.DELIVERED,
@@ -2465,6 +2579,9 @@ export class VendorService {
       [OrderStatus.DELIVERED]: [],
       [OrderStatus.DELIVERY_FAILED]: [],
       [OrderStatus.CANCELLED]: [],
+      [OrderStatus.CANCELLED_BY_BUYER]: [],
+      [OrderStatus.CANCELLED_BY_SELLER]: [],
+      [OrderStatus.DISPUTED]: [],
     };
     if (!allowedNext[item.status]?.includes(next)) {
       throw new ForbiddenException(
@@ -2624,6 +2741,75 @@ export class VendorService {
     } catch {
       return full as any;
     }
+  }
+
+  // --- Vendor Health Score ---
+  // Metrics: DISPUTE rate vs total DELIVERED orders (last 30 days)
+  // Logic: > 10% rate => flag for review
+  async getVendorHealth(vendorId: number) {
+    // 1. Define window (30 days)
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+    // 2. Count "Total Completed" (Delivered + Disputed) for this vendor
+    // We look at OrderItems to be specific to the vendor in case of mixed orders
+    const completedItems = await this.orderItemRepository
+      .createQueryBuilder('item')
+      .leftJoin('item.product', 'product')
+      .leftJoin('item.order', 'order')
+      .where('product.vendorId = :vendorId', { vendorId })
+      .andWhere('order.createdAt >= :thirtyDaysAgo', { thirtyDaysAgo })
+      .andWhere('order.status IN (:...statuses)', {
+        statuses: [OrderStatus.DELIVERED, OrderStatus.DISPUTED],
+      })
+      .getCount();
+
+    // 3. Count "Disputed" items
+    const disputedItems = await this.orderItemRepository
+      .createQueryBuilder('item')
+      .leftJoin('item.product', 'product')
+      .leftJoin('item.order', 'order')
+      .where('product.vendorId = :vendorId', { vendorId })
+      .andWhere('order.createdAt >= :thirtyDaysAgo', { thirtyDaysAgo })
+      .andWhere('order.status = :disputed', { disputed: OrderStatus.DISPUTED })
+      .getCount();
+
+    // 4. Calculate Rate
+    const total = completedItems > 0 ? completedItems : 0;
+    const disputeRate = total === 0 ? 0 : disputedItems / total;
+
+    // 5. Check penalty threshold (10%)
+    const penaltyThreshold = 0.1;
+    let flaggedForReview = false;
+
+    if (total >= 5 && disputeRate > penaltyThreshold) {
+      // Minimum 5 orders to avoid noise
+      flaggedForReview = true;
+    }
+
+    // 6. Update Vendor Flag
+    const vendor = await this.userRepository.findOne({
+      where: { id: vendorId },
+    });
+    if (vendor && vendor.flaggedForReview !== flaggedForReview) {
+      vendor.flaggedForReview = flaggedForReview;
+      await this.userRepository.save(vendor);
+
+      if (flaggedForReview) {
+        this.logger.warn(
+          `Vendor ${vendorId} FLAGGED for review. Dispute Rate: ${(disputeRate * 100).toFixed(1)}%`,
+        );
+      }
+    }
+
+    return {
+      vendorId,
+      period: '30d',
+      totalCompleted: total,
+      disputedCount: disputedItems,
+      disputeRate: Number(disputeRate.toFixed(4)),
+      flaggedForReview,
+    };
   }
 
   async generateLabel(

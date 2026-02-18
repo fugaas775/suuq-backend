@@ -1,4 +1,10 @@
-import { IsArray, IsOptional, IsString, ValidateNested } from 'class-validator';
+import {
+  IsArray,
+  IsOptional,
+  IsString,
+  ValidateNested,
+  IsNumber,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class VerificationDocumentDto {
@@ -7,6 +13,18 @@ export class VerificationDocumentDto {
 
   @IsString()
   name: string;
+
+  @IsOptional()
+  @IsString()
+  thumbnailUrl?: string;
+
+  @IsOptional()
+  @IsString()
+  mimeType?: string;
+
+  @IsOptional()
+  @IsNumber()
+  size?: number;
 }
 
 export class BusinessLicenseInfoDto {

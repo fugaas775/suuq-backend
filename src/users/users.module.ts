@@ -13,6 +13,7 @@ import { UiSetting } from '../settings/entities/ui-setting.entity';
 import { SubscriptionCronService } from './subscription-cron.service';
 import { ChurnRecoveryService } from './churn-recovery.service';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { EmailModule } from '../email/email.module';
 
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
     forwardRef(() => WalletModule),
     CurrencyModule,
     forwardRef(() => NotificationsModule),
+    EmailModule,
   ],
   providers: [UsersService, SubscriptionCronService, ChurnRecoveryService],
   controllers: [UsersController, SubscriptionsController],

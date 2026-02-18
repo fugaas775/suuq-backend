@@ -3,8 +3,8 @@
 ## Integration of Telebirr SuperApp SDK (In-App Payment)
 
 **Project Name:** Suuq S - Multi-Vendor Marketplace  
-**Document Version:** 1.0  
-**Date:** January 26, 2026  
+**Document Version:** 1.1  
+**Date:** February 6, 2026  
 **Confidentiality Level:** Confidential / INSA Audit Review Only  
 **Prepared For:** Information Network Security Administration (INSA), Ethiopia
 
@@ -102,7 +102,11 @@ Suuq S acts as the single point of entry for funds to ensure compliance and trus
 
 - **Inflow:** 100% of the cart value is debited from the customer to the "Suuq S" Master Merchant Account.
 - **Ledgering:** An internal immutable ledger (`telebirr_transaction` table) records the Fabric Reference ID against the local Order ID.
-- **Outflow (Disbursement):** Upon successful callback verification, the system executes an automated B2B transfer to the Vendor's registered merchant ID for their share (95%), retaining the commission (5%).
+- **Outflow (Disbursement):** Upon successful callback verification:
+  1.  The system calculates the **Net Amount** (95% of the total order value) for the Vendor.
+  2.  The system calculates the **Commission Amount** (5% of the total order value) for Suuq S.
+  3.  A B2B transfer is executed immediately to the Vendor's registered Merchant ID for their 95% share.
+  4.  The remaining 5% is retained in the Master Merchant Account as platform revenue.
 
 ### 4.2 Data Integrity
 

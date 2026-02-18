@@ -56,6 +56,7 @@ import { Exclude } from 'class-transformer';
 import { Product } from '../../products/entities/product.entity';
 import { Review } from '../../reviews/entities/review.entity';
 import { Notification } from '../../notifications/entities/notification.entity';
+import { VendorStaff } from '../../vendor/entities/vendor-staff.entity';
 
 export interface BusinessLicenseInfo {
   tradeName: string;
@@ -75,6 +76,9 @@ export enum VerificationMethod {
 export interface VerificationDocument {
   url: string;
   name: string;
+  thumbnailUrl?: string;
+  mimeType?: string;
+  size?: number;
 }
 
 @Entity('user')
@@ -121,7 +125,7 @@ export class User {
     type: 'decimal',
     precision: 5,
     scale: 2,
-    default: 0.05, // 5%
+    default: 0.03, // 3%
     transformer: {
       to: (value: number) => value,
       from: (value: string | number) =>
@@ -286,6 +290,12 @@ export class User {
   @OneToMany(() => Notification, (notification) => notification.recipient)
   notifications: Notification[];
 
+  @OneToMany(() => VendorStaff, (staff: VendorStaff) => staff.member)
+  employments: VendorStaff[];
+
+  @OneToMany(() => VendorStaff, (staff: VendorStaff) => staff.vendor)
+  staff: VendorStaff[];
+
   // --- Vendor currency (for unified vendor logic) ---
   @Column({ type: 'varchar', length: 3, nullable: true })
   currency?: string | null;
@@ -354,6 +364,9 @@ export class User {
   passwordResetExpires?: Date;
 
   // --- Timestamps & Audit ---
+  @Column({ default: false })
+  flaggedForReview: boolean;
+
   @CreateDateColumn()
   createdAt!: Date;
 

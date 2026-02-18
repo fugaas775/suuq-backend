@@ -11,8 +11,8 @@ async function run() {
   const settings = [
     {
       key: 'commission_rate',
-      value: 15,
-      description: 'Platform commission rate in percent (e.g. 15 for 15%)',
+      value: 3,
+      description: 'Platform commission rate in percent (e.g. 3 for 3%)',
     },
     {
       key: 'delivery_base_fee',

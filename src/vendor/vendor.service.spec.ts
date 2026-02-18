@@ -5,6 +5,7 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { User } from '../users/entities/user.entity';
 import { Product } from '../products/entities/product.entity';
 import { Order, OrderItem } from '../orders/entities/order.entity';
+import { Dispute } from '../orders/entities/dispute.entity';
 import { ProductImage } from '../products/entities/product-image.entity';
 import { NotificationsService } from '../notifications/notifications.service';
 import { Tag } from '../tags/tag.entity';
@@ -121,6 +122,7 @@ describe('VendorService', () => {
         { provide: getRepositoryToken(User), useValue: userRepoMock },
         { provide: getRepositoryToken(Product), useValue: productRepoMock },
         { provide: getRepositoryToken(Order), useValue: orderRepoMock },
+        { provide: getRepositoryToken(Dispute), useValue: {} },
         { provide: getRepositoryToken(OrderItem), useValue: orderItemRepoMock },
         {
           provide: getRepositoryToken(ProductImage),

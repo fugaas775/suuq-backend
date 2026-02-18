@@ -1,5 +1,6 @@
 import { Expose, Exclude } from 'class-transformer';
 import { UserRole } from '../../auth/roles.enum';
+import { VendorStaff } from '../../vendor/entities/vendor-staff.entity';
 import {
   CertificationStatus,
   SubscriptionTier,
@@ -39,6 +40,9 @@ export class UserResponseDto {
 
   @Expose()
   roles!: UserRole[];
+
+  @Expose()
+  employments?: VendorStaff[];
 
   @Expose()
   subscriptionTier?: SubscriptionTier;

@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unsafe-return */
 import {
   Injectable,
   NotFoundException,
@@ -28,7 +29,13 @@ import { TopUpRequest, TopUpStatus } from './entities/top-up-request.entity';
 import { UiSetting } from '../settings/entities/ui-setting.entity';
 import { User, SubscriptionTier } from '../users/entities/user.entity';
 import { CurrencyService } from '../common/services/currency.service';
+import { Order, OrderStatus } from '../orders/entities/order.entity';
 import { UsersService } from '../users/users.service';
+import { Settlement, SettlementStatus } from './entities/settlement.entity';
+import PDFDocument from 'pdfkit';
+import { createWriteStream } from 'fs';
+import { join } from 'path';
+import { subDays, startOfWeek, endOfWeek } from 'date-fns';
 
 @Injectable()
 export class WalletService {
@@ -45,11 +52,166 @@ export class WalletService {
     private readonly userRepository: Repository<User>,
     @InjectRepository(UiSetting)
     private readonly uiSettingRepository: Repository<UiSetting>,
+    @InjectRepository(Settlement)
+    private readonly settlementRepository: Repository<Settlement>,
     private readonly dataSource: DataSource,
     private readonly currencyService: CurrencyService,
     @Inject(forwardRef(() => UsersService))
     private readonly usersService: UsersService,
   ) {}
+
+  /**
+   * Weekly Cron: Calculates weekly settlement for all vendors.
+   * - Queries DELIVERED orders from last week (Mon-Sun)
+   * - Aggregates Sales, Fees, Net Pay
+   * - Generates PDF Statement
+   */
+  async processWeeklySettlements() {
+    // 1. Determine Date Range (Last complete week)
+    const now = new Date();
+    const lastWeekEnd = endOfWeek(subDays(now, 7), { weekStartsOn: 1 }); // Sunday
+    const lastWeekStart = startOfWeek(subDays(now, 7), { weekStartsOn: 1 }); // Monday
+
+    const earnings = await this.transactionRepository
+      .createQueryBuilder('tx')
+      .select('tx.walletId', 'walletId')
+      .addSelect('SUM(tx.amount)', 'totalNet')
+      .leftJoin('tx.wallet', 'wallet')
+      .leftJoin(Order, 'order', 'order.id = tx.orderId')
+      .addSelect('wallet.userId', 'vendorId')
+      .where('tx.type = :type', { type: TransactionType.EARNING })
+      .andWhere('tx.createdAt >= :start', { start: lastWeekStart })
+      .andWhere('tx.createdAt <= :end', { end: lastWeekEnd })
+      .andWhere('(order.id IS NULL OR order.status != :disputed)', {
+        disputed: OrderStatus.DISPUTED,
+      })
+      .groupBy('tx.walletId')
+      .addGroupBy('wallet.userId')
+      .getRawMany();
+
+    const results = [];
+
+    for (const record of earnings) {
+      const vendorId = record.vendorId;
+      const netAmount = Number(record.totalNet);
+      if (!vendorId || netAmount <= 0) continue;
+
+      // Fetch Vendor Details
+      const vendor = await this.userRepository.findOne({
+        where: { id: vendorId },
+      });
+      if (!vendor) continue;
+
+      const commissionRate = 0.03;
+      const gatewayRate = 0.01;
+      const totalRate = commissionRate + gatewayRate;
+      const divisor = 1 - totalRate;
+      const grossEstimated = netAmount / divisor;
+      const platformFee = grossEstimated * commissionRate;
+      const gatewayFee = grossEstimated * gatewayRate;
+
+      // 3. Create Settlement Record
+      const settlement = this.settlementRepository.create({
+        vendor: vendor,
+        vendorId: vendor.id,
+        amount: netAmount,
+        grossSales: grossEstimated,
+        platformFee: platformFee,
+        gatewayFee: gatewayFee,
+        currency: 'ETB', // Defaulting for MVP
+        periodStart: lastWeekStart,
+        periodEnd: lastWeekEnd,
+        status: SettlementStatus.PENDING,
+      });
+
+      await this.settlementRepository.save(settlement);
+
+      // 4. Generate PDF
+      const pdfPath = await this.generateSettlementPdf(settlement, vendor);
+      settlement.generatedPdfUrl = pdfPath; // In prod, upload to S3/Spaces and save URL
+      settlement.status = SettlementStatus.PROCESSING; // Ready for Payout
+      await this.settlementRepository.save(settlement);
+
+      results.push(settlement);
+    }
+
+    return results;
+  }
+
+  private async generateSettlementPdf(
+    settlement: Settlement,
+    vendor: User,
+  ): Promise<string> {
+    const doc = new PDFDocument({ margin: 50 });
+    const filename = `settlement_${settlement.id}_${vendor.id}.pdf`;
+    const folder = join(process.cwd(), 'uploads', 'settlements');
+    const path = join(folder, filename);
+
+    const stream = createWriteStream(path);
+    doc.pipe(stream);
+
+    // Header
+    doc.fontSize(20).text('Suuq S - Weekly Settlement', { align: 'center' });
+    doc.moveDown();
+    doc.fontSize(12).text(`Vendor: ${vendor.storeName || vendor.displayName}`);
+    doc.text(`TIN: 0041178026 (Suuq S PLC)`); // Example placeholder
+    doc.text(
+      `Period: ${settlement.periodStart.toDateString()} - ${settlement.periodEnd.toDateString()}`,
+    );
+    doc.moveDown();
+
+    // Table Logic
+    const startY = doc.y;
+    doc.text('Description', 50, startY, { underline: true });
+    doc.text('Amount (ETB)', 350, startY, { underline: true, align: 'right' });
+    doc.moveDown();
+
+    doc.text('Gross Sales', 50);
+    doc.text(settlement.grossSales.toFixed(2), 350, doc.y - 12, {
+      align: 'right',
+    });
+    doc.moveDown();
+
+    doc.text('Platform Fee (5%)', 50);
+    doc
+      .fillColor('red')
+      .text(`-${settlement.platformFee.toFixed(2)}`, 350, doc.y - 12, {
+        align: 'right',
+      });
+    doc.fillColor('black'); // Reset
+    doc.moveDown();
+
+    doc.text('Gateway Fee (1%)', 50);
+    doc
+      .fillColor('red')
+      .text(`-${settlement.gatewayFee.toFixed(2)}`, 350, doc.y - 12, {
+        align: 'right',
+      });
+    doc.fillColor('black'); // Reset
+    doc.moveDown();
+
+    doc.moveTo(50, doc.y).lineTo(550, doc.y).stroke();
+    doc.moveDown();
+
+    doc.fontSize(14).font('Helvetica-Bold').text('Net Payout', 50, doc.y);
+    doc.text(settlement.amount.toFixed(2), 350, doc.y - 14, {
+      align: 'right',
+    });
+    doc.font('Helvetica'); // Reset
+
+    // Footer
+    doc.moveDown(4);
+    doc.fontSize(10).text('Transfer to:', { underline: true });
+    doc.text(
+      `Account Name: ${vendor.displayName || vendor.storeName || vendor.email}`,
+    );
+
+    doc.end();
+
+    return new Promise((resolve) => {
+      stream.on('finish', () => resolve(path));
+    });
+  }
 
   async logPayout(data: {
     vendorId: number;

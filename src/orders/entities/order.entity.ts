@@ -19,6 +19,7 @@ export enum PaymentMethod {
   WAAFI = 'WAAFI',
   DMONEY = 'DMONEY',
   BANK_TRANSFER = 'BANK_TRANSFER',
+  CREDIT = 'CREDIT',
 }
 
 export enum PaymentStatus {
@@ -35,6 +36,9 @@ export enum OrderStatus {
   DELIVERED = 'DELIVERED', // Deliverer confirms completion
   DELIVERY_FAILED = 'DELIVERY_FAILED', // Deliverer reports an issue
   CANCELLED = 'CANCELLED',
+  CANCELLED_BY_BUYER = 'CANCELLED_BY_BUYER',
+  CANCELLED_BY_SELLER = 'CANCELLED_BY_SELLER',
+  DISPUTED = 'DISPUTED',
 }
 
 export enum DeliveryAcceptanceStatus {
@@ -126,6 +130,18 @@ export class Order {
 
   @CreateDateColumn()
   createdAt!: Date;
+
+  @Column({ type: 'varchar', nullable: true, select: false })
+  deliveryCode?: string | null;
+
+  @Column({ type: 'int', default: 0 })
+  deliveryAttemptCount!: number;
+
+  @Column({ type: 'varchar', nullable: true })
+  proofOfDeliveryUrl?: string | null;
+
+  @Column({ type: 'varchar', nullable: true })
+  paymentProofUrl?: string | null;
 }
 
 // Define OrderItem second

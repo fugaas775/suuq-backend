@@ -6,6 +6,7 @@ import {
   Req,
   ForbiddenException,
 } from '@nestjs/common';
+import { VendorService } from './vendor.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -43,6 +44,7 @@ export class VendorAnalyticsController {
     private readonly productRepo: Repository<Product>,
     @InjectRepository(User)
     private readonly usersRepo: Repository<User>,
+    private readonly vendorService: VendorService,
   ) {}
 
   @Get('v2/vendor/analytics/pro')
@@ -66,6 +68,10 @@ export class VendorAnalyticsController {
         'This feature is available for Certified vendors only. Please complete and verify your business license.',
       );
     }
+
+    // --- Health Score ---
+    const health = await this.vendorService.getVendorHealth(userId);
+    // --------------------
 
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
@@ -320,6 +326,7 @@ export class VendorAnalyticsController {
       visitorLocations,
       visitorCities,
       trafficTrend,
+      health,
     };
   }
 

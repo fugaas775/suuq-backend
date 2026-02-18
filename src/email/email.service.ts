@@ -1,9 +1,10 @@
+/* eslint-disable */
 import { Injectable, Logger } from '@nestjs/common';
 import * as nodemailer from 'nodemailer';
 import { ConfigService } from '@nestjs/config';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
-// eslint-disable-next-line @typescript-eslint/no-var-requires
+ 
 const postmarkTransport = require('nodemailer-postmark-transport');
 
 @Injectable()
@@ -610,6 +611,62 @@ export class EmailService {
         <p>If you did not request this, please change your password immediately.</p>
       `,
     };
+    await this.send(mail);
+  }
+
+  async sendStaffInvitation(
+    email: string,
+    vendorName: string,
+    isExistingUser: boolean,
+  ) {
+    const adminUrl =
+      this.configService.get('ADMIN_URL') || 'https://suuq.ugasfuad.com';
+    
+    // Ensure API Url has logic to map to correct backend endpoint
+    let apiUrl =
+      this.configService.get('API_URL') || 'https://suuq.ugasfuad.com/api';
+    
+    // If it's a root domain without /api, append /api to match Controller prefix
+    if (!apiUrl.endsWith('/api')) {
+       apiUrl = `${apiUrl}/api`;
+    }
+
+    const actionLink = isExistingUser
+      ? `${adminUrl}/login`
+      : `${adminUrl}/register`;
+
+    // Deep link scheme for mobile app - Wrapped in HTTPS redirect to bypass email client stripping
+    // Included email query param to pre-fill forms on mobile
+    const rawMobileLink = isExistingUser
+      ? `suuq://login?email=${encodeURIComponent(email)}`
+      : `suuq://register?email=${encodeURIComponent(email)}`;
+      
+    const mobileActionLink = `${apiUrl}/open-app?target=${encodeURIComponent(
+      rawMobileLink,
+    )}`;
+
+    const actionText = isExistingUser ? 'Log In' : 'Sign Up';
+
+    const mail = {
+      to: email,
+      subject: `You're invited to join ${vendorName} on Suuq`,
+      text: `Hello,\n\nYou have been invited to join the staff of ${vendorName} on Suuq.\n\nPlease ${actionText} to access your staff dashboard.\n\nWeb: ${actionLink}\nMobile App: ${rawMobileLink}\n\nBest regards,\nThe Suuq Team`, // Keep raw link in text version just in case
+      html: `
+        <h2>Staff Invitation</h2>
+        <p>Hello,</p>
+        <p>You have been invited to join the staff of <strong>${vendorName}</strong> on Suuq.</p>
+        <p>Please click the link below to ${actionText} and access your staff dashboard:</p>
+        <p>
+          <a href="${mobileActionLink}" style="background-color: #4CAF50; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Open in Suuq App</a>
+        </p>
+        <p style="margin-top: 15px; font-size: 0.9em;">
+          Or continue on web: <a href="${actionLink}">${actionText} on Browser</a>
+        </p>
+        <br/>
+        <p>Best regards,<br/>The Suuq Team</p>
+      `,
+    };
+
     await this.send(mail);
   }
 }

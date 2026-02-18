@@ -46,7 +46,8 @@ export class CurationService {
 
     // Ordering preference: curatedOrder ASC, curatedAt DESC, updatedAt DESC
     // Note: curated fields are not present; fallback sorts are used until fields exist
-    const fallbackSort = tagKey === 'home-best' ? 'sales_desc' : 'created_desc';
+    // FIX: Using 'created_desc' for home-best as well to ensure newly curated (but low sales) products appear
+    const fallbackSort = 'created_desc';
 
     const res = await this.productsService.findFiltered({
       page,

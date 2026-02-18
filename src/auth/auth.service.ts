@@ -171,7 +171,9 @@ export class AuthService {
     dto: LoginDto,
   ): Promise<{ accessToken: string; refreshToken: string; user: User }> {
     this.logger.log(`[login] Attempting login for user: ${dto.email}`);
-    const user = await this.usersService.findByEmail(dto.email);
+    const user = await this.usersService.findByEmail(dto.email, [
+      'employments',
+    ]);
     if (!user || !user.password) {
       throw new UnauthorizedException({
         code: 'INVALID_CREDENTIALS',
@@ -233,7 +235,9 @@ export class AuthService {
       });
     }
 
-    let user = await this.usersService.findByEmail(googlePayload.email);
+    let user = await this.usersService.findByEmail(googlePayload.email, [
+      'employments',
+    ]);
 
     if (!user) {
       this.logger.log(
@@ -528,14 +532,14 @@ export class AuthService {
 
     // Generate 6 digit code
     const code = Math.floor(100000 + Math.random() * 900000).toString();
-    
+
     // Store in Redis with 10 mins expiry
     const key = `auth:change-email:${userId}`;
     const client = this.redisService.getClient();
     if (client) {
       await client.set(key, JSON.stringify({ code, newEmail }), 'EX', 600);
     } else {
-        throw new InternalServerErrorException('Service unavailable (Redis)');
+      throw new InternalServerErrorException('Service unavailable (Redis)');
     }
 
     // Send to CURRENT email
@@ -547,10 +551,11 @@ export class AuthService {
   async verifyEmailChange(userId: number, code: string, newEmail: string) {
     const key = `auth:change-email:${userId}`;
     const client = this.redisService.getClient();
-    if (!client) throw new InternalServerErrorException('Service unavailable (Redis)');
+    if (!client)
+      throw new InternalServerErrorException('Service unavailable (Redis)');
 
     const dataStr = await client.get(key);
-    
+
     if (!dataStr) {
       throw new BadRequestException('Verification code expired or invalid');
     }
@@ -561,12 +566,14 @@ export class AuthService {
     }
 
     if (data.newEmail !== newEmail) {
-        throw new BadRequestException('Email does not match the requested change');
+      throw new BadRequestException(
+        'Email does not match the requested change',
+      );
     }
 
     // Update email
     await this.usersService.updateEmail(userId, data.newEmail);
-    
+
     // Clear Redis
     await client.del(key);
 
@@ -583,9 +590,9 @@ export class AuthService {
     const key = `auth:identity-verify:${userId}`;
     const client = this.redisService.getClient();
     if (client) {
-        await client.set(key, code, 'EX', 600); // 10 mins
+      await client.set(key, code, 'EX', 600); // 10 mins
     } else {
-        throw new InternalServerErrorException('Service unavailable (Redis)');
+      throw new InternalServerErrorException('Service unavailable (Redis)');
     }
 
     await this.emailService.sendIdentityVerificationCode(user.email, code);
@@ -595,20 +602,21 @@ export class AuthService {
   async verifyIdentityVerification(userId: number, code: string) {
     const key = `auth:identity-verify:${userId}`;
     const client = this.redisService.getClient();
-    if (!client) throw new InternalServerErrorException('Service unavailable (Redis)');
+    if (!client)
+      throw new InternalServerErrorException('Service unavailable (Redis)');
 
     const savedCode = await client.get(key);
     if (!savedCode) {
-        throw new BadRequestException('Verification code expired or invalid');
+      throw new BadRequestException('Verification code expired or invalid');
     }
     if (savedCode !== code) {
-        throw new BadRequestException('Invalid verification code');
+      throw new BadRequestException('Invalid verification code');
     }
 
     // Success - consume code
     await client.del(key);
 
-    // Ideally return a short-lived token, but for now just success 
+    // Ideally return a short-lived token, but for now just success
     return { message: 'Identity verified successfully', success: true };
   }
 }

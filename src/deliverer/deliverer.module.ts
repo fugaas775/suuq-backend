@@ -9,6 +9,7 @@ import { SettingsModule } from '../settings/settings.module';
 import { EmailModule } from '../email/email.module';
 import { CurrencyModule } from '../common/services/currency.module';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { RealtimeModule } from '../realtime/realtime.module';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
     EmailModule,
     CurrencyModule,
     NotificationsModule,
+    RealtimeModule,
   ],
   controllers: [DelivererController],
   providers: [DelivererService],

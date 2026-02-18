@@ -94,8 +94,18 @@ async function bootstrap() {
             "'unsafe-inline'", // Swagger UI injects inline styles
             'https://fonts.googleapis.com',
           ],
+          styleSrcElem: [
+            "'self'",
+            "'unsafe-inline'",
+            'https://fonts.googleapis.com',
+          ],
           imgSrc: ["'self'", 'data:', 'https:', 'http:'],
-          fontSrc: ["'self'", 'data:', 'https://fonts.gstatic.com'],
+          fontSrc: [
+            "'self'",
+            'data:',
+            'https://fonts.gstatic.com',
+            'https://fonts.googleapis.com',
+          ],
           connectSrc: ["'self'"],
           objectSrc: ["'none'"],
           frameAncestors: ["'none'"],
@@ -138,7 +148,9 @@ async function bootstrap() {
       const url = req.url || '';
       if (
         (url.startsWith('/product-requests') ||
-          url.startsWith('/withdrawals')) &&
+          url.startsWith('/withdrawals') ||
+          url.startsWith('/promotions') ||
+          url.startsWith('/orders')) &&
         !url.startsWith('/api')
       ) {
         req.url = `/api${url}`;

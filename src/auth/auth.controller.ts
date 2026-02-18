@@ -110,7 +110,9 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   async getProfile(@Request() req: AuthenticatedRequest) {
     // Fetch the full user from the database to ensure all fields are present
-    const user = await this.authService.getUsersService().findById(req.user.id);
+    const user = await this.authService
+      .getUsersService()
+      .findById(req.user.id, ['employments']);
     return plainToInstance(UserResponseDto, user, {
       excludeExtraneousValues: true,
     });

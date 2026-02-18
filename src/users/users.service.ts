@@ -34,6 +34,8 @@ import * as bcrypt from 'bcrypt';
 import { UiSetting } from '../settings/entities/ui-setting.entity';
 import { parsePhoneNumberFromString } from 'libphonenumber-js';
 import { NotificationsService } from '../notifications/notifications.service';
+import { EmailService } from '../email/email.service';
+import { NotificationType } from '../notifications/entities/notification.entity';
 
 @Injectable()
 export class UsersService {
@@ -52,6 +54,7 @@ export class UsersService {
     private readonly currencyService: CurrencyService,
     @Inject(forwardRef(() => NotificationsService))
     private readonly notificationsService: NotificationsService,
+    private readonly emailService: EmailService,
   ) {}
 
   /**
@@ -101,7 +104,27 @@ export class UsersService {
     user.verificationStatus = VerificationStatus.PENDING;
     user.verificationMethod = VerificationMethod.MANUAL;
 
-    return this.userRepository.save(user);
+    const savedUser = await this.userRepository.save(user);
+
+    // Notify Admin
+    try {
+      const adminEmail = 'admin@suuqsapp.com';
+      const userIdentifier =
+        savedUser.email || savedUser.phoneNumber || `ID: ${savedUser.id}`;
+      await this.emailService.send({
+        to: adminEmail,
+        subject: 'New Business Verification Request',
+        text: `User ${userIdentifier} has submitted a business license for verification. Please review it in the admin dashboard.`,
+        html: `<p>User <strong>${userIdentifier} (ID: ${savedUser.id})</strong> has submitted a business license for verification.</p>
+               <p>Please review their documents in the admin dashboard.</p>`,
+      });
+    } catch (err) {
+      this.logger.error(
+        `Failed to notify admin of verification request for user ${userId}: ${err}`,
+      );
+    }
+
+    return savedUser;
   }
 
   /**
@@ -146,9 +169,13 @@ export class UsersService {
   /**
    * Find user by email, returning essential login fields.
    */
-  async findByEmail(email: string): Promise<User | null> {
+  async findByEmail(
+    email: string,
+    relations: string[] = [],
+  ): Promise<User | null> {
     return this.userRepository.findOne({
       where: { email },
+      relations,
       // By removing the 'select' clause, TypeORM will fetch all fields
       // for the User entity, which is what we want.
     });
@@ -164,8 +191,11 @@ export class UsersService {
   /**
    * Find user by ID, or throw if not found.
    */
-  async findById(id: number): Promise<User> {
-    const user = await this.userRepository.findOne({ where: { id } });
+  async findById(id: number, relations: string[] = []): Promise<User> {
+    const user = await this.userRepository.findOne({
+      where: { id },
+      relations,
+    });
     if (!user) {
       throw new NotFoundException('User not found');
     }
@@ -241,7 +271,7 @@ export class UsersService {
   async findAll(
     filters?: FindUsersQueryDto,
   ): Promise<{ users: User[]; total: number; page: number; pageSize: number }> {
-    const qb = this.userRepository.createQueryBuilder('user');
+    const qb = this.userRepository.createQueryBuilder('u');
 
     // Normalize search term and source
     const aliasSearch = (
@@ -260,26 +290,26 @@ export class UsersService {
 
     // Exact id match (token id:123)
     if (filters?.id) {
-      qb.andWhere('user.id = :exactId', { exactId: filters.id });
+      qb.andWhere('u.id = :exactId', { exactId: filters.id });
     }
 
     // Email contains (token email:foo) - case-insensitive partial
     if (filters?.email) {
-      qb.andWhere('user.email ILIKE :emailLike', {
+      qb.andWhere('u.email ILIKE :emailLike', {
         emailLike: `%${filters.email}%`,
       });
     }
 
     // Display name contains (token name:john)
     if (filters?.name) {
-      qb.andWhere('user.displayName ILIKE :nameLike', {
+      qb.andWhere('u.displayName ILIKE :nameLike', {
         nameLike: `%${filters.name}%`,
       });
     }
 
     // Store name contains (token store:acme)
     if (filters?.store) {
-      qb.andWhere('user.storeName ILIKE :storeLike', {
+      qb.andWhere('u.storeName ILIKE :storeLike', {
         storeLike: `%${filters.store}%`,
       });
     }
@@ -298,30 +328,30 @@ export class UsersService {
 
     // Enforce role filter whenever provided so vendor/admin searches stay scoped
     if (filters?.role) {
-      qb.andWhere('user.roles @> :roles', { roles: [filters.role] });
+      qb.andWhere('u.roles @> :roles', { roles: [filters.role] });
     }
 
     if (filters?.verificationStatus) {
-      qb.andWhere('user.verificationStatus = :vs', {
+      qb.andWhere('u.verificationStatus = :vs', {
         vs: filters.verificationStatus,
       });
     }
 
     if (typeof isActiveFilter === 'boolean') {
-      qb.andWhere('user.isActive = :ia', { ia: isActiveFilter });
+      qb.andWhere('u.isActive = :ia', { ia: isActiveFilter });
     }
 
     if (term) {
       if (aliasSearch) {
         // For q-based search: include storeName so vendor lookups work with q-term
         qb.andWhere(
-          '(user.email ILIKE :t OR user.displayName ILIKE :t OR user.storeName ILIKE :t)',
+          '(u.email ILIKE :t OR u.displayName ILIKE :t OR u.storeName ILIKE :t)',
           { t: `%${term}%` },
         );
       } else {
         // Legacy/explicit search: include storeName too for broader matching
         qb.andWhere(
-          '(user.displayName ILIKE :t OR user.storeName ILIKE :t OR user.email ILIKE :t)',
+          '(u.displayName ILIKE :t OR u.storeName ILIKE :t OR u.email ILIKE :t)',
           { t: `%${term}%` },
         );
       }
@@ -333,22 +363,22 @@ export class UsersService {
       const wantsDocs = ['true', '1'].includes(hasDocsToken);
       if (wantsDocs) {
         qb.andWhere(
-          'jsonb_array_length(COALESCE(user.verificationDocuments, :emptyJsonb)) > 0',
+          'jsonb_array_length(COALESCE(u.verificationDocuments, :emptyJsonb)) > 0',
           { emptyJsonb: '[]' },
         );
       } else if (['false', '0'].includes(hasDocsToken)) {
         qb.andWhere(
-          'jsonb_array_length(COALESCE(user.verificationDocuments, :emptyJsonb)) = 0',
+          'jsonb_array_length(COALESCE(u.verificationDocuments, :emptyJsonb)) = 0',
           { emptyJsonb: '[]' },
         );
       }
     }
 
     if (filters?.createdFrom) {
-      qb.andWhere('user."createdAt" >= :from', { from: filters.createdFrom });
+      qb.andWhere('u."createdAt" >= :from', { from: filters.createdFrom });
     }
     if (filters?.createdTo) {
-      qb.andWhere('user."createdAt" <= :to', { to: filters.createdTo });
+      qb.andWhere('u."createdAt" <= :to', { to: filters.createdTo });
     }
 
     // Sorting
@@ -364,9 +394,9 @@ export class UsersService {
       'verificationStatus',
     ]);
     if (sortableColumns.has(sortBy)) {
-      qb.orderBy(`user.${sortBy}`, sortOrder);
+      qb.orderBy(`u.${sortBy}`, sortOrder);
     } else {
-      qb.orderBy('user.id', 'DESC');
+      qb.orderBy('u.id', 'DESC');
     }
 
     // Pagination (safe bounds)
@@ -389,10 +419,10 @@ export class UsersService {
    */
   async findRecipientsByRole(role: UserRole): Promise<User[]> {
     return this.userRepository
-      .createQueryBuilder('user')
-      .where('user.roles @> :role', { role: [role] })
-      .andWhere('user.isActive = :isActive', { isActive: true }) // Only active users
-      .select(['user.id', 'user.email']) // specific fields
+      .createQueryBuilder('u')
+      .where('u.roles @> :role', { role: [role] })
+      .andWhere('u.isActive = :isActive', { isActive: true }) // Only active users
+      .select(['u.id', 'u.email']) // specific fields
       .getMany();
   }
 
@@ -408,8 +438,8 @@ export class UsersService {
    */
   async countByRole(role: UserRole): Promise<number> {
     return this.userRepository
-      .createQueryBuilder('user')
-      .where('user.roles @> :roles', { roles: [role] })
+      .createQueryBuilder('u')
+      .where('u.roles::text[] @> :roles::text[]', { roles: [role] })
       .getCount();
   }
 
@@ -512,14 +542,14 @@ export class UsersService {
       }
 
       const qb = this.userRepository
-        .createQueryBuilder('user')
-        .where('user.phoneNumber = :phoneNumber', {
+        .createQueryBuilder('u')
+        .where('u.phoneNumber = :phoneNumber', {
           phoneNumber: data.phoneNumber,
         })
-        .andWhere('user.id != :id', { id });
+        .andWhere('u.id != :id', { id });
 
       if (data.phoneCountryCode) {
-        qb.andWhere('user.phoneCountryCode = :phoneCountryCode', {
+        qb.andWhere('u.phoneCountryCode = :phoneCountryCode', {
           phoneCountryCode: data.phoneCountryCode,
         });
       }
@@ -636,6 +666,64 @@ export class UsersService {
     this.logger.log(
       `Verification status changed: userId=${userId} prev=${prevStatus} status=${status} reason=${reason || 'n/a'} by=${actedBy || 'system'}`,
     );
+
+    // Send notifications if status changed
+    if (prevStatus !== status) {
+      try {
+        if (status === VerificationStatus.APPROVED) {
+          const subject = 'Your Business Verification has been Approved!';
+          const body =
+            'Congratulations! Your business verification for Suuq has been approved. You now have full access to vendor features.';
+
+          // In-App
+          await this.notificationsService.createAndDispatch({
+            userId: user.id,
+            title: 'Verification Approved',
+            body: body,
+            type: NotificationType.ACCOUNT,
+            data: { status: 'APPROVED' },
+          });
+
+          // Email
+          if (user.email) {
+            await this.emailService.send({
+              to: user.email,
+              subject,
+              text: body,
+              html: `<p>${body}</p>`,
+            });
+          }
+        } else if (status === VerificationStatus.REJECTED) {
+          const subject = 'Your Business Verification has been Rejected';
+          const reasonText = reason ? ` Reason: ${reason}` : '';
+          const body = `We regret to inform you that your business verification for Suuq has been rejected.${reasonText}`;
+
+          // In-App
+          await this.notificationsService.createAndDispatch({
+            userId: user.id,
+            title: 'Verification Rejected',
+            body: body,
+            type: NotificationType.ACCOUNT,
+            data: { status: 'REJECTED', reason: reason },
+          });
+
+          // Email
+          if (user.email) {
+            await this.emailService.send({
+              to: user.email,
+              subject,
+              text: body,
+              html: `<p>${body}</p>`,
+            });
+          }
+        }
+      } catch (err) {
+        this.logger.error(
+          `Failed to send verification notification to user ${userId}: ${err}`,
+        );
+      }
+    }
+
     return saved;
   }
 

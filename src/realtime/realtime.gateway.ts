@@ -97,4 +97,22 @@ export class RealtimeGateway
       lng,
     });
   }
+
+  /**
+   * Called by backend services when an order is completed/delivered.
+   * Emits a completion event and cleans up Redis.
+   */
+  async notifyOrderComplete(orderId: number) {
+    const roomName = `order_${orderId}`;
+    this.logger.log(
+      `Order ${orderId} completed. Cleaning up room ${roomName}.`,
+    );
+
+    // Emit final event so clients know to stop tracking
+    this.server.to(roomName).emit('orderCompleted', { orderId });
+
+    // Clean up Redis key immediately
+    const redisKey = `location:order:${orderId}`;
+    await this.redisService.del(redisKey);
+  }
 }

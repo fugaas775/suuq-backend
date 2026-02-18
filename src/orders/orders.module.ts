@@ -1,6 +1,7 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Order, OrderItem } from './entities/order.entity';
+import { Dispute } from './entities/dispute.entity';
 import { OrdersController } from './orders.controller';
 import { OrdersService } from './orders.service';
 import { CartModule } from '../cart/cart.module';
@@ -16,6 +17,7 @@ import { UiSetting } from '../settings/entities/ui-setting.entity';
 import { EbirrModule } from '../ebirr/ebirr.module';
 import { UsersModule } from '../users/users.module';
 import { WalletModule } from '../wallet/wallet.module';
+import { CreditModule } from '../credit/credit.module';
 import { Message } from '../chat/entities/message.entity';
 import { Conversation } from '../chat/entities/conversation.entity';
 
@@ -24,6 +26,7 @@ import { Conversation } from '../chat/entities/conversation.entity';
     TypeOrmModule.forFeature([
       Order,
       OrderItem,
+      Dispute,
       UiSetting,
       Message,
       Conversation,
@@ -40,6 +43,7 @@ import { Conversation } from '../chat/entities/conversation.entity';
     CurrencyModule,
     EmailModule,
     WalletModule,
+    CreditModule,
   ],
   controllers: [OrdersController],
   providers: [OrdersService],

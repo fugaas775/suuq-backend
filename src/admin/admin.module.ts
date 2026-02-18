@@ -6,6 +6,7 @@ import { RolesGuard } from '../auth/roles.guard';
 // 1. Import the modules that provide the services you need
 import { UsersModule } from '../users/users.module';
 import { OrdersModule } from '../orders/orders.module';
+import { DelivererModule } from '../deliverer/deliverer.module';
 import { AdminCurationController } from './curation.controller';
 import { ProductImpression } from '../products/entities/product-impression.entity';
 import { Product } from '../products/entities/product.entity';
@@ -45,6 +46,8 @@ import { EmailModule } from '../email/email.module';
 import { BullModule } from '@nestjs/bullmq';
 import { EbirrTransaction } from '../payments/entities/ebirr-transaction.entity';
 import { AdminEbirrAuditController } from './ebirr-audit.controller';
+import { CreditModule } from '../credit/credit.module';
+import { AdminCreditController } from './credit.admin.controller';
 
 @Module({
   // 2. Add UsersModule and OrdersModule here
@@ -52,6 +55,7 @@ import { AdminEbirrAuditController } from './ebirr-audit.controller';
     BullModule.registerQueue({ name: 'emails' }, { name: 'notifications' }),
     UsersModule,
     OrdersModule,
+    DelivererModule,
     ProductsModule,
     VendorModule,
     AuditModule,
@@ -63,6 +67,7 @@ import { AdminEbirrAuditController } from './ebirr-audit.controller';
     NotificationsModule,
     CurrencyModule,
     EmailModule,
+    CreditModule,
     TypeOrmModule.forFeature([
       Product,
       ProductImpression,
@@ -92,6 +97,7 @@ import { AdminEbirrAuditController } from './ebirr-audit.controller';
     AdminNotificationsController,
     AdminSystemController,
     AdminEbirrAuditController,
+    AdminCreditController,
   ],
   // 3. Remove the services from providers. They are now correctly provided by the imported modules.
   providers: [

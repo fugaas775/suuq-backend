@@ -23,11 +23,11 @@ import * as path from 'path';
 const execFile = promisify(_execFile);
 const sharpExec: any = (sharpModule as any)?.default ?? (sharpModule as any);
 
-@Controller('media')
+@Controller()
 export class MediaController {
   constructor(private readonly doSpacesService: DoSpacesService) {}
 
-  @Post('upload')
+  @Post(['media/upload', 'upload'])
   @UseGuards(JwtAuthGuard)
   @UseInterceptors(FileInterceptor('file'))
   @UseFilters(MulterExceptionFilter)
@@ -75,6 +75,7 @@ export class MediaController {
 
     const isImage = mime?.startsWith('image/');
     const isVideo = mime?.startsWith('video/');
+    const isDocument = mime === 'application/pdf';
 
     const allowedImage = new Set([
       'image/jpeg',
@@ -104,9 +105,9 @@ export class MediaController {
       );
     }
 
-    if (!isImage && !isVideo) {
+    if (!isImage && !isVideo && !isDocument) {
       throw new BadRequestException(
-        'Unsupported file type. Only images or videos are allowed.',
+        'Unsupported file type. Only images, videos, or PDFs are allowed.',
       );
     }
 
@@ -214,6 +215,17 @@ export class MediaController {
         urls: [fullUrl],
         posterSrc: posterUrl,
         posterUrl: posterUrl,
+      };
+    }
+
+    if (isDocument) {
+      void fs.promises.unlink(file.path).catch(() => {});
+      return {
+        kind: 'document',
+        src: fullUrl,
+        url: fullUrl,
+        urls: [fullUrl],
+        mimeType: mime,
       };
     }
 

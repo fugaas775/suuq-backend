@@ -10,7 +10,10 @@ import {
   Query,
   UseInterceptors,
   Logger,
+  UploadedFile,
+  BadRequestException,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 // import { RolesGuard } from '../auth/roles.guard';
 // import { Roles } from '../common/decorators/roles.decorator';
 // import { UserRole } from '../auth/roles.enum';
@@ -83,6 +86,24 @@ export class OrdersController {
     return this.ordersService.findOneForUser(req.user.id, id, currency);
   }
 
+  @Post(':id/payment-proof')
+  @UseInterceptors(FileInterceptor('file'))
+  @ApiParam({ name: 'id', type: Number })
+  @ApiOkResponse({
+    description: 'Upload payment proof (bank transfer screenshot)',
+  })
+  async uploadPaymentProof(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', ParseIntPipe) id: number,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    if (!file) {
+      throw new BadRequestException('File is required');
+    }
+    this.logger.debug(`Upload payment proof for order #${id}`);
+    return this.ordersService.uploadPaymentProof(req.user.id, id, file);
+  }
+
   // Buyer-gated: return a short-lived attachment URL for a purchased digital product.
   @Get(':orderId/items/:itemId/signed-download')
   @ApiParam({ name: 'orderId', type: Number })
@@ -103,5 +124,44 @@ export class OrdersController {
       itemId,
       ttl,
     );
+  }
+
+  @Post(':id/dispute')
+  @ApiParam({ name: 'id', type: Number })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: { reason: { type: 'string' }, details: { type: 'string' } },
+    },
+  })
+  @ApiOkResponse({ description: 'Dispute an order' })
+  async disputeOrder(
+    @Param('id', ParseIntPipe) id: number,
+    @Body('reason') reason: string,
+    @Body('details') details?: string,
+  ) {
+    return this.ordersService.disputeOrder(id, reason, details);
+  }
+
+  @Post('dispute/:id/resolve')
+  @ApiParam({ name: 'id', type: Number, description: 'Dispute ID' })
+  @ApiOkResponse({ description: 'Resolve dispute (Vendor wins)' })
+  async resolveDispute(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', ParseIntPipe) id: number,
+    @Body('resolutionNotes') resolutionNotes?: string,
+  ) {
+    return this.ordersService.resolveDispute(id, req.user.id, resolutionNotes);
+  }
+
+  @Post('dispute/:id/refund')
+  @ApiParam({ name: 'id', type: Number, description: 'Dispute ID' })
+  @ApiOkResponse({ description: 'Refund dispute (Buyer wins)' })
+  async refundDispute(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', ParseIntPipe) id: number,
+    @Body('resolutionNotes') resolutionNotes?: string,
+  ) {
+    return this.ordersService.refundDispute(id, req.user.id, resolutionNotes);
   }
 }

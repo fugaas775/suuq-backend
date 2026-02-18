@@ -9,6 +9,7 @@ export type OrderStatusNotificationPayload = {
 export function buildOrderStatusNotification(
   orderId: number,
   status: OrderStatus,
+  deliveryCode?: string,
 ): OrderStatusNotificationPayload {
   const id = Number(orderId);
   const idStr = Number.isFinite(id) ? String(id) : String(orderId);
@@ -33,12 +34,19 @@ export function buildOrderStatusNotification(
         body: `Your order #${idStr} has been shipped!`,
         data: { ...baseData },
       };
-    case OrderStatus.OUT_FOR_DELIVERY:
+    case OrderStatus.OUT_FOR_DELIVERY: {
+      const body = deliveryCode
+        ? `Order #${idStr} is out for delivery. Your code is ${deliveryCode}.`
+        : `Order #${idStr} is out for delivery.`;
+      const data = deliveryCode
+        ? { ...baseData, deliveryCode }
+        : { ...baseData };
       return {
         title: 'Order Update',
-        body: `Order #${idStr} is out for delivery.`,
-        data: { ...baseData },
+        body,
+        data,
       };
+    }
     case OrderStatus.DELIVERED:
       return {
         title: 'Delivered',

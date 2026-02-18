@@ -12,6 +12,7 @@ import { MediaModule } from '../media/media.module';
 import { UsersModule } from '../users/users.module';
 
 import { PayoutLog } from './entities/payout-log.entity';
+import { Settlement } from './entities/settlement.entity';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { PayoutLog } from './entities/payout-log.entity';
       WalletTransaction,
       TopUpRequest,
       PayoutLog,
+      Settlement,
       User,
       UiSetting,
     ]),

@@ -52,7 +52,7 @@ export class EbirrService {
       }
     }
 
-    this.logger.log('Checking for pending Ebirr transactions...');
+    this.logger.debug('Checking for pending Ebirr transactions...');
     const tenMinutesAgo = subMinutes(new Date(), 10);
 
     const pendingTransactions = await this.ebirrTransactionRepo.find({

@@ -20,6 +20,7 @@ import {
   Header,
   UseInterceptors,
   Res,
+  Req,
 } from '@nestjs/common';
 import { UsersService } from '../users/users.service';
 import { SkipThrottle } from '@nestjs/throttler';
@@ -37,6 +38,7 @@ import { FindUsersQueryDto } from '../users/dto/find-users-query.dto';
 import { Response } from 'express';
 import { CurrencyService } from '../common/services/currency.service';
 import { ProductsService } from '../products/products.service';
+import { DelivererService } from '../deliverer/deliverer.service';
 
 // ✨ FINAL FIX: Use AuthGuard('jwt') to match your other working controllers
 @UseGuards(AuthGuard('jwt'), RolesGuard)
@@ -50,6 +52,7 @@ export class AdminController {
     private readonly ordersService: OrdersService,
     private readonly currencyService: CurrencyService,
     private readonly productsService: ProductsService,
+    private readonly delivererService: DelivererService,
   ) {}
 
   // Prefer a specific route before the generic :id matcher to avoid ParseIntPipe errors
@@ -300,6 +303,9 @@ export class AdminController {
       page?: number;
       pageSize?: number;
       status?: string;
+      paymentMethod?: string;
+      paymentStatus?: string;
+      hasPaymentProof?: boolean | string;
       sort?: string;
       sortBy?: string;
       orderBy?: string;
@@ -309,6 +315,13 @@ export class AdminController {
   ) {
     const result = await this.ordersService.findAllForAdmin(query as any);
     return { orders: result.data, total: result.total };
+  }
+
+  @Post('orders/:id/approve-payment')
+  @HttpCode(HttpStatus.OK)
+  async approvePayment(@Param('id', ParseIntPipe) id: number) {
+    await this.ordersService.approveBankTransfer(id);
+    return { success: true };
   }
 
   @Patch('orders/:id/cancel')
@@ -404,6 +417,20 @@ export class AdminController {
     return this.ordersService.assignDeliverer(id, delivererId);
   }
 
+  @Get('disputes')
+  async getDisputes(
+    @Query('page') page = 1,
+    @Query('limit') limit = 10,
+    @Query('status') status?: string,
+  ) {
+    const result = await this.ordersService.findAllDisputesForAdmin({
+      page,
+      limit,
+      status,
+    });
+    return { disputes: result.data, total: result.total };
+  }
+
   // ================== PLATFORM STATS ENDPOINT ==================
   @Get('stats')
   async getStats(): Promise<AdminStatsDto> {
@@ -471,5 +498,24 @@ export class AdminController {
     dto: import('../vendor/dto/update-order-item-tracking.dto').UpdateOrderItemTrackingDto,
   ) {
     return this.ordersService.updateOrderItemTracking(orderId, itemId, dto);
+  }
+
+  @Post('orders/:orderId/bypass-delivery')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  async bypassDelivery(
+    @Param('orderId', ParseIntPipe) orderId: number,
+    @Body('reason') reason: string,
+    @Req() req: any,
+  ) {
+    if (!reason || reason.length < 5) {
+      throw new BadRequestException(
+        'A valid reason is required for audit logs',
+      );
+    }
+    return this.delivererService.adminForceDelivery(
+      orderId,
+      req.user.id,
+      reason,
+    );
   }
 }

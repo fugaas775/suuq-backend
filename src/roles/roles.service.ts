@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unsafe-assignment */
 import {
   Injectable,
   BadRequestException,
@@ -12,6 +13,7 @@ import {
 import { UsersService } from '../users/users.service';
 import { RequestRoleUpgradeDto } from './dto/request-upgrade.dto';
 import { UserRole } from '../auth/roles.enum';
+import { VendorStaffService } from '../vendor/vendor-staff.service';
 
 @Injectable()
 export class RolesService {
@@ -19,6 +21,7 @@ export class RolesService {
     @InjectRepository(RoleUpgradeRequest)
     private readonly upgradeRepo: Repository<RoleUpgradeRequest>,
     private readonly usersService: UsersService,
+    private readonly vendorStaffService: VendorStaffService,
   ) {}
 
   async requestUpgrade(userId: number, dto: RequestRoleUpgradeDto) {
@@ -81,8 +84,12 @@ export class RolesService {
     if (newRoles.includes(UserRole.VENDOR)) {
       newRoles = newRoles.filter((r) => r !== UserRole.CUSTOMER);
     }
-    
+
     await this.usersService.updateUserRoles(user.id, newRoles);
+
+    if (newRoles.includes(UserRole.VENDOR)) {
+      await this.vendorStaffService.bootstrapOwner(user);
+    }
     return req;
   }
 
@@ -136,6 +143,11 @@ export class RolesService {
         newRoles = newRoles.filter((r) => r !== UserRole.CUSTOMER);
       }
       await this.usersService.updateUserRoles(user.id, newRoles);
+
+      if (newRoles.includes(UserRole.VENDOR)) {
+        await this.vendorStaffService.bootstrapOwner(user);
+      }
+
       return saved;
     }
 
@@ -147,13 +159,16 @@ export class RolesService {
       decidedBy: actedBy,
     });
     const saved = await this.upgradeRepo.save(request);
-    let newRoles = Array.from(
-      new Set([...(user.roles || []), ...saved.roles]),
-    );
+    let newRoles = Array.from(new Set([...(user.roles || []), ...saved.roles]));
     if (newRoles.includes(UserRole.VENDOR)) {
       newRoles = newRoles.filter((r) => r !== UserRole.CUSTOMER);
     }
     await this.usersService.updateUserRoles(user.id, newRoles);
+
+    if (newRoles.includes(UserRole.VENDOR)) {
+      await this.vendorStaffService.bootstrapOwner(user);
+    }
+
     return saved;
   }
 

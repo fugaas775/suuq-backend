@@ -218,6 +218,8 @@ export class ProductsService {
         'product.furnished',
         'product.rentPeriod',
         'product.createdAt',
+        'product.createdById',
+        'product.createdByName',
         'vendor.id',
         'vendor.displayName',
         'vendor.storeName',
@@ -400,12 +402,13 @@ export class ProductsService {
 
   // ✅ NEW create method
   async create(
-    data: CreateProductDto & { vendorId: number },
+    data: CreateProductDto & { vendorId: number; createdBy?: Partial<User> },
   ): Promise<Product> {
     const {
       tags = [],
       images = [],
       vendorId,
+      createdBy,
       categoryId,
       listingType,
       bedrooms,
@@ -429,6 +432,19 @@ export class ProductsService {
     const vendor = await this.userRepo.findOneBy({ id: vendorId });
     if (!vendor) {
       throw new NotFoundException('Vendor not found');
+    }
+
+    // Capture creator info if different from vendor (e.g. staff member)
+    let createdById: number | undefined;
+    let createdByName: string | undefined;
+
+    if (createdBy && createdBy.id !== vendor.id) {
+      createdById = createdBy.id;
+      // Prefer display name, fallback to contact name or email part
+      createdByName =
+        createdBy.displayName ||
+        createdBy.contactName ||
+        createdBy.email.split('@')[0];
     }
 
     // Check certification status and product limit
@@ -504,6 +520,8 @@ export class ProductsService {
       ...rest,
       status,
       vendor,
+      createdById,
+      createdByName,
       category,
       currency: rest.currency || vendor.currency || 'USD',
       listingType: listingType ?? null,
@@ -1512,6 +1530,8 @@ export class ProductsService {
           'product.createdAt',
           'product.moq',
           'product.dispatchDays',
+          'product.createdById',
+          'product.createdByName',
           'vendor.id',
           'vendor.email',
           'vendor.displayName',

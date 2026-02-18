@@ -25,6 +25,7 @@ export class OrderResponseDto {
   @Expose() status: OrderStatus;
   @Expose() paymentMethod: PaymentMethod;
   @Expose() paymentStatus: PaymentStatus;
+  @Expose() paymentProofUrl?: string;
   @Expose() createdAt: Date;
   @Expose() shippingAddress: any;
   @Expose() currency?: string;
@@ -43,6 +44,7 @@ export class OrderResponseDto {
   @Expose() assignedDelivererPhone?: string;
   @Expose() assignedDelivererVehicle?: string; // e.g. "Toyota Corolla" or "Bajaj"
   @Expose() userId: number;
+  @Expose() deliveryCode?: string;
   // For admin tables: vendors involved in this order
   @Expose() vendors?: Array<{
     id: number;
@@ -60,6 +62,9 @@ export class OrderResponseDto {
   @Expose() storeName?: string | null;
   @Expose() legalName?: string | null;
   @Expose() businessName?: string | null;
+  @Expose() vendorAddress?: string | null;
+  @Expose() vendorCity?: string | null;
+  @Expose() vendorCountry?: string | null;
 
   @Expose() @Type(() => OrderItemResponseDto) items: OrderItemResponseDto[];
 }

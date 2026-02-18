@@ -2,6 +2,7 @@ import {
   Injectable,
   ForbiddenException,
   NotFoundException,
+  BadRequestException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -20,6 +21,7 @@ import { Logger } from '@nestjs/common';
 import { NotificationsService } from '../notifications/notifications.service';
 import { NotificationType } from '../notifications/entities/notification.entity';
 import { buildOrderStatusNotification } from '../orders/order-notifications.util';
+import { RealtimeGateway } from '../realtime/realtime.gateway';
 
 @Injectable()
 export class DelivererService {
@@ -35,9 +37,14 @@ export class DelivererService {
     private readonly emailService: EmailService,
     private readonly currencyService: CurrencyService,
     private readonly notificationsService: NotificationsService,
+    private readonly realtimeGateway: RealtimeGateway,
   ) {}
 
-  private async notifyOrderStatusChange(order: Order, status: OrderStatus) {
+  private async notifyOrderStatusChange(
+    order: Order,
+    status: OrderStatus,
+    deliveryCode?: string,
+  ) {
     let userId = order?.user?.id;
     if (!userId) {
       const withUser = await this.orderRepository.findOne({
@@ -49,7 +56,11 @@ export class DelivererService {
 
     if (!userId) return;
 
-    const payload = buildOrderStatusNotification(order.id, status);
+    const payload = buildOrderStatusNotification(
+      order.id,
+      status,
+      deliveryCode,
+    );
     await this.notificationsService.createAndDispatch({
       userId,
       title: payload.title,
@@ -228,16 +239,248 @@ export class DelivererService {
       return order; // Already picked up
     }
 
+    // Generate 4-digit OTP
+    const code = Math.floor(1000 + Math.random() * 9000).toString();
+
     order.status = OrderStatus.OUT_FOR_DELIVERY;
+    order.deliveryCode = code;
+    order.deliveryAttemptCount = 0;
+
     await this.orderRepository.save(order);
 
-    // Notify Customer
-    await this.notifyOrderStatusChange(order, OrderStatus.OUT_FOR_DELIVERY);
+    // Notify Customer (send code)
+    await this.notifyOrderStatusChange(
+      order,
+      OrderStatus.OUT_FOR_DELIVERY,
+      code,
+    );
 
     // Notify Vendors
     await this.notifyVendorsStatusChange(order, OrderStatus.OUT_FOR_DELIVERY);
 
     return order;
+  }
+
+  async verifyDelivery(delivererId: number, orderId: number, code: string) {
+    const order = await this.orderRepository
+      .createQueryBuilder('order')
+      .where('order.id = :orderId', { orderId })
+      .addSelect('order.deliveryCode')
+      .leftJoinAndSelect('order.deliverer', 'deliverer')
+      .getOne();
+
+    if (!order) throw new NotFoundException('Order not found');
+    if (!order.deliverer || order.deliverer.id !== delivererId) {
+      throw new ForbiddenException('You are not assigned to this order');
+    }
+
+    if (order.status === OrderStatus.DELIVERED) {
+      return order;
+    }
+
+    if (order.deliveryAttemptCount >= 5) {
+      throw new BadRequestException(
+        'Too many failed attempts. Contact support.',
+      );
+    }
+
+    if (!order.deliveryCode) {
+      // If legacy order without code, we might allow bypass or require it.
+      // For this task, let's assume secure flow is required.
+      throw new BadRequestException(
+        'Delivery code not generated for this order.',
+      );
+    }
+
+    // Direct string comparison
+    const isValid = code === order.deliveryCode;
+    if (!isValid) {
+      order.deliveryAttemptCount = (order.deliveryAttemptCount || 0) + 1;
+      await this.orderRepository.save(order);
+      throw new BadRequestException('Invalid delivery code');
+    }
+
+    // Valid code, proceed to mark as delivered
+    return this.updateDeliveryStatus(
+      delivererId,
+      orderId,
+      OrderStatus.DELIVERED,
+    );
+  }
+
+  async adminForceDelivery(orderId: number, adminId: number, reason: string) {
+    this.logger.log(
+      `Admin ${adminId} forcing delivery for order ${orderId}. Reason: ${reason}`,
+    );
+    const order = await this.orderRepository.findOne({
+      where: { id: orderId },
+      relations: [
+        'deliverer',
+        'user',
+        'items',
+        'items.product',
+        'items.product.vendor',
+      ],
+    });
+    if (!order) throw new NotFoundException('Order not found');
+
+    if (order.status === OrderStatus.DELIVERED) {
+      return order;
+    }
+
+    order.status = OrderStatus.DELIVERED;
+    await this.orderRepository.save(order);
+    await this.notifyOrderStatusChange(order, OrderStatus.DELIVERED);
+
+    await this.onOrderDelivered(order);
+
+    return order;
+  }
+
+  /*
+   * Centralized logic triggered when an order is first marked DELIVERED.
+   * Handles: Socket cleanup, Emails, Sales Count, Wallet Credits.
+   */
+  private async onOrderDelivered(order: Order) {
+    // 0. Clean up Socket Room
+    await this.realtimeGateway.notifyOrderComplete(order.id);
+
+    // 1. Send Email
+    if (!order.user) {
+      const orderWithUser = await this.orderRepository.findOne({
+        where: { id: order.id },
+        relations: ['user'],
+      });
+      if (orderWithUser && orderWithUser.user) {
+        order.user = orderWithUser.user;
+      }
+    }
+    this.emailService
+      .sendOrderDelivered(order)
+      .catch((e) =>
+        this.logger.error(`Failed to send order delivered email: ${e.message}`),
+      );
+
+    // 2. Increment Sales Count
+    if (Array.isArray(order.items)) {
+      const productQuantities = new Map<number, number>();
+      for (const it of order.items) {
+        const pid = (it as any).product?.id;
+        if (pid) {
+          productQuantities.set(
+            pid,
+            (productQuantities.get(pid) || 0) + (it.quantity || 0),
+          );
+        }
+      }
+      if (productQuantities.size > 0) {
+        for (const [productId, qty] of productQuantities.entries()) {
+          await this.productRepository
+            .createQueryBuilder()
+            .update(Product)
+            .set({
+              sales_count: () =>
+                `COALESCE(sales_count, 0) + ${Math.max(0, qty)}`,
+            })
+            .where('id = :productId', { productId })
+            .execute();
+        }
+      }
+
+      // 3. Credit Wallets (Vendor & Deliverer)
+      const deliveryFeeVal = await this.settingsService.getSetting(
+        'delivery_base_fee',
+        50,
+      );
+      const commissionPercent =
+        Number(
+          await this.settingsService.getSystemSetting(
+            'VENDOR_COMMISSION_PERCENT',
+          ),
+        ) || 5;
+      const orderCurrency = order.currency || 'ETB';
+
+      // Group items by Vendor
+      const vendorEarnings = new Map<number, number>();
+      for (const item of order.items || []) {
+        const vendorId = (item.product as any)?.vendor?.id;
+        if (vendorId) {
+          const itemTotal = Number(item.price) * Number(item.quantity);
+          vendorEarnings.set(
+            vendorId,
+            (vendorEarnings.get(vendorId) || 0) + itemTotal,
+          );
+        }
+      }
+
+      // Credit Vendors
+      for (const [vendorId, total] of vendorEarnings.entries()) {
+        const gross = total;
+        const commission = gross * (commissionPercent / 100);
+        const net = gross - commission;
+
+        if (net > 0) {
+          try {
+            const vendorWallet = await this.walletService.getWallet(vendorId);
+            const walletCurrency = vendorWallet.currency || 'KES';
+            let amountToCredit = net;
+            if (orderCurrency !== walletCurrency) {
+              amountToCredit = this.currencyService.convert(
+                net,
+                orderCurrency,
+                walletCurrency,
+              );
+            }
+            await this.walletService.creditWallet(
+              vendorId,
+              amountToCredit,
+              TransactionType.EARNING,
+              `Earnings from Order #${order.id} (${orderCurrency} ${net.toFixed(
+                2,
+              )})`,
+              order.id,
+            );
+          } catch (e: any) {
+            this.logger.error(
+              `Failed to credit vendor ${vendorId}: ${e.message}`,
+            );
+          }
+        }
+      }
+
+      // Credit Deliverer
+      const delivererId = order.deliverer?.id;
+      if (delivererId) {
+        const DELIVERY_FEE = Number(deliveryFeeVal);
+        if (DELIVERY_FEE > 0) {
+          try {
+            const delivererWallet =
+              await this.walletService.getWallet(delivererId);
+            const walletCurrency = delivererWallet.currency || 'KES';
+            const baseFeeCurrency = 'ETB';
+            let amountToCredit = DELIVERY_FEE;
+            if (baseFeeCurrency !== walletCurrency) {
+              amountToCredit = this.currencyService.convert(
+                DELIVERY_FEE,
+                baseFeeCurrency,
+                walletCurrency,
+              );
+            }
+            await this.walletService.creditWallet(
+              delivererId,
+              amountToCredit,
+              TransactionType.EARNING,
+              `Delivery Fee for Order #${order.id}`,
+              order.id,
+            );
+          } catch (e: any) {
+            this.logger.error(
+              `Failed to credit deliverer ${delivererId}: ${e.message}`,
+            );
+          }
+        }
+      }
+    }
   }
 
   async updateDeliveryStatus(
@@ -265,156 +508,7 @@ export class DelivererService {
     await this.notifyOrderStatusChange(order, newStatus);
 
     if (!wasDelivered && newStatus === OrderStatus.DELIVERED) {
-      // Need to re-fetch user for email if not in relations (or trust it's there via ManyToOne eager? Order.user is eager but query didn't request it explicitly, however eager loads unless disabled. Let's start with checking relations above... relations doesn't list 'user'. But entity has eager: true. So it should be there.)
-      // To be safe, let's ensure we have the user email.
-      if (!order.user) {
-        const orderWithUser = await this.orderRepository.findOne({
-          where: { id: orderId },
-          relations: ['user'],
-        });
-        if (orderWithUser && orderWithUser.user) {
-          order.user = orderWithUser.user;
-        }
-      }
-      this.emailService
-        .sendOrderDelivered(order)
-        .catch((e) =>
-          this.logger.error(
-            `Failed to send order delivered email: ${e.message}`,
-          ),
-        );
-    }
-
-    // If transitioning to DELIVERED for the first time, increment product sales_count by item quantities
-    if (
-      !wasDelivered &&
-      newStatus === OrderStatus.DELIVERED &&
-      Array.isArray(order.items)
-    ) {
-      // 1. Increment Sales Count
-      const productQuantities = new Map<number, number>();
-      for (const it of order.items) {
-        const pid = (it as any).product?.id;
-        if (pid) {
-          productQuantities.set(
-            pid,
-            (productQuantities.get(pid) || 0) + (it.quantity || 0),
-          );
-        }
-      }
-      if (productQuantities.size > 0) {
-        for (const [productId, qty] of productQuantities.entries()) {
-          await this.productRepository
-            .createQueryBuilder()
-            .update(Product)
-            .set({
-              sales_count: () =>
-                `COALESCE(sales_count, 0) + ${Math.max(0, qty)}`,
-            })
-            .where('id = :productId', { productId })
-            .execute();
-        }
-      }
-
-      // 2. Credit Wallets (Vendor & Deliverer)
-      // Fetch dynamic settings (defaults: 50 base fee)
-      const deliveryFeeVal = await this.settingsService.getSetting(
-        'delivery_base_fee',
-        50,
-      );
-      const commissionPercent =
-        Number(
-          await this.settingsService.getSystemSetting(
-            'VENDOR_COMMISSION_PERCENT',
-          ),
-        ) || 5; // Default 5% commission
-      const orderCurrency = order.currency || 'ETB';
-
-      // Group items by Vendor
-      const vendorEarnings = new Map<number, number>();
-      for (const item of order.items || []) {
-        const vendorId = (item.product as any)?.vendor?.id;
-        if (vendorId) {
-          const itemTotal = Number(item.price) * Number(item.quantity);
-          vendorEarnings.set(
-            vendorId,
-            (vendorEarnings.get(vendorId) || 0) + itemTotal,
-          );
-        }
-      }
-
-      // Credit Vendors
-      for (const [vendorId, total] of vendorEarnings.entries()) {
-        const gross = total;
-        // Apply commission
-        const commission = gross * (commissionPercent / 100);
-        const net = gross - commission;
-
-        if (net > 0) {
-          try {
-            // Convert currency
-            const vendorWallet = await this.walletService.getWallet(vendorId);
-            const walletCurrency = vendorWallet.currency || 'KES';
-
-            let amountToCredit = net;
-            if (orderCurrency !== walletCurrency) {
-              amountToCredit = this.currencyService.convert(
-                net,
-                orderCurrency,
-                walletCurrency,
-              );
-            }
-
-            await this.walletService.creditWallet(
-              vendorId,
-              amountToCredit,
-              TransactionType.EARNING,
-              `Earnings from Order #${orderId} (${orderCurrency} ${net.toFixed(
-                2,
-              )})`,
-              order.id,
-            );
-          } catch (e: any) {
-            this.logger.error(
-              `Failed to credit vendor ${vendorId}: ${e.message}`,
-            );
-          }
-        }
-      }
-
-      // Credit Deliverer
-      const DELIVERY_FEE = Number(deliveryFeeVal);
-      // No commission on delivery fee
-      if (DELIVERY_FEE > 0) {
-        try {
-          const delivererWallet =
-            await this.walletService.getWallet(delivererId);
-          const walletCurrency = delivererWallet.currency || 'KES';
-          // Assume Base Fee is in 'ETB' for EA market context
-          const baseFeeCurrency = 'ETB';
-
-          let amountToCredit = DELIVERY_FEE;
-          if (baseFeeCurrency !== walletCurrency) {
-            amountToCredit = this.currencyService.convert(
-              DELIVERY_FEE,
-              baseFeeCurrency,
-              walletCurrency,
-            );
-          }
-
-          await this.walletService.creditWallet(
-            delivererId,
-            amountToCredit,
-            TransactionType.EARNING,
-            `Delivery Fee for Order #${orderId}`,
-            order.id,
-          );
-        } catch (e: any) {
-          this.logger.error(
-            `Failed to credit deliverer ${delivererId}: ${e.message}`,
-          );
-        }
-      }
+      await this.onOrderDelivered(order);
     }
 
     // Return enriched detail including vendor summaries

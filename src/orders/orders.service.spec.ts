@@ -2,7 +2,9 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { OrdersService } from './orders.service';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { Order, OrderItem } from './entities/order.entity';
+import { Dispute } from './entities/dispute.entity';
 import { CartService } from '../cart/cart.service';
+import { CreditService } from '../credit/credit.service';
 import { MpesaService } from '../mpesa/mpesa.service';
 import { TelebirrService } from '../telebirr/telebirr.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -26,7 +28,9 @@ describe('OrdersService', () => {
         OrdersService,
         { provide: getRepositoryToken(Order), useValue: {} },
         { provide: getRepositoryToken(OrderItem), useValue: {} },
+        { provide: getRepositoryToken(Dispute), useValue: {} },
         { provide: CartService, useValue: {} },
+        { provide: CreditService, useValue: {} },
         { provide: MpesaService, useValue: {} },
         { provide: TelebirrService, useValue: {} },
         { provide: NotificationsService, useValue: {} },

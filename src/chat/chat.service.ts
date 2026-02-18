@@ -245,24 +245,11 @@ export class ChatService {
       throw new ForbiddenException('Not a participant');
     }
 
-    // DLP: Prevent sharing contact info (Commission Guard)
-    // Blocks phone numbers for Ethiopia, Kenya, Somalia, Djibouti
-    // Uses relaxed matching to catch attempts like "09-11-22" or "254 7..."
-    const PHONE_REGEX = new RegExp(
-      [
-        // Ethiopia: +251 or 0 + (9 or 7) + 8 digits
-        /(?:\b(?:\+?251)|0)(?:[\s.-]*)(?:9|7)(?:[\s.-]*\d){8}\b/.source,
-        // Kenya: +254 or 0 + (7 or 1) + 8 digits
-        /(?:\b(?:\+?254)|0)(?:[\s.-]*)(?:7|1)(?:[\s.-]*\d){8}\b/.source,
-        // Somalia: +252 or 0 + (6x, 79, 90) + 7 digits
-        /(?:\b(?:\+?252)|0)?(?:[\s.-]*)(?:6\d|79|90)(?:[\s.-]*\d){7}\b/.source,
-        // Djibouti: +253 + 77 + 6 digits (fixed length 8 usually, international code common)
-        /(?:\b(?:\+?253)|0?)(?:[\s.-]*)77(?:[\s.-]*\d){6}\b/.source,
-      ].join('|'),
-      'i', // Case insensitive just in case
-    );
-    const EMAIL_REGEX = /[a-zA-Z0-9._%+-]+@(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}/;
+    // DLP: Prevent sharing contact info (Commission Guard) - DISABLED based on new requirement
+    // const PHONE_REGEX = new RegExp(...)
+    // const EMAIL_REGEX = /[a-zA-Z0-9._%+-]+@(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}/;
 
+    /*
     if (
       type === MessageType.TEXT &&
       (PHONE_REGEX.test(content) || EMAIL_REGEX.test(content))
@@ -284,6 +271,7 @@ export class ChatService {
         'For your safety, please keep transactions within Suuq. Sharing contact information is not allowed.',
       );
     }
+    */
 
     const message = this.messageRepo.create({
       conversation,

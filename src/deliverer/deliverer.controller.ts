@@ -7,6 +7,7 @@ import {
   Req,
   UseGuards,
   ParseIntPipe,
+  BadRequestException,
 } from '@nestjs/common';
 import { DelivererService } from './deliverer.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -77,12 +78,29 @@ export class DelivererController {
 
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.DELIVERER)
+  @Patch('deliverer/orders/:orderId/verify')
+  async verifyDelivery(
+    @Req() req: any,
+    @Param('orderId', ParseIntPipe) orderId: number,
+    @Body('code') code: string,
+  ) {
+    if (!code) throw new BadRequestException('Code is required');
+    return this.delivererService.verifyDelivery(req.user.id, orderId, code);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.DELIVERER)
   @Patch('deliverer/orders/:orderId/status')
   async updateDeliveryStatus(
     @Req() req: any,
     @Param('orderId', ParseIntPipe) orderId: number,
     @Body('status') status: OrderStatus,
   ) {
+    if (status === OrderStatus.DELIVERED) {
+      throw new BadRequestException(
+        'You must use the verification code to complete delivery.',
+      );
+    }
     return this.delivererService.updateDeliveryStatus(
       req.user.id,
       orderId,

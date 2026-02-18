@@ -3,6 +3,7 @@ import { CreateVendorProductDto } from './dto/create-vendor-product.dto';
 import { UpdateVendorProductDto } from './dto/update-vendor-product.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
 import { OrderStatus } from '../orders/entities/order.entity';
+import { AuthenticatedRequest } from '../auth/auth.types';
 import {
   Controller,
   Get,
@@ -22,20 +23,24 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { UserRole } from '../auth/roles.enum';
+import { VendorPermissionGuard } from './guards/vendor-permission.guard';
+import { ActiveVendor } from '../common/decorators/active-vendor.decorator';
+import { RequireVendorPermission } from './decorators/vendor-permission.decorator';
+import { VendorPermission } from './vendor-permissions.enum';
+import { User } from '../users/entities/user.entity';
 
 @Controller()
 export class VendorController {
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.VENDOR, UserRole.CUSTOMER)
+  @UseGuards(JwtAuthGuard, VendorPermissionGuard)
+  @RequireVendorPermission(VendorPermission.VIEW_ANALYTICS)
   @Get('vendor/sales-graph')
   async getSalesGraph(
     @Query('range') range: string,
     @Query('status') status: string,
-    @Req() req: any,
+    @ActiveVendor() vendor: User,
   ) {
-    const userId = req.user.id;
     const graphData = await this.vendorService.getSalesGraphData(
-      userId,
+      vendor.id,
       range,
       status,
     );
@@ -95,38 +100,38 @@ export class VendorController {
     @Query('currency') currency?: string,
     @Query('search') search?: string,
   ) {
-    return this.vendorService.getVendorProducts(
-      req.user.id,
-      currency,
-      search,
-    );
+    return this.vendorService.getVendorProducts(req.user.id, currency, search);
   }
 
   // New: managed listing with search + publish status filters and pagination
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.VENDOR)
+  @UseGuards(JwtAuthGuard, VendorPermissionGuard)
+  @RequireVendorPermission(VendorPermission.MANAGE_PRODUCTS)
   @Get('vendor/products/manage')
   async getVendorProductsManage(
-    @Req() req: any,
+    @ActiveVendor() vendor: User,
     @Query()
     q: import('./dto/vendor-products-query.dto').VendorProductsQueryDto,
   ) {
-    return this.vendorService.getVendorProductsManage(req.user.id, q);
+    return this.vendorService.getVendorProductsManage(vendor.id, q);
   }
 
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.VENDOR, UserRole.CUSTOMER)
+  @UseGuards(JwtAuthGuard, VendorPermissionGuard)
+  @RequireVendorPermission(VendorPermission.MANAGE_PRODUCTS)
   @Post('vendor/products')
-  async createMyProduct(@Req() req: any, @Body() dto: CreateVendorProductDto) {
-    return this.vendorService.createMyProduct(req.user.id, dto);
+  async createMyProduct(
+    @ActiveVendor() vendor: User,
+    @Body() dto: CreateVendorProductDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.vendorService.createMyProduct(vendor.id, dto, req.user as any);
   }
 
   // Fetch a single product owned by the current vendor (for edit prefill)
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.VENDOR, UserRole.CUSTOMER)
+  @UseGuards(JwtAuthGuard, VendorPermissionGuard)
+  @RequireVendorPermission(VendorPermission.MANAGE_PRODUCTS)
   @Get('vendor/products/:productId')
   async getMyProduct(
-    @Req() req: any,
+    @ActiveVendor() vendor: User,
     @Param('productId', ParseIntPipe) productId: number,
     @Query('playable') playable?: string,
     @Query('ttl') ttl?: string,
@@ -138,39 +143,39 @@ export class VendorController {
       60,
       Math.min(parseInt(String(ttl || '300'), 10) || 300, 3600),
     );
-    return this.vendorService.getMyProduct(req.user.id, productId, {
+    return this.vendorService.getMyProduct(vendor.id, productId, {
       playable: wantsPlayable,
       ttlSecs,
     });
   }
 
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.VENDOR, UserRole.CUSTOMER)
+  @UseGuards(JwtAuthGuard, VendorPermissionGuard)
+  @RequireVendorPermission(VendorPermission.MANAGE_PRODUCTS)
   @Delete('vendor/products/:productId')
   async deleteMyProduct(
-    @Req() req: any,
+    @ActiveVendor() vendor: User,
     @Param('productId', ParseIntPipe) productId: number,
   ) {
-    return this.vendorService.deleteMyProduct(req.user.id, productId);
+    return this.vendorService.deleteMyProduct(vendor.id, productId);
   }
 
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.VENDOR, UserRole.CUSTOMER)
+  @UseGuards(JwtAuthGuard, VendorPermissionGuard)
+  @RequireVendorPermission(VendorPermission.MANAGE_PRODUCTS)
   @Patch('vendor/products/:productId')
   async updateMyProduct(
-    @Req() req: any,
+    @ActiveVendor() vendor: User,
     @Param('productId', ParseIntPipe) productId: number,
     @Body() dto: UpdateVendorProductDto,
   ) {
-    return this.vendorService.updateMyProduct(req.user.id, productId, dto);
+    return this.vendorService.updateMyProduct(vendor.id, productId, dto);
   }
 
   // Quick publish/unpublish toggle
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.VENDOR, UserRole.CUSTOMER)
+  @UseGuards(JwtAuthGuard, VendorPermissionGuard)
+  @RequireVendorPermission(VendorPermission.MANAGE_PRODUCTS)
   @Patch('vendor/products/:productId/publish')
   async togglePublish(
-    @Req() req: any,
+    @ActiveVendor() vendor: User,
     @Param('productId', ParseIntPipe) productId: number,
     @Body() body: { publish?: boolean; status?: 'publish' | 'draft' },
   ) {
@@ -180,14 +185,14 @@ export class VendorController {
           ? 'publish'
           : 'draft'
         : body?.status || 'publish';
-    return this.vendorService.setPublishStatus(req.user.id, productId, desired);
+    return this.vendorService.setPublishStatus(vendor.id, productId, desired);
   }
 
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.VENDOR, UserRole.CUSTOMER)
+  @UseGuards(JwtAuthGuard, VendorPermissionGuard)
+  @RequireVendorPermission(VendorPermission.VIEW_FINANCE)
   @Get('vendor/sales')
-  getSales(@Req() req: any) {
-    return this.vendorService.getSales(req.user.id);
+  getSales(@ActiveVendor() vendor: User) {
+    return this.vendorService.getSales(vendor.id);
   }
 
   // Allow vendors to search available deliverers (users with DELIVERER role)
@@ -222,17 +227,17 @@ export class VendorController {
   }
 
   // ===== Vendor Orders =====
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.VENDOR, UserRole.CUSTOMER)
+  @UseGuards(JwtAuthGuard, VendorPermissionGuard)
+  @RequireVendorPermission(VendorPermission.VIEW_ORDERS)
   @Get('vendor/orders')
   async getVendorOrders(
-    @Req() req: any,
+    @ActiveVendor() vendor: User,
     @Query('page') page = 1,
     @Query('limit') limit = 20,
     @Query('status') status?: OrderStatus,
     @Query('currency') currency?: string,
   ) {
-    return this.vendorService.getVendorOrders(req.user.id, {
+    return this.vendorService.getVendorOrders(vendor.id, {
       page: Number(page),
       limit: Number(limit),
       status,
@@ -240,38 +245,34 @@ export class VendorController {
     });
   }
 
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.VENDOR, UserRole.CUSTOMER)
+  @UseGuards(JwtAuthGuard, VendorPermissionGuard)
+  @RequireVendorPermission(VendorPermission.VIEW_ORDERS)
   @Get('vendor/orders/:orderId')
   async getVendorOrder(
-    @Req() req: any,
+    @ActiveVendor() vendor: User,
     @Param('orderId', ParseIntPipe) orderId: number,
     @Query('currency') currency?: string,
   ) {
-    return this.vendorService.getVendorOrder(req.user.id, orderId, currency);
+    return this.vendorService.getVendorOrder(vendor.id, orderId, currency);
   }
 
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.VENDOR, UserRole.CUSTOMER)
+  @UseGuards(JwtAuthGuard, VendorPermissionGuard)
+  @RequireVendorPermission(VendorPermission.MANAGE_ORDERS)
   @Patch('vendor/orders/:orderId/status')
   async updateOrderStatus(
-    @Req() req: any,
+    @ActiveVendor() vendor: User,
     @Param('orderId', ParseIntPipe) orderId: number,
     @Body() dto: UpdateOrderStatusDto,
   ) {
-    return this.vendorService.updateOrderStatus(
-      req.user.id,
-      orderId,
-      dto.status,
-    );
+    return this.vendorService.updateOrderStatus(vendor.id, orderId, dto.status);
   }
 
   // Vendor assigns a deliverer to an order they fully own
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.VENDOR, UserRole.CUSTOMER)
+  @UseGuards(JwtAuthGuard, VendorPermissionGuard)
+  @RequireVendorPermission(VendorPermission.MANAGE_ORDERS)
   @Patch('vendor/orders/:orderId/assign-deliverer')
   async vendorAssignDeliverer(
-    @Req() req: any,
+    @ActiveVendor() vendor: User,
     @Param('orderId', ParseIntPipe) orderId: number,
     @Body() body: any,
     @Query() query?: any,
@@ -290,82 +291,82 @@ export class VendorController {
       throw new BadRequestException('delivererId is required');
     }
     return this.vendorService.assignDelivererByVendor(
-      req.user.id,
+      vendor.id,
       orderId,
       delivererId,
     );
   }
 
   // ===== Item-level endpoints =====
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.VENDOR, UserRole.CUSTOMER)
+  @UseGuards(JwtAuthGuard, VendorPermissionGuard)
+  @RequireVendorPermission(VendorPermission.VIEW_ORDERS)
   @Get('vendor/orders/:orderId/items')
   async getVendorOrderItems(
-    @Req() req: any,
+    @ActiveVendor() vendor: User,
     @Param('orderId', ParseIntPipe) orderId: number,
   ) {
-    return this.vendorService.getVendorOrderItems(req.user.id, orderId);
+    return this.vendorService.getVendorOrderItems(vendor.id, orderId);
   }
 
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.VENDOR, UserRole.CUSTOMER)
+  @UseGuards(JwtAuthGuard, VendorPermissionGuard)
+  @RequireVendorPermission(VendorPermission.MANAGE_ORDERS)
   @Patch('vendor/orders/:orderId/items/:itemId/status')
   async updateOrderItemStatus(
-    @Req() req: any,
+    @ActiveVendor() vendor: User,
     @Param('orderId', ParseIntPipe) orderId: number,
     @Param('itemId', ParseIntPipe) itemId: number,
     @Body()
     dto: import('./dto/update-order-item-status.dto').UpdateOrderItemStatusDto,
   ) {
     return this.vendorService.updateOrderItemStatus(
-      req.user.id,
+      vendor.id,
       orderId,
       itemId,
       dto.status,
     );
   }
 
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.VENDOR, UserRole.CUSTOMER)
+  @UseGuards(JwtAuthGuard, VendorPermissionGuard)
+  @RequireVendorPermission(VendorPermission.MANAGE_ORDERS)
   @Patch('vendor/orders/:orderId/items/:itemId/tracking')
   async updateOrderItemTracking(
-    @Req() req: any,
+    @ActiveVendor() vendor: User,
     @Param('orderId', ParseIntPipe) orderId: number,
     @Param('itemId', ParseIntPipe) itemId: number,
     @Body()
     dto: import('./dto/update-order-item-tracking.dto').UpdateOrderItemTrackingDto,
   ) {
     return this.vendorService.updateOrderItemTracking(
-      req.user.id,
+      vendor.id,
       orderId,
       itemId,
       dto,
     );
   }
 
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.VENDOR, UserRole.CUSTOMER)
+  @UseGuards(JwtAuthGuard, VendorPermissionGuard)
+  @RequireVendorPermission(VendorPermission.MANAGE_ORDERS)
   @Post('vendor/orders/:orderId/shipments')
   async createShipment(
-    @Req() req: any,
+    @ActiveVendor() vendor: User,
     @Param('orderId', ParseIntPipe) orderId: number,
     @Body() dto: import('./dto/create-shipment.dto').CreateShipmentDto,
   ) {
-    return this.vendorService.createShipment(req.user.id, orderId, dto.items, {
+    return this.vendorService.createShipment(vendor.id, orderId, dto.items, {
       trackingCarrier: dto.trackingCarrier,
       trackingNumber: dto.trackingNumber,
       trackingUrl: dto.trackingUrl,
     });
   }
 
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.VENDOR, UserRole.CUSTOMER)
+  @UseGuards(JwtAuthGuard, VendorPermissionGuard)
+  @RequireVendorPermission(VendorPermission.MANAGE_ORDERS)
   @Post('vendor/orders/:orderId/label')
   async generateLabel(
-    @Req() req: any,
+    @ActiveVendor() vendor: User,
     @Param('orderId', ParseIntPipe) orderId: number,
     @Body() dto: import('./dto/generate-label.dto').GenerateLabelDto,
   ) {
-    return this.vendorService.generateLabel(req.user.id, orderId, dto);
+    return this.vendorService.generateLabel(vendor.id, orderId, dto);
   }
 }

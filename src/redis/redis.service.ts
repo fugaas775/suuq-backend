@@ -86,4 +86,13 @@ export class RedisService {
       return null;
     }
   }
+
+  async del(key: string): Promise<void> {
+    if (!this.client) return;
+    try {
+      await this.client.del(key);
+    } catch {
+      // Ignore errors for optional cache ops
+    }
+  }
 }

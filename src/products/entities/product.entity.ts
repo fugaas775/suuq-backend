@@ -171,6 +171,50 @@ export class Product {
   })
   productType?: 'physical' | 'digital' | 'service' | 'property' | null;
 
+  // --- Accountability Fields ---
+  @Column({ name: 'created_by_id', nullable: true })
+  createdById?: number;
+
+  @Column({ name: 'created_by_name', nullable: true })
+  createdByName?: string;
+
+  @Expose()
+  get listedBy(): {
+    name: string;
+    type: 'owner' | 'staff' | 'store' | 'guest';
+    id?: number | null;
+  } {
+    // 1. Guest/Approved posts (explicit contact override)
+    if (this.original_creator_contact && this.original_creator_contact.name) {
+      return {
+        name: this.original_creator_contact.name,
+        type: 'guest',
+        id: null,
+      };
+    }
+
+    // 2. Staff Member / Specific User (if explicitly recorded)
+    if (this.createdByName) {
+      return {
+        name: this.createdByName,
+        type: 'staff',
+        id: this.createdById ?? null,
+      };
+    }
+
+    // 3. Fallback: Owner (The Vendor Account itself)
+    // If no createdByName is set, it means the product was created by the account holder directly
+    // or before this tracking was implemented. We default to the store/vendor identity.
+    const fallbackName =
+      this.vendor?.storeName || this.vendor?.displayName || 'Suuq Vendor';
+
+    return {
+      name: fallbackName,
+      type: 'store', // "store" implies the main account
+      id: this.vendor?.id ?? null,
+    };
+  }
+
   // --- Explicit Type Flags ---
   @Expose()
   get isDigital(): boolean {

@@ -17,6 +17,7 @@ import {
   PaymentStatus,
   DeliveryAcceptanceStatus,
 } from './entities/order.entity';
+import { Dispute, DisputeStatus } from './entities/dispute.entity';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { CartService } from '../cart/cart.service';
 import { MpesaService } from '../mpesa/mpesa.service';
@@ -45,12 +46,43 @@ import {
   PayoutStatus,
 } from '../wallet/entities/payout-log.entity';
 import { Message, MessageType } from '../chat/entities/message.entity';
+import { CreditService } from '../credit/credit.service';
 import { MoreThan, In } from 'typeorm';
 import { subMinutes } from 'date-fns';
 import { buildOrderStatusNotification } from './order-notifications.util';
 
 @Injectable()
 export class OrdersService {
+  /**
+   * Find all disputes for admin.
+   */
+  async findAllDisputesForAdmin(query: {
+    page?: number;
+    limit?: number;
+    status?: string;
+  }): Promise<{ data: Dispute[]; total: number }> {
+    const qb = this.disputeRepository
+      .createQueryBuilder('dispute')
+      .leftJoinAndSelect('dispute.order', 'order')
+      .leftJoinAndSelect('order.user', 'user')
+      .leftJoinAndSelect('order.items', 'items')
+      .leftJoinAndSelect('items.product', 'product')
+      .leftJoinAndSelect('product.vendor', 'vendor')
+      .orderBy('dispute.createdAt', 'DESC');
+
+    if (query.status) {
+      qb.andWhere('dispute.status = :status', { status: query.status });
+    }
+
+    const page = query.page && query.page > 0 ? query.page : 1;
+    const limit = query.limit && query.limit > 0 ? query.limit : 20;
+
+    qb.skip((page - 1) * limit).take(limit);
+
+    const [data, total] = await qb.getManyAndCount();
+    return { data, total };
+  }
+
   /**
    * Find all orders for admin with pagination and optional status filter.
    * Returns { orders, total } for pagination.
@@ -60,6 +92,9 @@ export class OrdersService {
     limit?: number;
     pageSize?: number;
     status?: string;
+    paymentMethod?: string;
+    paymentStatus?: string;
+    hasPaymentProof?: boolean | string;
     sort?: string;
     sortBy?: string;
     orderBy?: string;
@@ -67,11 +102,11 @@ export class OrdersService {
     order?: 'ASC' | 'DESC' | 'asc' | 'desc';
   }): Promise<{ data: OrderResponseDto[]; total: number }> {
     const qb = this.orderRepository
-      .createQueryBuilder('order')
+      .createQueryBuilder('o')
       .withDeleted() // Include soft-deleted records (e.g. deleted vendors/products)
-      .leftJoinAndSelect('order.user', 'user')
-      .leftJoinAndSelect('order.deliverer', 'deliverer')
-      .leftJoinAndSelect('order.items', 'items')
+      .leftJoinAndSelect('o.user', 'user')
+      .leftJoinAndSelect('o.deliverer', 'deliverer')
+      .leftJoinAndSelect('o.items', 'items')
       .leftJoinAndSelect('items.product', 'product')
       .leftJoinAndSelect('product.vendor', 'vendor');
 
@@ -81,8 +116,24 @@ export class OrdersService {
         .map((s) => s.trim())
         .filter(Boolean);
       if (statuses.length > 0) {
-        qb.andWhere('order.status IN (:...statuses)', { statuses });
+        qb.andWhere('o.status IN (:...statuses)', { statuses });
       }
+    }
+
+    if (query.paymentMethod) {
+      qb.andWhere('o.paymentMethod = :paymentMethod', {
+        paymentMethod: query.paymentMethod,
+      });
+    }
+
+    if (query.paymentStatus) {
+      qb.andWhere('o.paymentStatus = :paymentStatus', {
+        paymentStatus: query.paymentStatus,
+      });
+    }
+
+    if (query.hasPaymentProof === true || query.hasPaymentProof === 'true') {
+      qb.andWhere('o.paymentProofUrl IS NOT NULL');
     }
 
     // Server-side sorting so admin always sees deterministic newest-first pages
@@ -115,11 +166,11 @@ export class OrdersService {
         : 'DESC';
 
     if (requestedColumn && sortableColumns.has(requestedColumn)) {
-      qb.orderBy(`order.${requestedColumn}`, requestedOrder);
+      qb.orderBy(`o.${requestedColumn}`, requestedOrder);
     } else {
-      qb.orderBy('order.createdAt', 'DESC');
+      qb.orderBy('o.createdAt', 'DESC');
     }
-    qb.addOrderBy('order.id', 'DESC'); // tie-break for deterministic pagination
+    qb.addOrderBy('o.id', 'DESC'); // tie-break for deterministic pagination
 
     const page = query.page && query.page > 0 ? query.page : 1;
     const limitInput = query.limit ?? query.pageSize;
@@ -215,9 +266,9 @@ export class OrdersService {
    */
   async getTotalRevenue(): Promise<number> {
     const raw = await this.orderRepository
-      .createQueryBuilder('order')
-      .select('SUM(order.total)', 'sum')
-      .where('order.paymentStatus = :status', { status: PaymentStatus.PAID })
+      .createQueryBuilder('o')
+      .select('SUM(o.total)', 'sum')
+      .where('o.paymentStatus = :status', { status: PaymentStatus.PAID })
       .getRawOne<{ sum: string | number | null }>();
     const sum = raw?.sum;
     return typeof sum === 'number' ? sum : sum ? Number(sum) : 0;
@@ -235,6 +286,8 @@ export class OrdersService {
   constructor(
     @InjectRepository(Order)
     private readonly orderRepository: Repository<Order>,
+    @InjectRepository(Dispute)
+    private readonly disputeRepository: Repository<Dispute>,
     @InjectRepository(OrderItem)
     private readonly orderItemRepository: Repository<OrderItem>,
     @InjectRepository(UiSetting)
@@ -253,6 +306,7 @@ export class OrdersService {
     private readonly emailService: EmailService,
     private readonly usersService: UsersService,
     private readonly walletService: WalletService,
+    private readonly creditService: CreditService,
   ) {}
 
   private async sendConfirmationForOrder(orderId: number) {
@@ -546,6 +600,8 @@ export class OrdersService {
     }
     if (
       order.status === OrderStatus.CANCELLED ||
+      order.status === OrderStatus.CANCELLED_BY_BUYER ||
+      order.status === OrderStatus.CANCELLED_BY_SELLER ||
       order.status === OrderStatus.DELIVERED
     ) {
       throw new BadRequestException('Order cannot be cancelled');
@@ -634,6 +690,30 @@ export class OrdersService {
         this.logger.error(`Failed to send order shipped email: ${e.message}`),
       );
     return order;
+  }
+
+  async uploadPaymentProof(
+    userId: number,
+    orderId: number,
+    file: Express.Multer.File,
+  ): Promise<Order> {
+    const order = await this.orderRepository.findOne({
+      where: { id: orderId, user: { id: userId } },
+    });
+
+    if (!order) {
+      throw new NotFoundException(`Order #${orderId} not found`);
+    }
+
+    const path = `orders/${order.id}/payment-proof/${Date.now()}-${file.originalname}`;
+    const url = await this.doSpaces.uploadBody(
+      file.buffer,
+      path,
+      file.mimetype,
+    );
+
+    order.paymentProofUrl = url;
+    return this.orderRepository.save(order);
   }
 
   async createFromCart(
@@ -753,12 +833,12 @@ export class OrdersService {
     const globalCommissionSetting = await this.uiSettingRepo.findOne({
       where: { key: 'vendor_commission_percentage' },
     });
-    // Default to 5% (0.05) if not set. Setting value expected as integer 5 or decimal 0.05?
-    // User said "Vendor Commission Percentage (%)". Usually implies 5 for 5%.
-    // Safely handle both: if > 1, assume percent (e.g. 5) -> divide by 100.
+    // Default to 3% (0.03) if not set. Setting value expected as integer 3 or decimal 0.03?
+    // User said "Vendor Commission Percentage (%)". Usually implies 3 for 3%.
+    // Safely handle both: if > 1, assume percent (e.g. 3) -> divide by 100.
     const rawVal = globalCommissionSetting
       ? Number(globalCommissionSetting.value)
-      : 5;
+      : 3;
     const globalRate = rawVal > 1 ? rawVal / 100 : rawVal;
 
     const orderItems = await Promise.all(
@@ -825,7 +905,7 @@ export class OrdersService {
         const lineTotal = orderItem.price * orderItem.quantity;
 
         // Fetch Global Commission or specific
-        const defaultRate = 0.05;
+        const defaultRate = 0.03;
 
         // Inline Fetch - ideal to optimize later
         // Note: We can't await inside synchronous map without Promise.all
@@ -838,10 +918,10 @@ export class OrdersService {
             ? Number(vendor.commissionRate)
             : globalRate; // Use the fetched global rate
 
-        // EBIRR Commission Logic: Vendor 94%, Platform 5%, Ebirr 1%
-        // Total deduction = Base Rate (5%) + 1% = 6%
+        // EBIRR Commission Logic: Vendor 96%, Platform 3%, Ebirr 1%
+        // Total deduction = Base Rate (3%) + 1% = 4%
         // However, Ebirr deducts their 1% AT SOURCE (before settling to us).
-        // So if we deduct 6% from the vendor, we are effectively covering the Ebirr fee from the vendor's share.
+        // So if we deduct 4% from the vendor, we are effectively covering the Ebirr fee from the vendor's share.
         // This is correct as per business logic: Vendor pays the gateway fee.
         let gatewayRate = 0;
         if (createOrderDto.paymentMethod === 'EBIRR') {
@@ -976,6 +1056,40 @@ export class OrdersService {
       // Return receiveCode for the App SDK
       return { order: this.mapOrder(savedOrder, currency), receiveCode, checkoutUrl: receiveCode }; 
       */
+    } else if (paymentMethod === 'CREDIT') {
+      const creditInfo = await this.creditService.getLimit(userId);
+      const available = Number(creditInfo.available);
+      if (total > available) {
+        throw new BadRequestException('Insufficient credit limit.');
+      }
+
+      newOrder = this.orderRepository.create({
+        user: { id: userId } as User,
+        items: orderItems,
+        total: total,
+        shippingAddress: createOrderDto.shippingAddress,
+        paymentMethod: PaymentMethod.CREDIT,
+        paymentStatus: PaymentStatus.PAID,
+        status: OrderStatus.PENDING,
+        currency: currencyCode,
+        exchangeRate: exchangeRate,
+      });
+      const savedOrder = await this.orderRepository.save(newOrder);
+
+      try {
+        await this.creditService.useCredit(
+          userId,
+          total,
+          `ORDER-${savedOrder.id}`,
+        );
+      } catch (error) {
+        await this.orderRepository.remove(savedOrder);
+        throw error;
+      }
+
+      if (!isDirectOrder) await this.cartService.clearCart(userId);
+      this.sendConfirmationForOrder(savedOrder.id);
+      return this.mapOrder(savedOrder, currency);
     } else if (paymentMethod === 'EBIRR') {
       if (!phoneNumber || !phoneNumber.trim()) {
         throw new BadRequestException(
@@ -1023,6 +1137,7 @@ export class OrdersService {
           amount: total.toFixed(2),
           referenceId: `REF-${savedOrder.id}`,
           invoiceId: `INV-${savedOrder.id}`,
+          description: `Order #${savedOrder.id}`,
         });
       } catch (error) {
         const msg = error.message || '';
@@ -1123,7 +1238,7 @@ export class OrdersService {
       };
     } else {
       throw new BadRequestException(
-        `Unsupported payment method: ${paymentMethod}. Supported: BANK_TRANSFER, COD, MPESA, TELEBIRR, EBIRR, CBE, WAAFI, DMONEY.`,
+        `Unsupported payment method: ${paymentMethod}. Supported: CREDIT, BANK_TRANSFER, COD, MPESA, TELEBIRR, EBIRR, CBE, WAAFI, DMONEY.`,
       );
     }
   }
@@ -1175,21 +1290,28 @@ export class OrdersService {
     orderId: number,
     currency?: string,
   ): Promise<OrderResponseDto> {
-    const order = await this.orderRepository.findOne({
-      where: { id: orderId, user: { id: userId } },
-      relations: [
-        'items',
-        'items.product',
-        'items.product.vendor',
-        'deliverer',
-      ],
-    });
+    const order = await this.orderRepository
+      .createQueryBuilder('order')
+      .leftJoinAndSelect('order.items', 'items')
+      .leftJoinAndSelect('items.product', 'product')
+      .leftJoinAndSelect('product.vendor', 'vendor')
+      .leftJoinAndSelect('order.deliverer', 'deliverer')
+      .leftJoinAndSelect('order.user', 'user')
+      .addSelect('order.deliveryCode')
+      .where('order.id = :orderId', { orderId })
+      .andWhere('user.id = :userId', { userId })
+      .getOne();
+
     if (!order) {
       throw new NotFoundException(
         'Order not found or you do not have permission to view it.',
       );
     }
     const mapped = this.mapOrder(order, currency);
+    // Ensure deliveryCode is passed if present (mapOrder might not copy strict props?)
+    // OrderResponseDto likely doesn't have deliveryCode field yet?
+    // We should check OrderResponseDto.
+
     const orderDeliverer = order.deliverer as
       | (User & {
           displayName?: string | null;
@@ -1206,10 +1328,19 @@ export class OrdersService {
       storeName?: string | null;
       phoneNumber?: string | null;
       vendorPhoneNumber?: string | null;
+      address?: string | null;
+      registrationCity?: string | null;
+      registrationCountry?: string | null;
     };
     const vendorsMap = new Map<
       number,
-      VendorLike & { id: number; contactPhone?: string | null }
+      VendorLike & {
+        id: number;
+        contactPhone?: string | null;
+        contactAddress?: string | null;
+        contactCity?: string | null;
+        contactCountry?: string | null;
+      }
     >();
     for (const it of order.items || []) {
       const vendor = it.product?.vendor as VendorLike | undefined;
@@ -1226,8 +1357,9 @@ export class OrdersService {
           displayName: vendor.displayName ?? null,
           storeName: vendor.storeName ?? null,
           contactPhone: contactPhone ?? null, // Expose for "Call Shop" button
-          // Add address info if available but masked is handled by frontend or filtered dto
-          // storeAddress: ...
+          contactAddress: vendor.address ?? null,
+          contactCity: vendor.registrationCity ?? null,
+          contactCountry: vendor.registrationCountry ?? null,
         });
       }
     }
@@ -1253,6 +1385,9 @@ export class OrdersService {
           ? vendors[0].storeName || vendors[0].displayName || null
           : null,
       vendorPhone: vendors.length === 1 ? vendors[0].contactPhone : null, // expose single vendor phone
+      vendorAddress: vendors.length === 1 ? vendors[0].contactAddress : null,
+      vendorCity: vendors.length === 1 ? vendors[0].contactCity : null,
+      vendorCountry: vendors.length === 1 ? vendors[0].contactCountry : null,
       items:
         mapped.items?.map((item) => ({
           productId: item.product?.id,
@@ -1264,6 +1399,7 @@ export class OrdersService {
         })) || [],
       total_display: (mapped as any).total_display,
       currency: (mapped as any).currency,
+      deliveryCode: order.deliveryCode,
     });
   }
 
@@ -1378,7 +1514,11 @@ export class OrdersService {
   private computeAggregateStatus(items: OrderItem[]): OrderStatus {
     if (!items || items.length === 0) return OrderStatus.PENDING;
     const statuses = new Set(items.map((i) => i.status));
-    if (statuses.has(OrderStatus.CANCELLED)) return OrderStatus.CANCELLED; // If any cancelled, order is partial/cancelled? Logic varies.
+    if (statuses.has(OrderStatus.CANCELLED)) return OrderStatus.CANCELLED;
+    if (statuses.has(OrderStatus.CANCELLED_BY_BUYER))
+      return OrderStatus.CANCELLED_BY_BUYER;
+    if (statuses.has(OrderStatus.CANCELLED_BY_SELLER))
+      return OrderStatus.CANCELLED_BY_SELLER;
     // Simple logic:
     if (statuses.has(OrderStatus.DELIVERY_FAILED))
       return OrderStatus.DELIVERY_FAILED;
@@ -1448,6 +1588,14 @@ export class OrdersService {
     item.trackingUrl = tracking.trackingUrl ?? item.trackingUrl ?? null;
     await this.orderItemRepository.save(item);
     return item;
+  }
+
+  /**
+   * Called by Admin to manually approve a bank transfer payment.
+   */
+  async approveBankTransfer(orderId: number): Promise<void> {
+    this.logger.log(`Admin approving bank transfer for order ${orderId}`);
+    await this.triggerPostPaymentProcessing(orderId);
   }
 
   /**
@@ -1585,5 +1733,127 @@ export class OrdersService {
     this.sendConfirmationForOrder(order.id);
 
     return order;
+  }
+
+  // --- Dispute Logic ---
+
+  async disputeOrder(orderId: number, reason: string, details?: string) {
+    const order = await this.orderRepository.findOne({
+      where: { id: orderId },
+    });
+    if (!order) throw new NotFoundException(`Order #${orderId} not found`);
+
+    if (order.status === OrderStatus.DISPUTED) {
+      throw new BadRequestException('Order is already disputed');
+    }
+
+    const dispute = this.disputeRepository.create({
+      order,
+      orderId,
+      reason,
+      details,
+      status: DisputeStatus.OPEN,
+    });
+
+    await this.disputeRepository.save(dispute);
+
+    order.status = OrderStatus.DISPUTED;
+    await this.orderRepository.save(order);
+
+    this.logger.log(`Order ${orderId} disputed. Reason: ${reason}`);
+
+    return dispute;
+  }
+
+  async resolveDispute(
+    disputeId: number,
+    adminId: number,
+    resolutionNotes?: string,
+  ) {
+    const dispute = await this.disputeRepository.findOne({
+      where: { id: disputeId },
+      relations: ['order'],
+    });
+    if (!dispute) throw new NotFoundException('Dispute not found');
+    if (dispute.status !== DisputeStatus.OPEN)
+      throw new BadRequestException('Dispute already closed');
+
+    dispute.status = DisputeStatus.RESOLVED;
+    dispute.resolvedBy = adminId;
+    dispute.resolutionNotes = resolutionNotes;
+    dispute.resolvedAt = new Date();
+    await this.disputeRepository.save(dispute);
+
+    // Release to Vendor: Mark as DELIVERED
+    dispute.order.status = OrderStatus.DELIVERED;
+    await this.orderRepository.save(dispute.order);
+
+    this.logger.log(
+      `Dispute ${dispute.id} resolved (Vendor Win). Order ${dispute.order.id} released.`,
+    );
+    return dispute;
+  }
+
+  async refundDispute(
+    disputeId: number,
+    adminId: number,
+    resolutionNotes?: string,
+  ) {
+    const dispute = await this.disputeRepository.findOne({
+      where: { id: disputeId },
+      relations: [
+        'order',
+        'order.items',
+        'order.items.product',
+        'order.items.product.vendor',
+        'order.user',
+      ],
+    });
+    if (!dispute) throw new NotFoundException('Dispute not found');
+    if (dispute.status !== DisputeStatus.OPEN)
+      throw new BadRequestException('Dispute already closed');
+
+    const order = dispute.order;
+
+    // 1. Reverse Vendor Earnings (Clawback)
+    if (order.items) {
+      for (const item of order.items) {
+        if (item.vendorPayout > 0 && item.product?.vendor?.id) {
+          // Chargeback vendor using creditWallet with negative amount
+          await this.walletService.creditWallet(
+            item.product.vendor.id,
+            -item.vendorPayout,
+            TransactionType.REFUND,
+            `Refund (Dispute Loss) for Order #${order.id}`,
+            order.id,
+          );
+        }
+      }
+    }
+
+    // 2. Refund Buyer Wallet
+    if (order.user) {
+      await this.walletService.creditWallet(
+        order.user.id,
+        order.total,
+        TransactionType.REFUND,
+        `Refund (Dispute Win) for Order #${order.id}`,
+        order.id,
+      );
+    }
+
+    dispute.status = DisputeStatus.REFUNDED;
+    dispute.resolvedBy = adminId;
+    dispute.resolutionNotes = resolutionNotes;
+    dispute.resolvedAt = new Date();
+    await this.disputeRepository.save(dispute);
+
+    order.status = OrderStatus.CANCELLED;
+    await this.orderRepository.save(order);
+
+    this.logger.log(
+      `Dispute ${dispute.id} refunded (Buyer Win). Order ${order.id} cancelled.`,
+    );
+    return dispute;
   }
 }
