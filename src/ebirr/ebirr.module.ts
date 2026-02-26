@@ -6,12 +6,14 @@ import { EbirrService } from './ebirr.service';
 import { EbirrController } from './ebirr.controller';
 import { EbirrTransaction } from '../payments/entities/ebirr-transaction.entity';
 import { Order } from '../orders/entities/order.entity';
+import { CurrencyModule } from '../common/services/currency.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([EbirrTransaction, Order]),
     forwardRef(() => OrdersModule),
     RedisModule,
+    CurrencyModule,
   ],
   controllers: [EbirrController],
   providers: [EbirrService],

@@ -8,9 +8,9 @@ import { ISortStrategy } from './base-sort.strategy';
 export class BestMatchSort implements ISortStrategy {
   apply(q: SelectQueryBuilder<Product>, dto: ProductListingDto) {
     if (dto.geoPriority) q.orderBy('geo_rank', 'DESC');
-    q.addOrderBy('product.sales_count', 'DESC', 'NULLS LAST')
-      .addOrderBy('product.average_rating', 'DESC', 'NULLS LAST')
-      .addOrderBy('product.rating_count', 'DESC', 'NULLS LAST')
+    q.addOrderBy('product.salesCount', 'DESC', 'NULLS LAST')
+      .addOrderBy('product.averageRating', 'DESC', 'NULLS LAST')
+      .addOrderBy('product.ratingCount', 'DESC', 'NULLS LAST')
       .addOrderBy('product.createdAt', 'DESC');
     return q;
   }

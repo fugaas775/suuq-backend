@@ -9,6 +9,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { UiSetting } from '../settings/entities/ui-setting.entity';
 import { MediaCleanupTask } from './entities/media-cleanup-task.entity';
 import { Between, In, Like, Not } from 'typeorm';
+import { RedisService } from '../redis/redis.service';
 
 const execFile = promisify(_execFile);
 
@@ -19,11 +20,28 @@ export class MediaMaintenanceService {
   constructor(
     private readonly doSpaces: DoSpacesService,
     private readonly dataSource: DataSource,
+    private readonly redisService: RedisService,
     @InjectRepository(MediaCleanupTask)
     private readonly cleanupRepo: Repository<MediaCleanupTask>,
     @InjectRepository(UiSetting)
     private readonly settingsRepo: Repository<UiSetting>,
   ) {}
+
+  private async acquireCronLock(jobName: string, ttlSeconds: number): Promise<boolean> {
+    const client = this.redisService.getClient();
+    if (!client) {
+      const instanceId = process.env.NODE_APP_INSTANCE;
+      return !instanceId || instanceId === '0';
+    }
+
+    try {
+      const key = `lock:media-maintenance:${jobName}`;
+      const acquired = await client.set(key, 'locked', 'NX', 'EX', ttlSeconds);
+      return !!acquired;
+    } catch {
+      return false;
+    }
+  }
 
   /**
    * Cleans up inactive verification files based on the "Orphaned Files" strategy.
@@ -37,11 +55,7 @@ export class MediaMaintenanceService {
    */
   @Cron('0 2 * * 0') // "At 02:00 on Sunday"
   async cleanupOrphanedVerifications() {
-    // Check for PM2 instance ID to prevent multiple executions in cluster mode in production
-    // '0' is usually the first instance. ParseInt to be safe.
-    if (process.env.NODE_APP_INSTANCE && process.env.NODE_APP_INSTANCE !== '0') {
-        return;
-    }
+    if (!(await this.acquireCronLock('cleanup-orphaned-verifications', 2 * 60 * 60))) return;
 
     this.log.log('Starting Cleanup of Orphaned Verification Files...');
     try {
@@ -119,6 +133,7 @@ export class MediaMaintenanceService {
 
   @Cron(CronExpression.EVERY_HOUR)
   async cleanupTmpUploads() {
+    if (!(await this.acquireCronLock('cleanup-tmp-uploads', 55 * 60))) return;
     try {
       const fs = await import('fs');
       const dir = '/tmp/uploads';
@@ -147,6 +162,7 @@ export class MediaMaintenanceService {
   // Runs daily at 03:15
   @Cron('15 3 * * *')
   async backfillVideoPosters() {
+    if (!(await this.acquireCronLock('backfill-video-posters', 55 * 60))) return;
     try {
       const maxVideoBytes = 150 * 1024 * 1024;
       // Scan a prefix if you use one; empty means whole bucket (be careful)
@@ -258,10 +274,7 @@ export class MediaMaintenanceService {
    */
   @Cron('0 3 * * 0') // "At 03:00 on Sunday"
   async cleanupDeletedProducts() {
-    // Prevent concurrent execution across PM2 instances
-    if (process.env.NODE_APP_INSTANCE && process.env.NODE_APP_INSTANCE !== '0') {
-        return;
-    }
+    if (!(await this.acquireCronLock('cleanup-deleted-products', 2 * 60 * 60))) return;
 
     this.log.log('Starting Cleanup of Deleted Product Files...');
     try {
@@ -314,15 +327,12 @@ export class MediaMaintenanceService {
    */
   @Cron('0 4 * * *') // "At 04:00 every day"
   async scanHistoricalProductMedia() {
-    const instanceId = process.env.NODE_APP_INSTANCE;
-    if (instanceId && instanceId !== '0') {
-      return;
-    }
+    if (!(await this.acquireCronLock('scan-historical-product-media', 55 * 60))) return;
 
     const BATCH_SIZE = 1000;
     const SETTING_KEY = 'media_cleanup_cursor_v1';
     
-    this.log.log(`Starting Historical Media Scan on instance ${instanceId || 'single'}...`);
+    this.log.log('Starting Historical Media Scan...');
 
     try {
       // 1. Get Continuation Token

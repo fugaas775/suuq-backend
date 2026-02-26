@@ -67,11 +67,26 @@ import { CreditModule } from './credit/credit.module';
     BullModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
-      useFactory: async (configService: ConfigService) => ({
-        connection: {
+      useFactory: async (configService: ConfigService) => {
+        const baseConnection = {
           url: configService.get('REDIS_URL') || 'redis://localhost:6379',
-        },
-      }),
+        } as any;
+
+        if (process.env.NODE_ENV === 'test') {
+          return {
+            connection: {
+              ...baseConnection,
+              lazyConnect: true,
+              enableOfflineQueue: false,
+              maxRetriesPerRequest: 1,
+            },
+          };
+        }
+
+        return {
+          connection: baseConnection,
+        };
+      },
     }),
     // Global Cache (Redis if configured, else in-memory)
     CacheModule.registerAsync({

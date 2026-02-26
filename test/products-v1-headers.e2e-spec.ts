@@ -4,6 +4,7 @@ import request from 'supertest';
 
 import { AppModule } from '../src/app.module';
 import { EtagInterceptor } from '../src/common/interceptors/etag.interceptor';
+import { closeE2eApp } from './utils/e2e-cleanup';
 
 // This e2e test boots the whole AppModule to validate interceptors and controllers wiring.
 // It asserts that /api/v1/products returns expected caching and rate limit headers, contains
@@ -32,7 +33,7 @@ describe('V1 Products headers (e2e)', () => {
   }, 30000);
 
   afterAll(async () => {
-    if (app) await app.close();
+    await closeE2eApp({ app });
   });
 
   it('GET /api/v1/products should include rate-limit and cache headers and primaryImage variants', async () => {

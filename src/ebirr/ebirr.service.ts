@@ -16,6 +16,7 @@ import {
   OrderStatus,
 } from '../orders/entities/order.entity';
 import { OrdersService } from '../orders/orders.service';
+import { CurrencyService } from '../common/services/currency.service';
 import { RedisService } from '../redis/redis.service';
 import axios from 'axios';
 import { v4 as uuidv4 } from 'uuid';
@@ -35,6 +36,7 @@ export class EbirrService {
     @Inject(forwardRef(() => OrdersService))
     private readonly ordersService: OrdersService,
     private readonly redisService: RedisService,
+    private readonly currencyService: CurrencyService,
   ) {}
 
   @Cron(CronExpression.EVERY_MINUTE)
@@ -162,7 +164,7 @@ export class EbirrService {
         transactionInfo: {
           referenceId: referenceId,
           invoiceId: referenceId,
-          amount: amount.toFixed(2),
+          amount: this.currencyService.formatAmount(amount, 'ETB'),
           currency: 'ETB',
           description: remark || 'Vendor Payout',
         },
@@ -217,6 +219,7 @@ export class EbirrService {
     description?: string;
   }) {
     const { phoneNumber, amount, referenceId, invoiceId, description } = params;
+    const startedAt = Date.now();
 
     const requestId = `Suuq_${uuidv4()}`;
     const timestamp = format(new Date(), 'yyyy-MM-dd HH:mm:ss');
@@ -346,7 +349,7 @@ export class EbirrService {
         const codeStr = String(data.errorCode);
 
         if (codeStr === '5310') {
-          friendlyMsg = 'Payment was declined by the user on their device.';
+          friendlyMsg = 'Payment declined. Ensure the SIM is in your device.';
           this.logger.warn(
             `Ebirr User Rejection (Order: ${orderId}): ${friendlyMsg}`,
           );
@@ -362,8 +365,18 @@ export class EbirrService {
           );
         }
 
+        const attemptNo = await this.ebirrTransactionRepo.count({
+          where: { merch_order_id: referenceId },
+        });
         const err: any = new Error(`${friendlyMsg} (Code: ${data.errorCode})`);
         err.isHandled = true;
+        err.provider = 'EBIRR';
+        err.providerCode = codeStr;
+        err.providerRef = requestId;
+        err.orderId = orderId;
+        err.referenceId = referenceId;
+        err.attemptNo = attemptNo;
+        err.latencyMs = Date.now() - startedAt;
         throw err;
       }
 

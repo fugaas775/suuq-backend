@@ -31,6 +31,7 @@ import {
   BOOST_OPTIONS,
 } from '../products/boost-pricing.service';
 import { EbirrService } from '../ebirr/ebirr.service';
+import { CurrencyService } from '../common/services/currency.service';
 import { AuthGuard } from '@nestjs/passport'; // Add this if missing
 import { RolesGuard } from '../common/guards/roles.guard'; // Add this
 import { Req } from '@nestjs/common'; // Add this
@@ -49,6 +50,7 @@ export class PaymentsController {
     private readonly ebirrService: EbirrService,
     private readonly productsService: ProductsService,
     private readonly boostPricingService: BoostPricingService,
+    private readonly currencyService: CurrencyService,
   ) {}
 
   // ✨ ADD THIS NEW METHOD ✨
@@ -98,7 +100,7 @@ export class PaymentsController {
 
     // Construct Order ID (Timestamp ensures uniqueness)
     const merchOrderId = `BOOST-${productId}-${tier}-${Date.now()}`;
-    const amount = option.basePriceETB.toFixed(2);
+    const amount = this.currencyService.formatAmount(option.basePriceETB, 'ETB');
 
     // Create Audit Record (Reusing TelebirrTransaction for now, or unified Transaction)
     // NOTE: For Ebirr, we might use EbirrTransaction if we want separation, or just log.
@@ -140,7 +142,7 @@ export class PaymentsController {
     } else if (provider === 'EBIRR') {
       try {
         const result = await this.ebirrService.initiatePayment({
-          amount: option.basePriceETB.toString(),
+          amount: this.currencyService.formatAmount(option.basePriceETB, 'ETB'),
           referenceId: merchOrderId,
           invoiceId: merchOrderId,
           description: `Product Boost: ${productId} (${tier})`,
@@ -151,7 +153,7 @@ export class PaymentsController {
         return {
           receiveCode: result.toPayUrl || result.receiverCode, // adjust based on Ebirr response shape
           merchOrderId,
-          amount: option.basePriceETB.toString(),
+          amount: this.currencyService.formatAmount(option.basePriceETB, 'ETB'),
           currency: 'ETB',
           provider: 'EBIRR',
           checkoutUrl: result.toPayUrl,
@@ -177,7 +179,10 @@ export class PaymentsController {
     if (!order) throw new BadRequestException('Order not found');
 
     const merchOrderId = `ORDER-${order.id}`;
-    const amount = Number(order.total).toFixed(2);
+    const amount = this.currencyService.formatAmount(
+      Number(order.total),
+      order.currency || 'ETB',
+    );
 
     // Audit Log - Pending
     const tx = this.transactionRepository.create({

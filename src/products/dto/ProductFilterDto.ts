@@ -284,6 +284,38 @@ export class ProductFilterDto {
   @Expose({ name: 'geo_append' })
   geoAppend?: boolean;
 
+  @IsOptional()
+  @Type(() => Boolean)
+  @IsBoolean()
+  @Expose({ name: 'debug_listing' })
+  debugListing?: boolean;
+
+  // Rotation + refresh context (used by home/feed style callers)
+  @IsOptional()
+  @IsString()
+  @Expose({ name: 'refresh_reason' })
+  refreshReason?: string;
+
+  @IsOptional()
+  @IsString()
+  @Expose({ name: 'request_id' })
+  requestId?: string;
+
+  @IsOptional()
+  @IsString()
+  @Expose({ name: 'rotation_key' })
+  rotationKey?: string;
+
+  @IsOptional()
+  @IsString()
+  @Expose({ name: 'session_salt' })
+  sessionSalt?: string;
+
+  @IsOptional()
+  @IsString()
+  @Expose({ name: 'time_bucket' })
+  timeBucket?: string;
+
   // Property: bedrooms exact or ranges
   // Property listing type filter (?listingType=sale or ?listing_type=rent)
   @IsOptional()

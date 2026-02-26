@@ -88,7 +88,7 @@ export class CartService {
       targetCurrency,
     );
     const { amount: saleConverted } = this.convertPrice(
-      product.sale_price,
+      product.salePrice,
       from,
       targetCurrency,
     );
@@ -97,11 +97,11 @@ export class CartService {
 
     // Use sale price if available and lower than regular price
     const hasSale =
-      product.sale_price &&
-      product.sale_price > 0 &&
-      product.sale_price < product.price;
+      product.salePrice &&
+      product.salePrice > 0 &&
+      product.salePrice < product.price;
     // Prefer converted sale price, fallback to raw sale price if conversion failed but sale exists (edge case), else unit
-    const priceToUse = hasSale ? (saleConverted ?? product.sale_price) : unit;
+    const priceToUse = hasSale ? (saleConverted ?? product.salePrice) : unit;
 
     // Ensure we don't return null/undefined for math
     const finalUnit = priceToUse ?? 0;
@@ -135,12 +135,16 @@ export class CartService {
           ? Number(product.price)
           : 0;
 
-    itemWithDisplay.product.sale_price =
+    itemWithDisplay.product.salePrice =
       saleConverted !== null && saleConverted !== undefined
         ? Number(saleConverted)
-        : product.sale_price
-          ? Number(product.sale_price)
+        : product.salePrice
+          ? Number(product.salePrice)
           : undefined;
+
+    // Legacy support for frontend
+    (itemWithDisplay.product as any).sale_price =
+      itemWithDisplay.product.salePrice;
 
     itemWithDisplay.product.currency = targetCurrency;
     return itemWithDisplay;

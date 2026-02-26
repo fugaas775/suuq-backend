@@ -6,6 +6,7 @@ import { UsersService } from '../src/users/users.service';
 import { UserRole } from '../src/auth/roles.enum';
 import { VerificationStatus } from '../src/users/entities/user.entity';
 import { DataSource } from 'typeorm';
+import { closeE2eApp } from './utils/e2e-cleanup';
 
 describe('Public Certificates & Profile (e2e)', () => {
   let app: INestApplication;
@@ -25,10 +26,7 @@ describe('Public Certificates & Profile (e2e)', () => {
   });
 
   afterAll(async () => {
-    await app.close();
-    if (dataSource && dataSource.isInitialized) {
-      await dataSource.destroy();
-    }
+    await closeE2eApp({ app, dataSource });
   });
 
   it('returns empty certificates for PENDING vendor', async () => {

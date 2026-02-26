@@ -7,7 +7,8 @@ export class ProductQueryBuilder {
       .leftJoinAndSelect('product.vendor', 'vendor')
       .leftJoinAndSelect('product.category', 'category')
       .where('product.status = :status', { status: 'publish' })
-      .andWhere('product.isBlocked = false');
+      .andWhere('product.isBlocked = false')
+      .andWhere('product.deleted_at IS NULL');
   }
 
   applyGridView() {
@@ -17,10 +18,14 @@ export class ProductQueryBuilder {
       'product.price',
       'product.currency',
       'product.imageUrl',
-      'product.average_rating',
-      'product.rating_count',
-      'product.sales_count',
+      'product.averageRating',
+      'product.ratingCount',
+      'product.salesCount',
       'product.viewCount',
+      'product.salePrice',
+      'product.stockQuantity',
+      'product.manageStock',
+      'product.productType',
       'product.listingType',
       'product.bedrooms',
       'product.listingCity',

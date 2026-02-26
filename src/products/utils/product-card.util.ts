@@ -60,7 +60,6 @@ export type ProductCard = {
   format?: string;
   fileSizeMB?: number;
   licenseRequired?: boolean;
-  isFree?: boolean;
 
   // Service
   deliveryMethod?: string;
@@ -82,7 +81,9 @@ export type ProductCard = {
 
   // Physical
   dispatchDays?: number | null;
-  stock_quantity?: number;
+  stockQuantity?: number;
+  stock_quantity?: number; // Legacy
+  sale_price?: number; // Legacy
   shippingCost?: number;
   shippingNotes?: string;
   moq?: number;
@@ -241,7 +242,7 @@ export function toProductCard(p: Product): ProductCard {
 
     // Metrics
     viewCount: (p as any).viewCount || (p as any).view_count || 0,
-    salesCount: (p as any).sales_count || 0,
+    salesCount: (p as any).salesCount || (p as any).sales_count || 0,
 
     // Explicit Type Flags
     isDigital: p.isDigital,
@@ -254,7 +255,6 @@ export function toProductCard(p: Product): ProductCard {
     format: p.format,
     fileSizeMB: p.fileSizeMB,
     licenseRequired: p.licenseRequired,
-    isFree: p.isFree,
 
     // Service
     deliveryMethod: p.deliveryMethod,
@@ -274,7 +274,9 @@ export function toProductCard(p: Product): ProductCard {
 
     // Physical
     dispatchDays: p.dispatchDays,
-    stock_quantity: p.stock_quantity,
+    stockQuantity: p.stockQuantity,
+    stock_quantity: p.stockQuantity, // Legacy support
+    sale_price: p.salePrice ?? undefined, // Legacy support
     shippingCost: p.shippingCost,
     shippingNotes: p.shippingNotes,
     moq: p.moq,

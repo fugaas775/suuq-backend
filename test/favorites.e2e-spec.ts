@@ -10,6 +10,7 @@ import request from 'supertest';
 import { JwtAuthGuard } from '../src/auth/jwt-auth.guard';
 import { RequiredHeadersGuard } from '../src/common/guards/required-headers.guard';
 import { FavoritesService } from '../src/favorites/favorites.service';
+import { closeE2eApp } from './utils/e2e-cleanup';
 
 class AllowGuard implements CanActivate {
   canActivate(ctx: ExecutionContext): boolean {
@@ -114,7 +115,7 @@ describe('Favorites E2E', () => {
   });
 
   afterAll(async () => {
-    await app.close();
+    await closeE2eApp({ app });
   });
 
   it('GET empty and returns etag', async () => {

@@ -6,6 +6,7 @@ import { WalletService } from '../src/wallet/wallet.service';
 import { User, SubscriptionTier } from '../src/users/entities/user.entity';
 import { UserRole } from '../src/auth/roles.enum';
 import { UiSetting } from '../src/settings/entities/ui-setting.entity';
+import { closeE2eApp } from './utils/e2e-cleanup';
 
 describe('Auto Upgrade Workflow (e2e)', () => {
   let app: INestApplication;
@@ -49,7 +50,7 @@ describe('Auto Upgrade Workflow (e2e)', () => {
         }
         await dataSource.query(`DELETE FROM "user" WHERE id = ${user.id}`);
     }
-    await app.close();
+    await closeE2eApp({ app, dataSource });
   });
 
   it('should automatically upgrade user to PRO when Top-Up with metadata is approved', async () => {

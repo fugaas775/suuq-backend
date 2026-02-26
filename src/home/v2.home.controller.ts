@@ -1,6 +1,8 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return */
 import { Controller, Get, Header, Query } from '@nestjs/common';
 import { HomeService } from './home.service';
+import { Res } from '@nestjs/common';
+import type { Response } from 'express';
 
 // Routes here are mounted under global prefix '/api'
 @Controller('v2/home')
@@ -10,15 +12,20 @@ export class HomeV2Controller {
   // New unified home feed endpoint
   @Get('feed')
   @Header('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=120')
-  async v2Feed(@Query() q: any) {
+  async v2Feed(@Query() q: any, @Res({ passthrough: true }) res: Response) {
     const page = Math.max(1, Number(q.page) || 1);
     const perPage = Math.min(
       Math.max(Number(q.limit || q.per_page) || 20, 1),
       50,
     );
-    const city = q.user_city || q.userCity || q.city || undefined;
-    const region = q.user_region || q.userRegion || q.region || undefined;
-    const country = q.user_country || q.userCountry || q.country || undefined;
+    const toText = (v: unknown): string | undefined => {
+      if (typeof v !== 'string') return undefined;
+      const trimmed = v.trim();
+      return trimmed ? trimmed : undefined;
+    };
+    const city = toText(q.user_city || q.userCity || q.city);
+    const region = toText(q.user_region || q.userRegion || q.region);
+    const country = toText(q.user_country || q.userCountry || q.country);
     const currency = q.currency;
 
     // Category filters (accept id(s) or slug)
@@ -65,8 +72,17 @@ export class HomeV2Controller {
       q.include_descendants ?? q.includeDescendants,
       categoryId || categorySlug ? true : undefined,
     );
-    const geoAppend = toBool(q.geo_append ?? q.geoAppend);
+    const geoAppend = toBool(q.geo_append ?? q.geoAppend, true);
     const sort = typeof q.sort === 'string' ? q.sort : undefined;
+    const rotationKey = toText(q.rotation_key ?? q.rotationKey ?? q.seed);
+    const sessionSalt = toText(q.session_salt ?? q.sessionSalt);
+    const rotationBucket = toText(q.time_bucket ?? q.timeBucket);
+    const refreshReason = toText(q.refresh_reason ?? q.refreshReason);
+    const requestId = toText(q.request_id ?? q.requestId);
+    const geoCountryStrict = toBool(
+      q.geo_country_strict ?? q.geoCountryStrict,
+      true,
+    );
 
     // Property filters passthrough (optional)
     const listingType = q.listing_type || q.listingType;
@@ -87,7 +103,32 @@ export class HomeV2Controller {
       sort,
       listingType,
       listingTypeMode,
+      rotationKey,
+      sessionSalt,
+      rotationBucket,
+      refreshReason,
+      requestId,
+      geoCountryStrict,
     });
+    const source =
+      data?.meta?.exploreSource === 'fallback' ? 'fallback' : 'tiered';
+    res.setHeader('X-Home-Explore-Source', source);
+    res.setHeader(
+      'X-Home-Explore-Count',
+      String(Number(data?.meta?.exploreCount || 0)),
+    );
+    if (data?.meta?.requestId) {
+      res.setHeader('X-Home-Request-Id', String(data.meta.requestId));
+    }
+    if (data?.meta?.requestKind) {
+      res.setHeader('X-Home-Request-Kind', String(data.meta.requestKind));
+    }
+    if (data?.meta?.applyPriority !== undefined) {
+      res.setHeader(
+        'X-Home-Apply-Priority',
+        String(Number(data.meta.applyPriority || 0)),
+      );
+    }
     return data;
   }
 }

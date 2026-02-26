@@ -5,6 +5,7 @@ import {
   BadRequestException,
   Inject,
   forwardRef,
+  Logger,
 } from '@nestjs/common';
 /* eslint-disable @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment */
 import { InjectRepository } from '@nestjs/typeorm';
@@ -39,6 +40,8 @@ import { subDays, startOfWeek, endOfWeek } from 'date-fns';
 
 @Injectable()
 export class WalletService {
+  private readonly logger = new Logger(WalletService.name);
+
   constructor(
     @InjectRepository(Wallet)
     private readonly walletRepository: Repository<Wallet>,
@@ -167,26 +170,37 @@ export class WalletService {
     doc.moveDown();
 
     doc.text('Gross Sales', 50);
-    doc.text(settlement.grossSales.toFixed(2), 350, doc.y - 12, {
-      align: 'right',
-    });
+    doc.text(
+      this.currencyService.formatAmount(settlement.grossSales, 'ETB'),
+      350,
+      doc.y - 12,
+      {
+        align: 'right',
+      },
+    );
     doc.moveDown();
 
     doc.text('Platform Fee (5%)', 50);
-    doc
-      .fillColor('red')
-      .text(`-${settlement.platformFee.toFixed(2)}`, 350, doc.y - 12, {
+    doc.fillColor('red').text(
+      `-${this.currencyService.formatAmount(settlement.platformFee, 'ETB')}`,
+      350,
+      doc.y - 12,
+      {
         align: 'right',
-      });
+      },
+    );
     doc.fillColor('black'); // Reset
     doc.moveDown();
 
     doc.text('Gateway Fee (1%)', 50);
-    doc
-      .fillColor('red')
-      .text(`-${settlement.gatewayFee.toFixed(2)}`, 350, doc.y - 12, {
+    doc.fillColor('red').text(
+      `-${this.currencyService.formatAmount(settlement.gatewayFee, 'ETB')}`,
+      350,
+      doc.y - 12,
+      {
         align: 'right',
-      });
+      },
+    );
     doc.fillColor('black'); // Reset
     doc.moveDown();
 
@@ -194,9 +208,14 @@ export class WalletService {
     doc.moveDown();
 
     doc.fontSize(14).font('Helvetica-Bold').text('Net Payout', 50, doc.y);
-    doc.text(settlement.amount.toFixed(2), 350, doc.y - 14, {
-      align: 'right',
-    });
+    doc.text(
+      this.currencyService.formatAmount(settlement.amount, 'ETB'),
+      350,
+      doc.y - 14,
+      {
+        align: 'right',
+      },
+    );
     doc.font('Helvetica'); // Reset
 
     // Footer
@@ -348,7 +367,7 @@ export class WalletService {
 
     // If a specific currency is requested and it's different from user's current preference, update it
     if (requestedCurrency && user.currency !== requestedCurrency) {
-      console.log(
+      this.logger.debug(
         `[WalletService] Updating user ${userId} currency preference from ${user.currency} to ${requestedCurrency}`,
       );
       user.currency = requestedCurrency;
@@ -366,7 +385,7 @@ export class WalletService {
         else if (user.registrationCountry === 'KE') currency = 'KES';
       }
 
-      console.log(
+      this.logger.log(
         `[WalletService] Creating new wallet for user ${userId} with currency ${currency}`,
       );
       wallet = this.walletRepository.create({
@@ -391,7 +410,7 @@ export class WalletService {
     } else {
       // Sync currency if user preference changed
       if (user.currency && wallet.currency !== user.currency) {
-        console.log(
+        this.logger.log(
           `[WalletService] Migrating wallet ${wallet.id} from ${wallet.currency} to ${user.currency}`,
         );
         await this.migrateWalletCurrency(wallet, user.currency);
@@ -840,7 +859,7 @@ export class WalletService {
     wallet: Wallet,
   ): Promise<void> {
     if (request.metadata && request.metadata.auto_action === 'upgrade_pro') {
-      console.log(
+      this.logger.log(
         `[AutoAction] Processing auto-upgrade for user ${request.user.id}`,
       );
       try {
@@ -869,7 +888,7 @@ export class WalletService {
         );
         const finalPrice = Math.ceil(convertedPrice); // Round up to be safe/clean
 
-        console.log(
+        this.logger.debug(
           `[AutoAction] Price: ${rawPrice} ${priceCurrency} -> ${finalPrice} ${walletCurrency}`,
         );
 
@@ -894,7 +913,7 @@ export class WalletService {
             expiry.setDate(expiry.getDate() + 30);
             user.subscriptionExpiry = expiry;
             await this.userRepository.save(user);
-            console.log(
+            this.logger.log(
               `[AutoAction] User ${user.id} upgraded to PRO automatically.`,
             );
           }
@@ -949,7 +968,7 @@ export class WalletService {
       }
 
       // Log currency check
-      console.log(
+      this.logger.debug(
         `[PayWithWallet] Wallet Currency: ${wallet.currency}, Amount: ${amount}, CheckCurrency: ${checkCurrency}`,
       );
 

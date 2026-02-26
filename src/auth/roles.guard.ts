@@ -10,8 +10,36 @@ import { UserRole } from './roles.enum';
 @Injectable()
 export class RolesGuard implements CanActivate {
   private readonly logger = new Logger(RolesGuard.name);
+  private static lastVerboseLogAt = 0;
 
   constructor(private reflector: Reflector) {}
+
+  private verboseEnabled(): boolean {
+    return process.env.ROLES_GUARD_DEBUG === '1';
+  }
+
+  private maybeLog(
+    requiredRoles: UserRole[] | undefined,
+    user: any,
+    granted: boolean,
+  ) {
+    if (!granted) {
+      this.logger.warn(
+        `Access Denied: userRoles=${JSON.stringify(user?.roles)} requiredRoles=${JSON.stringify(requiredRoles)}`,
+      );
+      return;
+    }
+
+    if (this.verboseEnabled()) {
+      const now = Date.now();
+      if (now - RolesGuard.lastVerboseLogAt > 5000) {
+        RolesGuard.lastVerboseLogAt = now;
+        this.logger.debug(
+          `Access Granted: userRoles=${JSON.stringify(user?.roles)} requiredRoles=${JSON.stringify(requiredRoles)}`,
+        );
+      }
+    }
+  }
 
   canActivate(context: ExecutionContext): boolean {
     const requiredRoles = this.reflector.getAllAndOverride<UserRole[]>(
@@ -25,14 +53,8 @@ export class RolesGuard implements CanActivate {
 
     const { user } = context.switchToHttp().getRequest();
 
-    // --- DEBUG LOGGING ---
-    this.logger.debug('--- RolesGuard Check ---');
-    this.logger.debug(`Required Roles: ${JSON.stringify(requiredRoles)}`);
-    this.logger.debug(`User from Token: ${JSON.stringify(user)}`);
-    // --- END DEBUG LOGGING ---
-
     if (!user || !user.roles || !Array.isArray(user.roles)) {
-      this.logger.warn('Access Denied: User object or roles array is missing.');
+      this.maybeLog(requiredRoles, user, false);
       return false;
     }
 
@@ -40,13 +62,7 @@ export class RolesGuard implements CanActivate {
       user.roles.includes(UserRole.SUPER_ADMIN) || // SUPER_ADMIN bypass
       requiredRoles.some((role) => user.roles.includes(role));
 
-    if (hasRequiredRole) {
-      this.logger.debug('Access Granted: User has a required role.');
-    } else {
-      this.logger.warn(
-        'Access Denied: User does not have any of the required roles.',
-      );
-    }
+    this.maybeLog(requiredRoles, user, !!hasRequiredRole);
 
     return !!hasRequiredRole;
   }

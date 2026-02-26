@@ -8,6 +8,7 @@ import {
   Body,
   ParseIntPipe,
   BadRequestException,
+  Delete,
 } from '@nestjs/common';
 import { CreditService } from '../credit/credit.service';
 import { RolesGuard } from '../auth/roles.guard';
@@ -75,5 +76,15 @@ export class AdminCreditController {
       throw new BadRequestException('amount is required');
     }
     return this.creditService.repayCredit(userId, body.amount, body.notes);
+  }
+
+  @Get('users/:userId/history')
+  async getUserHistory(@Param('userId', ParseIntPipe) userId: number) {
+    return this.creditService.getTransactions(userId);
+  }
+
+  @Delete('users/:userId')
+  async deleteUserLimit(@Param('userId', ParseIntPipe) userId: number) {
+    return this.creditService.deleteCreditLimit(userId);
   }
 }

@@ -2,6 +2,7 @@ import { INestApplication } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
+import { closeE2eApp } from './utils/e2e-cleanup';
 
 describe('Categories tree ETag (e2e)', () => {
   let app: INestApplication;
@@ -17,7 +18,7 @@ describe('Categories tree ETag (e2e)', () => {
   });
 
   afterAll(async () => {
-    await app.close();
+    await closeE2eApp({ app });
   });
 
   it('GET /api/categories/tree returns ETag then 304 with If-None-Match', async () => {

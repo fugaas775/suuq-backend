@@ -7,6 +7,7 @@ import { User } from '../src/users/entities/user.entity';
 import { Product } from '../src/products/entities/product.entity';
 import { UserRole } from '../src/auth/roles.enum';
 import { CreateProductDto } from '../src/products/dto/create-product.dto';
+import { closeE2eApp } from './utils/e2e-cleanup';
 
 describe('Product Limits (e2e)', () => {
   let app: INestApplication;
@@ -35,7 +36,7 @@ describe('Product Limits (e2e)', () => {
         await productRepo.delete({ vendor: { id: vendor.id } });
         await userRepo.delete(vendor.id);
     }
-    await app.close();
+    await closeE2eApp({ app, dataSource });
   });
 
   it('should limit unverified vendors to 5 products', async () => {

@@ -1,10 +1,12 @@
-import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
+import { CanActivate, ExecutionContext, Injectable, Logger } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { ROLES_KEY } from '../decorators/roles.decorator';
 import { UserRole } from '../../auth/roles.enum';
 
 @Injectable()
 export class RolesGuard implements CanActivate {
+  private readonly logger = new Logger(RolesGuard.name);
+
   constructor(private reflector: Reflector) {}
 
   private static lastVerboseLogAt = 0; // per-process throttle timestamp
@@ -20,10 +22,8 @@ export class RolesGuard implements CanActivate {
   ) {
     // Always log denials at DEBUG (can be redirected by logger configuration)
     if (!granted) {
-      console.debug(
-        '[RolesGuard] DENY user roles=%s required=%s',
-        JSON.stringify(user?.roles),
-        JSON.stringify(requiredRoles),
+      this.logger.warn(
+        `DENY user roles=${JSON.stringify(user?.roles)} required=${JSON.stringify(requiredRoles)}`,
       );
       return;
     }
@@ -32,10 +32,8 @@ export class RolesGuard implements CanActivate {
       const now = Date.now();
       if (now - RolesGuard.lastVerboseLogAt > 5000) {
         RolesGuard.lastVerboseLogAt = now;
-        console.debug(
-          '[RolesGuard] grant user roles=%s satisfies required=%s',
-          JSON.stringify(user?.roles),
-          JSON.stringify(requiredRoles),
+        this.logger.debug(
+          `grant user roles=${JSON.stringify(user?.roles)} satisfies required=${JSON.stringify(requiredRoles)}`,
         );
       }
     }

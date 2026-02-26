@@ -230,6 +230,20 @@ export class EmailService {
     await this.send(mail);
   }
 
+  private formatAttributes(attrs: any): string {
+    if (!attrs || typeof attrs !== 'object') return '';
+    const parts: string[] = [];
+    for (const [key, value] of Object.entries(attrs)) {
+      if (value === undefined || value === null || value === '') continue;
+      // Skip irrelevant
+      if (['downloadKey', 'downloadUrl', 'fileSizeMB', 'isFree', 'licenseRequired', 'format'].includes(key)) continue;
+      const valStr = Array.isArray(value) ? value.join(', ') : String(value);
+      const keyCap = key.charAt(0).toUpperCase() + key.slice(1);
+      parts.push(`${keyCap}: ${valStr}`);
+    }
+    return parts.length > 0 ? `(${parts.join(' | ')})` : '';
+  }
+
   async sendWelcomeEmail(user: { email: string; displayName?: string }) {
     const firstName = user.displayName?.split(' ')[0] || 'User';
     const mail = {
@@ -258,25 +272,35 @@ export class EmailService {
     const date = new Date().toLocaleDateString();
 
     const itemsHtml = (order.items || [])
-      .map(
-        (item: any) =>
-          `<li>${item.quantity}x ${item.product?.name || 'Item'} - ${
-            item.price_display?.amount || item.price
-          } ${item.price_display?.currency || currency}</li>`,
-      )
+      .map((item: any) => {
+        const attrStr = this.formatAttributes(item.attributes);
+        const namePart = item.product?.name || 'Item';
+        const fullDesc = attrStr ? `${namePart} ${attrStr}` : namePart;
+        return `<li>${item.quantity}x ${fullDesc} - ${
+          item.price_display?.amount || item.price
+        } ${item.price_display?.currency || currency}</li>`;
+      })
       .join('');
 
     const mail = {
       to: order.user.email,
       subject: `Order Confirmation #${order.id}`,
-      text: `Hi ${firstName},\n\nThank you for your order! Your order #${order.id} has been received.\n\nTotal: ${total} ${currency}\n\nItems:\n${(
+      text: `Hi ${firstName},\n\nThank you for your order! Your order #${
+        order.id
+      } has been received.\n\nTotal: ${total} ${currency}\n\nItems:\n${(
         order.items || []
       )
-        .map(
-          (i: any) =>
-            `- ${i.quantity}x ${i.product?.name} (${i.price_display?.amount || i.price} ${i.price_display?.currency || currency})`,
-        )
-        .join('\n')}\n\nWe will notify you when it is shipped.\n\nBest regards,\nThe Suuq Team`,
+        .map((i: any) => {
+          const attrStr = this.formatAttributes(i.attributes);
+          const namePart = i.product?.name;
+          const fullDesc = attrStr ? `${namePart} ${attrStr}` : namePart;
+          return `- ${i.quantity}x ${fullDesc} (${
+            i.price_display?.amount || i.price
+          } ${i.price_display?.currency || currency})`;
+        })
+        .join(
+          '\n',
+        )}\n\nWe will notify you when it is shipped.\n\nBest regards,\nThe Suuq Team`,
       html: `
         <h2>Thank you for your order!</h2>
         <p>Hi ${firstName},</p>
@@ -361,20 +385,24 @@ export class EmailService {
     currency: string,
   ) {
     const itemsHtml = items
-      .map(
-        (item) =>
-          `<li>${item.quantity}x ${item.productName} - ${item.price} ${currency}</li>`,
-      )
+      .map((item) => {
+        const attrStr = this.formatAttributes(item.attributes);
+        const namePart = item.productName;
+        const fullDesc = attrStr ? `${namePart} ${attrStr}` : namePart;
+        return `<li>${item.quantity}x ${fullDesc} - ${item.price} ${currency}</li>`;
+      })
       .join('');
 
     const mail = {
       to: vendorEmail,
       subject: `New Order #${orderId} Received`,
       text: `Hi ${vendorName},\n\nYou have received a new order #${orderId} containing the following items:\n\n${items
-        .map(
-          (i) =>
-            `- ${i.quantity}x ${i.productName} (${i.price} ${currency})`,
-        )
+        .map((i) => {
+          const attrStr = this.formatAttributes(i.attributes);
+          const namePart = i.productName;
+          const fullDesc = attrStr ? `${namePart} ${attrStr}` : namePart;
+          return `- ${i.quantity}x ${fullDesc} (${i.price} ${currency})`;
+        })
         .join(
           '\n',
         )}\n\nPlease prepare these items for shipping.\n\nIf you cannot fulfill this order, please contact us immediately at admin@suuqsapp.com.\n\nBest regards,\nThe Suuq Team`,

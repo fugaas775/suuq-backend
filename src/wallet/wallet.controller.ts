@@ -4,6 +4,7 @@ import {
   Post,
   Body,
   UseGuards,
+  Header,
   Req,
   Param,
   Query,
@@ -20,6 +21,7 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { UserRole } from '../auth/roles.enum';
 import { TopUpDto } from './dto/top-up.dto';
 import { PaymentDto } from './dto/payment.dto';
+import { RateLimitInterceptor } from '../common/interceptors/rate-limit.interceptor';
 
 @Controller('wallet')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -30,6 +32,16 @@ export class WalletController {
   ) {}
 
   @Get()
+  @UseInterceptors(
+    new RateLimitInterceptor({
+      maxRps: 4,
+      burst: 8,
+      keyBy: 'userOrIp',
+      scope: 'route',
+      headers: true,
+    }),
+  )
+  @Header('Cache-Control', 'private, max-age=10')
   async getWallet(@Req() req, @Query('currency') currency?: string) {
     // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment
     const userId = req.user?.id || req.user?.userId;
@@ -43,6 +55,16 @@ export class WalletController {
   }
 
   @Get('balance')
+  @UseInterceptors(
+    new RateLimitInterceptor({
+      maxRps: 6,
+      burst: 12,
+      keyBy: 'userOrIp',
+      scope: 'route',
+      headers: true,
+    }),
+  )
+  @Header('Cache-Control', 'private, max-age=5')
   async getBalance(@Req() req, @Query('currency') currency?: string) {
     // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment
     const userId = req.user?.id || req.user?.userId;
@@ -54,6 +76,16 @@ export class WalletController {
   }
 
   @Get('transactions')
+  @UseInterceptors(
+    new RateLimitInterceptor({
+      maxRps: 4,
+      burst: 8,
+      keyBy: 'userOrIp',
+      scope: 'route',
+      headers: true,
+    }),
+  )
+  @Header('Cache-Control', 'private, max-age=10')
   async getTransactions(@Req() req) {
     // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment
     const userId = req.user?.id || req.user?.userId;
@@ -61,6 +93,16 @@ export class WalletController {
   }
 
   @Get('payouts')
+  @UseInterceptors(
+    new RateLimitInterceptor({
+      maxRps: 4,
+      burst: 8,
+      keyBy: 'userOrIp',
+      scope: 'route',
+      headers: true,
+    }),
+  )
+  @Header('Cache-Control', 'private, max-age=10')
   async getPayouts(@Req() req) {
     // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment
     const userId = req.user?.id || req.user?.userId;

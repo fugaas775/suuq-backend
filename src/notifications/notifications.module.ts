@@ -9,6 +9,11 @@ import { FirebaseModule } from '../firebase/firebase.module';
 import { NotificationsController } from './notifications.controller';
 import { UsersModule } from '../users/users.module';
 
+const notificationsProviders =
+  process.env.NODE_ENV === 'test'
+    ? [NotificationsService]
+    : [NotificationsService, NotificationsProcessor];
+
 @Module({
   imports: [
     TypeOrmModule.forFeature([DeviceToken, Notification]),
@@ -18,7 +23,7 @@ import { UsersModule } from '../users/users.module';
     FirebaseModule,
     forwardRef(() => UsersModule),
   ],
-  providers: [NotificationsService, NotificationsProcessor],
+  providers: notificationsProviders,
   exports: [NotificationsService],
   controllers: [NotificationsController],
 })

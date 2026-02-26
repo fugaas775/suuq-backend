@@ -4,6 +4,7 @@ import request from 'supertest';
 
 import { AppModule } from '../src/app.module';
 import { EtagInterceptor } from '../src/common/interceptors/etag.interceptor';
+import { closeE2eApp } from './utils/e2e-cleanup';
 
 // e2e tests for /api/products/:id/related
 
@@ -24,7 +25,7 @@ describe('Products related (e2e)', () => {
   }, 30000);
 
   afterAll(async () => {
-    if (app) await app.close();
+    await closeE2eApp({ app });
   });
 
   it('returns 200 with items and excludes base product', async () => {

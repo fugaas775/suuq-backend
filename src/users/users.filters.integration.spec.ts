@@ -55,31 +55,32 @@ class FakeQueryBuilder<T extends User> {
   ): (u: T) => boolean {
     // Handle patterns used in UsersService.findAll. Keep simple substring / equality semantics.
     sql = sql.trim();
-    if (sql.startsWith('user.id =')) {
+    if (sql.startsWith('u.id =')) {
       const id = params.exactId;
       return (u) => u.id === id;
     }
-    if (sql.includes('user.email ILIKE')) {
+    if (sql.includes('u.email ILIKE') && !sql.includes('OR')) {
       const val = (params.emailLike || params.t || '')
         .replace(/%/g, '')
         .toLowerCase();
       return (u) => (u.email || '').toLowerCase().includes(val);
     }
-    if (sql.includes('user.displayName ILIKE') && !sql.includes('OR')) {
+    if (sql.includes('u.displayName ILIKE') && !sql.includes('OR')) {
       const val = (params.nameLike || params.t || '')
         .replace(/%/g, '')
         .toLowerCase();
       return (u) => (u.displayName || '').toLowerCase().includes(val);
     }
-    if (sql.includes('user.storeName ILIKE') && !sql.includes('OR')) {
+    if (sql.includes('u.storeName ILIKE') && !sql.includes('OR')) {
       const val = (params.storeLike || params.t || '')
         .replace(/%/g, '')
         .toLowerCase();
       return (u) => (u.storeName || '').toLowerCase().includes(val);
     }
     if (
-      sql.includes('(user.email ILIKE') &&
-      sql.includes('OR user.displayName ILIKE')
+      sql.includes('u.email ILIKE') &&
+      sql.includes('OR u.displayName ILIKE') &&
+      !sql.includes('u.storeName')
     ) {
       const val = (params.t || '').replace(/%/g, '').toLowerCase();
       return (u) =>
@@ -87,9 +88,8 @@ class FakeQueryBuilder<T extends User> {
         (u.displayName || '').toLowerCase().includes(val);
     }
     if (
-      sql.includes('(user.displayName ILIKE') &&
-      sql.includes('OR user.storeName ILIKE') &&
-      sql.includes('OR user.email ILIKE')
+      (sql.includes('u.displayName ILIKE') || sql.includes('u.email ILIKE')) &&
+      sql.includes('OR u.storeName ILIKE')
     ) {
       const val = (params.t || '').replace(/%/g, '').toLowerCase();
       return (u) =>
@@ -97,15 +97,15 @@ class FakeQueryBuilder<T extends User> {
         (u.storeName || '').toLowerCase().includes(val) ||
         (u.email || '').toLowerCase().includes(val);
     }
-    if (sql.startsWith('user.verificationStatus =')) {
+    if (sql.startsWith('u.verificationStatus =')) {
       const vs = params.vs;
       return (u) => u.verificationStatus === vs;
     }
-    if (sql.startsWith('user.isActive =')) {
+    if (sql.startsWith('u.isActive =')) {
       const ia = params.ia;
       return (u) => u.isActive === ia;
     }
-    if (sql.startsWith('user.roles @>')) {
+    if (sql.startsWith('u.roles @>')) {
       const roles: UserRole[] = params.roles;
       return (u) => roles.every((r) => (u.roles || []).includes(r));
     }
@@ -115,11 +115,11 @@ class FakeQueryBuilder<T extends User> {
       if (sql.includes('= 0'))
         return (u) => (u.verificationDocuments || []).length === 0;
     }
-    if (sql.includes('user."createdAt" >=')) {
+    if (sql.includes('u."createdAt" >=')) {
       const from = new Date(params.from);
       return (u) => u.createdAt >= from;
     }
-    if (sql.includes('user."createdAt" <=')) {
+    if (sql.includes('u."createdAt" <=')) {
       const to = new Date(params.to);
       return (u) => u.createdAt <= to;
     }
@@ -209,6 +209,7 @@ describe('UsersService.findAll filtering (in-memory integration)', () => {
     const mockWalletService: any = { createWallet: jest.fn() };
     const mockCurrencyService: any = { convert: jest.fn() };
     const mockNotificationsService: any = { sendToUser: jest.fn() };
+    const mockEmailService: any = { sendEmail: jest.fn(), sendWelcomeEmail: jest.fn() };
 
     service = new UsersService(
         fakeRepo,
@@ -217,7 +218,8 @@ describe('UsersService.findAll filtering (in-memory integration)', () => {
         mockWalletRepo,
         mockWalletService,
         mockCurrencyService,
-        mockNotificationsService
+        mockNotificationsService,
+        mockEmailService
     );
   });
 

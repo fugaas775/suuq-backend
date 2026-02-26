@@ -7,10 +7,12 @@ import { AuthenticatedRequest } from '../auth/auth.types';
 import {
   Controller,
   Get,
+  Header,
   Param,
   Query,
   Patch,
   Body,
+  UseInterceptors,
   UseGuards,
   Req,
   Post,
@@ -28,6 +30,7 @@ import { ActiveVendor } from '../common/decorators/active-vendor.decorator';
 import { RequireVendorPermission } from './decorators/vendor-permission.decorator';
 import { VendorPermission } from './vendor-permissions.enum';
 import { User } from '../users/entities/user.entity';
+import { RateLimitInterceptor } from '../common/interceptors/rate-limit.interceptor';
 
 @Controller()
 export class VendorController {
@@ -85,6 +88,16 @@ export class VendorController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.VENDOR)
   @Get('vendor/dashboard')
+  @UseInterceptors(
+    new RateLimitInterceptor({
+      maxRps: 4,
+      burst: 8,
+      keyBy: 'userOrIp',
+      scope: 'route',
+      headers: true,
+    }),
+  )
+  @Header('Cache-Control', 'private, max-age=10')
   async getDashboardOverview(
     @Req() req: any,
     @Query('status') status?: string,
@@ -230,6 +243,16 @@ export class VendorController {
   @UseGuards(JwtAuthGuard, VendorPermissionGuard)
   @RequireVendorPermission(VendorPermission.VIEW_ORDERS)
   @Get('vendor/orders')
+  @UseInterceptors(
+    new RateLimitInterceptor({
+      maxRps: 4,
+      burst: 8,
+      keyBy: 'userOrIp',
+      scope: 'route',
+      headers: true,
+    }),
+  )
+  @Header('Cache-Control', 'private, max-age=10')
   async getVendorOrders(
     @ActiveVendor() vendor: User,
     @Query('page') page = 1,

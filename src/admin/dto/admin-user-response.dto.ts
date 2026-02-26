@@ -42,6 +42,58 @@ export class AdminUserResponseDto {
   @Expose()
   storeName?: string;
 
+  // --- Vendor Fields ---
+  @Expose()
+  legalName?: string;
+
+  @Expose()
+  businessLicenseNumber?: string;
+
+  @Expose()
+  taxId?: string;
+
+  @Expose()
+  registrationCountry?: string;
+
+  @Expose()
+  registrationRegion?: string;
+
+  @Expose()
+  registrationCity?: string;
+
+  @Expose()
+  businessType?: string;
+
+  @Expose()
+  contactName?: string;
+
+  @Expose()
+  vendorPhoneNumber?: string;
+
+  @Expose()
+  vendorEmail?: string;
+
+  @Expose()
+  website?: string;
+
+  @Expose()
+  address?: string;
+
+  @Expose()
+  postalCode?: string;
+
+  @Expose()
+  vendorAvatarUrl?: string;
+
+  @Expose()
+  telebirrAccount?: string;
+
+  @Expose()
+  interestedCategoryIds?: number[];
+
+  @Expose()
+  interestedCategoriesLastUpdated?: Date;
+
   @Expose()
   productCount?: number;
 

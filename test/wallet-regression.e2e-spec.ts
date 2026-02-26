@@ -3,14 +3,17 @@ import { INestApplication } from '@nestjs/common';
 import { AppModule } from '../src/app.module';
 import { DataSource } from 'typeorm';
 import { WalletService } from '../src/wallet/wallet.service';
+import { CurrencyService } from '../src/common/services/currency.service';
 import { User } from '../src/users/entities/user.entity';
 import { UserRole } from '../src/auth/roles.enum';
 import { TransactionType } from '../src/wallet/entities/wallet-transaction.entity';
+import { closeE2eApp } from './utils/e2e-cleanup';
 
 describe('Wallet Regression (e2e)', () => {
   let app: INestApplication;
   let dataSource: DataSource;
   let walletService: WalletService;
+  let currencyService: CurrencyService;
   let user: User;
 
   beforeAll(async () => {
@@ -23,6 +26,7 @@ describe('Wallet Regression (e2e)', () => {
     
     dataSource = app.get(DataSource);
     walletService = app.get(WalletService);
+    currencyService = app.get(CurrencyService);
   });
 
   afterAll(async () => {
@@ -37,7 +41,7 @@ describe('Wallet Regression (e2e)', () => {
         }
         await dataSource.manager.delete(User, user.id);
     }
-    await app.close();
+    await closeE2eApp({ app, dataSource });
   });
 
   it('should handle wallet currency migration and balance recalculation correctly', async () => {
@@ -95,9 +99,7 @@ describe('Wallet Regression (e2e)', () => {
     // 6. Verify Migration
     expect(wallet.currency).toBe('KES');
     
-    // Expected Rate: 1 ETB = (128.95 / 184) KES
-    const conversionRate = 128.95 / 184;
-    const expectedBalance = 800 * conversionRate;
+    const expectedBalance = currencyService.convert(800, 'ETB', 'KES');
     
     console.log(`Expected Balance (approx): ${expectedBalance}`);
     console.log(`Actual Balance: ${wallet.balance}`);
@@ -109,10 +111,16 @@ describe('Wallet Regression (e2e)', () => {
     const transactions = await walletService.getTransactions(user.id);
     
     const depositTx = transactions.find(t => t.description === 'Initial Deposit');
-    expect(Number(depositTx.amount)).toBeCloseTo(1000 * conversionRate, 1); // was 1000 ETB
+    expect(Number(depositTx.amount)).toBeCloseTo(
+      currencyService.convert(1000, 'ETB', 'KES'),
+      1,
+    );
 
     const paymentTx = transactions.find(t => t.type === TransactionType.PAYMENT && t.description === 'Test Payment');
-    expect(Number(paymentTx.amount)).toBeCloseTo(-200 * conversionRate, 1); // was -200 ETB
+    expect(Number(paymentTx.amount)).toBeCloseTo(
+      currencyService.convert(-200, 'ETB', 'KES'),
+      1,
+    );
 
     // 7. Test debitWallet in new currency
     // Debit 100 KES

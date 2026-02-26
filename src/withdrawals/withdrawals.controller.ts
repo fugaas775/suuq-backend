@@ -11,6 +11,8 @@ import {
   Req,
   ParseIntPipe,
   Res,
+  Header,
+  UseInterceptors,
 } from '@nestjs/common';
 import { Response } from 'express';
 import { WithdrawalsService } from './withdrawals.service';
@@ -19,6 +21,7 @@ import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { UserRole } from '../auth/roles.enum';
 import { WithdrawalStatus } from './entities/withdrawal.entity';
+import { RateLimitInterceptor } from '../common/interceptors/rate-limit.interceptor';
 
 @Controller('withdrawals')
 export class WithdrawalsController {
@@ -45,6 +48,16 @@ export class WithdrawalsController {
 
   @UseGuards(JwtAuthGuard)
   @Get()
+  @UseInterceptors(
+    new RateLimitInterceptor({
+      maxRps: 4,
+      burst: 8,
+      keyBy: 'userOrIp',
+      scope: 'route',
+      headers: true,
+    }),
+  )
+  @Header('Cache-Control', 'private, max-age=10')
   async getMyWithdrawals(@Req() req: any) {
     return this.withdrawalsService.findAll({ userId: req.user.id });
   }
@@ -52,6 +65,15 @@ export class WithdrawalsController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
   @Get('admin/list')
+  @UseInterceptors(
+    new RateLimitInterceptor({
+      maxRps: 6,
+      burst: 12,
+      keyBy: 'userOrIp',
+      scope: 'route',
+      headers: true,
+    }),
+  )
   async getAllWithdrawals(
     @Query('status') status: WithdrawalStatus | undefined,
     @Query('page') page = 1,

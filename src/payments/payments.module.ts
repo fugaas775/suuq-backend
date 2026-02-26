@@ -10,6 +10,7 @@ import { CartModule } from '../cart/cart.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { OrdersModule } from '../orders/orders.module';
 import { ProductsModule } from '../products/products.module';
+import { CurrencyModule } from '../common/services/currency.module';
 
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { ProductsModule } from '../products/products.module';
     NotificationsModule,
     OrdersModule,
     ProductsModule,
+    CurrencyModule,
   ],
   controllers: [PaymentsController],
   providers: [],

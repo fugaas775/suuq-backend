@@ -12,6 +12,7 @@ import {
   CreditTransaction,
   CreditTransactionType,
 } from './entities/credit-transaction.entity';
+import { CurrencyService } from '../common/services/currency.service';
 
 @Injectable()
 export class CreditService {
@@ -20,6 +21,7 @@ export class CreditService {
     private creditLimitRepo: Repository<CreditLimit>,
     @InjectRepository(CreditTransaction)
     private transactionRepo: Repository<CreditTransaction>,
+    private readonly currencyService: CurrencyService,
   ) {}
 
   async getLimit(userId: number) {
@@ -28,18 +30,29 @@ export class CreditService {
     });
     if (!limit) {
       // Return default 0 limit
+      const defaultCurrency = 'ETB';
+      const zero = this.currencyService.formatAmount(0, defaultCurrency);
       return {
-        maxLimit: '0.00',
-        currentUsage: '0.00',
-        available: '0.00',
-        currency: 'ETB',
+        maxLimit: zero,
+        currentUsage: zero,
+        available: zero,
+        currency: defaultCurrency,
         isEligible: false,
       };
     }
     const available = Number(limit.maxLimit) - Number(limit.currentUsage);
+    const currency = limit.currency || 'ETB';
     return {
       ...limit,
-      available: available.toFixed(2),
+      maxLimit: this.currencyService.formatAmount(
+        Number(limit.maxLimit),
+        currency,
+      ),
+      currentUsage: this.currencyService.formatAmount(
+        Number(limit.currentUsage),
+        currency,
+      ),
+      available: this.currencyService.formatAmount(available, currency),
     };
   }
 
@@ -157,7 +170,14 @@ export class CreditService {
       throw new NotFoundException('Credit limit not found for user');
     }
 
-    limit.currentUsage = Math.max(0, Number(limit.currentUsage) - amount);
+    const currentUsageNumber = Number(limit.currentUsage);
+    if (amount > currentUsageNumber) {
+      throw new BadRequestException(
+        `Repayment amount ${amount} exceeds current usage ${currentUsageNumber}`,
+      );
+    }
+
+    limit.currentUsage = currentUsageNumber - amount;
 
     await this.creditLimitRepo.save(limit);
 
@@ -175,5 +195,23 @@ export class CreditService {
       where: { user: { id: userId } },
       order: { createdAt: 'DESC' },
     });
+  }
+
+  async deleteCreditLimit(userId: number) {
+    const limit = await this.creditLimitRepo.findOne({
+      where: { user: { id: userId } },
+    });
+
+    if (!limit) {
+      throw new NotFoundException('Credit limit not found for user');
+    }
+
+    if (Number(limit.currentUsage) > 0) {
+      throw new BadRequestException(
+        'Cannot delete credit limit while user has outstanding usage. Please repay first.',
+      );
+    }
+
+    return this.creditLimitRepo.remove(limit);
   }
 }

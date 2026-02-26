@@ -3,16 +3,17 @@
   "rootDir": ".",
   "testEnvironment": "node",
   "testRegex": ".e2e-spec.ts$",
+  "detectOpenHandles": true,
+  "openHandlesTimeout": 5000,
   "transform": {
-    "^.+\\.(t|j)s$": "ts-jest"
-  },
-  "globals": {
-    "ts-jest": {
-      "tsconfig": {
-        "types": ["node", "jest"]
-      },
-      "isolatedModules": true
-    }
+    "^.+\\.(t|j)s$": [
+      "ts-jest",
+      {
+        "tsconfig": {
+          "types": ["node", "jest"]
+        }
+      }
+    ]
   },
   "moduleNameMapper": {
     "^file-type$": "<rootDir>/../__mocks__/file-type.ts"

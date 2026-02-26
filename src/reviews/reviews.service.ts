@@ -87,8 +87,8 @@ export class ReviewsService {
     const average = avg ? Math.round(parseFloat(avg) * 100) / 100 : null;
     const ratingCount = Number(count) || 0;
     await this.productRepository.update(productId, {
-      average_rating: average as any,
-      rating_count: ratingCount,
+      averageRating: average as any,
+      ratingCount: ratingCount,
     });
   }
 

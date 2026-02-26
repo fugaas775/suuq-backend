@@ -44,6 +44,14 @@ export class CreateOrderDto {
   items?: OrderItemDto[];
 
   @IsString()
+  @IsOptional()
+  couponCode?: string;
+
+  @IsString()
+  @IsOptional()
+  coupon_code?: string; // Startup compatibility: often sent as snake_case
+
+  @IsString()
   // eslint-disable-next-line @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
   @Transform(({ value }) => value?.toUpperCase())
   @IsIn([

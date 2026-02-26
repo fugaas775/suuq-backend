@@ -11,6 +11,21 @@ import * as Sentry from '@sentry/node';
 @Catch()
 export class GlobalExceptionFilter implements ExceptionFilter {
   private readonly logger = new Logger(GlobalExceptionFilter.name);
+  private readonly noisyProbe404Paths = new Set([
+    '/.env',
+    '/.env.local',
+    '/.env.production',
+    '/.git/config',
+    '/wp-admin',
+    '/wp-login.php',
+    '/xmlrpc.php',
+    '/phpinfo.php',
+  ]);
+
+  private headerValue(value: string | string[] | undefined): string {
+    if (Array.isArray(value)) return value[0] ?? '';
+    return value ?? '';
+  }
 
   catch(exception: unknown, host: ArgumentsHost) {
     const ctx = host.switchToHttp();
@@ -39,12 +54,33 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       }
     }
 
-    // Reduce noise for expected denials (401/403), 404s, and rate limits (429): log as warn with concise message
+    const path = (request.path || request.url || '').split('?')[0];
+    const userAgent = this.headerValue(request.headers['user-agent']);
+    const forwardedFor = this.headerValue(request.headers['x-forwarded-for']);
+    const clientIp = (forwardedFor.split(',')[0] || request.ip || '').trim();
+    const isExpectedAuthVerifyProbe =
+      status === 401 &&
+      request.method === 'GET' &&
+      path === '/api/auth/verify';
+    const isExpected404Probe =
+      status === 404 &&
+      request.method === 'GET' &&
+      (this.noisyProbe404Paths.has(path) || path.startsWith('/.well-known/'));
+
+    // Reduce noise for expected denials (401/403), 404s, and rate limits (429)
     if (status === 401 || status === 403 || status === 404 || status === 429) {
       const msg = `${status === 404 ? 'Not Found' : status === 429 ? 'Rate limited' : 'Auth denial'} ${status} on ${request.method} ${request.url}: ${
         typeof message === 'string' ? message : JSON.stringify(message)
       }`;
-      if (status === 429) {
+      if (isExpectedAuthVerifyProbe) {
+        this.logger.debug(
+          `Expected auth check ${status} on ${request.method} ${path} ua="${userAgent || 'unknown'}" ip="${clientIp || 'unknown'}"`,
+        );
+      } else if (isExpected404Probe) {
+        this.logger.debug(
+          `Expected probe miss ${status} on ${request.method} ${path} ua="${userAgent || 'unknown'}" ip="${clientIp || 'unknown'}"`,
+        );
+      } else if (status === 429) {
         this.logger.debug(msg);
       } else {
         this.logger.warn(msg);

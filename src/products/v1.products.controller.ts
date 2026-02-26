@@ -38,6 +38,15 @@ import { ProductListingDto } from './listing/dto/product-listing.dto';
 @SkipThrottle()
 @Controller('v1/products')
 export class ProductsV1Controller {
+  private readonly rotateOnReasons = new Set([
+    'pull_to_refresh',
+    'resume_idle',
+    'tab_switch_all',
+    'revisit',
+    'app_reopen',
+    'return_to_app',
+  ]);
+
   constructor(
     private readonly productsService: ProductsService,
     @InjectRepository(Category)
@@ -106,6 +115,10 @@ export class ProductsV1Controller {
     // Normalize category filters for stable behavior and cache keys:
     // Accept category, categories, or categoryId from DTO; coalesce into categoryId only
     const norm: ProductFilterDto = { ...(filters as any), currency };
+    const debugListingEnabled =
+      (norm as any).debug_listing === '1' ||
+      (norm as any).debugListing === '1' ||
+      (norm as any).debugListing === true;
     const ids: number[] = [];
     if (Array.isArray((filters as any).categoryId))
       ids.push(...((filters as any).categoryId as number[]));
@@ -124,6 +137,49 @@ export class ProductsV1Controller {
     // Force lean grid projection
     (norm as any).view = 'grid';
 
+    // Optional home refresh/revisit rotation support for legacy /v1/products callers.
+    // If refresh context is provided, derive a per-request rotation seed to avoid sticky ordering.
+    const refreshReason = String((filters as any).refreshReason || '')
+      .trim()
+      .toLowerCase();
+    const requestId =
+      String((filters as any).requestId || '').trim() ||
+      `v1-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const shouldRotate = this.rotateOnReasons.has(refreshReason);
+    let effectiveRotationBucket: string | undefined;
+    let effectiveRotationSeed: string | undefined;
+    if (shouldRotate) {
+      const baseBucket =
+        String((filters as any).timeBucket || '').trim() ||
+        (() => {
+          const d = new Date();
+          d.setMinutes(Math.floor(d.getMinutes() / 10) * 10, 0, 0);
+          return d.toISOString();
+        })();
+      const effectiveBucket = `${baseBucket}|${requestId}`;
+      const rotationSeed = [
+        String((norm as any).userCountry || '').trim().toUpperCase(),
+        String((norm as any).userCity || '').trim().toLowerCase(),
+        String((filters as any).rotationKey || '').trim(),
+        String((filters as any).sessionSalt || '').trim(),
+        effectiveBucket,
+      ]
+        .filter(Boolean)
+        .join('|');
+
+      effectiveRotationBucket = effectiveBucket;
+      effectiveRotationSeed = rotationSeed;
+
+      (norm as any).geoPriority = true;
+      (norm as any).geoRotationBucket = effectiveBucket;
+      (norm as any).geoRotationSeed = rotationSeed;
+
+      // If no explicit sort was requested, keep created-desc but allow seeded tie-break rotation.
+      if (!(norm as any).sort) {
+        (norm as any).sort = 'created_desc';
+      }
+    }
+
     const cacheKey = this.makeCacheKey(norm as any);
     const cached = ProductsV1Controller.LIST_CACHE.get(cacheKey);
     if (cached && cached.expiresAt > now) {
@@ -133,8 +189,9 @@ export class ProductsV1Controller {
     }
 
     let result: any;
-    const useV2 =
+    const useV2ByFlag =
       String(process.env.LISTING_ENGINE_V2 || '').toLowerCase() === '1';
+    const useV2 = useV2ByFlag || shouldRotate;
     if (useV2 && (norm as any).view === 'grid') {
       const dto: ProductListingDto = norm as unknown as ProductListingDto;
       result = await this.listingService.list(dto, { mapCards: true });
@@ -165,9 +222,7 @@ export class ProductsV1Controller {
 
     // If debug requested, emit a few lightweight headers for QA
     if (
-      (norm as any).debug_listing === '1' ||
-      (norm as any).debugListing === '1' ||
-      (norm as any).debugListing === true
+      debugListingEnabled
     ) {
       try {
         const dbg = result?.debug?.meta || {};
@@ -180,6 +235,16 @@ export class ProductsV1Controller {
             'X-Listing-Fallback-Parent',
             String(dbg.fallbackToParent),
           );
+        if (effectiveRotationBucket) {
+          res.setHeader('X-Listing-Rotation-Bucket', effectiveRotationBucket);
+        }
+        if (effectiveRotationSeed) {
+          res.setHeader('X-Listing-Rotation-Seed', effectiveRotationSeed);
+        }
+        res.setHeader(
+          'X-Listing-Rotation-Applied',
+          shouldRotate ? '1' : '0',
+        );
       } catch {}
     }
 
@@ -191,7 +256,20 @@ export class ProductsV1Controller {
       perPage: result.perPage,
       currentPage: result.currentPage,
       totalPages: result.totalPages,
-      ...(result.debug ? { debug: result.debug } : {}),
+      ...(result.debug || debugListingEnabled
+        ? {
+            debug: {
+              ...(result.debug || {}),
+              rotation: {
+                applied: shouldRotate,
+                reason: refreshReason || null,
+                requestId: shouldRotate ? requestId : null,
+                bucket: effectiveRotationBucket || null,
+                seed: effectiveRotationSeed || null,
+              },
+            },
+          }
+        : {}),
     };
 
     // Cache the response for a short window to absorb bursts
@@ -288,8 +366,18 @@ export class ProductsV1Controller {
 
   // Batch likes for product ids: GET /v1/products/likes?ids=1,2,3
   @Get('likes')
+  @UseInterceptors(
+    new RateLimitInterceptor({
+      maxRps: 8,
+      burst: 16,
+      keyBy: 'userOrIp',
+      scope: 'route',
+      headers: true,
+    }),
+  )
   @Header('Cache-Control', 'public, s-maxage=15')
   async likes(@Query('ids') idsParam: string) {
+    const MAX_IDS = 120;
     const parts = String(idsParam || '')
       .split(',')
       .map((s) => s.trim())
@@ -300,7 +388,7 @@ export class ProductsV1Controller {
           .map((s) => Number(s))
           .filter((n) => Number.isInteger(n) && n >= 1),
       ),
-    );
+    ).slice(0, MAX_IDS);
     if (!list.length) {
       throw new BadRequestException(
         'ids must be a comma-separated list of positive integers',

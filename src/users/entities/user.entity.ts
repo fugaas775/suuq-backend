@@ -176,8 +176,8 @@ export class User {
   @Column({ type: 'varchar', length: 128, nullable: true })
   taxId?: string | null;
 
-  @Column({ nullable: true, length: 2 })
-  registrationCountry?: string; // "ET", "SO", "DJ", "KE"
+  @Column({ nullable: true, length: 64 })
+  registrationCountry?: string; // "ET", "SO", "DJ", "KE" or full name
 
   @Column({ type: 'varchar', length: 128, nullable: true })
   registrationRegion?: string | null; // e.g., Oromia, Nairobi
@@ -185,7 +185,7 @@ export class User {
   @Column({ type: 'varchar', length: 128, nullable: true })
   registrationCity?: string | null;
 
-  @Column({ type: 'varchar', length: 64, nullable: true })
+  @Column({ type: 'varchar', length: 255, nullable: true })
   businessType?: string | null; // e.g., "Sole Proprietor", "PLC"
 
   @Column({ type: 'varchar', length: 128, nullable: true })

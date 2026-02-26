@@ -67,6 +67,8 @@ export class AdminVendorsController {
     @Query('page') page?: string,
     @Query('limit') limit?: string,
     @Query('q') q?: string,
+    @Query('search') search?: string,
+    @Query('vendorId') vendorId?: string,
     @Query('sort') sort?: 'name' | 'recent' | 'popular' | 'verifiedAt',
     @Query('verificationStatus')
     verificationStatus?: 'APPROVED' | 'PENDING' | 'REJECTED',
@@ -88,10 +90,17 @@ export class AdminVendorsController {
       minRating !== undefined && minRating !== ''
         ? Number(minRating)
         : undefined;
+
+    // Prioritize specific vendor ID if provided
+    const effectiveSearch =
+      vendorId && !Number.isNaN(Number(vendorId))
+        ? vendorId
+        : search || q;
+
     const result = await this.vendorService.findPublicVendors({
       page: p,
       limit: l,
-      search: q,
+      search: effectiveSearch,
       sort: sort || 'recent',
       verificationStatus,
       certificationStatus,
@@ -104,6 +113,7 @@ export class AdminVendorsController {
       minRating: Number.isFinite(minRatingNum as any)
         ? minRatingNum
         : undefined,
+      skipRoleFilter: true, // Allow admins to find any user (e.g. Suuq S default admin account)
     } as any);
     const payload = {
       items: result.items,
@@ -133,6 +143,7 @@ export class AdminVendorsController {
       certificationStatus,
       subscriptionTier,
       sort: 'recent',
+      skipRoleFilter: true, // Allow finding any user for admin purposes
       role: 'VENDOR',
     } as any);
 

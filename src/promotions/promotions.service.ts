@@ -68,6 +68,14 @@ export class PromotionsService {
     return { isValid: true, discount, coupon };
   }
 
+  async deleteCoupon(id: number) {
+    const result = await this.couponRepo.delete(id);
+    if (result.affected === 0) {
+      throw new NotFoundException('Coupon not found');
+    }
+    return { deleted: true };
+  }
+
   async incrementUsage(id: number) {
     await this.couponRepo.increment({ id }, 'usedCount', 1);
   }

@@ -1098,6 +1098,7 @@ export class VendorService {
       certificationStatus?: 'certified' | 'uncertified';
       minSales?: number;
       minRating?: number;
+      skipRoleFilter?: boolean;
     },
   ): Promise<{
     items: any[];
@@ -1118,6 +1119,7 @@ export class VendorService {
       certificationStatus,
       minSales,
       minRating,
+      skipRoleFilter,
     } = findAllVendorsDto;
     const skip = (page - 1) * limit;
 
@@ -1126,8 +1128,8 @@ export class VendorService {
     if (search) {
       // If there is a search term, create OR conditions for displayName, storeName, and ID
       const commonCriteria = {
-        roles: ArrayContains([UserRole.VENDOR]),
-        isActive: true,
+        ...(skipRoleFilter ? {} : { roles: ArrayContains([UserRole.VENDOR]) }),
+        ...(skipRoleFilter ? {} : { isActive: true }),
       };
 
       const whereConditions: any[] = [
@@ -1138,6 +1140,18 @@ export class VendorService {
         {
           ...commonCriteria,
           storeName: ILike(`%${search}%`),
+        },
+        {
+          ...commonCriteria,
+          email: ILike(`%${search}%`),
+        },
+        {
+          ...commonCriteria,
+          phoneNumber: ILike(`%${search}%`),
+        },
+        {
+          ...commonCriteria,
+          vendorPhoneNumber: ILike(`%${search}%`),
         },
       ];
 
@@ -1156,8 +1170,8 @@ export class VendorService {
       // If there is no search term, find all vendors
       findOptions = {
         where: {
-          roles: ArrayContains([UserRole.VENDOR]),
-          isActive: true,
+          ...(skipRoleFilter ? {} : { roles: ArrayContains([UserRole.VENDOR]) }),
+          ...(skipRoleFilter ? {} : { isActive: true }),
         },
       };
     }
@@ -2390,7 +2404,7 @@ export class VendorService {
         type: NotificationType.ORDER,
         data: {
           orderId: String(orderId),
-          route: `/deliverer/orders/${orderId}`,
+          route: '/deliverer-deliveries',
           click_action: 'FLUTTER_NOTIFICATION_CLICK',
           action: 'request_acceptance',
         },

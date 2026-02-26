@@ -11,6 +11,7 @@ import { RolesService } from '../src/roles/roles.service';
 import { JwtAuthGuard } from '../src/auth/jwt-auth.guard';
 import { RoleUpgradeStatus } from '../src/roles/entities/role-upgrade-request.entity';
 import { UserRole } from '../src/auth/roles.enum';
+import { closeE2eApp } from './utils/e2e-cleanup';
 
 class AllowGuard implements CanActivate {
   canActivate(context: ExecutionContext): boolean {
@@ -71,7 +72,7 @@ describe('Roles Endpoints (e2e-lite)', () => {
   });
 
   afterAll(async () => {
-    await app.close();
+    await closeE2eApp({ app });
   });
 
   it('GET /roles/upgrade-request/me returns 204 when none', async () => {

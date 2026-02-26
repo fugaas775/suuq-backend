@@ -1,6 +1,7 @@
 import { INestApplication, Controller, Get, Query } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
+import { closeE2eApp } from './utils/e2e-cleanup';
 
 // Minimal mock controller to isolate the /products/tiers contract without DB
 @Controller('products')
@@ -40,7 +41,7 @@ describe('Products /products/tiers (shape contract)', () => {
   });
 
   afterAll(async () => {
-    await app.close();
+    await closeE2eApp({ app });
   });
 
   it('returns bucketed tiers by default', async () => {

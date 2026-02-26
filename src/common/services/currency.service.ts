@@ -48,16 +48,46 @@ export class CurrencyService implements OnModuleInit, OnModuleDestroy {
    * @returns The converted amount
    */
   convert(amount: number, fromCurrency: string, toCurrency: string): number {
-    if (fromCurrency === toCurrency) return amount;
-    const fromRate = this.rates[fromCurrency];
-    const toRate = this.rates[toCurrency];
+    const from = fromCurrency.toUpperCase();
+    const to = toCurrency.toUpperCase();
+    const isIntegerTarget = ['ETB', 'KES', 'SOS', 'DJF', 'KSH'].includes(to);
+
+    if (from === to) {
+      // If target is integer currency, ensure integer
+      if (isIntegerTarget) {
+        return Math.round(amount);
+      }
+      return Math.round(amount * 100) / 100; // round to 2 decimals for float safety
+    }
+
+    const fromRate = this.rates[from];
+    const toRate = this.rates[to];
     if (!fromRate || !toRate) {
-      throw new Error(`Unsupported currency: ${fromCurrency} or ${toCurrency}`);
+      throw new Error(`Unsupported currency: ${from} or ${to}`);
     }
     // Convert to USD first, then to target
     const amountInUSD = amount / fromRate;
     const converted = amountInUSD * toRate;
+
+    if (isIntegerTarget) {
+      return Math.round(converted);
+    }
+
     return Math.round(converted * 100) / 100; // round to 2 decimals
+  }
+
+  /**
+   * Formats an amount as a string based on the currency.
+   * - ETB, KES, SOS, DJF: No decimals (integer)
+   * - USD: 2 decimals
+   */
+  formatAmount(amount: number | string, currency: string): string {
+    const val = typeof amount === 'string' ? parseFloat(amount) : amount;
+    const code = (currency || '').toUpperCase();
+    if (['ETB', 'KES', 'SOS', 'DJF', 'KSH'].includes(code)) {
+      return val.toFixed(0);
+    }
+    return val.toFixed(2);
   }
 
   /** Returns the FX multiplier from `fromCurrency` to `toCurrency` (to/from). */

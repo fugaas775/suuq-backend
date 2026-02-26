@@ -7,6 +7,7 @@ import { AuthGuard } from '@nestjs/passport';
 import { RolesGuard } from '../src/auth/roles.guard';
 import { AuditService } from '../src/audit/audit.service';
 import { DataSource } from 'typeorm';
+import { closeE2eApp } from './utils/e2e-cleanup';
 
 // Simple guard override that injects an admin user
 const mockAdminGuard = {
@@ -71,8 +72,7 @@ describe('AdminAuditController (e2e)', () => {
   });
 
   afterAll(async () => {
-    await app.close();
-    if (dataSource?.isInitialized) await dataSource.destroy();
+    await closeE2eApp({ app, dataSource });
   });
 
   it('paginates with filters and returns prettified labels', async () => {

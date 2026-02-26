@@ -22,6 +22,7 @@ describe('HomeService (Explore engine flag)', () => {
   } as any;
 
   beforeEach(async () => {
+    jest.clearAllMocks();
     process.env.HOME_EXPLORE_ENGINE_V2 = '1';
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -62,7 +63,7 @@ describe('HomeService (Explore engine flag)', () => {
 
   it('uses listing engine when flag is on and maps cards internally', async () => {
     listingService.list.mockResolvedValue({
-      items: [{ id: 1 }],
+      items: [{ id: 1, name: 'One', currency: 'ETB', price: 10 }],
       total: 1,
       page: 1,
       perPage: 20,
@@ -80,6 +81,69 @@ describe('HomeService (Explore engine flag)', () => {
     expect(Array.isArray(resp.exploreProducts.items)).toBe(true);
   });
 
+  it('propagates geo/rotation params and returns tier metadata', async () => {
+    listingService.list
+      .mockResolvedValueOnce({
+        items: [{ id: 11, name: 'A', currency: 'ETB', price: 10 }],
+        total: 1,
+        page: 1,
+        perPage: 20,
+        totalPages: 1,
+      })
+      .mockResolvedValueOnce({
+        items: [{ id: 12, name: 'B', currency: 'ETB', price: 20 }],
+        total: 1,
+        page: 1,
+        perPage: 20,
+        totalPages: 1,
+      })
+      .mockResolvedValueOnce({
+        items: [{ id: 13, name: 'C', currency: 'ETB', price: 30 }],
+        total: 1,
+        page: 1,
+        perPage: 20,
+        totalPages: 1,
+      });
+
+    const resp = await service.getV2HomeFeed({
+      page: 1,
+      perPage: 3,
+      userCountry: 'Ethiopia',
+      userRegion: 'Addis Ababa',
+      userCity: 'Addis Ababa',
+      rotationKey: 'rev-1',
+      sessionSalt: 'abc',
+      rotationBucket: '2026-02-25T10:00:00.000Z',
+      refreshReason: 'revisit',
+      requestId: 'req-123',
+    });
+
+    expect(listingService.list).toHaveBeenCalled();
+    expect(listingService.list).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userCountry: 'Ethiopia',
+        geoCountryStrict: true,
+        geoRotationBucket: '2026-02-25T10:00:00.000Z|req-123',
+      }),
+      expect.objectContaining({ mapCards: false }),
+    );
+    expect(resp.meta).toEqual(
+      expect.objectContaining({
+        requestId: 'req-123',
+        refreshReason: 'revisit',
+        rotationBucket: '2026-02-25T10:00:00.000Z|req-123',
+        geoScopeUsed: expect.any(String),
+        rankingTierCounts: expect.objectContaining({
+          city_country: expect.any(Number),
+          region_country: expect.any(Number),
+          country_only: expect.any(Number),
+          east_africa: expect.any(Number),
+          world: expect.any(Number),
+        }),
+      }),
+    );
+  });
+
   it('falls back to ProductsService when flag is off', async () => {
     process.env.HOME_EXPLORE_ENGINE_V2 = '0';
     productsService.findFiltered.mockResolvedValue({
@@ -92,5 +156,56 @@ describe('HomeService (Explore engine flag)', () => {
 
     expect(productsService.findFiltered).toHaveBeenCalled();
     expect(Array.isArray(resp.exploreProducts.items)).toBe(true);
+  });
+
+  it('keeps explore non-empty when listing tiers fail', async () => {
+    listingService.list.mockRejectedValue(new Error('tier query failed'));
+    productsService.findFiltered.mockImplementation(async (query: any) => {
+      if (query?.featured) return { items: [] };
+      return {
+        items: [{ id: 999, name: 'Fallback item', currency: 'ETB', price: 42 }],
+        total: 1,
+        currentPage: 1,
+      };
+    });
+
+    const resp = await service.getV2HomeFeed({
+      page: 1,
+      perPage: 1,
+      userCountry: 'Ethiopia',
+      geoAppend: true,
+    });
+
+    expect(resp.exploreProducts.items.length).toBe(1);
+    expect((resp.exploreProducts.items[0] as any).id).toBe(999);
+    expect(productsService.findFiltered).toHaveBeenCalledWith(
+      expect.objectContaining({
+        perPage: 1,
+        view: 'grid',
+      }),
+    );
+  });
+
+  it('uses requested page and preserves explore total for infinite scroll', async () => {
+    listingService.list.mockResolvedValue({
+      items: [{ id: 21, name: 'Page Two', currency: 'ETB', price: 15 }],
+      total: 120,
+      page: 2,
+      perPage: 20,
+      totalPages: 6,
+    });
+
+    const resp = await service.getV2HomeFeed({
+      page: 2,
+      perPage: 20,
+      userCountry: 'Ethiopia',
+    });
+
+    expect(listingService.list).toHaveBeenCalledWith(
+      expect.objectContaining({ page: 2 }),
+      expect.objectContaining({ mapCards: false }),
+    );
+    expect(resp.exploreProducts.page).toBe(2);
+    expect(resp.exploreProducts.total).toBeGreaterThan(20);
   });
 });

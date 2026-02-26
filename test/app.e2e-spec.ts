@@ -4,6 +4,7 @@ import request from 'supertest';
 import type { App } from 'supertest/types';
 import { AppModule } from './../src/app.module';
 import { DataSource } from 'typeorm';
+import { closeE2eApp } from './utils/e2e-cleanup';
 
 describe('AppController (e2e)', () => {
   let app: INestApplication<App>;
@@ -20,10 +21,7 @@ describe('AppController (e2e)', () => {
     dataSource = app.get(DataSource);
   });
   afterAll(async () => {
-    await app.close();
-    if (dataSource && dataSource.isInitialized) {
-      await dataSource.destroy();
-    }
+    await closeE2eApp({ app, dataSource });
   });
 
   it('/api (GET)', () => {

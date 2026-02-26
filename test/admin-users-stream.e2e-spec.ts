@@ -12,7 +12,7 @@ import { AuthGuard } from '@nestjs/passport';
 import { UserRole } from '../src/auth/roles.enum';
 import { VerificationStatus } from '../src/users/entities/user.entity';
 import { OrdersService } from '../src/orders/orders.service';
-import { WithdrawalsService } from '../src/withdrawals/withdrawals.service';
+import { DelivererService } from '../src/deliverer/deliverer.service';
 
 class AllowGuard implements CanActivate {
   canActivate(_context: ExecutionContext): boolean {
@@ -22,6 +22,7 @@ class AllowGuard implements CanActivate {
 
 import { CurrencyService } from '../src/common/services/currency.service';
 import { ProductsService } from '../src/products/products.service';
+import { closeE2eApp } from './utils/e2e-cleanup';
 
 describe('GET /admin/users/stream (e2e)', () => {
   let app: INestApplication;
@@ -80,6 +81,7 @@ describe('GET /admin/users/stream (e2e)', () => {
         { provide: OrdersService, useValue: {} },
         { provide: CurrencyService, useValue: {} },
         { provide: ProductsService, useValue: {} },
+        { provide: DelivererService, useValue: {} },
       ],
     })
       .overrideGuard(RolesGuard)
@@ -93,7 +95,7 @@ describe('GET /admin/users/stream (e2e)', () => {
   });
 
   afterAll(async () => {
-    await app.close();
+    await closeE2eApp({ app });
   });
 
   it('streams NDJSON with correct headers and line format', async () => {

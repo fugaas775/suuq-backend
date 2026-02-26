@@ -17,6 +17,7 @@ import { UserReport } from '../moderation/entities/user-report.entity';
 import { CurrencyService } from '../common/services/currency.service';
 import { ShippingService } from '../shipping/shipping.service';
 import { SettingsService } from '../settings/settings.service';
+import { EmailService } from '../email/email.service';
 
 const j = jest as any;
 
@@ -29,6 +30,7 @@ describe('VendorService', () => {
   const productImageRepoMock: any = {};
   const tagRepoMock: any = {};
   const notificationsMock: any = {};
+  const emailMock: any = { sendEmail: j.fn(), sendWelcomeEmail: j.fn() };
   const doSpacesMock: any = {
     extractKeyFromUrl: j.fn((url: string) => {
       try {
@@ -136,6 +138,7 @@ describe('VendorService', () => {
         { provide: CurrencyService, useValue: { convert: j.fn() } },
         { provide: ShippingService, useValue: { generateLabel: j.fn() } },
         { provide: SettingsService, useValue: { getSystemSetting: j.fn() } },
+        { provide: EmailService, useValue: emailMock },
       ],
     }).compile();
 

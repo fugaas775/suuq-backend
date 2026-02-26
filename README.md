@@ -123,6 +123,25 @@ IDEMPOTENCY_TTL_SEC=600
 - Admin endpoints sit under `/api/admin`; responses are marked `Cache-Control: no-store` by default to avoid stale dashboards.
 - Legacy `/product-requests` paths are auto-prefixed to `/api/product-requests` for backwards compatibility.
 
+## Product contract: Restaurant/Catering
+
+For listings under restaurant/catering/food/beverage/cafe categories, mobile/web clients must use canonical restaurant attributes.
+
+Exception: `Food & Beverages > Restaurant & Catering Deals` no longer uses/enforces restaurant variation attributes.
+
+- Canonical keys (inside `attributes`): `menuSection`, `availability`, `serviceType`, `orderClass`
+- `menuSection` is required for restaurant/catering listings.
+- Allowed value input formats:
+	- Display values (for example: `Main Dishes`, `Out of stock`, `Dine-in`, `Special Order`)
+	- camelCase tokens (for example: `mainDishes`, `outOfStock`, `dineIn`, `specialOrder`)
+- Backward compatibility (accepted, but deprecated/prefer camelCase):
+	- snake_case enum tokens (for example: `main_dishes`, `out_of_stock`, `dine_in`, `special_order`)
+	- snake_case keys (`menu_section`, `stock_status`, `service_type`, `order_class`, `order_type`)
+- Rejected input keys:
+	- legacy non-canonical keys (`section`, `stockStatus`, `service`, `orderType`)
+- Request-time top-level fallback supports canonical keys and snake_case aliases; all are merged into canonical `attributes` keys.
+- If both top-level canonical fields and `attributes` are provided, `attributes` wins.
+
 ## License
 
 UNLICENSED (private).

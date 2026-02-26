@@ -101,8 +101,9 @@ export class Product {
       from: (value: string | number | undefined) =>
         typeof value === 'string' ? parseFloat(value) : value,
     },
+    name: 'sale_price',
   })
-  sale_price?: number;
+  salePrice?: number;
 
   @OneToMany(() => ProductImage, (image) => image.product, {
     cascade: true,
@@ -110,14 +111,24 @@ export class Product {
   })
   images!: ProductImage[];
 
-  @Column('decimal', { precision: 3, scale: 2, nullable: true })
-  average_rating?: number;
+  @Column('decimal', {
+    precision: 3,
+    scale: 2,
+    nullable: true,
+    name: 'average_rating',
+  })
+  averageRating?: number;
 
-  @Column({ nullable: true })
-  rating_count?: number;
+  @Column({ nullable: true, name: 'rating_count' })
+  ratingCount?: number;
 
-  @Column({ type: 'json', nullable: true, select: false })
-  original_creator_contact?: Record<string, any>;
+  @Column({
+    type: 'json',
+    nullable: true,
+    select: false,
+    name: 'original_creator_contact',
+  })
+  originalCreatorContact?: Record<string, any>;
 
   @ManyToMany(() => Tag, (tag) => tag.products, { cascade: true })
   @JoinTable()
@@ -126,11 +137,11 @@ export class Product {
   @Column({ nullable: true })
   sku?: string;
 
-  @Column('int', { nullable: true })
-  stock_quantity?: number;
+  @Column('int', { nullable: true, name: 'stock_quantity' })
+  stockQuantity?: number;
 
-  @Column({ default: false })
-  manage_stock?: boolean;
+  @Column({ default: false, name: 'manage_stock' })
+  manageStock?: boolean;
 
   @Column({ default: 'publish' })
   status?: 'publish' | 'draft' | 'pending' | 'pending_approval' | 'rejected';
@@ -139,8 +150,8 @@ export class Product {
   reviews!: Review[];
 
   // Per-product sales counter used for Best Sellers sorting
-  @Column('int', { default: 0 })
-  sales_count!: number;
+  @Column('int', { default: 0, name: 'sales_count' })
+  salesCount!: number;
 
   // Minimum Order Quantity (MOQ)
   @Expose()
@@ -185,9 +196,9 @@ export class Product {
     id?: number | null;
   } {
     // 1. Guest/Approved posts (explicit contact override)
-    if (this.original_creator_contact && this.original_creator_contact.name) {
+    if (this.originalCreatorContact && this.originalCreatorContact.name) {
       return {
-        name: this.original_creator_contact.name,
+        name: this.originalCreatorContact.name,
         type: 'guest',
         id: null,
       };
@@ -293,6 +304,37 @@ export class Product {
   @Expose()
   get shippingNotes(): string | undefined {
     return this.getAttribute<string>('shippingNotes');
+  }
+
+  // --- Vehicle Fields ---
+  @Expose()
+  get make(): string | undefined {
+    return this.getAttribute<string>('make');
+  }
+
+  @Expose()
+  get model(): string | undefined {
+    return this.getAttribute<string>('model');
+  }
+
+  @Expose()
+  get year(): number | undefined {
+    return this.getAttribute<number>('year');
+  }
+
+  @Expose()
+  get mileage(): number | undefined {
+    return this.getAttribute<number>('mileage');
+  }
+
+  @Expose()
+  get transmission(): string | undefined {
+    return this.getAttribute<string>('transmission');
+  }
+
+  @Expose()
+  get fuelType(): string | undefined {
+    return this.getAttribute<string>('fuelType');
   }
 
   // Feed Type (Injected by Controller/Service)
@@ -477,27 +519,27 @@ export class Product {
   get info_text(): string | null {
     // 1. Low Stock (Urgency)
     if (
-      this.manage_stock &&
-      this.stock_quantity &&
-      this.stock_quantity <= 5 &&
-      this.stock_quantity > 0
+      this.manageStock &&
+      this.stockQuantity &&
+      this.stockQuantity <= 5 &&
+      this.stockQuantity > 0
     ) {
-      return `Only ${this.stock_quantity} left!`;
+      return `Only ${this.stockQuantity} left!`;
     }
 
     // 2. Discount
-    if (this.sale_price && this.price && this.sale_price < this.price) {
+    if (this.salePrice && this.price && this.salePrice < this.price) {
       const discount = Math.round(
-        ((this.price - this.sale_price) / this.price) * 100,
+        ((this.price - this.salePrice) / this.price) * 100,
       );
       if (discount > 0) return `${discount}% OFF`;
     }
 
     // 3. Sold Count (User Request)
-    if (this.sales_count > 0) {
-      if (this.sales_count >= 1000)
-        return `${(this.sales_count / 1000).toFixed(1)}k+ sold`;
-      return `${this.sales_count} sold`;
+    if (this.salesCount > 0) {
+      if (this.salesCount >= 1000)
+        return `${(this.salesCount / 1000).toFixed(1)}k+ sold`;
+      return `${this.salesCount} sold`;
     }
 
     // 4. New Arrival (Freshness - last 7 days)
@@ -538,14 +580,6 @@ export class Product {
     }
 
     return null;
-  }
-
-  @Expose()
-  get isFree(): boolean | undefined {
-    const attrs = this.attributes;
-    if (!attrs || typeof attrs !== 'object') return undefined;
-    const v = (attrs as Record<string, unknown>).isFree as any;
-    return typeof v === 'boolean' ? v : undefined;
   }
 
   // Convenience for edit forms: list of tag names

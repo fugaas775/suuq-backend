@@ -3,6 +3,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import request from 'supertest';
 import { CategoriesController } from '../src/categories/categories.controller';
 import { CategoriesService } from '../src/categories/categories.service';
+import { closeE2eApp } from './utils/e2e-cleanup';
 
 describe('Categories (e2e)', () => {
   let app: INestApplication;
@@ -79,7 +80,7 @@ describe('Categories (e2e)', () => {
   });
 
   afterAll(async () => {
-    await app?.close();
+    await closeE2eApp({ app });
   });
 
   describe('GET /api/categories', () => {

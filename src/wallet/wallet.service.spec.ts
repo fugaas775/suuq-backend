@@ -5,6 +5,7 @@ import { Wallet } from './entities/wallet.entity';
 import { WalletTransaction } from './entities/wallet-transaction.entity';
 import { PayoutLog, PayoutStatus } from './entities/payout-log.entity';
 import { TopUpRequest } from './entities/top-up-request.entity';
+import { Settlement } from './entities/settlement.entity';
 import { User } from '../users/entities/user.entity';
 import { UiSetting } from '../settings/entities/ui-setting.entity';
 import { CurrencyService } from '../common/services/currency.service';
@@ -30,6 +31,7 @@ describe('WalletService', () => {
         { provide: getRepositoryToken(WalletTransaction), useValue: {} },
         { provide: getRepositoryToken(PayoutLog), useValue: payoutRepo },
         { provide: getRepositoryToken(TopUpRequest), useValue: {} },
+        { provide: getRepositoryToken(Settlement), useValue: {} },
         { provide: getRepositoryToken(User), useValue: {} },
         { provide: getRepositoryToken(UiSetting), useValue: {} },
         { provide: DataSource, useValue: {} },

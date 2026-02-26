@@ -11,6 +11,7 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { Category } from '../src/categories/entities/category.entity';
 import { Repository } from 'typeorm';
 import { DataSource } from 'typeorm';
+import { closeE2eApp } from './utils/e2e-cleanup';
 
 /** Minimal e2e to assert iconName/iconUrl are exposed in list responses */
 
@@ -51,10 +52,7 @@ describe('Categories icons (e2e)', () => {
   });
 
   afterAll(async () => {
-    await app.close();
-    if (dataSource && dataSource.isInitialized) {
-      await dataSource.destroy();
-    }
+    await closeE2eApp({ app, dataSource });
   });
 
   it('/api/categories (GET) exposes iconName/iconUrl', async () => {

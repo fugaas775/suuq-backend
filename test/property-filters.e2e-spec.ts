@@ -15,6 +15,7 @@ import { ProductImpression } from '../src/products/entities/product-impression.e
 import { SearchKeyword } from '../src/products/entities/search-keyword.entity';
 
 import { AppModule } from '../src/app.module';
+import { closeE2eApp } from './utils/e2e-cleanup';
 
 // Minimal e2e covering listingType + bedrooms filtering logic
 
@@ -121,7 +122,7 @@ describe.skip('Property Filters (e2e)', () => {
   });
 
   afterAll(async () => {
-    await app.close();
+    await closeE2eApp({ app, dataSource });
   });
 
   function extractNames(res: request.Response) {

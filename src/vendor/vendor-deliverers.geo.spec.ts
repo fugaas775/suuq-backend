@@ -14,6 +14,8 @@ import { UserReport } from '../moderation/entities/user-report.entity';
 import { CurrencyService } from '../common/services/currency.service';
 import { ShippingService } from '../shipping/shipping.service';
 import { SettingsService } from '../settings/settings.service';
+import { EmailService } from '../email/email.service';
+import { Dispute } from '../orders/entities/dispute.entity';
 
 /**
  * Unit tests (mocked repos) for geo-aware searchDeliverers
@@ -69,6 +71,7 @@ describe('VendorService.searchDeliverers (geo)', () => {
         { provide: getRepositoryToken(User), useClass: Repository },
         { provide: getRepositoryToken(Product), useClass: Repository },
         { provide: getRepositoryToken(Order), useClass: Repository },
+        { provide: getRepositoryToken(Dispute), useClass: Repository },
         { provide: getRepositoryToken(OrderItem), useClass: Repository },
         { provide: getRepositoryToken(ProductImage), useClass: Repository },
         { provide: getRepositoryToken(Tag), useClass: Repository },
@@ -82,6 +85,7 @@ describe('VendorService.searchDeliverers (geo)', () => {
         { provide: CurrencyService, useValue: {} },
         { provide: ShippingService, useValue: {} },
         { provide: SettingsService, useValue: {} },
+        { provide: EmailService, useValue: {} },
       ],
     }).compile();
 

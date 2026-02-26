@@ -46,6 +46,34 @@ import { BOOST_OPTIONS, BoostTier } from './boost-pricing.service';
 @Injectable()
 export class ProductsService {
   private readonly logger = new Logger(ProductsService.name);
+  private readonly restaurantCategoryPattern =
+    /(restaurant|catering|food|beverage|cafe|café)/i;
+  private readonly restaurantVariationDisabledSlugs = new Set([
+    'restaurant-catering-deals',
+  ]);
+  private readonly restaurantVariationDisabledNamePattern =
+    /food\s*&\s*beverages\s*>\s*restaurant\s*&\s*catering\s*deals/i;
+  private readonly restaurantMenuSections = [
+    'Breakfast',
+    'Main Dishes',
+    'Fast Foods & Snacks',
+    'Beverages',
+    'Extras/Add-ons',
+  ] as const;
+  private readonly restaurantAvailabilityValues = [
+    'Available',
+    'Out of stock',
+    'On request',
+  ] as const;
+  private readonly restaurantServiceTypes = [
+    'Dine-in',
+    'Takeaway',
+    'Delivery',
+  ] as const;
+  private readonly restaurantOrderClasses = [
+    'Regular',
+    'Special Order',
+  ] as const;
 
   constructor(
     @InjectRepository(Product)
@@ -102,7 +130,7 @@ export class ProductsService {
     const from = product.currency || 'ETB';
     const price = this.convertAmount(product.price, from, targetCurrency);
     const sale = this.convertAmount(
-      product.sale_price as any,
+      product.salePrice as any,
       from,
       targetCurrency,
     );
@@ -113,7 +141,10 @@ export class ProductsService {
         : undefined;
 
     (product as any).price = price ?? product.price;
-    (product as any).sale_price = sale ?? product.sale_price;
+    (product as any).salePrice = sale ?? product.salePrice;
+    // Legacy support
+    (product as any).sale_price = sale ?? product.salePrice;
+
     (product as any).currency = targetCurrency;
 
     // Provide transparent conversion metadata without breaking existing clients
@@ -191,7 +222,8 @@ export class ProductsService {
       .leftJoinAndSelect('product.category', 'category')
       .where('product.id IN (:...ids)', { ids: list })
       .andWhere('product.status = :status', { status: 'publish' })
-      .andWhere('product.isBlocked = false');
+      .andWhere('product.isBlocked = false')
+      .andWhere('product.deleted_at IS NULL');
 
     if ((opts?.view || 'grid') === 'grid') {
       qb.select([
@@ -202,10 +234,10 @@ export class ProductsService {
         'product.imageUrl',
         'product.average_rating',
         'product.rating_count',
-        'product.sales_count',
-        'product.stock_quantity',
-        'product.manage_stock',
-        'product.sale_price',
+        'product.salesCount',
+        'product.stockQuantity',
+        'product.manageStock',
+        'product.salePrice',
         'product.moq',
         'product.viewCount',
         'product.featured',
@@ -254,6 +286,197 @@ export class ProductsService {
     return (
       typeof slug === 'string' && /(property|real[-_ ]?estate)/i.test(slug)
     );
+  }
+
+  private isVehicleCategory(category?: any): boolean {
+    const slug = (category && (category.slug || category?.['slug'])) || '';
+    return (
+      typeof slug === 'string' &&
+      /(car|truck|motorcycle|auto|boat|vehicle)/i.test(slug)
+    );
+  }
+
+  private isRestaurantCategory(category?: any): boolean {
+    const slug =
+      (category && (category.slug || category?.['slug'])
+        ? String(category.slug || category?.['slug'])
+        : '') || '';
+    const name =
+      (category && (category.name || category?.['name'])
+        ? String(category.name || category?.['name'])
+        : '') || '';
+
+    return (
+      this.restaurantCategoryPattern.test(slug) ||
+      this.restaurantCategoryPattern.test(name)
+    );
+  }
+
+  private shouldApplyRestaurantVariations(category?: any): boolean {
+    if (!this.isRestaurantCategory(category)) return false;
+
+    const slug =
+      (category && (category.slug || category?.['slug'])
+        ? String(category.slug || category?.['slug'])
+        : '') || '';
+    const name =
+      (category && (category.name || category?.['name'])
+        ? String(category.name || category?.['name'])
+        : '') || '';
+
+    if (slug && this.restaurantVariationDisabledSlugs.has(slug.toLowerCase())) {
+      return false;
+    }
+    if (name && this.restaurantVariationDisabledNamePattern.test(name)) {
+      return false;
+    }
+
+    return true;
+  }
+
+  private normalizeRestaurantEnumValue(
+    value: any,
+    allowedValues: readonly string[],
+    fieldName: string,
+  ): string | undefined {
+    if (typeof value === 'undefined' || value === null) return undefined;
+    const raw = String(value).trim();
+    if (!raw) return undefined;
+
+    const normalizeToken = (input: string): string =>
+      input
+        .trim()
+        .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '_')
+        .replace(/^_+|_+$/g, '');
+
+    const normalizedRaw = normalizeToken(raw);
+    const hit = allowedValues.find((option) => {
+      const normalizedOption = normalizeToken(option);
+      return (
+        option.toLowerCase() === raw.toLowerCase() ||
+        normalizedOption === normalizedRaw
+      );
+    });
+    if (!hit) {
+      throw new BadRequestException(
+        `Invalid ${fieldName}. Allowed values: ${allowedValues.join(', ')}`,
+      );
+    }
+    return hit;
+  }
+
+  private sanitizeAttributesForCategory(
+    attrs: any,
+    category?: any,
+    opts?: { requireRestaurantMenuSection?: boolean },
+  ): Record<string, any> | null {
+    const out = this.sanitizeAttributes(attrs);
+    if (!out || typeof out !== 'object') {
+      if (
+        opts?.requireRestaurantMenuSection &&
+        this.shouldApplyRestaurantVariations(category)
+      ) {
+        throw new BadRequestException(
+          `menuSection is required for Restaurant & Catering listings. Allowed values: ${this.restaurantMenuSections.join(', ')}`,
+        );
+      }
+      return out ?? null;
+    }
+
+    if (!this.shouldApplyRestaurantVariations(category)) {
+      return out;
+    }
+
+    const hasLegacyAlias =
+      Object.prototype.hasOwnProperty.call(out, 'section') ||
+      Object.prototype.hasOwnProperty.call(out, 'stockStatus') ||
+      Object.prototype.hasOwnProperty.call(out, 'service') ||
+      Object.prototype.hasOwnProperty.call(out, 'orderType');
+    if (hasLegacyAlias) {
+      throw new BadRequestException(
+        'Restaurant attributes must use canonical keys only: menuSection, availability, serviceType, orderClass.',
+      );
+    }
+
+    const menuSection = this.normalizeRestaurantEnumValue(
+      out.menuSection ?? out.menu_section,
+      this.restaurantMenuSections,
+      'menuSection',
+    );
+    const availability = this.normalizeRestaurantEnumValue(
+      out.availability ?? out.stock_status,
+      this.restaurantAvailabilityValues,
+      'availability',
+    );
+    const serviceType = this.normalizeRestaurantEnumValue(
+      out.serviceType ?? out.service_type,
+      this.restaurantServiceTypes,
+      'serviceType',
+    );
+    const orderClass = this.normalizeRestaurantEnumValue(
+      out.orderClass ?? out.order_class ?? out.order_type,
+      this.restaurantOrderClasses,
+      'orderClass',
+    );
+
+    if (opts?.requireRestaurantMenuSection && !menuSection) {
+      throw new BadRequestException(
+        `menuSection is required for Restaurant & Catering listings. Allowed values: ${this.restaurantMenuSections.join(', ')}`,
+      );
+    }
+
+    if (menuSection) out.menuSection = menuSection;
+    if (availability) out.availability = availability;
+    if (serviceType) out.serviceType = serviceType;
+    if (orderClass) out.orderClass = orderClass;
+
+    delete out.menu_section;
+    delete out.stock_status;
+    delete out.service_type;
+    delete out.order_class;
+    delete out.order_type;
+
+    return out;
+  }
+
+  private extractRestaurantTopLevelAliases(input: {
+    menuSection?: any;
+    menu_section?: any;
+    availability?: any;
+    stock_status?: any;
+    serviceType?: any;
+    service_type?: any;
+    orderClass?: any;
+    order_class?: any;
+    order_type?: any;
+  }): Record<string, any> {
+    const picked: Record<string, any> = {};
+
+    const menuSection =
+      input.menuSection !== undefined ? input.menuSection : input.menu_section;
+    if (menuSection !== undefined) picked.menuSection = menuSection;
+
+    const availability =
+      input.availability !== undefined ? input.availability : input.stock_status;
+    if (availability !== undefined) {
+      picked.availability = availability;
+    }
+
+    const serviceType =
+      input.serviceType !== undefined ? input.serviceType : input.service_type;
+    if (serviceType !== undefined) picked.serviceType = serviceType;
+
+    const orderClass =
+      input.orderClass !== undefined
+        ? input.orderClass
+        : input.order_class !== undefined
+          ? input.order_class
+          : input.order_type;
+    if (orderClass !== undefined) picked.orderClass = orderClass;
+
+    return picked;
   }
 
   private sanitizeAttributes(attrs: any): Record<string, any> | null {
@@ -418,9 +641,53 @@ export class ProductsService {
       furnished,
       rentPeriod,
       attributes,
+      menuSection,
+      menu_section,
+      availability,
+      stock_status,
+      serviceType,
+      service_type,
+      orderClass,
+      order_class,
+      order_type,
       downloadKey,
+      make,
+      model,
+      year,
+      mileage,
+      transmission,
+      fuelType,
+      salePrice,
+      sale_price,
+      stockQuantity,
+      stock_quantity,
+      manageStock,
+      manage_stock,
       ...rest
     } = data;
+
+    // Coalesce legacy snake_case inputs to camelCase
+    const finalSalePrice = salePrice ?? sale_price;
+    const finalStockQuantity = stockQuantity ?? stock_quantity;
+    const finalManageStock = manageStock ?? manage_stock;
+    const topLevelRestaurantAliases = this.extractRestaurantTopLevelAliases({
+      menuSection,
+      menu_section,
+      availability,
+      stock_status,
+      serviceType,
+      service_type,
+      orderClass,
+      order_class,
+      order_type,
+    });
+    const mergedRequestAttributes = {
+      ...topLevelRestaurantAliases,
+      ...((attributes && typeof attributes === 'object' ? attributes : {}) as Record<
+        string,
+        any
+      >),
+    };
 
     // Security: Prevent creating featured products directly
     delete (rest as any).featured;
@@ -486,17 +753,22 @@ export class ProductsService {
       category = await this.categoryRepo.findOneBy({ id: categoryId });
       if (!category) throw new NotFoundException('Category not found');
     }
-    // Property validations
-    if (category && this.isPropertyCategory(category)) {
+    const isRestaurant =
+      category && this.shouldApplyRestaurantVariations(category);
+    // Vertical-specific validations
+    const isProp = category && this.isPropertyCategory(category);
+    const isVeh = category && this.isVehicleCategory(category);
+
+    if (isProp) {
       if (!listingCity || !String(listingCity).trim()) {
         throw new BadRequestException(
           'listingCity is required for Property & Real Estate listings',
         );
       }
-      if (
-        listingType === 'rent' &&
-        (!rentPeriod || !String(rentPeriod).trim())
-      ) {
+    }
+
+    if ((isProp || isVeh) && listingType === 'rent') {
+      if (!rentPeriod || !String(rentPeriod).trim()) {
         throw new BadRequestException(
           'rentPeriod is required when listing_type is rent',
         );
@@ -525,13 +797,26 @@ export class ProductsService {
       category,
       currency: rest.currency || vendor.currency || 'USD',
       listingType: listingType ?? null,
+      salePrice: finalSalePrice,
+      stockQuantity: finalStockQuantity,
+      manageStock: finalManageStock,
       bedrooms: bedrooms ?? null,
       listingCity: listingCity ?? null,
       bathrooms: bathrooms ?? null,
       sizeSqm: sizeSqm ?? null,
       furnished: furnished ?? null,
       rentPeriod: rentPeriod ?? null,
-      attributes: this.sanitizeAttributes(attributes) ?? {},
+      attributes: {
+        ...(this.sanitizeAttributesForCategory(mergedRequestAttributes, category, {
+          requireRestaurantMenuSection: !!isRestaurant,
+        }) ?? {}),
+        ...(make !== undefined ? { make } : {}),
+        ...(model !== undefined ? { model } : {}),
+        ...(year !== undefined ? { year } : {}),
+        ...(mileage !== undefined ? { mileage } : {}),
+        ...(transmission !== undefined ? { transmission } : {}),
+        ...(fuelType !== undefined ? { fuelType } : {}),
+      },
       imageUrl: normalizedImages.length > 0 ? normalizedImages[0].src : null,
     });
 
@@ -578,7 +863,7 @@ export class ProductsService {
   async findOne(id: number, currency?: string): Promise<Product> {
     const targetCurrency = this.normalizeCurrencyParam(currency);
     const product = await this.productRepo.findOne({
-      where: { id },
+      where: { id, deletedAt: IsNull() },
       relations: ['vendor', 'category', 'tags', 'images'],
     });
 
@@ -768,105 +1053,6 @@ export class ProductsService {
     }
   }
 
-  // Free digital download: presign attachment if product is marked free and has a downloadKey
-  async getFreeDownload(
-    productId: number,
-    opts?: { ttl?: number; actorId?: number | null },
-  ): Promise<{
-    url: string;
-    expiresIn: number;
-    filename?: string;
-    contentType?: string;
-  }> {
-    const product = await this.productRepo.findOne({
-      where: {
-        id: productId,
-        status: 'publish' as any,
-        isBlocked: false,
-        deletedAt: IsNull(),
-      },
-    });
-    if (!product) throw new NotFoundException('Product not found');
-    let attrs =
-      product.attributes && typeof product.attributes === 'object'
-        ? product.attributes
-        : {};
-    // Normalize to canonical digital structure if applicable
-    try {
-      const { updated } = normalizeDigitalAttributes(attrs);
-      if (updated) attrs = updated as any;
-    } catch {}
-    const dig =
-      attrs && typeof (attrs as any).digital === 'object'
-        ? (attrs as any).digital
-        : undefined;
-    const dl =
-      dig && typeof dig.download === 'object' ? dig.download : undefined;
-    const isFree =
-      dig?.isFree === true || attrs.isFree === true || attrs.is_free === true;
-    // Resolve key: prefer canonical, else legacy, else derive from URL
-    let downloadKey: string | undefined =
-      (dl?.key as string) || (attrs.downloadKey as string) || undefined;
-    if (!downloadKey) {
-      const urlCandidate: string | undefined =
-        typeof dl?.publicUrl === 'string' && dl.publicUrl
-          ? dl.publicUrl
-          : typeof attrs.downloadUrl === 'string' && attrs.downloadUrl
-            ? attrs.downloadUrl
-            : undefined;
-      if (urlCandidate) {
-        try {
-          downloadKey =
-            this.doSpaces.urlToKeyIfInBucket(urlCandidate) || undefined;
-        } catch {}
-      }
-    }
-    if (!isFree)
-      throw new BadRequestException('This item is not marked as free');
-    if (!downloadKey)
-      throw new BadRequestException('No digital download available');
-
-    // Basic rate-limit: 20 per day per product (unauth users will have null actorId)
-    const now = new Date();
-    const from = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-    const count = await this.audit.countForTargetSince(
-      'FREE_PRODUCT_DOWNLOAD',
-      productId,
-      from,
-    );
-    if (count >= 500) {
-      // broader cap to protect origin for viral freebies
-      throw new BadRequestException(
-        'Download limit reached. Please try later.',
-      );
-    }
-
-    const fileName = downloadKey.split('/').pop();
-    const ext = (fileName?.split('.').pop() || '').toLowerCase();
-    const contentType =
-      ext === 'pdf'
-        ? 'application/pdf'
-        : ext === 'epub'
-          ? 'application/epub+zip'
-          : ext === 'zip'
-            ? 'application/zip'
-            : undefined;
-    const ttlSecs = Math.max(60, Math.min(Number(opts?.ttl || 600), 3600));
-    const url = await this.doSpaces.getDownloadSignedUrl(downloadKey, ttlSecs, {
-      contentType,
-      filename: fileName,
-    });
-
-    await this.audit.log({
-      actorId: opts?.actorId ?? null,
-      action: 'SIGNED_DOWNLOAD_FREE',
-      targetType: 'FREE_PRODUCT_DOWNLOAD',
-      targetId: productId,
-      meta: { productId, downloadKey, ttlSecs },
-    });
-    return { url, expiresIn: ttlSecs, filename: fileName, contentType };
-  }
-
   // Helper: get a presentable vendor name by id
   async getVendorDisplayName(vendorId: number): Promise<string | null> {
     try {
@@ -912,6 +1098,7 @@ export class ProductsService {
       .leftJoinAndSelect('product.images', 'images')
       .where('product.status = :status', { status: 'publish' })
       .andWhere('product.isBlocked = false')
+      .andWhere('product.deleted_at IS NULL')
       .andWhere('product.id <> :pid', { pid: id })
       // Prioritize "Featured" (Paid/Sponsored) products first for monetization
       .orderBy('product.featured', 'DESC')
@@ -1076,6 +1263,7 @@ export class ProductsService {
       .leftJoinAndSelect('product.category', 'category')
       .where('product.status = :status', { status: 'publish' })
       .andWhere('product.isBlocked = false')
+      .andWhere('product.deleted_at IS NULL')
       .andWhere('product.id <> :pid', { pid: productId })
       .limit(lim);
 
@@ -1396,6 +1584,7 @@ export class ProductsService {
       )
       .andWhere('product.status = :status', { status: 'publish' })
       .andWhere('product.isBlocked = :blocked', { blocked: false })
+      .andWhere('product.deleted_at IS NULL')
       .orderBy('product.id', 'DESC')
       .take(limit)
       .getMany();
@@ -1510,12 +1699,12 @@ export class ProductsService {
           'product.id',
           'product.name',
           'product.price',
-          'product.sale_price',
+          'product.salePrice',
           'product.currency',
           'product.imageUrl',
-          'product.average_rating',
-          'product.rating_count',
-          'product.sales_count',
+          'product.averageRating',
+          'product.ratingCount',
+          'product.salesCount',
           'product.viewCount',
           'product.featured',
           'product.featuredExpiresAt',
@@ -1569,6 +1758,8 @@ export class ProductsService {
           'product.images',
           'images',
         );
+        // Important: For distinct query pagination, sort fields must be selected.
+        // We ensure createdAt is available (already selected by default product.* logic).
       }
 
       qb.andWhere('product.status = :status', { status: 'publish' })
@@ -1738,9 +1929,9 @@ export class ProductsService {
         qb.orderBy('vendor.verified', 'DESC');
 
         if (addedGeoRank) qb.addOrderBy('geo_rank', 'DESC');
-        qb.addOrderBy('product.sales_count', 'DESC', 'NULLS LAST')
-          .addOrderBy('product.average_rating', 'DESC', 'NULLS LAST')
-          .addOrderBy('product.rating_count', 'DESC', 'NULLS LAST')
+        qb.addOrderBy('product.salesCount', 'DESC')
+          .addOrderBy('product.averageRating', 'DESC', 'NULLS LAST')
+          .addOrderBy('product.ratingCount', 'DESC', 'NULLS LAST')
           .addOrderBy('product.createdAt', 'DESC');
       } else if (
         (sort === 'distance_asc' || sort === 'distance_desc') &&
@@ -1759,8 +1950,8 @@ export class ProductsService {
 
         if (addedGeoRank) {
           qb.addOrderBy('geo_rank', 'DESC');
-          qb.addOrderBy('product.sales_count', 'DESC', 'NULLS LAST')
-            .addOrderBy('product.average_rating', 'DESC', 'NULLS LAST')
+          qb.addOrderBy('product.salesCount', 'DESC')
+            .addOrderBy('product.averageRating', 'DESC', 'NULLS LAST')
             .addOrderBy('product.createdAt', 'DESC');
         } else {
           qb.addOrderBy('product.createdAt', 'DESC');
@@ -1773,18 +1964,18 @@ export class ProductsService {
         qb.addOrderBy('product.price', 'DESC', 'NULLS LAST');
       } else if (sort === 'rating_desc') {
         if (addedGeoRank) qb.orderBy('geo_rank', 'DESC');
-        qb.addOrderBy('product.average_rating', 'DESC', 'NULLS LAST')
-          .addOrderBy('product.rating_count', 'DESC', 'NULLS LAST')
+        qb.addOrderBy('product.averageRating', 'DESC', 'NULLS LAST')
+          .addOrderBy('product.ratingCount', 'DESC', 'NULLS LAST')
           .addOrderBy('product.createdAt', 'DESC');
       } else if (sort === 'sales_desc') {
         if (addedGeoRank) qb.orderBy('geo_rank', 'DESC');
-        qb.addOrderBy('product.sales_count', 'DESC', 'NULLS LAST').addOrderBy(
+        qb.addOrderBy('product.salesCount', 'DESC').addOrderBy(
           'product.createdAt',
           'DESC',
         );
       } else if (sort === 'views_desc') {
         if (addedGeoRank) qb.orderBy('geo_rank', 'DESC');
-        qb.addOrderBy('product.viewCount', 'DESC', 'NULLS LAST').addOrderBy(
+        qb.addOrderBy('product.viewCount', 'DESC').addOrderBy(
           'product.createdAt',
           'DESC',
         );
@@ -1833,6 +2024,12 @@ export class ProductsService {
         .createQueryBuilder('product')
         .leftJoinAndSelect('product.vendor', 'vendor')
         .leftJoinAndSelect('product.category', 'category');
+
+      // The distinct query bug workaround:
+      // TypeORM's distinct pagination (take/skip) requires sort columns to be selected.
+      // However, if we blindly addSelect them here, they conflict with 'applyFilters'.
+      // We will let applyFilters handle the selection logic entirely.
+
       const { addedGeoRank } = applyFilters(base, {
         categoryMode,
         catIds: catIds || undefined,
@@ -2307,12 +2504,54 @@ export class ProductsService {
       furnished,
       rentPeriod,
       attributes,
+      menuSection,
+      menu_section,
+      availability,
+      stock_status,
+      serviceType,
+      service_type,
+      orderClass,
+      order_class,
+      order_type,
       downloadKey,
+      make,
+      model,
+      year,
+      mileage,
+      transmission,
+      fuelType,
+      salePrice,
+      stockQuantity,
+      manageStock,
+      sale_price,
+      stock_quantity,
+      manage_stock,
       ...rest
     } = updateData;
+    const topLevelRestaurantAliases = this.extractRestaurantTopLevelAliases({
+      menuSection,
+      menu_section,
+      availability,
+      stock_status,
+      serviceType,
+      service_type,
+      orderClass,
+      order_class,
+      order_type,
+    });
+
+    // Coalesce legacy snake_case inputs to camelCase
+    const finalSalePrice = salePrice ?? sale_price;
+    const finalStockQuantity = stockQuantity ?? stock_quantity;
+    const finalManageStock = manageStock ?? manage_stock;
 
     // Update simple properties
     Object.assign(product, rest);
+
+    if (finalSalePrice !== undefined) product.salePrice = finalSalePrice;
+    if (finalStockQuantity !== undefined)
+      product.stockQuantity = finalStockQuantity;
+    if (finalManageStock !== undefined) product.manageStock = finalManageStock;
 
     // Update category if provided
     if (categoryId !== undefined) {
@@ -2358,8 +2597,38 @@ export class ProductsService {
     if (typeof furnished !== 'undefined') product.furnished = furnished as any;
     if (rentPeriod !== undefined)
       product.rentPeriod = (rentPeriod as any) ?? null;
-    if (attributes !== undefined)
-      product.attributes = this.sanitizeAttributes(attributes) as any;
+    if (attributes !== undefined || Object.keys(topLevelRestaurantAliases).length) {
+      const baseAttrs =
+        product.attributes && typeof product.attributes === 'object'
+          ? (product.attributes as Record<string, any>)
+          : {};
+      const incomingAttrs =
+        attributes && typeof attributes === 'object'
+          ? (attributes as Record<string, any>)
+          : {};
+      product.attributes = this.sanitizeAttributesForCategory(
+        {
+          ...baseAttrs,
+          ...topLevelRestaurantAliases,
+          ...incomingAttrs,
+        },
+        product.category,
+      ) as any;
+    }
+
+    // Vehicle updates
+    const vAttrs: any = {};
+    if (make !== undefined) vAttrs.make = make;
+    if (model !== undefined) vAttrs.model = model;
+    if (year !== undefined) vAttrs.year = year;
+    if (mileage !== undefined) vAttrs.mileage = mileage;
+    if (transmission !== undefined) vAttrs.transmission = transmission;
+    if (fuelType !== undefined) vAttrs.fuelType = fuelType;
+
+    if (Object.keys(vAttrs).length > 0) {
+      product.attributes = { ...(product.attributes ?? {}), ...vAttrs };
+    }
+
     // Mirror explicit downloadKey into attributes for digital products
     try {
       if (typeof downloadKey === 'string' && downloadKey) {
@@ -2379,20 +2648,35 @@ export class ProductsService {
       listingType !== undefined ? listingType : product.listingType;
     const finalRentPeriod =
       rentPeriod !== undefined ? rentPeriod : product.rentPeriod;
-    if (finalCategory && this.isPropertyCategory(finalCategory)) {
+
+    // Vertical-specific validations
+    const isProp = finalCategory && this.isPropertyCategory(finalCategory);
+    const isVeh = finalCategory && this.isVehicleCategory(finalCategory);
+    const isRestaurant =
+      finalCategory && this.shouldApplyRestaurantVariations(finalCategory);
+
+    if (isProp) {
       if (!finalListingCity || !String(finalListingCity).trim()) {
         throw new BadRequestException(
           'listingCity is required for Property & Real Estate listings',
         );
       }
-      if (
-        finalListingType === 'rent' &&
-        (!finalRentPeriod || !String(finalRentPeriod).trim())
-      ) {
+    }
+
+    if ((isProp || isVeh) && finalListingType === 'rent') {
+      if (!finalRentPeriod || !String(finalRentPeriod).trim()) {
         throw new BadRequestException(
           'rentPeriod is required when listing_type is rent',
         );
       }
+    }
+
+    if (isRestaurant) {
+      product.attributes = this.sanitizeAttributesForCategory(
+        product.attributes ?? {},
+        finalCategory,
+        { requireRestaurantMenuSection: true },
+      ) as any;
     }
 
     await this.productRepo.save(product);
@@ -2708,7 +2992,7 @@ export class ProductsService {
     product.isBlocked = false;
 
     // Handle Guest/Customer product approval
-    if (product.original_creator_contact) {
+    if (product.originalCreatorContact) {
       // Find Suuq S Vendor
       const suuqVendor = await this.userRepo.findOne({
         where: [
@@ -2723,7 +3007,7 @@ export class ProductsService {
       }
 
       // Send email notification
-      const contact = product.original_creator_contact;
+      const contact = product.originalCreatorContact;
       if (contact.email) {
         const name = contact.name || 'User';
         await this.emailService.send({
@@ -2745,7 +3029,7 @@ export class ProductsService {
     });
 
     // Notify normal vendor if not guest product
-    if (product.vendor && !product.original_creator_contact) {
+    if (product.vendor && !product.originalCreatorContact) {
       await this.notifications.createAndDispatch({
         userId: product.vendor.id,
         title: 'Product Approved',
@@ -2778,7 +3062,7 @@ export class ProductsService {
     const products = await this.productRepo
       .createQueryBuilder('p')
       .leftJoinAndSelect('p.vendor', 'vendor')
-      .addSelect('p.original_creator_contact')
+      .addSelect('p.originalCreatorContact')
       .where('p.id IN (:...ids)', { ids: uniqueIds })
       .getMany();
 
@@ -2787,7 +3071,7 @@ export class ProductsService {
 
     // Pre-fetch Suuq S Vendor if needed
     let suuqVendor: User | null = null;
-    const needsVendorMove = products.some((p) => p.original_creator_contact);
+    const needsVendorMove = products.some((p) => p.originalCreatorContact);
     if (needsVendorMove) {
       suuqVendor = await this.userRepo.findOne({
         where: [
@@ -2803,12 +3087,12 @@ export class ProductsService {
       (p as any).status = 'publish';
       p.isBlocked = false;
 
-      if (p.original_creator_contact) {
+      if (p.originalCreatorContact) {
         if (suuqVendor) {
           p.vendor = suuqVendor;
         }
         // Send email
-        const contact = p.original_creator_contact;
+        const contact = p.originalCreatorContact;
         if (contact.email) {
           const name = contact.name || 'User';
           this.emailService
@@ -3126,7 +3410,7 @@ export class ProductsService {
                  p."createdAt" AS created_at
           FROM "product" p
           LEFT JOIN "user" v ON p."vendorId" = v.id
-          WHERE p.status = 'publish' AND p."isBlocked" = false AND p.name ILIKE $2
+          WHERE p.status = 'publish' AND p."isBlocked" = false AND p."deleted_at" IS NULL AND p.name ILIKE $2
           LIMIT ${prePrefix}
         )
         UNION ALL
@@ -3143,7 +3427,7 @@ export class ProductsService {
                  p."createdAt" AS created_at
           FROM "product" p
           LEFT JOIN "user" v ON p."vendorId" = v.id
-          WHERE p.status = 'publish' AND p."isBlocked" = false AND p.name ILIKE $3
+          WHERE p.status = 'publish' AND p."isBlocked" = false AND p."deleted_at" IS NULL AND p.name ILIKE $3
           LIMIT ${preContain}
         )
       )

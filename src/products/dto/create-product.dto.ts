@@ -65,11 +65,6 @@ class DigitalAttributesDto {
   @IsIn(['digital'])
   @ApiPropertyOptional({ enum: ['digital'] })
   type: 'digital';
-  @IsOptional()
-  @Type(() => Boolean)
-  @IsBoolean()
-  @ApiPropertyOptional({ description: 'Flag for free download eligibility' })
-  isFree?: boolean;
   @ValidateNested()
   @Type(() => DigitalDownloadDto)
   @ApiPropertyOptional({ description: 'Download metadata object' })
@@ -137,10 +132,32 @@ export class CreateProductDto {
   @IsOptional()
   @Type(() => Number)
   @IsNumber()
+  salePrice?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @ApiPropertyOptional({ description: 'Legacy support for sale_price' })
+  sale_price?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  stockQuantity?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @ApiPropertyOptional({ description: 'Legacy support for stock_quantity' })
   stock_quantity?: number;
 
   @IsOptional()
   @IsBoolean()
+  manageStock?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  @ApiPropertyOptional({ description: 'Legacy support for manage_stock' })
   manage_stock?: boolean;
 
   @IsOptional()
@@ -189,6 +206,31 @@ export class CreateProductDto {
   @IsIn(['day', 'week', 'month', 'year'])
   rentPeriod?: 'day' | 'week' | 'month' | 'year';
 
+  // Vehicle Attributes
+  @IsOptional()
+  @IsString()
+  make?: string;
+
+  @IsOptional()
+  @IsString()
+  model?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  year?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  mileage?: number;
+
+  @IsOptional()
+  @IsString()
+  transmission?: string;
+
+  @IsOptional()
+  @IsString()
+  fuelType?: string;
+
   // Optional explicit productType (else inferred)
   @IsOptional()
   @IsIn(['physical', 'digital', 'service', 'property'])
@@ -214,10 +256,50 @@ export class CreateProductDto {
     example: {
       digital: {
         type: 'digital',
-        isFree: true,
         download: { key: 'files/book.pdf' },
       },
     },
   })
   attributes?: Record<string, any> & { digital?: DigitalAttributesDto };
+
+  @IsOptional()
+  @IsString()
+  menuSection?: string;
+
+  @IsOptional()
+  @IsString()
+  @ApiPropertyOptional({ description: 'Legacy alias for menuSection' })
+  menu_section?: string;
+
+  @IsOptional()
+  @IsString()
+  availability?: string;
+
+  @IsOptional()
+  @IsString()
+  @ApiPropertyOptional({ description: 'Legacy alias for availability' })
+  stock_status?: string;
+
+  @IsOptional()
+  @IsString()
+  serviceType?: string;
+
+  @IsOptional()
+  @IsString()
+  @ApiPropertyOptional({ description: 'Legacy alias for serviceType' })
+  service_type?: string;
+
+  @IsOptional()
+  @IsString()
+  orderClass?: string;
+
+  @IsOptional()
+  @IsString()
+  @ApiPropertyOptional({ description: 'Legacy alias for orderClass' })
+  order_class?: string;
+
+  @IsOptional()
+  @IsString()
+  @ApiPropertyOptional({ description: 'Legacy alias for orderClass' })
+  order_type?: string;
 }

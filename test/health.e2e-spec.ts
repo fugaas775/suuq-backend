@@ -4,6 +4,7 @@ import request from 'supertest';
 import { HealthController } from '../src/health/health.controller';
 import { HealthService } from '../src/health/health.service';
 import { DataSource } from 'typeorm';
+import { closeE2eApp } from './utils/e2e-cleanup';
 
 describe('Health (e2e)', () => {
   let app: INestApplication;
@@ -34,9 +35,7 @@ describe('Health (e2e)', () => {
   }, 10000);
 
   afterAll(async () => {
-    if (app) {
-      await app.close();
-    }
+    await closeE2eApp({ app });
   });
 
   describe('/api/health (GET)', () => {

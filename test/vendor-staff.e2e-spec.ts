@@ -8,6 +8,8 @@ import { Repository } from 'typeorm';
 import { User } from '../src/users/entities/user.entity';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { VendorStaffService } from '../src/vendor/vendor-staff.service';
+import { EmailService } from '../src/email/email.service';
+import { closeE2eApp } from './utils/e2e-cleanup';
 
 describe('Vendor Staff Integration (e2e)', () => {
   let app: INestApplication;
@@ -24,10 +26,23 @@ describe('Vendor Staff Integration (e2e)', () => {
   const staffEmail = `staff_${Date.now()}@test.com`;
   const password = 'Password@123';
 
+  const emailServiceMock = {
+    send: jest.fn().mockResolvedValue(undefined),
+    sendWelcomeEmail: jest.fn().mockResolvedValue(undefined),
+    sendStaffInvitation: jest.fn().mockResolvedValue(undefined),
+    sendOrderConfirmation: jest.fn().mockResolvedValue(undefined),
+    sendVendorNewOrderEmail: jest.fn().mockResolvedValue(undefined),
+    sendPasswordResetEmail: jest.fn().mockResolvedValue(undefined),
+    initTransport: jest.fn(),
+  };
+
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
-    }).compile();
+    })
+      .overrideProvider(EmailService)
+      .useValue(emailServiceMock)
+      .compile();
 
     app = moduleFixture.createNestApplication();
     await app.init();
@@ -77,15 +92,20 @@ describe('Vendor Staff Integration (e2e)', () => {
 
     staffToken = staffLogin.body.accessToken;
     staffUser = await userRepo.findOne({ where: { email: staffEmail } });
-  });
+  }, 120000);
 
   afterAll(async () => {
-    if (vendorUser) await userRepo.delete(vendorUser.id);
-    if (staffUser) await userRepo.delete(staffUser.id);
     try {
-      await app.close();
+      if (vendorUser) await userRepo.delete(vendorUser.id);
+      if (staffUser) await userRepo.delete(staffUser.id);
     } catch {
       /* ignore */
+    } finally {
+      try {
+        await closeE2eApp({ app });
+      } catch {
+        /* ignore */
+      }
     }
   });
 

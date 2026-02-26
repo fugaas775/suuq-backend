@@ -17,6 +17,49 @@ import { Order } from '../orders/entities/order.entity';
 @Injectable()
 export class HomeService {
   private readonly logger = new Logger(HomeService.name);
+  private readonly eastAfricaCountryHints = [
+    'ET',
+    'SO',
+    'KE',
+    'DJ',
+    'UG',
+    'UGANDA',
+    'TZ',
+    'TANZANIA',
+    'RW',
+    'RWANDA',
+    'BI',
+    'BURUNDI',
+    'SS',
+    'SOUTH SUDAN',
+  ] as const;
+  private readonly forceRotationRefreshReasons = new Set([
+    'pull_to_refresh',
+    'resume_idle',
+    'tab_switch_all',
+    'revisit',
+    'app_reopen',
+    'return_to_app',
+  ]);
+
+  private computeHomeApplyPriority(reasonRaw?: string): number {
+    const reason = (reasonRaw || '').trim().toLowerCase();
+    if (!reason) return 10;
+    if (
+      [
+        'pull_to_refresh',
+        'revisit',
+        'resume_idle',
+        'tab_switch_all',
+        'app_reopen',
+        'return_to_app',
+      ].includes(reason)
+    ) {
+      return 100;
+    }
+    if (['initial_load', 'initial'].includes(reason)) return 40;
+    return 20;
+  }
   constructor(
     private readonly productsService: ProductsService,
     private readonly curation: CurationService,
@@ -247,6 +290,13 @@ export class HomeService {
     // Property passthrough
     listingType?: string;
     listingTypeMode?: string;
+    // Rotation + telemetry contract
+    rotationKey?: string;
+    sessionSalt?: string;
+    rotationBucket?: string;
+    refreshReason?: string;
+    requestId?: string;
+    geoCountryStrict?: boolean;
   }) {
     const page = Math.max(1, Number(opts.page) || 1);
     const perPage = Math.min(Math.max(Number(opts.perPage) || 20, 1), 50);
@@ -322,47 +372,259 @@ export class HomeService {
         return { items: [] } as any;
       });
 
+    const requestId =
+      (opts.requestId || '').trim() ||
+      `home-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const refreshReason = (opts.refreshReason || '').trim().toLowerCase();
+    const baseBucket =
+      (opts.rotationBucket || '').trim() ||
+      (() => {
+        const d = new Date();
+        d.setMinutes(Math.floor(d.getMinutes() / 10) * 10, 0, 0);
+        return d.toISOString();
+      })();
+    const inferredBucket = this.forceRotationRefreshReasons.has(refreshReason)
+      ? `${baseBucket}|${requestId}`
+      : baseBucket;
+    const rotationSeed = [
+      (opts.userCountry || '').trim().toUpperCase(),
+      (opts.userCity || '').trim().toLowerCase(),
+      (opts.rotationKey || '').trim(),
+      (opts.sessionSalt || '').trim(),
+      inferredBucket,
+    ]
+      .filter(Boolean)
+      .join('|');
+
     // 3) Explore products: use new engine behind flag, fallback to legacy service
     const explorePromise = (async () => {
       const useV2 = String(process.env.HOME_EXPLORE_ENGINE_V2 || '1') === '1';
       try {
         if (useV2) {
-          const res = await this.listingService.list(
-            {
+          const baseListingQuery = {
+            page,
+            perPage: Math.min(Math.max(perPage * 2, perPage), 100),
+            sort: (opts.sort as any) || ('created_desc' as any),
+            geoPriority: true,
+            userCountry: opts.userCountry,
+            country: opts.userCountry,
+            // Category-first flags; if provided, enable prioritization
+            categoryId: Array.isArray(opts.categoryId) ? opts.categoryId : undefined,
+            categorySlug: opts.categorySlug,
+            categoryFirst: opts.categoryFirst,
+            includeDescendants: opts.includeDescendants,
+            // Property passthrough
+            listingType: opts.listingType as any,
+            listingTypeMode: opts.listingTypeMode as any,
+            currency,
+            view: 'grid',
+            geoCountryStrict: opts.geoCountryStrict !== false,
+            geoRotationSeed: rotationSeed,
+            geoRotationBucket: inferredBucket,
+          } as any;
+
+          const merged: any[] = [];
+          const seenIds = new Set<number>();
+          let usedFallbackFill = false;
+          const tierCounts: {
+            city_country: number;
+            region_country: number;
+            country_only: number;
+            east_africa: number;
+            world: number;
+          } = {
+            city_country: 0,
+            region_country: 0,
+            country_only: 0,
+            east_africa: 0,
+            world: 0,
+          };
+          const tierTotalHints: {
+            city_country: number;
+            region_country: number;
+            country_only: number;
+            east_africa: number;
+            world: number;
+          } = {
+            city_country: 0,
+            region_country: 0,
+            country_only: 0,
+            east_africa: 0,
+            world: 0,
+          };
+
+          const collectTier = async (
+            tier: keyof typeof tierCounts,
+            overrides: Record<string, any>,
+          ) => {
+            if (merged.length >= perPage) return;
+            try {
+              const tierRes = await this.listingService.list(
+                {
+                  ...baseListingQuery,
+                  ...overrides,
+                },
+                { mapCards: false },
+              );
+              const tierTotal = Number((tierRes as any)?.total || 0);
+              if (Number.isFinite(tierTotal) && tierTotal > tierTotalHints[tier]) {
+                tierTotalHints[tier] = tierTotal;
+              }
+              for (const item of tierRes.items || []) {
+                const id = Number((item as any)?.id);
+                if (!Number.isFinite(id) || id < 1 || seenIds.has(id)) continue;
+                seenIds.add(id);
+                merged.push(item as any);
+                tierCounts[tier] += 1;
+                if (merged.length >= perPage) break;
+              }
+            } catch (e) {
+              this.logger.warn(
+                `home_feed_explore_tier_failed tier=${tier} requestId=${requestId}`,
+              );
+            }
+          };
+
+          const country = (opts.userCountry || '').trim();
+          const city = (opts.userCity || '').trim();
+          const region = (opts.userRegion || '').trim();
+
+          if (country && city) {
+            await collectTier('city_country', {
+              userCity: city,
+              userRegion: undefined,
+              userCountry: country,
+              country,
+              geoAppend: false,
+            });
+          }
+          if (country && region) {
+            await collectTier('region_country', {
+              userCity: undefined,
+              userRegion: region,
+              userCountry: country,
+              country,
+              geoAppend: false,
+            });
+          }
+          if (country) {
+            await collectTier('country_only', {
+              userCity: undefined,
+              userRegion: undefined,
+              userCountry: country,
+              country,
+              geoAppend: false,
+            });
+          }
+
+          if (country && merged.length < perPage) {
+            const normalizedCountry = country.trim().toUpperCase();
+            const normalizedNoSpace = normalizedCountry.replace(/\s+/g, '');
+            const eastAfricaCandidates = this.eastAfricaCountryHints.filter(
+              (hint) => {
+                const upperHint = hint.toUpperCase();
+                const upperHintNoSpace = upperHint.replace(/\s+/g, '');
+                return (
+                  upperHint !== normalizedCountry &&
+                  upperHintNoSpace !== normalizedNoSpace
+                );
+              },
+            );
+
+            for (const eastCountry of eastAfricaCandidates) {
+              if (merged.length >= perPage) break;
+              await collectTier('east_africa', {
+                userCity: undefined,
+                userRegion: undefined,
+                userCountry: eastCountry,
+                country: eastCountry,
+                geoAppend: false,
+                geoCountryStrict: true,
+              });
+            }
+          }
+
+          if ((opts.geoAppend ?? true) && merged.length < perPage) {
+            await collectTier('world', {
+              userCity: undefined,
+              userRegion: undefined,
+              userCountry: undefined,
+              country: undefined,
+              geoAppend: true,
+              geoCountryStrict: false,
+            });
+          }
+
+          if (merged.length < perPage) {
+            usedFallbackFill = true;
+            const fill = await this.productsService.findFiltered({
               page,
               perPage,
-              sort: (opts.sort as any) || ('rating_desc' as any),
-              geoPriority: true,
-              userCity: opts.userCity,
-              userRegion: opts.userRegion,
-              userCountry: opts.userCountry,
-              // Category-first flags; if provided, enable prioritization
-              categoryId: Array.isArray(opts.categoryId)
-                ? opts.categoryId
-                : undefined,
-              categorySlug: opts.categorySlug,
-              categoryFirst: opts.categoryFirst,
-              includeDescendants: opts.includeDescendants,
-              geoAppend: opts.geoAppend,
-              // Property passthrough
-              listingType: opts.listingType as any,
-              listingTypeMode: opts.listingTypeMode as any,
-              currency,
+              sort: (opts.sort as any) || ('created_desc' as any),
               view: 'grid',
-            } as any,
-            { mapCards: true },
+              currency,
+            } as any);
+            for (const item of fill.items || []) {
+              const id = Number((item as any)?.id);
+              if (!Number.isFinite(id) || id < 1 || seenIds.has(id)) continue;
+              seenIds.add(id);
+              merged.push(item as any);
+              if (merged.length >= perPage) break;
+            }
+            const fallbackTotal = Number((fill as any)?.total || 0);
+            if (Number.isFinite(fallbackTotal) && fallbackTotal > tierTotalHints.world) {
+              tierTotalHints.world = fallbackTotal;
+            }
+          }
+
+          const geoScopeUsed =
+            (tierCounts.city_country > 0 && 'city_country') ||
+            (tierCounts.region_country > 0 && 'region_country') ||
+            (tierCounts.country_only > 0 && 'country_only') ||
+            (tierCounts.east_africa > 0 && 'east_africa') ||
+            (tierCounts.world > 0 && 'world') ||
+            'none';
+
+          this.logger.log(
+            JSON.stringify({
+              event: 'home_feed_explore_fetch',
+              requestId,
+              reason: opts.refreshReason || 'initial',
+              geoScopeUsed,
+              rotationBucket: inferredBucket,
+              resultCount: merged.length,
+              tiers: tierCounts,
+            }),
           );
+
+          const estimatedTotal = Math.max(
+            merged.length,
+            tierTotalHints.city_country,
+            tierTotalHints.region_country,
+            tierTotalHints.country_only,
+            tierTotalHints.east_africa,
+            tierTotalHints.world,
+          );
+
           return {
-            items: res.items,
-            total: res.total,
-            currentPage: res.page,
+            items: merged,
+            total: estimatedTotal,
+            currentPage: page,
+            meta: {
+              requestId,
+              refreshReason: opts.refreshReason || 'initial',
+              geoScopeUsed,
+              rotationBucket: inferredBucket,
+              exploreSource: usedFallbackFill ? 'fallback' : 'tiered',
+              tierCounts,
+            },
           } as any;
         }
         // Legacy path
         const fallback = await this.productsService.findFiltered({
           page,
           perPage,
-          sort: (opts.sort as any) || ('rating_desc' as any),
+          sort: (opts.sort as any) || ('created_desc' as any),
           geoPriority: true,
           userCity: opts.userCity,
           userRegion: opts.userRegion,
@@ -386,7 +648,25 @@ export class HomeService {
           section: 'exploreProducts',
           message: e?.message || 'explore failed',
         });
-        return { items: [], total: 0, currentPage: page } as any;
+        return {
+          items: [],
+          total: 0,
+          currentPage: page,
+          meta: {
+            requestId,
+            refreshReason: opts.refreshReason || 'initial',
+            geoScopeUsed: 'none',
+            rotationBucket: inferredBucket,
+            exploreSource: 'fallback',
+            tierCounts: {
+              city_country: 0,
+              region_country: 0,
+              country_only: 0,
+              east_africa: 0,
+              world: 0,
+            },
+          },
+        } as any;
       }
     })();
 
@@ -478,6 +758,9 @@ export class HomeService {
       ]);
 
     const [curatedNew, curatedBest] = curated;
+    const exploreCards = (explore.items || []).map((p: any) => toProductCard(p));
+    const exploreTotal = explore.total;
+    const explorePage = explore.currentPage || page;
 
     const payload: any = {
       featuredCategories: config.featuredCategories,
@@ -510,9 +793,39 @@ export class HomeService {
         },
       })),
       exploreProducts: {
-        items: (explore.items || []).map((p: any) => toProductCard(p)),
-        total: explore.total,
-        page: explore.currentPage || page,
+        items: exploreCards,
+        total: exploreTotal,
+        page: explorePage,
+      },
+      // Compatibility aliases for clients that still read legacy keys.
+      explore: {
+        items: exploreCards,
+        total: exploreTotal,
+        page: explorePage,
+      },
+      exploreProductsItems: exploreCards,
+      explore_products_items: exploreCards,
+      meta: {
+        requestId,
+        refreshReason: opts.refreshReason || 'initial',
+        geoScopeUsed: explore?.meta?.geoScopeUsed || 'none',
+        rotationBucket: inferredBucket,
+        exploreCount: exploreCards.length,
+        applyPriority: this.computeHomeApplyPriority(opts.refreshReason),
+        requestKind: this.forceRotationRefreshReasons.has(
+          (opts.refreshReason || '').trim().toLowerCase(),
+        )
+          ? 'refresh'
+          : 'background',
+        exploreSource:
+          explore?.meta?.exploreSource === 'fallback' ? 'fallback' : 'tiered',
+        rankingTierCounts: explore?.meta?.tierCounts || {
+          city_country: 0,
+          region_country: 0,
+          country_only: 0,
+          east_africa: 0,
+          world: 0,
+        },
       },
     };
 

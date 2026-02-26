@@ -59,22 +59,6 @@ export class ProductsController {
     private readonly categoriesService: CategoriesService,
   ) {}
 
-  // Public: return a short-lived signed attachment URL for free digital products
-  @Get(':id/free-download')
-  @Header('Cache-Control', 'private, no-store')
-  async freeDownload(
-    @Param('id', ParseIntPipe) id: number,
-    @Query('ttl') ttl?: string,
-    @Req() req?: AuthenticatedRequest,
-  ) {
-    const ttlNum = Math.max(
-      60,
-      Math.min(parseInt(String(ttl || '600'), 10) || 600, 1800),
-    );
-    const actorId = (req?.user as any)?.id ?? null;
-    return this.productsService.getFreeDownload(id, { ttl: ttlNum, actorId });
-  }
-
   @Post()
   @UseGuards(AuthGuard('jwt'), RolesGuard)
   @Roles(UserRole.VENDOR, UserRole.CUSTOMER, UserRole.GUEST)
@@ -111,6 +95,15 @@ export class ProductsController {
   }
   // Batched impressions for list views (idempotent per session/window)
   @Post('impressions')
+  @UseInterceptors(
+    new RateLimitInterceptor({
+      maxRps: 5,
+      burst: 10,
+      keyBy: 'userOrIp',
+      scope: 'route',
+      headers: true,
+    }),
+  )
   async recordImpressions(
     @Req() req: AuthenticatedRequest,
     @Body() dto: RecordImpressionsDto,
@@ -898,8 +891,18 @@ export class ProductsController {
   // Bulk likes: GET /products/likes?ids=1,2,3
   // Place BEFORE the parameterized route to avoid shadowing
   @Get('likes')
+  @UseInterceptors(
+    new RateLimitInterceptor({
+      maxRps: 8,
+      burst: 16,
+      keyBy: 'userOrIp',
+      scope: 'route',
+      headers: true,
+    }),
+  )
   @Header('Cache-Control', 'public, max-age=10')
   async getLikesCountBulk(@Query('ids') ids: string) {
+    const MAX_IDS = 120;
     const parts = String(ids || '')
       .split(',')
       .map((s) => s.trim())
@@ -910,7 +913,7 @@ export class ProductsController {
           .map((s) => Number(s))
           .filter((n) => Number.isInteger(n) && n >= 1),
       ),
-    );
+    ).slice(0, MAX_IDS);
     if (!list.length) {
       throw new BadRequestException(
         'ids must be a comma-separated list of positive integers',

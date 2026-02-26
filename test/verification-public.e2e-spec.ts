@@ -16,6 +16,7 @@ import { AuthService } from '../src/auth/auth.service';
 import { UsersController } from '../src/users/users.controller';
 import { UserResponseDto } from '../src/users/dto/user-response.dto';
 import { ProductsService } from '../src/products/products.service';
+import { closeE2eApp } from './utils/e2e-cleanup';
 
 class AllowGuard implements CanActivate {
   canActivate(context: ExecutionContext): boolean {
@@ -70,7 +71,7 @@ describe('Public verification and profile (e2e-lite)', () => {
   });
 
   afterAll(async () => {
-    await app.close();
+    await closeE2eApp({ app });
   });
 
   it('GET /vendors/:id/certificates returns 2 items when approved', async () => {

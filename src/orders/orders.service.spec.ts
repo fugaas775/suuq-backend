@@ -18,6 +18,7 @@ import { EbirrService } from '../ebirr/ebirr.service';
 import { EmailService } from '../email/email.service';
 import { UsersService } from '../users/users.service';
 import { WalletService } from '../wallet/wallet.service';
+import { PromotionsService } from '../promotions/promotions.service';
 
 describe('OrdersService', () => {
   let service: OrdersService;
@@ -44,6 +45,7 @@ describe('OrdersService', () => {
         { provide: UsersService, useValue: {} },
         { provide: WalletService, useValue: {} },
         { provide: CurrencyService, useValue: { convert: jest.fn() } },
+        { provide: PromotionsService, useValue: {} },
       ],
     }).compile();
 

@@ -379,7 +379,7 @@ export class DelivererService {
             .createQueryBuilder()
             .update(Product)
             .set({
-              sales_count: () =>
+              salesCount: () =>
                 `COALESCE(sales_count, 0) + ${Math.max(0, qty)}`,
             })
             .where('id = :productId', { productId })

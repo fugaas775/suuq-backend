@@ -21,6 +21,7 @@
     "noFallthroughCasesInSwitch": false,
     "resolveJsonModule": true,
     "moduleResolution": "node",
+    "isolatedModules": true,
     "types": ["node", "express", "jest"]
   },
   "include": ["src/**/*", "test/**/*.ts"],

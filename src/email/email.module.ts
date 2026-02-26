@@ -4,6 +4,11 @@ import { ConfigModule } from '@nestjs/config';
 import { BullModule } from '@nestjs/bullmq';
 import { EmailProcessor } from './email.processor';
 
+const emailProviders =
+  process.env.NODE_ENV === 'test'
+    ? [EmailService]
+    : [EmailService, EmailProcessor];
+
 @Module({
   imports: [
     ConfigModule,
@@ -11,7 +16,7 @@ import { EmailProcessor } from './email.processor';
       name: 'emails',
     }),
   ],
-  providers: [EmailService, EmailProcessor],
+  providers: emailProviders,
   exports: [EmailService],
 })
 export class EmailModule {}

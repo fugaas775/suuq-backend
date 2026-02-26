@@ -8,6 +8,7 @@ import { Wallet } from '../wallet/entities/wallet.entity';
 import { WalletService } from '../wallet/wallet.service';
 import { CurrencyService } from '../common/services/currency.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { EmailService } from '../email/email.service';
 
 describe('UsersService', () => {
   let service: UsersService;
@@ -17,6 +18,11 @@ describe('UsersService', () => {
       findOne: jest.fn(),
       save: jest.fn(),
       create: jest.fn(),
+  };
+
+  const mockEmailService = {
+      sendEmail: jest.fn(),
+      sendWelcomeEmail: jest.fn(),
   };
 
   const mockWalletService = {
@@ -42,6 +48,7 @@ describe('UsersService', () => {
         { provide: WalletService, useValue: mockWalletService },
         { provide: CurrencyService, useValue: mockCurrencyService },
         { provide: NotificationsService, useValue: mockNotificationsService },
+        { provide: EmailService, useValue: mockEmailService },
       ],
     }).compile();
 

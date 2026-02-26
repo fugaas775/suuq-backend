@@ -41,11 +41,6 @@ class DigitalAttributesDtoU {
   @ApiPropertyOptional({ enum: ['digital'] })
   type?: 'digital';
   @IsOptional()
-  @Type(() => Boolean)
-  @IsBoolean()
-  @ApiPropertyOptional({ description: 'Flag for free download eligibility' })
-  isFree?: boolean;
-  @IsOptional()
   @ValidateNested()
   @Type(() => DigitalDownloadDtoU)
   @ApiPropertyOptional({ description: 'Download metadata object' })
@@ -109,7 +104,27 @@ export class UpdateProductDto {
   @IsOptional()
   @Type(() => Number)
   @IsNumber()
+  salePrice?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @ApiPropertyOptional({ description: 'Legacy support for sale_price' })
+  sale_price?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  stockQuantity?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
   stock_quantity?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  manageStock?: boolean;
 
   @IsOptional()
   @IsBoolean()
@@ -162,6 +177,31 @@ export class UpdateProductDto {
   @IsIn(['day', 'week', 'month', 'year'])
   rentPeriod?: 'day' | 'week' | 'month' | 'year';
 
+  // Vehicle Attributes
+  @IsOptional()
+  @IsString()
+  make?: string;
+
+  @IsOptional()
+  @IsString()
+  model?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  year?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  mileage?: number;
+
+  @IsOptional()
+  @IsString()
+  transmission?: string;
+
+  @IsOptional()
+  @IsString()
+  fuelType?: string;
+
   @IsOptional()
   @IsIn(['physical', 'digital', 'service', 'property'])
   @ApiPropertyOptional({ enum: ['physical', 'digital', 'service', 'property'] })
@@ -183,4 +223,45 @@ export class UpdateProductDto {
       'Arbitrary attributes bag; may include canonical digital structure under digital',
   })
   attributes?: Record<string, any> & { digital?: DigitalAttributesDtoU };
+
+  @IsOptional()
+  @IsString()
+  menuSection?: string;
+
+  @IsOptional()
+  @IsString()
+  @ApiPropertyOptional({ description: 'Legacy alias for menuSection' })
+  menu_section?: string;
+
+  @IsOptional()
+  @IsString()
+  availability?: string;
+
+  @IsOptional()
+  @IsString()
+  @ApiPropertyOptional({ description: 'Legacy alias for availability' })
+  stock_status?: string;
+
+  @IsOptional()
+  @IsString()
+  serviceType?: string;
+
+  @IsOptional()
+  @IsString()
+  @ApiPropertyOptional({ description: 'Legacy alias for serviceType' })
+  service_type?: string;
+
+  @IsOptional()
+  @IsString()
+  orderClass?: string;
+
+  @IsOptional()
+  @IsString()
+  @ApiPropertyOptional({ description: 'Legacy alias for orderClass' })
+  order_class?: string;
+
+  @IsOptional()
+  @IsString()
+  @ApiPropertyOptional({ description: 'Legacy alias for orderClass' })
+  order_type?: string;
 }

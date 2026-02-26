@@ -49,9 +49,9 @@ export class ProductListingService {
         if (typeof it.price === 'number') {
           it.price = this.currencyService.convert(it.price, from, target);
         }
-        if (typeof it.sale_price === 'number') {
-          it.sale_price = this.currencyService.convert(
-            it.sale_price,
+        if (typeof it.salePrice === 'number') {
+          it.salePrice = this.currencyService.convert(
+            it.salePrice,
             from,
             target,
           );

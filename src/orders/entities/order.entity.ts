@@ -128,6 +128,22 @@ export class Order {
   })
   exchangeRate!: number;
 
+  @Column('decimal', {
+    name: 'discountAmount',
+    precision: 10,
+    scale: 2,
+    default: 0,
+    transformer: {
+      to: (value: number) => value,
+      from: (value: string | number) =>
+        typeof value === 'string' ? parseFloat(value) : value,
+    },
+  })
+  discountAmount!: number;
+
+  @Column({ type: 'varchar', nullable: true })
+  couponCode?: string | null;
+
   @CreateDateColumn()
   createdAt!: Date;
 

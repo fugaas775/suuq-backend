@@ -9,10 +9,12 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { MediaMaintenanceService } from './media-maintenance.service';
 import { MediaCleanupTask } from './entities/media-cleanup-task.entity';
 import { UiSetting } from '../settings/entities/ui-setting.entity';
+import { RedisModule } from '../redis/redis.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([MediaCleanupTask, UiSetting]),
+    RedisModule,
     // 2. Replace the complex MulterModule config with this simple one
     ScheduleModule.forRoot(),
     MulterModule.register({

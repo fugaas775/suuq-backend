@@ -8,8 +8,8 @@ import { ISortStrategy } from './base-sort.strategy';
 export class RatingSort implements ISortStrategy {
   apply(q: SelectQueryBuilder<Product>, dto: ProductListingDto) {
     if (dto.geoPriority) q.orderBy('geo_rank', 'DESC');
-    q.addOrderBy('product.average_rating', 'DESC', 'NULLS LAST');
-    q.addOrderBy('product.rating_count', 'DESC', 'NULLS LAST');
+    q.addOrderBy('product.averageRating', 'DESC', 'NULLS LAST');
+    q.addOrderBy('product.ratingCount', 'DESC', 'NULLS LAST');
     q.addOrderBy('product.createdAt', 'DESC');
     return q;
   }

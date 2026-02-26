@@ -115,6 +115,11 @@ export class PrometheusService {
     [0.05, 0.1, 0.25, 0.5, 1, 2, 5],
     ['method', 'route', 'status'],
   );
+  private readonly legacyRouteRewrites = new Counter(
+    'legacy_route_rewrites_total',
+    'Total number of legacy route rewrites',
+    ['legacy_route', 'target_route'],
+  );
 
   incHttpRequests(method: string, route: string, status: number) {
     this.httpRequests.inc({ method, route, status: String(status) });
@@ -131,8 +136,19 @@ export class PrometheusService {
     );
   }
 
+  incLegacyRouteRewrite(legacyRoute: string, targetRoute: string) {
+    this.legacyRouteRewrites.inc({
+      legacy_route: legacyRoute,
+      target_route: targetRoute,
+    });
+  }
+
   metrics(): string {
-    const parts = [this.httpRequests.collect(), this.httpDuration.collect()];
+    const parts = [
+      this.httpRequests.collect(),
+      this.httpDuration.collect(),
+      this.legacyRouteRewrites.collect(),
+    ];
     return parts.filter(Boolean).join('\n') + '\n';
   }
 }

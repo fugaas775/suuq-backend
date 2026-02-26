@@ -148,7 +148,7 @@ export class NotificationsService {
 
     // 2. Push (fire and forget or await)
     // We convert data to string map for FCM
-    const fcmData = opts.data
+    const fcmData = (opts.data
       ? Object.entries(opts.data).reduce(
           (acc, [k, v]) => {
             acc[k] = String(v);
@@ -156,13 +156,30 @@ export class NotificationsService {
           },
           {} as Record<string, string>,
         )
-      : {};
+      : {}) as Record<string, string>;
+
+    // NEW: Handle Deliverer Routing Logic
+    // If the user is a deliverer and this is an order notification, set explicit route.
+    const userRecipient = await this.usersService.findOne(opts.userId);
+    if (userRecipient && userRecipient.roles.includes(UserRole.DELIVERER)) {
+      if (type === NotificationType.ORDER) {
+        // If specific order ID is present, go to detail, else dashboard
+        if (fcmData.id || fcmData.orderId) {
+          const oid = fcmData.id || fcmData.orderId;
+          fcmData['route'] = `/vendor-order-detail?id=${oid}`;
+        } else {
+          fcmData['route'] = '/deliverer-deliveries';
+        }
+      }
+    }
 
     // Explicitly add 'type' to the helper payload so Flutter's NotificationService
     // can detect it easily (for routing optimization). Respect any caller-provided
-    // type (e.g. lowercase 'order') to keep mobile routing stable.
-    if (!('type' in fcmData)) {
-      fcmData['type'] = type;
+    // type and normalize to lowercase.
+    if (!fcmData['type']) {
+      fcmData['type'] = type.toLowerCase();
+    } else {
+      fcmData['type'] = fcmData['type'].toLowerCase();
     }
 
     return this.sendToUser({

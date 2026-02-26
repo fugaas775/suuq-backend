@@ -18,6 +18,7 @@ import { GeoResolverService } from '../common/services/geo-resolver.service';
 import { FavoritesService } from '../favorites/favorites.service';
 import { CurrencyService } from '../common/services/currency.service';
 import { EmailService } from '../email/email.service';
+import { BadRequestException } from '@nestjs/common';
 
 describe('ProductsService', () => {
   let service: ProductsService;
@@ -129,7 +130,6 @@ describe('ProductsService', () => {
       attributes: {
         digital: {
           type: 'digital',
-          isFree: true,
           download: {
             key,
             size,
@@ -171,5 +171,237 @@ describe('ProductsService', () => {
     expect(out.attributes.files).toBeTruthy();
     expect(Array.isArray(out.attributes.files)).toBe(true);
     expect(out.attributes.files[0].url).toBe(publicUrl);
+  });
+
+  it('normalizes restaurant attributes into canonical keys and values', () => {
+    const attrs = {
+      menuSection: 'breakfast',
+      availability: 'available',
+      serviceType: 'delivery',
+      orderClass: 'special order',
+    };
+    const category = {
+      slug: 'restaurant-specials',
+      name: 'Restaurant Specials',
+    };
+
+    const out = (service as any).sanitizeAttributesForCategory(attrs, category, {
+      requireRestaurantMenuSection: true,
+    });
+
+    expect(out.menuSection).toBe('Breakfast');
+    expect(out.availability).toBe('Available');
+    expect(out.serviceType).toBe('Delivery');
+    expect(out.orderClass).toBe('Special Order');
+    expect(out.menu_section).toBeUndefined();
+    expect(out.stock_status).toBeUndefined();
+    expect(out.service_type).toBeUndefined();
+    expect(out.order_type).toBeUndefined();
+  });
+
+  it('accepts snake_case restaurant enum values from client payloads', () => {
+    const attrs = {
+      menuSection: 'main_dishes',
+      availability: 'out_of_stock',
+      serviceType: 'dine_in',
+      orderClass: 'special_order',
+    };
+    const category = {
+      slug: 'restaurant-specials',
+      name: 'Restaurant Specials',
+    };
+
+    const out = (service as any).sanitizeAttributesForCategory(attrs, category, {
+      requireRestaurantMenuSection: true,
+    });
+
+    expect(out.menuSection).toBe('Main Dishes');
+    expect(out.availability).toBe('Out of stock');
+    expect(out.serviceType).toBe('Dine-in');
+    expect(out.orderClass).toBe('Special Order');
+  });
+
+  it('accepts camelCase restaurant enum values from client payloads', () => {
+    const attrs = {
+      menuSection: 'fastFoodsSnacks',
+      availability: 'outOfStock',
+      serviceType: 'dineIn',
+      orderClass: 'specialOrder',
+    };
+    const category = {
+      slug: 'restaurant-specials',
+      name: 'Restaurant Specials',
+    };
+
+    const out = (service as any).sanitizeAttributesForCategory(attrs, category, {
+      requireRestaurantMenuSection: true,
+    });
+
+    expect(out.menuSection).toBe('Fast Foods & Snacks');
+    expect(out.availability).toBe('Out of stock');
+    expect(out.serviceType).toBe('Dine-in');
+    expect(out.orderClass).toBe('Special Order');
+  });
+
+  it('does not require menuSection for Food & Beverages > Restaurant & Catering Deals', () => {
+    const category = {
+      slug: 'restaurant-catering-deals',
+      name: 'Food & Beverages > Restaurant & Catering Deals',
+    };
+
+    const out = (service as any).sanitizeAttributesForCategory(
+      { availability: 'Available' },
+      category,
+      {
+        requireRestaurantMenuSection: true,
+      },
+    );
+
+    expect(out).toEqual({ availability: 'Available' });
+  });
+
+  it('throws when menuSection is missing for restaurant categories that still use variations', () => {
+    const category = {
+      slug: 'restaurant-specials',
+      name: 'Restaurant Specials',
+    };
+
+    expect(() =>
+      (service as any).sanitizeAttributesForCategory(
+        { availability: 'Available' },
+        category,
+        {
+          requireRestaurantMenuSection: true,
+        },
+      ),
+    ).toThrow(BadRequestException);
+  });
+
+  it('rejects non-canonical legacy restaurant attribute aliases', () => {
+    const category = {
+      slug: 'restaurant-specials',
+      name: 'Restaurant Specials',
+    };
+
+    expect(() =>
+      (service as any).sanitizeAttributesForCategory(
+        {
+          section: 'Breakfast',
+          stockStatus: 'Available',
+          service: 'Delivery',
+          orderType: 'Regular',
+        },
+        category,
+        { requireRestaurantMenuSection: true },
+      ),
+    ).toThrow(BadRequestException);
+  });
+
+  it('accepts snake_case restaurant attribute keys and canonicalizes', () => {
+    const category = {
+      slug: 'restaurant-specials',
+      name: 'Restaurant Specials',
+    };
+
+    const out = (service as any).sanitizeAttributesForCategory(
+      {
+        menu_section: 'Breakfast',
+        stock_status: 'Available',
+        service_type: 'Delivery',
+        order_class: 'Regular',
+      },
+      category,
+      { requireRestaurantMenuSection: true },
+    );
+
+    expect(out.menuSection).toBe('Breakfast');
+    expect(out.availability).toBe('Available');
+    expect(out.serviceType).toBe('Delivery');
+    expect(out.orderClass).toBe('Regular');
+    expect(out.menu_section).toBeUndefined();
+    expect(out.stock_status).toBeUndefined();
+    expect(out.service_type).toBeUndefined();
+    expect(out.order_class).toBeUndefined();
+  });
+
+  it('merges top-level restaurant aliases into canonical attribute keys', () => {
+    const out = (service as any).extractRestaurantTopLevelAliases({
+      menu_section: 'beverages',
+      stock_status: 'on_request',
+      service_type: 'takeaway',
+      order_type: 'regular',
+    });
+
+    expect(out).toEqual({
+      menuSection: 'beverages',
+      availability: 'on_request',
+      serviceType: 'takeaway',
+      orderClass: 'regular',
+    });
+  });
+
+  it('prefers attributes values over top-level alias fallback when both exist', () => {
+    const topLevel = (service as any).extractRestaurantTopLevelAliases({
+      menuSection: 'beverages',
+      serviceType: 'delivery',
+    });
+
+    const merged = {
+      ...topLevel,
+      menuSection: 'mainDishes',
+      serviceType: 'dineIn',
+      availability: 'available',
+      orderClass: 'regular',
+    };
+
+    const out = (service as any).sanitizeAttributesForCategory(
+      merged,
+      { slug: 'restaurant-specials', name: 'Restaurant Deals' },
+      { requireRestaurantMenuSection: true },
+    );
+
+    expect(out.menuSection).toBe('Main Dishes');
+    expect(out.serviceType).toBe('Dine-in');
+  });
+
+  it('findFeaturedActive excludes soft-deleted products', async () => {
+    const qb = {
+      leftJoinAndSelect: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      take: jest.fn().mockReturnThis(),
+      getMany: jest.fn().mockResolvedValue([]),
+    } as any;
+    productRepo.createQueryBuilder.mockReturnValueOnce(qb);
+
+    await service.findFeaturedActive(5);
+
+    expect(qb.andWhere).toHaveBeenCalledWith('product.deleted_at IS NULL');
+  });
+
+  it('findRelatedProducts excludes soft-deleted products', async () => {
+    const qb = {
+      leftJoinAndSelect: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      limit: jest.fn().mockReturnThis(),
+      addOrderBy: jest.fn().mockReturnThis(),
+      setParameter: jest.fn().mockReturnThis(),
+      select: jest.fn().mockReturnThis(),
+      getMany: jest.fn().mockResolvedValue([]),
+    } as any;
+
+    productRepo.findOne.mockResolvedValue({
+      id: 101,
+      category: { id: 7 },
+      vendor: { id: 55 },
+      tags: [],
+    });
+    productRepo.createQueryBuilder.mockReturnValueOnce(qb);
+
+    await service.findRelatedProducts(101, { limit: 12, currency: 'ETB' });
+
+    expect(qb.andWhere).toHaveBeenCalledWith('product.deleted_at IS NULL');
   });
 });

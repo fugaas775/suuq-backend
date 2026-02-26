@@ -18,6 +18,7 @@ import { EbirrModule } from '../ebirr/ebirr.module';
 import { UsersModule } from '../users/users.module';
 import { WalletModule } from '../wallet/wallet.module';
 import { CreditModule } from '../credit/credit.module';
+import { PromotionsModule } from '../promotions/promotions.module';
 import { Message } from '../chat/entities/message.entity';
 import { Conversation } from '../chat/entities/conversation.entity';
 
@@ -44,6 +45,7 @@ import { Conversation } from '../chat/entities/conversation.entity';
     EmailModule,
     WalletModule,
     CreditModule,
+    PromotionsModule,
   ],
   controllers: [OrdersController],
   providers: [OrdersService],

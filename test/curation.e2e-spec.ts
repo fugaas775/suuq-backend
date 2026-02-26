@@ -3,6 +3,7 @@ import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import type { App } from 'supertest/types';
 import { AppModule } from './../src/app.module';
+import { closeE2eApp } from './utils/e2e-cleanup';
 
 describe('Curation (e2e)', () => {
   let app: INestApplication<App>;
@@ -18,7 +19,7 @@ describe('Curation (e2e)', () => {
   });
 
   afterAll(async () => {
-    await app.close();
+    await closeE2eApp({ app });
   });
 
   it('/api/curation/home (GET) shape', async () => {

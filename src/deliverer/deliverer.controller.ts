@@ -96,11 +96,15 @@ export class DelivererController {
     @Param('orderId', ParseIntPipe) orderId: number,
     @Body('status') status: OrderStatus,
   ) {
+    // If you want to enforce delivery code, keep the check or modify.
+    // For now, removing the Throw per user request to enable easier testing/flow.
+    /*
     if (status === OrderStatus.DELIVERED) {
       throw new BadRequestException(
         'You must use the verification code to complete delivery.',
       );
     }
+    */
     return this.delivererService.updateDeliveryStatus(
       req.user.id,
       orderId,
@@ -108,3 +112,4 @@ export class DelivererController {
     );
   }
 }
+

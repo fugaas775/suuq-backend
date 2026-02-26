@@ -203,6 +203,18 @@ export class ProductListingDto {
   geoAppend?: boolean;
 
   @IsOptional()
+  @Transform(({ value }) => toBoolean(value))
+  geoCountryStrict?: boolean;
+
+  @IsOptional()
+  @IsString()
+  geoRotationSeed?: string;
+
+  @IsOptional()
+  @IsString()
+  geoRotationBucket?: string;
+
+  @IsOptional()
   @IsString()
   listingType?: 'sale' | 'rent';
 

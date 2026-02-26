@@ -6,9 +6,11 @@ import {
   NotFoundException,
   BadRequestException,
   Logger,
+  HttpException,
+  HttpStatus,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, Brackets } from 'typeorm';
 import {
   Order,
   OrderItem,
@@ -47,6 +49,7 @@ import {
 } from '../wallet/entities/payout-log.entity';
 import { Message, MessageType } from '../chat/entities/message.entity';
 import { CreditService } from '../credit/credit.service';
+import { PromotionsService } from '../promotions/promotions.service';
 import { MoreThan, In } from 'typeorm';
 import { subMinutes } from 'date-fns';
 import { buildOrderStatusNotification } from './order-notifications.util';
@@ -307,6 +310,7 @@ export class OrdersService {
     private readonly usersService: UsersService,
     private readonly walletService: WalletService,
     private readonly creditService: CreditService,
+    private readonly promotionsService: PromotionsService,
   ) {}
 
   private async sendConfirmationForOrder(orderId: number) {
@@ -354,7 +358,8 @@ export class OrdersService {
         vendorItems.get(vendor.id)?.items.push({
           productName: item.product.name,
           quantity: item.quantity,
-          price: item.price, // Note: This is base price. Ideally we use display price if available, but for vendor notification base/stored price is usually OK or we need to pass currency.
+          price: item.price,
+          attributes: item.attributes,
         });
       }
     }
@@ -659,7 +664,7 @@ export class OrdersService {
       type: NotificationType.ORDER,
       data: {
         orderId: String(orderId),
-        route: `/deliverer/orders/${orderId}`,
+        route: '/deliverer-deliveries',
         click_action: 'FLUTTER_NOTIFICATION_CLICK',
         action: 'request_acceptance',
       },
@@ -852,11 +857,11 @@ export class OrdersService {
 
         // Use sale price if available and lower than regular price
         if (
-          item.product.sale_price &&
-          Number(item.product.sale_price) > 0 &&
-          Number(item.product.sale_price) < finalPrice
+          item.product.salePrice &&
+          Number(item.product.salePrice) > 0 &&
+          Number(item.product.salePrice) < finalPrice
         ) {
-          finalPrice = Number(item.product.sale_price);
+          finalPrice = Number(item.product.salePrice);
         }
 
         if (
@@ -942,10 +947,29 @@ export class OrdersService {
       }),
     );
 
-    const total = orderItems.reduce(
-      (sum: number, item: OrderItem) => sum + item.price * item.quantity,
+    let total = orderItems.reduce(
+      (sum, item) => sum + Number((item.price * item.quantity).toFixed(2)),
       0,
     );
+
+    let discountAmount = 0;
+    const submittedCoupon = createOrderDto.couponCode || createOrderDto.coupon_code;
+
+    if (submittedCoupon) {
+      const couponRes = await this.promotionsService.validateCoupon(
+        submittedCoupon,
+        total,
+      );
+      
+      if (couponRes.isValid) {
+        discountAmount = Number(couponRes.discount || 0);
+        total = Number(Math.max(0, total - discountAmount).toFixed(2));
+        
+        if (couponRes.coupon?.id) {
+           await this.promotionsService.incrementUsage(couponRes.coupon.id);
+        }
+      }
+    }
 
     // Currency Snapshot
     // Lock currency to the product's currency if available
@@ -979,6 +1003,8 @@ export class OrdersService {
         user: { id: userId } as User,
         items: orderItems,
         total: total,
+        couponCode: submittedCoupon,
+        discountAmount,
         shippingAddress: createOrderDto.shippingAddress,
         paymentMethod:
           PaymentMethod[paymentMethod as keyof typeof PaymentMethod],
@@ -1001,6 +1027,8 @@ export class OrdersService {
         user: { id: userId } as User,
         items: orderItems,
         total: total,
+        couponCode: submittedCoupon,
+        discountAmount,
         shippingAddress: createOrderDto.shippingAddress,
         paymentMethod: PaymentMethod.MPESA,
         paymentStatus: PaymentStatus.UNPAID,
@@ -1043,7 +1071,7 @@ export class OrdersService {
       
       // Updated Telebirr Integration
       const paymentResponse = await this.telebirrService.createOrder(
-        total.toFixed(2),
+        this.currencyService.formatAmount(total, currencyCode || 'ETB'),
         `ORDER-${savedOrder.id}`,
       );
       
@@ -1067,6 +1095,8 @@ export class OrdersService {
         user: { id: userId } as User,
         items: orderItems,
         total: total,
+        couponCode: submittedCoupon,
+        discountAmount,
         shippingAddress: createOrderDto.shippingAddress,
         paymentMethod: PaymentMethod.CREDIT,
         paymentStatus: PaymentStatus.PAID,
@@ -1101,6 +1131,8 @@ export class OrdersService {
         user: { id: userId } as User,
         items: orderItems,
         total: total,
+        couponCode: submittedCoupon,
+        discountAmount,
         shippingAddress: createOrderDto.shippingAddress,
         paymentMethod: PaymentMethod.EBIRR,
         paymentStatus: PaymentStatus.UNPAID,
@@ -1134,23 +1166,43 @@ export class OrdersService {
       try {
         paymentResponse = await this.ebirrService.initiatePayment({
           phoneNumber: phoneNumber,
-          amount: total.toFixed(2),
+          amount: this.currencyService.formatAmount(total, currencyCode || 'ETB'),
           referenceId: `REF-${savedOrder.id}`,
           invoiceId: `INV-${savedOrder.id}`,
           description: `Order #${savedOrder.id}`,
         });
       } catch (error) {
-        const msg = error.message || '';
+        const msg = error?.message || '';
+        const providerCode = String(
+          (error as any)?.providerCode ||
+            (msg.match(/Code:\s*([0-9A-Za-z_-]+)/)?.[1] ?? ''),
+        );
+        const isProviderDecline =
+          providerCode === '5310' ||
+          msg.includes('declined') ||
+          msg.includes('Insufficient balance');
+
+        const declineMeta = {
+          orderId: savedOrder.id,
+          userId,
+          provider: (error as any)?.provider || 'EBIRR',
+          providerCode: providerCode || undefined,
+          providerRef: (error as any)?.providerRef || undefined,
+          amount: this.currencyService.formatAmount(total, currencyCode || 'ETB'),
+          currency: currencyCode || 'ETB',
+          attemptNo: (error as any)?.attemptNo || undefined,
+          latencyMs: (error as any)?.latencyMs || undefined,
+        };
+
         if (
-          msg.includes('declined by the user') ||
-          msg.includes('Insufficient balance')
+          isProviderDecline
         ) {
           this.logger.warn(
-            `Ebirr payment rejected/failed for order ${savedOrder.id}: ${msg}`,
+            `Ebirr payment declined: ${JSON.stringify({ message: msg, ...declineMeta })}`,
           );
         } else {
           this.logger.error(
-            `Ebirr payment system error for order ${savedOrder.id}: ${msg}`,
+            `Ebirr payment system error: ${JSON.stringify({ message: msg, ...declineMeta })}`,
           );
         }
 
@@ -1158,7 +1210,25 @@ export class OrdersService {
         savedOrder.paymentStatus = PaymentStatus.FAILED;
         await this.orderRepository.save(savedOrder);
 
-        throw new BadRequestException(error.message);
+        if (isProviderDecline) {
+          throw new HttpException(
+            {
+              code: 'PAYMENT_DECLINED',
+              message: 'Payment declined. Please verify SIM/account and retry or use another payment method.',
+              details: {
+                provider: declineMeta.provider,
+                providerCode: declineMeta.providerCode,
+                providerRef: declineMeta.providerRef,
+                orderId: declineMeta.orderId,
+                currency: declineMeta.currency,
+                amount: declineMeta.amount,
+              },
+            },
+            HttpStatus.PAYMENT_REQUIRED,
+          );
+        }
+
+        throw new BadRequestException(msg || 'Payment initiation failed');
       }
 
       // Reload to ensure all relations (user, items) are populated for the response
@@ -1299,7 +1369,14 @@ export class OrdersService {
       .leftJoinAndSelect('order.user', 'user')
       .addSelect('order.deliveryCode')
       .where('order.id = :orderId', { orderId })
-      .andWhere('user.id = :userId', { userId })
+      .andWhere(
+        new Brackets((qb) => {
+          qb.where('user.id = :userId', { userId }).orWhere(
+            'deliverer.id = :userId',
+            { userId },
+          );
+        }),
+      )
       .getOne();
 
     if (!order) {
