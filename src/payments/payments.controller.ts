@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unused-vars */
 // Backend: src/payments/payments.controller.ts
 
 import {
@@ -12,18 +11,21 @@ import {
   Param,
   UseGuards,
   Query,
+  Req,
 } from '@nestjs/common';
 import { OrdersService } from '../orders/orders.service';
 import { Repository } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
 import {
   Order,
+  PaymentMethod,
   PaymentStatus,
   OrderStatus,
 } from '../orders/entities/order.entity';
 import { TelebirrCallbackDto } from './telebirr-callback.dto';
 import { TelebirrService } from '../telebirr/telebirr.service';
 import { TelebirrTransaction } from './entities/telebirr-transaction.entity';
+import { EbirrTransaction } from './entities/ebirr-transaction.entity';
 import { ProductsService } from '../products/products.service';
 import {
   BoostPricingService,
@@ -34,17 +36,97 @@ import { EbirrService } from '../ebirr/ebirr.service';
 import { CurrencyService } from '../common/services/currency.service';
 import { AuthGuard } from '@nestjs/passport'; // Add this if missing
 import { RolesGuard } from '../common/guards/roles.guard'; // Add this
-import { Req } from '@nestjs/common'; // Add this
+
+type PaymentMethodId =
+  | 'TELEBIRR'
+  | 'EBIRR'
+  | 'CBE'
+  | 'MPESA'
+  | 'WAAFI'
+  | 'DMONEY'
+  | 'BANK_TRANSFER';
+
+type PaymentMethodDef = {
+  id: PaymentMethodId;
+  name: string;
+  countries: string[];
+  supportsBoost: boolean;
+  readinessEnv: string[];
+};
 
 @Controller('payments')
 export class PaymentsController {
   private readonly logger = new Logger(PaymentsController.name);
+  private readonly paymentMethodCatalog: PaymentMethodDef[] = [
+    {
+      id: 'TELEBIRR',
+      name: 'Telebirr',
+      countries: ['ET'],
+      supportsBoost: true,
+      readinessEnv: [
+        'TELEBIRR_APP_ID',
+        'TELEBIRR_APP_KEY',
+        'TELEBIRR_SHORT_CODE',
+        'TELEBIRR_PUBLIC_KEY',
+        'TELEBIRR_PRIVATE_KEY',
+      ],
+    },
+    {
+      id: 'EBIRR',
+      name: 'Ebirr',
+      countries: ['ET'],
+      supportsBoost: true,
+      readinessEnv: [
+        'EBIRR_BASE_URL',
+        'EBIRR_API_KEY',
+        'EBIRR_MERCHANT_ID',
+        'EBIRR_API_USER_ID',
+      ],
+    },
+    {
+      id: 'CBE',
+      name: 'CBE Birr',
+      countries: ['ET'],
+      supportsBoost: false,
+      readinessEnv: [],
+    },
+    {
+      id: 'MPESA',
+      name: 'M-Pesa',
+      countries: ['KE'],
+      supportsBoost: false,
+      readinessEnv: [],
+    },
+    {
+      id: 'WAAFI',
+      name: 'Waafi / EVC Plus',
+      countries: ['SO'],
+      supportsBoost: false,
+      readinessEnv: [],
+    },
+    {
+      id: 'DMONEY',
+      name: 'D-Money',
+      countries: ['DJ'],
+      supportsBoost: false,
+      readinessEnv: [],
+    },
+    {
+      id: 'BANK_TRANSFER',
+      name: 'Bank Transfer',
+      countries: ['ALL'],
+      supportsBoost: false,
+      readinessEnv: [],
+    },
+  ];
 
   constructor(
     @InjectRepository(Order)
     private readonly orderRepository: Repository<Order>,
     @InjectRepository(TelebirrTransaction)
     private readonly transactionRepository: Repository<TelebirrTransaction>,
+    @InjectRepository(EbirrTransaction)
+    private readonly ebirrTransactionRepository: Repository<EbirrTransaction>,
     private readonly ordersService: OrdersService,
     private readonly telebirrService: TelebirrService,
     private readonly ebirrService: EbirrService,
@@ -53,25 +135,129 @@ export class PaymentsController {
     private readonly currencyService: CurrencyService,
   ) {}
 
-  // ✨ ADD THIS NEW METHOD ✨
+  private normalizeCountry(input?: string): string | null {
+    const value = String(input || '')
+      .trim()
+      .toUpperCase();
+    if (!value) return null;
+
+    if (value === 'ET' || value === 'ETHIOPIA') return 'ET';
+    if (value === 'SO' || value === 'SOMALIA') return 'SO';
+    if (value === 'KE' || value === 'KENYA') return 'KE';
+    if (value === 'DJ' || value === 'DJIBOUTI') return 'DJ';
+
+    return value;
+  }
+
+  private envVarReady(key: string): boolean {
+    const value = String(process.env[key] || '').trim();
+    if (!value) return false;
+    if (value.toUpperCase().includes('PLACEHOLDER')) return false;
+    return true;
+  }
+
+  private providerEnabled(providerId: PaymentMethodId): boolean {
+    const forcedEnabled = String(process.env.PAYMENT_METHODS_FORCE_ENABLE || '')
+      .split(',')
+      .map((v) => v.trim().toUpperCase())
+      .filter(Boolean);
+
+    const forcedDisabled = String(
+      process.env.PAYMENT_METHODS_FORCE_DISABLE || '',
+    )
+      .split(',')
+      .map((v) => v.trim().toUpperCase())
+      .filter(Boolean);
+
+    if (forcedDisabled.includes(providerId)) return false;
+    if (forcedEnabled.includes(providerId)) return true;
+
+    const def = this.paymentMethodCatalog.find((m) => m.id === providerId);
+    if (!def) return false;
+
+    if (!def.readinessEnv.length) {
+      return false;
+    }
+
+    return def.readinessEnv.every((envKey) => this.envVarReady(envKey));
+  }
+
+  private deriveEbirrTelemetryTag(providerCode?: string | null): string {
+    const code = String(providerCode || '').trim();
+    if (code === '5309') {
+      return 'EBIRR_EXPECTED_DECLINE_5309_INSUFFICIENT_BALANCE';
+    }
+    if (code === 'E10205') {
+      return 'EBIRR_EXPECTED_DECLINE_E10205_INSUFFICIENT_BALANCE';
+    }
+    if (code === '5310') {
+      return 'EBIRR_EXPECTED_DECLINE_5310_USER_REJECTED';
+    }
+    if (/^E\d+$/i.test(code) || code === 'ORDER_PAYMENT_FAILED') {
+      return 'EBIRR_SYSTEM_ERROR';
+    }
+    return 'EBIRR_PROVIDER_DECLINE';
+  }
+
+  private resolveCountryFromRequest(
+    req: any,
+    queryCountry?: string,
+  ): string | null {
+    const headerCountry =
+      req?.headers?.['x-user-country'] ||
+      req?.headers?.['x-country'] ||
+      req?.headers?.['cf-ipcountry'] ||
+      req?.headers?.['x-vercel-ip-country'] ||
+      req?.headers?.['x-country-code'];
+
+    return this.normalizeCountry(queryCountry || String(headerCountry || ''));
+  }
+
+  private listPaymentMethods(opts?: {
+    purpose?: 'boost' | 'checkout';
+    country?: string | null;
+  }) {
+    const country = this.normalizeCountry(opts?.country || undefined);
+    const purpose = opts?.purpose || 'checkout';
+
+    return this.paymentMethodCatalog
+      .filter((m) => (purpose === 'boost' ? m.supportsBoost : true))
+      .filter((m) => {
+        if (!country) return true;
+        return m.countries.includes('ALL') || m.countries.includes(country);
+      })
+      .map((m) => ({
+        id: m.id,
+        name: m.name,
+        country: m.countries.length === 1 ? m.countries[0] : 'MULTI',
+        countries: m.countries,
+        enabled: this.providerEnabled(m.id),
+        supportsBoost: m.supportsBoost,
+      }));
+  }
+
   @Get('methods')
-  getPaymentMethods() {
-    // This returns a static list of your payment methods.
-    // Enhanced with new regional options as requested.
-    return [
-      { id: 'TELEBIRR', name: 'Telebirr', country: 'ET', enabled: false },
-      { id: 'EBIRR', name: 'Ebirr', country: 'ET', enabled: true }, // Coming Soon
-      { id: 'CBE', name: 'CBE Birr', country: 'ET', enabled: true }, // Commercial Bank of Ethiopia
-      { id: 'MPESA', name: 'M-Pesa', country: 'KE', enabled: true },
-      { id: 'WAAFI', name: 'Waafi / EVC Plus', country: 'SO', enabled: true }, // Hormuud
-      { id: 'DMONEY', name: 'D-Money', country: 'DJ', enabled: true }, // Djibouti
-      {
-        id: 'BANK_TRANSFER',
-        name: 'Bank Transfer',
-        country: 'ALL',
-        enabled: true,
-      },
-    ];
+  getPaymentMethods(@Req() req: any, @Query('country') country?: string) {
+    const resolvedCountry = this.resolveCountryFromRequest(req, country);
+    return {
+      country: resolvedCountry,
+      methods: this.listPaymentMethods({
+        purpose: 'checkout',
+        country: resolvedCountry,
+      }),
+    };
+  }
+
+  @Get('boost-methods')
+  getBoostPaymentMethods(@Req() req: any, @Query('country') country?: string) {
+    const resolvedCountry = this.resolveCountryFromRequest(req, country);
+    return {
+      country: resolvedCountry,
+      methods: this.listPaymentMethods({
+        purpose: 'boost',
+        country: resolvedCountry,
+      }),
+    };
   }
 
   @Get('transactions')
@@ -98,9 +284,31 @@ export class PaymentsController {
     const option = BOOST_OPTIONS.find((o) => o.tier === tier);
     if (!option) throw new BadRequestException('Invalid boost tier');
 
+    const normalizedProvider = String(provider || 'TELEBIRR').toUpperCase() as
+      | 'TELEBIRR'
+      | 'EBIRR';
+    const userCountry = this.resolveCountryFromRequest(req);
+    const boostMethods = this.listPaymentMethods({
+      purpose: 'boost',
+      country: userCountry,
+    }).filter((m) => m.enabled);
+
+    const selectedMethod = boostMethods.find(
+      (m) => m.id === normalizedProvider,
+    );
+
+    if (!selectedMethod) {
+      throw new BadRequestException(
+        `Provider ${normalizedProvider} is not enabled for boost${userCountry ? ` in ${userCountry}` : ''}`,
+      );
+    }
+
     // Construct Order ID (Timestamp ensures uniqueness)
     const merchOrderId = `BOOST-${productId}-${tier}-${Date.now()}`;
-    const amount = this.currencyService.formatAmount(option.basePriceETB, 'ETB');
+    const amount = this.currencyService.formatAmount(
+      option.basePriceETB,
+      'ETB',
+    );
 
     // Create Audit Record (Reusing TelebirrTransaction for now, or unified Transaction)
     // NOTE: For Ebirr, we might use EbirrTransaction if we want separation, or just log.
@@ -110,7 +318,7 @@ export class PaymentsController {
     // If provider is Ebirr, we might likely not use it or use Ebirr's own if available.
 
     // Let's create a generic "Pending" record if it's TELEBIRR.
-    if (provider === 'TELEBIRR') {
+    if (normalizedProvider === 'TELEBIRR') {
       const tx = this.transactionRepository.create({
         merch_order_id: merchOrderId,
         amount: Number(amount),
@@ -139,7 +347,7 @@ export class PaymentsController {
           e.message || 'Failed to initiate Telebirr payment',
         );
       }
-    } else if (provider === 'EBIRR') {
+    } else if (normalizedProvider === 'EBIRR') {
       try {
         const result = await this.ebirrService.initiatePayment({
           amount: this.currencyService.formatAmount(option.basePriceETB, 'ETB'),
@@ -307,9 +515,48 @@ export class PaymentsController {
 
     let status = 'PENDING';
     let updated = false;
+    let ebirrFailureDetails: Record<string, any> | null = null;
 
     if (order.paymentStatus === PaymentStatus.PAID) {
       status = 'SUCCESS';
+    } else if (order.paymentMethod === 'EBIRR') {
+      const refIds = [`REF-${order.id}`, `ORDER-${order.id}`];
+      const ebirrTx = await this.ebirrTransactionRepository
+        .createQueryBuilder('tx')
+        .where('tx.merch_order_id IN (:...refIds)', { refIds })
+        .orderBy('tx.updated_at', 'DESC')
+        .addOrderBy('tx.created_at', 'DESC')
+        .getOne();
+
+      const txStatus = String(ebirrTx?.status || '').toUpperCase();
+      const failedByTx = ['FAILED', 'ERROR'].includes(txStatus);
+      const failedByOrder = order.paymentStatus === PaymentStatus.FAILED;
+
+      if (failedByTx || failedByOrder) {
+        status = 'FAILED';
+        const providerCode =
+          ebirrTx?.response_code ||
+          (failedByOrder ? 'ORDER_PAYMENT_FAILED' : 'EBIRR_FAILED');
+        const providerRef =
+          ebirrTx?.req_transaction_id ||
+          ebirrTx?.trans_id ||
+          ebirrTx?.issuer_trans_id ||
+          null;
+        const providerMessage =
+          ebirrTx?.response_msg ||
+          ebirrTx?.raw_response_payload?.responseMsg ||
+          ebirrTx?.raw_response_payload?.message ||
+          'Payment failed';
+
+        ebirrFailureDetails = {
+          provider: 'EBIRR',
+          providerCode,
+          telemetryTag: this.deriveEbirrTelemetryTag(providerCode),
+          expectedDecline: ['5309', '5310'].includes(String(providerCode)),
+          providerRef,
+          message: providerMessage,
+        };
+      }
     } else {
       const merchOrderId = `ORDER-${order.id}`;
       try {
@@ -339,7 +586,24 @@ export class PaymentsController {
         ...dto,
       };
     }
-    return { status: status || 'Unknown', updated: false };
+
+    if (status === 'FAILED' && ebirrFailureDetails) {
+      return {
+        status: 'FAILED',
+        updated: false,
+        details: ebirrFailureDetails,
+        skipOrderConfirmationScreen:
+          order.paymentMethod === PaymentMethod.EBIRR,
+        disableWebCheckoutFallback: order.paymentMethod === PaymentMethod.EBIRR,
+      };
+    }
+
+    return {
+      status: status || 'Unknown',
+      updated: false,
+      skipOrderConfirmationScreen: order.paymentMethod === PaymentMethod.EBIRR,
+      disableWebCheckoutFallback: order.paymentMethod === PaymentMethod.EBIRR,
+    };
   }
 
   @Post('disburse-vendor/:orderId')

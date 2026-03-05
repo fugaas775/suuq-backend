@@ -8,10 +8,12 @@ module.exports = {
       exec_mode: 'cluster',
       env: {
         NODE_ENV: 'production',
+        TZ: 'Africa/Nairobi',
       },
       env_development: {
         NODE_ENV: 'development',
         PORT: 3001,
+        TZ: 'Africa/Nairobi',
         // Enable Firebase emulators for development
         FIREBASE_EMULATOR: 'true',
         FIREBASE_DATABASE_EMULATOR_HOST: 'localhost:9000',
@@ -31,6 +33,8 @@ module.exports = {
       env: {
         NODE_ENV: 'production',
         PORT: 3000,
+        TZ: 'Africa/Nairobi',
+        METRICS_ENABLED: 'true',
         // Force no-store caching headers across the entire API (handled in src/main.ts)
         NO_STORE_ALL_API: 'true',
         // Supply outreach tasks rollout (feature-flag driven)
@@ -55,6 +59,14 @@ module.exports = {
         TWILIO_ACCOUNT_SID: process.env.TWILIO_ACCOUNT_SID,
         TWILIO_AUTH_TOKEN: process.env.TWILIO_AUTH_TOKEN,
         TWILIO_VERIFY_SERVICE_SID: process.env.TWILIO_VERIFY_SERVICE_SID,
+        // Ebirr webhook/return-callback security (must be provided via server env)
+        EBIRR_WEBHOOK_SECRET: process.env.EBIRR_WEBHOOK_SECRET,
+        EBIRR_ENFORCE_RETURN_ORIGIN:
+          process.env.EBIRR_ENFORCE_RETURN_ORIGIN || 'false',
+        EBIRR_RETURN_ALLOWED_HOSTS:
+          process.env.EBIRR_RETURN_ALLOWED_HOSTS ||
+          'payments.ebirr.com,testpayments.ebirr.com',
+        EBIRR_RETURN_ALLOWED_IPS: process.env.EBIRR_RETURN_ALLOWED_IPS || '',
       },
 
       // Logging

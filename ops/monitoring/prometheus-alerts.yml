@@ -1,0 +1,64 @@
+groups:
+  - name: suuq-backend-api
+    rules:
+      - alert: SuuqApiErrorRateHigh
+        expr: |
+          (
+            sum(rate(http_requests_failed_total[5m]))
+            /
+            clamp_min(sum(rate(http_requests_total[5m])), 1)
+          ) > 0.02
+        for: 5m
+        labels:
+          severity: page
+          service: suuq-backend
+        annotations:
+          summary: 'Suuq backend API error rate is above 2%'
+          description: 'Failed request ratio has exceeded 2% over the last 5 minutes.'
+          runbook: 'Check recent deploys, status-code mix, and top failing routes from /metrics.'
+
+      - alert: SuuqApiServerErrorRateHigh
+        expr: |
+          (
+            sum(rate(http_requests_total{status=~"5.."}[5m]))
+            /
+            clamp_min(sum(rate(http_requests_total[5m])), 1)
+          ) > 0.01
+        for: 5m
+        labels:
+          severity: page
+          service: suuq-backend
+        annotations:
+          summary: 'Suuq backend 5xx error rate is above 1%'
+          description: 'Server error ratio has exceeded 1% over the last 5 minutes.'
+          runbook: 'Inspect app logs and dependency health (DB/cache/external providers).'
+
+      - alert: SuuqApiLatencyP95High
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (rate(http_request_duration_seconds_bucket[5m]))
+          ) > 0.8
+        for: 10m
+        labels:
+          severity: warning
+          service: suuq-backend
+        annotations:
+          summary: 'Suuq backend p95 latency is above 800ms'
+          description: 'Global API p95 latency has remained above 800ms for 10 minutes.'
+          runbook: 'Break down p95 by route and check recent traffic spikes and slow dependencies.'
+
+      - alert: SuuqApiRouteLatencyP95Critical
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (route, le) (rate(http_request_duration_seconds_bucket[5m]))
+          ) > 1
+        for: 10m
+        labels:
+          severity: page
+          service: suuq-backend
+        annotations:
+          summary: 'Suuq backend route p95 latency is above 1s'
+          description: 'At least one API route has p95 latency over 1 second for 10 minutes.'
+          runbook: 'Identify affected route label, inspect query plans/cache hit rate, and rollback recent regressions if needed.'

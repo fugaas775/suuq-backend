@@ -32,7 +32,7 @@ describe('ProductsV1Controller detail', () => {
     ],
     vendor: {
       id: 9,
-      email: 'vendor@example.com',
+      email: 'vendor@suuqsapp.com',
       displayName: 'Vendor',
       avatarUrl: 'https://example.com/avatar.jpg',
       storeName: 'Store',

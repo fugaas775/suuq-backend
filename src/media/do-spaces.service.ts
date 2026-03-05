@@ -41,21 +41,26 @@ export class DoSpacesService {
     body: Buffer | Readable,
     filename: string,
     mimetype: string,
+    opts?: {
+      acl?: 'private' | 'public-read';
+      cacheControl?: string;
+      contentDisposition?: string;
+    },
   ): Promise<string> {
     const command = new PutObjectCommand({
       Bucket: this.bucket,
       Key: filename,
       Body: body,
-      ACL: 'public-read',
+      ACL: opts?.acl || 'public-read',
       ContentType: mimetype,
-      ContentDisposition: 'inline',
-      CacheControl: 'public, max-age=31536000, immutable',
+      ContentDisposition: opts?.contentDisposition || 'inline',
+      CacheControl: opts?.cacheControl || 'public, max-age=31536000, immutable',
     });
 
     await this.s3.send(command);
 
-  // ✨ THE FINAL FIX: Construct the correct public URL
-  return this.buildPublicUrl(filename);
+    // ✨ THE FINAL FIX: Construct the correct public URL
+    return this.buildPublicUrl(filename);
   }
 
   // Backward compatibility: buffer-based helper
@@ -128,11 +133,16 @@ export class DoSpacesService {
     try {
       const u = new URL(url);
       const host = u.host.toLowerCase();
-      const path = u.pathname.startsWith('/') ? u.pathname.slice(1) : u.pathname;
-      const expectedVirtual = `${this.bucket}.${this.region}.digitaloceanspaces.com`.toLowerCase();
-      const expectedCdnVirtual = `${this.bucket}.${this.region}.cdn.digitaloceanspaces.com`.toLowerCase();
+      const path = u.pathname.startsWith('/')
+        ? u.pathname.slice(1)
+        : u.pathname;
+      const expectedVirtual =
+        `${this.bucket}.${this.region}.digitaloceanspaces.com`.toLowerCase();
+      const expectedCdnVirtual =
+        `${this.bucket}.${this.region}.cdn.digitaloceanspaces.com`.toLowerCase();
       const regionHost = `${this.region}.digitaloceanspaces.com`.toLowerCase();
-      const cdnRegionHost = `${this.region}.cdn.digitaloceanspaces.com`.toLowerCase();
+      const cdnRegionHost =
+        `${this.region}.cdn.digitaloceanspaces.com`.toLowerCase();
       // Virtual-hosted: bucket.region.digitaloceanspaces.com/<key>
       if (host === expectedVirtual || host === expectedCdnVirtual) {
         return path || null;
@@ -171,7 +181,11 @@ export class DoSpacesService {
   /** Ensure an object is world-readable. */
   async setPublicRead(key: string): Promise<void> {
     try {
-      const cmd = new PutObjectAclCommand({ Bucket: this.bucket, Key: key, ACL: 'public-read' });
+      const cmd = new PutObjectAclCommand({
+        Bucket: this.bucket,
+        Key: key,
+        ACL: 'public-read',
+      });
       await this.s3.send(cmd);
     } catch {
       // Best-effort; if bucket policy already grants public read or ACLs are disabled, ignore
@@ -181,13 +195,21 @@ export class DoSpacesService {
   /** Return basic HEAD metadata: content length, content type, and raw metadata. */
   async headObjectMeta(
     key: string,
-  ): Promise<{ contentLength?: number; contentType?: string; metadata?: Record<string, string> }>{
+  ): Promise<{
+    contentLength?: number;
+    contentType?: string;
+    metadata?: Record<string, string>;
+  }> {
     try {
       const cmd = new HeadObjectCommand({ Bucket: this.bucket, Key: key });
       const res = (await this.s3.send(cmd)) as any;
       return {
-        contentLength: typeof res?.ContentLength === 'number' ? res.ContentLength : undefined,
-        contentType: typeof res?.ContentType === 'string' ? res.ContentType : undefined,
+        contentLength:
+          typeof res?.ContentLength === 'number'
+            ? res.ContentLength
+            : undefined,
+        contentType:
+          typeof res?.ContentType === 'string' ? res.ContentType : undefined,
         metadata: res?.Metadata as Record<string, string> | undefined,
       };
     } catch {
@@ -200,7 +222,11 @@ export class DoSpacesService {
     key: string,
     contentType: string,
     ttlSecs = 3600,
-    _opts?: { cacheControl?: string; contentDisposition?: string; acl?: 'private' | 'public-read' },
+    _opts?: {
+      cacheControl?: string;
+      contentDisposition?: string;
+      acl?: 'private' | 'public-read';
+    },
   ): Promise<string> {
     void _opts; // currently unused; kept for future extensibility
     // Keep signed headers minimal to avoid client mismatches; bucket should allow public reads
@@ -210,7 +236,9 @@ export class DoSpacesService {
       ContentType: contentType,
       // Avoid signing CacheControl/ContentDisposition/ACL to keep client-side PUT requirements minimal
     });
-    return awsGetSignedUrl(this.s3 as any, command as any, { expiresIn: ttlSecs });
+    return awsGetSignedUrl(this.s3 as any, command as any, {
+      expiresIn: ttlSecs,
+    });
   }
 
   /** Download an object into a Buffer (for images to derive thumbnails). */
@@ -220,7 +248,9 @@ export class DoSpacesService {
     const body = this.extractBody(res);
     const chunks: Buffer[] = [];
     await new Promise<void>((resolve, reject) => {
-      body.on('data', (c) => chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c)));
+      body.on('data', (c) =>
+        chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c)),
+      );
       body.on('end', () => resolve());
       body.on('error', (e) => reject(e));
     });
@@ -230,12 +260,18 @@ export class DoSpacesService {
   /** Download only the first N bytes of an object (for magic-byte sniffing). */
   async getObjectHeadBytes(key: string, maxBytes = 4096): Promise<Buffer> {
     const end = Math.max(0, Math.min(maxBytes, 1024 * 1024) - 1); // cap to 1MB range
-    const command = new GetObjectCommand({ Bucket: this.bucket, Key: key, Range: `bytes=0-${end}` } as any);
+    const command = new GetObjectCommand({
+      Bucket: this.bucket,
+      Key: key,
+      Range: `bytes=0-${end}`,
+    } as any);
     const res = await this.s3.send(command as any);
     const body = this.extractBody(res);
     const chunks: Buffer[] = [];
     await new Promise<void>((resolve, reject) => {
-      body.on('data', (c) => chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c)));
+      body.on('data', (c) =>
+        chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c)),
+      );
       body.on('end', () => resolve());
       body.on('error', (e) => reject(e));
     });
@@ -285,16 +321,22 @@ export class DoSpacesService {
   }
 
   /** List object keys under a prefix (single page). */
-  async listKeys(prefix = '', maxKeys = 1000, continuationToken?: string): Promise<{ keys: string[]; nextToken?: string }>{
+  async listKeys(
+    prefix = '',
+    maxKeys = 1000,
+    continuationToken?: string,
+  ): Promise<{ keys: string[]; nextToken?: string }> {
     const cmd = new ListObjectsV2Command({
       Bucket: this.bucket,
       Prefix: prefix || undefined,
       MaxKeys: maxKeys,
       ContinuationToken: continuationToken,
     } as any);
-  const res = (await this.s3.send(cmd as any)) as any;
-  const keys = ((res?.Contents as any[]) || []).map((o: any) => o.Key).filter(Boolean);
-  const nextToken = res?.NextContinuationToken as string | undefined;
+    const res = (await this.s3.send(cmd as any)) as any;
+    const keys = ((res?.Contents as any[]) || [])
+      .map((o: any) => o.Key)
+      .filter(Boolean);
+    const nextToken = res?.NextContinuationToken as string | undefined;
     return { keys, nextToken };
   }
 

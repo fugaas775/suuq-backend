@@ -8,6 +8,7 @@ import { Favorite } from '../favorites/entities/favorite.entity';
 import { Order } from '../orders/entities/order.entity';
 import { User } from '../users/entities/user.entity';
 import { CurationService } from '../curation/curation.service';
+import { ImageSimilarityService } from '../search/image-similarity.service';
 
 describe('HomeService (Explore engine flag)', () => {
   let service: HomeService;
@@ -20,10 +21,14 @@ describe('HomeService (Explore engine flag)', () => {
   const curation = {
     getSection: jest.fn().mockResolvedValue({ items: [] }),
   } as any;
+  const imageSimilarity = {
+    searchSimilarByProduct: jest.fn().mockResolvedValue({ matches: [] }),
+  } as any;
 
   beforeEach(async () => {
     jest.clearAllMocks();
     process.env.HOME_EXPLORE_ENGINE_V2 = '1';
+    process.env.HOME_IMMERSIVE_SIMILAR_IMAGES_ENABLED = '0';
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         HomeService,
@@ -55,6 +60,10 @@ describe('HomeService (Explore engine flag)', () => {
           useValue: { find: jest.fn().mockResolvedValue([]) },
         },
         { provide: CurationService, useValue: curation },
+        {
+          provide: ImageSimilarityService,
+          useValue: imageSimilarity,
+        },
       ],
     }).compile();
 
@@ -177,7 +186,7 @@ describe('HomeService (Explore engine flag)', () => {
     });
 
     expect(resp.exploreProducts.items.length).toBe(1);
-    expect((resp.exploreProducts.items[0] as any).id).toBe(999);
+    expect(resp.exploreProducts.items[0].id).toBe(999);
     expect(productsService.findFiltered).toHaveBeenCalledWith(
       expect.objectContaining({
         perPage: 1,
@@ -207,5 +216,62 @@ describe('HomeService (Explore engine flag)', () => {
     );
     expect(resp.exploreProducts.page).toBe(2);
     expect(resp.exploreProducts.total).toBeGreaterThan(20);
+  });
+
+  it('hydrates immersive similar strip with non-self items and mirrors attributes', async () => {
+    process.env.HOME_IMMERSIVE_SIMILAR_IMAGES_ENABLED = '1';
+    listingService.list.mockResolvedValue({
+      items: [
+        {
+          id: 625,
+          name: 'Focus Product',
+          currency: 'ETB',
+          price: 123,
+          imageUrl: 'https://cdn.example.com/full_focus.jpg',
+        },
+      ],
+      total: 1,
+      page: 1,
+      perPage: 20,
+      totalPages: 1,
+    });
+    imageSimilarity.searchSimilarByProduct.mockResolvedValue({
+      matches: [
+        {
+          productId: 625,
+          src: 'https://cdn.example.com/full_focus.jpg',
+          thumbnail: 'https://cdn.example.com/full_focus.jpg',
+          lowRes: null,
+          distance: 1,
+        },
+        {
+          productId: 777,
+          src: 'https://cdn.example.com/full_other.jpg',
+          thumbnail: 'https://cdn.example.com/thumb_other.jpg',
+          lowRes: 'https://cdn.example.com/lowres_other.jpg',
+          distance: 3,
+        },
+      ],
+      fallbackImages: [
+        {
+          productId: 625,
+          src: 'https://cdn.example.com/full_focus.jpg',
+          thumbnail: 'https://cdn.example.com/full_focus.jpg',
+        },
+      ],
+    });
+
+    const resp = await service.getV2HomeFeed({ page: 1, perPage: 1 });
+    const card = resp.exploreProducts.items[0];
+
+    expect(imageSimilarity.searchSimilarByProduct).toHaveBeenCalledWith(
+      625,
+      expect.any(Object),
+    );
+    expect(card.similarImageStrip).toEqual(
+      expect.arrayContaining([expect.objectContaining({ productId: 777 })]),
+    );
+    expect(card.similarImageStrip).toHaveLength(1);
+    expect(card.attributes.similarImageStrip).toEqual(card.similarImageStrip);
   });
 });

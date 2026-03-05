@@ -43,7 +43,6 @@ export class WalletController {
   )
   @Header('Cache-Control', 'private, max-age=10')
   async getWallet(@Req() req, @Query('currency') currency?: string) {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment
     const userId = req.user?.id || req.user?.userId;
     const wallet = await this.walletService.getWallet(userId, currency);
     const transactions = await this.walletService.getTransactions(userId);
@@ -66,7 +65,6 @@ export class WalletController {
   )
   @Header('Cache-Control', 'private, max-age=5')
   async getBalance(@Req() req, @Query('currency') currency?: string) {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment
     const userId = req.user?.id || req.user?.userId;
     const wallet = await this.walletService.getWallet(userId, currency);
     return {
@@ -87,7 +85,6 @@ export class WalletController {
   )
   @Header('Cache-Control', 'private, max-age=10')
   async getTransactions(@Req() req) {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment
     const userId = req.user?.id || req.user?.userId;
     return this.walletService.getTransactions(userId);
   }
@@ -104,7 +101,6 @@ export class WalletController {
   )
   @Header('Cache-Control', 'private, max-age=10')
   async getPayouts(@Req() req) {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment
     const userId = req.user?.id || req.user?.userId;
     return this.walletService.getPayouts(userId);
   }
@@ -118,14 +114,13 @@ export class WalletController {
   ) {
     // Fix: Use req.user.id (from JwtStrategy) instead of req.user.userId
 
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment
     const tokenUserId = req.user?.id || req.user?.userId;
     const bodyUserId = topUpDto.userDetails?.id
       ? Number(topUpDto.userDetails.id)
       : undefined;
 
     // Prioritize token user ID to prevent ID spoofing/mismatch
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+
     const userId = tokenUserId || bodyUserId;
 
     if (!userId) {
@@ -159,7 +154,6 @@ export class WalletController {
 
   @Post('pay')
   async payWithWallet(@Req() req, @Body() paymentDto: PaymentDto) {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment
     const userId = req.user?.id || req.user?.userId;
     return this.walletService.payWithWallet(
       userId,

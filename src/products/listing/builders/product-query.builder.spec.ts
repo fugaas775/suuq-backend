@@ -12,7 +12,7 @@ describe('ProductQueryBuilder', () => {
       getManyAndCount: jest.fn().mockResolvedValue([[], 0]),
     };
 
-    new ProductQueryBuilder(qb as any);
+    new ProductQueryBuilder(qb);
 
     expect(qb.where).toHaveBeenCalledWith('product.status = :status', {
       status: 'publish',

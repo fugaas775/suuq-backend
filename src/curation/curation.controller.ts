@@ -82,7 +82,7 @@ export class CurationController {
   ) {
     const v = view === 'full' ? 'full' : 'grid';
     // Logic: Enable ads for 'home-new', disable for 'home-best' (pure organic)
-    const shouldInject = key === 'home-new'; 
+    const shouldInject = key === 'home-new';
 
     const res = await this.curation.getSection(key, {
       limit: Number(limit) || 20,
@@ -93,7 +93,7 @@ export class CurationController {
     });
     // If view is full (feed style), prefer high-res images. Otherwise optimized thumbnails.
     const preferHighRes = v === 'full';
-    const items = res.items.map(i => normalizeProductImage(i, preferHighRes));
+    const items = res.items.map((i) => normalizeProductImage(i, preferHighRes));
     this.logger.log(
       `section=${key} count=${items.length} limit=${limit ?? ''} cursor=${cursor ?? ''}`,
     );
@@ -122,7 +122,7 @@ function normalizeProductImage(p: any, preferHighRes = false) {
       (p.imageUrl as string) ||
       null;
   }
-  
+
   if (url) {
     p.imageUrl = absolutize(url);
   }

@@ -9,7 +9,6 @@ import {
   Query,
   Req,
   UseGuards,
-  BadRequestException,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { RolesGuard } from '../auth/roles.guard';
@@ -24,11 +23,7 @@ import { AdminForwardProductRequestDto } from './dto/admin-forward-product-reque
 import { AdminForwardToAllVerifiedDto } from './dto/admin-forward-all-verified.dto';
 import { SkipThrottle } from '@nestjs/throttler';
 import { NotificationsService } from '../notifications/notifications.service';
-import {
-  User,
-  SubscriptionTier,
-  VerificationStatus,
-} from '../users/entities/user.entity';
+import { User, VerificationStatus } from '../users/entities/user.entity';
 
 @UseGuards(AuthGuard('jwt'), RolesGuard)
 @SkipThrottle()
@@ -164,30 +159,33 @@ export class AdminProductRequestsController {
       (vid) => !alreadyForwardedVendorIds.has(vid),
     );
 
-    // Validate that all candidates are PRO vendors
+    // Validate candidates and allow partial success:
+    // - forward to any existing selected vendor user
+    // - skip missing users
+    const missingVendorIds: number[] = [];
+    const validToCreate: number[] = [];
+
     if (toCreate.length > 0) {
       const candidates = await this.userRepo.find({
         where: { id: In(toCreate) },
-        select: ['id', 'subscriptionTier'],
+        select: ['id'],
       });
-      const validMap = new Map<number, boolean>();
+
+      const candidateMap = new Map<number, true>();
       for (const c of candidates) {
-        if (c.subscriptionTier === SubscriptionTier.PRO) {
-          validMap.set(c.id, true);
-        }
+        candidateMap.set(c.id, true);
       }
 
-      const invalidIds = toCreate.filter((vid) => !validMap.has(vid));
-      if (invalidIds.length > 0) {
-        throw new BadRequestException(
-          `Cannot forward to non-PRO vendors: ${invalidIds.join(
-            ', ',
-          )}. Only PRO vendors can receive forwarded requests.`,
-        );
+      for (const vendorId of toCreate) {
+        if (!candidateMap.has(vendorId)) {
+          missingVendorIds.push(vendorId);
+          continue;
+        }
+        validToCreate.push(vendorId);
       }
     }
 
-    if (!toCreate.length) {
+    if (!validToCreate.length) {
       const forwards = await this.forwardRepo.find({
         where: { requestId: id },
         relations: ['vendor', 'forwardedByAdmin'],
@@ -196,10 +194,17 @@ export class AdminProductRequestsController {
       return {
         ...request,
         forwards: forwards.map((f) => this.mapForwardWithUsers(f)),
+        forwardingSummary: {
+          requestedCount: uniqueVendorIds.length,
+          createdCount: 0,
+          alreadyForwardedVendorIds: Array.from(alreadyForwardedVendorIds),
+          skippedNonProVendorIds: [],
+          skippedMissingVendorIds: missingVendorIds,
+        },
       };
     }
 
-    const newForwards = toCreate.map((vendorId) =>
+    const newForwards = validToCreate.map((vendorId) =>
       this.forwardRepo.create({
         request: { id } as ProductRequest,
         requestId: id,
@@ -221,13 +226,20 @@ export class AdminProductRequestsController {
     });
 
     // Notify vendors about the forwarded request (fire-and-forget)
-    this.notifyVendorsOnForward(id, request?.title, toCreate).catch(
+    this.notifyVendorsOnForward(id, request?.title, validToCreate).catch(
       () => undefined,
     );
 
     return {
       ...request,
       forwards: forwards.map((f) => this.mapForwardWithUsers(f)),
+      forwardingSummary: {
+        requestedCount: uniqueVendorIds.length,
+        createdCount: validToCreate.length,
+        alreadyForwardedVendorIds: Array.from(alreadyForwardedVendorIds),
+        skippedNonProVendorIds: [],
+        skippedMissingVendorIds: missingVendorIds,
+      },
     };
   }
 

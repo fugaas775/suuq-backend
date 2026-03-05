@@ -21,34 +21,40 @@ describe('Auto Upgrade Workflow (e2e)', () => {
 
     app = moduleFixture.createNestApplication();
     await app.init();
-    
+
     dataSource = app.get(DataSource);
     walletService = app.get(WalletService);
 
     // Ensure Price is set (Mocking the seed)
     const settingRepo = dataSource.getRepository(UiSetting);
-    let priceSetting = await settingRepo.findOne({ where: { key: 'vendor_subscription_base_price' } });
+    let priceSetting = await settingRepo.findOne({
+      where: { key: 'vendor_subscription_base_price' },
+    });
     if (!priceSetting) {
-        priceSetting = settingRepo.create({
-            key: 'vendor_subscription_base_price',
-            value: 9.99,
-            description: 'Test Price'
-        });
-        await settingRepo.save(priceSetting);
+      priceSetting = settingRepo.create({
+        key: 'vendor_subscription_base_price',
+        value: 9.99,
+        description: 'Test Price',
+      });
+      await settingRepo.save(priceSetting);
     }
   });
 
   afterAll(async () => {
     // Cleanup
     if (user) {
-        const wallet = await walletService.getWallet(user.id);
-        if (wallet) {
-             // Clean using query runner or raw delete to avoid FK constraints
-             await dataSource.query(`DELETE FROM wallet_transaction WHERE "walletId" = ${wallet.id}`);
-             await dataSource.query(`DELETE FROM top_up_request WHERE "userId" = ${user.id}`);
-             await dataSource.query(`DELETE FROM wallet WHERE id = ${wallet.id}`);
-        }
-        await dataSource.query(`DELETE FROM "user" WHERE id = ${user.id}`);
+      const wallet = await walletService.getWallet(user.id);
+      if (wallet) {
+        // Clean using query runner or raw delete to avoid FK constraints
+        await dataSource.query(
+          `DELETE FROM wallet_transaction WHERE "walletId" = ${wallet.id}`,
+        );
+        await dataSource.query(
+          `DELETE FROM top_up_request WHERE "userId" = ${user.id}`,
+        );
+        await dataSource.query(`DELETE FROM wallet WHERE id = ${wallet.id}`);
+      }
+      await dataSource.query(`DELETE FROM "user" WHERE id = ${user.id}`);
     }
     await closeE2eApp({ app, dataSource });
   });
@@ -56,7 +62,7 @@ describe('Auto Upgrade Workflow (e2e)', () => {
   it('should automatically upgrade user to PRO when Top-Up with metadata is approved', async () => {
     // 1. Create a User (ETB)
     const userRepository = dataSource.getRepository(User);
-    const email = `test-auto-upgrade-${Date.now()}@example.com`;
+    const email = `test-auto-upgrade-${Date.now()}@suuqsapp.com`;
     user = userRepository.create({
       email,
       password: 'password123',
@@ -66,7 +72,7 @@ describe('Auto Upgrade Workflow (e2e)', () => {
       verified: true,
       currency: 'ETB',
       registrationCountry: 'ET',
-      subscriptionTier: SubscriptionTier.FREE 
+      subscriptionTier: SubscriptionTier.FREE,
     });
     await userRepository.save(user);
 
@@ -77,11 +83,11 @@ describe('Auto Upgrade Workflow (e2e)', () => {
     // Amount: 2500 ETB (Needs to covers $9.99 USD approx 1800-2000 ETB)
     const topUpAmount = 2500;
     const request = await walletService.requestTopUp(
-        user.id,
-        topUpAmount,
-        'BANK_TRANSFER',
-        'REF_AUTO_TEST',
-        { auto_action: 'upgrade_pro' } // The Magic Key
+      user.id,
+      topUpAmount,
+      'BANK_TRANSFER',
+      'REF_AUTO_TEST',
+      { auto_action: 'upgrade_pro' }, // The Magic Key
     );
     console.log(`[Test] Created TopUp Request: ${request.id}`);
 
@@ -90,20 +96,22 @@ describe('Auto Upgrade Workflow (e2e)', () => {
     await walletService.approveTopUp(request.id);
 
     // 4. Verify Outcomes
-    
+
     // A. Wallet Balance should be: TopUp Amount - Subscription Price
     // We need to fetch the wallet
     const wallet = await walletService.getWallet(user.id);
     console.log(`[Test] Wallet Balance: ${wallet.balance} ${wallet.currency}`);
 
     // It should NOT be 2500. It should be less.
-    expect(Number(wallet.balance)).toBeLessThan(topUpAmount); 
+    expect(Number(wallet.balance)).toBeLessThan(topUpAmount);
     expect(Number(wallet.balance)).toBeGreaterThan(0);
 
     // B. User Subscription should be PRO
-    const updatedUser = await userRepository.findOne({ where: { id: user.id } });
+    const updatedUser = await userRepository.findOne({
+      where: { id: user.id },
+    });
     console.log(`[Test] User Tier: ${updatedUser.subscriptionTier}`);
-    
+
     expect(updatedUser.subscriptionTier).toBe(SubscriptionTier.PRO);
     expect(updatedUser.subscriptionExpiry).not.toBeNull();
   });

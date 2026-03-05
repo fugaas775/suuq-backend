@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unused-vars */
 import {
   ForbiddenException,
   Injectable,
@@ -9,7 +8,7 @@ import { CreateVendorProductDto } from './dto/create-vendor-product.dto';
 import { FindAllVendorsDto } from './dto/find-all-vendors.dto';
 import { UpdateVendorProductDto } from './dto/update-vendor-product.dto';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Raw, ArrayContains, ILike, In, IsNull } from 'typeorm';
+import { Repository, Raw, ILike, In, IsNull, Brackets } from 'typeorm';
 import {
   CertificationStatus,
   User,
@@ -80,10 +79,309 @@ export class VendorService {
 
   private readonly logger = new Logger(VendorService.name);
   private readonly supportedCurrencies = ['ETB', 'SOS', 'KES', 'DJF', 'USD'];
+  private readonly allowedDigitalExt = new Set(['pdf', 'epub', 'zip']);
+  private privateNoteColumnsAvailable: boolean | null = null;
 
   private normalizeCurrency(value?: string | null): string {
     const upper = (value || '').trim().toUpperCase();
     return this.supportedCurrencies.includes(upper) ? upper : 'ETB';
+  }
+
+  private isMissingPrivateNoteColumnError(err: unknown): boolean {
+    const msg = String((err as any)?.message || '').toLowerCase();
+    return msg.includes('private_note') && msg.includes('does not exist');
+  }
+
+  private async hasPrivateNoteColumns(): Promise<boolean> {
+    if (this.privateNoteColumnsAvailable !== null) {
+      return this.privateNoteColumnsAvailable;
+    }
+    try {
+      const rows = await this.productRepository.query(
+        `SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'product' AND column_name = 'private_note' LIMIT 1`,
+      );
+      this.privateNoteColumnsAvailable = Array.isArray(rows) && rows.length > 0;
+      if (!this.privateNoteColumnsAvailable) {
+        this.logger.warn(
+          'product.private_note column is missing; internal-note features are temporarily disabled until migrations run.',
+        );
+      }
+      return this.privateNoteColumnsAvailable;
+    } catch (err) {
+      this.privateNoteColumnsAvailable = false;
+      this.logger.warn(
+        'Failed to verify private note schema; internal-note features are temporarily disabled.',
+      );
+      return false;
+    }
+  }
+
+  private normalizePrivateNoteInput(value: unknown): string | null | undefined {
+    if (typeof value === 'undefined') return undefined;
+    if (value === null) return null;
+    const trimmed = String(value).trim();
+    return trimmed.length ? trimmed : null;
+  }
+
+  private actorDisplayName(
+    actor: Partial<User> | undefined,
+    fallback: User,
+  ): string {
+    if (actor) {
+      const actorName =
+        actor.displayName ||
+        (actor as any).contactName ||
+        (actor.email ? String(actor.email).split('@')[0] : undefined);
+      if (actorName) return actorName;
+    }
+    return (
+      fallback.displayName ||
+      (fallback as any).contactName ||
+      (fallback.email ? String(fallback.email).split('@')[0] : 'Vendor')
+    );
+  }
+
+  private isVehicleCategory(category?: Category | null): boolean {
+    if (!category) return false;
+    const slug = String((category as any)?.slug || '').toLowerCase();
+    const name = String((category as any)?.name || '').toLowerCase();
+    return /(car|truck|motorcycle|auto|boat|vehicle)/i.test(slug + ' ' + name);
+  }
+
+  private sanitizeVehicleAttributesForCategory(
+    attrs: Record<string, any> | undefined,
+    category?: Category | null,
+  ): Record<string, any> | undefined {
+    if (!attrs || typeof attrs !== 'object') return attrs;
+    if (this.isVehicleCategory(category)) return attrs;
+
+    const out = { ...attrs };
+    for (const key of [
+      'make',
+      'model',
+      'year',
+      'mileage',
+      'transmission',
+      'fuelType',
+      'fuel_type',
+      'vehicleType',
+      'vehicle_type',
+      'engineCapacity',
+      'engine_capacity',
+    ]) {
+      if (Object.prototype.hasOwnProperty.call(out, key)) delete out[key];
+    }
+    return out;
+  }
+
+  private extractExtFromRef(value: unknown): string | null {
+    if (typeof value !== 'string') return null;
+    const raw = value.trim();
+    if (!raw) return null;
+
+    let fileLike = raw;
+    try {
+      if (raw.startsWith('http://') || raw.startsWith('https://')) {
+        const parsed = new URL(raw);
+        fileLike = parsed.pathname || raw;
+      }
+    } catch {
+      fileLike = raw;
+    }
+
+    const noQuery = fileLike.split('?')[0].split('#')[0];
+    const name = noQuery.split('/').pop() || noQuery;
+    const ext = name.split('.').pop()?.toLowerCase();
+    return ext || null;
+  }
+
+  private isSupportedDigitalRef(value: unknown): boolean {
+    const ext = this.extractExtFromRef(value);
+    return !!ext && this.allowedDigitalExt.has(ext);
+  }
+
+  private hasValidDigitalHints(
+    attrs: Record<string, any> | undefined,
+  ): boolean {
+    if (!attrs || typeof attrs !== 'object') return false;
+    const digKey = (attrs as any)?.digital?.download?.key;
+    return (
+      this.isSupportedDigitalRef((attrs as any)?.downloadKey) ||
+      this.isSupportedDigitalRef((attrs as any)?.download_key) ||
+      this.isSupportedDigitalRef((attrs as any)?.downloadUrl) ||
+      this.isSupportedDigitalRef((attrs as any)?.download_url) ||
+      this.isSupportedDigitalRef(digKey)
+    );
+  }
+
+  private stripInvalidDigitalHintsForNonDigital(
+    attrs: Record<string, any> | undefined,
+  ): Record<string, any> | undefined {
+    if (!attrs || typeof attrs !== 'object') return attrs;
+    if (this.hasValidDigitalHints(attrs)) return attrs;
+
+    const out = { ...attrs };
+    for (const key of [
+      'digital',
+      'downloadKey',
+      'download_key',
+      'downloadUrl',
+      'download_url',
+      'isFree',
+      'is_free',
+      'licenseRequired',
+      'license_required',
+    ]) {
+      if (Object.prototype.hasOwnProperty.call(out, key)) {
+        delete out[key];
+      }
+    }
+    return out;
+  }
+
+  private resolveListedBy(product: any): {
+    name: string;
+    type: 'owner' | 'staff' | 'store' | 'guest';
+    id?: number | null;
+  } {
+    if (product?.originalCreatorContact?.name) {
+      return {
+        name: String(product.originalCreatorContact.name),
+        type: 'guest',
+        id: null,
+      };
+    }
+
+    if (product?.createdByName) {
+      return {
+        name: String(product.createdByName),
+        type: 'staff',
+        id:
+          typeof product?.createdById === 'number'
+            ? product.createdById
+            : product?.createdById != null
+              ? Number(product.createdById)
+              : null,
+      };
+    }
+
+    const vendor = product?.vendor;
+    return {
+      name: String(vendor?.storeName || vendor?.displayName || 'Suuq Vendor'),
+      type: 'store',
+      id:
+        typeof vendor?.id === 'number'
+          ? vendor.id
+          : vendor?.id != null
+            ? Number(vendor.id)
+            : null,
+    };
+  }
+
+  private attachListedBy<T extends Record<string, any>>(items: T[]): T[] {
+    return (items || []).map((item) => ({
+      ...item,
+      listedBy: this.resolveListedBy(item),
+    }));
+  }
+
+  private async getInternalNoteMap(
+    userId: number,
+    productIds: number[],
+  ): Promise<
+    Map<
+      number,
+      {
+        hasInternalNote: boolean;
+        privateNoteUpdatedAt: Date | null;
+        privateNoteUpdatedById: number | null;
+        privateNoteUpdatedByName: string | null;
+      }
+    >
+  > {
+    const ids = Array.from(
+      new Set(
+        (productIds || []).map((id) => Number(id)).filter((id) => id > 0),
+      ),
+    );
+    const out = new Map<
+      number,
+      {
+        hasInternalNote: boolean;
+        privateNoteUpdatedAt: Date | null;
+        privateNoteUpdatedById: number | null;
+        privateNoteUpdatedByName: string | null;
+      }
+    >();
+    if (!ids.length) return out;
+
+    const hasColumns = await this.hasPrivateNoteColumns();
+    if (!hasColumns) return out;
+
+    let rows: Array<{
+      id: string;
+      has_internal_note: boolean | string;
+      private_note_updated_at: Date | string | null;
+      private_note_updated_by_id: string | null;
+      private_note_updated_by_name: string | null;
+    }> = [];
+
+    try {
+      rows = await this.productRepository
+        .createQueryBuilder('product')
+        .select('product.id', 'id')
+        .addSelect(
+          `CASE WHEN NULLIF(BTRIM(product.private_note), '') IS NULL THEN false ELSE true END`,
+          'has_internal_note',
+        )
+        .addSelect('product.private_note_updated_at', 'private_note_updated_at')
+        .addSelect(
+          'product.private_note_updated_by_id',
+          'private_note_updated_by_id',
+        )
+        .addSelect(
+          'product.private_note_updated_by_name',
+          'private_note_updated_by_name',
+        )
+        .where('product.vendorId = :userId', { userId })
+        .andWhere('product.id IN (:...ids)', { ids })
+        .andWhere('product.deletedAt IS NULL')
+        .getRawMany<{
+          id: string;
+          has_internal_note: boolean | string;
+          private_note_updated_at: Date | string | null;
+          private_note_updated_by_id: string | null;
+          private_note_updated_by_name: string | null;
+        }>();
+    } catch (err) {
+      if (this.isMissingPrivateNoteColumnError(err)) {
+        this.privateNoteColumnsAvailable = false;
+        this.logger.warn(
+          'product.private_note columns missing; returning vendor products without internal-note metadata.',
+        );
+        return out;
+      }
+      throw err;
+    }
+
+    for (const row of rows) {
+      const id = Number(row.id);
+      if (!id) continue;
+      const hasInternalNote =
+        row.has_internal_note === true || row.has_internal_note === 'true';
+      out.set(id, {
+        hasInternalNote,
+        privateNoteUpdatedAt: row.private_note_updated_at
+          ? new Date(row.private_note_updated_at)
+          : null,
+        privateNoteUpdatedById: row.private_note_updated_by_id
+          ? Number(row.private_note_updated_by_id)
+          : null,
+        privateNoteUpdatedByName: row.private_note_updated_by_name || null,
+      });
+    }
+
+    return out;
   }
 
   private convertPrice(
@@ -271,14 +569,49 @@ export class VendorService {
       sizeSqm,
       furnished,
       rentPeriod,
+      totalPrice,
       attributes,
       tags,
       featured,
       featuredExpiresAt,
       featuredPaidAmount, // Destructure
       featuredPaidCurrency, // Destructure
+      privateNote,
       ...productData
     } = dto as any;
+
+    const normalizedProductData: Record<string, any> = {
+      ...productData,
+    };
+    const incomingType =
+      typeof (dto as any)?.productType === 'string'
+        ? (dto as any).productType
+        : typeof (dto as any)?.type === 'string'
+          ? (dto as any).type
+          : undefined;
+    if (incomingType) {
+      normalizedProductData.productType = String(incomingType).toLowerCase();
+    }
+    const incomingStockQuantity =
+      (dto as any)?.stockQuantity ?? (dto as any)?.stock_quantity;
+    if (incomingStockQuantity !== undefined && incomingStockQuantity !== null) {
+      normalizedProductData.stockQuantity = Number(incomingStockQuantity);
+    }
+    if ('stock_quantity' in normalizedProductData)
+      delete normalizedProductData.stock_quantity;
+    if ('type' in normalizedProductData) delete normalizedProductData.type;
+
+    const categoryRepo = this.productRepository.manager.getRepository(Category);
+    const effectiveCategory = categoryId
+      ? await categoryRepo.findOne({ where: { id: Number(categoryId) } })
+      : null;
+    if (categoryId && !effectiveCategory) {
+      throw new NotFoundException(`Category with ID ${categoryId} not found.`);
+    }
+
+    const normalizedPrivateNote = this.normalizePrivateNoteInput(privateNote);
+    const noteActorId = Number(creator?.id || vendor.id);
+    const noteActorName = this.actorDisplayName(creator, vendor);
 
     // Normalize listingType if client sent listingTypeMulti
     const resolvedListingType: 'sale' | 'rent' | undefined = (() => {
@@ -296,6 +629,11 @@ export class VendorService {
       const a: Record<string, any> = {};
       if (attributes && typeof attributes === 'object')
         Object.assign(a, attributes);
+
+      if (totalPrice !== undefined) {
+        a.totalPrice = totalPrice;
+      }
+
       // Some clients send videoUrl at top-level attributes or in dto.attributes
       if (a.videoUrl == null && dto && (dto as any).attributes?.videoUrl) {
         a.videoUrl = (dto as any).attributes.videoUrl;
@@ -346,7 +684,27 @@ export class VendorService {
 
     // Normalize & validate digital schema (create path)
     if (safeAttributes) {
+      safeAttributes = this.sanitizeVehicleAttributesForCategory(
+        safeAttributes,
+        effectiveCategory,
+      );
+
+      if (productData.productType !== 'digital') {
+        safeAttributes =
+          this.stripInvalidDigitalHintsForNonDigital(safeAttributes);
+      }
+
       try {
+        const hasExplicitDigitalHints =
+          this.hasValidDigitalHints(safeAttributes);
+        const shouldProcessDigital =
+          productData.productType === 'digital' || hasExplicitDigitalHints;
+        if (!shouldProcessDigital) {
+          this.logger.debug(
+            'Normalize digital attributes (create) skipped for non-digital product with no valid digital hints',
+          );
+          throw new Error('DIGITAL_INFERENCE_SKIP_SENTINEL');
+        }
         const before = JSON.stringify(safeAttributes);
         const norm = normalizeDigitalAttributes(safeAttributes);
         safeAttributes = norm.updated;
@@ -371,20 +729,21 @@ export class VendorService {
           }
         }
       } catch (err) {
-        this.logger.debug(
-          'Normalize digital attributes (create) skipped',
-          err as Error,
-        );
+        if (err?.message !== 'DIGITAL_INFERENCE_SKIP_SENTINEL') {
+          this.logger.debug(
+            `Normalize digital attributes (create) skipped due to error: ${String(err?.message || err)}`,
+          );
+        }
       }
     }
 
     const newProduct = this.productRepository.create({
-      ...productData,
+      ...normalizedProductData,
       status: 'publish',
       vendor: vendor,
       createdById,
       createdByName,
-      category: categoryId ? { id: categoryId } : undefined,
+      category: effectiveCategory ?? undefined,
       imageUrl: images && images.length > 0 ? images[0].src : null, // Set main display image
       listingType: resolvedListingType,
       listingCity,
@@ -397,6 +756,14 @@ export class VendorService {
       productType:
         productData.productType ||
         (resolvedListingType ? 'property' : undefined),
+      ...(normalizedPrivateNote !== undefined
+        ? {
+            privateNote: normalizedPrivateNote,
+            privateNoteUpdatedAt: new Date(),
+            privateNoteUpdatedById: noteActorId,
+            privateNoteUpdatedByName: noteActorName,
+          }
+        : {}),
     } as Product); // Assert as Product
 
     // Handle initial featured state if provided during creation
@@ -467,9 +834,11 @@ export class VendorService {
     userId: number,
     productId: number,
     dto: UpdateVendorProductDto,
+    updater?: Partial<User>,
   ): Promise<Product> {
     const product = await this.productRepository.findOne({
       where: { id: productId, vendor: { id: userId } },
+      relations: ['category'],
     });
     if (!product) {
       throw new NotFoundException('Product not found or you do not own it.');
@@ -486,26 +855,83 @@ export class VendorService {
       sizeSqm,
       furnished,
       rentPeriod,
+      totalPrice,
       attributes,
       tags,
       featured,
       featuredExpiresAt,
       featuredPaidAmount, // Destructure
       featuredPaidCurrency, // Destructure
+      privateNote,
       ...productData
     } = dto as any;
 
-    // Update simple fields (exclude computed getters like posterUrl/videoUrl)
-    if (productData && typeof productData === 'object') {
-      // Extra safety: drop any computed keys if present
-      if ('posterUrl' in productData) delete productData.posterUrl;
-      if ('videoUrl' in productData) delete productData.videoUrl;
-      if ('status' in productData) delete productData.status;
-      if ('isFree' in productData) delete productData.isFree;
-      if ('downloadKey' in productData) delete productData.downloadKey;
-      if ('downloadUrl' in productData) delete productData.downloadUrl;
+    const normalizedProductData: Record<string, any> = {
+      ...productData,
+    };
+    const incomingType =
+      typeof (dto as any)?.productType === 'string'
+        ? (dto as any).productType
+        : typeof (dto as any)?.type === 'string'
+          ? (dto as any).type
+          : undefined;
+    if (incomingType) {
+      normalizedProductData.productType = String(incomingType).toLowerCase();
     }
-    Object.assign(product, productData);
+    const incomingStockQuantity =
+      (dto as any)?.stockQuantity ?? (dto as any)?.stock_quantity;
+    if (incomingStockQuantity !== undefined && incomingStockQuantity !== null) {
+      normalizedProductData.stockQuantity = Number(incomingStockQuantity);
+    }
+    if ('stock_quantity' in normalizedProductData)
+      delete normalizedProductData.stock_quantity;
+    if ('type' in normalizedProductData) delete normalizedProductData.type;
+
+    const categoryRepo = this.productRepository.manager.getRepository(Category);
+    let effectiveCategory: Category | null = (product as any).category || null;
+    if (typeof categoryId !== 'undefined') {
+      if (categoryId) {
+        const category = await categoryRepo.findOne({
+          where: { id: Number(categoryId) },
+        });
+        if (!category) {
+          throw new NotFoundException(
+            `Category with ID ${categoryId} not found.`,
+          );
+        }
+        effectiveCategory = category;
+      } else {
+        effectiveCategory = null;
+      }
+    }
+
+    // Update simple fields (exclude computed getters like posterUrl/videoUrl)
+    if (normalizedProductData && typeof normalizedProductData === 'object') {
+      // Extra safety: drop any computed keys if present
+      if ('posterUrl' in normalizedProductData)
+        delete normalizedProductData.posterUrl;
+      if ('videoUrl' in normalizedProductData)
+        delete normalizedProductData.videoUrl;
+      if ('status' in normalizedProductData)
+        delete normalizedProductData.status;
+      if ('isFree' in normalizedProductData)
+        delete normalizedProductData.isFree;
+      if ('downloadKey' in normalizedProductData)
+        delete normalizedProductData.downloadKey;
+      if ('downloadUrl' in normalizedProductData)
+        delete normalizedProductData.downloadUrl;
+    }
+    Object.assign(product, normalizedProductData);
+
+    const normalizedPrivateNote = this.normalizePrivateNoteInput(privateNote);
+    if (normalizedPrivateNote !== undefined) {
+      const actorId = Number(updater?.id || userId);
+      const actorName = this.actorDisplayName(updater, product.vendor);
+      product.privateNote = normalizedPrivateNote;
+      product.privateNoteUpdatedAt = new Date();
+      product.privateNoteUpdatedById = actorId;
+      product.privateNoteUpdatedByName = actorName;
+    }
 
     // [Fix] Handle featured status and expiration
     if (typeof featured === 'boolean') {
@@ -561,16 +987,31 @@ export class VendorService {
     if (typeof furnished !== 'undefined') product.furnished = furnished;
     if (typeof rentPeriod !== 'undefined') product.rentPeriod = rentPeriod;
 
-    if (typeof attributes !== 'undefined') {
+    // Ensure we merge totalPrice into attributes if passed top-level
+    const nextAttributes =
+      typeof attributes !== 'undefined' && attributes !== null
+        ? { ...attributes }
+        : {};
+
+    if (typeof totalPrice !== 'undefined') {
+      nextAttributes.totalPrice = totalPrice;
+    }
+
+    if (
+      Object.keys(nextAttributes).length > 0 ||
+      typeof attributes !== 'undefined'
+    ) {
       const existing =
         product.attributes && typeof product.attributes === 'object'
           ? { ...(product.attributes as any) }
           : {};
-      const next =
-        attributes && typeof attributes === 'object'
-          ? { ...existing, ...attributes }
-          : existing;
-      product.attributes = Object.keys(next).length ? next : null;
+      const next = { ...existing, ...nextAttributes };
+      const sanitized = this.sanitizeVehicleAttributesForCategory(
+        next,
+        effectiveCategory,
+      );
+      product.attributes =
+        sanitized && Object.keys(sanitized).length ? sanitized : null;
     }
     // Accept top-level dto.videoUrl during update as well
     if (
@@ -634,9 +1075,32 @@ export class VendorService {
       product.attributes = base;
     }
 
+    if (product.attributes && typeof product.attributes === 'object') {
+      product.attributes = this.sanitizeVehicleAttributesForCategory(
+        product.attributes as any,
+        effectiveCategory,
+      ) as any;
+    }
+
     // Normalize & validate digital schema after merges (update path)
     if (product.attributes && typeof product.attributes === 'object') {
+      if (product.productType !== 'digital') {
+        product.attributes = this.stripInvalidDigitalHintsForNonDigital(
+          product.attributes as any,
+        ) as any;
+      }
+
       try {
+        const attrs = product.attributes as any;
+        const hasExplicitDigitalHints = this.hasValidDigitalHints(attrs);
+        const shouldProcessDigital =
+          product.productType === 'digital' || hasExplicitDigitalHints;
+        if (!shouldProcessDigital) {
+          this.logger.debug(
+            'Normalize digital attributes (update) skipped for non-digital product with no valid digital hints',
+          );
+          throw new Error('DIGITAL_INFERENCE_SKIP_SENTINEL');
+        }
         const before = JSON.stringify(product.attributes);
         const { updated, inferredType } = normalizeDigitalAttributes(
           product.attributes as any,
@@ -663,10 +1127,11 @@ export class VendorService {
           }
         }
       } catch (err) {
-        this.logger.debug(
-          'Normalize digital attributes (update) skipped',
-          err as Error,
-        );
+        if (err?.message !== 'DIGITAL_INFERENCE_SKIP_SENTINEL') {
+          this.logger.debug(
+            `Normalize digital attributes (update) skipped due to error: ${String(err?.message || err)}`,
+          );
+        }
       }
     }
 
@@ -691,23 +1156,8 @@ export class VendorService {
     }
 
     // Update category if it was sent
-    if (categoryId !== undefined) {
-      if (categoryId) {
-        // Fetch the category entity from the database
-        const categoryRepo =
-          this.productRepository.manager.getRepository(Category);
-        const category = await categoryRepo.findOne({
-          where: { id: categoryId },
-        });
-        if (!category) {
-          throw new NotFoundException(
-            `Category with ID ${categoryId} not found.`,
-          );
-        }
-        product.category = category;
-      } else {
-        product.category = null;
-      }
+    if (typeof categoryId !== 'undefined') {
+      product.category = effectiveCategory;
     }
 
     // Update images if they were sent (delete old ones, add new ones)
@@ -794,6 +1244,57 @@ export class VendorService {
     if (!product) {
       throw new NotFoundException('Product not found or not owned by user');
     }
+
+    try {
+      const hasColumns = await this.hasPrivateNoteColumns();
+      if (hasColumns) {
+        const noteRow = await this.productRepository
+          .createQueryBuilder('product')
+          .select('product.private_note', 'private_note')
+          .addSelect(
+            'product.private_note_updated_at',
+            'private_note_updated_at',
+          )
+          .addSelect(
+            'product.private_note_updated_by_id',
+            'private_note_updated_by_id',
+          )
+          .addSelect(
+            'product.private_note_updated_by_name',
+            'private_note_updated_by_name',
+          )
+          .where('product.id = :productId', { productId })
+          .andWhere('product.vendorId = :userId', { userId })
+          .getRawOne<{
+            private_note: string | null;
+            private_note_updated_at: Date | string | null;
+            private_note_updated_by_id: string | null;
+            private_note_updated_by_name: string | null;
+          }>();
+
+        if (noteRow) {
+          (product as any).privateNote = noteRow.private_note || null;
+          (product as any).hasInternalNote =
+            !!noteRow.private_note && !!String(noteRow.private_note).trim();
+          (product as any).privateNoteUpdatedAt =
+            noteRow.private_note_updated_at
+              ? new Date(noteRow.private_note_updated_at)
+              : null;
+          (product as any).privateNoteUpdatedById =
+            noteRow.private_note_updated_by_id
+              ? Number(noteRow.private_note_updated_by_id)
+              : null;
+          (product as any).privateNoteUpdatedByName =
+            noteRow.private_note_updated_by_name || null;
+        }
+      }
+    } catch (err) {
+      this.logger.debug(
+        'Failed to load internal note for product',
+        err as Error,
+      );
+    }
+
     try {
       const out = normalizeProductMedia(product as any);
 
@@ -806,6 +1307,18 @@ export class VendorService {
               ? (obj.attributes as Record<string, any>)
               : undefined;
           if (!attrs) return;
+
+          const isExplicitDigital =
+            String(obj.productType || '').toLowerCase() === 'digital';
+          if (!isExplicitDigital) {
+            attrs =
+              this.stripInvalidDigitalHintsForNonDigital(attrs) || ({} as any);
+          }
+          const hasDigitalHints = this.hasValidDigitalHints(attrs);
+          if (!isExplicitDigital && !hasDigitalHints) {
+            obj.attributes = attrs;
+            return;
+          }
 
           // First, normalize into canonical digital structure if applicable
           try {
@@ -947,6 +1460,12 @@ export class VendorService {
           obj.attributes = attrs; // assign back (possibly updated reference)
         };
         ensureDigitalAliases(out);
+        if (out.attributes && typeof out.attributes === 'object') {
+          out.attributes = this.sanitizeVehicleAttributesForCategory(
+            out.attributes,
+            out.category || null,
+          );
+        }
 
         // Log attribute keys for troubleshooting prefill (use .log for visibility in prod)
         try {
@@ -1031,9 +1550,15 @@ export class VendorService {
           }
         }
       }
-      return out;
+      return {
+        ...out,
+        listedBy: this.resolveListedBy(out),
+      };
     } catch {
-      return product as any;
+      return {
+        ...(product as any),
+        listedBy: this.resolveListedBy(product as any),
+      };
     }
   }
 
@@ -1099,6 +1624,8 @@ export class VendorService {
       minSales?: number;
       minRating?: number;
       skipRoleFilter?: boolean;
+      withProductsOnly?: boolean;
+      minPublishedProducts?: number;
     },
   ): Promise<{
     items: any[];
@@ -1120,169 +1647,165 @@ export class VendorService {
       minSales,
       minRating,
       skipRoleFilter,
+      withProductsOnly,
+      minPublishedProducts,
     } = findAllVendorsDto;
     const skip = (page - 1) * limit;
 
-    let findOptions: any;
+    const qb = this.userRepository
+      .createQueryBuilder('u')
+      .select([
+        'u.id',
+        'u.displayName',
+        'u.storeName',
+        'u.avatarUrl',
+        'u.verificationStatus',
+        'u.verified',
+        'u.rating',
+        'u.numberOfSales',
+        'u.verifiedAt',
+        'u.createdAt',
+        'u.supportedCurrencies',
+        'u.registrationCountry',
+        'u.registrationCity',
+        'u.subscriptionTier',
+        'u.subscriptionExpiry',
+      ]);
 
-    if (search) {
-      // If there is a search term, create OR conditions for displayName, storeName, and ID
-      const commonCriteria = {
-        ...(skipRoleFilter ? {} : { roles: ArrayContains([UserRole.VENDOR]) }),
-        ...(skipRoleFilter ? {} : { isActive: true }),
-      };
-
-      const whereConditions: any[] = [
-        {
-          ...commonCriteria,
-          displayName: ILike(`%${search}%`),
-        },
-        {
-          ...commonCriteria,
-          storeName: ILike(`%${search}%`),
-        },
-        {
-          ...commonCriteria,
-          email: ILike(`%${search}%`),
-        },
-        {
-          ...commonCriteria,
-          phoneNumber: ILike(`%${search}%`),
-        },
-        {
-          ...commonCriteria,
-          vendorPhoneNumber: ILike(`%${search}%`),
-        },
-      ];
-
-      // If strictly numeric, also match exact ID
-      if (!Number.isNaN(Number(search)) && search.trim() !== '') {
-        whereConditions.push({
-          ...commonCriteria,
-          id: Number(search),
-        });
-      }
-
-      findOptions = {
-        where: whereConditions,
-      };
-    } else {
-      // If there is no search term, find all vendors
-      findOptions = {
-        where: {
-          ...(skipRoleFilter ? {} : { roles: ArrayContains([UserRole.VENDOR]) }),
-          ...(skipRoleFilter ? {} : { isActive: true }),
-        },
-      };
+    if (!skipRoleFilter) {
+      qb.andWhere(':role = ANY(u.roles)', { role: UserRole.VENDOR }).andWhere(
+        'u."isActive" = true',
+      );
     }
 
-    const order: any = {};
-    if (sort === 'name') order.displayName = 'ASC';
-    else if (sort === 'verifiedAt') order.verifiedAt = 'DESC';
-    else if (sort === 'popular') order.numberOfSales = 'DESC';
-    else order.createdAt = 'DESC';
-
-    // filter by verificationStatus when provided (Home uses APPROVED)
     if (verificationStatus) {
-      findOptions.where = Array.isArray(findOptions.where)
-        ? findOptions.where.map((w: any) => ({
-            ...w,
-            verificationStatus,
-          }))
-        : { ...findOptions.where, verificationStatus };
+      qb.andWhere('u."verificationStatus" = :verificationStatus', {
+        verificationStatus,
+      });
     }
 
     if (certificationStatus) {
       const normalized = certificationStatus.toLowerCase();
-      const target =
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-enum-comparison
-        normalized === CertificationStatus.CERTIFIED
-          ? CertificationStatus.CERTIFIED
-          : CertificationStatus.UNCERTIFIED;
-      const shouldBeVerified = target === CertificationStatus.CERTIFIED;
-      findOptions.where = Array.isArray(findOptions.where)
-        ? findOptions.where.map((w: any) => ({
-            ...w,
-            verified: shouldBeVerified,
-          }))
-        : { ...findOptions.where, verified: shouldBeVerified };
+      const shouldBeVerified = normalized === CertificationStatus.CERTIFIED;
+      qb.andWhere('u.verified = :shouldBeVerified', { shouldBeVerified });
     }
 
     if (subscriptionTier) {
-      const tier = subscriptionTier.toLowerCase();
-      findOptions.where = Array.isArray(findOptions.where)
-        ? findOptions.where.map((w: any) => ({
-            ...w,
-            subscriptionTier: tier,
-          }))
-        : { ...findOptions.where, subscriptionTier: tier };
+      qb.andWhere('LOWER(COALESCE(u."subscriptionTier", \'\')) = :tier', {
+        tier: subscriptionTier.toLowerCase(),
+      });
     }
 
-    // Apply geo filters (case-insensitive equals) when provided
-    const geoFilters: any = {};
-    if (country)
-      geoFilters.registrationCountry = Raw(
-        (alias) => `LOWER(${alias}) = LOWER(:country)`,
-        { country },
+    if (country) {
+      qb.andWhere(
+        'LOWER(COALESCE(u."registrationCountry", \'\')) = LOWER(:country)',
+        {
+          country,
+        },
       );
-    if (region)
-      geoFilters.registrationRegion = Raw(
-        (alias) => `LOWER(${alias}) = LOWER(:region)`,
-        { region },
+    }
+    if (region) {
+      qb.andWhere(
+        'LOWER(COALESCE(u."registrationRegion", \'\')) = LOWER(:region)',
+        {
+          region,
+        },
       );
-    if (city)
-      geoFilters.registrationCity = Raw(
-        (alias) => `LOWER(${alias}) = LOWER(:city)`,
-        { city },
+    }
+    if (city) {
+      qb.andWhere(
+        'LOWER(COALESCE(u."registrationCity", \'\')) = LOWER(:city)',
+        {
+          city,
+        },
       );
-
-    if (Object.keys(geoFilters).length) {
-      findOptions.where = Array.isArray(findOptions.where)
-        ? findOptions.where.map((w: any) => ({ ...w, ...geoFilters }))
-        : { ...findOptions.where, ...geoFilters };
     }
 
-    // Apply minimum thresholds
-    const minFilters: any = {};
     if (typeof minSales === 'number' && !Number.isNaN(minSales)) {
-      minFilters.numberOfSales = Raw((alias) => `${alias} >= :minSales`, {
+      qb.andWhere('COALESCE(u."numberOfSales", 0) >= :minSales', {
         minSales: Number(minSales),
       });
     }
     if (typeof minRating === 'number' && !Number.isNaN(minRating)) {
-      minFilters.rating = Raw((alias) => `${alias} >= :minRating`, {
+      qb.andWhere('COALESCE(u.rating, 0) >= :minRating', {
         minRating: Number(minRating),
       });
     }
-    if (Object.keys(minFilters).length) {
-      findOptions.where = Array.isArray(findOptions.where)
-        ? findOptions.where.map((w: any) => ({ ...w, ...minFilters }))
-        : { ...findOptions.where, ...minFilters };
+
+    const term = typeof search === 'string' ? search.trim() : '';
+    if (term) {
+      qb.andWhere(
+        new Brackets((subQb) => {
+          subQb
+            .where('u."displayName" ILIKE :term', { term: `%${term}%` })
+            .orWhere('u."storeName" ILIKE :term', { term: `%${term}%` })
+            .orWhere('u.email ILIKE :term', { term: `%${term}%` })
+            .orWhere('u."phoneNumber" ILIKE :term', { term: `%${term}%` })
+            .orWhere('u."vendorPhoneNumber" ILIKE :term', {
+              term: `%${term}%`,
+            });
+
+          if (!Number.isNaN(Number(term))) {
+            subQb.orWhere('u.id = :searchId', { searchId: Number(term) });
+          }
+        }),
+      );
     }
 
-    const [users, total] = await this.userRepository.findAndCount({
-      ...findOptions,
-      take: limit,
-      skip,
-      order,
-      select: [
-        'id',
-        'displayName',
-        'storeName',
-        'avatarUrl',
-        'verificationStatus',
-        'verified',
-        'rating',
-        'numberOfSales',
-        'verifiedAt',
-        'createdAt',
-        'supportedCurrencies',
-        'registrationCountry',
-        'registrationCity',
-        'subscriptionTier',
-        'subscriptionExpiry',
-      ] as any,
-    });
+    const shouldHideEmptyVendors = withProductsOnly ?? !skipRoleFilter;
+    if (shouldHideEmptyVendors) {
+      const minProducts = Math.max(1, Number(minPublishedProducts) || 1);
+      qb.andWhere(
+        `(
+          SELECT COUNT(1)
+          FROM product p
+          WHERE p."vendorId" = u.id
+            AND p.status = :publishedStatus
+            AND p.deleted_at IS NULL
+        ) >= :minProducts`,
+        { publishedStatus: 'publish', minProducts },
+      );
+    }
+
+    const nameOrderExpr =
+      'LOWER(COALESCE(u."storeName", u."displayName", \'\'))';
+    const latestPublishedProductExpr = `(
+      SELECT MAX(p2."createdAt")
+      FROM product p2
+      WHERE p2."vendorId" = u.id
+        AND p2.status = :publishedStatus
+        AND p2.deleted_at IS NULL
+    )`;
+    const publishedProductCountExpr = `(
+      SELECT COUNT(1)
+      FROM product p3
+      WHERE p3."vendorId" = u.id
+        AND p3.status = :publishedStatus
+        AND p3.deleted_at IS NULL
+    )`;
+    if (sort === 'name') {
+      qb.orderBy(nameOrderExpr, 'ASC');
+    } else if (sort === 'verifiedAt') {
+      qb.orderBy('u."verifiedAt"', 'DESC', 'NULLS LAST').addOrderBy(
+        nameOrderExpr,
+        'ASC',
+      );
+    } else if (sort === 'popular') {
+      qb.orderBy(publishedProductCountExpr, 'DESC')
+        .addOrderBy('u."numberOfSales"', 'DESC', 'NULLS LAST')
+        .addOrderBy(nameOrderExpr, 'ASC');
+    } else {
+      if (shouldHideEmptyVendors) {
+        qb.orderBy(latestPublishedProductExpr, 'DESC', 'NULLS LAST').addOrderBy(
+          nameOrderExpr,
+          'ASC',
+        );
+      } else {
+        qb.orderBy('u."createdAt"', 'DESC').addOrderBy(nameOrderExpr, 'ASC');
+      }
+    }
+
+    const [users, total] = await qb.take(limit).skip(skip).getManyAndCount();
 
     const items = users.map((u) => {
       let yearsOnPlatform: string | number | null = null;
@@ -1310,6 +1833,8 @@ export class VendorService {
         verificationStatus: u.verificationStatus,
         isVerified: !!u.verified,
         rating: u.rating ?? 0,
+        salesCount: Number((u as any).numberOfSales ?? 0),
+        numberOfSales: Number((u as any).numberOfSales ?? 0),
         createdAt: u.createdAt,
         yearsOnPlatform,
         subscriptionTier: isCertifiedVendor(u)
@@ -1400,9 +1925,7 @@ export class VendorService {
   }
 
   async getDashboardOverview(userId: number, status?: string) {
-    const productCount = await this.productRepository.count({
-      where: { vendor: { id: userId }, deletedAt: IsNull() },
-    });
+    const startedAt = Date.now();
 
     let statuses = [
       OrderStatus.PROCESSING,
@@ -1425,32 +1948,48 @@ export class VendorService {
       }
     }
 
-    const orderCount = await this.orderRepository
-      .createQueryBuilder('order')
-      .innerJoin('order.items', 'orderItem')
-      .innerJoin('orderItem.product', 'product')
-      .where('product.vendor.id = :userId', { userId })
-      .andWhere('order.status IN (:...statuses)', { statuses })
-      .getCount();
+    const queryStartedAt = Date.now();
+    const [productCount, orderAgg] = await Promise.all([
+      this.productRepository.count({
+        where: { vendor: { id: userId }, deletedAt: IsNull() },
+      }),
+      this.orderRepository
+        .createQueryBuilder('order')
+        .innerJoin('order.items', 'orderItem')
+        .innerJoin('orderItem.product', 'product')
+        .where('product.vendorId = :userId', { userId })
+        .andWhere('order.status IN (:...statuses)', {
+          statuses,
+        })
+        .select('COUNT(DISTINCT "order"."id")', 'orderCount')
+        .addSelect(
+          'COALESCE(SUM(orderItem.price * orderItem.quantity), 0)',
+          'totalSales',
+        )
+        .getRawOne<{ orderCount: string; totalSales: string }>(),
+    ]);
+    const queryMs = Date.now() - queryStartedAt;
 
-    const { totalSales } = await this.orderRepository
-      .createQueryBuilder('order')
-      .innerJoin('order.items', 'orderItem')
-      .innerJoin('orderItem.product', 'product')
-      .where('product.vendor.id = :userId', { userId })
-      .andWhere('order.status IN (:...statuses)', {
-        statuses,
-      })
-      .select('SUM(orderItem.price * orderItem.quantity)', 'totalSales')
-      .getRawOne();
+    const orderCount = Number(orderAgg?.orderCount || 0);
+    const totalSales = parseFloat(orderAgg?.totalSales || '0') || 0;
+    const totalMs = Date.now() - startedAt;
+    this.logger.log(
+      `[getDashboardOverview] userId=${userId} queryMs=${queryMs} totalMs=${totalMs} productCount=${productCount} orderCount=${orderCount}`,
+    );
+    if (totalMs > 800) {
+      this.logger.warn(
+        `[getDashboardOverview] Slow response userId=${userId} totalMs=${totalMs}`,
+      );
+    }
 
     return {
       productCount,
       orderCount,
-      totalSales: parseFloat(totalSales) || 0,
+      totalSales,
     };
   }
   async getVendorProducts(userId: number, currency?: string, search?: string) {
+    const startedAt = Date.now();
     const target = this.normalizeCurrency(currency);
     this.logger.debug(
       `Vendor products currency normalized: requested=${currency} applied=${target}`,
@@ -1461,20 +2000,93 @@ export class VendorService {
       where.name = ILike(`%${search.trim()}%`);
     }
 
+    if (!search || !search.trim().length) {
+      const hasAnyStartedAt = Date.now();
+      const hasAny = await this.productRepository
+        .createQueryBuilder('product')
+        .select('1')
+        .where('product.vendorId = :userId', { userId })
+        .andWhere('product.deletedAt IS NULL')
+        .limit(1)
+        .getRawOne();
+      const hasAnyMs = Date.now() - hasAnyStartedAt;
+      if (!hasAny) {
+        const totalMs = Date.now() - startedAt;
+        this.logger.log(
+          `[getVendorProducts] userId=${userId} fast-empty=true hasAnyMs=${hasAnyMs} totalMs=${totalMs}`,
+        );
+        return [];
+      }
+    }
+
+    const fetchStartedAt = Date.now();
     const products = await this.productRepository.find({
       where,
       relations: ['images', 'category', 'tags'],
     });
+    const fetchMs = Date.now() - fetchStartedAt;
     try {
+      const transformStartedAt = Date.now();
       const normalized = Array.isArray(products)
         ? products.map(normalizeProductMedia)
         : [];
-      return this.applyCurrencyToProducts(normalized, target);
+      let converted = this.applyCurrencyToProducts(normalized, target);
+      converted = this.attachListedBy(converted as any[]) as any;
+      const noteMap = await this.getInternalNoteMap(
+        userId,
+        converted.map((item: any) => Number(item?.id || 0)),
+      );
+      const result = converted.map((item: any) => {
+        const noteMeta = noteMap.get(Number(item?.id || 0));
+        return {
+          ...item,
+          hasInternalNote: !!noteMeta?.hasInternalNote,
+          privateNoteUpdatedAt: noteMeta?.privateNoteUpdatedAt || null,
+          privateNoteUpdatedById: noteMeta?.privateNoteUpdatedById || null,
+          privateNoteUpdatedByName: noteMeta?.privateNoteUpdatedByName || null,
+        };
+      });
+      const transformMs = Date.now() - transformStartedAt;
+      const totalMs = Date.now() - startedAt;
+      this.logger.log(
+        `[getVendorProducts] userId=${userId} count=${result.length} fetchMs=${fetchMs} transformMs=${transformMs} totalMs=${totalMs}`,
+      );
+      if (totalMs > 900) {
+        this.logger.warn(
+          `[getVendorProducts] Slow response userId=${userId} count=${result.length} totalMs=${totalMs}`,
+        );
+      }
+      return result;
     } catch {
-      return this.applyCurrencyToProducts(
+      let converted = this.applyCurrencyToProducts(
         Array.isArray(products) ? products : [],
         target,
       );
+      converted = this.attachListedBy(converted as any[]) as any;
+      const noteMap = await this.getInternalNoteMap(
+        userId,
+        converted.map((item: any) => Number(item?.id || 0)),
+      );
+      const result = converted.map((item: any) => {
+        const noteMeta = noteMap.get(Number(item?.id || 0));
+        return {
+          ...item,
+          hasInternalNote: !!noteMeta?.hasInternalNote,
+          privateNoteUpdatedAt: noteMeta?.privateNoteUpdatedAt || null,
+          privateNoteUpdatedById: noteMeta?.privateNoteUpdatedById || null,
+          privateNoteUpdatedByName: noteMeta?.privateNoteUpdatedByName || null,
+        };
+      });
+      const totalMs = Date.now() - startedAt;
+      this.logger.log(
+        `[getVendorProducts] userId=${userId} count=${result.length} fetchMs=${fetchMs} totalMs=${totalMs} path=fallback`,
+      );
+      if (totalMs > 900) {
+        this.logger.warn(
+          `[getVendorProducts] Slow response userId=${userId} count=${result.length} totalMs=${totalMs} path=fallback`,
+        );
+      }
+      return result;
     }
   }
 
@@ -1535,7 +2147,18 @@ export class VendorService {
     }
 
     if (q.search) {
-      qb.andWhere('product.name ILIKE :search', { search: `%${q.search}%` });
+      if (await this.hasPrivateNoteColumns()) {
+        qb.andWhere(
+          '(product.name ILIKE :search OR product.private_note ILIKE :search)',
+          {
+            search: `%${q.search}%`,
+          },
+        );
+      } else {
+        qb.andWhere('product.name ILIKE :search', {
+          search: `%${q.search}%`,
+        });
+      }
     }
     if (q.status === 'published')
       qb.andWhere('product.status = :statusPub', { statusPub: 'publish' });
@@ -1549,6 +2172,22 @@ export class VendorService {
       // ignore normalization errors and return raw items
     }
     items = this.applyCurrencyToProducts(items, targetCurrency);
+    items = this.attachListedBy(items as any[]) as any;
+
+    const noteMap = await this.getInternalNoteMap(
+      userId,
+      items.map((item) => Number(item.id || 0)),
+    );
+    items = items.map((item: any) => {
+      const noteMeta = noteMap.get(Number(item?.id || 0));
+      return {
+        ...item,
+        hasInternalNote: !!noteMeta?.hasInternalNote,
+        privateNoteUpdatedAt: noteMeta?.privateNoteUpdatedAt || null,
+        privateNoteUpdatedById: noteMeta?.privateNoteUpdatedById || null,
+        privateNoteUpdatedByName: noteMeta?.privateNoteUpdatedByName || null,
+      } as Product;
+    });
 
     // [New] Populate recent viewers for featured products
     // This allows the frontend to show avatars on the "My Products" card overlay

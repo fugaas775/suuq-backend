@@ -1,5 +1,5 @@
-/* eslint-disable @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-floating-promises, @typescript-eslint/no-unused-vars */
-/* eslint-disable no-empty, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access */
+/* eslint-disable @typescript-eslint/no-floating-promises */
+
 import { UserRole } from '../auth/roles.enum';
 import {
   Injectable,
@@ -44,18 +44,33 @@ import { UsersService } from '../users/users.service';
 import { WalletService } from '../wallet/wallet.service';
 import { TransactionType } from '../wallet/entities/wallet-transaction.entity';
 import {
+  PayoutLog,
   PayoutProvider,
   PayoutStatus,
 } from '../wallet/entities/payout-log.entity';
 import { Message, MessageType } from '../chat/entities/message.entity';
 import { CreditService } from '../credit/credit.service';
 import { PromotionsService } from '../promotions/promotions.service';
+import { EbirrTransaction } from '../payments/entities/ebirr-transaction.entity';
 import { MoreThan, In } from 'typeorm';
 import { subMinutes } from 'date-fns';
 import { buildOrderStatusNotification } from './order-notifications.util';
+import { randomUUID } from 'crypto';
+import {
+  getInvalidRequiredSelections,
+  getMissingRequiredSelections,
+  getRequiredSelectionKeys,
+} from '../common/utils/attribute-selection.util';
 
 @Injectable()
 export class OrdersService {
+  private static readonly INTERNAL_ORDER_ITEM_ATTRIBUTE_KEYS = new Set([
+    'offerId',
+    'offer_id',
+    'clientRef',
+    'client_ref',
+  ]);
+
   /**
    * Find all disputes for admin.
    */
@@ -97,6 +112,7 @@ export class OrdersService {
     status?: string;
     paymentMethod?: string;
     paymentStatus?: string;
+    paymentLifecycleState?: string;
     hasPaymentProof?: boolean | string;
     sort?: string;
     sortBy?: string;
@@ -136,7 +152,9 @@ export class OrdersService {
     }
 
     if (query.hasPaymentProof === true || query.hasPaymentProof === 'true') {
-      qb.andWhere('o.paymentProofUrl IS NOT NULL');
+      qb.andWhere(
+        '(o.paymentProofUrl IS NOT NULL OR o.paymentProofKey IS NOT NULL)',
+      );
     }
 
     // Server-side sorting so admin always sees deterministic newest-first pages
@@ -175,12 +193,53 @@ export class OrdersService {
     }
     qb.addOrderBy('o.id', 'DESC'); // tie-break for deterministic pagination
 
+    const lifecycleFilters = String(query.paymentLifecycleState || '')
+      .split(',')
+      .map((value) => value.trim().toUpperCase())
+      .filter(Boolean);
+
+    const lifecycleBaseQb = lifecycleFilters.length > 0 ? qb.clone() : null;
+
     const page = query.page && query.page > 0 ? query.page : 1;
     const limitInput = query.limit ?? query.pageSize;
     const limit = limitInput && limitInput > 0 ? limitInput : 20;
     qb.skip((page - 1) * limit).take(limit);
 
     const [orders, total] = await qb.getManyAndCount();
+
+    const ebirrOrderIds = orders
+      .filter((order) => order.paymentMethod === PaymentMethod.EBIRR)
+      .map((order) => order.id);
+
+    const latestTxByOrderId = new Map<number, EbirrTransaction>();
+    if (ebirrOrderIds.length > 0) {
+      const invoiceIds = [
+        ...ebirrOrderIds.map((id) => `INV-${id}`),
+        ...ebirrOrderIds.map((id) => String(id)),
+      ];
+      const refs = ebirrOrderIds.map((id) => `REF-${id}`);
+
+      const txRows = await this.ebirrTransactionRepository.find({
+        where: [{ invoiceId: In(invoiceIds) }, { merch_order_id: In(refs) }],
+        order: { created_at: 'DESC' },
+      });
+
+      for (const tx of txRows) {
+        const invoiceMatch = String(tx.invoiceId || '').match(/(\d+)/);
+        const refMatch = String(tx.merch_order_id || '').match(/(\d+)/);
+        const orderId = invoiceMatch?.[0]
+          ? parseInt(invoiceMatch[0], 10)
+          : refMatch?.[0]
+            ? parseInt(refMatch[0], 10)
+            : NaN;
+
+        if (!orderId || isNaN(orderId) || latestTxByOrderId.has(orderId)) {
+          continue;
+        }
+        latestTxByOrderId.set(orderId, tx);
+      }
+    }
+
     const response = orders.map((order) => {
       type VendorLike = {
         id?: number;
@@ -223,8 +282,18 @@ export class OrdersService {
             phoneNumber?: string | null;
           })
         | undefined;
+
+      const tx = latestTxByOrderId.get(order.id);
+      const paymentLifecycleState = this.derivePaymentLifecycleState(
+        order,
+        tx?.status || null,
+        tx?.updated_at || null,
+      );
+
       return plainToInstance(OrderResponseDto, {
         ...order,
+        ...this.getCheckoutUiDirectives(order),
+        paymentLifecycleState,
         userId: order.user?.id,
         delivererId: deliverer?.id,
         delivererName: deliverer?.displayName ?? null,
@@ -261,7 +330,70 @@ export class OrdersService {
         }),
       });
     });
-    return { data: response, total };
+
+    const filteredResponse =
+      lifecycleFilters.length > 0
+        ? response.filter((order) =>
+            lifecycleFilters.includes(
+              String(order.paymentLifecycleState || '').toUpperCase(),
+            ),
+          )
+        : response;
+
+    let exactFilteredTotal = total;
+    if (lifecycleBaseQb) {
+      const allCandidateOrders = await lifecycleBaseQb.getMany();
+      const allEbirrOrderIds = allCandidateOrders
+        .filter((order) => order.paymentMethod === PaymentMethod.EBIRR)
+        .map((order) => order.id);
+
+      const latestTxByCandidateOrderId = new Map<number, EbirrTransaction>();
+      if (allEbirrOrderIds.length > 0) {
+        const invoiceIds = [
+          ...allEbirrOrderIds.map((id) => `INV-${id}`),
+          ...allEbirrOrderIds.map((id) => String(id)),
+        ];
+        const refs = allEbirrOrderIds.map((id) => `REF-${id}`);
+
+        const txRows = await this.ebirrTransactionRepository.find({
+          where: [{ invoiceId: In(invoiceIds) }, { merch_order_id: In(refs) }],
+          order: { created_at: 'DESC' },
+        });
+
+        for (const tx of txRows) {
+          const invoiceMatch = String(tx.invoiceId || '').match(/(\d+)/);
+          const refMatch = String(tx.merch_order_id || '').match(/(\d+)/);
+          const orderId = invoiceMatch?.[0]
+            ? parseInt(invoiceMatch[0], 10)
+            : refMatch?.[0]
+              ? parseInt(refMatch[0], 10)
+              : NaN;
+
+          if (
+            !orderId ||
+            isNaN(orderId) ||
+            latestTxByCandidateOrderId.has(orderId)
+          ) {
+            continue;
+          }
+          latestTxByCandidateOrderId.set(orderId, tx);
+        }
+      }
+
+      exactFilteredTotal = allCandidateOrders.reduce((count, order) => {
+        const tx = latestTxByCandidateOrderId.get(order.id);
+        const lifecycle = this.derivePaymentLifecycleState(
+          order,
+          tx?.status || null,
+          tx?.updated_at || null,
+        );
+        return lifecycleFilters.includes(String(lifecycle || '').toUpperCase())
+          ? count + 1
+          : count;
+      }, 0);
+    }
+
+    return { data: filteredResponse, total: exactFilteredTotal };
   }
 
   /**
@@ -297,6 +429,10 @@ export class OrdersService {
     private readonly uiSettingRepo: Repository<UiSetting>,
     @InjectRepository(Message)
     private readonly messageRepo: Repository<Message>,
+    @InjectRepository(PayoutLog)
+    private readonly payoutLogRepository: Repository<PayoutLog>,
+    @InjectRepository(EbirrTransaction)
+    private readonly ebirrTransactionRepository: Repository<EbirrTransaction>,
     private readonly productsService: ProductsService,
     private readonly cartService: CartService,
     private readonly mpesaService: MpesaService,
@@ -333,6 +469,23 @@ export class OrdersService {
         this.notifyVendorsOfOrder(order).catch((e) =>
           this.logger.error(`Failed to notify vendors: ${e.message}`),
         );
+
+        if (
+          order.paymentMethod === PaymentMethod.EBIRR &&
+          order.paymentStatus === PaymentStatus.PAID
+        ) {
+          const superAdminEmail =
+            process.env.SUPER_ADMIN_EMAIL || process.env.ADMIN_EMAIL;
+          if (superAdminEmail) {
+            this.emailService
+              .sendEbirrPaymentSuccessToSuperAdmin(superAdminEmail, order)
+              .catch((e) =>
+                this.logger.error(
+                  `Failed to send EBIRR success email to super admin: ${e.message}`,
+                ),
+              );
+          }
+        }
       }
     } catch (e) {
       this.logger.error(
@@ -450,6 +603,38 @@ export class OrdersService {
     return item;
   }
 
+  private mapOrderItemSelectionAttributes(
+    item: OrderItem,
+  ): Record<string, any> {
+    const raw =
+      item?.attributes && typeof item.attributes === 'object'
+        ? item.attributes
+        : {};
+
+    const cleaned: Record<string, any> = {};
+    for (const [key, value] of Object.entries(raw)) {
+      if (OrdersService.INTERNAL_ORDER_ITEM_ATTRIBUTE_KEYS.has(key)) continue;
+      if (value === null || value === undefined) continue;
+      if (typeof value === 'string' && value.trim().length === 0) continue;
+      if (Array.isArray(value) && value.length === 0) continue;
+      cleaned[key] = value;
+    }
+
+    const requiredKeys = new Set(getRequiredSelectionKeys(item?.product));
+    if (!requiredKeys.size) return cleaned;
+
+    const selectedRequired: Record<string, any> = {};
+    for (const [key, value] of Object.entries(cleaned)) {
+      if (requiredKeys.has(key)) {
+        selectedRequired[key] = value;
+      }
+    }
+
+    return Object.keys(selectedRequired).length > 0
+      ? selectedRequired
+      : cleaned;
+  }
+
   private mapOrder(order: Order, currency?: string): Order {
     if (!order) return order;
     const target = this.normalizeCurrency(currency);
@@ -519,6 +704,122 @@ export class OrdersService {
     return order;
   }
 
+  private buildPaymentUiHint(order: {
+    id: number;
+    paymentMethod: PaymentMethod;
+    paymentStatus: PaymentStatus;
+  }): OrderResponseDto['paymentUiHint'] {
+    if (order.paymentMethod !== PaymentMethod.EBIRR) {
+      return undefined;
+    }
+
+    if (order.paymentStatus === PaymentStatus.PAID) {
+      return {
+        provider: 'EBIRR',
+        state: 'PAID',
+        skipOrderConfirmationScreen: true,
+        disableWebCheckoutFallback: true,
+        orderDetailsRoute: `/orders/${order.id}`,
+      };
+    }
+
+    return {
+      provider: 'EBIRR',
+      state: 'PENDING_PUSH_CONFIRMATION',
+      message:
+        'A payment request has been sent to your phone. Confirm the system prompt/notification to complete payment.',
+      checkStatusEndpoint: `/api/payments/sync-status/${order.id}`,
+      recommendedPollIntervalMs: 4000,
+      skipOrderConfirmationScreen: true,
+      disableWebCheckoutFallback: true,
+      orderDetailsRoute: `/orders/${order.id}`,
+    };
+  }
+
+  private getCheckoutUiDirectives(order: {
+    id: number;
+    paymentMethod: PaymentMethod;
+    paymentStatus: PaymentStatus;
+  }): Pick<
+    OrderResponseDto,
+    | 'skipOrderConfirmationScreen'
+    | 'disableWebCheckoutFallback'
+    | 'paymentUiHint'
+  > {
+    const skipOrderConfirmationScreen =
+      order.paymentMethod === PaymentMethod.EBIRR;
+    const disableWebCheckoutFallback =
+      order.paymentMethod === PaymentMethod.EBIRR;
+    return {
+      skipOrderConfirmationScreen,
+      disableWebCheckoutFallback,
+      paymentUiHint: this.buildPaymentUiHint(order),
+    };
+  }
+
+  private derivePaymentLifecycleState(
+    order: {
+      status: OrderStatus;
+      paymentMethod: PaymentMethod;
+      paymentStatus: PaymentStatus;
+    },
+    providerTxStatus?: string | null,
+    providerTxUpdatedAt?: Date | string | null,
+  ): OrderResponseDto['paymentLifecycleState'] {
+    if (order.paymentMethod !== PaymentMethod.EBIRR) {
+      return undefined;
+    }
+
+    if (order.paymentStatus === PaymentStatus.PAID) {
+      return 'PAID';
+    }
+
+    if (
+      order.paymentStatus === PaymentStatus.FAILED ||
+      order.status === OrderStatus.CANCELLED ||
+      order.status === OrderStatus.CANCELLED_BY_BUYER ||
+      order.status === OrderStatus.CANCELLED_BY_SELLER
+    ) {
+      return 'FAILED';
+    }
+
+    const txStatus = String(providerTxStatus || '')
+      .trim()
+      .toUpperCase();
+
+    if (!txStatus) {
+      return 'CREATED';
+    }
+
+    if (txStatus === 'COMPLETED' || txStatus === 'SUCCESS') {
+      return 'PAID';
+    }
+
+    if (txStatus === 'FAILED' || txStatus === 'ERROR') {
+      return 'FAILED';
+    }
+
+    if (txStatus === 'EXPIRED') {
+      return 'RECONCILING';
+    }
+
+    if (txStatus === 'INITIATED' || txStatus === 'PENDING') {
+      const updatedAt = providerTxUpdatedAt
+        ? new Date(providerTxUpdatedAt)
+        : null;
+      if (
+        updatedAt &&
+        !Number.isNaN(updatedAt.getTime()) &&
+        updatedAt < subMinutes(new Date(), 2)
+      ) {
+        return 'RECONCILING';
+      }
+      return 'INITIATED';
+    }
+
+    return 'INITIATED';
+  }
+
   public mapToResponseDto(order: Order, currency?: string): OrderResponseDto {
     const mapped = this.mapOrder(order, currency);
     this.logger.debug(
@@ -551,6 +852,8 @@ export class OrdersService {
     const deliverer = mapped.deliverer;
     return plainToInstance(OrderResponseDto, {
       ...mapped,
+      ...this.getCheckoutUiDirectives(mapped),
+      paymentLifecycleState: this.derivePaymentLifecycleState(mapped),
       id: mapped.id,
       total: mapped.total,
       userId: mapped.user?.id,
@@ -571,6 +874,7 @@ export class OrdersService {
           quantity: item.quantity,
           price: item.price,
           price_display: (item as any).price_display,
+          attributes: this.mapOrderItemSelectionAttributes(item),
         })) || [],
       total_display: (mapped as any).total_display,
       currency: (mapped as any).currency,
@@ -710,15 +1014,152 @@ export class OrdersService {
       throw new NotFoundException(`Order #${orderId} not found`);
     }
 
-    const path = `orders/${order.id}/payment-proof/${Date.now()}-${file.originalname}`;
-    const url = await this.doSpaces.uploadBody(
-      file.buffer,
-      path,
-      file.mimetype,
-    );
+    const allowedMethods = new Set<PaymentMethod>([
+      PaymentMethod.BANK_TRANSFER,
+      PaymentMethod.CBE,
+      PaymentMethod.WAAFI,
+      PaymentMethod.DMONEY,
+      PaymentMethod.COD,
+    ]);
+    if (!allowedMethods.has(order.paymentMethod)) {
+      throw new BadRequestException(
+        `Payment proof is not accepted for ${order.paymentMethod} orders.`,
+      );
+    }
 
-    order.paymentProofUrl = url;
+    const inferred = await this.detectFileType(file.buffer);
+    const mime = inferred?.mime || file.mimetype || '';
+    const allowedMimes = new Set(['image/jpeg', 'image/png', 'image/webp']);
+    if (!allowedMimes.has(mime)) {
+      throw new BadRequestException(
+        'Unsupported payment proof format. Allowed: jpeg, png, webp.',
+      );
+    }
+
+    const ext =
+      mime === 'image/png' ? 'png' : mime === 'image/webp' ? 'webp' : 'jpg';
+    const key = `payments/proofs/${order.id}/${Date.now()}-${randomUUID()}.${ext}`;
+    await this.doSpaces.uploadBody(file.buffer, key, mime, {
+      acl: 'private',
+      cacheControl: 'private, no-store',
+      contentDisposition: 'inline',
+    });
+
+    order.paymentProofKey = key;
+    order.paymentProofMimeType = mime;
+    order.paymentProofSizeBytes = Number(file.size || file.buffer.length || 0);
+    order.paymentProofUploadedAt = new Date();
+    order.paymentProofStatus = 'PENDING_REVIEW';
+    order.paymentProofUrl = null;
     return this.orderRepository.save(order);
+  }
+
+  private async detectFileType(
+    buffer: Buffer,
+  ): Promise<{ mime?: string } | null> {
+    try {
+      const mod = (await import('file-type')) as {
+        fileTypeFromBuffer?: (
+          b: Buffer,
+        ) => Promise<{ mime: string } | undefined>;
+      };
+      if (!mod?.fileTypeFromBuffer) return null;
+      const found = await mod.fileTypeFromBuffer(buffer);
+      return found || null;
+    } catch {
+      return null;
+    }
+  }
+
+  private resolvePaymentProofKey(order: Order): string | null {
+    if (order.paymentProofKey) return order.paymentProofKey;
+    if (order.paymentProofUrl) {
+      return this.doSpaces.urlToKeyIfInBucket(order.paymentProofUrl);
+    }
+    return null;
+  }
+
+  async getSignedPaymentProofForUser(
+    userId: number,
+    orderId: number,
+    ttl?: string,
+  ): Promise<{ url: string; expiresIn: number; key: string }> {
+    const order = await this.orderRepository.findOne({
+      where: { id: orderId, user: { id: userId } },
+    });
+    if (!order) {
+      throw new NotFoundException(`Order #${orderId} not found`);
+    }
+
+    const key = this.resolvePaymentProofKey(order);
+    if (!key) {
+      throw new NotFoundException('Payment proof not found for this order');
+    }
+
+    const ttlSecs = Math.max(
+      60,
+      Math.min(parseInt(String(ttl || '300'), 10) || 300, 1800),
+    );
+    const url = await this.doSpaces.getSignedUrl(key, ttlSecs, {
+      contentType: order.paymentProofMimeType || undefined,
+    });
+
+    return { url, expiresIn: ttlSecs, key };
+  }
+
+  async getSignedPaymentProofForAdmin(
+    orderId: number,
+    ttl?: string,
+  ): Promise<{ url: string; expiresIn: number; key: string }> {
+    const order = await this.orderRepository.findOne({
+      where: { id: orderId },
+    });
+    if (!order) {
+      throw new NotFoundException(`Order #${orderId} not found`);
+    }
+
+    const key = this.resolvePaymentProofKey(order);
+    if (!key) {
+      throw new NotFoundException('Payment proof not found for this order');
+    }
+
+    const ttlSecs = Math.max(
+      60,
+      Math.min(parseInt(String(ttl || '600'), 10) || 600, 3600),
+    );
+    const url = await this.doSpaces.getSignedUrl(key, ttlSecs, {
+      contentType: order.paymentProofMimeType || undefined,
+    });
+
+    return { url, expiresIn: ttlSecs, key };
+  }
+
+  async setPaymentProofStatusForAdmin(
+    orderId: number,
+    status: 'VERIFIED' | 'REJECTED',
+  ): Promise<Order> {
+    const order = await this.orderRepository.findOne({
+      where: { id: orderId },
+    });
+    if (!order) {
+      throw new NotFoundException(`Order #${orderId} not found`);
+    }
+
+    const key = this.resolvePaymentProofKey(order);
+    if (!key) {
+      throw new BadRequestException(
+        'Cannot set payment proof status: proof not found',
+      );
+    }
+
+    order.paymentProofStatus = status;
+    const saved = await this.orderRepository.save(order);
+
+    if (status === 'VERIFIED' && saved.paymentStatus !== PaymentStatus.PAID) {
+      return this.triggerPostPaymentProcessing(orderId);
+    }
+
+    return saved;
   }
 
   async createFromCart(
@@ -726,6 +1167,10 @@ export class OrdersService {
     createOrderDto: CreateOrderDto,
     currency?: string,
   ): Promise<any> {
+    const checkoutMode = String(createOrderDto.checkoutMode || '')
+      .trim()
+      .toUpperCase()
+      .replace('_', '');
     let itemsToProcess: Array<{
       product: any;
       quantity: number;
@@ -733,6 +1178,12 @@ export class OrdersService {
     }> = [];
     const isDirectOrder =
       createOrderDto.items && createOrderDto.items.length > 0;
+
+    if (checkoutMode === 'BUYNOW' && !isDirectOrder) {
+      throw new BadRequestException(
+        'BUY_NOW checkout requires items in request body.',
+      );
+    }
 
     // Check for Duplicate Order Prevention
     // If an order was created in the last 2 minutes for this user with status PENDING or PAID
@@ -783,10 +1234,30 @@ export class OrdersService {
             `Product with ID ${dtoItem.productId} not found`,
           );
         }
+        const selectedAttributes = dtoItem.attributes || {};
+        const requiredKeys = getRequiredSelectionKeys(product);
+        const missingKeys = getMissingRequiredSelections(
+          requiredKeys,
+          selectedAttributes,
+        );
+        if (missingKeys.length > 0) {
+          throw new BadRequestException(
+            `Missing required product selections for product ${dtoItem.productId}: ${missingKeys.join(', ')}`,
+          );
+        }
+        const invalidKeys = getInvalidRequiredSelections(
+          product,
+          selectedAttributes,
+        );
+        if (invalidKeys.length > 0) {
+          throw new BadRequestException(
+            `Invalid required product selections for product ${dtoItem.productId}: ${invalidKeys.join(', ')}`,
+          );
+        }
         return {
           product,
           quantity: dtoItem.quantity || 1,
-          attributes: dtoItem.attributes || {},
+          attributes: selectedAttributes,
         };
       });
     } else {
@@ -797,11 +1268,44 @@ export class OrdersService {
           'Cannot create an order from an empty cart.',
         );
       }
-      itemsToProcess = cart.items.map((ci) => ({
-        product: ci.product,
-        quantity: ci.quantity,
-        attributes: {}, // Cart items in this codebase do not yet store attributes
-      }));
+      const cartProductIds = cart.items.map((ci) => ci.product.id);
+      const fullProducts = await this.productsService.findManyByIds(
+        cartProductIds,
+        {
+          view: 'full',
+        },
+      );
+      const productById = new Map(fullProducts.map((p) => [p.id, p]));
+
+      itemsToProcess = cart.items.map((ci) => {
+        const product = productById.get(ci.product.id) || ci.product;
+        const selectedAttributes = ci.attributes || {};
+        const requiredKeys = getRequiredSelectionKeys(product);
+        const missingKeys = getMissingRequiredSelections(
+          requiredKeys,
+          selectedAttributes,
+        );
+        if (missingKeys.length > 0) {
+          throw new BadRequestException(
+            `Missing required product selections for product ${ci.product.id}: ${missingKeys.join(', ')}`,
+          );
+        }
+        const invalidKeys = getInvalidRequiredSelections(
+          product,
+          selectedAttributes,
+        );
+        if (invalidKeys.length > 0) {
+          throw new BadRequestException(
+            `Invalid required product selections for product ${ci.product.id}: ${invalidKeys.join(', ')}`,
+          );
+        }
+
+        return {
+          product,
+          quantity: ci.quantity,
+          attributes: selectedAttributes,
+        };
+      });
     }
 
     // Prevent self-purchase: if any item belongs to the same user (vendor), block order creation
@@ -953,20 +1457,21 @@ export class OrdersService {
     );
 
     let discountAmount = 0;
-    const submittedCoupon = createOrderDto.couponCode || createOrderDto.coupon_code;
+    const submittedCoupon =
+      createOrderDto.couponCode || createOrderDto.coupon_code;
 
     if (submittedCoupon) {
       const couponRes = await this.promotionsService.validateCoupon(
         submittedCoupon,
         total,
       );
-      
+
       if (couponRes.isValid) {
         discountAmount = Number(couponRes.discount || 0);
         total = Number(Math.max(0, total - discountAmount).toFixed(2));
-        
+
         if (couponRes.coupon?.id) {
-           await this.promotionsService.incrementUsage(couponRes.coupon.id);
+          await this.promotionsService.incrementUsage(couponRes.coupon.id);
         }
       }
     }
@@ -982,12 +1487,34 @@ export class OrdersService {
 
     // Payment method branching
     const paymentMethod = createOrderDto.paymentMethod.toUpperCase();
-    let phoneNumber = createOrderDto.phoneNumber || createOrderDto.mpesaPhone;
+    const normalizeEbirrPhone = (raw?: string | null): string | null => {
+      const value = String(raw || '')
+        .trim()
+        .replace(/\s+/g, '')
+        .replace(/^\+/, '');
+      if (!value) return null;
 
-    if (
-      !phoneNumber &&
-      ['EBIRR', 'MPESA', 'TELEBIRR'].includes(paymentMethod)
-    ) {
+      if (value.startsWith('2519') && value.length === 12) return value;
+      if (value.startsWith('09') && value.length === 10)
+        return `251${value.substring(1)}`;
+      if (value.startsWith('9') && value.length === 9) return `251${value}`;
+
+      return value;
+    };
+
+    const explicitPhone = createOrderDto.phoneNumber?.trim();
+    const legacyMpesaPhone = createOrderDto.mpesaPhone?.trim();
+    const shippingPhone = createOrderDto.shippingAddress?.phoneNumber?.trim();
+
+    // For EBIRR, prefer generic/shipping phone and treat mpesaPhone as legacy fallback only.
+    // This avoids cross-provider payload leakage and wrong-account routing.
+    let phoneNumber =
+      paymentMethod === 'EBIRR'
+        ? explicitPhone || shippingPhone || legacyMpesaPhone
+        : explicitPhone || legacyMpesaPhone || shippingPhone;
+
+    // Keep profile fallback only for providers that historically relied on it.
+    if (!phoneNumber && ['MPESA', 'TELEBIRR'].includes(paymentMethod)) {
       const user = await this.usersService.findOne(userId);
       if (user?.phoneNumber) {
         phoneNumber = user.phoneNumber;
@@ -1127,6 +1654,97 @@ export class OrdersService {
         );
       }
 
+      const normalizedExplicitPhone = normalizeEbirrPhone(explicitPhone);
+      const normalizedShippingPhone = normalizeEbirrPhone(shippingPhone);
+      const normalizedLegacyMpesaPhone = normalizeEbirrPhone(legacyMpesaPhone);
+
+      if (
+        normalizedExplicitPhone &&
+        normalizedShippingPhone &&
+        normalizedExplicitPhone !== normalizedShippingPhone
+      ) {
+        throw new BadRequestException(
+          'EBIRR phone mismatch: phoneNumber and shippingAddress.phoneNumber must match.',
+        );
+      }
+
+      if (
+        normalizedExplicitPhone &&
+        normalizedLegacyMpesaPhone &&
+        normalizedExplicitPhone !== normalizedLegacyMpesaPhone
+      ) {
+        throw new BadRequestException(
+          'EBIRR phone mismatch: phoneNumber and mpesaPhone must match.',
+        );
+      }
+
+      const normalizedSubmittedPhone = normalizeEbirrPhone(phoneNumber);
+      const normalizedDevicePhone = normalizeEbirrPhone(
+        createOrderDto.devicePhoneNumber,
+      );
+      const devicePlatform = String(
+        createOrderDto.devicePlatform || 'unknown',
+      ).toLowerCase();
+
+      if (
+        devicePlatform === 'android' &&
+        normalizedDevicePhone &&
+        normalizedSubmittedPhone &&
+        normalizedDevicePhone !== normalizedSubmittedPhone
+      ) {
+        throw new BadRequestException(
+          'EBIRR phone mismatch: entered number must match the SIM line detected on this Android device.',
+        );
+      }
+
+      const user = await this.usersService.findOne(userId);
+      if (user?.isPhoneVerified) {
+        const normalizedVerifiedPhone =
+          normalizeEbirrPhone(
+            `${user.phoneCountryCode || ''}${user.phoneNumber || ''}`,
+          ) || normalizeEbirrPhone(user.phoneNumber);
+
+        const enforceVerifiedPhoneMatch =
+          String(process.env.EBIRR_ENFORCE_VERIFIED_PHONE_MATCH || 'false') ===
+          'true';
+
+        if (
+          normalizedVerifiedPhone &&
+          normalizedSubmittedPhone &&
+          normalizedVerifiedPhone !== normalizedSubmittedPhone
+        ) {
+          if (enforceVerifiedPhoneMatch) {
+            throw new BadRequestException(
+              'EBIRR phone mismatch: submitted number must match your verified profile phone.',
+            );
+          }
+
+          this.logger.warn(
+            `EBIRR verified phone mismatch (soft-check): userId=${userId} submitted=${normalizedSubmittedPhone} verified=${normalizedVerifiedPhone}`,
+          );
+        }
+      }
+
+      const recentEbirrFailures = await this.orderRepository.count({
+        where: {
+          user: { id: userId },
+          paymentMethod: PaymentMethod.EBIRR,
+          paymentStatus: PaymentStatus.FAILED,
+          createdAt: MoreThan(subMinutes(new Date(), 5)),
+        },
+      });
+
+      if (recentEbirrFailures >= 3) {
+        throw new HttpException(
+          {
+            code: 'EBIRR_TOO_MANY_RETRIES',
+            message:
+              'Too many recent EBIRR declines. Wait 5 minutes and retry from the SIM device.',
+          },
+          HttpStatus.TOO_MANY_REQUESTS,
+        );
+      }
+
       newOrder = this.orderRepository.create({
         user: { id: userId } as User,
         items: orderItems,
@@ -1162,149 +1780,32 @@ export class OrdersService {
       }
       phoneNumber = formattedPhone;
 
-      let paymentResponse;
-      try {
-        paymentResponse = await this.ebirrService.initiatePayment({
-          phoneNumber: phoneNumber,
-          amount: this.currencyService.formatAmount(total, currencyCode || 'ETB'),
-          referenceId: `REF-${savedOrder.id}`,
-          invoiceId: `INV-${savedOrder.id}`,
-          description: `Order #${savedOrder.id}`,
-        });
-      } catch (error) {
-        const msg = error?.message || '';
-        const providerCode = String(
-          (error as any)?.providerCode ||
-            (msg.match(/Code:\s*([0-9A-Za-z_-]+)/)?.[1] ?? ''),
-        );
-        const isProviderDecline =
-          providerCode === '5310' ||
-          msg.includes('declined') ||
-          msg.includes('Insufficient balance');
-
-        const declineMeta = {
-          orderId: savedOrder.id,
-          userId,
-          provider: (error as any)?.provider || 'EBIRR',
-          providerCode: providerCode || undefined,
-          providerRef: (error as any)?.providerRef || undefined,
-          amount: this.currencyService.formatAmount(total, currencyCode || 'ETB'),
-          currency: currencyCode || 'ETB',
-          attemptNo: (error as any)?.attemptNo || undefined,
-          latencyMs: (error as any)?.latencyMs || undefined,
-        };
-
-        if (
-          isProviderDecline
-        ) {
-          this.logger.warn(
-            `Ebirr payment declined: ${JSON.stringify({ message: msg, ...declineMeta })}`,
-          );
-        } else {
-          this.logger.error(
-            `Ebirr payment system error: ${JSON.stringify({ message: msg, ...declineMeta })}`,
-          );
-        }
-
-        savedOrder.status = OrderStatus.CANCELLED;
-        savedOrder.paymentStatus = PaymentStatus.FAILED;
-        await this.orderRepository.save(savedOrder);
-
-        if (isProviderDecline) {
-          throw new HttpException(
-            {
-              code: 'PAYMENT_DECLINED',
-              message: 'Payment declined. Please verify SIM/account and retry or use another payment method.',
-              details: {
-                provider: declineMeta.provider,
-                providerCode: declineMeta.providerCode,
-                providerRef: declineMeta.providerRef,
-                orderId: declineMeta.orderId,
-                currency: declineMeta.currency,
-                amount: declineMeta.amount,
-              },
-            },
-            HttpStatus.PAYMENT_REQUIRED,
-          );
-        }
-
-        throw new BadRequestException(msg || 'Payment initiation failed');
-      }
-
-      // Reload to ensure all relations (user, items) are populated for the response
-      // Explicitly load relations needed for DTO mapping
-      const fullOrder = await this.orderRepository.findOne({
-        where: { id: savedOrder.id },
-        relations: [
-          'items',
-          'items.product',
-          'items.product.vendor',
-          'user',
-          'deliverer',
-        ],
+      void this.processEbirrPaymentAsync({
+        orderId: savedOrder.id,
+        userId,
+        phoneNumber,
+        total,
+        currencyCode: currencyCode || 'ETB',
       });
-
-      // Ebirr Web Checkout Flow:
-      // The responseCode will likely be "200" or similar, indicating the URL is ready.
-      // We do NOT mark as PAID here. We rely on a webhook callback (TODO) or user return.
-      // For now, we return the checkoutUrl so the app can create a WebView.
-
-      this.logger.log(
-        `Ebirr initiated. Response: ${JSON.stringify(paymentResponse)}`,
-      );
-
-      // NEW HANDLING: If the payment is auto-approved (e.g. Test Env or Pre-auth), mark as PAID immediately.
-      // Ebirr response structure based on logs: { errorCode: "0", responseMsg: "RCS_SUCCESS", params: { state: "APPROVED", ... } }
-      if (
-        paymentResponse.errorCode === '0' &&
-        paymentResponse.params &&
-        paymentResponse.params.state === 'APPROVED'
-      ) {
-        this.logger.log(
-          `Ebirr payment auto-approved for Order #${savedOrder.id}. Updating status to PAID.`,
-        );
-        await this.triggerPostPaymentProcessing(savedOrder.id);
-      }
-
-      // If toPayUrl is missing, we pass the whole response.
-      // let receiveCode = paymentResponse.toPayUrl; // ERROR: Ebirr response is object, not string logic
-
-      // Fix: Ensure checkoutUrl is strictly a string (URL) or null.
-      // Ebirr "Push" does not provide a URL.
-      let checkoutUrl: string | null = null;
-      if (
-        paymentResponse.toPayUrl &&
-        typeof paymentResponse.toPayUrl === 'string'
-      ) {
-        checkoutUrl = paymentResponse.toPayUrl;
-      }
-
-      // If auto-approved (Test Env), we can provide a dummy success URL if client logic expects one.
-      // But better to leave it null for PUSH.
-      if (!checkoutUrl && savedOrder.paymentStatus === PaymentStatus.PAID) {
-        // Optional: checkoutUrl = "https://suuqs.com/success";
-      }
-
-      // receiveCode can store the full object for SDK/Debug
-      const receiveCode = paymentResponse;
 
       // Note: We do NOT clear cart yet if using Web Checkout, because payment isn't confirmed.
       // However, Suuq architecture usually clears cart on order creation to avoid double inventory lock.
       // We stick to clearing cart for now.
       if (!isDirectOrder) await this.cartService.clearCart(userId);
 
-      const responseOrder = this.mapToResponseDto(
-        fullOrder || savedOrder,
-        currency,
-      );
+      const responseOrder = this.mapToResponseDto(savedOrder, currency);
+      const checkoutUi = this.getCheckoutUiDirectives(responseOrder);
       this.logger.debug(
         `Returning Order DTO for Web Checkout: id=${responseOrder.id}`,
       );
 
       return {
         order: responseOrder,
-        receiveCode,
-        checkoutUrl,
+        receiveCode: null,
+        checkoutUrl: null,
+        paymentUiHint: checkoutUi.paymentUiHint,
+        skipOrderConfirmationScreen: checkoutUi.skipOrderConfirmationScreen,
+        disableWebCheckoutFallback: checkoutUi.disableWebCheckoutFallback,
       };
     } else {
       throw new BadRequestException(
@@ -1334,6 +1835,8 @@ export class OrdersService {
       const deliverer = mapped.deliverer;
       return plainToInstance(OrderResponseDto, {
         ...mapped,
+        ...this.getCheckoutUiDirectives(mapped),
+        paymentLifecycleState: this.derivePaymentLifecycleState(mapped),
         userId: mapped.user?.id,
         delivererId: mapped.deliverer?.id,
         assignedDelivererId: deliverer?.id,
@@ -1347,12 +1850,115 @@ export class OrdersService {
             quantity: item.quantity,
             price: item.price,
             price_display: (item as any).price_display,
+            attributes: this.mapOrderItemSelectionAttributes(item),
           })) || [],
         total_display: (mapped as any).total_display,
         currency: (mapped as any).currency,
       });
     });
     return { data: response, total };
+  }
+
+  private async processEbirrPaymentAsync(params: {
+    orderId: number;
+    userId: number;
+    phoneNumber: string;
+    total: number;
+    currencyCode: string;
+  }): Promise<void> {
+    const { orderId, userId, phoneNumber, total, currencyCode } = params;
+    try {
+      const paymentResponse = await this.ebirrService.initiatePayment({
+        phoneNumber,
+        amount: this.currencyService.formatAmount(total, currencyCode || 'ETB'),
+        referenceId: `REF-${orderId}`,
+        invoiceId: `INV-${orderId}`,
+        description: `Order #${orderId}`,
+      });
+
+      this.logger.log(
+        `Ebirr initiated async. Response: ${JSON.stringify(paymentResponse)}`,
+      );
+
+      const maybeCheckoutUrl =
+        paymentResponse?.toPayUrl &&
+        typeof paymentResponse.toPayUrl === 'string'
+          ? paymentResponse.toPayUrl.trim()
+          : null;
+      if (maybeCheckoutUrl && !/^https?:\/\//i.test(maybeCheckoutUrl)) {
+        this.logger.warn(
+          `Ebirr checkout URL blocked (non-http): ${JSON.stringify({ telemetryTag: 'EBIRR_NON_HTTP_CHECKOUT_URL_BLOCKED', orderId, provider: 'EBIRR', scheme: maybeCheckoutUrl.split(':')[0] || 'unknown' })}`,
+        );
+      }
+
+      if (
+        paymentResponse?.errorCode === '0' &&
+        paymentResponse?.params &&
+        paymentResponse.params.state === 'APPROVED'
+      ) {
+        this.logger.log(
+          `Ebirr payment auto-approved for Order #${orderId}. Updating status to PAID.`,
+        );
+        await this.triggerPostPaymentProcessing(orderId);
+      }
+    } catch (error) {
+      const msg = error?.message || '';
+      const providerCode = String(
+        error?.providerCode ||
+          (msg.match(/Code:\s*([0-9A-Za-z_-]+)/)?.[1] ?? ''),
+      );
+      const isProviderDecline =
+        providerCode === '5309' ||
+        providerCode === '5310' ||
+        providerCode === 'E10205' ||
+        msg.includes('declined') ||
+        msg.includes('Insufficient balance');
+      const upstreamTelemetryTag = String(error?.telemetryTag || '').trim();
+      const telemetryTag =
+        upstreamTelemetryTag ||
+        (providerCode === '5310'
+          ? 'EBIRR_EXPECTED_DECLINE_5310_USER_REJECTED'
+          : providerCode === '5309'
+            ? 'EBIRR_EXPECTED_DECLINE_5309_INSUFFICIENT_BALANCE'
+            : providerCode === 'E10205'
+              ? 'EBIRR_EXPECTED_DECLINE_E10205_INSUFFICIENT_BALANCE'
+              : isProviderDecline
+                ? 'EBIRR_EXPECTED_DECLINE'
+                : 'EBIRR_SYSTEM_ERROR');
+
+      const declineMeta = {
+        orderId,
+        userId,
+        provider: error?.provider || 'EBIRR',
+        providerCode: providerCode || undefined,
+        providerRef: error?.providerRef || undefined,
+        amount: this.currencyService.formatAmount(total, currencyCode || 'ETB'),
+        currency: currencyCode || 'ETB',
+        attemptNo: error?.attemptNo || undefined,
+        latencyMs: error?.latencyMs || undefined,
+        expectedDecline: isProviderDecline,
+        telemetryTag,
+      };
+
+      if (isProviderDecline) {
+        this.logger.warn(
+          `Ebirr payment declined (async): ${JSON.stringify({ message: msg, ...declineMeta })}`,
+        );
+      } else {
+        this.logger.error(
+          `Ebirr payment system error (async): ${JSON.stringify({ message: msg, ...declineMeta })}`,
+        );
+      }
+
+      const order = await this.orderRepository.findOne({
+        where: { id: orderId },
+      });
+      if (order && order.paymentStatus !== PaymentStatus.PAID) {
+        order.status = OrderStatus.CANCELLED;
+        order.paymentStatus = PaymentStatus.FAILED;
+        await this.orderRepository.save(order);
+      }
+    }
   }
 
   async findOneForUser(
@@ -1445,8 +2051,31 @@ export class OrdersService {
       // Ensure we don't leak private address fields here
     }));
 
+    let providerTxStatus: string | null = null;
+    let providerTxUpdatedAt: Date | string | null = null;
+    if (mapped.paymentMethod === PaymentMethod.EBIRR) {
+      try {
+        const paymentSync = (await this.ebirrService.checkOrderStatus(
+          String(mapped.id),
+        )) as any;
+        providerTxStatus =
+          String(paymentSync?.transaction?.status || '').trim() || null;
+        providerTxUpdatedAt = paymentSync?.transaction?.updatedAt || null;
+      } catch (error: any) {
+        this.logger.warn(
+          `Failed to enrich paymentLifecycleState for order=${mapped.id}: ${error?.message || error}`,
+        );
+      }
+    }
+
     return plainToInstance(OrderResponseDto, {
       ...mapped,
+      ...this.getCheckoutUiDirectives(mapped),
+      paymentLifecycleState: this.derivePaymentLifecycleState(
+        mapped,
+        providerTxStatus,
+        providerTxUpdatedAt,
+      ),
       userId: mapped.user?.id,
       delivererId: orderDeliverer?.id,
       assignedDelivererId: orderDeliverer?.id,
@@ -1473,6 +2102,7 @@ export class OrdersService {
           quantity: item.quantity,
           price: item.price,
           price_display: (item as any).price_display,
+          attributes: this.mapOrderItemSelectionAttributes(item),
         })) || [],
       total_display: (mapped as any).total_display,
       currency: (mapped as any).currency,
@@ -1721,6 +2351,29 @@ export class OrdersService {
       return null;
     }
 
+    const responseCode = String(
+      query?.responseCode ?? query?.code ?? query?.errorCode ?? '',
+    ).trim();
+    const status = String(query?.status ?? query?.state ?? '')
+      .trim()
+      .toLowerCase();
+    const hasExplicitSuccessSignal =
+      responseCode === '0' ||
+      responseCode === '200' ||
+      status === 'paid' ||
+      status === 'approved' ||
+      status === 'success';
+
+    const allowUnverifiedReturnPath =
+      String(process.env.EBIRR_ALLOW_UNVERIFIED_RETURN || 'false') === 'true';
+
+    if (!hasExplicitSuccessSignal && !allowUnverifiedReturnPath) {
+      this.logger.warn(
+        `Ebirr return callback ignored (missing explicit success signal). refId=${refId}`,
+      );
+      return null;
+    }
+
     const order = await this.orderRepository.findOne({
       where: { id: orderId },
       relations: ['user', 'items', 'items.product', 'items.product.vendor'],
@@ -1776,17 +2429,15 @@ export class OrdersService {
 
     await this.orderRepository.save(order);
 
-    this.logger.log(`Order ${order.id} marked as PAID. Triggering payouts.`);
+    this.logger.log(
+      `Order ${order.id} marked as PAID. Crediting vendor wallets (Ebirr payout remains manual unless explicitly enabled).`,
+    );
 
     // Automate Vendor Payouts
     if (order.items) {
       for (const item of order.items) {
         if (item.vendorPayout > 0 && item.product?.vendor?.id) {
           try {
-            // STANDARD: Credit Internal Wallet for all providers (Ebirr, Telebirr, etc.)
-            // We do NOT create PayoutLogs here anymore, as that creates double-entries in Admin
-            // (One PayoutLog per order + One Withdrawal Request per user action).
-            // The Single Source of Truth for Payouts is now the Withdrawal Request.
             await this.walletService.creditWallet(
               item.product.vendor.id,
               item.vendorPayout,
@@ -1794,6 +2445,9 @@ export class OrdersService {
               `Payout for Order #${order.id} - ${item.product.name.substring(0, 20)}...`,
               order.id,
             );
+
+            await this.tryAutoEbirrPayoutForItem(order, item);
+
             this.logger.log(
               `Credited vendor ${item.product.vendor.id} amount ${item.vendorPayout} for item ${item.id}`,
             );
@@ -1810,6 +2464,213 @@ export class OrdersService {
     this.sendConfirmationForOrder(order.id);
 
     return order;
+  }
+
+  private isAutoEbirrPayoutEnabled(): boolean {
+    return (
+      String(process.env.AUTO_VENDOR_EBIRR_PAYOUT_ON_PAYMENT || 'false') ===
+      'true'
+    );
+  }
+
+  private resolveVendorPayoutPhone(vendor?: User): string | null {
+    if (!vendor) return null;
+    const raw = String(
+      vendor.vendorPhoneNumber || vendor.phoneNumber || '',
+    ).trim();
+    if (!raw) return null;
+    return raw;
+  }
+
+  async retryFailedAutoPayout(payoutLogId: number): Promise<{
+    retried: boolean;
+    latestPayout: PayoutLog | null;
+  }> {
+    const payout = await this.payoutLogRepository.findOne({
+      where: { id: payoutLogId },
+      relations: ['vendor'],
+    });
+
+    if (!payout) {
+      throw new NotFoundException('Payout log not found');
+    }
+
+    if (payout.provider !== PayoutProvider.EBIRR) {
+      throw new BadRequestException('Only EBIRR payouts can be retried here');
+    }
+
+    if (payout.status !== PayoutStatus.FAILED) {
+      throw new BadRequestException('Only FAILED payouts can be retried');
+    }
+
+    if (!payout.orderId || !payout.orderItemId) {
+      throw new BadRequestException(
+        'Payout log is missing order/orderItem linkage required for auto retry',
+      );
+    }
+
+    const order = await this.orderRepository.findOne({
+      where: { id: payout.orderId },
+      relations: ['items', 'items.product', 'items.product.vendor'],
+    });
+
+    if (!order) {
+      throw new NotFoundException('Order not found for payout retry');
+    }
+
+    const item = (order.items || []).find((i) => i.id === payout.orderItemId);
+    if (!item) {
+      throw new NotFoundException('Order item not found for payout retry');
+    }
+
+    await this.tryAutoEbirrPayoutForItem(order, item, { force: true });
+
+    const latestPayout = await this.payoutLogRepository.findOne({
+      where: {
+        orderItemId: item.id,
+        provider: PayoutProvider.EBIRR,
+      },
+      relations: ['vendor'],
+      order: { createdAt: 'DESC' },
+    });
+
+    return {
+      retried: true,
+      latestPayout,
+    };
+  }
+
+  private async tryAutoEbirrPayoutForItem(
+    order: Order,
+    item: OrderItem,
+    options?: { force?: boolean },
+  ): Promise<void> {
+    if (!options?.force && !this.isAutoEbirrPayoutEnabled()) return;
+
+    const vendor = item.product?.vendor;
+    if (
+      !vendor?.id ||
+      !item.id ||
+      !item.vendorPayout ||
+      Number(item.vendorPayout) <= 0
+    ) {
+      return;
+    }
+
+    const existing = await this.payoutLogRepository.findOne({
+      where: {
+        orderItemId: item.id,
+        provider: PayoutProvider.EBIRR,
+      },
+      order: { createdAt: 'DESC' },
+    });
+
+    if (
+      existing &&
+      [PayoutStatus.SUCCESS, PayoutStatus.PENDING].includes(existing.status)
+    ) {
+      this.logger.warn(
+        `Skipping auto Ebirr payout for orderItem=${item.id}; payout already exists with status=${existing.status}`,
+      );
+      return;
+    }
+
+    const payoutPhone = this.resolveVendorPayoutPhone(vendor);
+    const referenceId = `ORD-${order.id}-ITEM-${item.id}`;
+
+    if (!payoutPhone) {
+      await this.walletService.logPayout({
+        vendorId: vendor.id,
+        amount: Number(item.vendorPayout),
+        currency: 'ETB',
+        phoneNumber: '',
+        provider: PayoutProvider.EBIRR,
+        transactionReference: referenceId,
+        orderId: order.id,
+        orderItemId: item.id,
+        status: PayoutStatus.FAILED,
+        failureReason: 'Vendor payout phone is missing',
+      });
+      this.logger.warn(
+        `Auto Ebirr payout skipped for orderItem=${item.id}: vendor phone is missing`,
+      );
+      return;
+    }
+
+    const pendingAttemptReference = `${referenceId}-ATTEMPT-${Date.now()}`;
+    const pendingLog = this.payoutLogRepository.create({
+      vendor: { id: vendor.id },
+      amount: Number(item.vendorPayout),
+      currency: 'ETB',
+      phoneNumber: payoutPhone,
+      provider: PayoutProvider.EBIRR,
+      transactionReference: pendingAttemptReference,
+      orderId: order.id,
+      orderItemId: item.id,
+      status: PayoutStatus.PENDING,
+    });
+    await this.payoutLogRepository.save(pendingLog);
+
+    try {
+      const payoutResult = await this.ebirrService.sendPayout({
+        phoneNumber: payoutPhone,
+        amount: Number(item.vendorPayout),
+        referenceId,
+        remark: `Auto payout for Order #${order.id}, Item #${item.id}`,
+      });
+
+      const providerReference =
+        payoutResult?.data?.referenceId ||
+        payoutResult?.data?.issuerTransactionId ||
+        payoutResult?.data?.requestId ||
+        referenceId;
+
+      pendingLog.status = PayoutStatus.SUCCESS;
+      pendingLog.transactionReference = String(providerReference);
+      pendingLog.failureReason = null;
+      await this.payoutLogRepository.save(pendingLog);
+
+      try {
+        await this.walletService.debitWallet(
+          vendor.id,
+          Number(item.vendorPayout),
+          TransactionType.PAYOUT,
+          `Auto Ebirr payout for Order #${order.id}, Item #${item.id}`,
+          order.id,
+        );
+      } catch (debitError: any) {
+        const debitFailureReason =
+          debitError?.message ||
+          'Wallet debit failed after provider payout success';
+        pendingLog.failureReason = `RECONCILE_REQUIRED: ${debitFailureReason}`;
+        await this.payoutLogRepository.save(pendingLog);
+
+        await this.walletService.logPayout({
+          vendorId: vendor.id,
+          amount: Number(item.vendorPayout),
+          currency: 'ETB',
+          phoneNumber: payoutPhone,
+          provider: PayoutProvider.EBIRR,
+          transactionReference: `${referenceId}-WALLET-DEBIT`,
+          orderId: order.id,
+          orderItemId: item.id,
+          status: PayoutStatus.FAILED,
+          failureReason: `Wallet debit failed after successful provider payout. ProviderRef=${String(providerReference)} | ${debitFailureReason}`,
+        });
+
+        this.logger.error(
+          `Auto payout wallet debit failed for orderItem=${item.id}: ${debitError?.message || debitError}`,
+        );
+      }
+    } catch (error: any) {
+      pendingLog.status = PayoutStatus.FAILED;
+      pendingLog.failureReason = error?.message || 'Auto Ebirr payout failed';
+      await this.payoutLogRepository.save(pendingLog);
+
+      this.logger.error(
+        `Auto Ebirr payout failed for orderItem=${item.id}: ${error?.message || error}`,
+      );
+    }
   }
 
   // --- Dispute Logic ---

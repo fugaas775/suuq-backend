@@ -1,5 +1,5 @@
-/* eslint-disable @typescript-eslint/require-await, @typescript-eslint/no-unused-vars */
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, prettier/prettier */
+/* eslint-disable @typescript-eslint/require-await */
+
 import {
   BadRequestException,
   ForbiddenException,
@@ -27,6 +27,7 @@ import { ListProductRequestFeedDto } from './dto/list-product-request-feed.dto';
 import { RespondOfferDto } from './dto/respond-offer.dto';
 import { Category } from '../categories/entities/category.entity';
 import { Product } from '../products/entities/product.entity';
+import { VendorStaff } from '../vendor/entities/vendor-staff.entity';
 import {
   User,
   VerificationMethod,
@@ -40,6 +41,8 @@ import { EmailService } from '../email/email.service';
 
 @Injectable()
 export class ProductRequestsService {
+  private static readonly FEED_STALE_WINDOW_DAYS = 14;
+
   constructor(
     @InjectRepository(ProductRequest)
     private readonly requestRepo: Repository<ProductRequest>,
@@ -53,9 +56,45 @@ export class ProductRequestsService {
     private readonly productRepo: Repository<Product>,
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
+    @InjectRepository(VendorStaff)
+    private readonly vendorStaffRepo: Repository<VendorStaff>,
     private readonly notifications: NotificationsService,
     private readonly emailService: EmailService,
   ) {}
+
+  private parseVendorId(value: unknown): number | null {
+    if (Array.isArray(value)) return this.parseVendorId(value[0]);
+    if (value === null || typeof value === 'undefined') return null;
+    const num = Number(value);
+    if (!Number.isInteger(num) || num <= 0) return null;
+    return num;
+  }
+
+  async resolveVendorActorId(
+    actorUserId: number,
+    requestedVendorContextId?: unknown,
+  ): Promise<number> {
+    const requestedVendorId = this.parseVendorId(requestedVendorContextId);
+    if (!requestedVendorId || requestedVendorId === actorUserId) {
+      return actorUserId;
+    }
+
+    const membership = await this.vendorStaffRepo.findOne({
+      where: {
+        memberId: actorUserId,
+        vendorId: requestedVendorId,
+      },
+      select: ['id'],
+    });
+
+    if (!membership) {
+      throw new ForbiddenException(
+        'You are not a staff member of this vendor store.',
+      );
+    }
+
+    return requestedVendorId;
+  }
 
   private sanitizeMetadata(
     payload?: Record<string, unknown> | null,
@@ -309,6 +348,22 @@ export class ProductRequestsService {
     return request;
   }
 
+  async findRequestForwardedToVendor(
+    vendorId: number,
+    requestId: number,
+  ): Promise<ProductRequest> {
+    const forward = await this.forwardRepo.findOne({
+      where: { requestId, vendorId },
+      select: ['id'],
+    });
+
+    if (!forward) {
+      throw new NotFoundException('Product request not found');
+    }
+
+    return this.findOne(requestId);
+  }
+
   async getForwardDetails(requestId: number, vendorId: number) {
     return this.forwardRepo.findOne({
       where: { requestId, vendorId },
@@ -463,6 +518,11 @@ export class ProductRequestsService {
     const limit = query.limit ?? 20;
     const page = Math.max(query.page ?? 1, 1);
     const offset = (page - 1) * limit;
+    const staleCutoff = new Date();
+    staleCutoff.setDate(
+      staleCutoff.getDate() - ProductRequestsService.FEED_STALE_WINDOW_DAYS,
+    );
+
     // Latest forward per request for this seller, sorted by latest forwarded_at desc
     const latestForwardSql = `
       SELECT DISTINCT ON (f.request_id)
@@ -470,15 +530,18 @@ export class ProductRequestsService {
         f.forwarded_at,
         f.forwarded_by_admin_id
       FROM product_request_forward f
+      INNER JOIN product_request pr ON pr.id = f.request_id
       INNER JOIN "user" u ON f.forwarded_by_admin_id = u.id
       WHERE f.vendor_id = $1
+      AND COALESCE(f.forwarded_at, pr.created_at) >= $2
+      AND pr.deleted_at IS NULL
       AND u.roles::text[] @> ARRAY['SUPER_ADMIN']
       ORDER BY f.request_id ASC, f.forwarded_at DESC
     `;
 
     const totalRow = await this.forwardRepo.query(
       `SELECT COUNT(*) FROM (${latestForwardSql}) lf`,
-      [sellerId],
+      [sellerId, staleCutoff],
     );
 
     const total = Number(totalRow?.[0]?.count ?? 0);
@@ -486,8 +549,8 @@ export class ProductRequestsService {
     const forwardedRows = await this.forwardRepo.query(
       `SELECT * FROM (${latestForwardSql}) lf
        ORDER BY lf.forwarded_at DESC
-       OFFSET $2 LIMIT $3`,
-      [sellerId, offset, limit],
+       OFFSET $3 LIMIT $4`,
+      [sellerId, staleCutoff, offset, limit],
     );
 
     const requestIds = forwardedRows
@@ -503,7 +566,8 @@ export class ProductRequestsService {
       .leftJoinAndSelect('request.category', 'category')
       .leftJoinAndSelect('request.acceptedOffer', 'acceptedOffer')
       .leftJoinAndSelect('acceptedOffer.product', 'acceptedProduct')
-      .where('request.id IN (:...ids)', { ids: requestIds });
+      .where('request.id IN (:...ids)', { ids: requestIds })
+      .andWhere('request.deleted_at IS NULL');
 
     // Show everything that was forwarded, unless caller explicitly filters by status
     if (query.status) {
@@ -872,6 +936,49 @@ export class ProductRequestsService {
       if (seller && seller.email) {
         this.emailService
           .sendOfferStatusChange(seller, { ...offer, request }, 'ACCEPTED')
+          .catch(() => {});
+      }
+
+      // Guardrail: make delivery assignment state explicit to avoid confusion
+      // between accepted offer and deliverer visibility.
+      const assignmentPendingTitle =
+        'Offer accepted · pending deliverer assignment';
+      const assignmentPendingBody =
+        'Your offer is accepted. A deliverer has not been assigned yet.';
+
+      if (offer.sellerId) {
+        this.notifications
+          .createAndDispatch({
+            userId: offer.sellerId,
+            title: assignmentPendingTitle,
+            body: assignmentPendingBody,
+            type: NotificationType.PRODUCT_REQUEST,
+            data: {
+              requestId: String(request.id),
+              offerId: String(offer.id),
+              deliveryAssignmentPending: 'true',
+              route: `/request-detail?id=${request.id}`,
+              click_action: 'FLUTTER_NOTIFICATION_CLICK',
+            },
+          })
+          .catch(() => {});
+      }
+
+      if (request.buyerId) {
+        this.notifications
+          .createAndDispatch({
+            userId: request.buyerId,
+            title: 'Offer accepted',
+            body: 'Offer accepted. Deliverer assignment is pending.',
+            type: NotificationType.PRODUCT_REQUEST,
+            data: {
+              requestId: String(request.id),
+              offerId: String(offer.id),
+              deliveryAssignmentPending: 'true',
+              route: `/request-detail?id=${request.id}`,
+              click_action: 'FLUTTER_NOTIFICATION_CLICK',
+            },
+          })
           .catch(() => {});
       }
 

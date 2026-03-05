@@ -158,6 +158,21 @@ export class Order {
 
   @Column({ type: 'varchar', nullable: true })
   paymentProofUrl?: string | null;
+
+  @Column({ type: 'varchar', nullable: true })
+  paymentProofKey?: string | null;
+
+  @Column({ type: 'varchar', nullable: true })
+  paymentProofMimeType?: string | null;
+
+  @Column({ type: 'int', nullable: true })
+  paymentProofSizeBytes?: number | null;
+
+  @Column({ type: 'timestamp', nullable: true })
+  paymentProofUploadedAt?: Date | null;
+
+  @Column({ type: 'varchar', length: 32, nullable: true })
+  paymentProofStatus?: 'PENDING_REVIEW' | 'VERIFIED' | 'REJECTED' | null;
 }
 
 // Define OrderItem second

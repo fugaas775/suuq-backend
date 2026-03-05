@@ -1,5 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment */
-
 import {
   Injectable,
   NotFoundException,
@@ -12,6 +10,11 @@ import { FlashSale } from './entities/flash-sale.entity';
 
 @Injectable()
 export class PromotionsService {
+  private flashSalesCache: {
+    expiresAt: number;
+    payload: FlashSale[];
+  } | null = null;
+
   constructor(
     @InjectRepository(Coupon)
     private couponRepo: Repository<Coupon>,
@@ -26,7 +29,6 @@ export class PromotionsService {
   async getCoupons(vendorId?: number) {
     const where: any = {};
     if (vendorId) {
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
       where.vendor = { id: vendorId };
     }
 
@@ -85,13 +87,30 @@ export class PromotionsService {
   }
 
   async getActiveFlashSales() {
+    const nowMs = Date.now();
+    if (this.flashSalesCache && this.flashSalesCache.expiresAt > nowMs) {
+      return this.flashSalesCache.payload;
+    }
+
     const now = new Date();
-    return this.flashSaleRepo
+    const rows = await this.flashSaleRepo
       .createQueryBuilder('sale')
       .leftJoinAndSelect('sale.products', 'product')
       .where('sale.isActive = :isActive', { isActive: true })
       .andWhere('sale.startTime <= :now', { now })
       .andWhere('sale.endTime >= :now', { now })
+      .orderBy('sale.endTime', 'ASC')
       .getMany();
+
+    const ttlMs = Math.max(
+      5000,
+      Number(process.env.FLASH_SALES_CACHE_TTL_MS || 60000),
+    );
+    this.flashSalesCache = {
+      expiresAt: nowMs + ttlMs,
+      payload: rows,
+    };
+
+    return rows;
   }
 }

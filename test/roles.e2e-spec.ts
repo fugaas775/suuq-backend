@@ -16,7 +16,7 @@ import { closeE2eApp } from './utils/e2e-cleanup';
 class AllowGuard implements CanActivate {
   canActivate(context: ExecutionContext): boolean {
     const req = context.switchToHttp().getRequest();
-    req.user = { id: 42, email: 'user@example.com', roles: ['CUSTOMER'] };
+    req.user = { id: 42, email: 'user@suuqsapp.com', roles: ['CUSTOMER'] };
     return true;
   }
 }

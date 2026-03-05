@@ -67,9 +67,11 @@ export class VendorController {
         page: Number(page) || 1,
         limit: Math.min(Number(limit) || 20, 100),
         search: q,
-        sort,
+        sort: sort || 'recent',
         verificationStatus,
         role,
+        withProductsOnly: true,
+        minPublishedProducts: 3,
       } as any);
 
     return {
@@ -179,8 +181,14 @@ export class VendorController {
     @ActiveVendor() vendor: User,
     @Param('productId', ParseIntPipe) productId: number,
     @Body() dto: UpdateVendorProductDto,
+    @Req() req: AuthenticatedRequest,
   ) {
-    return this.vendorService.updateMyProduct(vendor.id, productId, dto);
+    return this.vendorService.updateMyProduct(
+      vendor.id,
+      productId,
+      dto,
+      req.user as any,
+    );
   }
 
   // Quick publish/unpublish toggle

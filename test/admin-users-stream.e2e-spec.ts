@@ -31,7 +31,7 @@ describe('GET /admin/users/stream (e2e)', () => {
   const mockUsers: any[] = [
     {
       id: 1,
-      email: 'vendor1@example.com',
+      email: 'vendor1@suuqsapp.com',
       displayName: 'Vendor One',
       storeName: 'Electro World',
       roles: [UserRole.VENDOR],
@@ -41,7 +41,7 @@ describe('GET /admin/users/stream (e2e)', () => {
     },
     {
       id: 2,
-      email: 'vendor2@example.com',
+      email: 'vendor2@suuqsapp.com',
       displayName: 'Vendor Two',
       storeName: 'Electro World 2',
       roles: [UserRole.VENDOR],

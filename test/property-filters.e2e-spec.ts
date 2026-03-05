@@ -89,12 +89,12 @@ describe.skip('Property Filters (e2e)', () => {
 
     const userRepo = dataSource.getRepository('user');
     let vendor = await userRepo.findOne({
-      where: { email: 'filters-vendor@example.com' } as any,
+      where: { email: 'filters-vendor@suuqsapp.com' } as any,
     });
     if (!vendor) {
       vendor = await userRepo.save(
         userRepo.create({
-          email: 'filters-vendor@example.com',
+          email: 'filters-vendor@suuqsapp.com',
           password: 'x',
         } as any),
       );

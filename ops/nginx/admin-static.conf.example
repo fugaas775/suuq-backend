@@ -8,6 +8,11 @@ server {
     root /var/www/suuq-admin; # Ensure this points to the folder you rsynced
     index index.html;
 
+    # Block common probe targets early
+    location ~* ^/(?:\.env(?:\..*)?|\.git(?:/|$)) {
+        return 404;
+    }
+
     # Never cache index.html so new deployments are visible immediately
     location = /index.html {
         add_header Cache-Control "no-cache, no-store, must-revalidate" always;

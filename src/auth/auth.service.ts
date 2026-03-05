@@ -201,6 +201,7 @@ export class AuthService {
   async googleLogin(dto: {
     idToken: string;
   }): Promise<{ accessToken: string; refreshToken: string; user: User }> {
+    const startedAt = Date.now();
     const idToken = dto.idToken;
     this.logger.log(`[googleLogin] Attempting Google login`);
     if (!this.oauthClient) {
@@ -211,7 +212,11 @@ export class AuthService {
     }
 
     let googlePayload: TokenPayload | undefined;
+    let verifyMs = 0;
+    let userLookupMs = 0;
+    let userCreateMs = 0;
     try {
+      const verifyStartedAt = Date.now();
       const ticket = await this.oauthClient.verifyIdToken({
         idToken: idToken,
         audience: [
@@ -220,8 +225,13 @@ export class AuthService {
           this.configService.get<string>('GOOGLE_IOS_CLIENT_ID'),
         ].filter((id) => !!id),
       });
+      verifyMs = Date.now() - verifyStartedAt;
       googlePayload = ticket.getPayload();
-    } catch {
+    } catch (error) {
+      verifyMs = verifyMs || Date.now() - startedAt;
+      this.logger.warn(
+        `[googleLogin] Google token verification failed in ${verifyMs}ms: ${error instanceof Error ? error.message : String(error)}`,
+      );
       throw new UnauthorizedException({
         code: 'INVALID_GOOGLE_TOKEN',
         message: 'Invalid Google token',
@@ -235,14 +245,18 @@ export class AuthService {
       });
     }
 
+    const userLookupStartedAt = Date.now();
     let user = await this.usersService.findByEmail(googlePayload.email, [
       'employments',
     ]);
+    userLookupMs = Date.now() - userLookupStartedAt;
+    let createdUser = false;
 
     if (!user) {
       this.logger.log(
         `[googleLogin] User ${googlePayload.email} not found. Creating new user.`,
       );
+      const userCreateStartedAt = Date.now();
       user = await this.usersService.createWithGoogle({
         email: googlePayload.email,
         name: googlePayload.name,
@@ -250,6 +264,8 @@ export class AuthService {
         sub: googlePayload.sub,
         roles: [UserRole.CUSTOMER],
       });
+      userCreateMs = Date.now() - userCreateStartedAt;
+      createdUser = true;
     } else if (!user.isActive) {
       throw new UnauthorizedException({
         code: 'USER_DEACTIVATED',
@@ -257,7 +273,21 @@ export class AuthService {
       });
     }
 
-    return this.generateTokens(user);
+    const tokenStartedAt = Date.now();
+    const result = await this.generateTokens(user);
+    const tokenMs = Date.now() - tokenStartedAt;
+    const totalMs = Date.now() - startedAt;
+
+    this.logger.log(
+      `[googleLogin] Success userId=${user.id} created=${createdUser} verifyMs=${verifyMs} userLookupMs=${userLookupMs} userCreateMs=${userCreateMs} tokenMs=${tokenMs} totalMs=${totalMs}`,
+    );
+    if (totalMs > 1200) {
+      this.logger.warn(
+        `[googleLogin] Slow login detected userId=${user.id} totalMs=${totalMs}`,
+      );
+    }
+
+    return result;
   }
 
   async appleLogin(

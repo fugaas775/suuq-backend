@@ -11,6 +11,14 @@ type PrimaryImage = {
   lowRes?: string | null;
 };
 
+type SimilarImageStripItem = {
+  productId: number;
+  thumbnail?: string | null;
+  lowRes?: string | null;
+  src?: string | null;
+  distance?: number;
+};
+
 export type ProductCard = {
   id: number;
   name: string;
@@ -18,6 +26,7 @@ export type ProductCard = {
   currency: string;
   primaryImage?: PrimaryImage;
   ratingSummary?: RatingSummary;
+  similarImageStrip?: SimilarImageStripItem[];
   categoryId?: number | null;
   listingType?: 'sale' | 'rent' | null;
   listingCity?: string | null;

@@ -1,0 +1,8 @@
+  id  |              email               |        roles        
+------+----------------------------------+---------------------
+    3 | admin@suuqsapp.com               | {SUPER_ADMIN,ADMIN}
+ 1059 | admin_1765533486308@example.com  | {ADMIN}
+ 1187 | admin_1768057467512@example.com  | {ADMIN}
+ 1769 | admin_1772519255164@suuqsapp.com | {ADMIN}
+(4 rows)
+

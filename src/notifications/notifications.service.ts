@@ -1,5 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access */
-/* eslint-disable @typescript-eslint/no-base-to-string */
 import {
   Injectable,
   Inject,
@@ -23,6 +21,10 @@ import type {
 @Injectable()
 export class NotificationsService {
   private readonly logger = new Logger(NotificationsService.name);
+  private readonly staleTokenErrorCodes = new Set([
+    'messaging/invalid-registration-token',
+    'messaging/registration-token-not-registered',
+  ]);
 
   constructor(
     @Inject('FIREBASE_ADMIN') private readonly firebase: FirebaseAdmin,
@@ -93,13 +95,36 @@ export class NotificationsService {
         `Sent notification to user ${userId}: ${response.successCount} success, ${response.failureCount} failure`,
       );
       if (response.failureCount > 0) {
+        let staleTokenFailures = 0;
+        let otherFailures = 0;
+        const nonStaleSamples: string[] = [];
+
         response.responses.forEach((resp, idx) => {
-          if (!resp.success) {
-            this.logger.error(
-              `Notification Error [Token Index ${idx}]: ${resp.error?.code} - ${resp.error?.message}`,
-            );
+          if (resp.success) return;
+          const code = String(resp.error?.code || 'unknown');
+          const message = String(resp.error?.message || 'Unknown error');
+          if (this.staleTokenErrorCodes.has(code)) {
+            staleTokenFailures += 1;
+            return;
+          }
+
+          otherFailures += 1;
+          if (nonStaleSamples.length < 3) {
+            nonStaleSamples.push(`idx=${idx} code=${code} msg=${message}`);
           }
         });
+
+        if (staleTokenFailures > 0) {
+          this.logger.warn(
+            `Notification stale-token failures for user ${userId}: ${staleTokenFailures} (tokens pruned)`,
+          );
+        }
+
+        if (otherFailures > 0) {
+          this.logger.error(
+            `Notification non-stale failures for user ${userId}: count=${otherFailures} samples=${nonStaleSamples.join(' | ')}`,
+          );
+        }
       }
       return response;
     } catch (err: unknown) {
@@ -148,7 +173,7 @@ export class NotificationsService {
 
     // 2. Push (fire and forget or await)
     // We convert data to string map for FCM
-    const fcmData = (opts.data
+    const fcmData = opts.data
       ? Object.entries(opts.data).reduce(
           (acc, [k, v]) => {
             acc[k] = String(v);
@@ -156,7 +181,7 @@ export class NotificationsService {
           },
           {} as Record<string, string>,
         )
-      : {}) as Record<string, string>;
+      : {};
 
     // NEW: Handle Deliverer Routing Logic
     // If the user is a deliverer and this is an order notification, set explicit route.
@@ -245,11 +270,6 @@ export class NotificationsService {
     token: string;
     platform?: string;
   }) {
-    const user = await this.usersService.findOne(dto.userId);
-    if (!user) {
-      throw new NotFoundException('User not found');
-    }
-
     await this.deviceTokenRepository.upsert(
       {
         userId: dto.userId,
@@ -277,7 +297,6 @@ export class NotificationsService {
     try {
       const messaging = this.firebase.messaging?.();
       if (messaging && 'subscribeToTopic' in messaging) {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-call
         await (messaging as any).subscribeToTopic([token], topic);
       }
     } catch (e) {
@@ -293,7 +312,6 @@ export class NotificationsService {
     try {
       const messaging = this.firebase.messaging?.();
       if (messaging && 'unsubscribeFromTopic' in messaging) {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-call
         await (messaging as any).unsubscribeFromTopic([token], topic);
       }
     } catch (e) {
@@ -362,16 +380,13 @@ export class NotificationsService {
   ) {
     if (!response.responses?.length) return;
 
-    const invalidCodes = new Set([
-      'messaging/invalid-registration-token',
-      'messaging/registration-token-not-registered',
-    ]);
-
     const invalidTokens = response.responses
       .map((res, idx) => ({ res, token: tokens[idx] }))
       .filter(
         ({ res }) =>
-          !res.success && res.error?.code && invalidCodes.has(res.error.code),
+          !res.success &&
+          res.error?.code &&
+          this.staleTokenErrorCodes.has(res.error.code),
       )
       .map(({ token }) => token)
       .filter(Boolean);

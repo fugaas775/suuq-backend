@@ -59,17 +59,57 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     const forwardedFor = this.headerValue(request.headers['x-forwarded-for']);
     const clientIp = (forwardedFor.split(',')[0] || request.ip || '').trim();
     const isExpectedAuthVerifyProbe =
-      status === 401 &&
-      request.method === 'GET' &&
-      path === '/api/auth/verify';
+      status === 401 && request.method === 'GET' && path === '/api/auth/verify';
     const isExpected404Probe =
       status === 404 &&
       request.method === 'GET' &&
       (this.noisyProbe404Paths.has(path) || path.startsWith('/.well-known/'));
+    const isExpectedPaymentDecline =
+      status === 402 && code === 'PAYMENT_DECLINED';
+    const isExpectedDuplicateRequestOffer =
+      status === 400 &&
+      request.method === 'POST' &&
+      /^\/api\/product-requests\/\d+\/offers$/.test(path) &&
+      typeof message === 'string' &&
+      message.includes(
+        'You already have an active offer for this request. Update or withdraw it instead.',
+      );
+    const paymentDeclineProviderCode =
+      isExpectedPaymentDecline && details
+        ? String(details?.providerCode || '')
+        : '';
+    const paymentDeclineTelemetryTagFromDetails =
+      isExpectedPaymentDecline && details
+        ? String(details?.telemetryTag || '')
+        : '';
+    const paymentDeclineTelemetryTag =
+      paymentDeclineTelemetryTagFromDetails ||
+      (paymentDeclineProviderCode === '5310'
+        ? 'EBIRR_EXPECTED_DECLINE_5310_USER_REJECTED'
+        : paymentDeclineProviderCode === '5309'
+          ? 'EBIRR_EXPECTED_DECLINE_5309_INSUFFICIENT_BALANCE'
+          : 'PAYMENT_EXPECTED_DECLINE');
 
-    // Reduce noise for expected denials (401/403), 404s, and rate limits (429)
-    if (status === 401 || status === 403 || status === 404 || status === 429) {
-      const msg = `${status === 404 ? 'Not Found' : status === 429 ? 'Rate limited' : 'Auth denial'} ${status} on ${request.method} ${request.url}: ${
+    // Reduce noise for expected denials (401/403), 404s, rate limits (429), and expected payment declines (402)
+    if (
+      status === 401 ||
+      status === 403 ||
+      status === 404 ||
+      status === 429 ||
+      isExpectedPaymentDecline ||
+      isExpectedDuplicateRequestOffer
+    ) {
+      const msg = `${
+        status === 404
+          ? 'Not Found'
+          : status === 429
+            ? 'Rate limited'
+            : isExpectedPaymentDecline
+              ? 'Payment declined'
+              : isExpectedDuplicateRequestOffer
+                ? 'Business-rule rejection'
+                : 'Auth denial'
+      } ${status} on ${request.method} ${request.url}: ${
         typeof message === 'string' ? message : JSON.stringify(message)
       }`;
       if (isExpectedAuthVerifyProbe) {
@@ -82,6 +122,12 @@ export class GlobalExceptionFilter implements ExceptionFilter {
         );
       } else if (status === 429) {
         this.logger.debug(msg);
+      } else if (isExpectedPaymentDecline) {
+        this.logger.warn(
+          `${msg} telemetryTag="${paymentDeclineTelemetryTag}" details=${JSON.stringify(details || {})} ua="${userAgent || 'unknown'}" ip="${clientIp || 'unknown'}"`,
+        );
+      } else if (isExpectedDuplicateRequestOffer) {
+        this.logger.warn(msg);
       } else {
         this.logger.warn(msg);
       }

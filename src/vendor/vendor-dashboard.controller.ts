@@ -59,6 +59,11 @@ export class VendorDashboardController {
     @Param('productId') productId: number,
     @Body() dto: UpdateVendorProductDto,
   ) {
-    return this.vendorService.updateMyProduct(req.user.id, productId, dto);
+    return this.vendorService.updateMyProduct(
+      req.user.id,
+      productId,
+      dto,
+      req.user,
+    );
   }
 }

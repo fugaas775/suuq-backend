@@ -79,6 +79,30 @@ export class SettingsController {
     return this.settingsService.getAllSettings();
   }
 
+  // App versions for force update strategy
+  @Get('app-versions')
+  async getAppVersions() {
+    const defaultVersions = {
+      ios: { min_version: '1.0.0', latest_version: '1.0.0' },
+      android: { min_version: '1.0.0', latest_version: '1.0.0' },
+    };
+    const versions =
+      await this.settingsService.getSystemSetting('app_versions');
+    return versions || defaultVersions;
+  }
+
+  // Admin-only update for app versions
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  @Patch('app-versions')
+  async updateAppVersions(@Body() body: any) {
+    return this.settingsService.setSystemSetting(
+      'app_versions',
+      body,
+      'Minimum and latest app versions for force update',
+    );
+  }
+
   // Admin-only update for UI settings
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)

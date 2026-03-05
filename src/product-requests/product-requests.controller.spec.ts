@@ -12,9 +12,11 @@ describe('ProductRequestsController', () => {
     createRequest: jest.fn(),
     listBuyerRequests: jest.fn(),
     findRequestForBuyer: jest.fn(),
+    resolveVendorActorId: jest.fn(async (id: number) => id),
     updateStatusAsBuyer: jest.fn(),
     listOffersForBuyer: jest.fn(),
     listSellerFeed: jest.fn(),
+    listForwardedToSeller: jest.fn(),
     createOffer: jest.fn(),
     listSellerOffersForRequest: jest.fn(),
     acceptOffer: jest.fn(),
@@ -24,6 +26,7 @@ describe('ProductRequestsController', () => {
 
   beforeEach(() => {
     jest.resetAllMocks();
+    service.resolveVendorActorId.mockImplementation(async (id: number) => id);
     controller = new ProductRequestsController(service);
   });
 

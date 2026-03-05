@@ -17,6 +17,14 @@ export class VendorPermissionGuard implements CanActivate {
     private vendorStaffService: VendorStaffService,
   ) {}
 
+  private parseVendorId(value: unknown): number | null {
+    if (Array.isArray(value)) return this.parseVendorId(value[0]);
+    if (value === null || typeof value === 'undefined') return null;
+    const num = Number(value);
+    if (!Number.isInteger(num) || num <= 0) return null;
+    return num;
+  }
+
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const requiredPermission = this.reflector.get<VendorPermission>(
       'vendorPermission',
@@ -32,13 +40,26 @@ export class VendorPermissionGuard implements CanActivate {
 
     // 1. Identify Target Vendor ID
     let vendorId: number;
-    const headerVendorId = request.headers['x-vendor-id'];
+    const headerVendorId = this.parseVendorId(request.headers['x-vendor-id']);
+    const bodyVendorId = this.parseVendorId(
+      request.body?.vendorId ?? request.body?.vendor_id,
+    );
+    const queryVendorId = this.parseVendorId(
+      request.query?.vendorId ?? request.query?.vendor_id,
+    );
+    const paramVendorId = this.parseVendorId(
+      request.params?.vendorId ?? request.params?.vendor_id,
+    );
 
-    if (headerVendorId) {
-      vendorId = parseInt(headerVendorId, 10);
-      if (isNaN(vendorId)) {
-        throw new BadRequestException('Invalid x-vendor-id header');
-      }
+    if (request.headers['x-vendor-id'] && !headerVendorId) {
+      throw new BadRequestException('Invalid x-vendor-id header');
+    }
+
+    const resolvedVendorId =
+      headerVendorId ?? bodyVendorId ?? queryVendorId ?? paramVendorId;
+
+    if (resolvedVendorId) {
+      vendorId = resolvedVendorId;
     } else {
       // Fallback: If user is acting as themselves (Owner mode context implicit)
       vendorId = user.id;

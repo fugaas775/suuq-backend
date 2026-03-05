@@ -29,7 +29,11 @@ export class SettingsService {
     return setting ? setting.value : null;
   }
 
-  async setSystemSetting(key: string, value: any, description?: string): Promise<SystemSetting> {
+  async setSystemSetting(
+    key: string,
+    value: any,
+    description?: string,
+  ): Promise<SystemSetting> {
     let setting = await this.systemSettingRepo.findOne({ where: { key } });
     if (!setting) {
       setting = this.systemSettingRepo.create({ key, value, description });

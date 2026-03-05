@@ -9,6 +9,7 @@ import {
   ValidateNested,
   IsInt,
   IsObject,
+  MaxLength,
 } from 'class-validator';
 import { Type, Transform } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
@@ -97,6 +98,11 @@ export class CreateProductDto {
   description?: string;
 
   @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  privateNote?: string;
+
+  @IsOptional()
   @IsArray()
   @IsString({ each: true })
   tags?: string[];
@@ -169,7 +175,9 @@ export class CreateProductDto {
   @IsOptional()
   @Type(() => Number)
   @IsInt()
-  @ApiPropertyOptional({ description: 'Dispatch time in days (0 = Ready to Ship)' })
+  @ApiPropertyOptional({
+    description: 'Dispatch time in days (0 = Ready to Ship)',
+  })
   dispatchDays?: number;
 
   @IsOptional()

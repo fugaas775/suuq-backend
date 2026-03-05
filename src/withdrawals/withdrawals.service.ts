@@ -10,12 +10,53 @@ import { Withdrawal, WithdrawalStatus } from './entities/withdrawal.entity';
 import { WalletService } from '../wallet/wallet.service';
 import { Wallet } from '../wallet/entities/wallet.entity';
 import { TransactionType } from '../wallet/entities/wallet-transaction.entity';
+import {
+  PayoutProvider,
+  PayoutStatus,
+} from '../wallet/entities/payout-log.entity';
 import { User } from '../users/entities/user.entity';
 import { EmailService } from '../email/email.service';
+import { EbirrService } from '../ebirr/ebirr.service';
 
 @Injectable()
 export class WithdrawalsService {
   private readonly logger = new Logger(WithdrawalsService.name);
+
+  private emitWithdrawalOutcomeEvent(params: {
+    outcome: 'APPROVED' | 'REJECTED';
+    withdrawalId: number;
+    userId: number;
+    method: string;
+    amount: number;
+    status: WithdrawalStatus;
+    providerReference?: string | null;
+    reason?: string | null;
+  }) {
+    this.logger.log(
+      `WITHDRAWAL_OUTCOME ${JSON.stringify({
+        telemetryTag: 'WITHDRAWAL_OUTCOME',
+        ...params,
+        emittedAt: new Date().toISOString(),
+      })}`,
+    );
+  }
+
+  private emitWithdrawalApproveFailedEvent(params: {
+    withdrawalId: number;
+    userId: number;
+    method: string;
+    amount: number;
+    providerReference?: string | null;
+    failureReason: string;
+  }) {
+    this.logger.error(
+      `WITHDRAWAL_APPROVE_FAILED ${JSON.stringify({
+        telemetryTag: 'WITHDRAWAL_APPROVE_FAILED',
+        ...params,
+        emittedAt: new Date().toISOString(),
+      })}`,
+    );
+  }
 
   constructor(
     @InjectRepository(Withdrawal)
@@ -24,6 +65,7 @@ export class WithdrawalsService {
     private readonly walletRepository: Repository<Wallet>,
     private readonly walletService: WalletService,
     private readonly emailService: EmailService,
+    private readonly ebirrService: EbirrService,
   ) {}
 
   async requestWithdrawal(
@@ -34,6 +76,13 @@ export class WithdrawalsService {
   ): Promise<Withdrawal> {
     if (amount <= 0) {
       throw new BadRequestException('Amount must be greater than zero');
+    }
+
+    const normalizedMethod = String(method || '')
+      .trim()
+      .toUpperCase();
+    if (!normalizedMethod) {
+      throw new BadRequestException('Withdrawal method is required');
     }
 
     // if (method === 'TELEBIRR' && !user.telebirrVerified) {
@@ -49,7 +98,7 @@ export class WithdrawalsService {
     const withdrawal = this.withdrawalRepository.create({
       user,
       amount,
-      method,
+      method: normalizedMethod,
       details,
       status: WithdrawalStatus.PENDING,
     });
@@ -58,7 +107,7 @@ export class WithdrawalsService {
 
     // Send email
     this.emailService
-      .sendWithdrawalRequested(user, amount, method, saved.id)
+      .sendWithdrawalRequested(user, amount, normalizedMethod, saved.id)
       .catch((e) =>
         this.logger.error(
           `Failed to send withdrawal request email: ${e.message}`,
@@ -90,8 +139,30 @@ export class WithdrawalsService {
     limit?: number;
     page?: number;
   }) {
+    const startedAt = Date.now();
     const take = query.limit || 20;
     const skip = ((query.page || 1) - 1) * take;
+
+    if (query.userId) {
+      const dbStartedAt = Date.now();
+      const [items, total] = await this.withdrawalRepository.findAndCount({
+        where: { user: { id: query.userId } },
+        order: { createdAt: 'DESC' },
+        take,
+        skip,
+      });
+      const dbMs = Date.now() - dbStartedAt;
+      const totalMs = Date.now() - startedAt;
+      this.logger.log(
+        `[findAll] self-withdrawals userId=${query.userId} count=${items.length} total=${total} dbMs=${dbMs} totalMs=${totalMs}`,
+      );
+      if (totalMs > 700) {
+        this.logger.warn(
+          `[findAll] Slow self-withdrawals userId=${query.userId} totalMs=${totalMs}`,
+        );
+      }
+      return { items, total };
+    }
 
     const qb = this.withdrawalRepository
       .createQueryBuilder('withdrawal')
@@ -107,7 +178,9 @@ export class WithdrawalsService {
       qb.andWhere('withdrawal.status = :status', { status: query.status });
     }
 
+    const dbStartedAt = Date.now();
     const [items, total] = await qb.getManyAndCount();
+    const dbMs = Date.now() - dbStartedAt;
 
     // Manually fetch and map wallet balances to ensure reliability
     const userIds = [
@@ -135,6 +208,13 @@ export class WithdrawalsService {
       });
     }
 
+    const totalMs = Date.now() - startedAt;
+    this.logger.log(
+      `[findAll] admin-withdrawals count=${items.length} total=${total} dbMs=${dbMs} totalMs=${totalMs}`,
+    );
+    if (totalMs > 900) {
+      this.logger.warn(`[findAll] Slow admin-withdrawals totalMs=${totalMs}`);
+    }
     return { items, total };
   }
 
@@ -147,6 +227,123 @@ export class WithdrawalsService {
 
     if (withdrawal.status !== WithdrawalStatus.PENDING) {
       throw new BadRequestException('Withdrawal is not pending');
+    }
+
+    const method = String(withdrawal.method || '')
+      .trim()
+      .toUpperCase();
+
+    if (method === 'EBIRR') {
+      const payoutPhone = String(
+        withdrawal.details?.account_number ||
+          withdrawal.details?.accountNo ||
+          withdrawal.details?.phoneNumber ||
+          withdrawal.user?.vendorPhoneNumber ||
+          withdrawal.user?.phoneNumber ||
+          '',
+      ).trim();
+
+      if (!payoutPhone) {
+        throw new BadRequestException(
+          'Cannot approve EBIRR withdrawal: payout phone/account is missing.',
+        );
+      }
+
+      const referenceId = `WD-${withdrawal.id}-U-${withdrawal.user.id}`;
+
+      try {
+        const payoutResult = await this.ebirrService.sendPayout({
+          phoneNumber: payoutPhone,
+          amount: Number(withdrawal.amount),
+          referenceId,
+          remark: `Withdrawal #${withdrawal.id} approved`,
+        });
+
+        const providerReference =
+          payoutResult?.data?.referenceId ||
+          payoutResult?.data?.issuerTransactionId ||
+          payoutResult?.data?.requestId ||
+          referenceId;
+
+        await this.walletService.debitWallet(
+          withdrawal.user.id,
+          withdrawal.amount,
+          TransactionType.PAYOUT,
+          `Withdrawal Approved via ${method}`,
+        );
+
+        withdrawal.status = WithdrawalStatus.APPROVED;
+        withdrawal.method = method;
+        withdrawal.details = {
+          ...(withdrawal.details || {}),
+          disbursementReference: String(providerReference),
+          disbursedAt: new Date().toISOString(),
+        };
+
+        const saved = await this.withdrawalRepository.save(withdrawal);
+
+        await this.walletService.logPayout({
+          vendorId: withdrawal.user.id,
+          amount: Number(withdrawal.amount),
+          currency: 'ETB',
+          phoneNumber: payoutPhone,
+          provider: PayoutProvider.EBIRR,
+          transactionReference: String(providerReference),
+          status: PayoutStatus.SUCCESS,
+        });
+
+        this.emailService
+          .sendWithdrawalApproved(
+            withdrawal.user,
+            Number(withdrawal.amount),
+            method,
+            saved.id,
+          )
+          .catch((e) =>
+            this.logger.error(
+              `Failed to send withdrawal approval email: ${e.message}`,
+            ),
+          );
+
+        this.emitWithdrawalOutcomeEvent({
+          outcome: 'APPROVED',
+          withdrawalId: saved.id,
+          userId: withdrawal.user.id,
+          method,
+          amount: Number(withdrawal.amount),
+          status: saved.status,
+          providerReference: String(providerReference),
+          reason: null,
+        });
+
+        return saved;
+      } catch (error: any) {
+        this.emitWithdrawalApproveFailedEvent({
+          withdrawalId: withdrawal.id,
+          userId: withdrawal.user.id,
+          method,
+          amount: Number(withdrawal.amount),
+          providerReference: referenceId,
+          failureReason:
+            error?.message || 'EBIRR withdrawal disbursement failed',
+        });
+
+        await this.walletService.logPayout({
+          vendorId: withdrawal.user.id,
+          amount: Number(withdrawal.amount),
+          currency: 'ETB',
+          phoneNumber: payoutPhone,
+          provider: PayoutProvider.EBIRR,
+          transactionReference: referenceId,
+          status: PayoutStatus.FAILED,
+          failureReason:
+            error?.message || 'EBIRR withdrawal disbursement failed',
+        });
+
+        throw new BadRequestException(
+          `EBIRR disbursement failed: ${error?.message || 'Unknown error'}`,
+        );
+      }
     }
 
     // Debit wallet now (on approval) so the transaction appears when funds are truly released
@@ -174,6 +371,17 @@ export class WithdrawalsService {
         ),
       );
 
+    this.emitWithdrawalOutcomeEvent({
+      outcome: 'APPROVED',
+      withdrawalId: saved.id,
+      userId: withdrawal.user.id,
+      method,
+      amount: Number(withdrawal.amount),
+      status: saved.status,
+      providerReference: saved.details?.disbursementReference || null,
+      reason: null,
+    });
+
     return saved;
   }
 
@@ -189,15 +397,15 @@ export class WithdrawalsService {
     }
 
     withdrawal.status = WithdrawalStatus.REJECTED;
+    withdrawal.details = {
+      ...(withdrawal.details || {}),
+      rejectedAt: new Date().toISOString(),
+      rejectedReason: reason || null,
+    };
     const saved = await this.withdrawalRepository.save(withdrawal);
 
-    // Refund the money
-    await this.walletService.creditWallet(
-      withdrawal.user.id,
-      Number(withdrawal.amount),
-      TransactionType.REFUND,
-      `Refund: Withdrawal #${id} Rejected. ${reason || ''}`,
-    );
+    // IMPORTANT: Withdrawal requests do not debit/reserve wallet balance at creation time.
+    // Therefore, rejecting a pending withdrawal must NOT credit wallet, otherwise balance is inflated.
 
     this.emailService
       .sendWithdrawalRejected(
@@ -213,6 +421,19 @@ export class WithdrawalsService {
         ),
       );
 
+    this.emitWithdrawalOutcomeEvent({
+      outcome: 'REJECTED',
+      withdrawalId: saved.id,
+      userId: withdrawal.user.id,
+      method: String(withdrawal.method || '')
+        .trim()
+        .toUpperCase(),
+      amount: Number(withdrawal.amount),
+      status: saved.status,
+      providerReference: saved.details?.disbursementReference || null,
+      reason: reason || null,
+    });
+
     return saved;
   }
 
@@ -224,6 +445,12 @@ export class WithdrawalsService {
         name: 'Bank Transfer',
         enabled: true,
         currencies: ['ETB', 'USD'],
+      },
+      {
+        id: 'EBIRR',
+        name: 'Ebirr',
+        enabled: true,
+        currencies: ['ETB'],
       },
       {
         id: 'TELEBIRR',

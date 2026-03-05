@@ -16,6 +16,8 @@ import {
   PaymentStatus,
   PaymentMethod,
 } from '../orders/entities/order.entity';
+import { TelebirrTransaction } from '../payments/entities/telebirr-transaction.entity';
+import { EbirrTransaction } from '../payments/entities/ebirr-transaction.entity';
 
 type SortKey =
   | 'submit_desc'
@@ -41,6 +43,10 @@ export class AdminAnalyticsController {
     private readonly productRepo: Repository<Product>,
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
+    @InjectRepository(TelebirrTransaction)
+    private readonly telebirrTxRepo: Repository<TelebirrTransaction>,
+    @InjectRepository(EbirrTransaction)
+    private readonly ebirrTxRepo: Repository<EbirrTransaction>,
     private readonly geo: GeoResolverService,
     private readonly dataSource: DataSource,
   ) {}
@@ -105,6 +111,29 @@ export class AdminAnalyticsController {
     const grossCommission = Number(totalCommission || 0);
     const platformRevenueNet = grossCommission - totalEbirrFees;
 
+    const successStates = ['SUCCESS', 'COMPLETED', 'PAID'];
+
+    const telebirrBoostRaw = await this.telebirrTxRepo
+      .createQueryBuilder('tx')
+      .select('COALESCE(SUM(tx.amount), 0)', 'sum')
+      .addSelect('COUNT(*)', 'count')
+      .where("tx.merch_order_id LIKE 'BOOST-%'")
+      .andWhere('UPPER(tx.status) IN (:...states)', { states: successStates })
+      .getRawOne<{ sum: string; count: string }>();
+
+    const ebirrBoostRaw = await this.ebirrTxRepo
+      .createQueryBuilder('tx')
+      .select('COALESCE(SUM(tx.amount), 0)', 'sum')
+      .addSelect('COUNT(*)', 'count')
+      .where("tx.merch_order_id LIKE 'BOOST-%'")
+      .andWhere('UPPER(tx.status) IN (:...states)', { states: successStates })
+      .getRawOne<{ sum: string; count: string }>();
+
+    const boostRevenueTelebirr = Number(telebirrBoostRaw?.sum || 0);
+    const boostRevenueEbirr = Number(ebirrBoostRaw?.sum || 0);
+    const adsRevenue = boostRevenueTelebirr + boostRevenueEbirr;
+    const platformRevenueWithAds = platformRevenueNet + adsRevenue;
+
     return {
       totalMrr: Number(recentCommission || 0), // Aliased to MRR for compatibility
       activeSubscribers, // Aliased to Certified Count
@@ -114,6 +143,15 @@ export class AdminAnalyticsController {
       // Breakdown for Super Admin
       ebirrFees: totalEbirrFees,
       platformRevenue: platformRevenueNet,
+      adsRevenue,
+      adsRevenueBreakdown: {
+        telebirr: boostRevenueTelebirr,
+        ebirr: boostRevenueEbirr,
+        successfulBoostTransactions:
+          Number(telebirrBoostRaw?.count || 0) +
+          Number(ebirrBoostRaw?.count || 0),
+      },
+      platformRevenueWithAds,
 
       // Snake_case aliases
       total_mrr: Number(recentCommission || 0),
@@ -122,6 +160,8 @@ export class AdminAnalyticsController {
       gross_sales: Number(totalGrossSales || 0),
       ebirr_fees: totalEbirrFees,
       platform_revenue: platformRevenueNet,
+      ads_revenue: adsRevenue,
+      platform_revenue_with_ads: platformRevenueWithAds,
     };
   }
 

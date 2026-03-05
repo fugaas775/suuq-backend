@@ -1,18 +1,15 @@
-/* eslint-disable @typescript-eslint/no-unused-vars */
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return */
 import { Injectable, Logger } from '@nestjs/common';
 import { ProductsService } from '../products/products.service';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Category } from '../categories/entities/category.entity';
 import { CurationService } from '../curation/curation.service';
-// Avoid VendorModule import to prevent circular deps; query vendors directly via User repo
 import { toProductCard } from '../products/utils/product-card.util';
-import { User } from '../users/entities/user.entity';
 import { ProductListingService } from '../products/listing/product-listing.service';
 
 import { Favorite } from '../favorites/entities/favorite.entity';
 import { Order } from '../orders/entities/order.entity';
+import { ImageSimilarityService } from '../search/image-similarity.service';
 
 @Injectable()
 export class HomeService {
@@ -65,14 +62,148 @@ export class HomeService {
     private readonly curation: CurationService,
     @InjectRepository(Category)
     private readonly categoryRepo: Repository<Category>,
-    @InjectRepository(User)
-    private readonly userRepo: Repository<User>,
     @InjectRepository(Favorite)
     private readonly favoriteRepo: Repository<Favorite>,
     @InjectRepository(Order)
     private readonly orderRepo: Repository<Order>,
     private readonly listingService: ProductListingService,
+    private readonly imageSimilarity: ImageSimilarityService,
   ) {}
+
+  private async hydrateSimilarImageStrips(
+    cards: Array<Record<string, any>>,
+    opts?: { maxCards?: number; topK?: number; maxDistance?: number },
+  ): Promise<{
+    attempted: number;
+    hydrated: number;
+    fallbackUsed: number;
+    noMatch: number;
+  }> {
+    if (!Array.isArray(cards) || !cards.length) {
+      return { attempted: 0, hydrated: 0, fallbackUsed: 0, noMatch: 0 };
+    }
+
+    const maxCards = Math.min(
+      Math.max(Number(opts?.maxCards) || 6, 1),
+      cards.length,
+    );
+    const topK = Math.min(Math.max(Number(opts?.topK) || 3, 1), 6);
+    const maxDistance = Math.min(
+      Math.max(Number(opts?.maxDistance) || 12, 1),
+      64,
+    );
+
+    const telemetry = {
+      attempted: 0,
+      hydrated: 0,
+      fallbackUsed: 0,
+      noMatch: 0,
+    };
+
+    const assignStrip = (
+      card: Record<string, any>,
+      strip: Array<Record<string, any>>,
+    ) => {
+      (card as any).similarImageStrip = strip;
+      const attrs =
+        typeof (card as any).attributes === 'object' &&
+        (card as any).attributes !== null
+          ? { ...(card as any).attributes }
+          : {};
+      attrs.similarImageStrip = strip;
+      (card as any).attributes = attrs;
+    };
+
+    await Promise.all(
+      cards.slice(0, maxCards).map(async (card) => {
+        const productId = Number(card?.id || 0);
+        if (!productId) return;
+        telemetry.attempted += 1;
+        try {
+          const ownImageUrls = new Set(
+            [
+              (card as any)?.primaryImage?.src,
+              (card as any)?.primaryImage?.thumbnail,
+              (card as any)?.primaryImage?.lowRes,
+              (card as any)?.imageUrl,
+            ]
+              .filter(
+                (url): url is string => typeof url === 'string' && !!url.trim(),
+              )
+              .map((url) => url.trim()),
+          );
+          const isOwnImageEntry = (entry: {
+            src?: string | null;
+            thumbnail?: string | null;
+            lowRes?: string | null;
+          }) => {
+            const entryUrls = [entry.src, entry.thumbnail, entry.lowRes].filter(
+              (url): url is string => typeof url === 'string' && !!url.trim(),
+            );
+            if (!entryUrls.length || !ownImageUrls.size) return false;
+            return entryUrls.every((url) => ownImageUrls.has(url.trim()));
+          };
+
+          const sim = await this.imageSimilarity.searchSimilarByProduct(
+            productId,
+            {
+              topK,
+              maxDistance,
+              sameCategoryBoost: 2,
+              sameCityBoost: 1,
+              diversifyVendors: true,
+            },
+          );
+
+          const strip = (sim.matches || [])
+            .slice(0, topK)
+            .map((m) => ({
+              productId: Number(m.productId),
+              thumbnail: m.thumbnail ?? null,
+              lowRes: m.lowRes ?? null,
+              src: m.src ?? null,
+              distance: Number(m.distance),
+            }))
+            .filter(
+              (entry) => !!entry.thumbnail || !!entry.lowRes || !!entry.src,
+            )
+            .filter((entry) => Number(entry.productId) !== productId)
+            .filter((entry) => !isOwnImageEntry(entry));
+
+          if (strip.length) {
+            assignStrip(card, strip);
+            telemetry.hydrated += 1;
+            return;
+          }
+
+          const fallback = (sim.fallbackImages || [])
+            .slice(0, topK)
+            .map((m) => ({
+              productId: Number(m.productId || productId),
+              thumbnail: m.thumbnail ?? null,
+              lowRes: m.lowRes ?? null,
+              src: m.src ?? null,
+            }))
+            .filter(
+              (entry) => !!entry.thumbnail || !!entry.lowRes || !!entry.src,
+            )
+            .filter((entry) => Number(entry.productId) !== productId)
+            .filter((entry) => !isOwnImageEntry(entry));
+          if (fallback.length) assignStrip(card, fallback);
+          if (fallback.length) {
+            telemetry.fallbackUsed += 1;
+            return;
+          }
+          telemetry.noMatch += 1;
+        } catch {
+          // Non-fatal: leave card as-is
+          telemetry.noMatch += 1;
+        }
+      }),
+    );
+
+    return telemetry;
+  }
 
   async getRecommended(
     userId: number,
@@ -297,85 +428,135 @@ export class HomeService {
     refreshReason?: string;
     requestId?: string;
     geoCountryStrict?: boolean;
+    hydrationMode?: 'initial' | 'deferred' | 'full';
   }) {
     const page = Math.max(1, Number(opts.page) || 1);
     const perPage = Math.min(Math.max(Number(opts.perPage) || 20, 1), 50);
     const currency = opts.currency;
+    const refreshReason = (opts.refreshReason || '').trim().toLowerCase();
+    const mode = (opts.hydrationMode || '').trim().toLowerCase();
+    const hydrationMode: 'initial' | 'deferred' | 'full' | undefined =
+      mode === 'initial' || mode === 'deferred' || mode === 'full'
+        ? mode
+        : undefined;
+    const isInitialLoad =
+      hydrationMode === 'initial' ||
+      (!hydrationMode &&
+        ['initial', 'initial_load', ''].includes(refreshReason));
+    const isDeferredHydration =
+      hydrationMode === 'deferred' ||
+      refreshReason === 'deferred_hydration' ||
+      refreshReason === 'post_first_paint' ||
+      refreshReason === 'post_initial' ||
+      refreshReason === 'hydrate';
+    const shouldFetchExtended = !isInitialLoad || hydrationMode === 'full';
+    const shouldFetchCurated = shouldFetchExtended || isInitialLoad;
 
     // Collect non-fatal errors per section
     const errors: Array<{ section: string; message: string }> = [];
 
+    const sectionTimeoutMs = Math.max(
+      300,
+      Number(process.env.HOME_FEED_SECTION_TIMEOUT_MS || 2500),
+    );
+    const initialCuratedTimeoutMs = Math.max(
+      300,
+      Number(process.env.HOME_INITIAL_CURATED_TIMEOUT_MS || 900),
+    );
+    const withDeadline = async <T>(
+      section: string,
+      promise: Promise<T>,
+      timeoutMs: number,
+      fallback: T,
+    ): Promise<T> => {
+      let timer: NodeJS.Timeout | null = null;
+      try {
+        const timeoutPromise = new Promise<T>((resolve) => {
+          timer = setTimeout(() => {
+            errors.push({ section, message: `timeout:${timeoutMs}ms` });
+            this.logger.warn(
+              `home_feed_section_timeout section=${section} timeoutMs=${timeoutMs}`,
+            );
+            resolve(fallback);
+          }, timeoutMs);
+        });
+
+        const value = await Promise.race([promise, timeoutPromise]);
+        return value;
+      } catch (e: any) {
+        errors.push({ section, message: e?.message || `${section} failed` });
+        this.logger.error(`Failed to get ${section}`, e);
+        return fallback;
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+    };
+
+    const configFallback = {
+      featuredCategories: [],
+      eastAfricaCountries: [],
+      defaultSorts: {
+        homeAll: 'rating_desc',
+        bestSellers: 'sales_desc',
+        topRated: 'rating_desc',
+      },
+    } as any;
     // 1) Featured categories (reuse existing config helper)
-    const configPromise = this.getHomeConfig().catch((e) => {
-      this.logger.error('Failed to get home config', e);
-      errors.push({
-        section: 'featuredCategories',
-        message: e?.message || 'config failed',
-      });
-      return {
-        featuredCategories: [],
-        eastAfricaCountries: [],
-        defaultSorts: {
-          homeAll: 'rating_desc',
-          bestSellers: 'sales_desc',
-          topRated: 'rating_desc',
-        },
-      } as any;
-    });
+    const configPromise = shouldFetchExtended
+      ? withDeadline(
+          'featuredCategories',
+          this.getHomeConfig(),
+          sectionTimeoutMs,
+          configFallback,
+        )
+      : Promise.resolve(configFallback);
 
     // 2) Curated sections (parallel via tags home-new/home-best)
-    const curatedPromise = Promise.all([
-      this.curation
-        .getSection('home-new', {
-          limit: 10,
-          cursor: null,
-          view: 'grid',
-          currency,
-        })
-        .catch((e) => {
-          this.logger.error('Failed to get curatedNew section', e);
-          errors.push({
-            section: 'curatedNew',
-            message: e?.message || 'curatedNew failed',
-          });
-          return { items: [] } as any;
-        }),
-      this.curation
-        .getSection('home-best', {
-          limit: 10,
-          cursor: null,
-          view: 'grid',
-          currency,
-        })
-        .catch((e) => {
-          this.logger.error('Failed to get curatedBest section', e);
-          errors.push({
-            section: 'curatedBest',
-            message: e?.message || 'curatedBest failed',
-          });
-          return { items: [] } as any;
-        }),
-    ]);
+    const curatedPromise = shouldFetchCurated
+      ? Promise.all([
+          withDeadline(
+            'curatedNew',
+            this.curation.getSection('home-new', {
+              limit: 10,
+              cursor: null,
+              view: 'grid',
+              currency,
+            }),
+            shouldFetchExtended ? sectionTimeoutMs : initialCuratedTimeoutMs,
+            { items: [] } as any,
+          ),
+          withDeadline(
+            'curatedBest',
+            this.curation.getSection('home-best', {
+              limit: 10,
+              cursor: null,
+              view: 'grid',
+              currency,
+            }),
+            shouldFetchExtended ? sectionTimeoutMs : initialCuratedTimeoutMs,
+            { items: [] } as any,
+          ),
+        ])
+      : Promise.resolve([{ items: [] }, { items: [] }] as any);
 
     // 2.5) Featured Products (for Carousel) - uses ProductsService to ensure consistent expiry logic
-    const featuredProductsPromise = this.productsService
-      .findFiltered({
+    const featuredProductsPromise = withDeadline(
+      'featuredProducts',
+      this.productsService.findFiltered({
         page: 1,
         perPage: 8,
         featured: true,
         view: 'grid',
         currency,
         sort: 'created_desc',
-      } as any)
-      .catch((e) => {
-        this.logger.error('Failed to get featuredProducts', e);
-        return { items: [] } as any;
-      });
+      } as any),
+      sectionTimeoutMs,
+      { items: [] } as any,
+    );
 
     const requestId =
       (opts.requestId || '').trim() ||
       `home-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-    const refreshReason = (opts.refreshReason || '').trim().toLowerCase();
     const baseBucket =
       (opts.rotationBucket || '').trim() ||
       (() => {
@@ -397,356 +578,373 @@ export class HomeService {
       .join('|');
 
     // 3) Explore products: use new engine behind flag, fallback to legacy service
-    const explorePromise = (async () => {
-      const useV2 = String(process.env.HOME_EXPLORE_ENGINE_V2 || '1') === '1';
-      try {
-        if (useV2) {
-          const baseListingQuery = {
-            page,
-            perPage: Math.min(Math.max(perPage * 2, perPage), 100),
-            sort: (opts.sort as any) || ('created_desc' as any),
-            geoPriority: true,
-            userCountry: opts.userCountry,
-            country: opts.userCountry,
-            // Category-first flags; if provided, enable prioritization
-            categoryId: Array.isArray(opts.categoryId) ? opts.categoryId : undefined,
-            categorySlug: opts.categorySlug,
-            categoryFirst: opts.categoryFirst,
-            includeDescendants: opts.includeDescendants,
-            // Property passthrough
-            listingType: opts.listingType as any,
-            listingTypeMode: opts.listingTypeMode as any,
-            currency,
-            view: 'grid',
-            geoCountryStrict: opts.geoCountryStrict !== false,
-            geoRotationSeed: rotationSeed,
-            geoRotationBucket: inferredBucket,
-          } as any;
-
-          const merged: any[] = [];
-          const seenIds = new Set<number>();
-          let usedFallbackFill = false;
-          const tierCounts: {
-            city_country: number;
-            region_country: number;
-            country_only: number;
-            east_africa: number;
-            world: number;
-          } = {
-            city_country: 0,
-            region_country: 0,
-            country_only: 0,
-            east_africa: 0,
-            world: 0,
-          };
-          const tierTotalHints: {
-            city_country: number;
-            region_country: number;
-            country_only: number;
-            east_africa: number;
-            world: number;
-          } = {
-            city_country: 0,
-            region_country: 0,
-            country_only: 0,
-            east_africa: 0,
-            world: 0,
-          };
-
-          const collectTier = async (
-            tier: keyof typeof tierCounts,
-            overrides: Record<string, any>,
-          ) => {
-            if (merged.length >= perPage) return;
-            try {
-              const tierRes = await this.listingService.list(
-                {
-                  ...baseListingQuery,
-                  ...overrides,
-                },
-                { mapCards: false },
-              );
-              const tierTotal = Number((tierRes as any)?.total || 0);
-              if (Number.isFinite(tierTotal) && tierTotal > tierTotalHints[tier]) {
-                tierTotalHints[tier] = tierTotal;
-              }
-              for (const item of tierRes.items || []) {
-                const id = Number((item as any)?.id);
-                if (!Number.isFinite(id) || id < 1 || seenIds.has(id)) continue;
-                seenIds.add(id);
-                merged.push(item as any);
-                tierCounts[tier] += 1;
-                if (merged.length >= perPage) break;
-              }
-            } catch (e) {
-              this.logger.warn(
-                `home_feed_explore_tier_failed tier=${tier} requestId=${requestId}`,
-              );
-            }
-          };
-
-          const country = (opts.userCountry || '').trim();
-          const city = (opts.userCity || '').trim();
-          const region = (opts.userRegion || '').trim();
-
-          if (country && city) {
-            await collectTier('city_country', {
-              userCity: city,
-              userRegion: undefined,
-              userCountry: country,
-              country,
-              geoAppend: false,
-            });
-          }
-          if (country && region) {
-            await collectTier('region_country', {
-              userCity: undefined,
-              userRegion: region,
-              userCountry: country,
-              country,
-              geoAppend: false,
-            });
-          }
-          if (country) {
-            await collectTier('country_only', {
-              userCity: undefined,
-              userRegion: undefined,
-              userCountry: country,
-              country,
-              geoAppend: false,
-            });
-          }
-
-          if (country && merged.length < perPage) {
-            const normalizedCountry = country.trim().toUpperCase();
-            const normalizedNoSpace = normalizedCountry.replace(/\s+/g, '');
-            const eastAfricaCandidates = this.eastAfricaCountryHints.filter(
-              (hint) => {
-                const upperHint = hint.toUpperCase();
-                const upperHintNoSpace = upperHint.replace(/\s+/g, '');
-                return (
-                  upperHint !== normalizedCountry &&
-                  upperHintNoSpace !== normalizedNoSpace
-                );
-              },
+    const explorePromise = withDeadline(
+      'exploreProducts',
+      (async () => {
+        const useV2 = String(process.env.HOME_EXPLORE_ENGINE_V2 || '1') === '1';
+        try {
+          if (useV2) {
+            const tierTimeoutMs = Math.max(
+              300,
+              Number(process.env.HOME_EXPLORE_TIER_TIMEOUT_MS || 1200),
             );
+            const initialLoad = ['initial', 'initial_load', ''].includes(
+              (opts.refreshReason || '').trim().toLowerCase(),
+            );
+            const maxTierCalls = Math.max(
+              1,
+              Number(
+                process.env.HOME_EXPLORE_MAX_TIERS || (initialLoad ? 2 : 4),
+              ),
+            );
+            const tierBudgetMs = Math.max(
+              1000,
+              Number(
+                process.env.HOME_EXPLORE_TIER_BUDGET_MS ||
+                  (initialLoad ? 4500 : 6500),
+              ),
+            );
+            const tierStartedAt = Date.now();
 
-            for (const eastCountry of eastAfricaCandidates) {
-              if (merged.length >= perPage) break;
-              await collectTier('east_africa', {
-                userCity: undefined,
-                userRegion: undefined,
-                userCountry: eastCountry,
-                country: eastCountry,
-                geoAppend: false,
-                geoCountryStrict: true,
-              });
-            }
-          }
-
-          if ((opts.geoAppend ?? true) && merged.length < perPage) {
-            await collectTier('world', {
-              userCity: undefined,
-              userRegion: undefined,
-              userCountry: undefined,
-              country: undefined,
-              geoAppend: true,
-              geoCountryStrict: false,
-            });
-          }
-
-          if (merged.length < perPage) {
-            usedFallbackFill = true;
-            const fill = await this.productsService.findFiltered({
+            const baseListingQuery = {
               page,
-              perPage,
+              perPage: Math.min(Math.max(perPage + 4, perPage), 40),
               sort: (opts.sort as any) || ('created_desc' as any),
-              view: 'grid',
+              geoPriority: true,
+              userCountry: opts.userCountry,
+              country: opts.userCountry,
+              // Category-first flags; if provided, enable prioritization
+              categoryId: Array.isArray(opts.categoryId)
+                ? opts.categoryId
+                : undefined,
+              categorySlug: opts.categorySlug,
+              categoryFirst: opts.categoryFirst,
+              includeDescendants: opts.includeDescendants,
+              // Property passthrough
+              listingType: opts.listingType as any,
+              listingTypeMode: opts.listingTypeMode as any,
               currency,
-            } as any);
-            for (const item of fill.items || []) {
-              const id = Number((item as any)?.id);
-              if (!Number.isFinite(id) || id < 1 || seenIds.has(id)) continue;
-              seenIds.add(id);
-              merged.push(item as any);
-              if (merged.length >= perPage) break;
-            }
-            const fallbackTotal = Number((fill as any)?.total || 0);
-            if (Number.isFinite(fallbackTotal) && fallbackTotal > tierTotalHints.world) {
-              tierTotalHints.world = fallbackTotal;
-            }
-          }
+              view: 'grid',
+              geoCountryStrict: opts.geoCountryStrict !== false,
+              geoRotationSeed: rotationSeed,
+              geoRotationBucket: inferredBucket,
+            } as any;
 
-          const geoScopeUsed =
-            (tierCounts.city_country > 0 && 'city_country') ||
-            (tierCounts.region_country > 0 && 'region_country') ||
-            (tierCounts.country_only > 0 && 'country_only') ||
-            (tierCounts.east_africa > 0 && 'east_africa') ||
-            (tierCounts.world > 0 && 'world') ||
-            'none';
-
-          this.logger.log(
-            JSON.stringify({
-              event: 'home_feed_explore_fetch',
-              requestId,
-              reason: opts.refreshReason || 'initial',
-              geoScopeUsed,
-              rotationBucket: inferredBucket,
-              resultCount: merged.length,
-              tiers: tierCounts,
-            }),
-          );
-
-          const estimatedTotal = Math.max(
-            merged.length,
-            tierTotalHints.city_country,
-            tierTotalHints.region_country,
-            tierTotalHints.country_only,
-            tierTotalHints.east_africa,
-            tierTotalHints.world,
-          );
-
-          return {
-            items: merged,
-            total: estimatedTotal,
-            currentPage: page,
-            meta: {
-              requestId,
-              refreshReason: opts.refreshReason || 'initial',
-              geoScopeUsed,
-              rotationBucket: inferredBucket,
-              exploreSource: usedFallbackFill ? 'fallback' : 'tiered',
-              tierCounts,
-            },
-          } as any;
-        }
-        // Legacy path
-        const fallback = await this.productsService.findFiltered({
-          page,
-          perPage,
-          sort: (opts.sort as any) || ('created_desc' as any),
-          geoPriority: true,
-          userCity: opts.userCity,
-          userRegion: opts.userRegion,
-          userCountry: opts.userCountry,
-          categoryId: Array.isArray(opts.categoryId)
-            ? opts.categoryId
-            : undefined,
-          categorySlug: opts.categorySlug,
-          categoryFirst: opts.categoryFirst,
-          includeDescendants: opts.includeDescendants,
-          geoAppend: opts.geoAppend,
-          listing_type: opts.listingType as any,
-          listingTypeMode: opts.listingTypeMode as any,
-          currency,
-          view: 'grid',
-        } as any);
-        return fallback as any;
-      } catch (e: any) {
-        this.logger.error('Failed to get exploreProducts', e);
-        errors.push({
-          section: 'exploreProducts',
-          message: e?.message || 'explore failed',
-        });
-        return {
-          items: [],
-          total: 0,
-          currentPage: page,
-          meta: {
-            requestId,
-            refreshReason: opts.refreshReason || 'initial',
-            geoScopeUsed: 'none',
-            rotationBucket: inferredBucket,
-            exploreSource: 'fallback',
-            tierCounts: {
+            const merged: any[] = [];
+            const seenIds = new Set<number>();
+            let usedFallbackFill = false;
+            const tierCounts: {
+              city_country: number;
+              region_country: number;
+              country_only: number;
+              east_africa: number;
+              world: number;
+            } = {
               city_country: 0,
               region_country: 0,
               country_only: 0,
               east_africa: 0,
               world: 0,
+            };
+            const tierTotalHints: {
+              city_country: number;
+              region_country: number;
+              country_only: number;
+              east_africa: number;
+              world: number;
+            } = {
+              city_country: 0,
+              region_country: 0,
+              country_only: 0,
+              east_africa: 0,
+              world: 0,
+            };
+            let tierCalls = 0;
+
+            const tierBudgetExceeded = () =>
+              Date.now() - tierStartedAt >= tierBudgetMs;
+            const tierCallLimitReached = () => tierCalls >= maxTierCalls;
+
+            const collectTier = async (
+              tier: keyof typeof tierCounts,
+              overrides: Record<string, any>,
+            ) => {
+              if (merged.length >= perPage) return;
+              if (tierCallLimitReached() || tierBudgetExceeded()) return;
+              tierCalls += 1;
+              try {
+                let timer: NodeJS.Timeout | null = null;
+                const timeoutResult = { items: [], total: 0 } as any;
+                const timeoutPromise = new Promise<any>((resolve) => {
+                  timer = setTimeout(
+                    () => resolve(timeoutResult),
+                    tierTimeoutMs,
+                  );
+                });
+                const tierRes = await Promise.race([
+                  this.listingService.list(
+                    {
+                      ...baseListingQuery,
+                      ...overrides,
+                    },
+                    { mapCards: false },
+                  ),
+                  timeoutPromise,
+                ]);
+                if (timer) clearTimeout(timer);
+
+                const tierTotal = Number(tierRes?.total || 0);
+                if (
+                  Number.isFinite(tierTotal) &&
+                  tierTotal > tierTotalHints[tier]
+                ) {
+                  tierTotalHints[tier] = tierTotal;
+                }
+                for (const item of tierRes.items || []) {
+                  const id = Number(item?.id);
+                  if (!Number.isFinite(id) || id < 1 || seenIds.has(id))
+                    continue;
+                  seenIds.add(id);
+                  merged.push(item);
+                  tierCounts[tier] += 1;
+                  if (merged.length >= perPage) break;
+                }
+              } catch (e) {
+                this.logger.warn(
+                  `home_feed_explore_tier_failed tier=${tier} requestId=${requestId}`,
+                );
+              }
+            };
+
+            const country = (opts.userCountry || '').trim();
+            const city = (opts.userCity || '').trim();
+            const region = (opts.userRegion || '').trim();
+
+            if (country && city) {
+              await collectTier('city_country', {
+                userCity: city,
+                userRegion: undefined,
+                userCountry: country,
+                country,
+                geoAppend: false,
+              });
+            }
+            if (country && region) {
+              await collectTier('region_country', {
+                userCity: undefined,
+                userRegion: region,
+                userCountry: country,
+                country,
+                geoAppend: false,
+              });
+            }
+            if (country) {
+              await collectTier('country_only', {
+                userCity: undefined,
+                userRegion: undefined,
+                userCountry: country,
+                country,
+                geoAppend: false,
+              });
+            }
+
+            if (country && merged.length < perPage) {
+              const normalizedCountry = country.trim().toUpperCase();
+              const normalizedNoSpace = normalizedCountry.replace(/\s+/g, '');
+              const eastAfricaCandidates = this.eastAfricaCountryHints.filter(
+                (hint) => {
+                  const upperHint = hint.toUpperCase();
+                  const upperHintNoSpace = upperHint.replace(/\s+/g, '');
+                  return (
+                    upperHint !== normalizedCountry &&
+                    upperHintNoSpace !== normalizedNoSpace
+                  );
+                },
+              );
+
+              for (const eastCountry of eastAfricaCandidates) {
+                if (merged.length >= perPage) break;
+                await collectTier('east_africa', {
+                  userCity: undefined,
+                  userRegion: undefined,
+                  userCountry: eastCountry,
+                  country: eastCountry,
+                  geoAppend: false,
+                  geoCountryStrict: true,
+                });
+              }
+            }
+
+            if ((opts.geoAppend ?? true) && merged.length < perPage) {
+              await collectTier('world', {
+                userCity: undefined,
+                userRegion: undefined,
+                userCountry: undefined,
+                country: undefined,
+                geoAppend: true,
+                geoCountryStrict: false,
+              });
+            }
+
+            if (merged.length < perPage) {
+              usedFallbackFill = true;
+              let fillTimer: NodeJS.Timeout | null = null;
+              const fillTimeoutMs = Math.max(
+                300,
+                Number(process.env.HOME_EXPLORE_FILL_TIMEOUT_MS || 1500),
+              );
+              const fillFallback = {
+                items: [],
+                total: merged.length,
+                currentPage: page,
+              } as any;
+              const fill = await Promise.race([
+                this.productsService.findFiltered({
+                  page,
+                  perPage,
+                  sort: (opts.sort as any) || ('created_desc' as any),
+                  view: 'grid',
+                  currency,
+                } as any),
+                new Promise<any>((resolve) => {
+                  fillTimer = setTimeout(
+                    () => resolve(fillFallback),
+                    fillTimeoutMs,
+                  );
+                }),
+              ]);
+              if (fillTimer) clearTimeout(fillTimer);
+              for (const item of fill.items || []) {
+                const id = Number(item?.id);
+                if (!Number.isFinite(id) || id < 1 || seenIds.has(id)) continue;
+                seenIds.add(id);
+                merged.push(item);
+                if (merged.length >= perPage) break;
+              }
+              const fallbackTotal = Number(fill?.total || 0);
+              if (
+                Number.isFinite(fallbackTotal) &&
+                fallbackTotal > tierTotalHints.world
+              ) {
+                tierTotalHints.world = fallbackTotal;
+              }
+            }
+
+            const geoScopeUsed =
+              (tierCounts.city_country > 0 && 'city_country') ||
+              (tierCounts.region_country > 0 && 'region_country') ||
+              (tierCounts.country_only > 0 && 'country_only') ||
+              (tierCounts.east_africa > 0 && 'east_africa') ||
+              (tierCounts.world > 0 && 'world') ||
+              'none';
+
+            this.logger.log(
+              JSON.stringify({
+                event: 'home_feed_explore_fetch',
+                requestId,
+                reason: opts.refreshReason || 'initial',
+                geoScopeUsed,
+                rotationBucket: inferredBucket,
+                resultCount: merged.length,
+                tiers: tierCounts,
+              }),
+            );
+
+            const estimatedTotal = Math.max(
+              merged.length,
+              tierTotalHints.city_country,
+              tierTotalHints.region_country,
+              tierTotalHints.country_only,
+              tierTotalHints.east_africa,
+              tierTotalHints.world,
+            );
+
+            return {
+              items: merged,
+              total: estimatedTotal,
+              currentPage: page,
+              meta: {
+                requestId,
+                refreshReason: opts.refreshReason || 'initial',
+                geoScopeUsed,
+                rotationBucket: inferredBucket,
+                exploreSource: usedFallbackFill ? 'fallback' : 'tiered',
+                tierCounts,
+              },
+            } as any;
+          }
+          // Legacy path
+          const fallback = await this.productsService.findFiltered({
+            page,
+            perPage,
+            sort: (opts.sort as any) || ('created_desc' as any),
+            geoPriority: true,
+            userCity: opts.userCity,
+            userRegion: opts.userRegion,
+            userCountry: opts.userCountry,
+            categoryId: Array.isArray(opts.categoryId)
+              ? opts.categoryId
+              : undefined,
+            categorySlug: opts.categorySlug,
+            categoryFirst: opts.categoryFirst,
+            includeDescendants: opts.includeDescendants,
+            geoAppend: opts.geoAppend,
+            listing_type: opts.listingType as any,
+            listingTypeMode: opts.listingTypeMode as any,
+            currency,
+            view: 'grid',
+          } as any);
+          return fallback as any;
+        } catch (e: any) {
+          this.logger.error('Failed to get exploreProducts', e);
+          errors.push({
+            section: 'exploreProducts',
+            message: e?.message || 'explore failed',
+          });
+          return {
+            items: [],
+            total: 0,
+            currentPage: page,
+            meta: {
+              requestId,
+              refreshReason: opts.refreshReason || 'initial',
+              geoScopeUsed: 'none',
+              rotationBucket: inferredBucket,
+              exploreSource: 'fallback',
+              tierCounts: {
+                city_country: 0,
+                region_country: 0,
+                country_only: 0,
+                east_africa: 0,
+                world: 0,
+              },
             },
+          } as any;
+        }
+      })(),
+      Math.max(1200, Number(process.env.HOME_EXPLORE_DEADLINE_MS || 6000)),
+      {
+        items: [],
+        total: 0,
+        currentPage: page,
+        meta: {
+          requestId,
+          refreshReason: opts.refreshReason || 'initial',
+          geoScopeUsed: 'none',
+          rotationBucket: inferredBucket,
+          exploreSource: 'fallback',
+          tierCounts: {
+            city_country: 0,
+            region_country: 0,
+            country_only: 0,
+            east_africa: 0,
+            world: 0,
           },
-        } as any;
-      }
-    })();
+        },
+      } as any,
+    );
 
-    // 4) Featured vendors: leverage public listing with thresholds
-    // Use raw SQL to completely avoid accidental enum casts (e.g., verificationStatus enum)
-    const vendorsPromise = (async () => {
-      const uc = (opts.userCountry || '').trim();
-      const ur = (opts.userRegion || '').trim();
-      const ci = (opts.userCity || '').trim();
-      // Build ORDER BY geo-preference fragments conditionally
-      const geoOrders: string[] = [];
-      const params: any[] = [];
-      let p = 1;
-      // roles filter value as text[]
-      const rolesParamIndex = p++;
-      params.push(['VENDOR']);
-      // booleans
-      const isActiveIndex = p++;
-      params.push(true);
-      const verifiedIndex = p++;
-      params.push(true);
-      if (uc) {
-        const idx = p++;
-        geoOrders.push(
-          `CASE WHEN UPPER(COALESCE("registrationCountry", '')) = UPPER($${idx}) THEN 1 ELSE 0 END DESC`,
-        );
-        params.push(uc);
-      }
-      if (ur) {
-        const idx = p++;
-        geoOrders.push(
-          `CASE WHEN LOWER(COALESCE("registrationRegion", '')) = LOWER($${idx}) THEN 1 ELSE 0 END DESC`,
-        );
-        params.push(ur);
-      }
-      if (ci) {
-        const idx = p++;
-        geoOrders.push(
-          `CASE WHEN LOWER(COALESCE("registrationCity", '')) = LOWER($${idx}) THEN 1 ELSE 0 END DESC`,
-        );
-        params.push(ci);
-      }
-
-      const orderBy = [
-        ...geoOrders,
-        '"numberOfSales" DESC NULLS LAST',
-        'rating DESC NULLS LAST',
-      ].join(', ');
-
-      const sql = `
-        SELECT id,
-               "displayName",
-               "storeName",
-               "vendorAvatarUrl",
-               "avatarUrl",
-               rating,
-               "numberOfSales",
-               "registrationCountry",
-               "registrationRegion",
-               "registrationCity"
-        FROM "user"
-        WHERE roles @> ($${rolesParamIndex})::text[]
-          AND "isActive" = $${isActiveIndex}
-          AND verified = $${verifiedIndex}
-        ORDER BY ${orderBy}
-        LIMIT 12
-      `;
-
-      try {
-        const rows = await this.userRepo.query(sql, params);
-        return { items: rows as any[] };
-      } catch (e: any) {
-        this.logger.error('Failed to get featuredVendors', e);
-        errors.push({
-          section: 'featuredVendors',
-          message: e?.message || 'vendors failed',
-        });
-        return { items: [] };
-      }
-    })();
+    const vendorsPromise = Promise.resolve({ items: [] } as any);
 
     const [config, curated, explore, vendorList, featuredProdList] =
       await Promise.all([
@@ -758,40 +956,79 @@ export class HomeService {
       ]);
 
     const [curatedNew, curatedBest] = curated;
-    const exploreCards = (explore.items || []).map((p: any) => toProductCard(p));
+    const exploreCards = (explore.items || []).map((p: any) =>
+      toProductCard(p),
+    );
     const exploreTotal = explore.total;
     const explorePage = explore.currentPage || page;
 
+    const immersiveSimilarEnabled =
+      String(process.env.HOME_IMMERSIVE_SIMILAR_IMAGES_ENABLED || '0') === '1';
+    let immersiveStripTelemetry = {
+      enabled: immersiveSimilarEnabled,
+      attempted: 0,
+      hydrated: 0,
+      fallbackUsed: 0,
+      noMatch: 0,
+    };
+    if (immersiveSimilarEnabled && exploreCards.length > 0) {
+      const initialCardLimit = Math.max(
+        1,
+        Number(process.env.HOME_IMMERSIVE_SIMILAR_IMAGES_INITIAL_CARDS || 6),
+      );
+      const fullCardLimit = Math.max(
+        initialCardLimit,
+        Number(process.env.HOME_IMMERSIVE_SIMILAR_IMAGES_FULL_CARDS || 18),
+      );
+      const maxCardsToHydrate = isInitialLoad
+        ? initialCardLimit
+        : fullCardLimit;
+      const maxDistance = Math.max(
+        1,
+        Number(process.env.HOME_IMMERSIVE_SIMILAR_MAX_DISTANCE || 12),
+      );
+      const counts = await this.hydrateSimilarImageStrips(
+        exploreCards as any[],
+        {
+          maxCards: maxCardsToHydrate,
+          topK: 3,
+          maxDistance,
+        },
+      );
+      immersiveStripTelemetry = {
+        enabled: true,
+        attempted: counts.attempted,
+        hydrated: counts.hydrated,
+        fallbackUsed: counts.fallbackUsed,
+        noMatch: counts.noMatch,
+      };
+    }
+
+    const pendingSections: string[] = [];
+    if (!shouldFetchExtended) pendingSections.push('featuredCategories');
+    if (!shouldFetchCurated) pendingSections.push('curatedNew', 'curatedBest');
+
     const payload: any = {
-      featuredCategories: config.featuredCategories,
+      featuredCategories: shouldFetchExtended ? config.featuredCategories : [],
       featuredProducts: (featuredProdList.items || []).map((p: any) =>
         toProductCard(p),
       ),
       curatedNew: {
         key: 'home-new',
         title: 'New Arrivals',
-        items: (curatedNew.items || []).map((p: any) => toProductCard(p)),
+        items: shouldFetchCurated
+          ? (curatedNew.items || []).map((p: any) => toProductCard(p))
+          : [],
         seeAllFilters: { tag: 'home-new' },
       },
       curatedBest: {
         key: 'home-best',
         title: 'Best Sellers',
-        items: (curatedBest.items || []).map((p: any) => toProductCard(p)),
+        items: shouldFetchCurated
+          ? (curatedBest.items || []).map((p: any) => toProductCard(p))
+          : [],
         seeAllFilters: { tag: 'home-best' },
       },
-      featuredVendors: (vendorList.items || []).map((u: User) => ({
-        id: u.id,
-        displayName: u.displayName ?? null,
-        storeName: u.storeName ?? null,
-        avatarUrl: u.vendorAvatarUrl || u.avatarUrl || null,
-        rating: u.rating ?? 0,
-        numberOfSales: u.numberOfSales ?? 0,
-        location: {
-          country: u.registrationCountry ?? null,
-          region: u.registrationRegion ?? null,
-          city: u.registrationCity ?? null,
-        },
-      })),
       exploreProducts: {
         items: exploreCards,
         total: exploreTotal,
@@ -805,6 +1042,16 @@ export class HomeService {
       },
       exploreProductsItems: exploreCards,
       explore_products_items: exploreCards,
+      deferredHydration: {
+        enabled: pendingSections.length > 0,
+        pendingSections,
+        nextRequest: pendingSections.length
+          ? {
+              refreshReason: 'deferred_hydration',
+              hydrationMode: 'deferred',
+            }
+          : null,
+      },
       meta: {
         requestId,
         refreshReason: opts.refreshReason || 'initial',
@@ -826,6 +1073,12 @@ export class HomeService {
           east_africa: 0,
           world: 0,
         },
+        immersiveStripTelemetry,
+        hydrationStage: pendingSections.length
+          ? 'initial_minimal'
+          : isDeferredHydration
+            ? 'deferred_full'
+            : 'full',
       },
     };
 

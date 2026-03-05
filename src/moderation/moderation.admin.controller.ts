@@ -53,11 +53,10 @@ export class AdminModerationController {
     );
 
     const where: any = {};
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+
     if (status) where.status = status;
 
     const [items, total] = await this.reportRepo.findAndCount({
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
       where,
       relations: ['reporter', 'product', 'product.vendor', 'product.images'],
       order: { createdAt: 'DESC' },
@@ -72,9 +71,7 @@ export class AdminModerationController {
     // Remove images array to force frontend to use the thumbnail property
     // which is computed correctly by the backend now.
     plainItems.forEach((item) => {
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
       if (item.product && item.product.images) {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
         delete item.product.images;
       }
     });
@@ -94,7 +91,7 @@ export class AdminModerationController {
   @Patch('reports/:id/block-product')
   async blockProductFromReport(
     @Param('id', ParseIntPipe) id: number,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+
     @Body() _body: { reason?: string },
   ) {
     const report = await this.reportRepo.findOne({
@@ -114,25 +111,24 @@ export class AdminModerationController {
   }
 
   @Patch(['reports/:id/restore-product', 'reports/:id/restore'])
-  async restoreProductFromReport(
-    @Param('id', ParseIntPipe) id: number,
-  ) {
+  async restoreProductFromReport(@Param('id', ParseIntPipe) id: number) {
     const report = await this.reportRepo.findOne({
       where: { id },
       relations: ['product'],
     });
     if (!report) throw new Error('Report not found');
 
-    if (!report.product) throw new Error('Product not associated with this report');
+    if (!report.product)
+      throw new Error('Product not associated with this report');
 
     // Unblock the product
     await this.productRepo.update(report.product.id, { isBlocked: false });
 
-    // Optionally update report status if logic requires it, 
+    // Optionally update report status if logic requires it,
     // but usually 'reviewed' is fine as past tense.
     // If you want to indicate it's "re-reviewed" or similar, do it here.
     // For now, we assume restoring might be correcting a mistake or mercy.
-    
+
     return { success: true, message: 'Product restored (unblocked)' };
   }
 
@@ -154,24 +150,19 @@ export class AdminModerationController {
     const status = (statusRaw || 'flagged').toLowerCase();
 
     const order: any = {};
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+
     if (sort === 'confidence_desc') order.topConfidence = 'DESC';
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
     else if (sort === 'confidence_asc') order.topConfidence = 'ASC';
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
     else if (sort === 'created_asc') order.createdAt = 'ASC';
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
     else order.createdAt = 'DESC';
 
     const where: any = {};
     if (['flagged', 'pending', 'approved', 'rejected'].includes(status))
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
       where.status = status;
 
     const [items, total] = await this.pimRepo.findAndCount({
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
       where,
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+
       order,
       skip: (page - 1) * perPage,
       take: perPage,

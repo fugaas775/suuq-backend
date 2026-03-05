@@ -9,6 +9,7 @@ import { ProductRequestForward } from './entities/product-request-forward.entity
 import { Category } from '../categories/entities/category.entity';
 import { Product } from '../products/entities/product.entity';
 import { User } from '../users/entities/user.entity';
+import { VendorStaff } from '../vendor/entities/vendor-staff.entity';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { EmailModule } from '../email/email.module';
 
@@ -21,6 +22,7 @@ import { EmailModule } from '../email/email.module';
       Category,
       Product,
       User,
+      VendorStaff,
     ]),
     NotificationsModule,
     EmailModule,

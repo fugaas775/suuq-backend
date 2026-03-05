@@ -29,7 +29,12 @@ export class GeoPriorityAugment implements IFilterStrategy {
       DJIBOUTI: ['DJ', 'DJIBOUTI'],
       US: ['US', 'USA', 'UNITED STATES', 'UNITED STATES OF AMERICA'],
       USA: ['US', 'USA', 'UNITED STATES', 'UNITED STATES OF AMERICA'],
-      'UNITED STATES': ['US', 'USA', 'UNITED STATES', 'UNITED STATES OF AMERICA'],
+      'UNITED STATES': [
+        'US',
+        'USA',
+        'UNITED STATES',
+        'UNITED STATES OF AMERICA',
+      ],
       'UNITED STATES OF AMERICA': [
         'US',
         'USA',

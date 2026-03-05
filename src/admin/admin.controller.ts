@@ -305,6 +305,7 @@ export class AdminController {
       status?: string;
       paymentMethod?: string;
       paymentStatus?: string;
+      paymentLifecycleState?: string;
       hasPaymentProof?: boolean | string;
       sort?: string;
       sortBy?: string;
@@ -322,6 +323,25 @@ export class AdminController {
   async approvePayment(@Param('id', ParseIntPipe) id: number) {
     await this.ordersService.approveBankTransfer(id);
     return { success: true };
+  }
+
+  @Get('orders/:id/payment-proof/signed')
+  async getSignedPaymentProofForAdmin(
+    @Param('id', ParseIntPipe) id: number,
+    @Query('ttl') ttl?: string,
+  ) {
+    return this.ordersService.getSignedPaymentProofForAdmin(id, ttl);
+  }
+
+  @Patch('orders/:id/payment-proof/status')
+  async setPaymentProofStatus(
+    @Param('id', ParseIntPipe) id: number,
+    @Body('status') status: 'VERIFIED' | 'REJECTED',
+  ) {
+    if (status !== 'VERIFIED' && status !== 'REJECTED') {
+      throw new BadRequestException('status must be VERIFIED or REJECTED');
+    }
+    return this.ordersService.setPaymentProofStatusForAdmin(id, status);
   }
 
   @Patch('orders/:id/cancel')

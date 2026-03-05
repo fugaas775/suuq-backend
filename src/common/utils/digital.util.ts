@@ -1,5 +1,3 @@
-/* eslint-disable no-empty */
-
 export interface DigitalDownloadMeta {
   key: string; // object key in Spaces
   publicUrl?: string; // stable public URL (derived if missing)
@@ -228,12 +226,17 @@ export function normalizeDigitalAttributes(
   const derivedKey =
     !downloadKey && dlUrl ? urlToKeyIfInSpaces(dlUrl) : undefined;
   if (derivedKey) {
-    try {
-      // Use console.log to avoid circular Nest Logger deps
-      console.log(
-        `[digital.normalize] Derived key from URL: ${dlUrl} -> ${derivedKey}`,
-      );
-    } catch {}
+    const debugNormalize =
+      String(process.env.DEBUG_DIGITAL_NORMALIZE || '').toLowerCase() ===
+      'true';
+    if (debugNormalize) {
+      try {
+        // Use console.log to avoid circular Nest Logger deps
+        console.log(
+          `[digital.normalize] Derived key from URL: ${dlUrl} -> ${derivedKey}`,
+        );
+      } catch {}
+    }
   }
   const effectiveKey = downloadKey || derivedKey || undefined;
   const isFree =

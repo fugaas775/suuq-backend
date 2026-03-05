@@ -3,7 +3,6 @@ import sharpModule from 'sharp';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ProductImage } from '../products/entities/product-image.entity';
-import { ProductsService } from '../products/products.service';
 
 const sharp: any = (sharpModule as any)?.default ?? (sharpModule as any);
 
@@ -14,7 +13,6 @@ export class ImageSimilarityService {
   constructor(
     @InjectRepository(ProductImage)
     private readonly imgRepo: Repository<ProductImage>,
-    private readonly products: ProductsService,
   ) {}
 
   // Compute a 64-bit dHash (hex string length 16)
@@ -177,6 +175,238 @@ export class ImageSimilarityService {
         `searchSimilarByUpload failed: ${(e as Error)?.message}`,
       );
       return { productIds: [], scores: [], mode: 'fallback' };
+    }
+  }
+
+  async searchSimilarByProduct(
+    productId: number,
+    opts?: {
+      topK?: number;
+      maxDistance?: number;
+      maxCandidates?: number;
+      sameCategoryBoost?: number;
+      sameCityBoost?: number;
+      diversifyVendors?: boolean;
+    },
+  ): Promise<{
+    matches: Array<{
+      productId: number;
+      distance: number;
+      thumbnail?: string | null;
+      lowRes?: string | null;
+      src?: string | null;
+    }>;
+    fallbackImages: Array<{
+      productId: number;
+      thumbnail?: string | null;
+      lowRes?: string | null;
+      src?: string | null;
+    }>;
+    mode: string;
+  }> {
+    const topK = Math.min(Math.max(Number(opts?.topK) || 3, 1), 8);
+    const maxDistance = Math.min(
+      Math.max(Number(opts?.maxDistance) || 12, 1),
+      64,
+    );
+    const sameCategoryBoost = Math.max(Number(opts?.sameCategoryBoost) || 2, 0);
+    const sameCityBoost = Math.max(Number(opts?.sameCityBoost) || 1, 0);
+    const diversifyVendors = opts?.diversifyVendors !== false;
+    const maxCandidates = Math.max(
+      200,
+      Math.min(
+        Number(opts?.maxCandidates) ||
+          parseInt(process.env.MAX_PHASH_CANDIDATES || '2000', 10) ||
+          2000,
+        10000,
+      ),
+    );
+
+    try {
+      const baseRows = await this.imgRepo
+        .createQueryBuilder('img')
+        .innerJoin('img.product', 'product')
+        .leftJoin('product.category', 'category')
+        .leftJoin('product.vendor', 'vendor')
+        .select([
+          'img.phash AS phash',
+          'category.id AS categoryId',
+          "LOWER(COALESCE(product.listingCity, '')) AS listingCity",
+          'vendor.id AS vendorId',
+        ])
+        .where('img.productId = :productId', { productId })
+        .andWhere('img.phash IS NOT NULL')
+        .andWhere('product.status = :st', { st: 'publish' })
+        .andWhere('product.isBlocked = false')
+        .orderBy('COALESCE(img.sortOrder, 999999)', 'ASC')
+        .addOrderBy('img.id', 'ASC')
+        .limit(3)
+        .getRawMany();
+
+      const fallbackRows = await this.imgRepo
+        .createQueryBuilder('img')
+        .select([
+          'img.src AS src',
+          'img.thumbnailSrc AS thumbnail',
+          'img.lowResSrc AS lowRes',
+          'img.id AS id',
+        ])
+        .where('img.productId = :productId', { productId })
+        .orderBy('COALESCE(img.sortOrder, 999999)', 'ASC')
+        .addOrderBy('img.id', 'ASC')
+        .limit(topK + 2)
+        .getRawMany();
+
+      const fallbackImages = (fallbackRows || [])
+        .slice(1)
+        .slice(0, topK)
+        .map((row: any) => ({
+          productId,
+          thumbnail: row?.thumbnail || null,
+          lowRes: row?.lowRes || null,
+          src: row?.src || null,
+        }));
+
+      if (!baseRows.length) {
+        return { matches: [], fallbackImages, mode: 'no-base-phash' };
+      }
+
+      const baseHashes = (baseRows || [])
+        .map((row: any) => String(row?.phash || '').trim())
+        .filter((v: string) => !!v);
+      if (!baseHashes.length) {
+        return { matches: [], fallbackImages, mode: 'no-base-phash' };
+      }
+
+      const baseCategoryId = Number(baseRows[0]?.categoryId || 0) || null;
+      const baseCity = String(baseRows[0]?.listingCity || '').trim();
+
+      const candidateRows = await this.imgRepo
+        .createQueryBuilder('img')
+        .innerJoin('img.product', 'product')
+        .leftJoin('product.category', 'category')
+        .leftJoin('product.vendor', 'vendor')
+        .select([
+          'img.productId AS productId',
+          'img.phash AS phash',
+          'img.src AS src',
+          'img.thumbnailSrc AS thumbnail',
+          'img.lowResSrc AS lowRes',
+          'category.id AS categoryId',
+          "LOWER(COALESCE(product.listingCity, '')) AS listingCity",
+          'vendor.id AS vendorId',
+        ])
+        .where('img.phash IS NOT NULL')
+        .andWhere('img.productId <> :productId', { productId })
+        .andWhere('product.status = :st', { st: 'publish' })
+        .andWhere('product.isBlocked = false')
+        .orderBy('img.id', 'DESC')
+        .limit(maxCandidates)
+        .getRawMany();
+
+      if (!candidateRows.length) {
+        return { matches: [], fallbackImages, mode: 'no-candidates' };
+      }
+
+      const bestByProduct = new Map<
+        number,
+        {
+          productId: number;
+          distance: number;
+          score: number;
+          categoryId: number | null;
+          listingCity: string;
+          vendorId: number | null;
+          thumbnail?: string | null;
+          lowRes?: string | null;
+          src?: string | null;
+        }
+      >();
+
+      for (const row of candidateRows) {
+        const pid = Number(row?.productId || 0);
+        const ph = String(row?.phash || '').trim();
+        if (!pid || !ph) continue;
+
+        let bestDistance = 65;
+        for (const bh of baseHashes) {
+          const d = this.hammingDistanceHex64(bh, ph);
+          if (d < bestDistance) bestDistance = d;
+          if (bestDistance === 0) break;
+        }
+        if (bestDistance > maxDistance) continue;
+
+        const categoryId = Number(row?.categoryId || 0) || null;
+        const listingCity = String(row?.listingCity || '').trim();
+        const vendorId = Number(row?.vendorId || 0) || null;
+        const score =
+          bestDistance -
+          (baseCategoryId && categoryId === baseCategoryId
+            ? sameCategoryBoost
+            : 0) -
+          (baseCity && listingCity && listingCity === baseCity
+            ? sameCityBoost
+            : 0);
+
+        const prev = bestByProduct.get(pid);
+        if (
+          !prev ||
+          score < prev.score ||
+          (score === prev.score && bestDistance < prev.distance)
+        ) {
+          bestByProduct.set(pid, {
+            productId: pid,
+            distance: bestDistance,
+            score,
+            categoryId,
+            listingCity,
+            vendorId,
+            thumbnail: row?.thumbnail || null,
+            lowRes: row?.lowRes || null,
+            src: row?.src || null,
+          });
+        }
+      }
+
+      const sorted = Array.from(bestByProduct.values()).sort((a, b) => {
+        if (a.score !== b.score) return a.score - b.score;
+        if (a.distance !== b.distance) return a.distance - b.distance;
+        return a.productId - b.productId;
+      });
+
+      const uniqueVendor: typeof sorted = [];
+      const vendorOverflow: typeof sorted = [];
+      const seenVendors = new Set<number>();
+      for (const item of sorted) {
+        if (!diversifyVendors) {
+          uniqueVendor.push(item);
+          continue;
+        }
+        if (!item.vendorId || !seenVendors.has(item.vendorId)) {
+          if (item.vendorId) seenVendors.add(item.vendorId);
+          uniqueVendor.push(item);
+        } else {
+          vendorOverflow.push(item);
+        }
+      }
+
+      const picked = [...uniqueVendor, ...vendorOverflow].slice(0, topK);
+      return {
+        matches: picked.map((item) => ({
+          productId: item.productId,
+          distance: item.distance,
+          thumbnail: item.thumbnail || null,
+          lowRes: item.lowRes || null,
+          src: item.src || null,
+        })),
+        fallbackImages,
+        mode: 'dhash64-product',
+      };
+    } catch (e) {
+      this.logger.warn(
+        `searchSimilarByProduct failed productId=${productId}: ${(e as Error)?.message}`,
+      );
+      return { matches: [], fallbackImages: [], mode: 'fallback' };
     }
   }
 }

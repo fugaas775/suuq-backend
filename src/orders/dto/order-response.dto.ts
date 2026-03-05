@@ -11,6 +11,7 @@ export class OrderItemResponseDto {
   @Expose() productImageUrl?: string | null;
   @Expose() quantity: number;
   @Expose() price: number;
+  @Expose() attributes?: Record<string, any>;
   @Expose() price_display?: {
     amount: number | null;
     currency: string;
@@ -25,7 +26,15 @@ export class OrderResponseDto {
   @Expose() status: OrderStatus;
   @Expose() paymentMethod: PaymentMethod;
   @Expose() paymentStatus: PaymentStatus;
+  @Expose()
+  paymentLifecycleState?:
+    | 'CREATED'
+    | 'INITIATED'
+    | 'RECONCILING'
+    | 'PAID'
+    | 'FAILED';
   @Expose() paymentProofUrl?: string;
+  @Expose() paymentProofStatus?: 'PENDING_REVIEW' | 'VERIFIED' | 'REJECTED';
   @Expose() createdAt: Date;
   @Expose() shippingAddress: any;
   @Expose() currency?: string;
@@ -43,6 +52,19 @@ export class OrderResponseDto {
   @Expose() assignedDelivererName?: string;
   @Expose() assignedDelivererPhone?: string;
   @Expose() assignedDelivererVehicle?: string; // e.g. "Toyota Corolla" or "Bajaj"
+  @Expose() skipOrderConfirmationScreen?: boolean;
+  @Expose() disableWebCheckoutFallback?: boolean;
+  @Expose()
+  paymentUiHint?: {
+    provider: 'EBIRR';
+    state: 'PENDING_PUSH_CONFIRMATION' | 'PAID';
+    message?: string;
+    checkStatusEndpoint?: string;
+    recommendedPollIntervalMs?: number;
+    skipOrderConfirmationScreen?: boolean;
+    disableWebCheckoutFallback?: boolean;
+    orderDetailsRoute?: string;
+  };
   @Expose() userId: number;
   @Expose() deliveryCode?: string;
   // For admin tables: vendors involved in this order

@@ -11,9 +11,9 @@ async function bootstrap() {
 
   try {
     // Check if admin user already exists
-    const existingAdmin = await usersService.findByEmail('admin@suuq.com');
+    const existingAdmin = await usersService.findByEmail('admin@suuqsapp.com');
     if (existingAdmin) {
-      logger.log('✅ Admin user already exists with email: admin@suuq.com');
+      logger.log('✅ Admin user already exists with email: admin@suuqsapp.com');
       logger.log(`   ID: ${existingAdmin.id}`);
       logger.log(`   Roles: ${existingAdmin.roles.join(', ')}`);
       logger.log(`   Active: ${existingAdmin.isActive}`);
@@ -31,7 +31,7 @@ async function bootstrap() {
       // Create new admin user
       logger.log('🔄 Creating new SUPER_ADMIN user...');
       const adminUser = await usersService.create({
-        email: 'admin@suuq.com',
+        email: 'admin@suuqsapp.com',
         password: 'Ugas0912615526Suuq', // ✅ Correct password
         displayName: 'Super Administrator',
         roles: [UserRole.SUPER_ADMIN, UserRole.ADMIN],
@@ -46,14 +46,14 @@ async function bootstrap() {
     }
 
     logger.log('\n🔑 To get JWT token for admin access, login with:');
-    logger.log('   Email: admin@suuq.com');
+    logger.log('   Email: admin@suuqsapp.com');
     logger.log('   Password: Ugas0912615526Suuq');
 
     console.log('\n📡 Example curl command to get token:');
     console.log('curl -X POST http://localhost:3000/api/auth/login \\');
     console.log('  -H "Content-Type: application/json" \\');
     console.log(
-      '  -d \'{"email": "admin@suuq.com", "password": "Ugas0912615526Suuq"}\'',
+      '  -d \'{"email": "admin@suuqsapp.com", "password": "Ugas0912615526Suuq"}\'',
     );
 
     console.log('\n🛠️ Example admin API call:');

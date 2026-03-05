@@ -9,8 +9,8 @@ async function run() {
   const logger = new Logger('ResetAdminPassword');
   const app = await NestFactory.createApplicationContext(AppModule);
   const users = app.get(UsersService);
-  const email = process.env.ADMIN_EMAIL || 'admin@suuq.com';
-  const newPassword = process.env.ADMIN_PASSWORD || 'Ugas0912615526Suuq';
+  const email = process.env.ADMIN_EMAIL || 'admin@suuqsapp.com';
+  const newPassword = process.env.ADMIN_PASSWORD || 'Ugas0912615526Suuq@@';
   try {
     const user = await users.findByEmail(email);
     if (!user) {

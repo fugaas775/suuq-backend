@@ -19,6 +19,7 @@ import { UserRole } from '../auth/roles.enum';
 import { CurrencyService } from '../common/services/currency.service';
 import { EmailService } from '../email/email.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { ImageSimilarityService } from '../search/image-similarity.service';
 
 describe('ProductsService.deleteProduct media cleanup', () => {
   let service: ProductsService;
@@ -100,6 +101,10 @@ describe('ProductsService.deleteProduct media cleanup', () => {
         { provide: CurrencyService, useValue: { convert: jest.fn() } },
         { provide: EmailService, useValue: { send: jest.fn() } },
         { provide: NotificationsService, useValue: notificationsMock },
+        {
+          provide: ImageSimilarityService,
+          useValue: { searchSimilarByProduct: jest.fn() },
+        },
       ],
     }).compile();
 

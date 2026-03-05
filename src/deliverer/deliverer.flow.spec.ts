@@ -87,7 +87,7 @@ describe('DelivererService - Reject Assignment Flow', () => {
       // Verify QueryBuilder was called correctly to update DB
       // We expect createQueryBuilder to act on Order repo
       // And set status back to PROCESSING and deliverer to null
-      expect(orderRepository.createQueryBuilder).toHaveBeenCalled(); // eslint-disable-line @typescript-eslint/unbound-method
+      expect(orderRepository.createQueryBuilder).toHaveBeenCalled();
     });
 
     it('should throw ForbiddenException if deliverer does not match', async () => {

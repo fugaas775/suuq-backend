@@ -52,7 +52,14 @@ export class CreateOrderDto {
   coupon_code?: string; // Startup compatibility: often sent as snake_case
 
   @IsString()
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
+  @IsOptional()
+  @Transform(({ value }) =>
+    typeof value === 'string' ? value.toUpperCase() : value,
+  )
+  @IsIn(['CART', 'BUY_NOW', 'cart', 'buy_now', 'buynow'])
+  checkoutMode?: string;
+
+  @IsString()
   @Transform(({ value }) => value?.toUpperCase())
   @IsIn([
     'COD',
@@ -79,4 +86,17 @@ export class CreateOrderDto {
   @IsString()
   @IsOptional()
   mpesaPhone?: string;
+
+  // Optional device-line info from mobile app (Android SIM check path)
+  @IsString()
+  @IsOptional()
+  devicePhoneNumber?: string;
+
+  @IsString()
+  @IsOptional()
+  @Transform(({ value }) =>
+    typeof value === 'string' ? value.toLowerCase() : value,
+  )
+  @IsIn(['android', 'ios', 'unknown'])
+  devicePlatform?: string;
 }

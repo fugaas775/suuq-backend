@@ -93,9 +93,7 @@ export class AdminVendorsController {
 
     // Prioritize specific vendor ID if provided
     const effectiveSearch =
-      vendorId && !Number.isNaN(Number(vendorId))
-        ? vendorId
-        : search || q;
+      vendorId && !Number.isNaN(Number(vendorId)) ? vendorId : search || q;
 
     const result = await this.vendorService.findPublicVendors({
       page: p,
@@ -114,6 +112,7 @@ export class AdminVendorsController {
         ? minRatingNum
         : undefined,
       skipRoleFilter: true, // Allow admins to find any user (e.g. Suuq S default admin account)
+      withProductsOnly: false,
     } as any);
     const payload = {
       items: result.items,
@@ -145,6 +144,7 @@ export class AdminVendorsController {
       sort: 'recent',
       skipRoleFilter: true, // Allow finding any user for admin purposes
       role: 'VENDOR',
+      withProductsOnly: false,
     } as any);
 
     const payload = {

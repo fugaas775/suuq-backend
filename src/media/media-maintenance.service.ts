@@ -27,7 +27,10 @@ export class MediaMaintenanceService {
     private readonly settingsRepo: Repository<UiSetting>,
   ) {}
 
-  private async acquireCronLock(jobName: string, ttlSeconds: number): Promise<boolean> {
+  private async acquireCronLock(
+    jobName: string,
+    ttlSeconds: number,
+  ): Promise<boolean> {
     const client = this.redisService.getClient();
     if (!client) {
       const instanceId = process.env.NODE_APP_INSTANCE;
@@ -49,20 +52,26 @@ export class MediaMaintenanceService {
    * 1. Fetches all User.verificationDocuments from the DB.
    * 2. Iterates S3 objects in the `verification/` prefix.
    * 3. Deletes any S3 object key that is NOT referenced in the DB.
-   * 
+   *
    * This effectively keeps only the "last/approved" files stored in the DB.
    * Scheduling: Weekly (Sunday 2 AM) to avoid heavy load during peak.
    */
   @Cron('0 2 * * 0') // "At 02:00 on Sunday"
   async cleanupOrphanedVerifications() {
-    if (!(await this.acquireCronLock('cleanup-orphaned-verifications', 2 * 60 * 60))) return;
+    if (
+      !(await this.acquireCronLock(
+        'cleanup-orphaned-verifications',
+        2 * 60 * 60,
+      ))
+    )
+      return;
 
     this.log.log('Starting Cleanup of Orphaned Verification Files...');
     try {
       // 1. Collect all "valid" file keys from the Database
       // We manually construct the User query to separate concerns
       const result = await this.dataSource.query(
-        `SELECT "verificationDocuments" FROM "user" WHERE "verificationDocuments" IS NOT NULL AND jsonb_array_length("verificationDocuments") > 0`
+        `SELECT "verificationDocuments" FROM "user" WHERE "verificationDocuments" IS NOT NULL AND jsonb_array_length("verificationDocuments") > 0`,
       );
 
       // Extract all URLs into a Set of Keys
@@ -74,20 +83,22 @@ export class MediaMaintenanceService {
         if (Array.isArray(docs)) {
           for (const doc of docs) {
             if (doc && typeof doc.url === 'string') {
-               // The DB stores full URL. We need to extract the "key".
-               // URL: https://bucket.region.cdn.../verification/123/xxx.jpg
-               // Key: verification/123/xxx.jpg
-               // Strategy: find substring starting with "verification/"
-               const match = doc.url.match(/(verification\/.*)/);
-               if (match && match[1]) {
-                 validKeys.add(match[1]);
-               }
+              // The DB stores full URL. We need to extract the "key".
+              // URL: https://bucket.region.cdn.../verification/123/xxx.jpg
+              // Key: verification/123/xxx.jpg
+              // Strategy: find substring starting with "verification/"
+              const match = doc.url.match(/(verification\/.*)/);
+              if (match && match[1]) {
+                validKeys.add(match[1]);
+              }
             }
           }
         }
       }
 
-      this.log.log(`Found ${validKeys.size} valid verification file keys in DB.`);
+      this.log.log(
+        `Found ${validKeys.size} valid verification file keys in DB.`,
+      );
 
       // 2. Iterate S3 objects in `verification/` prefix
       let continuationToken: string | undefined;
@@ -96,7 +107,11 @@ export class MediaMaintenanceService {
 
       do {
         // List batch of 1000
-        const { keys, nextToken } = await this.doSpaces.listKeys('verification/', 1000, continuationToken);
+        const { keys, nextToken } = await this.doSpaces.listKeys(
+          'verification/',
+          1000,
+          continuationToken,
+        );
         continuationToken = nextToken;
 
         if (!keys || keys.length === 0) break;
@@ -104,7 +119,7 @@ export class MediaMaintenanceService {
         // 3. Compare and Delete
         for (const key of keys) {
           totalChecked++;
-          
+
           // Skip folders (if listed)
           if (key.endsWith('/')) continue;
 
@@ -119,11 +134,11 @@ export class MediaMaintenanceService {
             }
           }
         }
-        
       } while (continuationToken);
 
-      this.log.log(`Cleanup Complete. Checked: ${totalChecked}. Deleted: ${totalDeleted} orphaned files.`);
-
+      this.log.log(
+        `Cleanup Complete. Checked: ${totalChecked}. Deleted: ${totalDeleted} orphaned files.`,
+      );
     } catch (e: any) {
       this.log.error('Cleanup Orphanded Verifications Failed', e);
     }
@@ -162,7 +177,8 @@ export class MediaMaintenanceService {
   // Runs daily at 03:15
   @Cron('15 3 * * *')
   async backfillVideoPosters() {
-    if (!(await this.acquireCronLock('backfill-video-posters', 55 * 60))) return;
+    if (!(await this.acquireCronLock('backfill-video-posters', 55 * 60)))
+      return;
     try {
       const maxVideoBytes = 150 * 1024 * 1024;
       // Scan a prefix if you use one; empty means whole bucket (be careful)
@@ -274,7 +290,8 @@ export class MediaMaintenanceService {
    */
   @Cron('0 3 * * 0') // "At 03:00 on Sunday"
   async cleanupDeletedProducts() {
-    if (!(await this.acquireCronLock('cleanup-deleted-products', 2 * 60 * 60))) return;
+    if (!(await this.acquireCronLock('cleanup-deleted-products', 2 * 60 * 60)))
+      return;
 
     this.log.log('Starting Cleanup of Deleted Product Files...');
     try {
@@ -327,28 +344,35 @@ export class MediaMaintenanceService {
    */
   @Cron('0 4 * * *') // "At 04:00 every day"
   async scanHistoricalProductMedia() {
-    if (!(await this.acquireCronLock('scan-historical-product-media', 55 * 60))) return;
+    if (!(await this.acquireCronLock('scan-historical-product-media', 55 * 60)))
+      return;
 
     const BATCH_SIZE = 1000;
     const SETTING_KEY = 'media_cleanup_cursor_v1';
-    
+
     this.log.log('Starting Historical Media Scan...');
 
     try {
       // 1. Get Continuation Token
       let token: string | undefined;
-      let setting = await this.settingsRepo.findOne({ where: { key: SETTING_KEY } });
-      
+      const setting = await this.settingsRepo.findOne({
+        where: { key: SETTING_KEY },
+      });
+
       if (setting && setting.value) {
-         token = setting.value as string;
-         if (token === 'DONE') {
-           this.log.log('Historical scan previously completed. Skipping.');
-           return;
-         }
+        token = setting.value as string;
+        if (token === 'DONE') {
+          this.log.log('Historical scan previously completed. Skipping.');
+          return;
+        }
       }
 
       // 2. List keys from S3 Root
-      const { keys, nextToken } = await this.doSpaces.listKeys('', BATCH_SIZE, token);
+      const { keys, nextToken } = await this.doSpaces.listKeys(
+        '',
+        BATCH_SIZE,
+        token,
+      );
 
       if (!keys || keys.length === 0) {
         this.log.log('No keys returned. Scan complete?');
@@ -368,58 +392,68 @@ export class MediaMaintenanceService {
       }
 
       // 3. Filter for Product Media Candidates
-      const candidates = keys.filter(k => 
-        !k.endsWith('/') && 
-        (k.startsWith('full_') || k.startsWith('thumb_') || k.startsWith('lowres_') || k.startsWith('poster_'))
+      const candidates = keys.filter(
+        (k) =>
+          !k.endsWith('/') &&
+          (k.startsWith('full_') ||
+            k.startsWith('thumb_') ||
+            k.startsWith('lowres_') ||
+            k.startsWith('poster_')),
       );
 
-      this.log.log(`Scanned ${keys.length} keys. Found ${candidates.length} candidates for product media.`);
+      this.log.log(
+        `Scanned ${keys.length} keys. Found ${candidates.length} candidates for product media.`,
+      );
 
       if (candidates.length > 0) {
         const CHUNK = 50;
         let deletedCount = 0;
 
         for (let i = 0; i < candidates.length; i += CHUNK) {
-            const chunk = candidates.slice(i, i + CHUNK);
-            await Promise.all(chunk.map(async (key) => {
-                // Use %key% to handle query params like ?v=1 in DB URLs
-                const term = `%${key}%`;
-                
-                const pCount = await this.dataSource.query(
-                    `SELECT 1 FROM product WHERE "imageUrl" LIKE $1 LIMIT 1`, 
-                    [term]
-                );
-                if (pCount.length > 0) return; 
+          const chunk = candidates.slice(i, i + CHUNK);
+          await Promise.all(
+            chunk.map(async (key) => {
+              // Use %key% to handle query params like ?v=1 in DB URLs
+              const term = `%${key}%`;
 
-                const piCount = await this.dataSource.query(
-                    `SELECT 1 FROM product_image WHERE src LIKE $1 OR "thumbnailSrc" LIKE $1 OR "lowResSrc" LIKE $1 LIMIT 1`,
-                    [term]
-                );
-                if (piCount.length > 0) return;
+              const pCount = await this.dataSource.query(
+                `SELECT 1 FROM product WHERE "imageUrl" LIKE $1 LIMIT 1`,
+                [term],
+              );
+              if (pCount.length > 0) return;
 
-                const attrCount = await this.dataSource.query(
-                    `SELECT 1 FROM product WHERE attributes::text LIKE $1 LIMIT 1`,
-                    [term]
-                );
-                if (attrCount.length > 0) return;
+              const piCount = await this.dataSource.query(
+                `SELECT 1 FROM product_image WHERE src LIKE $1 OR "thumbnailSrc" LIKE $1 OR "lowResSrc" LIKE $1 LIMIT 1`,
+                [term],
+              );
+              if (piCount.length > 0) return;
 
-                // Also check Category icons
-                const catCount = await this.dataSource.query(
-                    `SELECT 1 FROM category WHERE "iconUrl" LIKE $1 LIMIT 1`,
-                    [term]
-                );
-                if (catCount.length > 0) return;
+              const attrCount = await this.dataSource.query(
+                `SELECT 1 FROM product WHERE attributes::text LIKE $1 LIMIT 1`,
+                [term],
+              );
+              if (attrCount.length > 0) return;
 
-                try {
-                   this.log.debug(`Deleting historical orphan: ${key}`);
-                   await this.doSpaces.deleteObject(key);
-                   deletedCount++;
-                } catch(e) {
-                   this.log.error(`Failed to delete ${key}`, e);
-                }
-            }));
+              // Also check Category icons
+              const catCount = await this.dataSource.query(
+                `SELECT 1 FROM category WHERE "iconUrl" LIKE $1 LIMIT 1`,
+                [term],
+              );
+              if (catCount.length > 0) return;
+
+              try {
+                this.log.debug(`Deleting historical orphan: ${key}`);
+                await this.doSpaces.deleteObject(key);
+                deletedCount++;
+              } catch (e) {
+                this.log.error(`Failed to delete ${key}`, e);
+              }
+            }),
+          );
         }
-        this.log.log(`Batch complete. Deleted ${deletedCount}/${candidates.length} candidates.`);
+        this.log.log(
+          `Batch complete. Deleted ${deletedCount}/${candidates.length} candidates.`,
+        );
       }
 
       // 5. Save Token safely
@@ -438,7 +472,6 @@ export class MediaMaintenanceService {
 
       if (!nextToken) this.log.log('Scan finished (no nextToken).');
       else this.log.log('Saving token for next run.');
-
     } catch (e: any) {
       this.log.error('Historical Media Scan Failed', e);
     }

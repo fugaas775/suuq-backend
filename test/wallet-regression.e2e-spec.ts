@@ -23,7 +23,7 @@ describe('Wallet Regression (e2e)', () => {
 
     app = moduleFixture.createNestApplication();
     await app.init();
-    
+
     dataSource = app.get(DataSource);
     walletService = app.get(WalletService);
     currencyService = app.get(CurrencyService);
@@ -32,14 +32,18 @@ describe('Wallet Regression (e2e)', () => {
   afterAll(async () => {
     // Cleanup
     if (user) {
-        // Delete wallet transactions first
-        const wallet = await walletService.getWallet(user.id);
-        if (wallet) {
-            await dataSource.getRepository('WalletTransaction').delete({ wallet: { id: wallet.id } });
-            await dataSource.getRepository('TopUpRequest').delete({ user: { id: user.id } });
-            await dataSource.getRepository('Wallet').delete(wallet.id);
-        }
-        await dataSource.manager.delete(User, user.id);
+      // Delete wallet transactions first
+      const wallet = await walletService.getWallet(user.id);
+      if (wallet) {
+        await dataSource
+          .getRepository('WalletTransaction')
+          .delete({ wallet: { id: wallet.id } });
+        await dataSource
+          .getRepository('TopUpRequest')
+          .delete({ user: { id: user.id } });
+        await dataSource.getRepository('Wallet').delete(wallet.id);
+      }
+      await dataSource.manager.delete(User, user.id);
     }
     await closeE2eApp({ app, dataSource });
   });
@@ -47,7 +51,7 @@ describe('Wallet Regression (e2e)', () => {
   it('should handle wallet currency migration and balance recalculation correctly', async () => {
     // 1. Create a test user with ETB preference
     const userRepository = dataSource.getRepository(User);
-    const email = `test-wallet-reg-${Date.now()}@example.com`;
+    const email = `test-wallet-reg-${Date.now()}@suuqsapp.com`;
     user = userRepository.create({
       email,
       password: 'password123',
@@ -68,22 +72,27 @@ describe('Wallet Regression (e2e)', () => {
     // 3. Add transactions in ETB
     // Deposit 1000 ETB
     await walletService.requestTopUp(user.id, 1000, 'TELEBIRR', 'REF123'); // Changed to TELEBIRR for context
-    
+
     // Simulating a Deposit of 1000 ETB
     wallet.balance = 1000;
     await dataSource.getRepository('Wallet').save(wallet);
 
     const txRepo = dataSource.getRepository('WalletTransaction');
     await txRepo.save({
-        wallet,
-        type: TransactionType.DEPOSIT,
-        amount: 1000,
-        description: 'Initial Deposit', 
+      wallet,
+      type: TransactionType.DEPOSIT,
+      amount: 1000,
+      description: 'Initial Deposit',
     });
 
     // Simulating a Payment of 200 ETB
-    await walletService.debitWallet(user.id, 200, TransactionType.PAYMENT, 'Test Payment');
-    
+    await walletService.debitWallet(
+      user.id,
+      200,
+      TransactionType.PAYMENT,
+      'Test Payment',
+    );
+
     wallet = await walletService.getWallet(user.id);
     expect(Number(wallet.balance)).toBe(800); // 1000 - 200
     expect(wallet.currency).toBe('ETB');
@@ -98,9 +107,9 @@ describe('Wallet Regression (e2e)', () => {
 
     // 6. Verify Migration
     expect(wallet.currency).toBe('KES');
-    
+
     const expectedBalance = currencyService.convert(800, 'ETB', 'KES');
-    
+
     console.log(`Expected Balance (approx): ${expectedBalance}`);
     console.log(`Actual Balance: ${wallet.balance}`);
 
@@ -109,14 +118,19 @@ describe('Wallet Regression (e2e)', () => {
 
     // Verify transactions were converted
     const transactions = await walletService.getTransactions(user.id);
-    
-    const depositTx = transactions.find(t => t.description === 'Initial Deposit');
+
+    const depositTx = transactions.find(
+      (t) => t.description === 'Initial Deposit',
+    );
     expect(Number(depositTx.amount)).toBeCloseTo(
       currencyService.convert(1000, 'ETB', 'KES'),
       1,
     );
 
-    const paymentTx = transactions.find(t => t.type === TransactionType.PAYMENT && t.description === 'Test Payment');
+    const paymentTx = transactions.find(
+      (t) =>
+        t.type === TransactionType.PAYMENT && t.description === 'Test Payment',
+    );
     expect(Number(paymentTx.amount)).toBeCloseTo(
       currencyService.convert(-200, 'ETB', 'KES'),
       1,
@@ -125,11 +139,15 @@ describe('Wallet Regression (e2e)', () => {
     // 7. Test debitWallet in new currency
     // Debit 100 KES
     const balanceBefore = Number(wallet.balance);
-    await walletService.debitWallet(user.id, 100, TransactionType.PAYMENT, 'Test Payment KES');
-    
-    wallet = await walletService.getWallet(user.id);
-    expect(Number(wallet.balance)).toBeCloseTo(balanceBefore - 100, 2); 
-    expect(wallet.currency).toBe('KES');
+    await walletService.debitWallet(
+      user.id,
+      100,
+      TransactionType.PAYMENT,
+      'Test Payment KES',
+    );
 
+    wallet = await walletService.getWallet(user.id);
+    expect(Number(wallet.balance)).toBeCloseTo(balanceBefore - 100, 2);
+    expect(wallet.currency).toBe('KES');
   });
 });

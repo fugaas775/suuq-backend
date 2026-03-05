@@ -139,7 +139,7 @@ class FakeUserRepository {
 function makeUser(overrides: Partial<User>): User {
   return Object.assign(new User(), {
     id: overrides.id ?? Math.floor(Math.random() * 100000),
-    email: overrides.email ?? 'user@example.com',
+    email: overrides.email ?? 'user@suuqsapp.com',
     roles: overrides.roles ?? [UserRole.CUSTOMER],
     displayName: overrides.displayName ?? 'User',
     storeName: overrides.storeName,
@@ -158,7 +158,7 @@ describe('UsersService.findAll filtering (in-memory integration)', () => {
     const seed: User[] = [
       makeUser({
         id: 1,
-        email: 'vendor1@example.com',
+        email: 'vendor1@suuqsapp.com',
         roles: [UserRole.VENDOR],
         displayName: 'Vendor One',
         storeName: 'Electro World',
@@ -168,7 +168,7 @@ describe('UsersService.findAll filtering (in-memory integration)', () => {
       }),
       makeUser({
         id: 2,
-        email: 'vendor2@example.com',
+        email: 'vendor2@suuqsapp.com',
         roles: [UserRole.VENDOR],
         displayName: 'Vendor Two',
         storeName: 'Electro World 2',
@@ -177,7 +177,7 @@ describe('UsersService.findAll filtering (in-memory integration)', () => {
       }),
       makeUser({
         id: 3,
-        email: 'cust1@example.com',
+        email: 'cust1@suuqsapp.com',
         roles: [UserRole.CUSTOMER],
         displayName: 'Customer One',
         isActive: false,
@@ -185,7 +185,7 @@ describe('UsersService.findAll filtering (in-memory integration)', () => {
       }),
       makeUser({
         id: 4,
-        email: 'cust2@example.com',
+        email: 'cust2@suuqsapp.com',
         roles: [UserRole.CUSTOMER],
         displayName: 'Customer Two',
         isActive: true,
@@ -203,23 +203,38 @@ describe('UsersService.findAll filtering (in-memory integration)', () => {
     ];
     const fakeRepo: any = new FakeUserRepository(seed);
     // Mocks for other dependencies
-    const mockSubscriptionRepo: any = { find: jest.fn(), findOne: jest.fn(), save: jest.fn() };
-    const mockUiSettingRepo: any = { find: jest.fn(), findOne: jest.fn(), save: jest.fn() };
-    const mockWalletRepo: any = { find: jest.fn(), findOne: jest.fn(), save: jest.fn() };
+    const mockSubscriptionRepo: any = {
+      find: jest.fn(),
+      findOne: jest.fn(),
+      save: jest.fn(),
+    };
+    const mockUiSettingRepo: any = {
+      find: jest.fn(),
+      findOne: jest.fn(),
+      save: jest.fn(),
+    };
+    const mockWalletRepo: any = {
+      find: jest.fn(),
+      findOne: jest.fn(),
+      save: jest.fn(),
+    };
     const mockWalletService: any = { createWallet: jest.fn() };
     const mockCurrencyService: any = { convert: jest.fn() };
     const mockNotificationsService: any = { sendToUser: jest.fn() };
-    const mockEmailService: any = { sendEmail: jest.fn(), sendWelcomeEmail: jest.fn() };
+    const mockEmailService: any = {
+      sendEmail: jest.fn(),
+      sendWelcomeEmail: jest.fn(),
+    };
 
     service = new UsersService(
-        fakeRepo,
-        mockSubscriptionRepo,
-        mockUiSettingRepo,
-        mockWalletRepo,
-        mockWalletService,
-        mockCurrencyService,
-        mockNotificationsService,
-        mockEmailService
+      fakeRepo,
+      mockSubscriptionRepo,
+      mockUiSettingRepo,
+      mockWalletRepo,
+      mockWalletService,
+      mockCurrencyService,
+      mockNotificationsService,
+      mockEmailService,
     );
   });
 
@@ -233,7 +248,7 @@ describe('UsersService.findAll filtering (in-memory integration)', () => {
     } as any;
     const { users } = await service.findAll(filters);
     expect(users).toHaveLength(1);
-    expect(users[0].email).toBe('vendor1@example.com');
+    expect(users[0].email).toBe('vendor1@suuqsapp.com');
   });
 
   it('Pending User by Email (verificationStatus=PENDING&email=test@)', async () => {
@@ -257,7 +272,7 @@ describe('UsersService.findAll filtering (in-memory integration)', () => {
     } as any;
     const { users } = await service.findAll(filters);
     expect(users).toHaveLength(1);
-    expect(users[0].email).toBe('cust1@example.com');
+    expect(users[0].email).toBe('cust1@suuqsapp.com');
     expect(users[0].isActive).toBe(false);
   });
 });

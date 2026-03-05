@@ -26,6 +26,7 @@ import { EmailModule } from '../email/email.module';
 import { CategoriesModule } from '../categories/categories.module';
 import { BoostPricingService } from './boost-pricing.service';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { SearchModule } from '../search/search.module';
 
 @Module({
   imports: [
@@ -52,6 +53,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
     ProductListingModule,
     EmailModule,
     CategoriesModule,
+    forwardRef(() => SearchModule),
   ],
   providers: [ProductsService, GeoResolverService, BoostPricingService],
   controllers: [ProductsController, ProductsV1Controller],

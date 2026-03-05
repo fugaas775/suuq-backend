@@ -48,6 +48,9 @@ import { EbirrTransaction } from '../payments/entities/ebirr-transaction.entity'
 import { AdminEbirrAuditController } from './ebirr-audit.controller';
 import { CreditModule } from '../credit/credit.module';
 import { AdminCreditController } from './credit.admin.controller';
+import { AdminAdsController } from './ads.admin.controller';
+import { TelebirrTransaction } from '../payments/entities/telebirr-transaction.entity';
+import { EbirrModule } from '../ebirr/ebirr.module';
 
 @Module({
   // 2. Add UsersModule and OrdersModule here
@@ -68,6 +71,7 @@ import { AdminCreditController } from './credit.admin.controller';
     CurrencyModule,
     EmailModule,
     CreditModule,
+    EbirrModule,
     TypeOrmModule.forFeature([
       Product,
       ProductImpression,
@@ -79,6 +83,7 @@ import { AdminCreditController } from './credit.admin.controller';
       ProductRequestForward,
       User,
       EbirrTransaction,
+      TelebirrTransaction,
     ]),
   ],
   controllers: [
@@ -98,6 +103,7 @@ import { AdminCreditController } from './credit.admin.controller';
     AdminSystemController,
     AdminEbirrAuditController,
     AdminCreditController,
+    AdminAdsController,
   ],
   // 3. Remove the services from providers. They are now correctly provided by the imported modules.
   providers: [

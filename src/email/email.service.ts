@@ -4,7 +4,7 @@ import * as nodemailer from 'nodemailer';
 import { ConfigService } from '@nestjs/config';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
- 
+
 const postmarkTransport = require('nodemailer-postmark-transport');
 
 @Injectable()
@@ -32,8 +32,7 @@ export class EmailService {
       return;
     }
 
-    const provider =
-      this.configService.get<string>('EMAIL_PROVIDER') || 'smtp';
+    const provider = this.configService.get<string>('EMAIL_PROVIDER') || 'smtp';
 
     if (provider === 'postmark') {
       this.initPostmarkTransport();
@@ -46,9 +45,7 @@ export class EmailService {
     const apiKey = this.configService.get<string>('POSTMARK_API_TOKEN');
 
     if (!apiKey) {
-      this.logger.warn(
-        'Postmark not configured (POSTMARK_API_TOKEN missing).',
-      );
+      this.logger.warn('Postmark not configured (POSTMARK_API_TOKEN missing).');
       this.configOk = false;
       return;
     }
@@ -65,7 +62,9 @@ export class EmailService {
       this.configOk = true;
       this.logger.log(`Email transport configured with Postmark API`);
     } catch (e: any) {
-      this.logger.error(`Failed to initialize Postmark transport: ${e.message}`);
+      this.logger.error(
+        `Failed to initialize Postmark transport: ${e.message}`,
+      );
       this.configOk = false;
     }
   }
@@ -190,7 +189,7 @@ export class EmailService {
   async sendInternal(mail: nodemailer.SendMailOptions) {
     const from =
       this.configService.get('EMAIL_FROM') ||
-      '"Suuq Marketplace" <no-reply@suuq.com>';
+      '"Suuq Marketplace" <admin@suuqsapp.com>';
     const mailToSend = { ...mail, from };
 
     if (!this.transporter || !this.configOk) {
@@ -202,10 +201,16 @@ export class EmailService {
 
     try {
       const info = await this.transporter.sendMail(mailToSend);
-      this.logger.debug(
-        `Email sent id=${info.messageId} to=${mailToSend.to}`,
-      );
+      this.logger.debug(`Email sent id=${info.messageId} to=${mailToSend.to}`);
     } catch (err: any) {
+      // Handle Postmark InactiveRecipientsError (406)
+      if (err.code === 406 && err.statusCode === 422) {
+        this.logger.warn(
+          `Postmark rejected email to ${mailToSend.to} because recipient is inactive. Skipping retry.`,
+        );
+        return; // Do not re-throw, so BullMQ doesn't retry
+      }
+
       this.logger.error(
         `Failed sending email to ${mailToSend.to}: ${err?.message}`,
       );
@@ -236,7 +241,17 @@ export class EmailService {
     for (const [key, value] of Object.entries(attrs)) {
       if (value === undefined || value === null || value === '') continue;
       // Skip irrelevant
-      if (['downloadKey', 'downloadUrl', 'fileSizeMB', 'isFree', 'licenseRequired', 'format'].includes(key)) continue;
+      if (
+        [
+          'downloadKey',
+          'downloadUrl',
+          'fileSizeMB',
+          'isFree',
+          'licenseRequired',
+          'format',
+        ].includes(key)
+      )
+        continue;
       const valStr = Array.isArray(value) ? value.join(', ') : String(value);
       const keyCap = key.charAt(0).toUpperCase() + key.slice(1);
       parts.push(`${keyCap}: ${valStr}`);
@@ -374,6 +389,47 @@ export class EmailService {
         <p>Best regards,<br/>The Suuq Team</p>
       `,
     };
+    await this.send(mail);
+  }
+
+  async sendEbirrPaymentSuccessToSuperAdmin(
+    recipientEmail: string,
+    order: any,
+  ) {
+    if (!recipientEmail || !order) return;
+
+    const vendors = new Set<string>();
+    for (const item of order.items || []) {
+      const vendor = item?.product?.vendor;
+      const name =
+        vendor?.storeName ||
+        vendor?.displayName ||
+        vendor?.email ||
+        `Vendor #${vendor?.id || 'N/A'}`;
+      vendors.add(name);
+    }
+
+    const customerName = order.user?.displayName || 'Customer';
+    const customerEmail = order.user?.email || 'N/A';
+    const total = order.total_display?.amount || order.total || 0;
+    const currency = order.total_display?.currency || order.currency || 'ETB';
+    const vendorText = Array.from(vendors).join(', ') || 'N/A';
+
+    const mail = {
+      to: recipientEmail,
+      subject: `EBIRR Payment Success - Order #${order.id}`,
+      text: `EBIRR payment succeeded for Order #${order.id}.\n\nCustomer: ${customerName} (${customerEmail})\nVendors: ${vendorText}\nTotal: ${total} ${currency}\nPayment Method: ${order.paymentMethod}\nPayment Status: ${order.paymentStatus}`,
+      html: `
+        <h2>EBIRR Payment Successful</h2>
+        <p><strong>Order:</strong> #${order.id}</p>
+        <p><strong>Customer:</strong> ${customerName} (${customerEmail})</p>
+        <p><strong>Vendors:</strong> ${vendorText}</p>
+        <p><strong>Total:</strong> ${total} ${currency}</p>
+        <p><strong>Payment Method:</strong> ${order.paymentMethod}</p>
+        <p><strong>Payment Status:</strong> ${order.paymentStatus}</p>
+      `,
+    };
+
     await this.send(mail);
   }
 
@@ -554,7 +610,7 @@ export class EmailService {
     };
     await this.send(mail);
 
-    // Ideally, also notify Admins here! 
+    // Ideally, also notify Admins here!
     // But we don't have a single admin email config handy in this method.
   }
 
@@ -592,7 +648,7 @@ export class EmailService {
     if (!user || !user.email) return;
     const firstName = user.displayName?.split(' ')[0] || 'User';
     const reasonText = reason ? `Reason: ${reason}` : '';
-    
+
     const mail = {
       to: user.email,
       subject: `Withdrawal #${withdrawalId} Rejected`,
@@ -649,14 +705,14 @@ export class EmailService {
   ) {
     const adminUrl =
       this.configService.get('ADMIN_URL') || 'https://suuq.ugasfuad.com';
-    
+
     // Ensure API Url has logic to map to correct backend endpoint
     let apiUrl =
       this.configService.get('API_URL') || 'https://suuq.ugasfuad.com/api';
-    
+
     // If it's a root domain without /api, append /api to match Controller prefix
     if (!apiUrl.endsWith('/api')) {
-       apiUrl = `${apiUrl}/api`;
+      apiUrl = `${apiUrl}/api`;
     }
 
     const actionLink = isExistingUser
@@ -668,7 +724,7 @@ export class EmailService {
     const rawMobileLink = isExistingUser
       ? `suuq://login?email=${encodeURIComponent(email)}`
       : `suuq://register?email=${encodeURIComponent(email)}`;
-      
+
     const mobileActionLink = `${apiUrl}/open-app?target=${encodeURIComponent(
       rawMobileLink,
     )}`;

@@ -81,6 +81,7 @@ describe('VendorService', () => {
     Object.assign(productRepoMock, {
       create: j.fn((v: any) => v),
       save: j.fn(async (v: any) => v),
+      find: j.fn(),
       findOne: j.fn(),
       findOneOrFail: j.fn(),
       findAndCount: j.fn(),
@@ -296,6 +297,93 @@ describe('VendorService', () => {
     }
   });
 
+  it('createMyProduct persists staff lister attribution when staff creates for vendor', async () => {
+    const vendor = {
+      id: 1,
+      verified: true,
+      verificationStatus: VerificationStatus.APPROVED,
+      roles: ['VENDOR'],
+      displayName: 'Owner Store',
+      email: 'owner@suuq.test',
+    } as any;
+    const creator = {
+      id: 99,
+      displayName: 'Vendor Staff',
+      email: 'staff@suuq.test',
+    } as any;
+
+    userRepoMock.findOneBy.mockResolvedValue(vendor);
+    const txProductSave = j.fn(async (p: any) => ({ ...p, id: 556 }));
+    productRepoMock.save = txProductSave;
+    productRepoMock.create = (v: any) => v;
+    productRepoMock.findOneOrFail.mockResolvedValue({
+      id: 556,
+      createdById: 99,
+      createdByName: 'Vendor Staff',
+      images: [],
+      vendor,
+      category: null,
+      tags: [],
+    });
+
+    const getSysSetting = (service as any).settingsService.getSystemSetting;
+    getSysSetting.mockResolvedValue('5');
+
+    await service.createMyProduct(
+      1,
+      {
+        name: 'Staff listed product',
+        price: 10,
+        currency: 'USD',
+      } as any,
+      creator,
+    );
+
+    expect(txProductSave).toHaveBeenCalled();
+    const firstSavedPayload = txProductSave.mock.calls[0][0];
+    expect(firstSavedPayload.createdById).toBe(99);
+    expect(firstSavedPayload.createdByName).toBe('Vendor Staff');
+  });
+
+  it('getVendorProducts returns explicit listedBy staff classification', async () => {
+    const vendorId = 1;
+    productRepoMock.find.mockResolvedValue([
+      {
+        id: 901,
+        name: 'Staff listed',
+        createdById: 77,
+        createdByName: 'Staff Member',
+        vendor: { id: vendorId, storeName: 'Owner Store' },
+        images: [],
+      },
+    ] as any);
+
+    productRepoMock.query = j
+      .fn()
+      .mockResolvedValue([{ '?column?': 1 }] as any);
+    productRepoMock.createQueryBuilder = j.fn(() => {
+      const qb: any = {
+        select: j.fn().mockReturnThis(),
+        addSelect: j.fn().mockReturnThis(),
+        where: j.fn().mockReturnThis(),
+        andWhere: j.fn().mockReturnThis(),
+        limit: j.fn().mockReturnThis(),
+        getRawMany: j.fn().mockResolvedValue([]),
+        getRawOne: j.fn().mockResolvedValue({}),
+      };
+      return qb;
+    });
+
+    const out: any[] = await service.getVendorProducts(vendorId, 'ETB');
+    expect(Array.isArray(out)).toBe(true);
+    expect(out[0]).toBeDefined();
+    expect(out[0].listedBy).toEqual({
+      name: 'Staff Member',
+      type: 'staff',
+      id: 77,
+    });
+  });
+
   it('updateMyProduct avoids wiping images when only primaryImageId is sent', async () => {
     const userId = 1;
     const productId = 2;
@@ -347,6 +435,38 @@ describe('VendorService', () => {
     expect(imageDelete).not.toHaveBeenCalled();
     expect(imageSave).not.toHaveBeenCalled();
     expect(updated.imageUrl).toBe('keep-me');
+  });
+
+  it('updateMyProduct preserves custom variant attributes', async () => {
+    const userId = 1;
+    const productId = 427;
+    const product = {
+      id: productId,
+      vendor: { id: userId },
+      attributes: {
+        isFree: false,
+        videoUrl: null,
+        posterUrl: null,
+      },
+    } as any;
+
+    productRepoMock.findOne = j.fn().mockResolvedValue(product);
+    productRepoMock.save = j.fn(async (p: any) => p);
+    productRepoMock.findOneOrFail = j.fn().mockResolvedValue(product);
+
+    const updated = await service.updateMyProduct(userId, productId, {
+      attributes: {
+        Size: ['S', 'M', 'L'],
+        Color: ['Red', 'Blue'],
+        Material: ['Cotton'],
+      },
+    } as any);
+
+    expect(productRepoMock.save).toHaveBeenCalled();
+    expect(updated.attributes.Size).toEqual(['S', 'M', 'L']);
+    expect(updated.attributes.Color).toEqual(['Red', 'Blue']);
+    expect(updated.attributes.Material).toEqual(['Cotton']);
+    expect(updated.attributes.isFree).toBe(false);
   });
 
   it('createShipment updates order and items', async () => {

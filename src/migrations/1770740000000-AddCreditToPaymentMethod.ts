@@ -11,6 +11,5 @@ export class AddCreditToPaymentMethod1770740000000
     );
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   public async down(_queryRunner: QueryRunner): Promise<void> {}
 }

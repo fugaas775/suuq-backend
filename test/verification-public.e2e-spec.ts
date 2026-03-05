@@ -21,7 +21,7 @@ import { closeE2eApp } from './utils/e2e-cleanup';
 class AllowGuard implements CanActivate {
   canActivate(context: ExecutionContext): boolean {
     const req = context.switchToHttp().getRequest();
-    req.user = { id: 1, email: 'admin@example.com' };
+    req.user = { id: 1, email: 'admin@suuqsapp.com' };
     return true;
   }
 }
@@ -119,7 +119,7 @@ describe('Public verification and profile (e2e-lite)', () => {
   it('GET /auth/profile includes verificationStatus', async () => {
     (usersServiceMock.findById as any).mockResolvedValueOnce({
       id: 1,
-      email: 'user@example.com',
+      email: 'user@suuqsapp.com',
       roles: ['CUSTOMER'],
       verificationStatus: 'APPROVED',
       verified: true,
@@ -137,7 +137,7 @@ describe('Public verification and profile (e2e-lite)', () => {
   it('PATCH /users/:id/verify updates status', async () => {
     (usersServiceMock.setVerificationStatus as any).mockResolvedValueOnce({
       id: 21,
-      email: 'vendor@example.com',
+      email: 'vendor@suuqsapp.com',
       roles: ['VENDOR'],
       verificationStatus: 'APPROVED',
       verified: true,

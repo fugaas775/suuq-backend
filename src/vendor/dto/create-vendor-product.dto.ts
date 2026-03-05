@@ -4,10 +4,12 @@ import {
   IsString,
   IsNumber,
   IsArray,
+  IsObject,
   ValidateNested,
   IsInt,
   IsBoolean,
   IsIn,
+  MaxLength,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -77,9 +79,19 @@ export class CreateVendorProductDto {
   description?: string;
 
   @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  privateNote?: string;
+
+  @IsOptional()
   @Type(() => Number)
   @IsNumber()
   stock_quantity?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  stockQuantity?: number;
 
   @IsOptional()
   @Type(() => Number)
@@ -114,6 +126,14 @@ export class CreateVendorProductDto {
   @IsOptional()
   @IsString()
   featuredPaidCurrency?: string;
+
+  @IsOptional()
+  @IsIn(['physical', 'digital', 'service', 'property'])
+  productType?: 'physical' | 'digital' | 'service' | 'property';
+
+  @IsOptional()
+  @IsIn(['physical', 'digital', 'service', 'property'])
+  type?: 'physical' | 'digital' | 'service' | 'property';
 
   // Tags as array of names (e.g., selected subcategory labels)
   @IsOptional()
@@ -185,7 +205,11 @@ export class CreateVendorProductDto {
   rentPeriod?: 'day' | 'week' | 'month' | 'year';
 
   @IsOptional()
-  @ValidateNested()
-  @Type(() => AttributesDto)
-  attributes?: AttributesDto;
+  @Type(() => Number)
+  @IsNumber()
+  totalPrice?: number;
+
+  @IsOptional()
+  @IsObject()
+  attributes?: Record<string, any>;
 }

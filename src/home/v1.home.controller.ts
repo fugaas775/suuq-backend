@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access */
 import { Controller, Get, Header, Query } from '@nestjs/common';
 import { HomeService } from './home.service';
 import { toProductCard } from '../products/utils/product-card.util';

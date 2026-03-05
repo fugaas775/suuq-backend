@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/await-thenable */
-/* eslint-disable no-empty, @typescript-eslint/no-unused-vars */
+
 import {
   Injectable,
   NotFoundException,
@@ -42,6 +42,7 @@ import { qbCacheIfEnabled } from '../common/utils/db-cache.util';
 import { CurrencyService } from '../common/services/currency.service';
 import { EmailService } from '../email/email.service';
 import { BOOST_OPTIONS, BoostTier } from './boost-pricing.service';
+import { ImageSimilarityService } from '../search/image-similarity.service';
 
 @Injectable()
 export class ProductsService {
@@ -100,7 +101,159 @@ export class ProductsService {
     private readonly currencyService: CurrencyService,
     private readonly emailService: EmailService,
     private readonly notifications: NotificationsService,
+    private readonly imageSimilarity: ImageSimilarityService,
   ) {}
+
+  private async resolveSimilarImageStrip(
+    productId: number,
+    opts?: {
+      topK?: number;
+      maxDistance?: number;
+      ownImageUrls?: string[];
+      currency?: string;
+    },
+  ): Promise<
+    Array<{
+      productId: number;
+      thumbnail?: string | null;
+      lowRes?: string | null;
+      src?: string | null;
+      distance?: number;
+    }>
+  > {
+    const topK = Math.min(Math.max(Number(opts?.topK) || 3, 1), 6);
+    const maxDistance = Math.min(
+      Math.max(Number(opts?.maxDistance) || 12, 1),
+      64,
+    );
+    const ownImageUrls = new Set(
+      (opts?.ownImageUrls || [])
+        .filter((url): url is string => typeof url === 'string' && !!url.trim())
+        .map((url) => url.trim()),
+    );
+    const isOwnImageEntry = (entry: {
+      src?: string | null;
+      thumbnail?: string | null;
+      lowRes?: string | null;
+    }) => {
+      const entryUrls = [entry.src, entry.thumbnail, entry.lowRes].filter(
+        (url): url is string => typeof url === 'string' && !!url.trim(),
+      );
+      if (!entryUrls.length || !ownImageUrls.size) return false;
+      return entryUrls.every((url) => ownImageUrls.has(url.trim()));
+    };
+
+    try {
+      const sim = await this.imageSimilarity.searchSimilarByProduct(productId, {
+        topK,
+        maxDistance,
+        sameCategoryBoost: 2,
+        sameCityBoost: 1,
+        diversifyVendors: true,
+      });
+
+      const strip = (sim.matches || [])
+        .slice(0, topK)
+        .map((m) => ({
+          productId: Number(m.productId),
+          thumbnail: m.thumbnail ?? null,
+          lowRes: m.lowRes ?? null,
+          src: m.src ?? null,
+          distance: Number(m.distance),
+        }))
+        .filter((entry) => !!entry.thumbnail || !!entry.lowRes || !!entry.src)
+        .filter((entry) => Number(entry.productId) !== productId)
+        .filter((entry) => !isOwnImageEntry(entry));
+
+      if (strip.length) return strip;
+
+      const fallbackStrip = (sim.fallbackImages || [])
+        .slice(0, topK)
+        .map((m) => ({
+          productId: Number(m.productId || productId),
+          thumbnail: m.thumbnail ?? null,
+          lowRes: m.lowRes ?? null,
+          src: m.src ?? null,
+        }))
+        .filter((entry) => !!entry.thumbnail || !!entry.lowRes || !!entry.src)
+        .filter((entry) => Number(entry.productId) !== productId)
+        .filter((entry) => !isOwnImageEntry(entry));
+      if (fallbackStrip.length) return fallbackStrip;
+    } catch {
+      // continue to related fallback
+    }
+
+    try {
+      const related = await this.findRelatedProducts(productId, {
+        limit: topK,
+        currency: opts?.currency,
+      });
+      return (related || [])
+        .slice(0, topK)
+        .map((item: any) => ({
+          productId: Number(item?.id || 0),
+          thumbnail:
+            item?.primaryImage?.thumbnail ??
+            item?.images?.[0]?.thumbnailSrc ??
+            null,
+          lowRes:
+            item?.primaryImage?.lowRes ?? item?.images?.[0]?.lowResSrc ?? null,
+          src:
+            item?.primaryImage?.src ??
+            item?.imageUrl ??
+            item?.images?.[0]?.src ??
+            null,
+        }))
+        .filter((entry) => Number(entry.productId) > 0)
+        .filter((entry) => !!entry.thumbnail || !!entry.lowRes || !!entry.src)
+        .filter((entry) => Number(entry.productId) !== productId)
+        .filter((entry) => !isOwnImageEntry(entry));
+    } catch {
+      return [];
+    }
+  }
+
+  private async ensureSimilarImageStripIfMissing(
+    target: Record<string, any> | null | undefined,
+    productId: number,
+  ): Promise<void> {
+    if (!target || typeof target !== 'object') return;
+    const topLevel = Array.isArray((target as any).similarImageStrip)
+      ? (target as any).similarImageStrip
+      : [];
+    const attrLevel = Array.isArray(
+      (target as any).attributes?.similarImageStrip,
+    )
+      ? (target as any).attributes.similarImageStrip
+      : [];
+    if (topLevel.length || attrLevel.length) return;
+
+    const ownImageUrls = [
+      (target as any)?.imageUrl,
+      (target as any)?.primaryImage?.src,
+      (target as any)?.primaryImage?.thumbnail,
+      (target as any)?.primaryImage?.lowRes,
+    ]
+      .filter((url): url is string => typeof url === 'string' && !!url.trim())
+      .map((url) => url.trim());
+
+    const strip = await this.resolveSimilarImageStrip(productId, {
+      topK: 3,
+      maxDistance: 12,
+      ownImageUrls,
+      currency: (target as any)?.currency,
+    });
+    if (!strip.length) return;
+
+    (target as any).similarImageStrip = strip;
+    const attrs =
+      (target as any).attributes &&
+      typeof (target as any).attributes === 'object'
+        ? { ...(target as any).attributes }
+        : {};
+    attrs.similarImageStrip = strip;
+    (target as any).attributes = attrs;
+  }
 
   // Simple in-memory cache for Property & Real Estate subtree ids
   private propertyIdsCache: { ids: number[]; at: number } | null = null;
@@ -385,6 +538,26 @@ export class ProductsService {
       return out ?? null;
     }
 
+    if (!this.isVehicleCategory(category)) {
+      for (const key of [
+        'make',
+        'model',
+        'year',
+        'mileage',
+        'transmission',
+        'fuelType',
+        'fuel_type',
+        'vehicleType',
+        'vehicle_type',
+        'engineCapacity',
+        'engine_capacity',
+      ]) {
+        if (Object.prototype.hasOwnProperty.call(out, key)) {
+          delete out[key];
+        }
+      }
+    }
+
     if (!this.shouldApplyRestaurantVariations(category)) {
       return out;
     }
@@ -459,7 +632,9 @@ export class ProductsService {
     if (menuSection !== undefined) picked.menuSection = menuSection;
 
     const availability =
-      input.availability !== undefined ? input.availability : input.stock_status;
+      input.availability !== undefined
+        ? input.availability
+        : input.stock_status;
     if (availability !== undefined) {
       picked.availability = availability;
     }
@@ -501,6 +676,90 @@ export class ProductsService {
       delete out.videoUrl;
       delete out.videourl;
       delete out.video_url;
+    }
+    return out;
+  }
+
+  private isFashionApparelCategory(category?: any): boolean {
+    const slug = String(category?.slug || '').toLowerCase();
+    const name = String(category?.name || '').toLowerCase();
+    return (
+      slug.includes('fashion') ||
+      slug.includes('apparel') ||
+      name.includes('fashion') ||
+      name.includes('apparel')
+    );
+  }
+
+  private stripNoisyMediaAttributeKeys(
+    attrs: Record<string, any>,
+    opts?: { stripDigitalKeys?: boolean },
+  ): Record<string, any> {
+    const out: Record<string, any> = { ...attrs };
+    const mediaKeys = [
+      'cover',
+      'featuredImage',
+      'featured_image',
+      'image',
+      'imageUrl',
+      'image_url',
+      'imageUrls',
+      'image_urls',
+      'image_list',
+      'images',
+      'images_flat',
+      'gallery',
+      'mainImage',
+      'main_image',
+      'media',
+      'mediaList',
+      'media_list',
+      'photos',
+      'pictures',
+      'primaryImage',
+      'primaryImageUrl',
+      'primary_image',
+      'primary_image_url',
+      'uploads',
+      'urls',
+      'url',
+      'src',
+      'thumbnail',
+      'thumbnail_url',
+      'thumbnailUrl',
+      'thumb',
+      'thumb_url',
+      'thumbUrl',
+      'lowRes',
+      'low_res',
+      'lowResUrl',
+      'low_res_url',
+      'lowres',
+      'lowres_url',
+      'file',
+      'files',
+    ];
+    for (const key of mediaKeys) {
+      if (Object.prototype.hasOwnProperty.call(out, key)) {
+        delete out[key];
+      }
+    }
+    if (opts?.stripDigitalKeys) {
+      for (const key of [
+        'digital',
+        'downloadKey',
+        'download_key',
+        'downloadUrl',
+        'download_url',
+        'fileSizeMB',
+        'format',
+        'licenseRequired',
+        'license_required',
+      ]) {
+        if (Object.prototype.hasOwnProperty.call(out, key)) {
+          delete out[key];
+        }
+      }
     }
     return out;
   }
@@ -651,6 +910,7 @@ export class ProductsService {
       order_class,
       order_type,
       downloadKey,
+      privateNote,
       make,
       model,
       year,
@@ -683,10 +943,9 @@ export class ProductsService {
     });
     const mergedRequestAttributes = {
       ...topLevelRestaurantAliases,
-      ...((attributes && typeof attributes === 'object' ? attributes : {}) as Record<
-        string,
-        any
-      >),
+      ...((attributes && typeof attributes === 'object'
+        ? attributes
+        : {}) as Record<string, any>),
     };
 
     // Security: Prevent creating featured products directly
@@ -807,9 +1066,13 @@ export class ProductsService {
       furnished: furnished ?? null,
       rentPeriod: rentPeriod ?? null,
       attributes: {
-        ...(this.sanitizeAttributesForCategory(mergedRequestAttributes, category, {
-          requireRestaurantMenuSection: !!isRestaurant,
-        }) ?? {}),
+        ...(this.sanitizeAttributesForCategory(
+          mergedRequestAttributes,
+          category,
+          {
+            requireRestaurantMenuSection: !!isRestaurant,
+          },
+        ) ?? {}),
         ...(make !== undefined ? { make } : {}),
         ...(model !== undefined ? { model } : {}),
         ...(year !== undefined ? { year } : {}),
@@ -819,6 +1082,19 @@ export class ProductsService {
       },
       imageUrl: normalizedImages.length > 0 ? normalizedImages[0].src : null,
     });
+
+    if (typeof privateNote !== 'undefined') {
+      const normalizedPrivateNote = String(privateNote ?? '').trim();
+      const noteActor = createdBy || vendor;
+      const noteActorName =
+        noteActor.displayName ||
+        (noteActor as any).contactName ||
+        (noteActor.email ? String(noteActor.email).split('@')[0] : 'Vendor');
+      product.privateNote = normalizedPrivateNote || null;
+      product.privateNoteUpdatedAt = new Date();
+      product.privateNoteUpdatedById = Number(noteActor.id || vendor.id);
+      product.privateNoteUpdatedByName = noteActorName;
+    }
 
     // If a downloadKey is provided explicitly, mirror it into attributes for digital products
     try {
@@ -995,6 +1271,14 @@ export class ProductsService {
           ) {
             (attrs as any).files = [(attrs as any).file];
           }
+          const isDigitalProduct =
+            String(out.productType || '').toLowerCase() === 'digital';
+          const isFashionCategory = this.isFashionApparelCategory(out.category);
+          if (isFashionCategory || !isDigitalProduct) {
+            attrs = this.stripNoisyMediaAttributeKeys(attrs, {
+              stripDigitalKeys: isFashionCategory || !isDigitalProduct,
+            });
+          }
           out.attributes = attrs;
         }
         // Log attribute keys (visibility in logs) for troubleshooting
@@ -1046,9 +1330,11 @@ export class ProductsService {
           } catch {}
         } catch {}
       } catch {}
+      await this.ensureSimilarImageStripIfMissing(out, id);
       this.applyCurrency(out, targetCurrency);
       return out;
     } catch {
+      await this.ensureSimilarImageStripIfMissing(product as any, id);
       return this.applyCurrency(product, targetCurrency);
     }
   }
@@ -1089,8 +1375,11 @@ export class ProductsService {
     // findOne handles view counting, normalization, etc.
     const focus = await this.findOne(id, currency);
 
-    // 2. Fetch Ad Products (Random selection from popular)
+    await this.ensureSimilarImageStripIfMissing(focus as any, id);
+
+    // 2. Fetch Sponsored Ad Products (active featured only)
     const targetCurrency = this.normalizeCurrencyParam(currency);
+    const now = new Date();
     const adsQb = this.productRepo
       .createQueryBuilder('product')
       .leftJoinAndSelect('product.vendor', 'vendor')
@@ -1100,10 +1389,13 @@ export class ProductsService {
       .andWhere('product.isBlocked = false')
       .andWhere('product.deleted_at IS NULL')
       .andWhere('product.id <> :pid', { pid: id })
-      // Prioritize "Featured" (Paid/Sponsored) products first for monetization
-      .orderBy('product.featured', 'DESC')
-      // Then fallback to high viewCount as a proxy for popularity
-      .addOrderBy('product.viewCount', 'DESC')
+      .andWhere('product.featured = :featured', { featured: true })
+      .andWhere(
+        '(product.featuredExpiresAt IS NULL OR product.featuredExpiresAt > :now)',
+        { now },
+      )
+      .orderBy('product.featuredExpiresAt', 'ASC')
+      .addOrderBy('product.id', 'DESC')
       .limit(20);
 
     // Lean select for Ads (same as related)
@@ -1124,7 +1416,6 @@ export class ProductsService {
       'product.createdAt',
       'product.listingType',
       'product.listingCity',
-      'product.viewCount', // Needed for ad selection, though usually hidden
       'vendor.id',
       'vendor.roles',
       'vendor.storeName',
@@ -1141,30 +1432,8 @@ export class ProductsService {
 
     const adCandidates = await adsQb.getMany();
 
-    // "System Ad" Implementation (Income Generating Logic):
-    // 1. Separate Paid (Featured) from Free (High Traffic) candidates.
-    // Respect expiration if set
-    const now = new Date();
-    const paidAds = adCandidates.filter(
-      (p) =>
-        p.featured &&
-        (!p.featuredExpiresAt || new Date(p.featuredExpiresAt) > now),
-    );
-    const fillerAds = adCandidates.filter(
-      (p) =>
-        !p.featured ||
-        (p.featuredExpiresAt && new Date(p.featuredExpiresAt) <= now),
-    );
-
-    // 2. Shuffle internally to rotate inventory, but strictly respect paid priority.
-    // Paid ads always come before fillers.
-    const sortedCandidates = [
-      ...paidAds.sort(() => 0.5 - Math.random()),
-      ...fillerAds.sort(() => 0.5 - Math.random()),
-    ];
-
-    // 3. Select top 2 slots for the feed
-    const ads = sortedCandidates.slice(0, 2);
+    // 3. Select up to 2 sponsored slots and shuffle for rotation
+    const ads = adCandidates.sort(() => 0.5 - Math.random()).slice(0, 2);
 
     const adsNormalized = await this.applyCurrencyList(
       ads.map((p) => normalizeProductMedia(p as any)) as any,
@@ -1245,6 +1514,7 @@ export class ProductsService {
     if (!base) throw new NotFoundException('Product not found');
     const lim = Math.min(Math.max(Number(opts?.limit) || 24, 1), 50);
     const city = (opts?.city || '').trim();
+    const baseIsVehicle = this.isVehicleCategory(base.category);
 
     // Resolve descendant category ids for stronger topical similarity
     let subtreeIds: number[] = [];
@@ -1275,6 +1545,26 @@ export class ProductsService {
     // Optional exact property city filter
     if (city) {
       qb.andWhere('LOWER(product.listing_city) = LOWER(:lc)', { lc: city });
+    }
+
+    // Safety guardrail: for vehicle detail pages, only keep related candidates that
+    // look like actual vehicle listings (not category-only misclassifications).
+    if (baseIsVehicle) {
+      qb.andWhere(
+        `(
+          COALESCE(
+            NULLIF(BTRIM(product.attributes->>'make'), ''),
+            NULLIF(BTRIM(product.attributes->>'model'), ''),
+            NULLIF(BTRIM(product.attributes->>'vehicleType'), ''),
+            NULLIF(BTRIM(product.attributes->>'vehicle_type'), ''),
+            NULLIF(BTRIM(product.attributes->>'fuelType'), ''),
+            NULLIF(BTRIM(product.attributes->>'fuel_type'), ''),
+            NULLIF(BTRIM(product.attributes->>'transmission'), '')
+          ) IS NOT NULL
+          OR NULLIF(BTRIM(product.attributes->>'year'), '') IS NOT NULL
+          OR NULLIF(BTRIM(product.attributes->>'mileage'), '') IS NOT NULL
+        )`,
+      );
     }
 
     // Soft scoring: prefer same vendor; then sales/rating recency
@@ -2514,6 +2804,7 @@ export class ProductsService {
       order_class,
       order_type,
       downloadKey,
+      privateNote,
       make,
       model,
       year,
@@ -2547,6 +2838,18 @@ export class ProductsService {
 
     // Update simple properties
     Object.assign(product, rest);
+
+    if (typeof privateNote !== 'undefined') {
+      const normalizedPrivateNote = String(privateNote ?? '').trim();
+      const noteActorName =
+        user.displayName ||
+        (user as any).contactName ||
+        (user.email ? String(user.email).split('@')[0] : 'Vendor');
+      product.privateNote = normalizedPrivateNote || null;
+      product.privateNoteUpdatedAt = new Date();
+      product.privateNoteUpdatedById = Number(user.id);
+      product.privateNoteUpdatedByName = noteActorName;
+    }
 
     if (finalSalePrice !== undefined) product.salePrice = finalSalePrice;
     if (finalStockQuantity !== undefined)
@@ -2597,10 +2900,13 @@ export class ProductsService {
     if (typeof furnished !== 'undefined') product.furnished = furnished as any;
     if (rentPeriod !== undefined)
       product.rentPeriod = (rentPeriod as any) ?? null;
-    if (attributes !== undefined || Object.keys(topLevelRestaurantAliases).length) {
+    if (
+      attributes !== undefined ||
+      Object.keys(topLevelRestaurantAliases).length
+    ) {
       const baseAttrs =
         product.attributes && typeof product.attributes === 'object'
-          ? (product.attributes as Record<string, any>)
+          ? product.attributes
           : {};
       const incomingAttrs =
         attributes && typeof attributes === 'object'
@@ -2998,7 +3304,7 @@ export class ProductsService {
         where: [
           { displayName: 'Suuq S Vendor' },
           { storeName: 'Suuq S Vendor' },
-          { email: 'suuq.s.vendor@suuq.com' },
+          { email: 'admin@suuqsapp.com' },
         ],
       });
 
@@ -3077,7 +3383,7 @@ export class ProductsService {
         where: [
           { displayName: 'Suuq S Vendor' },
           { storeName: 'Suuq S Vendor' },
-          { email: 'suuq.s.vendor@suuq.com' },
+          { email: 'admin@suuqsapp.com' },
         ],
       });
     }

@@ -1,6 +1,6 @@
 // src/app.module.ts
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unused-vars, @typescript-eslint/require-await */
-import { Module } from '@nestjs/common';
+/* eslint-disable @typescript-eslint/require-await */
+import { Module, MiddlewareConsumer, NestModule } from '@nestjs/common';
 import { CacheModule } from '@nestjs/cache-manager';
 import { APP_GUARD } from '@nestjs/core';
 import { APP_INTERCEPTOR } from '@nestjs/core';
@@ -12,6 +12,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { dataSourceOptions } from './ormconfig';
 import { BullModule } from '@nestjs/bullmq';
+import { AppVersionMiddleware } from './common/middleware/app-version.middleware';
 
 // Import all your feature modules
 import { UsersModule } from './users/users.module';
@@ -58,6 +59,7 @@ import { WithdrawalsModule } from './withdrawals/withdrawals.module';
 import { ChatModule } from './chat/chat.module';
 import { PromotionsModule } from './promotions/promotions.module';
 import { CreditModule } from './credit/credit.module';
+import { LinkingModule } from './linking/linking.module';
 
 @Module({
   imports: [
@@ -229,6 +231,7 @@ import { CreditModule } from './credit/credit.module';
     ChatModule,
     PromotionsModule,
     CreditModule,
+    LinkingModule,
   ],
   controllers: [AppController],
   // Apply rate limiting globally
@@ -244,4 +247,8 @@ import { CreditModule } from './credit/credit.module';
     },
   ],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    consumer.apply(AppVersionMiddleware).forRoutes('*');
+  }
+}

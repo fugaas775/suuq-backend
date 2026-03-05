@@ -4,7 +4,10 @@ module.exports = {
       name: 'suuq-api',
       script: 'dist/main.js',
       exec_mode: 'cluster',
-      instances: 'max', 
+      instances: 'max',
+      env: {
+        TZ: 'Africa/Nairobi',
+      },
     },
   ],
 };

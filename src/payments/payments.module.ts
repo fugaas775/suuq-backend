@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { PaymentsController } from './payments.controller';
 import { Order } from '../orders/entities/order.entity';
 import { TelebirrTransaction } from './entities/telebirr-transaction.entity';
+import { EbirrTransaction } from './entities/ebirr-transaction.entity';
 import { MpesaModule } from '../mpesa/mpesa.module';
 import { TelebirrModule } from '../telebirr/telebirr.module';
 import { EbirrModule } from '../ebirr/ebirr.module';
@@ -14,7 +15,7 @@ import { CurrencyModule } from '../common/services/currency.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Order, TelebirrTransaction]),
+    TypeOrmModule.forFeature([Order, TelebirrTransaction, EbirrTransaction]),
     MpesaModule,
     TelebirrModule,
     EbirrModule,

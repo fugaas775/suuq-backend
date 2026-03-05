@@ -1,4 +1,8 @@
-import { Injectable, Logger, InternalServerErrorException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  InternalServerErrorException,
+} from '@nestjs/common';
 import { telebirrConfig } from './telebirr.config';
 import axios from 'axios';
 import * as crypto from 'crypto';
@@ -17,34 +21,42 @@ export class TelebirrService {
     try {
       // Endpoint logic for Fabric Token
       const response = await axios.post(
-        `${telebirrConfig.apiUrl}/payment/v1/token`, 
+        `${telebirrConfig.apiUrl}/payment/v1/token`,
         {
           appId: telebirrConfig.appId,
-          appKey: telebirrConfig.appKey, 
+          appKey: telebirrConfig.appKey,
         },
       );
 
       const data = response.data;
       if (data.code !== 0 && data.code !== 200) {
-         this.logger.error(`Fabric token error: ${JSON.stringify(data)}`);
-         throw new Error('Failed to obtain Fabric token');
+        this.logger.error(`Fabric token error: ${JSON.stringify(data)}`);
+        throw new Error('Failed to obtain Fabric token');
       }
 
-      this.fabricToken = data.data.accessToken; 
-      const expr = parseInt(data.data.expiresIn) || 3600; 
-      this.tokenExpiry = Date.now() + (expr * 1000) - 60000;
-      
+      this.fabricToken = data.data.accessToken;
+      const expr = parseInt(data.data.expiresIn) || 3600;
+      this.tokenExpiry = Date.now() + expr * 1000 - 60000;
+
       return this.fabricToken;
     } catch (error) {
       this.logger.error('Error fetching Fabric token', error);
-      throw new InternalServerErrorException('Failed to authenticate with Payment Gateway');
+      throw new InternalServerErrorException(
+        'Failed to authenticate with Payment Gateway',
+      );
     }
   }
 
   private createStringA(params: Record<string, any>): string {
     return Object.keys(params)
       .sort()
-      .filter((key) => params[key] !== null && params[key] !== undefined && params[key] !== '' && key !== 'sign')
+      .filter(
+        (key) =>
+          params[key] !== null &&
+          params[key] !== undefined &&
+          params[key] !== '' &&
+          key !== 'sign',
+      )
       .map((key) => `${key}=${params[key]}`)
       .join('&');
   }
@@ -70,11 +82,8 @@ export class TelebirrService {
     return encrypted.toString('base64');
   }
 
-  async createOrder(
-    amount: string,
-    merchOrderId: string,
-  ): Promise<any> {
-    const token = await this.getFabricToken(); 
+  async createOrder(amount: string, merchOrderId: string): Promise<any> {
+    const token = await this.getFabricToken();
 
     const ussdPayload = {
       outTradeNo: merchOrderId,
@@ -97,23 +106,25 @@ export class TelebirrService {
       ussd: ussd,
       sign: '',
     };
-    
+
     requestBody.sign = this.signRequest(requestBody);
 
     try {
       const response = await axios.post(
-        `${telebirrConfig.apiUrl}/payment/v1/toPay`, 
+        `${telebirrConfig.apiUrl}/payment/v1/toPay`,
         requestBody,
-        { headers: { 'X-Auth-Token': token } }
+        { headers: { 'X-Auth-Token': token } },
       );
 
       if (response.data.code !== 0 && response.data.code !== 200) {
-         this.logger.error(`Telebirr createOrder failed: ${JSON.stringify(response.data)}`);
-         throw new Error(response.data.msg || 'Telebirr API Error');
+        this.logger.error(
+          `Telebirr createOrder failed: ${JSON.stringify(response.data)}`,
+        );
+        throw new Error(response.data.msg || 'Telebirr API Error');
       }
-      
-      // Return the data that contains toPayUrl or receiveCode 
-      return response.data.data; 
+
+      // Return the data that contains toPayUrl or receiveCode
+      return response.data.data;
     } catch (error) {
       this.logger.error('Error creating Telebirr order', error);
       throw new InternalServerErrorException('Payment initiation failed');
@@ -126,70 +137,72 @@ export class TelebirrService {
     refId: string, // Unique reference for disbursement
   ): Promise<any> {
     const token = await this.getFabricToken();
-    
+
     // Construct payload per standard disburse/B2C API patterns
     const payload = {
       appId: telebirrConfig.appId,
       sign: '',
-      ussd: ''
+      ussd: '',
     };
 
     const ussdData = {
-        outTradeNo: refId,
-        amount: amount,
-        receiverShortCode: vendorAccount, // Or msisdn depending on account type
-        remark: 'Vendor Settlement',
-        timestamp: Date.now().toString(),
-        nonce: crypto.randomBytes(16).toString('hex'),
+      outTradeNo: refId,
+      amount: amount,
+      receiverShortCode: vendorAccount, // Or msisdn depending on account type
+      remark: 'Vendor Settlement',
+      timestamp: Date.now().toString(),
+      nonce: crypto.randomBytes(16).toString('hex'),
     };
 
     const ussd = this.encryptPayload(ussdData);
     payload.ussd = ussd;
-    payload.sign = this.signRequest(payload); 
-    
+    payload.sign = this.signRequest(payload);
+
     try {
-      // Endpoint assumption: /payment/v1/merchant/transfer or similar. 
+      // Endpoint assumption: /payment/v1/merchant/transfer or similar.
       // User prompt called it "CreateDisburseOrder".
       const response = await axios.post(
-        `${telebirrConfig.apiUrl}/payment/v1/merchant/transfer`, 
+        `${telebirrConfig.apiUrl}/payment/v1/merchant/transfer`,
         payload,
-        { headers: { 'X-Auth-Token': token } }
+        { headers: { 'X-Auth-Token': token } },
       );
 
       if (response.data.code !== 0 && response.data.code !== 200) {
-          this.logger.error(`Disbursement failed: ${JSON.stringify(response.data)}`);
-          throw new Error(response.data.msg || 'Disbursement Failed');
+        this.logger.error(
+          `Disbursement failed: ${JSON.stringify(response.data)}`,
+        );
+        throw new Error(response.data.msg || 'Disbursement Failed');
       }
       return response.data;
     } catch (error) {
-       this.logger.error('Error processing disbursement', error);
-       throw new InternalServerErrorException('Disbursement failed');
+      this.logger.error('Error processing disbursement', error);
+      throw new InternalServerErrorException('Disbursement failed');
     }
   }
 
   async queryOrder(merchOrderId: string): Promise<any> {
-      const token = await this.getFabricToken();
-      const payload = {
-          appId: telebirrConfig.appId,
-          outTradeNo: merchOrderId,
-          sign: ''
-      };
-      payload.sign = this.signRequest(payload);
+    const token = await this.getFabricToken();
+    const payload = {
+      appId: telebirrConfig.appId,
+      outTradeNo: merchOrderId,
+      sign: '',
+    };
+    payload.sign = this.signRequest(payload);
 
-      try {
-          const response = await axios.post(
-              `${telebirrConfig.apiUrl}/payment/v1/queryOrder`,
-              payload,
-              { headers: { 'X-Auth-Token': token } }
-          );
-           if (response.data.code !== 0 && response.data.code !== 200) {
-              throw new Error(response.data.msg || 'Query Failed');
-           }
-           return response.data;
-      } catch (error) {
-          this.logger.error('Error querying order', error);
-          throw new InternalServerErrorException('Order query failed');
+    try {
+      const response = await axios.post(
+        `${telebirrConfig.apiUrl}/payment/v1/queryOrder`,
+        payload,
+        { headers: { 'X-Auth-Token': token } },
+      );
+      if (response.data.code !== 0 && response.data.code !== 200) {
+        throw new Error(response.data.msg || 'Query Failed');
       }
+      return response.data;
+    } catch (error) {
+      this.logger.error('Error querying order', error);
+      throw new InternalServerErrorException('Order query failed');
+    }
   }
 
   verifySignature(data: Record<string, any>): boolean {

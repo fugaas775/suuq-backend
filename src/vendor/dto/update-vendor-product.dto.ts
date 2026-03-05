@@ -4,10 +4,12 @@ import {
   IsNumber,
   IsBoolean,
   IsArray,
+  IsObject,
   ValidateNested,
   IsInt,
   IsIn,
   IsDate,
+  MaxLength,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -72,6 +74,11 @@ export class UpdateVendorProductDto {
   description?: string;
 
   @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  privateNote?: string;
+
+  @IsOptional()
   @Type(() => Number)
   @IsNumber()
   price?: number;
@@ -84,6 +91,19 @@ export class UpdateVendorProductDto {
   @Type(() => Number)
   @IsNumber()
   stock_quantity?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  stockQuantity?: number;
+
+  @IsOptional()
+  @IsIn(['physical', 'digital', 'service', 'property'])
+  productType?: 'physical' | 'digital' | 'service' | 'property';
+
+  @IsOptional()
+  @IsIn(['physical', 'digital', 'service', 'property'])
+  type?: 'physical' | 'digital' | 'service' | 'property';
 
   @IsOptional()
   @Type(() => Number)
@@ -189,7 +209,11 @@ export class UpdateVendorProductDto {
   rentPeriod?: 'day' | 'week' | 'month' | 'year';
 
   @IsOptional()
-  @ValidateNested()
-  @Type(() => AttributesDto)
-  attributes?: AttributesDto;
+  @Type(() => Number)
+  @IsNumber()
+  totalPrice?: number;
+
+  @IsOptional()
+  @IsObject()
+  attributes?: Record<string, any>;
 }

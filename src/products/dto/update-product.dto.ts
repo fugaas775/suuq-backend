@@ -7,6 +7,7 @@ import {
   IsIn,
   ValidateNested,
   IsInt,
+  MaxLength,
 } from 'class-validator';
 import { Type, Transform } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
@@ -71,6 +72,11 @@ export class UpdateProductDto {
   @IsOptional()
   @IsString()
   description?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  privateNote?: string;
 
   @IsOptional()
   @IsArray()

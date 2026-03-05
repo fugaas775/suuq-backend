@@ -1,5 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-enum-comparison */
-
 import {
   Controller,
   Get,
@@ -8,6 +6,9 @@ import {
   Logger,
   Post,
   Body,
+  Headers,
+  Req,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { OrdersService } from '../orders/orders.service';
 import { ProductsService } from '../products/products.service';
@@ -15,11 +16,156 @@ import { EbirrService } from '../ebirr/ebirr.service';
 import { BoostTier } from '../products/boost-pricing.service';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { Response } from 'express';
+import { createHmac, timingSafeEqual } from 'crypto';
+import { Request } from 'express';
 
 @ApiTags('Callbacks')
 @Controller('callbacks/ebirr')
 export class EbirrCallbackController {
   private readonly logger = new Logger(EbirrCallbackController.name);
+
+  private normalizeHeaderValue(value: string | string[] | undefined): string {
+    if (Array.isArray(value)) {
+      return String(value[0] || '').trim();
+    }
+    return String(value || '').trim();
+  }
+
+  private safeEqual(a: string, b: string): boolean {
+    const aBuf = Buffer.from(a);
+    const bBuf = Buffer.from(b);
+    if (aBuf.length !== bBuf.length) return false;
+    return timingSafeEqual(aBuf, bBuf);
+  }
+
+  private normalizeHost(host: string): string {
+    return String(host || '')
+      .trim()
+      .toLowerCase()
+      .replace(/\.$/, '');
+  }
+
+  private extractHostFromUrl(raw: string): string | null {
+    const value = String(raw || '').trim();
+    if (!value) return null;
+    try {
+      const parsed = new URL(value);
+      return this.normalizeHost(parsed.hostname);
+    } catch {
+      return null;
+    }
+  }
+
+  private isHostAllowed(host: string, allowedHosts: string[]): boolean {
+    const normalizedHost = this.normalizeHost(host);
+    return allowedHosts.some((allowed) => {
+      const normalizedAllowed = this.normalizeHost(allowed);
+      return (
+        normalizedHost === normalizedAllowed ||
+        normalizedHost.endsWith(`.${normalizedAllowed}`)
+      );
+    });
+  }
+
+  private assertReturnOriginTrusted(
+    headers: Record<string, string | string[] | undefined>,
+    req: Request,
+  ): void {
+    const enforce =
+      String(process.env.EBIRR_ENFORCE_RETURN_ORIGIN || 'false') === 'true';
+
+    const allowedHosts = String(process.env.EBIRR_RETURN_ALLOWED_HOSTS || '')
+      .split(',')
+      .map((value) => this.normalizeHost(value))
+      .filter(Boolean);
+
+    const allowedIps = String(process.env.EBIRR_RETURN_ALLOWED_IPS || '')
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean);
+
+    const originHost = this.extractHostFromUrl(
+      this.normalizeHeaderValue(headers.origin),
+    );
+    const refererHost = this.extractHostFromUrl(
+      this.normalizeHeaderValue(headers.referer),
+    );
+
+    const ipFromXForwardedFor = this.normalizeHeaderValue(
+      headers['x-forwarded-for'],
+    )
+      .split(',')[0]
+      ?.trim();
+    const sourceIp =
+      ipFromXForwardedFor ||
+      this.normalizeHeaderValue(headers['x-real-ip']) ||
+      req.ip ||
+      '';
+
+    const hostTrusted =
+      allowedHosts.length > 0 &&
+      [originHost, refererHost]
+        .filter((host): host is string => Boolean(host))
+        .some((host) => this.isHostAllowed(host, allowedHosts));
+
+    const ipTrusted = allowedIps.length > 0 && allowedIps.includes(sourceIp);
+
+    if (hostTrusted || ipTrusted) {
+      return;
+    }
+
+    const diagnostic = JSON.stringify({
+      originHost: originHost || null,
+      refererHost: refererHost || null,
+      sourceIp: sourceIp || null,
+      enforce,
+    });
+
+    if (enforce) {
+      throw new UnauthorizedException(
+        `Unauthorized Ebirr return callback origin: ${diagnostic}`,
+      );
+    }
+
+    this.logger.warn(
+      `Ebirr return callback origin not trusted (enforcement disabled): ${diagnostic}`,
+    );
+  }
+
+  private assertWebhookAuthorized(
+    headers: Record<string, string | string[] | undefined>,
+    body: any,
+  ): void {
+    const secret = String(process.env.EBIRR_WEBHOOK_SECRET || '').trim();
+    if (!secret) {
+      this.logger.warn(
+        'EBIRR webhook received without EBIRR_WEBHOOK_SECRET configured. Auth validation is bypassed.',
+      );
+      return;
+    }
+
+    const providedSecret = this.normalizeHeaderValue(
+      headers['x-ebirr-webhook-secret'],
+    );
+    if (providedSecret && this.safeEqual(providedSecret, secret)) {
+      return;
+    }
+
+    const providedSignature = this.normalizeHeaderValue(
+      headers['x-ebirr-signature'],
+    );
+    if (providedSignature) {
+      const normalizedSignature = providedSignature.replace(/^sha256=/i, '');
+      const computed = createHmac('sha256', secret)
+        .update(JSON.stringify(body || {}))
+        .digest('hex');
+      if (this.safeEqual(normalizedSignature, computed)) {
+        return;
+      }
+    }
+
+    throw new UnauthorizedException('Unauthorized Ebirr webhook');
+  }
 
   constructor(
     private readonly ordersService: OrdersService,
@@ -29,7 +175,11 @@ export class EbirrCallbackController {
 
   @Post('webhook')
   @ApiOperation({ summary: 'Ebirr Payment Webhook' })
-  async handleEbirrWebhook(@Body() body: any) {
+  async handleEbirrWebhook(
+    @Body() body: any,
+    @Headers() headers: Record<string, string | string[] | undefined>,
+  ) {
+    this.assertWebhookAuthorized(headers, body);
     this.logger.log(`Received Ebirr Webhook: ${JSON.stringify(body)}`);
     await this.ebirrService.processCallback(body);
     return { status: 'OK' };
@@ -37,10 +187,28 @@ export class EbirrCallbackController {
 
   @Get('finish')
   @ApiOperation({ summary: 'Ebirr Payment Return URL' })
-  async handleEbirrReturn(@Query() query: any, @Res() res: Response) {
+  async handleEbirrReturn(
+    @Query() query: any,
+    @Headers() headers: Record<string, string | string[] | undefined>,
+    @Req() req: Request,
+    @Res() res: Response,
+  ) {
+    this.assertReturnOriginTrusted(headers, req);
     this.logger.log(`Received Ebirr Return Callback: ${JSON.stringify(query)}`);
 
     try {
+      const verifiedReturn =
+        await this.ebirrService.verifyReturnCallback(query);
+      if (!verifiedReturn.accepted) {
+        this.logger.warn(
+          `Ebirr return callback rejected before completion: ${JSON.stringify(verifiedReturn)}`,
+        );
+        const siteUrl = process.env.SITE_URL || 'https://suuq.ugasfuad.com';
+        return res.redirect(
+          `${siteUrl}/payment/ebirr/finish?status=failed&reason=${encodeURIComponent(String(verifiedReturn.reason || 'invalid_return'))}`,
+        );
+      }
+
       // Check if this is a Boost transaction first
       // Ebirr returns `res` with the encrypted response which OrdersService decrypts
       // We need to inspect the decrypted content.

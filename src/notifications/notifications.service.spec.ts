@@ -100,7 +100,9 @@ describe('NotificationsService', () => {
   beforeAll(async () => {
     usersService = {
       findOne: jest.fn<(id: number) => Promise<{ id: number } | null>>(),
-      findRecipientsByRole: jest.fn<() => Promise<any[]>>().mockResolvedValue([]),
+      findRecipientsByRole: jest
+        .fn<() => Promise<any[]>>()
+        .mockResolvedValue([]),
     } as any;
     firebaseMock = makeFirebaseMock({ successCount: 0, failureCount: 0 });
     repo = makeRepoMock();
@@ -117,7 +119,10 @@ describe('NotificationsService', () => {
         { provide: 'FIREBASE_ADMIN', useFactory: () => firebaseMock },
         { provide: UsersService, useValue: usersService },
         { provide: getRepositoryToken(DeviceToken), useValue: repo },
-        { provide: getRepositoryToken(Notification), useValue: notificationRepoMock },
+        {
+          provide: getRepositoryToken(Notification),
+          useValue: notificationRepoMock,
+        },
         {
           provide: getQueueToken('notifications'),
           useValue: {

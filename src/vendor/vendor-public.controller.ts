@@ -54,7 +54,7 @@ export class VendorPublicController {
       .filter((n) => Number.isInteger(n) && n > 0)
       .sort((a, b) => a - b);
     const v = params.view === 'grid' ? 'grid' : 'full';
-    return `ids=${ids.join(',')}&per=${params.per}&sort=${params.sort || 'created_desc'}&view=${v}`;
+    return `ids=${ids.join(',')}&per=${params.per}&sort=${params.sort || 'sales_desc'}&view=${v}`;
   }
 
   // Batch products for multiple vendors in one call
@@ -99,7 +99,7 @@ export class VendorPublicController {
       vendorIds.map(async (vendorId) => {
         const res = await this.productsService.findFiltered({
           perPage: per,
-          sort: sort || 'created_desc',
+          sort: sort || 'sales_desc',
           vendorId,
           view: v,
         } as any);
@@ -185,7 +185,7 @@ export class VendorPublicController {
       vendorIds.map(async (vendorId) => {
         const res = await this.productsService.findFiltered({
           perPage: per,
-          sort: sort || 'created_desc',
+          sort: sort || 'sales_desc',
           vendorId,
           view: v,
         } as any);

@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, prettier/prettier */
+/* eslint-disable prettier/prettier */
 import * as dotenv from 'dotenv';
 import { DataSource, DataSourceOptions } from 'typeorm';
 
@@ -16,20 +16,29 @@ if (rawUrl && !isPostgresUrl) {
 }
 const url = isPostgresUrl ? rawUrl : undefined;
 
-const __cacheEnabled = String(
-  process.env.TYPEORM_CACHE_ENABLED || process.env.TYPEORM_QUERY_CACHE_ENABLED || 'false',
-)
-  .toLowerCase()
-  .trim() === 'true';
+const __cacheEnabled =
+  String(
+    process.env.TYPEORM_CACHE_ENABLED ||
+      process.env.TYPEORM_QUERY_CACHE_ENABLED ||
+      'false',
+  )
+    .toLowerCase()
+    .trim() === 'true';
 const __cacheDuration = parseInt(
-  process.env.TYPEORM_CACHE_TTL_MS || process.env.TYPEORM_QUERY_CACHE_TTL_MS || '30000',
+  process.env.TYPEORM_CACHE_TTL_MS ||
+    process.env.TYPEORM_QUERY_CACHE_TTL_MS ||
+    '30000',
   10,
 );
 const __redisUrl = process.env.REDIS_URL || '';
 const __cacheConfig: any = __cacheEnabled
-  ? (__redisUrl
-      ? { type: 'ioredis', options: { url: __redisUrl }, duration: __cacheDuration }
-      : { duration: __cacheDuration })
+  ? __redisUrl
+    ? {
+        type: 'ioredis',
+        options: { url: __redisUrl },
+        duration: __cacheDuration,
+      }
+    : { duration: __cacheDuration }
   : undefined;
 
 export const dataSourceOptions: DataSourceOptions = url
@@ -44,9 +53,18 @@ export const dataSourceOptions: DataSourceOptions = url
       cache: __cacheConfig,
       extra: {
         max: parseInt(process.env.DB_POOL_MAX || '10', 10),
-        idleTimeoutMillis: parseInt(process.env.DB_IDLE_TIMEOUT_MS || '10000', 10),
-        connectionTimeoutMillis: parseInt(process.env.DB_CONNECT_TIMEOUT_MS || '5000', 10),
-        statement_timeout: parseInt(process.env.DB_STATEMENT_TIMEOUT_MS || '15000', 10),
+        idleTimeoutMillis: parseInt(
+          process.env.DB_IDLE_TIMEOUT_MS || '10000',
+          10,
+        ),
+        connectionTimeoutMillis: parseInt(
+          process.env.DB_CONNECT_TIMEOUT_MS || '5000',
+          10,
+        ),
+        statement_timeout: parseInt(
+          process.env.DB_STATEMENT_TIMEOUT_MS || '15000',
+          10,
+        ),
       },
     }
   : {
@@ -64,9 +82,18 @@ export const dataSourceOptions: DataSourceOptions = url
       cache: __cacheConfig,
       extra: {
         max: parseInt(process.env.DB_POOL_MAX || '10', 10),
-        idleTimeoutMillis: parseInt(process.env.DB_IDLE_TIMEOUT_MS || '10000', 10),
-        connectionTimeoutMillis: parseInt(process.env.DB_CONNECT_TIMEOUT_MS || '5000', 10),
-        statement_timeout: parseInt(process.env.DB_STATEMENT_TIMEOUT_MS || '15000', 10),
+        idleTimeoutMillis: parseInt(
+          process.env.DB_IDLE_TIMEOUT_MS || '10000',
+          10,
+        ),
+        connectionTimeoutMillis: parseInt(
+          process.env.DB_CONNECT_TIMEOUT_MS || '5000',
+          10,
+        ),
+        statement_timeout: parseInt(
+          process.env.DB_STATEMENT_TIMEOUT_MS || '15000',
+          10,
+        ),
       },
     };
 

@@ -21,6 +21,8 @@ import { CreditModule } from '../credit/credit.module';
 import { PromotionsModule } from '../promotions/promotions.module';
 import { Message } from '../chat/entities/message.entity';
 import { Conversation } from '../chat/entities/conversation.entity';
+import { PayoutLog } from '../wallet/entities/payout-log.entity';
+import { EbirrTransaction } from '../payments/entities/ebirr-transaction.entity';
 
 @Module({
   imports: [
@@ -31,6 +33,8 @@ import { Conversation } from '../chat/entities/conversation.entity';
       UiSetting,
       Message,
       Conversation,
+      PayoutLog,
+      EbirrTransaction,
     ]),
     CartModule,
     ProductsModule,

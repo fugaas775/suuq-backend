@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-return */
 import {
   Injectable,
   NotFoundException,
@@ -7,7 +6,7 @@ import {
   forwardRef,
   Logger,
 } from '@nestjs/common';
-/* eslint-disable @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment */
+
 import { InjectRepository } from '@nestjs/typeorm';
 import {
   Repository,
@@ -181,26 +180,30 @@ export class WalletService {
     doc.moveDown();
 
     doc.text('Platform Fee (5%)', 50);
-    doc.fillColor('red').text(
-      `-${this.currencyService.formatAmount(settlement.platformFee, 'ETB')}`,
-      350,
-      doc.y - 12,
-      {
-        align: 'right',
-      },
-    );
+    doc
+      .fillColor('red')
+      .text(
+        `-${this.currencyService.formatAmount(settlement.platformFee, 'ETB')}`,
+        350,
+        doc.y - 12,
+        {
+          align: 'right',
+        },
+      );
     doc.fillColor('black'); // Reset
     doc.moveDown();
 
     doc.text('Gateway Fee (1%)', 50);
-    doc.fillColor('red').text(
-      `-${this.currencyService.formatAmount(settlement.gatewayFee, 'ETB')}`,
-      350,
-      doc.y - 12,
-      {
-        align: 'right',
-      },
-    );
+    doc
+      .fillColor('red')
+      .text(
+        `-${this.currencyService.formatAmount(settlement.gatewayFee, 'ETB')}`,
+        350,
+        doc.y - 12,
+        {
+          align: 'right',
+        },
+      );
     doc.fillColor('black'); // Reset
     doc.moveDown();
 
@@ -242,6 +245,7 @@ export class WalletService {
     orderId?: number;
     orderItemId?: number;
     status?: PayoutStatus;
+    failureReason?: string;
   }): Promise<PayoutLog> {
     const payout = this.payoutLogRepository.create({
       vendor: { id: data.vendorId },
@@ -253,15 +257,27 @@ export class WalletService {
       orderId: data.orderId,
       orderItemId: data.orderItemId,
       status: data.status || PayoutStatus.SUCCESS,
+      failureReason: data.failureReason,
     });
     return this.payoutLogRepository.save(payout);
   }
 
   async getPayouts(userId: number): Promise<PayoutLog[]> {
-    return this.payoutLogRepository.find({
+    const startedAt = Date.now();
+    const payouts = await this.payoutLogRepository.find({
       where: { vendor: { id: userId } },
       order: { createdAt: 'DESC' },
     });
+    const totalMs = Date.now() - startedAt;
+    this.logger.log(
+      `[getPayouts] userId=${userId} count=${payouts.length} totalMs=${totalMs}`,
+    );
+    if (totalMs > 700) {
+      this.logger.warn(
+        `[getPayouts] Slow response userId=${userId} totalMs=${totalMs}`,
+      );
+    }
+    return payouts;
   }
 
   async getAllPayouts(
@@ -280,6 +296,64 @@ export class WalletService {
       skip: (page - 1) * limit,
       take: limit,
     });
+    return { data, total };
+  }
+
+  async getFailedAutoEbirrPayouts(
+    page = 1,
+    limit = 20,
+  ): Promise<{ data: PayoutLog[]; total: number }> {
+    const safePage = Number.isFinite(Number(page))
+      ? Math.max(1, Number(page))
+      : 1;
+    const safeLimit = Number.isFinite(Number(limit))
+      ? Math.min(100, Math.max(1, Number(limit)))
+      : 20;
+
+    const qb = this.payoutLogRepository
+      .createQueryBuilder('payout')
+      .leftJoinAndSelect('payout.vendor', 'vendor')
+      .where('payout.provider = :provider', { provider: PayoutProvider.EBIRR })
+      .andWhere('payout.status = :status', { status: PayoutStatus.FAILED })
+      .andWhere('payout.orderId IS NOT NULL')
+      .andWhere('payout.orderItemId IS NOT NULL')
+      .andWhere('payout.transactionReference LIKE :autoRef', {
+        autoRef: 'ORD-%-ITEM-%',
+      })
+      .orderBy('payout.createdAt', 'DESC')
+      .skip((safePage - 1) * safeLimit)
+      .take(safeLimit);
+
+    const [data, total] = await qb.getManyAndCount();
+    return { data, total };
+  }
+
+  async getReconcileRequiredPayoutExceptions(
+    page = 1,
+    limit = 20,
+  ): Promise<{ data: PayoutLog[]; total: number }> {
+    const safePage = Number.isFinite(Number(page))
+      ? Math.max(1, Number(page))
+      : 1;
+    const safeLimit = Number.isFinite(Number(limit))
+      ? Math.min(100, Math.max(1, Number(limit)))
+      : 20;
+
+    const qb = this.payoutLogRepository
+      .createQueryBuilder('payout')
+      .leftJoinAndSelect('payout.vendor', 'vendor')
+      .where('payout.provider = :provider', { provider: PayoutProvider.EBIRR })
+      .andWhere('payout.status = :status', { status: PayoutStatus.SUCCESS })
+      .andWhere('payout.failureReason LIKE :marker', {
+        marker: 'RECONCILE_REQUIRED:%',
+      })
+      .andWhere('payout.orderId IS NOT NULL')
+      .andWhere('payout.orderItemId IS NOT NULL')
+      .orderBy('payout.createdAt', 'DESC')
+      .skip((safePage - 1) * safeLimit)
+      .take(safeLimit);
+
+    const [data, total] = await qb.getManyAndCount();
     return { data, total };
   }
 
@@ -308,6 +382,97 @@ export class WalletService {
   async deletePayouts(ids: number[]): Promise<number> {
     const result = await this.payoutLogRepository.delete(ids);
     return result.affected || 0;
+  }
+
+  async getPayoutById(id: number): Promise<PayoutLog> {
+    const payout = await this.payoutLogRepository.findOne({
+      where: { id },
+      relations: ['vendor'],
+    });
+    if (!payout) {
+      throw new NotFoundException('Payout not found');
+    }
+    return payout;
+  }
+
+  async reconcilePayoutDebitException(id: number): Promise<{
+    reconciled: boolean;
+    action: 'already_debited' | 'debited_now';
+    payout: PayoutLog;
+  }> {
+    const payout = await this.getPayoutById(id);
+
+    if (payout.provider !== PayoutProvider.EBIRR) {
+      throw new BadRequestException(
+        'Only EBIRR payout exceptions are supported',
+      );
+    }
+
+    if (payout.status !== PayoutStatus.SUCCESS) {
+      throw new BadRequestException(
+        'Payout exception reconciliation requires SUCCESS payout status',
+      );
+    }
+
+    if (!String(payout.failureReason || '').includes('RECONCILE_REQUIRED')) {
+      throw new BadRequestException(
+        'Payout does not have a reconcile-required exception',
+      );
+    }
+
+    if (!payout.orderId || !payout.orderItemId || !payout.vendor?.id) {
+      throw new BadRequestException(
+        'Payout is missing order/orderItem/vendor linkage required for reconciliation',
+      );
+    }
+
+    const wallet = await this.walletRepository.findOne({
+      where: { user: { id: payout.vendor.id } },
+      relations: ['user'],
+    });
+    if (!wallet) {
+      throw new NotFoundException(
+        'Vendor wallet not found for payout reconciliation',
+      );
+    }
+
+    const expectedDescription = `Auto Ebirr payout for Order #${payout.orderId}, Item #${payout.orderItemId}`;
+    const existingDebit = await this.transactionRepository
+      .createQueryBuilder('tx')
+      .where('tx.walletId = :walletId', { walletId: wallet.id })
+      .andWhere('tx.type = :type', { type: TransactionType.PAYOUT })
+      .andWhere('tx.orderId = :orderId', { orderId: payout.orderId })
+      .andWhere('tx.description = :description', {
+        description: expectedDescription,
+      })
+      .orderBy('tx.createdAt', 'DESC')
+      .getOne();
+
+    if (existingDebit) {
+      payout.failureReason = null;
+      const saved = await this.payoutLogRepository.save(payout);
+      return {
+        reconciled: true,
+        action: 'already_debited',
+        payout: saved,
+      };
+    }
+
+    await this.debitWallet(
+      payout.vendor.id,
+      Number(payout.amount),
+      TransactionType.PAYOUT,
+      expectedDescription,
+      payout.orderId,
+    );
+
+    payout.failureReason = null;
+    const saved = await this.payoutLogRepository.save(payout);
+    return {
+      reconciled: true,
+      action: 'debited_now',
+      payout: saved,
+    };
   }
 
   async exportPendingPayouts(): Promise<string> {
@@ -347,6 +512,97 @@ export class WalletService {
         p.currency,
         p.provider || 'EBIRR',
         p.transactionReference,
+        p.createdAt.toISOString(),
+      ].join(',');
+    });
+
+    return [header, ...rows].join('\n');
+  }
+
+  async exportFailedAutoEbirrPayouts(
+    from?: string,
+    to?: string,
+  ): Promise<string> {
+    const qb = this.payoutLogRepository
+      .createQueryBuilder('payout')
+      .leftJoinAndSelect('payout.vendor', 'vendor')
+      .where('payout.provider = :provider', { provider: PayoutProvider.EBIRR })
+      .andWhere('payout.status = :status', { status: PayoutStatus.FAILED })
+      .andWhere('payout.orderId IS NOT NULL')
+      .andWhere('payout.orderItemId IS NOT NULL')
+      .andWhere('payout.transactionReference LIKE :autoRef', {
+        autoRef: 'ORD-%-ITEM-%',
+      });
+
+    if (from) {
+      const fromDate = new Date(from);
+      if (Number.isNaN(fromDate.getTime())) {
+        throw new BadRequestException('Invalid from date. Use ISO format.');
+      }
+      qb.andWhere('payout.createdAt >= :fromDate', { fromDate });
+    }
+
+    if (to) {
+      const toDate = new Date(to);
+      if (Number.isNaN(toDate.getTime())) {
+        throw new BadRequestException('Invalid to date. Use ISO format.');
+      }
+      qb.andWhere('payout.createdAt <= :toDate', { toDate });
+    }
+
+    if (from && to) {
+      const fromDate = new Date(from);
+      const toDate = new Date(to);
+      if (fromDate > toDate) {
+        throw new BadRequestException(
+          'from date must be before or equal to to date.',
+        );
+      }
+    }
+
+    const payouts = await qb.orderBy('payout.createdAt', 'ASC').getMany();
+
+    const header = [
+      'Payout Log ID',
+      'Vendor ID',
+      'Vendor Name',
+      'Vendor Phone',
+      'Amount',
+      'Currency',
+      'Provider',
+      'System Ref',
+      'Order ID',
+      'Order Item ID',
+      'Failure Reason',
+      'Created At',
+    ].join(',');
+
+    const rows = payouts.map((p) => {
+      const name = (
+        p.vendor?.legalName ||
+        p.vendor?.displayName ||
+        p.vendor?.email ||
+        ''
+      )
+        .trim()
+        .replace(/"/g, '""');
+
+      const failureReason = String(p.failureReason || '')
+        .trim()
+        .replace(/"/g, '""');
+
+      return [
+        p.id,
+        p.vendor?.id || '',
+        `"${name}"`,
+        p.phoneNumber || p.vendor?.phoneNumber || '',
+        p.amount,
+        p.currency,
+        p.provider || 'EBIRR',
+        p.transactionReference,
+        p.orderId || '',
+        p.orderItemId || '',
+        `"${failureReason}"`,
         p.createdAt.toISOString(),
       ].join(',');
     });

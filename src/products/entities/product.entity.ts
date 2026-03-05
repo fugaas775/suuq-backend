@@ -189,6 +189,34 @@ export class Product {
   @Column({ name: 'created_by_name', nullable: true })
   createdByName?: string;
 
+  @Column({ type: 'text', nullable: true, select: false, name: 'private_note' })
+  privateNote?: string | null;
+
+  @Column({
+    type: 'timestamp',
+    nullable: true,
+    select: false,
+    name: 'private_note_updated_at',
+  })
+  privateNoteUpdatedAt?: Date | null;
+
+  @Column({
+    type: 'int',
+    nullable: true,
+    select: false,
+    name: 'private_note_updated_by_id',
+  })
+  privateNoteUpdatedById?: number | null;
+
+  @Column({
+    type: 'varchar',
+    length: 120,
+    nullable: true,
+    select: false,
+    name: 'private_note_updated_by_name',
+  })
+  privateNoteUpdatedByName?: string | null;
+
   @Expose()
   get listedBy(): {
     name: string;
@@ -309,31 +337,37 @@ export class Product {
   // --- Vehicle Fields ---
   @Expose()
   get make(): string | undefined {
+    if (!this.isVehicleCategoryContext()) return undefined;
     return this.getAttribute<string>('make');
   }
 
   @Expose()
   get model(): string | undefined {
+    if (!this.isVehicleCategoryContext()) return undefined;
     return this.getAttribute<string>('model');
   }
 
   @Expose()
   get year(): number | undefined {
+    if (!this.isVehicleCategoryContext()) return undefined;
     return this.getAttribute<number>('year');
   }
 
   @Expose()
   get mileage(): number | undefined {
+    if (!this.isVehicleCategoryContext()) return undefined;
     return this.getAttribute<number>('mileage');
   }
 
   @Expose()
   get transmission(): string | undefined {
+    if (!this.isVehicleCategoryContext()) return undefined;
     return this.getAttribute<string>('transmission');
   }
 
   @Expose()
   get fuelType(): string | undefined {
+    if (!this.isVehicleCategoryContext()) return undefined;
     return this.getAttribute<string>('fuelType');
   }
 
@@ -345,6 +379,12 @@ export class Product {
     const attrs = this.attributes;
     if (!attrs || typeof attrs !== 'object') return undefined;
     return (attrs as Record<string, unknown>)[key] as T;
+  }
+
+  private isVehicleCategoryContext(): boolean {
+    const slug = String((this.category as any)?.slug || '').toLowerCase();
+    const name = String((this.category as any)?.name || '').toLowerCase();
+    return /(car|truck|motorcycle|auto|boat|vehicle)/i.test(slug + ' ' + name);
   }
 
   // Listing type for property verticals: 'sale' | 'rent'

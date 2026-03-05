@@ -1,6 +1,73 @@
 # Nginx config snippet for suuq.ugasfuad.com to proxy /api to the backend API
 # Place inside the server {} for suuq.ugasfuad.com
 
+# Block common probe targets early
+location ~* ^/(?:\.env(?:\..*)?|\.git(?:/|$)) {
+    return 404;
+}
+
+# Universal/App Links association files (must be on the primary domain, no /api prefix)
+location = /apple-app-site-association {
+    proxy_pass https://api.suuq.ugasfuad.com/api/linking/apple-app-site-association;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    add_header Cache-Control "no-store, no-cache, must-revalidate, max-age=0" always;
+}
+
+location = /.well-known/apple-app-site-association {
+    proxy_pass https://api.suuq.ugasfuad.com/api/linking/apple-app-site-association;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    add_header Cache-Control "no-store, no-cache, must-revalidate, max-age=0" always;
+}
+
+location = /.well-known/assetlinks.json {
+    proxy_pass https://api.suuq.ugasfuad.com/api/linking/assetlinks.json;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    add_header Cache-Control "no-store, no-cache, must-revalidate, max-age=0" always;
+}
+
+# Share landing shortcut on primary domain: /l/product?id=123
+location = /l/product {
+    proxy_pass https://api.suuq.ugasfuad.com/api/linking/product-share-landing$is_args$args;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    add_header Cache-Control "no-store" always;
+}
+
+location ~ ^/s/p/(.+)$ {
+    proxy_pass https://api.suuq.ugasfuad.com/api/linking/product-share/$1;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    add_header Cache-Control "no-store" always;
+}
+
+location ~ ^/s/r/(.+)$ {
+    proxy_pass https://api.suuq.ugasfuad.com/api/linking/request-share/$1;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    add_header Cache-Control "no-store" always;
+}
+
 location /api/ {
     # Either proxy directly to Node app
     # proxy_pass http://127.0.0.1:3000$request_uri;

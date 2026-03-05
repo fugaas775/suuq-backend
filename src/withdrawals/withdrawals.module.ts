@@ -6,12 +6,14 @@ import { Withdrawal } from './entities/withdrawal.entity';
 import { Wallet } from '../wallet/entities/wallet.entity';
 import { WalletModule } from '../wallet/wallet.module';
 import { EmailModule } from '../email/email.module';
+import { EbirrModule } from '../ebirr/ebirr.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([Withdrawal, Wallet]),
     WalletModule,
     EmailModule,
+    EbirrModule,
   ],
   controllers: [WithdrawalsController],
   providers: [WithdrawalsService],

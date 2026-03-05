@@ -1,10 +1,19 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Cart, CartItem } from './entities/cart.entity';
 import { Product } from '../products/entities/product.entity';
 import { CurrencyService } from '../common/services/currency.service';
 import { Logger } from '@nestjs/common';
+import {
+  getInvalidRequiredSelections,
+  getMissingRequiredSelections,
+  getRequiredSelectionKeys,
+} from '../common/utils/attribute-selection.util';
 
 type PriceDisplay = {
   amount: number | null;
@@ -174,13 +183,38 @@ export class CartService {
     return cartWithDisplay;
   }
 
+  private isUniqueConstraintViolation(error: unknown): boolean {
+    const pgCode = String((error as any)?.code || '').trim();
+    return pgCode === '23505';
+  }
+
   async getCart(userId: number, currency?: string): Promise<Cart> {
     let cart = await this.cartRepository.findOne({
       where: { user: { id: userId } },
     });
     if (!cart) {
-      cart = this.cartRepository.create({ user: { id: userId }, items: [] });
-      await this.cartRepository.save(cart);
+      const createdCart = this.cartRepository.create({
+        user: { id: userId },
+        items: [],
+      });
+      try {
+        cart = await this.cartRepository.save(createdCart);
+      } catch (error) {
+        if (!this.isUniqueConstraintViolation(error)) {
+          throw error;
+        }
+
+        this.logger.warn(
+          `Cart create race detected for user=${userId}. Reloading existing cart.`,
+        );
+
+        cart = await this.cartRepository.findOne({
+          where: { user: { id: userId } },
+        });
+        if (!cart) {
+          throw error;
+        }
+      }
     }
     return this.mapCart(cart, currency);
   }
@@ -193,9 +227,27 @@ export class CartService {
     attributes: Record<string, any> = {},
   ): Promise<Cart> {
     const cart = await this.getCart(userId, currency);
-    const product = await this.productRepository.findOneBy({ id: productId });
+    const product = await this.productRepository.findOne({
+      where: { id: productId },
+      relations: ['category'],
+    });
     if (!product) {
       throw new NotFoundException('Product not found');
+    }
+
+    const requiredKeys = getRequiredSelectionKeys(product);
+    const missingKeys = getMissingRequiredSelections(requiredKeys, attributes);
+    if (missingKeys.length > 0) {
+      throw new BadRequestException(
+        `Missing required product selections: ${missingKeys.join(', ')}`,
+      );
+    }
+
+    const invalidKeys = getInvalidRequiredSelections(product, attributes);
+    if (invalidKeys.length > 0) {
+      throw new BadRequestException(
+        `Invalid required product selections: ${invalidKeys.join(', ')}`,
+      );
     }
 
     // Sort keys to ensure consistent stringify comparison

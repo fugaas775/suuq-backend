@@ -30,7 +30,7 @@ describe('Public Certificates & Profile (e2e)', () => {
   });
 
   it('returns empty certificates for PENDING vendor', async () => {
-    const email = `pending_vendor_${Date.now()}@example.com`;
+    const email = `pending_vendor_${Date.now()}@suuqsapp.com`;
     const vendor = await usersService.create({
       email,
       password: 'Passw0rd!',
@@ -53,7 +53,7 @@ describe('Public Certificates & Profile (e2e)', () => {
 
   it('approves vendor and exposes certificates publicly', async () => {
     // Create vendor with docs
-    const vEmail = `approved_vendor_${Date.now()}@example.com`;
+    const vEmail = `approved_vendor_${Date.now()}@suuqsapp.com`;
     const vendor = await usersService.create({
       email: vEmail,
       password: 'Passw0rd!',
@@ -66,7 +66,7 @@ describe('Public Certificates & Profile (e2e)', () => {
     });
 
     // Create admin and login to get token
-    const aEmail = `admin_${Date.now()}@example.com`;
+    const aEmail = `admin_${Date.now()}@suuqsapp.com`;
     await usersService.create({
       email: aEmail,
       password: 'AdminPassw0rd!',
@@ -100,7 +100,7 @@ describe('Public Certificates & Profile (e2e)', () => {
   });
 
   it('profile includes verificationStatus', async () => {
-    const email = `profile_user_${Date.now()}@example.com`;
+    const email = `profile_user_${Date.now()}@suuqsapp.com`;
     await usersService.create({
       email,
       password: 'Passw0rd!',

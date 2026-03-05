@@ -11,6 +11,11 @@ if ($http_origin ~* ^https://(admin\.)?suuq\.ugasfuad\.com$) {
     set $cors_origin $http_origin;
 }
 
+# Block common probe targets early
+location ~* ^/(?:\.env(?:\..*)?|\.git(?:/|$)) {
+    return 404;
+}
+
 location /api/ {
     # Allow uploads up to 50MB (matches app-side limit). Without this, Nginx returns 413 before Nest sees the request.
     client_max_body_size 50M;

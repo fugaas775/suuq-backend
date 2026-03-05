@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, prettier/prettier */
+/* eslint-disable prettier/prettier */
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -12,7 +12,10 @@ export type AuditFilters = {
   to?: Date;
 };
 
-export function prettyAuditActionLabel(action?: string, meta?: Record<string, any> | null) {
+export function prettyAuditActionLabel(
+  action?: string,
+  meta?: Record<string, any> | null,
+) {
   switch (action) {
     case 'vendor.verification.update': {
       const s = meta?.status;
@@ -73,7 +76,8 @@ export class AuditService {
       .orderBy('a.createdAt', 'DESC')
       .addOrderBy('a.id', 'DESC');
     if (targetType) qb.andWhere('a.targetType = :targetType', { targetType });
-    if (Number.isFinite(targetId)) qb.andWhere('a.targetId = :targetId', { targetId });
+    if (Number.isFinite(targetId))
+      qb.andWhere('a.targetId = :targetId', { targetId });
     return qb;
   }
 
@@ -171,13 +175,15 @@ export class AuditService {
     return { items, nextCursor };
   }
 
-  async listAllPaged(opts: {
-    page?: number;
-    limit?: number;
-    filters?: AuditFilters;
-    targetType?: string;
-    targetId?: number;
-  } = {}) {
+  async listAllPaged(
+    opts: {
+      page?: number;
+      limit?: number;
+      filters?: AuditFilters;
+      targetType?: string;
+      targetId?: number;
+    } = {},
+  ) {
     const p = Math.max(Number(opts.page) || 1, 1);
     const l = this.clampLimit(opts.limit);
     const qb = this.buildGlobalQuery(opts.targetType, opts.targetId)
@@ -194,16 +200,20 @@ export class AuditService {
     };
   }
 
-  async listAllCursor(opts: {
-    after?: string;
-    limit?: number;
-    filters?: AuditFilters;
-    targetType?: string;
-    targetId?: number;
-  } = {}) {
+  async listAllCursor(
+    opts: {
+      after?: string;
+      limit?: number;
+      filters?: AuditFilters;
+      targetType?: string;
+      targetId?: number;
+    } = {},
+  ) {
     const l = this.clampLimit(opts.limit);
     const { createdAt, id } = this.decodeCursor(opts.after);
-    const qb = this.buildGlobalQuery(opts.targetType, opts.targetId).take(l + 1);
+    const qb = this.buildGlobalQuery(opts.targetType, opts.targetId).take(
+      l + 1,
+    );
     this.applyFilters(qb, opts.filters);
 
     if (createdAt && id) {

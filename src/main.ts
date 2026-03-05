@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access */
 import 'dotenv/config';
 import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
@@ -318,13 +317,15 @@ async function bootstrap() {
       if (req.method !== 'GET') return next();
       if (req.url.startsWith('/api/')) return next();
 
-      const isLegacyProductPath = /^\/products\/\d+(?:$|\/related$|\/contextual-feed$)/.test(
-        req.path,
-      );
+      const isLegacyProductPath =
+        /^\/products\/\d+(?:$|\/related$|\/contextual-feed$)/.test(req.path);
       if (!isLegacyProductPath) return next();
 
       try {
-        prometheusService?.incLegacyRouteRewrite('/products/:id*', '/api/products/:id*');
+        prometheusService?.incLegacyRouteRewrite(
+          '/products/:id*',
+          '/api/products/:id*',
+        );
       } catch {
         // ignore metric failures
       }

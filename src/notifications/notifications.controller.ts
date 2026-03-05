@@ -61,7 +61,7 @@ export class NotificationsController {
   async remindRenewal(@Param('userId', ParseIntPipe) userId: number) {
     const result = await this.churnRecoveryService.remindRenewal(userId);
     if (!result.sent) {
-        return { message: result.reason || 'Reminder not sent' };
+      return { message: result.reason || 'Reminder not sent' };
     }
     return { message: 'Reminder sent successfully' };
   }

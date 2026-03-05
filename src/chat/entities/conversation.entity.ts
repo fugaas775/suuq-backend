@@ -15,9 +15,18 @@ import { Message } from './message.entity';
 import { Order } from '../../orders/entities/order.entity';
 
 @Entity()
-@Index(['buyer', 'vendor', 'product'], { unique: true, where: '"productId" IS NOT NULL' }) // Product Chat
-@Index(['buyer', 'deliverer', 'order'], { unique: true, where: '"orderId" IS NOT NULL AND "buyerId" IS NOT NULL' }) // Customer-Deliverer Chat
-@Index(['vendor', 'deliverer', 'order'], { unique: true, where: '"orderId" IS NOT NULL AND "vendorId" IS NOT NULL' }) // Vendor-Deliverer Chat
+@Index(['buyer', 'vendor', 'product'], {
+  unique: true,
+  where: '"productId" IS NOT NULL',
+}) // Product Chat
+@Index(['buyer', 'deliverer', 'order'], {
+  unique: true,
+  where: '"orderId" IS NOT NULL AND "buyerId" IS NOT NULL',
+}) // Customer-Deliverer Chat
+@Index(['vendor', 'deliverer', 'order'], {
+  unique: true,
+  where: '"orderId" IS NOT NULL AND "vendorId" IS NOT NULL',
+}) // Vendor-Deliverer Chat
 export class Conversation {
   @PrimaryGeneratedColumn()
   id!: number;

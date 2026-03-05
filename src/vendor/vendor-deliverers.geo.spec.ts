@@ -28,7 +28,7 @@ describe('VendorService.searchDeliverers (geo)', () => {
   const seed: Partial<User>[] = [
     {
       id: 1,
-      email: 'a@example.com',
+      email: 'a@suuqsapp.com',
       roles: ['DELIVERER'] as any,
       isActive: true as any,
       displayName: 'Alpha',
@@ -40,7 +40,7 @@ describe('VendorService.searchDeliverers (geo)', () => {
     },
     {
       id: 2,
-      email: 'b@example.com',
+      email: 'b@suuqsapp.com',
       roles: ['DELIVERER'] as any,
       isActive: true as any,
       displayName: 'Bravo',
@@ -52,7 +52,7 @@ describe('VendorService.searchDeliverers (geo)', () => {
     },
     {
       id: 3,
-      email: 'c@example.com',
+      email: 'c@suuqsapp.com',
       roles: ['DELIVERER'] as any,
       isActive: true as any,
       displayName: 'Charlie',

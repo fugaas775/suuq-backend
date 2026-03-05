@@ -13,8 +13,9 @@ export class ConfigController {
   @Get('bank-accounts')
   async getBankAccounts() {
     // Return empty object if setting not found, to avoid null client issues
-    const setting = await this.settingsService.getSystemSetting('bank_accounts');
-    return setting || {}; 
+    const setting =
+      await this.settingsService.getSystemSetting('bank_accounts');
+    return setting || {};
   }
 
   @Put('bank-accounts')
@@ -28,15 +29,18 @@ export class ConfigController {
     for (const country of countries) {
       const details = dto[country];
       // Only keep if details exist and at least one field has a value
-      if (details && (details.bank || details.accountName || details.accountNumber)) {
+      if (
+        details &&
+        (details.bank || details.accountName || details.accountNumber)
+      ) {
         cleanDto[country] = details;
       }
     }
 
     return this.settingsService.setSystemSetting(
-      'bank_accounts', 
-      cleanDto, 
-      'Bank Account Details for dynamic configuration in apps'
+      'bank_accounts',
+      cleanDto,
+      'Bank Account Details for dynamic configuration in apps',
     );
   }
 }

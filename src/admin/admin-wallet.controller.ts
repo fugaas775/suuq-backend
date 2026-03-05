@@ -13,6 +13,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { WalletService } from '../wallet/wallet.service';
+import { OrdersService } from '../orders/orders.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -24,7 +25,10 @@ import { PayoutStatus } from '../wallet/entities/payout-log.entity';
 @Controller('admin/wallet')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class AdminWalletController {
-  constructor(private readonly walletService: WalletService) {}
+  constructor(
+    private readonly walletService: WalletService,
+    private readonly ordersService: OrdersService,
+  ) {}
 
   @Post(':id/recalculate')
   @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
@@ -97,6 +101,56 @@ export class AdminWalletController {
   @Header('Content-Disposition', 'attachment; filename="pending_payouts.csv"')
   async exportPayouts() {
     return this.walletService.exportPendingPayouts();
+  }
+
+  @Get('payouts/auto-failures')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  async listAutoPayoutFailures(
+    @Query('page') page: number = 1,
+    @Query('limit') limit: number = 20,
+  ) {
+    return this.walletService.getFailedAutoEbirrPayouts(page, limit);
+  }
+
+  @Get('payouts/exceptions')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  async listPayoutExceptions(
+    @Query('page') page: number = 1,
+    @Query('limit') limit: number = 20,
+  ) {
+    return this.walletService.getReconcileRequiredPayoutExceptions(page, limit);
+  }
+
+  @Get('payouts/auto-failures/export')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  @Header('Content-Type', 'text/csv')
+  @Header(
+    'Content-Disposition',
+    'attachment; filename="failed_auto_ebirr_payouts.csv"',
+  )
+  async exportAutoPayoutFailures(
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    return this.walletService.exportFailedAutoEbirrPayouts(from, to);
+  }
+
+  @Post('payouts/:id/retry-auto')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  async retryAutoPayout(@Param('id', ParseIntPipe) id: number) {
+    return this.ordersService.retryFailedAutoPayout(id);
+  }
+
+  @Post('payouts/:id/reconcile-exception')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  async reconcilePayoutException(@Param('id', ParseIntPipe) id: number) {
+    const payout = await this.walletService.getPayoutById(id);
+
+    if (payout.status === PayoutStatus.FAILED) {
+      return this.ordersService.retryFailedAutoPayout(id);
+    }
+
+    return this.walletService.reconcilePayoutDebitException(id);
   }
 
   @Put('payouts/:id')

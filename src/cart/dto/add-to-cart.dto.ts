@@ -12,4 +12,3 @@ export class AddToCartDto {
   @IsObject()
   attributes?: Record<string, any>;
 }
-

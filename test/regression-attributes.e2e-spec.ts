@@ -97,8 +97,8 @@ describe('Attributes Regression (e2e)', () => {
   it('should create a product with multi-select attributes', async () => {
     // 0. Create Category
     category = categoryRepo.create({
-        name: 'Test Cat',
-        slug: `test-cat-${Date.now()}`,
+      name: 'Test Cat',
+      slug: `test-cat-${Date.now()}`,
     });
     category = await categoryRepo.save(category);
 
@@ -141,13 +141,15 @@ describe('Attributes Regression (e2e)', () => {
     expect(product.attributes['Color']).toContain('Red');
     expect(product.attributes['Color']).toContain('Blue');
     expect(product.attributes['Size']).toHaveLength(3);
-    
+
     // 3. Verify DB Persistence
     const dbProduct = await productRepo.findOne({ where: { id: product.id } });
-    expect(dbProduct.attributes).toEqual(expect.objectContaining({
+    expect(dbProduct.attributes).toEqual(
+      expect.objectContaining({
         Color: ['Red', 'Blue'],
         Size: ['M', 'L', 'XL'],
-    }));
+      }),
+    );
 
     // Store for next test
     (global as any).testProduct = product;
@@ -180,7 +182,7 @@ describe('Attributes Regression (e2e)', () => {
           attributes: {
             Color: 'Red', // User selected just one, or maybe an array if UI allows (usually single selection for cart)
             // backend should support whatever is passed
-            CustomOption: ['A', 'B'] // Let's test array passing to order too
+            CustomOption: ['A', 'B'], // Let's test array passing to order too
           },
         },
       ],
@@ -202,28 +204,38 @@ describe('Attributes Regression (e2e)', () => {
 
     expect(order).toBeDefined();
     expect(order.items).toHaveLength(1);
-    expect(order.items[0].attributes).toEqual(expect.objectContaining({
+    expect(order.items[0].attributes).toEqual(
+      expect.objectContaining({
         Color: 'Red',
         CustomOption: ['A', 'B'],
-    }));
+      }),
+    );
 
     // 3. Check Email Service Call
-    await waitFor(() => emailServiceMock.sendOrderConfirmation.mock.calls.length > 0);
+    await waitFor(
+      () => emailServiceMock.sendOrderConfirmation.mock.calls.length > 0,
+    );
     expect(emailServiceMock.sendOrderConfirmation).toHaveBeenCalled();
     const callArgs = emailServiceMock.sendOrderConfirmation.mock.calls[0][0];
     expect(callArgs.id).toBe(order.id);
-    expect(callArgs.items[0].attributes).toEqual(expect.objectContaining({
+    expect(callArgs.items[0].attributes).toEqual(
+      expect.objectContaining({
         Color: 'Red',
-    }));
+      }),
+    );
 
     // 4. Check Vendor Notification
-    await waitFor(() => emailServiceMock.sendVendorNewOrderEmail.mock.calls.length > 0);
+    await waitFor(
+      () => emailServiceMock.sendVendorNewOrderEmail.mock.calls.length > 0,
+    );
     expect(emailServiceMock.sendVendorNewOrderEmail).toHaveBeenCalled();
     const vendorArgs = emailServiceMock.sendVendorNewOrderEmail.mock.calls[0]; // (email, name, orderId, items, currency)
     // 4th arg is items
     const vendorItems = vendorArgs[3];
-    expect(vendorItems[0].attributes).toEqual(expect.objectContaining({
+    expect(vendorItems[0].attributes).toEqual(
+      expect.objectContaining({
         Color: 'Red',
-    }));
+      }),
+    );
   });
 });

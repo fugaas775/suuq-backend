@@ -9,7 +9,10 @@ import { UsersModule } from '../users/users.module';
 import { ConfigController } from './config.controller';
 
 @Module({
-  imports: [UsersModule, TypeOrmModule.forFeature([UiSetting, UserSettings, SystemSetting])],
+  imports: [
+    UsersModule,
+    TypeOrmModule.forFeature([UiSetting, UserSettings, SystemSetting]),
+  ],
   providers: [SettingsService],
   controllers: [SettingsController, ConfigController],
   exports: [SettingsService],

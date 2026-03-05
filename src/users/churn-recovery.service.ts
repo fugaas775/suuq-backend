@@ -25,7 +25,10 @@ export class ChurnRecoveryService {
   @Cron('0 10 * * *') // Every day at 10:00 AM
   async handleChurnRecovery() {
     // Prevent duplicate execution in PM2 cluster mode
-    if (process.env.NODE_APP_INSTANCE && process.env.NODE_APP_INSTANCE !== '0') {
+    if (
+      process.env.NODE_APP_INSTANCE &&
+      process.env.NODE_APP_INSTANCE !== '0'
+    ) {
       return;
     }
 
@@ -45,7 +48,10 @@ export class ChurnRecoveryService {
     }
   }
 
-  async checkAndNotifyUser(user: User, options?: { force?: boolean }): Promise<boolean> {
+  async checkAndNotifyUser(
+    user: User,
+    options?: { force?: boolean },
+  ): Promise<boolean> {
     try {
       const basePriceSetting = await this.uiSettingRepo.findOne({
         where: { key: 'vendor_subscription_base_price' },
@@ -91,7 +97,8 @@ export class ChurnRecoveryService {
         if (
           !options?.force &&
           user.lastRenewalReminderAt &&
-          Date.now() - user.lastRenewalReminderAt.getTime() < 20 * 60 * 60 * 1000
+          Date.now() - user.lastRenewalReminderAt.getTime() <
+            20 * 60 * 60 * 1000
         ) {
           this.logger.debug(
             `Skipping churn notification for ${user.id} - already sent recently.`,
@@ -136,7 +143,9 @@ export class ChurnRecoveryService {
     }
   }
 
-  async remindRenewal(userId: number): Promise<{ sent: boolean; reason?: string }> {
+  async remindRenewal(
+    userId: number,
+  ): Promise<{ sent: boolean; reason?: string }> {
     const user = await this.userRepository.findOne({ where: { id: userId } });
     if (!user) {
       throw new Error('User not found');
@@ -147,7 +156,7 @@ export class ChurnRecoveryService {
     const sent = await this.checkAndNotifyUser(user);
 
     if (!sent) {
-        return { sent: false, reason: 'User has sufficient balance' };
+      return { sent: false, reason: 'User has sufficient balance' };
     }
     return { sent: true };
   }

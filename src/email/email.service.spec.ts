@@ -50,20 +50,26 @@ describe('EmailService', () => {
   });
 
   it('send() should add job to queue', async () => {
-    const mail = { to: 'test@example.com', subject: 'Test' };
+    const mail = { to: 'test@suuqsapp.com', subject: 'Test' };
     await service.send(mail);
-    expect(queueMock.add).toHaveBeenCalledWith('send-email', mail, expect.anything());
+    expect(queueMock.add).toHaveBeenCalledWith(
+      'send-email',
+      mail,
+      expect.anything(),
+    );
   });
 
   it('sendInternal() should use nodemailer to send email', async () => {
     // Wait a bit for verify promise to settle in constructor if any
-    await new Promise(process.nextTick); 
-    
-    const mail = { to: 'test@example.com', subject: 'Test' };
+    await new Promise(process.nextTick);
+
+    const mail = { to: 'test@suuqsapp.com', subject: 'Test' };
     await service.sendInternal(mail);
-    expect(sendMailMock).toHaveBeenCalledWith(expect.objectContaining({
-      to: 'test@example.com',
-      subject: 'Test',
-    }));
+    expect(sendMailMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: 'test@suuqsapp.com',
+        subject: 'Test',
+      }),
+    );
   });
 });

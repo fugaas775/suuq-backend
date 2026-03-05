@@ -158,8 +158,12 @@ export class ProductsV1Controller {
         })();
       const effectiveBucket = `${baseBucket}|${requestId}`;
       const rotationSeed = [
-        String((norm as any).userCountry || '').trim().toUpperCase(),
-        String((norm as any).userCity || '').trim().toLowerCase(),
+        String((norm as any).userCountry || '')
+          .trim()
+          .toUpperCase(),
+        String((norm as any).userCity || '')
+          .trim()
+          .toLowerCase(),
         String((filters as any).rotationKey || '').trim(),
         String((filters as any).sessionSalt || '').trim(),
         effectiveBucket,
@@ -221,9 +225,7 @@ export class ProductsV1Controller {
     if (lastModified) res.setHeader('Last-Modified', lastModified);
 
     // If debug requested, emit a few lightweight headers for QA
-    if (
-      debugListingEnabled
-    ) {
+    if (debugListingEnabled) {
       try {
         const dbg = result?.debug?.meta || {};
         if (typeof dbg.usedOthers !== 'undefined')
@@ -241,10 +243,7 @@ export class ProductsV1Controller {
         if (effectiveRotationSeed) {
           res.setHeader('X-Listing-Rotation-Seed', effectiveRotationSeed);
         }
-        res.setHeader(
-          'X-Listing-Rotation-Applied',
-          shouldRotate ? '1' : '0',
-        );
+        res.setHeader('X-Listing-Rotation-Applied', shouldRotate ? '1' : '0');
       } catch {}
     }
 

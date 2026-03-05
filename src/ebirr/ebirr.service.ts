@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unused-vars */
 import {
   Injectable,
   Logger,
@@ -28,6 +27,213 @@ import { format, subMinutes } from 'date-fns';
 export class EbirrService {
   private readonly logger = new Logger(EbirrService.name);
 
+  private validatePayoutPreflight(params: {
+    phoneNumberRaw: string;
+    normalizedPhone: string | null;
+    effectivePayee: string;
+    amount: number;
+    referenceId: string;
+    remark?: string;
+    payerAccount?: string;
+  }): {
+    ok: boolean;
+    rejectedFields: Array<{
+      field: string;
+      reason: string;
+      value?: unknown;
+    }>;
+  } {
+    const rejectedFields: Array<{
+      field: string;
+      reason: string;
+      value?: unknown;
+    }> = [];
+
+    const push = (field: string, reason: string, value?: unknown) => {
+      rejectedFields.push({ field, reason, value });
+    };
+
+    const amountNumber = Number(params.amount);
+    if (!Number.isFinite(amountNumber)) {
+      push('amount', 'must be a finite number', params.amount);
+    } else if (amountNumber <= 0) {
+      push('amount', 'must be greater than 0', params.amount);
+    }
+
+    const referenceId = String(params.referenceId || '').trim();
+    if (!referenceId) {
+      push('referenceId', 'is required', params.referenceId);
+    } else if (referenceId.length > 64) {
+      push('referenceId', 'must be <= 64 characters', referenceId.length);
+    } else if (!/^[A-Za-z0-9._-]+$/.test(referenceId)) {
+      push(
+        'referenceId',
+        'contains unsupported characters (allowed: A-Z a-z 0-9 . _ -)',
+        referenceId,
+      );
+    }
+
+    if (params.remark && String(params.remark).length > 140) {
+      push('remark', 'must be <= 140 characters', String(params.remark).length);
+    }
+
+    if (!params.normalizedPhone) {
+      push(
+        'phoneNumber',
+        'invalid format; expected Ethiopian mobile MSISDN in 2519XXXXXXXX form',
+        params.phoneNumberRaw,
+      );
+    }
+
+    const normalizedEffectivePayee = this.normalizeEthiopianMsisdn(
+      params.effectivePayee,
+    );
+    if (!normalizedEffectivePayee) {
+      push(
+        'payeeInfo.accountNo',
+        'invalid payout recipient format; expected 2519XXXXXXXX',
+        params.effectivePayee,
+      );
+    }
+
+    if (params.payerAccount) {
+      const payerDigits = String(params.payerAccount).replace(/\D/g, '');
+      if (!payerDigits || payerDigits.length < 5 || payerDigits.length > 20) {
+        push(
+          'payerInfo.accountNo',
+          'must be 5-20 digits when provided',
+          params.payerAccount,
+        );
+      }
+    }
+
+    if (!String(ebirrConfig.baseUrl || '').trim()) {
+      push('ebirr.baseUrl', 'missing configuration');
+    }
+    if (!String(ebirrConfig.merchantUid || '').trim()) {
+      push('ebirr.merchantUid', 'missing configuration');
+    }
+    if (!String(ebirrConfig.apiKey || '').trim()) {
+      push('ebirr.apiKey', 'missing configuration');
+    }
+    if (!String(ebirrConfig.apiUserId || '').trim()) {
+      push('ebirr.apiUserId', 'missing configuration');
+    }
+
+    return {
+      ok: rejectedFields.length === 0,
+      rejectedFields,
+    };
+  }
+
+  private normalizeEthiopianMsisdn(phone: string): string | null {
+    const digits = String(phone || '').replace(/\D/g, '');
+    if (!digits) return null;
+
+    if (digits.startsWith('2519') && digits.length === 12) {
+      return digits;
+    }
+
+    if (digits.startsWith('09') && digits.length === 10) {
+      return `251${digits.substring(1)}`;
+    }
+
+    if (digits.startsWith('9') && digits.length === 9) {
+      return `251${digits}`;
+    }
+
+    return null;
+  }
+
+  private derivePaymentLifecycleStateForSync(params: {
+    order: Order;
+    transactionStatus?: string | null;
+    transactionUpdatedAt?: Date | null;
+  }): 'CREATED' | 'INITIATED' | 'RECONCILING' | 'PAID' | 'FAILED' {
+    const { order, transactionStatus, transactionUpdatedAt } = params;
+
+    if (order.paymentStatus === PaymentStatus.PAID) {
+      return 'PAID';
+    }
+
+    if (
+      order.paymentStatus === PaymentStatus.FAILED ||
+      order.status === OrderStatus.CANCELLED ||
+      order.status === OrderStatus.CANCELLED_BY_BUYER ||
+      order.status === OrderStatus.CANCELLED_BY_SELLER
+    ) {
+      return 'FAILED';
+    }
+
+    const txStatus = String(transactionStatus || '')
+      .trim()
+      .toUpperCase();
+
+    if (!txStatus) {
+      return 'CREATED';
+    }
+
+    if (txStatus === 'COMPLETED' || txStatus === 'SUCCESS') {
+      return 'PAID';
+    }
+
+    if (txStatus === 'FAILED' || txStatus === 'ERROR') {
+      return 'FAILED';
+    }
+
+    if (txStatus === 'EXPIRED') {
+      return 'RECONCILING';
+    }
+
+    if (txStatus === 'INITIATED' || txStatus === 'PENDING') {
+      if (
+        transactionUpdatedAt &&
+        transactionUpdatedAt < subMinutes(new Date(), 2)
+      ) {
+        return 'RECONCILING';
+      }
+      return 'INITIATED';
+    }
+
+    return 'INITIATED';
+  }
+
+  private maskAccountNumber(accountNo: string): string {
+    const normalized = accountNo.replace(/\s+/g, '');
+    if (normalized.length <= 4) {
+      return '****';
+    }
+    return `${normalized.slice(0, 6)}****${normalized.slice(-2)}`;
+  }
+
+  private redactForLogs(value: unknown): unknown {
+    if (Array.isArray(value)) {
+      return value.map((item) => this.redactForLogs(item));
+    }
+
+    if (value && typeof value === 'object') {
+      const redacted: Record<string, unknown> = {};
+      for (const [key, nestedValue] of Object.entries(
+        value as Record<string, unknown>,
+      )) {
+        if (key === 'apiKey' || key === 'apiUserId') {
+          redacted[key] = '[REDACTED]';
+          continue;
+        }
+
+        if (key === 'accountNo' && typeof nestedValue === 'string') {
+          redacted[key] = this.maskAccountNumber(nestedValue);
+          continue;
+        }
+
+        redacted[key] = this.redactForLogs(nestedValue);
+      }
+      return redacted;
+    }
+
+    return value;
+  }
+
   constructor(
     @InjectRepository(EbirrTransaction)
     private readonly ebirrTransactionRepo: Repository<EbirrTransaction>,
@@ -46,7 +252,7 @@ export class EbirrService {
     if (client) {
       const lockKey = 'lock:ebirr:check-pending';
       // Try to acquire lock for 55 seconds (since it runs every minute)
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-call
+
       const acquired = await client.set(lockKey, 'locked', 'NX', 'EX', 55);
       if (!acquired) {
         // Silently skip if locked
@@ -56,11 +262,19 @@ export class EbirrService {
 
     this.logger.debug('Checking for pending Ebirr transactions...');
     const tenMinutesAgo = subMinutes(new Date(), 10);
+    const thirtyMinutesAgo = subMinutes(new Date(), 30);
 
     const pendingTransactions = await this.ebirrTransactionRepo.find({
       where: {
         status: 'PENDING',
         created_at: LessThan(tenMinutesAgo),
+      },
+    });
+
+    const staleInitiatedTransactions = await this.ebirrTransactionRepo.find({
+      where: {
+        status: 'INITIATED',
+        updated_at: LessThan(thirtyMinutesAgo),
       },
     });
 
@@ -71,6 +285,18 @@ export class EbirrService {
       for (const tx of pendingTransactions) {
         tx.status = 'EXPIRED';
         tx.response_msg = 'Transaction timed out locally';
+        await this.ebirrTransactionRepo.save(tx);
+      }
+    }
+
+    if (staleInitiatedTransactions.length > 0) {
+      this.logger.warn(
+        `Found ${staleInitiatedTransactions.length} stale initiated Ebirr transactions to expire.`,
+      );
+      for (const tx of staleInitiatedTransactions) {
+        tx.status = 'EXPIRED';
+        tx.response_msg =
+          tx.response_msg || 'Transaction initiated but not confirmed in time';
         await this.ebirrTransactionRepo.save(tx);
       }
     }
@@ -126,12 +352,7 @@ export class EbirrService {
     const requestId = `Payout_${uuidv4()}`;
     const timestamp = format(new Date(), 'yyyy-MM-dd HH:mm:ss');
 
-    let formattedPhone = phoneNumber.replace(/\+/g, '');
-    if (formattedPhone.startsWith('09')) {
-      formattedPhone = '251' + formattedPhone.substring(1);
-    } else if (formattedPhone.startsWith('9')) {
-      formattedPhone = '251' + formattedPhone;
-    }
+    const formattedPhone = this.normalizeEthiopianMsisdn(phoneNumber);
 
     // In sandbox, optionally force a whitelisted recipient number (e.g. 251915333513)
     // Allow override in non-production OR when explicitly forced via EBIRR_FORCE_SANDBOX=true
@@ -144,6 +365,41 @@ export class EbirrService {
         : formattedPhone;
 
     const payerAccount = process.env.EBIRR_PAYOUT_PAYER;
+
+    const preflight = this.validatePayoutPreflight({
+      phoneNumberRaw: phoneNumber,
+      normalizedPhone: formattedPhone,
+      effectivePayee: String(effectivePayee || ''),
+      amount,
+      referenceId,
+      remark,
+      payerAccount,
+    });
+
+    if (!preflight.ok) {
+      const redactedRejections = preflight.rejectedFields.map((item) => {
+        if (
+          (item.field === 'payeeInfo.accountNo' ||
+            item.field === 'payerInfo.accountNo' ||
+            item.field === 'phoneNumber') &&
+          typeof item.value === 'string'
+        ) {
+          return {
+            ...item,
+            value: this.maskAccountNumber(item.value),
+          };
+        }
+        return item;
+      });
+
+      this.logger.error(
+        `Ebirr payout preflight rejected request | rejectedFields=${JSON.stringify(redactedRejections)}`,
+      );
+      throw new BadRequestException({
+        message: 'Invalid Ebirr payout request',
+        rejectedFields: redactedRejections,
+      });
+    }
 
     const payload = {
       schemaVersion: '1.0',
@@ -173,7 +429,7 @@ export class EbirrService {
 
     try {
       this.logger.log(
-        `Initiating Ebirr Payout with payload: ${JSON.stringify(payload)}`,
+        `Initiating Ebirr Payout with payload: ${JSON.stringify(this.redactForLogs(payload))}`,
       );
       const response = await axios.post(ebirrConfig.baseUrl, payload, {
         headers: { 'Content-Type': 'application/json' },
@@ -224,15 +480,9 @@ export class EbirrService {
     const requestId = `Suuq_${uuidv4()}`;
     const timestamp = format(new Date(), 'yyyy-MM-dd HH:mm:ss');
 
-    let formattedPhone = '';
-    if (phoneNumber) {
-      formattedPhone = phoneNumber.replace(/\+/g, '');
-      if (formattedPhone.startsWith('09')) {
-        formattedPhone = '251' + formattedPhone.substring(1);
-      } else if (formattedPhone.startsWith('9')) {
-        formattedPhone = '251' + formattedPhone;
-      }
-    }
+    const formattedPhone = phoneNumber
+      ? this.normalizeEthiopianMsisdn(phoneNumber)
+      : null;
 
     if (!formattedPhone) {
       throw new BadRequestException(
@@ -274,6 +524,10 @@ export class EbirrService {
       );
     }
     const callbackUrl = `${process.env.API_URL}/api/callbacks/ebirr/finish`;
+    const customerPrefix = String(ebirrConfig.customerPrefix || '').trim();
+    const paymentMethod = String(
+      ebirrConfig.paymentMethod || 'MWALLET_ACCOUNT',
+    ).trim();
 
     const payload: any = {
       schemaVersion: '1.0',
@@ -283,12 +537,14 @@ export class EbirrService {
       serviceName: 'API_PURCHASE',
       serviceParams: {
         merchantUid: ebirrConfig.merchantUid,
-        paymentMethod: 'MWALLET_ACCOUNT',
+        paymentMethod,
         apiKey: ebirrConfig.apiKey,
         apiUserId: ebirrConfig.apiUserId,
+        ...(customerPrefix ? { prefix: customerPrefix } : {}),
         // returnUrl: defined below
         payerInfo: {
           accountNo: formattedPhone,
+          ...(customerPrefix ? { prefix: customerPrefix } : {}),
         },
         transactionInfo: {
           referenceId: referenceId,
@@ -305,7 +561,7 @@ export class EbirrService {
     }
 
     this.logger.log(
-      `Initiating Ebirr payment with payload: ${JSON.stringify(payload)}`,
+      `Initiating Ebirr payment with payload: ${JSON.stringify(this.redactForLogs(payload))}`,
     );
 
     // Create initial transaction record
@@ -347,16 +603,29 @@ export class EbirrService {
 
         let friendlyMsg = data.responseMsg || 'Unknown error';
         const codeStr = String(data.errorCode);
+        const expectedDeclineTag =
+          codeStr === '5310'
+            ? 'EBIRR_EXPECTED_DECLINE_5310_USER_REJECTED'
+            : codeStr === '5309'
+              ? 'EBIRR_EXPECTED_DECLINE_5309_INSUFFICIENT_BALANCE'
+              : codeStr === 'E10205'
+                ? 'EBIRR_EXPECTED_DECLINE_E10205_INSUFFICIENT_BALANCE'
+                : null;
 
         if (codeStr === '5310') {
           friendlyMsg = 'Payment declined. Ensure the SIM is in your device.';
           this.logger.warn(
-            `Ebirr User Rejection (Order: ${orderId}): ${friendlyMsg}`,
+            `Ebirr expected decline: ${JSON.stringify({ telemetryTag: expectedDeclineTag, expectedDecline: true, provider: 'EBIRR', providerCode: codeStr, orderId, referenceId, requestId, message: friendlyMsg })}`,
           );
         } else if (codeStr === '5309') {
           friendlyMsg = 'Insufficient balance in your Ebirr account.';
           this.logger.warn(
-            `Ebirr Insufficient Balance (Order: ${orderId}): ${friendlyMsg}`,
+            `Ebirr expected decline: ${JSON.stringify({ telemetryTag: expectedDeclineTag, expectedDecline: true, provider: 'EBIRR', providerCode: codeStr, orderId, referenceId, requestId, message: friendlyMsg })}`,
+          );
+        } else if (codeStr === 'E10205') {
+          friendlyMsg = 'Insufficient balance in your Ebirr account.';
+          this.logger.warn(
+            `Ebirr expected decline: ${JSON.stringify({ telemetryTag: expectedDeclineTag, expectedDecline: true, provider: 'EBIRR', providerCode: codeStr, orderId, referenceId, requestId, message: friendlyMsg })}`,
           );
         } else {
           // Log other upstream errors as errors
@@ -372,6 +641,8 @@ export class EbirrService {
         err.isHandled = true;
         err.provider = 'EBIRR';
         err.providerCode = codeStr;
+        err.expectedDecline = expectedDeclineTag !== null;
+        err.telemetryTag = expectedDeclineTag || undefined;
         err.providerRef = requestId;
         err.orderId = orderId;
         err.referenceId = referenceId;
@@ -424,15 +695,48 @@ export class EbirrService {
   }
 
   async checkOrderStatus(orderId: string) {
+    const numericOrderId = parseInt(orderId, 10);
     const order = await this.orderRepo.findOne({
-      where: { id: parseInt(orderId) },
+      where: { id: numericOrderId },
     });
     if (!order) {
       throw new BadRequestException('Order not found');
     }
+
+    const latestTx = await this.ebirrTransactionRepo.findOne({
+      where: [
+        { invoiceId: `INV-${numericOrderId}` },
+        { invoiceId: String(numericOrderId) },
+        { merch_order_id: `REF-${numericOrderId}` },
+      ],
+      order: { created_at: 'DESC' },
+    });
+
+    const paymentLifecycleState = this.derivePaymentLifecycleStateForSync({
+      order,
+      transactionStatus: latestTx?.status || null,
+      transactionUpdatedAt: latestTx?.updated_at || null,
+    });
+
     return {
       paymentStatus: order.paymentStatus,
       status: order.paymentStatus === PaymentStatus.PAID ? 'PAID' : 'PENDING',
+      orderStatus: order.status,
+      provider: 'EBIRR',
+      paymentLifecycleState,
+      transaction: latestTx
+        ? {
+            status: latestTx.status,
+            referenceId: latestTx.merch_order_id,
+            invoiceId: latestTx.invoiceId,
+            requestId: latestTx.req_transaction_id,
+            transactionId: latestTx.trans_id || null,
+            issuerTransactionId: latestTx.issuer_trans_id || null,
+            responseCode: latestTx.response_code || null,
+            responseMessage: latestTx.response_msg || null,
+            updatedAt: latestTx.updated_at,
+          }
+        : null,
     };
   }
 
@@ -457,6 +761,13 @@ export class EbirrService {
       return;
     }
 
+    if (tx.status === 'COMPLETED') {
+      this.logger.warn(
+        `Ebirr Callback duplicate ignored for completed transaction ref ${refId}`,
+      );
+      return;
+    }
+
     tx.raw_response_payload = { ...tx.raw_response_payload, callback: payload };
 
     // Check various success indicators
@@ -473,7 +784,14 @@ export class EbirrService {
       await this.ebirrTransactionRepo.save(tx);
 
       if (tx.invoiceId) {
-        const orderId = parseInt(tx.invoiceId);
+        const matches = String(tx.invoiceId).match(/(\d+)/);
+        const orderId = matches?.[0] ? parseInt(matches[0], 10) : NaN;
+        if (!orderId || isNaN(orderId)) {
+          this.logger.error(
+            `Ebirr callback could not parse orderId from invoiceId=${tx.invoiceId}`,
+          );
+          return;
+        }
         try {
           await this.ordersService.completeOrderFromPaymentCallback(orderId);
         } catch (error) {
@@ -486,5 +804,180 @@ export class EbirrService {
       tx.status = 'FAILED';
       await this.ebirrTransactionRepo.save(tx);
     }
+  }
+
+  async verifyReturnCallback(query: any): Promise<{
+    accepted: boolean;
+    orderId: number | null;
+    referenceId: string | null;
+    reason?: string;
+  }> {
+    const refId =
+      query?.referenceId || query?.refId || query?.ReferenceId || query?.ref;
+
+    if (!refId || typeof refId !== 'string') {
+      return {
+        accepted: false,
+        orderId: null,
+        referenceId: null,
+        reason: 'missing_reference_id',
+      };
+    }
+
+    const tx = await this.ebirrTransactionRepo.findOne({
+      where: { merch_order_id: refId },
+      order: { created_at: 'DESC' },
+    });
+
+    if (!tx) {
+      return {
+        accepted: false,
+        orderId: null,
+        referenceId: refId,
+        reason: 'transaction_not_found',
+      };
+    }
+
+    const refOrderMatch = String(refId).match(/(\d+)/);
+    const refOrderId = refOrderMatch?.[0]
+      ? parseInt(refOrderMatch[0], 10)
+      : NaN;
+    const invoiceOrderMatch = String(tx.invoiceId || '').match(/(\d+)/);
+    const invoiceOrderId = invoiceOrderMatch?.[0]
+      ? parseInt(invoiceOrderMatch[0], 10)
+      : NaN;
+
+    const orderId =
+      !isNaN(invoiceOrderId) && invoiceOrderId > 0
+        ? invoiceOrderId
+        : !isNaN(refOrderId) && refOrderId > 0
+          ? refOrderId
+          : null;
+
+    if (
+      !isNaN(refOrderId) &&
+      refOrderId > 0 &&
+      !isNaN(invoiceOrderId) &&
+      invoiceOrderId > 0 &&
+      refOrderId !== invoiceOrderId
+    ) {
+      this.logger.error(
+        `Ebirr return callback rejected: ref/order mismatch refId=${refId} refOrderId=${refOrderId} invoiceOrderId=${invoiceOrderId}`,
+      );
+      return {
+        accepted: false,
+        orderId,
+        referenceId: refId,
+        reason: 'reference_invoice_mismatch',
+      };
+    }
+
+    tx.raw_response_payload = {
+      ...(tx.raw_response_payload || {}),
+      returnCallback: query,
+      returnCallbackVerifiedAt: new Date().toISOString(),
+    };
+    await this.ebirrTransactionRepo.save(tx);
+
+    return {
+      accepted: true,
+      orderId,
+      referenceId: refId,
+    };
+  }
+
+  async reconcileStuckInitiatedTransactions(params?: {
+    olderThanMinutes?: number;
+    limit?: number;
+    dryRun?: boolean;
+  }): Promise<{
+    scanned: number;
+    completed: number;
+    expired: number;
+    dryRun: boolean;
+    items: Array<{
+      txId: number;
+      referenceId: string;
+      invoiceId: string | null;
+      previousStatus: string;
+      nextStatus: string;
+      reason: string;
+      orderId: number | null;
+    }>;
+  }> {
+    const olderThanMinutes = Math.max(
+      1,
+      Number(params?.olderThanMinutes || 30),
+    );
+    const limit = Math.min(500, Math.max(1, Number(params?.limit || 100)));
+    const dryRun = Boolean(params?.dryRun);
+
+    const threshold = subMinutes(new Date(), olderThanMinutes);
+    const transactions = await this.ebirrTransactionRepo.find({
+      where: {
+        status: 'INITIATED',
+        updated_at: LessThan(threshold),
+      },
+      order: {
+        updated_at: 'ASC',
+      },
+      take: limit,
+    });
+
+    let completed = 0;
+    let expired = 0;
+    const items: Array<{
+      txId: number;
+      referenceId: string;
+      invoiceId: string | null;
+      previousStatus: string;
+      nextStatus: string;
+      reason: string;
+      orderId: number | null;
+    }> = [];
+
+    for (const tx of transactions) {
+      const previousStatus = tx.status;
+      const invoiceMatch = String(tx.invoiceId || '').match(/(\d+)/);
+      const orderId = invoiceMatch?.[0] ? parseInt(invoiceMatch[0], 10) : null;
+
+      let nextStatus: string = 'EXPIRED';
+      let reason = 'Admin reconciliation: payment not confirmed in time';
+
+      if (orderId) {
+        const order = await this.orderRepo.findOne({ where: { id: orderId } });
+        if (order?.paymentStatus === PaymentStatus.PAID) {
+          nextStatus = 'COMPLETED';
+          reason = 'Admin reconciliation: linked order already PAID';
+        }
+      }
+
+      if (!dryRun) {
+        tx.status = nextStatus;
+        tx.response_msg = reason;
+        await this.ebirrTransactionRepo.save(tx);
+      }
+
+      if (nextStatus === 'COMPLETED') completed += 1;
+      if (nextStatus === 'EXPIRED') expired += 1;
+
+      items.push({
+        txId: tx.id,
+        referenceId: tx.merch_order_id,
+        invoiceId: tx.invoiceId || null,
+        previousStatus,
+        nextStatus,
+        reason,
+        orderId,
+      });
+    }
+
+    return {
+      scanned: transactions.length,
+      completed,
+      expired,
+      dryRun,
+      items,
+    };
   }
 }

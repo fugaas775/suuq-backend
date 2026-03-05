@@ -12,29 +12,29 @@ import { EmailService } from '../email/email.service';
 
 describe('UsersService', () => {
   let service: UsersService;
-  
+
   const mockRepo = {
-      find: jest.fn(),
-      findOne: jest.fn(),
-      save: jest.fn(),
-      create: jest.fn(),
+    find: jest.fn(),
+    findOne: jest.fn(),
+    save: jest.fn(),
+    create: jest.fn(),
   };
 
   const mockEmailService = {
-      sendEmail: jest.fn(),
-      sendWelcomeEmail: jest.fn(),
+    sendEmail: jest.fn(),
+    sendWelcomeEmail: jest.fn(),
   };
 
   const mockWalletService = {
-      createWallet: jest.fn(),
+    createWallet: jest.fn(),
   };
 
   const mockCurrencyService = {
-      convert: jest.fn(),
+    convert: jest.fn(),
   };
 
   const mockNotificationsService = {
-      sendToUser: jest.fn(),
+    sendToUser: jest.fn(),
   };
 
   beforeEach(async () => {
@@ -42,7 +42,10 @@ describe('UsersService', () => {
       providers: [
         UsersService,
         { provide: getRepositoryToken(User), useValue: mockRepo },
-        { provide: getRepositoryToken(SubscriptionRequest), useValue: mockRepo },
+        {
+          provide: getRepositoryToken(SubscriptionRequest),
+          useValue: mockRepo,
+        },
         { provide: getRepositoryToken(UiSetting), useValue: mockRepo },
         { provide: getRepositoryToken(Wallet), useValue: mockRepo },
         { provide: WalletService, useValue: mockWalletService },

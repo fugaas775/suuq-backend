@@ -1,18 +1,25 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return */
 import { Controller, Get, Header, Query } from '@nestjs/common';
 import { HomeService } from './home.service';
 import { Res } from '@nestjs/common';
+import { HttpException } from '@nestjs/common';
 import type { Response } from 'express';
+import { PrometheusService } from '../metrics/prometheus.service';
 
 // Routes here are mounted under global prefix '/api'
 @Controller('v2/home')
 export class HomeV2Controller {
-  constructor(private readonly home: HomeService) {}
+  constructor(
+    private readonly home: HomeService,
+    private readonly prometheus: PrometheusService,
+  ) {}
 
   // New unified home feed endpoint
   @Get('feed')
   @Header('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=120')
   async v2Feed(@Query() q: any, @Res({ passthrough: true }) res: Response) {
+    const startedAt = Date.now();
+    let stage = 'unknown';
+    let statusCode = 200;
     const page = Math.max(1, Number(q.page) || 1);
     const perPage = Math.min(
       Math.max(Number(q.limit || q.per_page) || 20, 1),
@@ -66,6 +73,19 @@ export class HomeV2Controller {
       if (['0', 'false', 'no', 'off'].includes(s)) return false;
       return d;
     };
+    const hydrationModeRaw = toText(
+      q.hydration_mode ?? q.hydrationMode ?? q.mode,
+    );
+    const hydrationMode =
+      hydrationModeRaw === 'initial' ||
+      hydrationModeRaw === 'deferred' ||
+      hydrationModeRaw === 'full'
+        ? hydrationModeRaw
+        : toBool(q.minimal)
+          ? 'initial'
+          : toBool(q.hydrate)
+            ? 'deferred'
+            : undefined;
     const categoryFirst = toBool(q.category_first ?? q.categoryFirst);
     // If a category is provided and no explicit flag, default include_descendants to true
     const includeDescendants = toBool(
@@ -88,47 +108,89 @@ export class HomeV2Controller {
     const listingType = q.listing_type || q.listingType;
     const listingTypeMode = q.listing_type_mode || q.listingTypeMode;
 
-    const data = await this.home.getV2HomeFeed({
-      page,
-      perPage,
-      userCity: city,
-      userRegion: region,
-      userCountry: country,
-      currency,
-      categoryId,
-      categorySlug,
-      categoryFirst,
-      includeDescendants,
-      geoAppend,
-      sort,
-      listingType,
-      listingTypeMode,
-      rotationKey,
-      sessionSalt,
-      rotationBucket,
-      refreshReason,
-      requestId,
-      geoCountryStrict,
-    });
-    const source =
-      data?.meta?.exploreSource === 'fallback' ? 'fallback' : 'tiered';
-    res.setHeader('X-Home-Explore-Source', source);
-    res.setHeader(
-      'X-Home-Explore-Count',
-      String(Number(data?.meta?.exploreCount || 0)),
-    );
-    if (data?.meta?.requestId) {
-      res.setHeader('X-Home-Request-Id', String(data.meta.requestId));
-    }
-    if (data?.meta?.requestKind) {
-      res.setHeader('X-Home-Request-Kind', String(data.meta.requestKind));
-    }
-    if (data?.meta?.applyPriority !== undefined) {
+    try {
+      const data = await this.home.getV2HomeFeed({
+        page,
+        perPage,
+        userCity: city,
+        userRegion: region,
+        userCountry: country,
+        currency,
+        categoryId,
+        categorySlug,
+        categoryFirst,
+        includeDescendants,
+        geoAppend,
+        sort,
+        listingType,
+        listingTypeMode,
+        rotationKey,
+        sessionSalt,
+        rotationBucket,
+        refreshReason,
+        requestId,
+        geoCountryStrict,
+        hydrationMode,
+      });
+      stage = String(data?.meta?.hydrationStage || 'unknown');
+
+      const source =
+        data?.meta?.exploreSource === 'fallback' ? 'fallback' : 'tiered';
+      res.setHeader('X-Home-Explore-Source', source);
       res.setHeader(
-        'X-Home-Apply-Priority',
-        String(Number(data.meta.applyPriority || 0)),
+        'X-Home-Explore-Count',
+        String(Number(data?.meta?.exploreCount || 0)),
       );
+      if (data?.meta?.requestId) {
+        res.setHeader('X-Home-Request-Id', String(data.meta.requestId));
+      }
+      if (data?.meta?.requestKind) {
+        res.setHeader('X-Home-Request-Kind', String(data.meta.requestKind));
+      }
+      if (data?.meta?.applyPriority !== undefined) {
+        res.setHeader(
+          'X-Home-Apply-Priority',
+          String(Number(data.meta.applyPriority || 0)),
+        );
+      }
+      if (data?.meta?.hydrationStage) {
+        res.setHeader(
+          'X-Home-Hydration-Stage',
+          String(data.meta.hydrationStage),
+        );
+      }
+
+      const stripTelemetry = data?.meta?.immersiveStripTelemetry;
+      if (stripTelemetry?.enabled) {
+        const attempted = Number(stripTelemetry.attempted || 0);
+        const hydrated = Number(stripTelemetry.hydrated || 0);
+        const fallbackUsed = Number(stripTelemetry.fallbackUsed || 0);
+        const noMatch = Number(stripTelemetry.noMatch || 0);
+        const noMatchRate =
+          attempted > 0 ? Math.round((noMatch / attempted) * 1000) / 1000 : 0;
+        res.setHeader(
+          'X-Home-Immersive-Strip',
+          `attempted=${attempted};hydrated=${hydrated};fallback=${fallbackUsed};no_match=${noMatch};no_match_rate=${noMatchRate}`,
+        );
+        this.prometheus.observeHomeFeedImmersiveStrip(stage, statusCode, {
+          attempted,
+          hydrated,
+          fallbackUsed,
+          noMatch,
+        });
+      }
+      return data;
+    } catch (error) {
+      stage = 'error';
+      if (error instanceof HttpException) {
+        statusCode = error.getStatus();
+      } else {
+        statusCode = 500;
+      }
+      throw error;
+    } finally {
+      const seconds = (Date.now() - startedAt) / 1000;
+      this.prometheus.observeHomeFeedHydration(stage, statusCode, seconds);
     }
-    return data;
   }
 }

@@ -25,7 +25,7 @@ describe('EmailProcessor', () => {
   it('should process send-email job', async () => {
     const job = {
       name: 'send-email',
-      data: { to: 'test@example.com', subject: 'Hello' },
+      data: { to: 'test@suuqsapp.com', subject: 'Hello' },
     } as Job;
 
     await processor.process(job);

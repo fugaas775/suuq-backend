@@ -6,13 +6,24 @@ import { HomeV2Controller } from '../src/home/v2.home.controller';
 import { HomeService } from '../src/home/home.service';
 import { closeE2eApp } from './utils/e2e-cleanup';
 
+import { PrometheusService } from '../src/metrics/prometheus.service';
+
 const homeServiceMock = {
   getV2HomeFeed: jest.fn(),
 };
 
+const prometheusServiceMock = {
+  recordHomeFeedLatency: jest.fn(),
+  recordHomeFeedError: jest.fn(),
+  observeHomeFeedHydration: jest.fn(),
+};
+
 @Module({
   controllers: [HomeV2Controller],
-  providers: [{ provide: HomeService, useValue: homeServiceMock }],
+  providers: [
+    { provide: HomeService, useValue: homeServiceMock },
+    { provide: PrometheusService, useValue: prometheusServiceMock },
+  ],
 })
 class TestHomeV2Module {}
 

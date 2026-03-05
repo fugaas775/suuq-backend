@@ -1,11 +1,4 @@
-import {
-  Controller,
-  Get,
-  Query,
-  UseGuards,
-  Req,
-  ForbiddenException,
-} from '@nestjs/common';
+import { Controller, Get, Query, UseGuards, Req } from '@nestjs/common';
 import { VendorService } from './vendor.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
@@ -16,7 +9,6 @@ import { Repository } from 'typeorm';
 import { SearchKeyword } from '../products/entities/search-keyword.entity';
 import { ProductImpression } from '../products/entities/product-impression.entity';
 import { Product } from '../products/entities/product.entity';
-import { User, isCertifiedVendor } from '../users/entities/user.entity';
 import { SkipThrottle } from '@nestjs/throttler';
 
 type ZeroDemandQuery = {
@@ -42,32 +34,13 @@ export class VendorAnalyticsController {
     private readonly impressionRepo: Repository<ProductImpression>,
     @InjectRepository(Product)
     private readonly productRepo: Repository<Product>,
-    @InjectRepository(User)
-    private readonly usersRepo: Repository<User>,
     private readonly vendorService: VendorService,
   ) {}
 
   @Get('v2/vendor/analytics/pro')
   @Roles(UserRole.VENDOR)
   async getProAnalytics(@Req() req: any) {
-    // req.user comes from JwtStrategy and only contains { id, email, roles }
-    // We need to fetch the full user to check subscriptionTier
     const userId = req.user.id;
-    const user = await this.usersRepo.findOne({ where: { id: userId } });
-
-    if (!user) {
-      throw new ForbiddenException('User not found');
-    }
-
-    // Gatekeeper: Ensure user is Certified (legacy: Pro)
-    console.log(
-      `[Analytics] User ${userId} certification: ${isCertifiedVendor(user)}`,
-    );
-    if (!isCertifiedVendor(user)) {
-      throw new ForbiddenException(
-        'This feature is available for Certified vendors only. Please complete and verify your business license.',
-      );
-    }
 
     // --- Health Score ---
     const health = await this.vendorService.getVendorHealth(userId);
@@ -82,7 +55,7 @@ export class VendorAnalyticsController {
       .select('impression.productId', 'productId')
       .addSelect('COUNT(impression.id)', 'count')
       .innerJoin('product', 'p', 'p.id = impression.productId')
-      .where('p.vendorId = :vendorId', { vendorId: user.id })
+      .where('p.vendorId = :vendorId', { vendorId: userId })
       .groupBy('impression.productId')
       .getRawMany();
 
@@ -105,7 +78,7 @@ export class VendorAnalyticsController {
       .select('impression.country', 'country')
       .addSelect('COUNT(impression.id)', 'count')
       .innerJoin('product', 'p', 'p.id = impression.productId')
-      .where('p.vendorId = :vendorId', { vendorId: user.id })
+      .where('p.vendorId = :vendorId', { vendorId: userId })
       .groupBy('impression.country')
       .getRawMany();
 
@@ -151,7 +124,7 @@ export class VendorAnalyticsController {
       .addSelect('impression.country', 'country')
       .addSelect('COUNT(impression.id)', 'count')
       .innerJoin('product', 'p', 'p.id = impression.productId')
-      .where('p.vendorId = :vendorId', { vendorId: user.id })
+      .where('p.vendorId = :vendorId', { vendorId: userId })
       .groupBy('impression.city')
       .addGroupBy('impression.country')
       .getRawMany();
@@ -300,7 +273,7 @@ export class VendorAnalyticsController {
       .select("TO_CHAR(impression.createdAt, 'YYYY-MM-DD')", 'date')
       .addSelect('COUNT(impression.id)', 'count')
       .innerJoin('product', 'p', 'p.id = impression.productId')
-      .where('p.vendorId = :vendorId', { vendorId: user.id })
+      .where('p.vendorId = :vendorId', { vendorId: userId })
       .andWhere('impression.createdAt >= :date', { date: sevenDaysAgo })
       .groupBy("TO_CHAR(impression.createdAt, 'YYYY-MM-DD')")
       .orderBy('date', 'ASC')

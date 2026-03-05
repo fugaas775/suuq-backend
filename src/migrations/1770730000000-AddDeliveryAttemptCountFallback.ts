@@ -10,7 +10,6 @@ export class AddDeliveryAttemptCountFallback1770730000000
     );
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   public async down(_queryRunner: QueryRunner): Promise<void> {
     // We don't want to drop it in down usually, but for completeness:
     // await queryRunner.query(`ALTER TABLE "order" DROP COLUMN IF EXISTS "deliveryAttemptCount"`);

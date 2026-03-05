@@ -19,12 +19,21 @@ import { FavoritesService } from '../favorites/favorites.service';
 import { CurrencyService } from '../common/services/currency.service';
 import { EmailService } from '../email/email.service';
 import { BadRequestException } from '@nestjs/common';
+import { ImageSimilarityService } from '../search/image-similarity.service';
 
 describe('ProductsService', () => {
   let service: ProductsService;
   let productRepo: any;
+  let imageSimilarity: any;
 
   beforeEach(async () => {
+    imageSimilarity = {
+      searchSimilarByProduct: jest.fn().mockResolvedValue({
+        matches: [],
+        fallbackImages: [],
+      }),
+    };
+
     productRepo = {
       findOne: jest.fn(),
       save: jest.fn(),
@@ -100,6 +109,7 @@ describe('ProductsService', () => {
           },
         },
         { provide: EmailService, useValue: { send: jest.fn() } },
+        { provide: ImageSimilarityService, useValue: imageSimilarity },
       ],
     }).compile();
 
@@ -173,6 +183,117 @@ describe('ProductsService', () => {
     expect(out.attributes.files[0].url).toBe(publicUrl);
   });
 
+  it('findOne does not emit self-only similarImageStrip entries', async () => {
+    const productId = 625;
+    const imageUrl = 'https://cdn.example.com/full_625.jpg';
+    const entity: Product = Object.assign(new Product(), {
+      id: productId,
+      name: 'Focus Product',
+      price: 100,
+      currency: 'ETB',
+      description: 'desc',
+      imageUrl,
+      attributes: {},
+      createdAt: new Date(),
+      vendor: undefined,
+    });
+
+    productRepo.findOne.mockResolvedValue(entity);
+    imageSimilarity.searchSimilarByProduct.mockResolvedValue({
+      matches: [
+        {
+          productId,
+          src: imageUrl,
+          thumbnail: imageUrl,
+          lowRes: null,
+          distance: 1,
+        },
+      ],
+      fallbackImages: [
+        {
+          productId,
+          src: imageUrl,
+          thumbnail: imageUrl,
+          lowRes: null,
+        },
+      ],
+    });
+
+    const out = await service.findOne(productId);
+
+    expect(imageSimilarity.searchSimilarByProduct).toHaveBeenCalledWith(
+      productId,
+      expect.any(Object),
+    );
+    expect(Array.isArray((out as any).similarImageStrip)).toBe(false);
+    expect(Array.isArray((out as any).attributes?.similarImageStrip)).toBe(
+      false,
+    );
+  });
+
+  it('findOne falls back to related products when similarity has no useful matches', async () => {
+    const productId = 614;
+    const entity: Product = Object.assign(new Product(), {
+      id: productId,
+      name: 'Focus Product',
+      price: 200,
+      currency: 'ETB',
+      description: 'desc',
+      imageUrl: 'https://cdn.example.com/full_614.jpg',
+      attributes: {},
+      createdAt: new Date(),
+      vendor: undefined,
+      status: 'publish',
+      isBlocked: false,
+      category: { id: 10 } as any,
+    });
+
+    productRepo.findOne.mockResolvedValue(entity);
+    imageSimilarity.searchSimilarByProduct.mockResolvedValue({
+      matches: [
+        {
+          productId,
+          src: 'https://cdn.example.com/full_614.jpg',
+          thumbnail: 'https://cdn.example.com/full_614.jpg',
+          lowRes: null,
+          distance: 1,
+        },
+      ],
+      fallbackImages: [],
+    });
+
+    const qb = {
+      leftJoinAndSelect: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      limit: jest.fn().mockReturnThis(),
+      addOrderBy: jest.fn().mockReturnThis(),
+      setParameter: jest.fn().mockReturnThis(),
+      select: jest.fn().mockReturnThis(),
+      getMany: jest.fn().mockResolvedValue([
+        {
+          id: 999,
+          imageUrl: 'https://cdn.example.com/full_999.jpg',
+          images: [],
+          currency: 'ETB',
+          price: 10,
+          name: 'Other Product',
+          createdAt: new Date().toISOString(),
+        },
+      ]),
+    };
+    productRepo.createQueryBuilder.mockReturnValue(qb);
+
+    const out = await service.findOne(productId);
+
+    expect((out as any).similarImageStrip).toEqual(
+      expect.arrayContaining([expect.objectContaining({ productId: 999 })]),
+    );
+    expect((out as any).attributes?.similarImageStrip).toEqual(
+      (out as any).similarImageStrip,
+    );
+  });
+
   it('normalizes restaurant attributes into canonical keys and values', () => {
     const attrs = {
       menuSection: 'breakfast',
@@ -185,9 +306,13 @@ describe('ProductsService', () => {
       name: 'Restaurant Specials',
     };
 
-    const out = (service as any).sanitizeAttributesForCategory(attrs, category, {
-      requireRestaurantMenuSection: true,
-    });
+    const out = (service as any).sanitizeAttributesForCategory(
+      attrs,
+      category,
+      {
+        requireRestaurantMenuSection: true,
+      },
+    );
 
     expect(out.menuSection).toBe('Breakfast');
     expect(out.availability).toBe('Available');
@@ -211,9 +336,13 @@ describe('ProductsService', () => {
       name: 'Restaurant Specials',
     };
 
-    const out = (service as any).sanitizeAttributesForCategory(attrs, category, {
-      requireRestaurantMenuSection: true,
-    });
+    const out = (service as any).sanitizeAttributesForCategory(
+      attrs,
+      category,
+      {
+        requireRestaurantMenuSection: true,
+      },
+    );
 
     expect(out.menuSection).toBe('Main Dishes');
     expect(out.availability).toBe('Out of stock');
@@ -233,9 +362,13 @@ describe('ProductsService', () => {
       name: 'Restaurant Specials',
     };
 
-    const out = (service as any).sanitizeAttributesForCategory(attrs, category, {
-      requireRestaurantMenuSection: true,
-    });
+    const out = (service as any).sanitizeAttributesForCategory(
+      attrs,
+      category,
+      {
+        requireRestaurantMenuSection: true,
+      },
+    );
 
     expect(out.menuSection).toBe('Fast Foods & Snacks');
     expect(out.availability).toBe('Out of stock');
@@ -403,5 +536,32 @@ describe('ProductsService', () => {
     await service.findRelatedProducts(101, { limit: 12, currency: 'ETB' });
 
     expect(qb.andWhere).toHaveBeenCalledWith('product.deleted_at IS NULL');
+  });
+
+  it('findRelatedProducts adds strict vehicle signal guard for vehicle category', async () => {
+    const qb = {
+      leftJoinAndSelect: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      limit: jest.fn().mockReturnThis(),
+      addOrderBy: jest.fn().mockReturnThis(),
+      setParameter: jest.fn().mockReturnThis(),
+      select: jest.fn().mockReturnThis(),
+      getMany: jest.fn().mockResolvedValue([]),
+    } as any;
+
+    productRepo.findOne.mockResolvedValue({
+      id: 202,
+      category: { id: 11, slug: 'vehicles' },
+      vendor: { id: 77 },
+      tags: [],
+    });
+    productRepo.createQueryBuilder.mockReturnValueOnce(qb);
+
+    await service.findRelatedProducts(202, { limit: 12, currency: 'ETB' });
+
+    expect(qb.andWhere).toHaveBeenCalledWith(
+      expect.stringContaining("product.attributes->>'make'"),
+    );
   });
 });

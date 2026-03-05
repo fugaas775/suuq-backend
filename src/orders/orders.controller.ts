@@ -12,6 +12,7 @@ import {
   Logger,
   UploadedFile,
   BadRequestException,
+  ParseFilePipeBuilder,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 // import { RolesGuard } from '../auth/roles.guard';
@@ -41,7 +42,9 @@ export class OrdersController {
 
   @Post()
   @ApiBody({ type: CreateOrderDto })
-  @ApiOkResponse({ description: 'Create order from cart' })
+  @ApiOkResponse({
+    description: 'Create order from cart or direct Buy Now items',
+  })
   create(
     @Req() req: AuthenticatedRequest,
     @Body() createOrderDto: CreateOrderDto,
@@ -95,13 +98,45 @@ export class OrdersController {
   async uploadPaymentProof(
     @Req() req: AuthenticatedRequest,
     @Param('id', ParseIntPipe) id: number,
-    @UploadedFile() file: Express.Multer.File,
+    @UploadedFile(
+      new ParseFilePipeBuilder()
+        .addMaxSizeValidator({
+          maxSize: 8 * 1024 * 1024,
+          message: 'Please upload a payment proof image up to 8MB.',
+        })
+        .addFileTypeValidator({
+          fileType: /image\/(jpeg|jpg|png|webp)$/,
+        })
+        .build({
+          fileIsRequired: true,
+          errorHttpStatusCode: 400,
+        }),
+    )
+    file: Express.Multer.File,
   ) {
     if (!file) {
       throw new BadRequestException('File is required');
     }
     this.logger.debug(`Upload payment proof for order #${id}`);
     return this.ordersService.uploadPaymentProof(req.user.id, id, file);
+  }
+
+  @Get(':id/payment-proof/signed')
+  @ApiParam({ name: 'id', type: Number })
+  @ApiQuery({ name: 'ttl', required: false, type: Number })
+  @ApiOkResponse({
+    description: 'Get signed URL for payment proof image',
+  })
+  async getSignedPaymentProof(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', ParseIntPipe) id: number,
+    @Query('ttl') ttl?: string,
+  ) {
+    return this.ordersService.getSignedPaymentProofForUser(
+      req.user.id,
+      id,
+      ttl,
+    );
   }
 
   // Buyer-gated: return a short-lived attachment URL for a purchased digital product.

@@ -1,6 +1,6 @@
-/* eslint-disable @typescript-eslint/no-unsafe-return */
 import { Body, Controller, Get, Post, Param } from '@nestjs/common';
 import { EbirrService } from './ebirr.service';
+import { ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import {
   IsNotEmpty,
   IsOptional,
@@ -8,6 +8,7 @@ import {
   Matches,
   IsNumberString,
 } from 'class-validator';
+import { SyncOrderStatusResponseDto } from './dto/sync-order-status-response.dto';
 
 class InitiatePaymentDto {
   @IsNotEmpty()
@@ -34,6 +35,7 @@ class InitiatePaymentDto {
   description?: string;
 }
 
+@ApiTags('Ebirr Payments')
 @Controller('payments/ebirr')
 export class EbirrController {
   constructor(private readonly ebirrService: EbirrService) {}
@@ -45,15 +47,25 @@ export class EbirrController {
 
   @Post('pay')
   async initiatePayment(@Body() body: InitiatePaymentDto) {
-    return this.ebirrService.initiatePayment(body);
+    const response = await this.ebirrService.initiatePayment(body);
+    return {
+      ...response,
+      toPayUrl: null,
+      checkoutUrl: null,
+      receiveCode: null,
+      disableWebCheckoutFallback: true,
+      skipOrderConfirmationScreen: true,
+    };
   }
 
   @Get('sync-status/:orderId')
+  @ApiOkResponse({ type: SyncOrderStatusResponseDto })
   async syncOrderStatus(@Param('orderId') orderId: string) {
     return this.ebirrService.checkOrderStatus(orderId);
   }
 
   @Post('check-status/:orderId')
+  @ApiOkResponse({ type: SyncOrderStatusResponseDto })
   async checkOrderStatus(@Param('orderId') orderId: string) {
     return this.ebirrService.checkOrderStatus(orderId);
   }

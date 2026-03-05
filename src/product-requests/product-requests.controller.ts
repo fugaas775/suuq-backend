@@ -1,10 +1,9 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access */
-/* eslint-disable @typescript-eslint/no-unused-vars */
 import {
   Body,
   Controller,
   Delete,
   Get,
+  NotFoundException,
   Param,
   ParseIntPipe,
   Post,
@@ -34,6 +33,18 @@ import { UserRole } from '../auth/roles.enum';
 ])
 export class ProductRequestsController {
   constructor(private readonly productRequests: ProductRequestsService) {}
+
+  private parseVendorHeader(req: AuthenticatedRequest): number | null {
+    const headers = (req as any)?.headers || {};
+    const raw = headers['x-vendor-id'];
+    if (Array.isArray(raw)) {
+      const num = Number(raw[0]);
+      return Number.isInteger(num) && num > 0 ? num : null;
+    }
+    if (typeof raw === 'undefined' || raw === null) return null;
+    const num = Number(raw);
+    return Number.isInteger(num) && num > 0 ? num : null;
+  }
 
   // Allow guests to submit requests; no auth required
   @Post('guest')
@@ -82,9 +93,24 @@ export class ProductRequestsController {
     @Req() req: AuthenticatedRequest,
   ) {
     const user = req.user;
-    return this.productRequests.findRequestForBuyer(user.id, id, {
-      includeOffers: true,
-    });
+    return (async () => {
+      try {
+        return await this.productRequests.findRequestForBuyer(user.id, id, {
+          includeOffers: true,
+        });
+      } catch (error) {
+        const isVendor = user.roles?.includes(UserRole.VENDOR);
+        if (!(error instanceof NotFoundException) || !isVendor) {
+          throw error;
+        }
+
+        const vendorId = await this.productRequests.resolveVendorActorId(
+          user.id,
+          this.parseVendorHeader(req),
+        );
+        return this.productRequests.findRequestForwardedToVendor(vendorId, id);
+      }
+    })();
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
@@ -137,12 +163,18 @@ export class ProductRequestsController {
     @Query() query: ListProductRequestFeedDto,
     @Req() req: AuthenticatedRequest,
   ) {
-    const user = req.user;
-    return this.productRequests.listForwardedToSeller(
-      user.id,
-      user.roles,
-      query,
-    );
+    return (async () => {
+      const user = req.user;
+      const vendorId = await this.productRequests.resolveVendorActorId(
+        user.id,
+        this.parseVendorHeader(req),
+      );
+      return this.productRequests.listForwardedToSeller(
+        vendorId,
+        user.roles,
+        query,
+      );
+    })();
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
@@ -152,8 +184,14 @@ export class ProductRequestsController {
     @Body() dto: CreateProductRequestOfferDto,
     @Req() req: AuthenticatedRequest,
   ) {
-    const user = req.user;
-    return this.productRequests.createOffer(user.id, user.roles, id, dto);
+    return (async () => {
+      const user = req.user;
+      const vendorId = await this.productRequests.resolveVendorActorId(
+        user.id,
+        this.parseVendorHeader(req),
+      );
+      return this.productRequests.createOffer(vendorId, user.roles, id, dto);
+    })();
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
@@ -162,8 +200,14 @@ export class ProductRequestsController {
     @Param('id', ParseIntPipe) id: number,
     @Req() req: AuthenticatedRequest,
   ) {
-    const user = req.user;
-    return this.productRequests.withdrawOffer(user.id, id);
+    return (async () => {
+      const user = req.user;
+      const vendorId = await this.productRequests.resolveVendorActorId(
+        user.id,
+        this.parseVendorHeader(req),
+      );
+      return this.productRequests.withdrawOffer(vendorId, id);
+    })();
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
@@ -172,8 +216,14 @@ export class ProductRequestsController {
     @Param('id', ParseIntPipe) id: number,
     @Req() req: AuthenticatedRequest,
   ) {
-    const user = req.user;
-    return this.productRequests.listSellerOffersForRequest(user.id, id);
+    return (async () => {
+      const user = req.user;
+      const vendorId = await this.productRequests.resolveVendorActorId(
+        user.id,
+        this.parseVendorHeader(req),
+      );
+      return this.productRequests.listSellerOffersForRequest(vendorId, id);
+    })();
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
@@ -227,7 +277,14 @@ export class ProductRequestsController {
 
     // If vendor, attach forwarding details (note from admin, etc)
     if (user.roles?.includes('VENDOR')) {
-      const forward = await this.productRequests.getForwardDetails(id, user.id);
+      const vendorId = await this.productRequests.resolveVendorActorId(
+        user.id,
+        this.parseVendorHeader(req),
+      );
+      const forward = await this.productRequests.getForwardDetails(
+        id,
+        vendorId,
+      );
       if (forward) {
         adminNote = forward.note || null;
         forwardDetails = forward;

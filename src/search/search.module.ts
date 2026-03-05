@@ -15,5 +15,6 @@ import { SearchLogService } from './search-log.service';
   ],
   controllers: [ImageSearchController, SearchLogController],
   providers: [ImageSimilarityService, SearchLogService],
+  exports: [ImageSimilarityService],
 })
 export class SearchModule {}

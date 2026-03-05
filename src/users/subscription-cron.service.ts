@@ -26,6 +26,6 @@ export class SubscriptionCronService {
   @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
   async handleSubscriptionRenewal() {
     this.logger.log('Subscription renewal is deprecated. Skipping process.');
-    return; 
+    return;
   }
 }

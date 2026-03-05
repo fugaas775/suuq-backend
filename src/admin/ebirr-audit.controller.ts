@@ -6,6 +6,7 @@ import {
   Delete,
   Body,
   BadRequestException,
+  Post,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -14,6 +15,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { UserRole } from '../auth/roles.enum';
+import { EbirrService } from '../ebirr/ebirr.service';
 
 @Controller('admin/ebirr')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -21,6 +23,7 @@ export class AdminEbirrAuditController {
   constructor(
     @InjectRepository(EbirrTransaction)
     private readonly ebirrRepo: Repository<EbirrTransaction>,
+    private readonly ebirrService: EbirrService,
   ) {}
 
   @Get('transactions')
@@ -62,5 +65,28 @@ export class AdminEbirrAuditController {
 
     const result = await this.ebirrRepo.delete(ids);
     return { deleted: result.affected || 0 };
+  }
+
+  @Post('reconcile/initiated')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  async reconcileInitiated(@Body() body: any) {
+    return this.ebirrService.reconcileStuckInitiatedTransactions({
+      olderThanMinutes: body?.olderThanMinutes,
+      limit: body?.limit,
+      dryRun: body?.dryRun,
+    });
+  }
+
+  @Get('reconcile/initiated/report')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  async reconcileInitiatedReport(
+    @Query('olderThanMinutes') olderThanMinutes?: number,
+    @Query('limit') limit?: number,
+  ) {
+    return this.ebirrService.reconcileStuckInitiatedTransactions({
+      olderThanMinutes,
+      limit,
+      dryRun: true,
+    });
   }
 }
