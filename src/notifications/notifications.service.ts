@@ -13,6 +13,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { DeviceToken } from './entities/device-token.entity';
 import { Notification, NotificationType } from './entities/notification.entity';
 import { UserRole } from '../auth/roles.enum';
+import { VendorStaff } from '../vendor/entities/vendor-staff.entity';
 import type {
   FirebaseMessagingResponse,
   FirebaseAdmin,
@@ -30,6 +31,8 @@ export class NotificationsService {
     @Inject('FIREBASE_ADMIN') private readonly firebase: FirebaseAdmin,
     @InjectRepository(DeviceToken)
     private readonly deviceTokenRepository: Repository<DeviceToken>,
+    @InjectRepository(VendorStaff)
+    private readonly vendorStaffRepository: Repository<VendorStaff>,
     @InjectRepository(Notification)
     private readonly notificationRepository: Repository<Notification>,
     @Inject(forwardRef(() => UsersService))
@@ -61,9 +64,27 @@ export class NotificationsService {
 
     // Fetch device tokens for the user
     const tokens = await this.deviceTokenRepository.find({ where: { userId } });
-    const deviceTokens = tokens.map((t) => t.token).filter(Boolean);
+    const directTokens = Array.from(
+      new Set(tokens.map((t) => String(t.token || '').trim()).filter(Boolean)),
+    );
+    const { tokens: teamTokens, userIds: teamUserIds } =
+      await this.getVendorTeamTokens(userId);
+    const deviceTokens = Array.from(new Set([...directTokens, ...teamTokens]));
+
+    if (!directTokens.length && teamTokens.length) {
+      this.logger.warn(
+        `No direct device tokens for user ${userId}; using ${teamTokens.length} vendor-staff token(s) (Staff IDs: ${teamUserIds.join(', ')})`,
+      );
+    } else if (directTokens.length && teamTokens.length) {
+      this.logger.log(
+        `Vendor-team push fanout for user ${userId}: ownerTokens=${directTokens.length}, staffTokens=${teamTokens.length} (Staff IDs: ${teamUserIds.join(', ')})`,
+      );
+    }
+
     if (!deviceTokens.length) {
-      this.logger.warn(`No device tokens found for user ${userId}`);
+      this.logger.warn(
+        `No device tokens found for user ${userId} (push skipped; ensure /api/notifications/register-device is called after login)`,
+      );
       return { successCount: 0, failureCount: 0 };
     }
     const message = {
@@ -270,13 +291,29 @@ export class NotificationsService {
     token: string;
     platform?: string;
   }) {
+    const normalizedToken = String(dto.token || '').trim();
+    const normalizedPlatform = String(dto.platform || 'unknown')
+      .trim()
+      .toLowerCase();
+
+    if (!normalizedToken) {
+      this.logger.warn(
+        `Skipped empty device token registration for user ${dto.userId}`,
+      );
+      return { success: false };
+    }
+
     await this.deviceTokenRepository.upsert(
       {
         userId: dto.userId,
-        token: dto.token,
-        platform: dto.platform || 'unknown',
+        token: normalizedToken,
+        platform: normalizedPlatform || 'unknown',
       },
       ['token'],
+    );
+
+    this.logger.log(
+      `Registered device token for user ${dto.userId} (platform=${normalizedPlatform || 'unknown'}, tokenLen=${normalizedToken.length})`,
     );
 
     return { success: true };
@@ -360,6 +397,94 @@ export class NotificationsService {
     return { items, total };
   }
 
+  async getVendorTokenDebug(vendorId: number) {
+    const vendor = await this.usersService.findOne(vendorId);
+    if (!vendor) {
+      throw new NotFoundException('Vendor not found');
+    }
+
+    const staffLinks = await this.vendorStaffRepository.find({
+      where: { vendorId },
+      relations: ['member'],
+      order: { createdAt: 'ASC' },
+    });
+
+    const staffMembers = Array.from(
+      new Map(
+        staffLinks
+          .filter((link) => link.memberId && link.memberId !== vendorId)
+          .map((link) => [link.memberId, link]),
+      ).values(),
+    );
+
+    const lookupUserIds = [vendorId, ...staffMembers.map((s) => s.memberId)];
+    const tokenRows = lookupUserIds.length
+      ? await this.deviceTokenRepository.find({
+          where: { userId: In(lookupUserIds) },
+        })
+      : [];
+
+    const tokenMap = new Map<
+      number,
+      { tokenCount: number; platforms: Set<string> }
+    >();
+
+    for (const row of tokenRows) {
+      const existing = tokenMap.get(row.userId) || {
+        tokenCount: 0,
+        platforms: new Set<string>(),
+      };
+      existing.tokenCount += 1;
+      existing.platforms.add(String(row.platform || 'unknown'));
+      tokenMap.set(row.userId, existing);
+    }
+
+    const ownerInfo = tokenMap.get(vendorId) || {
+      tokenCount: 0,
+      platforms: new Set<string>(),
+    };
+
+    const staff = staffMembers.map((link) => {
+      const tokenInfo = tokenMap.get(link.memberId) || {
+        tokenCount: 0,
+        platforms: new Set<string>(),
+      };
+      return {
+        userId: link.memberId,
+        displayName: link.member?.displayName || null,
+        storeName: link.member?.storeName || null,
+        email: link.member?.email || null,
+        title: link.title || null,
+        permissions: link.permissions || [],
+        tokenCount: tokenInfo.tokenCount,
+        platforms: Array.from(tokenInfo.platforms).sort(),
+      };
+    });
+
+    return {
+      vendor: {
+        id: vendor.id,
+        displayName: vendor.displayName || null,
+        storeName: vendor.storeName || null,
+        email: vendor.email || null,
+      },
+      summary: {
+        ownerTokenCount: ownerInfo.tokenCount,
+        staffCount: staff.length,
+        staffWithTokens: staff.filter((s) => s.tokenCount > 0).length,
+        staffTokenCount: staff.reduce((sum, s) => sum + s.tokenCount, 0),
+        totalTokenCount: tokenRows.length,
+      },
+      owner: {
+        userId: vendor.id,
+        tokenCount: ownerInfo.tokenCount,
+        platforms: Array.from(ownerInfo.platforms).sort(),
+      },
+      staff,
+      generatedAt: new Date().toISOString(),
+    };
+  }
+
   async broadcastToRole(opts: {
     role: UserRole;
     title: string;
@@ -397,5 +522,44 @@ export class NotificationsService {
     this.logger.warn(
       `Pruned ${invalidTokens.length} invalid device tokens: ${invalidTokens.join(', ')}`,
     );
+  }
+
+  private async getVendorTeamTokens(
+    userId: number,
+  ): Promise<{ tokens: string[]; userIds: number[] }> {
+    const staffRows = await this.vendorStaffRepository.find({
+      where: { vendorId: userId },
+      select: ['memberId', 'permissions'],
+    });
+
+    if (!staffRows.length) return { tokens: [], userIds: [] };
+
+    const eligibleMemberIds = Array.from(
+      new Set(
+        staffRows
+          .map((row) => row.memberId)
+          .filter((memberId) => memberId && memberId !== userId),
+      ),
+    );
+
+    if (!eligibleMemberIds.length) return { tokens: [], userIds: [] };
+
+    const fallbackRows = await this.deviceTokenRepository.find({
+      where: { userId: In(eligibleMemberIds) },
+    });
+
+    const tokens = Array.from(
+      new Set(
+        fallbackRows
+          .map((row) => String(row.token || '').trim())
+          .filter(Boolean),
+      ),
+    );
+
+    const userIds = Array.from(
+      new Set(fallbackRows.map((row) => row.userId).filter(Boolean)),
+    );
+
+    return { tokens, userIds };
   }
 }
