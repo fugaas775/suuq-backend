@@ -4,6 +4,7 @@ import { DelivererService } from './deliverer.service';
 import { DelivererController } from './deliverer.controller';
 import { Order } from '../orders/entities/order.entity';
 import { Product } from '../products/entities/product.entity';
+import { User } from '../users/entities/user.entity';
 import { WalletModule } from '../wallet/wallet.module';
 import { SettingsModule } from '../settings/settings.module';
 import { EmailModule } from '../email/email.module';
@@ -13,7 +14,7 @@ import { RealtimeModule } from '../realtime/realtime.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Order, Product]),
+    TypeOrmModule.forFeature([Order, Product, User]),
     WalletModule,
     SettingsModule,
     EmailModule,

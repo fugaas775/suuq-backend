@@ -231,6 +231,8 @@ async function bootstrap() {
       'x-requested-with',
       'X-App-Version',
       'x-app-version',
+      'X-App-Build',
+      'x-app-build',
       'X-Platform',
       'x-platform',
       'Content-Type',
@@ -314,6 +316,19 @@ async function bootstrap() {
       _res: import('express').Response,
       next: import('express').NextFunction,
     ) => {
+      try {
+        const url = req.url || '';
+        if (
+          url.startsWith('/api/admin/moderation') &&
+          !url.startsWith('/api/admin/moderation/stats') &&
+          !url.startsWith('/api/admin/moderation/metrics')
+        ) {
+          req.url = url.replace('/api/admin/moderation', '/api/moderation');
+        }
+      } catch {
+        // ignore
+      }
+
       if (req.method !== 'GET') return next();
       if (req.url.startsWith('/api/')) return next();
 

@@ -59,4 +59,37 @@ describe('toProductCard', () => {
     expect(typeof card.primaryImage?.lowRes).toBe('string');
     expect(card.primaryImage?.lowRes).toContain('/lowres_');
   });
+
+  it('does not expose priceUnit on non-property cards even if stale attribute exists', () => {
+    const product: any = {
+      id: 2,
+      name: 'Rexona Men',
+      price: 800,
+      currency: 'ETB',
+      createdAt: new Date('2026-03-05T10:00:00.000Z'),
+      category: { slug: 'fragrances-perfumes', name: 'Fragrances & Perfumes' },
+      attributes: { priceUnit: 'm2' },
+      vendor: { id: 1 },
+    };
+
+    const card = toProductCard(product);
+    expect(card.priceUnit).toBeUndefined();
+  });
+
+  it('keeps priceUnit on property cards', () => {
+    const product: any = {
+      id: 3,
+      name: 'Apartment for rent',
+      price: 1200,
+      currency: 'ETB',
+      createdAt: new Date('2026-03-05T10:00:00.000Z'),
+      category: { slug: 'property-for-rent', name: 'Property for rent' },
+      attributes: { priceUnit: 'm2' },
+      productType: 'property',
+      vendor: { id: 1 },
+    };
+
+    const card = toProductCard(product);
+    expect(card.priceUnit).toBe('m2');
+  });
 });

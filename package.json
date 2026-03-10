@@ -47,7 +47,10 @@
     "monitor:device-tokens": "ts-node -r tsconfig-paths/register scripts/monitor-device-tokens.ts",
     "cleanup:media": "node --env-file=.env -r ts-node/register -r tsconfig-paths/register scripts/manual-media-cleanup.ts",
     "spaces:versions:dry-run": "node --env-file=.env -r ts-node/register scripts/cleanup-noncurrent-versions.ts --dry-run",
-    "spaces:versions:cleanup": "node --env-file=.env -r ts-node/register scripts/cleanup-noncurrent-versions.ts --execute"
+    "spaces:versions:cleanup": "node --env-file=.env -r ts-node/register scripts/cleanup-noncurrent-versions.ts --execute",
+    "cleanup:personalcare-priceunit": "node --env-file=.env -r ts-node/register -r tsconfig-paths/register scripts/cleanup-miscategorized-personalcare-priceunit.ts --dry-run",
+    "cleanup:personalcare-priceunit:execute": "node --env-file=.env -r ts-node/register -r tsconfig-paths/register scripts/cleanup-miscategorized-personalcare-priceunit.ts --execute",
+    "cleanup:personalcare-priceunit:diagnostic": "node --env-file=.env -r ts-node/register -r tsconfig-paths/register scripts/cleanup-miscategorized-personalcare-priceunit.ts --diagnostic --dry-run"
   },
   "dependencies": {
     "@aws-sdk/client-rekognition": "^3.864.0",

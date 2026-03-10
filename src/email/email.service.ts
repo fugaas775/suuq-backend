@@ -249,6 +249,9 @@ export class EmailService {
           'isFree',
           'licenseRequired',
           'format',
+          'image_url',
+          'imageUrl',
+          'Image_url',
         ].includes(key)
       )
         continue;
@@ -291,9 +294,21 @@ export class EmailService {
         const attrStr = this.formatAttributes(item.attributes);
         const namePart = item.product?.name || 'Item';
         const fullDesc = attrStr ? `${namePart} ${attrStr}` : namePart;
-        return `<li>${item.quantity}x ${fullDesc} - ${
+
+        let imgHtml = '';
+        if (item.attributes) {
+          const imgUrl =
+            item.attributes['image_url'] ||
+            item.attributes['imageUrl'] ||
+            item.attributes['Image_url'];
+          if (imgUrl) {
+            imgHtml = `<br/><img src="${imgUrl}" alt="${namePart}" style="max-width: 100px; max-height: 100px; display: block; margin-top: 5px; border-radius: 4px; border: 1px solid #ddd;" />`;
+          }
+        }
+
+        return `<li style="margin-bottom: 10px;">${item.quantity}x <strong>${fullDesc}</strong> - ${
           item.price_display?.amount || item.price
-        } ${item.price_display?.currency || currency}</li>`;
+        } ${item.price_display?.currency || currency}${imgHtml}</li>`;
       })
       .join('');
 
@@ -309,9 +324,17 @@ export class EmailService {
           const attrStr = this.formatAttributes(i.attributes);
           const namePart = i.product?.name;
           const fullDesc = attrStr ? `${namePart} ${attrStr}` : namePart;
+          let imgText = '';
+          if (i.attributes) {
+            const imgUrl =
+              i.attributes['image_url'] ||
+              i.attributes['imageUrl'] ||
+              i.attributes['Image_url'];
+            if (imgUrl) imgText = `\n  Product Image: ${imgUrl}`;
+          }
           return `- ${i.quantity}x ${fullDesc} (${
             i.price_display?.amount || i.price
-          } ${i.price_display?.currency || currency})`;
+          } ${i.price_display?.currency || currency})${imgText}`;
         })
         .join(
           '\n',
@@ -373,23 +396,61 @@ export class EmailService {
   }
 
   async sendOrderCancelled(order: any) {
-    if (!order || !order.user || !order.user.email) return;
+    if (!order) return;
 
-    const firstName = order.user.displayName?.split(' ')[0] || 'Customer';
-    const mail = {
-      to: order.user.email,
-      subject: `Order #${order.id} Cancelled`,
-      text: `Hi ${firstName},\n\nYour order #${order.id} has been cancelled. If you have any questions, please contact support.\n\nBest regards,\nThe Suuq Team`,
-      html: `
-        <h2>Order Cancelled</h2>
-        <p>Hi ${firstName},</p>
-        <p>Your order <strong>#${order.id}</strong> has been cancelled.</p>
-        <p>If you have any questions, please contact support.</p>
-        <br/>
-        <p>Best regards,<br/>The Suuq Team</p>
-      `,
-    };
-    await this.send(mail);
+    // Send to buyer
+    if (order.user && order.user.email) {
+      const firstName = order.user.displayName?.split(' ')[0] || 'Customer';
+      const mail = {
+        to: order.user.email,
+        subject: `Order #${order.id} Cancelled`,
+        text: `Hi ${firstName},\n\nYour order #${order.id} has been cancelled. If you have any questions, please contact support.\n\nBest regards,\nThe Suuq Team`,
+        html: `
+          <h2>Order Cancelled</h2>
+          <p>Hi ${firstName},</p>
+          <p>Your order <strong>#${order.id}</strong> has been cancelled.</p>
+          <p>If you have any questions, please contact support.</p>
+          <br/>
+          <p>Best regards,<br/>The Suuq Team</p>
+        `,
+      };
+      await this.send(mail).catch((e) =>
+        console.error(`Failed to send order cancelled email to buyer:`, e),
+      );
+    }
+
+    // Send to vendors
+    if (order.items && order.items.length > 0) {
+      const vendorEmails = new Map<string, string>();
+      for (const item of order.items) {
+        const vendor = item?.product?.vendor;
+        if (vendor && vendor.email) {
+          const name = vendor.storeName || vendor.displayName || 'Vendor';
+          vendorEmails.set(vendor.email, name);
+        }
+      }
+
+      for (const [email, name] of vendorEmails.entries()) {
+        const mail = {
+          to: email,
+          subject: `Order #${order.id} Cancelled`,
+          text: `Hi ${name},\n\nOrder #${order.id} has been cancelled.\n\nBest regards,\nThe Suuq Team`,
+          html: `
+            <h2>Order Cancelled</h2>
+            <p>Hi ${name},</p>
+            <p>Order <strong>#${order.id}</strong> has been cancelled.</p>
+            <br/>
+            <p>Best regards,<br/>The Suuq Team</p>
+          `,
+        };
+        await this.send(mail).catch((e) =>
+          console.error(
+            `Failed to send order cancelled email to vendor ${email}:`,
+            e,
+          ),
+        );
+      }
+    }
   }
 
   async sendEbirrPaymentSuccessToSuperAdmin(
@@ -445,7 +506,19 @@ export class EmailService {
         const attrStr = this.formatAttributes(item.attributes);
         const namePart = item.productName;
         const fullDesc = attrStr ? `${namePart} ${attrStr}` : namePart;
-        return `<li>${item.quantity}x ${fullDesc} - ${item.price} ${currency}</li>`;
+
+        let imgHtml = '';
+        if (item.attributes) {
+          const imgUrl =
+            item.attributes['image_url'] ||
+            item.attributes['imageUrl'] ||
+            item.attributes['Image_url'];
+          if (imgUrl) {
+            imgHtml = `<br/><img src="${imgUrl}" alt="${namePart}" style="max-width: 100px; max-height: 100px; display: block; margin-top: 5px; border-radius: 4px; border: 1px solid #ddd;" />`;
+          }
+        }
+
+        return `<li style="margin-bottom: 10px;">${item.quantity}x <strong>${fullDesc}</strong> - ${item.price} ${currency}${imgHtml}</li>`;
       })
       .join('');
 
@@ -457,7 +530,15 @@ export class EmailService {
           const attrStr = this.formatAttributes(i.attributes);
           const namePart = i.productName;
           const fullDesc = attrStr ? `${namePart} ${attrStr}` : namePart;
-          return `- ${i.quantity}x ${fullDesc} (${i.price} ${currency})`;
+          let imgText = '';
+          if (i.attributes) {
+            const imgUrl =
+              i.attributes['image_url'] ||
+              i.attributes['imageUrl'] ||
+              i.attributes['Image_url'];
+            if (imgUrl) imgText = `\n  Product Image: ${imgUrl}`;
+          }
+          return `- ${i.quantity}x ${fullDesc} (${i.price} ${currency})${imgText}`;
         })
         .join(
           '\n',

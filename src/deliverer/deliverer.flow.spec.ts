@@ -30,6 +30,13 @@ describe('DelivererService - Reject Assignment Flow', () => {
     deliverer: mockDeliverer,
   } as Order;
 
+  const buildOrder = (): Order => ({
+    ...mockOrder,
+    deliverer: mockOrder.deliverer
+      ? ({ ...mockOrder.deliverer } as User)
+      : undefined,
+  });
+
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -53,6 +60,7 @@ describe('DelivererService - Reject Assignment Flow', () => {
           },
         },
         { provide: getRepositoryToken(Product), useClass: Repository },
+        { provide: getRepositoryToken(User), useClass: Repository },
         { provide: WalletService, useValue: {} },
         { provide: SettingsService, useValue: {} },
         { provide: EmailService, useValue: {} },
@@ -76,7 +84,7 @@ describe('DelivererService - Reject Assignment Flow', () => {
   describe('rejectAssignment', () => {
     it('should reject assignment and reset order status', async () => {
       // Setup mock to return the order with deliverer assigned
-      jest.spyOn(orderRepository, 'findOne').mockResolvedValue(mockOrder);
+      jest.spyOn(orderRepository, 'findOne').mockResolvedValue(buildOrder());
 
       // Execute
       const result = await service.rejectAssignment(101, 1);
@@ -91,7 +99,7 @@ describe('DelivererService - Reject Assignment Flow', () => {
     });
 
     it('should throw ForbiddenException if deliverer does not match', async () => {
-      jest.spyOn(orderRepository, 'findOne').mockResolvedValue(mockOrder);
+      jest.spyOn(orderRepository, 'findOne').mockResolvedValue(buildOrder());
 
       const promise = service.rejectAssignment(999, 1);
 

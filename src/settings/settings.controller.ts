@@ -6,6 +6,7 @@ import {
   Put,
   Patch,
   Body,
+  Query,
   UseGuards,
   Request as ReqDecorator,
   Logger,
@@ -20,6 +21,7 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { UserRole } from '../auth/roles.enum';
 import { UpdateUiSettingDto } from './dto/update-ui-setting.dto';
 import { AuthenticatedRequest } from '../auth/auth.types';
+import { AppVersionPolicies } from './settings.service';
 
 // ✨ FIX: Remove @UseGuards from the controller level
 @Controller('settings')
@@ -82,13 +84,47 @@ export class SettingsController {
   // App versions for force update strategy
   @Get('app-versions')
   async getAppVersions() {
-    const defaultVersions = {
-      ios: { min_version: '1.0.0', latest_version: '1.0.0' },
-      android: { min_version: '1.0.0', latest_version: '1.0.0' },
+    return this.settingsService.getAppVersionPolicies();
+  }
+
+  @Get('delivery-sla')
+  async getDeliverySla(
+    @Query('country') country?: string,
+    @Query('vendorId') vendorId?: string,
+  ) {
+    const defaultPolicy = {
+      default: {
+        acceptancePickup: {
+          reminderHours: 12,
+          overdueHours: 24,
+          expiredWindowHours: 48,
+        },
+        outForDelivery: {
+          reminderHours: 8,
+          overdueHours: 24,
+          expiredWindowHours: 72,
+        },
+      },
+      marketOverrides: {},
+      vendorOverrides: {},
+      context: {
+        country: country || null,
+        vendorId: vendorId ? Number(vendorId) || null : null,
+      },
     };
-    const versions =
-      await this.settingsService.getSystemSetting('app_versions');
-    return versions || defaultVersions;
+
+    const policy =
+      (await this.settingsService.getSystemSetting('delivery_sla_policy')) ||
+      defaultPolicy;
+
+    return {
+      ...defaultPolicy,
+      ...policy,
+      context: {
+        country: country || null,
+        vendorId: vendorId ? Number(vendorId) || null : null,
+      },
+    };
   }
 
   // Admin-only update for app versions
@@ -96,10 +132,24 @@ export class SettingsController {
   @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
   @Patch('app-versions')
   async updateAppVersions(@Body() body: any) {
+    const current = await this.settingsService.getAppVersionPolicies();
+    const next: AppVersionPolicies =
+      this.settingsService.normalizeAppVersionPolicies(body, current);
     return this.settingsService.setSystemSetting(
       'app_versions',
-      body,
+      next,
       'Minimum and latest app versions for force update',
+    );
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  @Patch('delivery-sla')
+  async updateDeliverySla(@Body() body: any) {
+    return this.settingsService.setSystemSetting(
+      'delivery_sla_policy',
+      body,
+      'Delivery SLA thresholds with optional market/vendor overrides',
     );
   }
 

@@ -11,7 +11,7 @@ async function main() {
   );
 
   const duplicates = await runner.query(
-    'SELECT token, COUNT(*)::int AS cnt, ARRAY_AGG(user_id) AS users FROM device_tokens GROUP BY token HAVING COUNT(*) > 1 ORDER BY cnt DESC LIMIT 20',
+    'SELECT token, COUNT(*)::int AS cnt, ARRAY_AGG("userId") AS users FROM device_tokens GROUP BY token HAVING COUNT(*) > 1 ORDER BY cnt DESC LIMIT 20',
   );
 
   console.log('[device_tokens] totals:', {

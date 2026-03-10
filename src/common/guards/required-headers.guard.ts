@@ -10,6 +10,7 @@ export class RequiredHeadersGuard implements CanActivate {
   canActivate(context: ExecutionContext): boolean {
     const req = context.switchToHttp().getRequest();
     const version = req.headers['x-app-version'];
+    const build = req.headers['x-app-build'];
     const platform = req.headers['x-platform'];
     if (!version || !platform) {
       throw new BadRequestException(
@@ -17,7 +18,7 @@ export class RequiredHeadersGuard implements CanActivate {
       );
     }
     // Attach to request for later logging
-    req.appMeta = { version, platform };
+    req.appMeta = { version, build, platform };
     return true;
   }
 }

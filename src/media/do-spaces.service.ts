@@ -1,4 +1,4 @@
-/* eslint-disable prettier/prettier, @typescript-eslint/no-unnecessary-type-assertion */
+/* eslint-disable @typescript-eslint/no-unnecessary-type-assertion */
 import { Injectable } from '@nestjs/common';
 import type { Readable } from 'stream';
 import {
@@ -193,9 +193,7 @@ export class DoSpacesService {
   }
 
   /** Return basic HEAD metadata: content length, content type, and raw metadata. */
-  async headObjectMeta(
-    key: string,
-  ): Promise<{
+  async headObjectMeta(key: string): Promise<{
     contentLength?: number;
     contentType?: string;
     metadata?: Record<string, string>;

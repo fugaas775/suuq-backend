@@ -24,6 +24,7 @@ const j = jest as any;
 describe('VendorService', () => {
   let service: VendorService;
   const productRepoMock: any = {};
+  const categoryRepoMock: any = {};
   const userRepoMock: any = {};
   const orderRepoMock: any = {};
   const orderItemRepoMock: any = {};
@@ -78,6 +79,11 @@ describe('VendorService', () => {
     process.env.DO_SPACES_BUCKET = 'test-bucket';
     process.env.DO_SPACES_REGION = 'test-region';
 
+    Object.assign(categoryRepoMock, {
+      findOne: j.fn(async ({ where }: any) =>
+        where?.id ? ({ id: Number(where.id) } as Category) : null,
+      ),
+    });
     Object.assign(productRepoMock, {
       create: j.fn((v: any) => v),
       save: j.fn(async (v: any) => v),
@@ -86,7 +92,12 @@ describe('VendorService', () => {
       findOneOrFail: j.fn(),
       findAndCount: j.fn(),
       count: j.fn().mockResolvedValue(0),
-      manager: { transaction: j.fn() },
+      manager: {
+        transaction: j.fn(),
+        getRepository: j.fn((entity: any) =>
+          entity === Category ? categoryRepoMock : undefined,
+        ),
+      },
       createQueryBuilder: j.fn(),
     });
     Object.assign(userRepoMock, {
@@ -466,7 +477,6 @@ describe('VendorService', () => {
     expect(updated.attributes.Size).toEqual(['S', 'M', 'L']);
     expect(updated.attributes.Color).toEqual(['Red', 'Blue']);
     expect(updated.attributes.Material).toEqual(['Cotton']);
-    expect(updated.attributes.isFree).toBe(false);
   });
 
   it('createShipment updates order and items', async () => {

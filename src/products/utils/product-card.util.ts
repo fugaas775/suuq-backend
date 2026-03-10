@@ -116,6 +116,16 @@ function pruneNullish<T extends Record<string, any>>(obj: T): T {
 }
 
 export function toProductCard(p: Product): ProductCard {
+  const isPropertyLikeContext = (() => {
+    const slug = String((p as any)?.category?.slug || '').toLowerCase();
+    const name = String((p as any)?.category?.name || '').toLowerCase();
+    const productType = String((p as any)?.productType || '').toLowerCase();
+    const bag = `${slug} ${name} ${productType}`;
+    return (
+      /(property|real[-_ ]?estate)/i.test(bag) || productType === 'property'
+    );
+  })();
+
   const deriveVariant = (
     url: string | null | undefined,
     kind: 'thumb' | 'lowres',
@@ -274,7 +284,7 @@ export function toProductCard(p: Product): ProductCard {
 
     // Property
     rentPeriod: p.rentPeriod, // specific to property
-    priceUnit: p.attributes?.priceUnit, // Added
+    priceUnit: isPropertyLikeContext ? p.attributes?.priceUnit : undefined, // Added
     viewingText: p.viewingText,
     bedrooms: p.bedrooms,
     bathrooms: p.bathrooms,

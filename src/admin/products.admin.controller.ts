@@ -19,6 +19,7 @@ import { UserRole } from '../auth/roles.enum';
 import { ProductsService } from '../products/products.service';
 import { SkipThrottle } from '@nestjs/throttler';
 import { Query } from '@nestjs/common';
+import { UpdateProductSubcategoryDto } from './dto/update-product-subcategory.dto';
 
 @UseGuards(AuthGuard('jwt'), RolesGuard)
 @SkipThrottle()
@@ -61,6 +62,20 @@ export class AdminProductsController {
     return this.products.listPendingApproval();
   }
 
+  @Get('subcategories/leaf')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  async listLeafSubcategories(
+    @Query('parentId') parentId?: string,
+    @Query('q') q?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.products.listLeafSubcategories({
+      parentId: Number(parentId),
+      q,
+      limit: Number(limit),
+    });
+  }
+
   @Patch(':id/approve')
   @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
   async approve(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
@@ -101,6 +116,19 @@ export class AdminProductsController {
       body.amountPaid,
       body.currency,
     );
+  }
+
+  @Patch(':id/subcategory')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  async changeSubcategory(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: UpdateProductSubcategoryDto,
+    @Req() req: any,
+  ) {
+    const actorId = (req?.user?.id as number) || null;
+    return this.products.adminChangeSubcategory(id, body.subcategoryId, {
+      actorId,
+    });
   }
 
   @Post('bulk-approve')

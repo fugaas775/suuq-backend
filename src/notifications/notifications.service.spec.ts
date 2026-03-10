@@ -13,6 +13,7 @@ import { NotificationsService } from './notifications.service';
 import { DeviceToken } from './entities/device-token.entity';
 import { Notification } from './entities/notification.entity';
 import { UsersService } from '../users/users.service';
+import { VendorStaff } from '../vendor/entities/vendor-staff.entity';
 import type { FirebaseMessagingResponse } from './notifications.types';
 
 const makeFirebaseMock = (response: FirebaseMessagingResponse) => {
@@ -112,6 +113,9 @@ describe('NotificationsService', () => {
       save: jest.fn(async (items: any[]) => items),
       findAndCount: jest.fn(async () => [[], 0]),
     };
+    const vendorStaffRepoMock = {
+      find: jest.fn(async () => []),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -119,6 +123,10 @@ describe('NotificationsService', () => {
         { provide: 'FIREBASE_ADMIN', useFactory: () => firebaseMock },
         { provide: UsersService, useValue: usersService },
         { provide: getRepositoryToken(DeviceToken), useValue: repo },
+        {
+          provide: getRepositoryToken(VendorStaff),
+          useValue: vendorStaffRepoMock,
+        },
         {
           provide: getRepositoryToken(Notification),
           useValue: notificationRepoMock,

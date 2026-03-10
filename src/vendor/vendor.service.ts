@@ -123,6 +123,57 @@ export class VendorService {
     return trimmed.length ? trimmed : null;
   }
 
+  private buildDelivererResponseAliases(deliverer: any) {
+    const vehicle =
+      deliverer?.vehicleDetails?.model || deliverer?.vehicleType || null;
+
+    if (!deliverer) {
+      return {
+        deliverer: null,
+        delivererId: null,
+        delivererName: null,
+        delivererEmail: null,
+        delivererPhone: null,
+        assignedDelivererId: null,
+        assignedDelivererName: null,
+        assignedDelivererPhone: null,
+        assignedDelivererVehicle: null,
+        assignedDeliverer: null,
+        assigned_deliverer: null,
+        deliverer_id: null,
+        deliverer_name: null,
+        deliverer_phone: null,
+        delivererSummary: null,
+      };
+    }
+
+    const summary = {
+      id: deliverer.id,
+      name: deliverer.displayName ?? null,
+      email: deliverer.email ?? null,
+      phone: deliverer.phoneNumber ?? null,
+      vehicle: vehicle ?? null,
+    };
+
+    return {
+      deliverer,
+      delivererId: deliverer.id,
+      delivererName: deliverer.displayName ?? null,
+      delivererEmail: deliverer.email ?? null,
+      delivererPhone: deliverer.phoneNumber ?? null,
+      assignedDelivererId: deliverer.id,
+      assignedDelivererName: deliverer.displayName ?? null,
+      assignedDelivererPhone: deliverer.phoneNumber ?? null,
+      assignedDelivererVehicle: vehicle ?? null,
+      assignedDeliverer: summary,
+      assigned_deliverer: summary,
+      deliverer_id: deliverer.id,
+      deliverer_name: deliverer.displayName ?? null,
+      deliverer_phone: deliverer.phoneNumber ?? null,
+      delivererSummary: summary,
+    };
+  }
+
   private actorDisplayName(
     actor: Partial<User> | undefined,
     fallback: User,
@@ -411,25 +462,42 @@ export class VendorService {
   }
 
   private async notifyOrderStatusChange(order: Order, status: OrderStatus) {
-    let userId = order?.user?.id;
-    if (!userId) {
-      const withUser = await this.orderRepository.findOne({
+    let fullOrder = order;
+    if (
+      !fullOrder.user ||
+      !fullOrder.items ||
+      !fullOrder.items[0]?.product?.vendor
+    ) {
+      const fetched = await this.orderRepository.findOne({
         where: { id: order.id },
-        relations: ['user'],
+        relations: ['user', 'items', 'items.product', 'items.product.vendor'],
       });
-      userId = withUser?.user?.id;
+      if (fetched) fullOrder = fetched;
     }
 
-    if (!userId) return;
+    const userId = fullOrder?.user?.id;
+    if (userId) {
+      const payload = buildOrderStatusNotification(fullOrder.id, status);
+      await this.notificationsService.createAndDispatch({
+        userId,
+        title: payload.title,
+        body: payload.body,
+        type: NotificationType.ORDER,
+        data: payload.data,
+      });
+    }
 
-    const payload = buildOrderStatusNotification(order.id, status);
-    await this.notificationsService.createAndDispatch({
-      userId,
-      title: payload.title,
-      body: payload.body,
-      type: NotificationType.ORDER,
-      data: payload.data,
-    });
+    if (
+      status === OrderStatus.CANCELLED ||
+      status === OrderStatus.CANCELLED_BY_BUYER ||
+      status === OrderStatus.CANCELLED_BY_SELLER
+    ) {
+      this.emailService
+        .sendOrderCancelled(fullOrder)
+        .catch((e) =>
+          console.error(`Failed to send order cancelled email: ${e.message}`),
+        );
+    }
   }
 
   private applyCurrencyToProduct(product: Product, target: string): Product {
@@ -2703,6 +2771,7 @@ export class VendorService {
     // Filter items to only this vendor's products in the response and expose normalized deliverer fields
     const data = orders.map((o) => {
       const d: any = (o as any).deliverer || null;
+      const delivererAliases = this.buildDelivererResponseAliases(d);
       const filteredItems = (o.items || []).filter(
         (it) => (it.product as any)?.vendor?.id === vendorId,
       );
@@ -2780,31 +2849,7 @@ export class VendorService {
       const customerCountry = shipping.country || null;
       return {
         ...o,
-        // Keep the deliverer container for clients that look for it
-        deliverer: d,
-        // Normalized convenience fields for parsers
-        delivererId: d?.id ?? null,
-        delivererName: d?.displayName ?? null,
-        delivererEmail: d?.email ?? null,
-        delivererPhone: d?.phoneNumber ?? null,
-        // Aliased summary object commonly used by mobile apps
-        assignedDeliverer: d
-          ? {
-              id: d.id,
-              name: d.displayName ?? null,
-              email: d.email ?? null,
-              phone: d?.phoneNumber ?? null,
-            }
-          : null,
-        // Additional alias
-        delivererSummary: d
-          ? {
-              id: d.id,
-              name: d.displayName ?? null,
-              email: d.email ?? null,
-              phone: d?.phoneNumber ?? null,
-            }
-          : null,
+        ...delivererAliases,
         items: itemsWithMedia,
         vendorItemCount,
         vendorSubtotal,
@@ -2941,29 +2986,10 @@ export class VendorService {
     const shipping = (order as any).shippingAddress || {};
     const customerCity = shipping.city || null;
     const customerCountry = shipping.country || null;
+    const delivererAliases = this.buildDelivererResponseAliases(d);
     return {
       ...order,
-      deliverer: d,
-      delivererId: d?.id ?? null,
-      delivererName: d?.displayName ?? null,
-      delivererEmail: d?.email ?? null,
-      delivererPhone: d?.phoneNumber ?? null,
-      assignedDeliverer: d
-        ? {
-            id: d.id,
-            name: d.displayName ?? null,
-            email: d.email ?? null,
-            phone: d?.phoneNumber ?? null,
-          }
-        : null,
-      delivererSummary: d
-        ? {
-            id: d.id,
-            name: d.displayName ?? null,
-            email: d.email ?? null,
-            phone: d?.phoneNumber ?? null,
-          }
-        : null,
+      ...delivererAliases,
       items: vendorItems,
       vendorItemCount,
       vendorSubtotal,
@@ -3028,23 +3054,41 @@ export class VendorService {
     // Set deliverer and advance status to SHIPPED
     (order as any).deliverer = deliverer as any;
     order.status = OrderStatus.SHIPPED;
+    order.deliveryAssignedAt = new Date();
+    order.outForDeliveryAt = null;
+    order.deliveryResolvedAt = null;
+    order.deliveryAttentionNotificationState = null;
     // Set acceptance status to PENDING
     order.deliveryAcceptanceStatus = DeliveryAcceptanceStatus.PENDING;
 
     await this.orderRepository.save(order);
     await this.notifyOrderStatusChange(order, OrderStatus.SHIPPED);
 
+    let notificationResult: {
+      notificationCreated: boolean;
+      notificationId: number;
+      pushQueued: boolean;
+      pushDelivered: boolean | 'unknown';
+      successCount: number;
+      failureCount: number;
+      deviceTokenCount: number;
+    } | null = null;
+
     // Notify deliverer
     try {
-      await this.notificationsService.createAndDispatch({
+      notificationResult = await this.notificationsService.createAndDispatch({
         userId: delivererId,
-        title: 'New Delivery Request',
-        body: `You have a new delivery request order #${orderId}. Please Accept or Reject.`,
+        title: 'New delivery assigned',
+        body: `Order #${orderId} was assigned to you`,
         type: NotificationType.ORDER,
         data: {
+          type: 'DELIVERER_ASSIGNMENT',
+          id: String(orderId),
           orderId: String(orderId),
           route: '/deliverer-deliveries',
           click_action: 'FLUTTER_NOTIFICATION_CLICK',
+          title: 'New delivery assigned',
+          body: `Order #${orderId} was assigned to you`,
           action: 'request_acceptance',
         },
       });
@@ -3055,32 +3099,15 @@ export class VendorService {
     // Return enriched payload with deliverer info and common aliases
     return {
       ...order,
-      deliverer,
-      delivererId: deliverer.id,
-      delivererName: deliverer.displayName ?? null,
-      delivererEmail: deliverer.email ?? null,
-      delivererPhone: (deliverer as any)?.phoneNumber ?? null,
-      assignedDeliverer: {
-        id: deliverer.id,
-        name: deliverer.displayName ?? null,
-        email: deliverer.email ?? null,
-        phone: (deliverer as any)?.phoneNumber ?? null,
-      },
-      // Add snake_case aliases for robust frontend parsing
-      assigned_deliverer: {
-        id: deliverer.id,
-        name: deliverer.displayName ?? null,
-        email: deliverer.email ?? null,
-        phone: (deliverer as any)?.phoneNumber ?? null,
-      },
-      deliverer_id: deliverer.id,
-      deliverer_name: deliverer.displayName ?? null,
-      delivererSummary: {
-        id: deliverer.id,
-        name: deliverer.displayName ?? null,
-        email: deliverer.email ?? null,
-        phone: (deliverer as any)?.phoneNumber ?? null,
-      },
+      ...this.buildDelivererResponseAliases(deliverer),
+      notificationCreated: notificationResult?.notificationCreated ?? false,
+      notificationId: notificationResult?.notificationId ?? null,
+      pushQueued: notificationResult?.pushQueued ?? false,
+      pushDelivered: notificationResult?.pushDelivered ?? 'unknown',
+      notificationDelivery:
+        notificationResult?.pushDelivered === true
+          ? 'Delivery dispatched and driver notified'
+          : 'Delivery dispatched',
     } as any;
   }
 

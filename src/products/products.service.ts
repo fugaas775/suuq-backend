@@ -75,6 +75,8 @@ export class ProductsService {
     'Regular',
     'Special Order',
   ] as const;
+  private readonly personalCareKeywordPattern =
+    /(rexona|deodorant|fragrance|perfume|body\s*spray|antiperspirant|shampoo|conditioner|lotion|soap|cosmetic|beauty|personal\s*care)/i;
 
   constructor(
     @InjectRepository(Product)
@@ -278,6 +280,83 @@ export class ProductsService {
     }
   }
 
+  private isPropertyLikeReadContext(target?: any): boolean {
+    const slug = String(target?.category?.slug || '').toLowerCase();
+    const name = String(target?.category?.name || '').toLowerCase();
+    const productType = String(target?.productType || '').toLowerCase();
+    const listingType = String(target?.listingType || '').toLowerCase();
+    const bag = `${slug} ${name} ${productType} ${listingType}`;
+    return (
+      /(property|real[-_ ]?estate)/i.test(bag) || productType === 'property'
+    );
+  }
+
+  private sanitizeReadPayloadForCategory(target: any): any {
+    if (!target || typeof target !== 'object') return target;
+    if (this.isPropertyLikeReadContext(target)) return target;
+
+    const attrs =
+      target.attributes && typeof target.attributes === 'object'
+        ? { ...(target.attributes as Record<string, any>) }
+        : null;
+    if (!attrs) return target;
+
+    const stripAreaToken = (value: string): string =>
+      value
+        .replace(
+          /\s*(?:\/|per)\s*(m2|m²|sqm|sq\.?\s*m|sqft|ft2|ft²|acre|acres|hectare|hectares)\b/gi,
+          '',
+        )
+        .replace(/\s{2,}/g, ' ')
+        .trim();
+
+    let changed = false;
+    if (Object.prototype.hasOwnProperty.call(attrs, 'priceUnit')) {
+      delete attrs.priceUnit;
+      changed = true;
+    }
+    if (Object.prototype.hasOwnProperty.call(attrs, 'price_unit')) {
+      delete attrs.price_unit;
+      changed = true;
+    }
+
+    for (const key of [
+      'priceText',
+      'price_text',
+      'unitPriceText',
+      'unit_price_text',
+      'displayPrice',
+      'display_price',
+    ]) {
+      const raw = attrs[key];
+      if (typeof raw === 'string' && raw.trim()) {
+        const next = stripAreaToken(raw);
+        if (next !== raw) {
+          attrs[key] = next;
+          changed = true;
+        }
+      }
+    }
+
+    for (const key of [
+      'priceText',
+      'price_text',
+      'displayPrice',
+      'display_price',
+    ]) {
+      const raw = target[key];
+      if (typeof raw === 'string' && raw.trim()) {
+        const next = stripAreaToken(raw);
+        if (next !== raw) {
+          target[key] = next;
+        }
+      }
+    }
+
+    if (changed) target.attributes = attrs;
+    return target;
+  }
+
   private applyCurrency(product: Product, targetCurrency: string): Product {
     if (!product) return product;
     const from = product.currency || 'ETB';
@@ -316,6 +395,8 @@ export class ProductsService {
         rate: roundedRate,
       };
     }
+
+    this.sanitizeReadPayloadForCategory(product as any);
 
     return product;
   }
@@ -436,9 +517,58 @@ export class ProductsService {
 
   private isPropertyCategory(category?: any): boolean {
     const slug = (category && (category.slug || category?.['slug'])) || '';
+    const name = (category && (category.name || category?.['name'])) || '';
     return (
-      typeof slug === 'string' && /(property|real[-_ ]?estate)/i.test(slug)
+      (typeof slug === 'string' && /(property|real[-_ ]?estate)/i.test(slug)) ||
+      (typeof name === 'string' && /(property|real[-_ ]?estate)/i.test(name))
     );
+  }
+
+  private normalizePropertyPriceUnit(unit: string): string {
+    const normalized = unit.trim().toLowerCase().replace(/\s+/g, '');
+
+    if (
+      ['m2', 'm²', '/m2', '/m²', 'sqm', '/sqm', 'persqm', 'perm2'].includes(
+        normalized,
+      )
+    ) {
+      return 'm2';
+    }
+    if (
+      ['sqft', 'ft2', 'ft²', '/sqft', '/ft2', 'persqft', 'perft2'].includes(
+        normalized,
+      )
+    ) {
+      return 'sqft';
+    }
+    return unit.trim();
+  }
+
+  private assertPropertyCategoryContentConsistency(
+    input: {
+      name?: string | null;
+      description?: string | null;
+      attributes?: Record<string, any> | null;
+    },
+    category?: any,
+  ): void {
+    if (!this.isPropertyCategory(category)) return;
+
+    const probe = [
+      input?.name,
+      input?.description,
+      input?.attributes?.brand,
+      input?.attributes?.productName,
+      input?.attributes?.title,
+    ]
+      .filter((value) => typeof value === 'string' && !!String(value).trim())
+      .join(' ');
+
+    if (probe && this.personalCareKeywordPattern.test(probe)) {
+      throw new BadRequestException(
+        'This listing appears to be Health, Beauty & Personal Care / Fragrance and cannot be posted under Property & Real Estate.',
+      );
+    }
   }
 
   private isVehicleCategory(category?: any): boolean {
@@ -536,6 +666,23 @@ export class ProductsService {
         );
       }
       return out ?? null;
+    }
+
+    const isProperty = this.isPropertyCategory(category);
+    const incomingPriceUnit = out.priceUnit ?? out.price_unit;
+    if (incomingPriceUnit !== undefined && incomingPriceUnit !== null) {
+      const normalizedUnit = String(incomingPriceUnit).trim();
+      if (!normalizedUnit) {
+        delete out.priceUnit;
+        delete out.price_unit;
+      } else if (!isProperty) {
+        throw new BadRequestException(
+          'priceUnit is only allowed for Property & Real Estate listings',
+        );
+      } else {
+        out.priceUnit = this.normalizePropertyPriceUnit(normalizedUnit);
+        delete out.price_unit;
+      }
     }
 
     if (!this.isVehicleCategory(category)) {
@@ -1012,6 +1159,15 @@ export class ProductsService {
       category = await this.categoryRepo.findOneBy({ id: categoryId });
       if (!category) throw new NotFoundException('Category not found');
     }
+    this.assertPropertyCategoryContentConsistency(
+      {
+        name: rest.name,
+        description: rest.description,
+        attributes:
+          (mergedRequestAttributes as Record<string, any> | undefined) || null,
+      },
+      category,
+    );
     const isRestaurant =
       category && this.shouldApplyRestaurantVariations(category);
     // Vertical-specific validations
@@ -1331,6 +1487,7 @@ export class ProductsService {
         } catch {}
       } catch {}
       await this.ensureSimilarImageStripIfMissing(out, id);
+      this.sanitizeReadPayloadForCategory(out);
       this.applyCurrency(out, targetCurrency);
       return out;
     } catch {
@@ -2961,6 +3118,15 @@ export class ProductsService {
     const isRestaurant =
       finalCategory && this.shouldApplyRestaurantVariations(finalCategory);
 
+    this.assertPropertyCategoryContentConsistency(
+      {
+        name: rest.name ?? product.name,
+        description: rest.description ?? product.description,
+        attributes: product.attributes ?? null,
+      },
+      finalCategory,
+    );
+
     if (isProp) {
       if (!finalListingCity || !String(finalListingCity).trim()) {
         throw new BadRequestException(
@@ -3245,6 +3411,57 @@ export class ProductsService {
     });
   }
 
+  async listLeafSubcategories(opts?: {
+    parentId?: number;
+    q?: string;
+    limit?: number;
+  }): Promise<
+    Array<{
+      id: number;
+      name: string;
+      slug: string;
+      label: string;
+      parent: { id: number; name: string; slug: string } | null;
+    }>
+  > {
+    const limit = Math.min(Math.max(Number(opts?.limit || 500), 1), 2000);
+    const parentId = Number(opts?.parentId || 0) || undefined;
+    const q = String(opts?.q || '').trim();
+
+    const qb = this.categoryRepo
+      .createQueryBuilder('c')
+      .leftJoinAndSelect('c.parent', 'parent')
+      .where(
+        'NOT EXISTS (SELECT 1 FROM category child WHERE child."parentId" = c.id)',
+      )
+      .andWhere('c."parentId" IS NOT NULL');
+
+    if (parentId) {
+      qb.andWhere('parent.id = :parentId', { parentId });
+    }
+
+    if (q) {
+      qb.andWhere('(c.name ILIKE :q OR c.slug ILIKE :q)', { q: `%${q}%` });
+    }
+
+    qb.orderBy('parent.name', 'ASC').addOrderBy('c.name', 'ASC').take(limit);
+
+    const rows = await qb.getMany();
+    return rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      slug: row.slug,
+      label: row.parent ? `${row.parent.name} > ${row.name}` : row.name,
+      parent: row.parent
+        ? {
+            id: row.parent.id,
+            name: row.parent.name,
+            slug: row.parent.slug,
+          }
+        : null,
+    }));
+  }
+
   // Admin Override for Featured Status
   async adminSetFeatured(
     id: number,
@@ -3279,6 +3496,59 @@ export class ProductsService {
     }
 
     return this.productRepo.save(product);
+  }
+
+  async adminChangeSubcategory(
+    productId: number,
+    subcategoryId: number,
+    opts: { actorId?: number | null } = {},
+  ): Promise<Product> {
+    const product = await this.productRepo.findOne({
+      where: { id: productId, deletedAt: IsNull() },
+      relations: ['category'],
+    });
+    if (!product) {
+      throw new NotFoundException('Product not found');
+    }
+
+    const nextCategory = await this.categoryRepo.findOne({
+      where: { id: subcategoryId },
+      relations: ['parent'],
+    });
+    if (!nextCategory) {
+      throw new NotFoundException('Subcategory not found');
+    }
+    if (!nextCategory.parent) {
+      throw new BadRequestException(
+        'Target category must be a subcategory (child category)',
+      );
+    }
+
+    const previousCategoryId = (product.category as any)?.id ?? null;
+    if (previousCategoryId === nextCategory.id) {
+      return this.findOne(productId);
+    }
+
+    product.category = nextCategory as any;
+    product.attributes = this.sanitizeAttributesForCategory(
+      product.attributes ?? {},
+      nextCategory,
+    ) as any;
+    await this.productRepo.save(product);
+
+    await this.audit.log({
+      actorId: opts.actorId ?? null,
+      action: 'ADMIN_PRODUCT_CHANGE_SUBCATEGORY',
+      targetType: 'PRODUCT',
+      targetId: productId,
+      meta: {
+        previousCategoryId,
+        nextCategoryId: nextCategory.id,
+        nextCategorySlug: nextCategory.slug,
+      },
+    });
+
+    return this.findOne(productId);
   }
 
   async approveProduct(

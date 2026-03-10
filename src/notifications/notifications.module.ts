@@ -8,6 +8,7 @@ import { Notification } from './entities/notification.entity';
 import { FirebaseModule } from '../firebase/firebase.module';
 import { NotificationsController } from './notifications.controller';
 import { UsersModule } from '../users/users.module';
+import { VendorStaff } from '../vendor/entities/vendor-staff.entity';
 
 const notificationsProviders =
   process.env.NODE_ENV === 'test'
@@ -16,7 +17,7 @@ const notificationsProviders =
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([DeviceToken, Notification]),
+    TypeOrmModule.forFeature([DeviceToken, Notification, VendorStaff]),
     BullModule.registerQueue({
       name: 'notifications',
     }),

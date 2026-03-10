@@ -38,8 +38,10 @@ import { AuthGuard } from '@nestjs/passport'; // Add this if missing
 import { RolesGuard } from '../common/guards/roles.guard'; // Add this
 
 type PaymentMethodId =
+  | 'STARPAY'
   | 'TELEBIRR'
   | 'EBIRR'
+  | 'CREDIT'
   | 'CBE'
   | 'MPESA'
   | 'WAAFI'
@@ -58,6 +60,18 @@ type PaymentMethodDef = {
 export class PaymentsController {
   private readonly logger = new Logger(PaymentsController.name);
   private readonly paymentMethodCatalog: PaymentMethodDef[] = [
+    {
+      id: 'STARPAY',
+      name: 'StarPay',
+      countries: ['SO'],
+      supportsBoost: false,
+      readinessEnv: [
+        'STARPAY_MERCHANT_NAME',
+        'STARPAY_MERCHANT_ID',
+        'STARPAY_SECRET_KEY',
+        'STARPAY_BASE_URL',
+      ],
+    },
     {
       id: 'TELEBIRR',
       name: 'Telebirr',
@@ -82,6 +96,13 @@ export class PaymentsController {
         'EBIRR_MERCHANT_ID',
         'EBIRR_API_USER_ID',
       ],
+    },
+    {
+      id: 'CREDIT',
+      name: 'BNPL',
+      countries: ['ET'],
+      supportsBoost: false,
+      readinessEnv: ['__INTERNAL_CREDIT_AVAILABLE__'],
     },
     {
       id: 'CBE',
@@ -175,6 +196,10 @@ export class PaymentsController {
     const def = this.paymentMethodCatalog.find((m) => m.id === providerId);
     if (!def) return false;
 
+    if (providerId === 'CREDIT') {
+      return true;
+    }
+
     if (!def.readinessEnv.length) {
       return false;
     }
@@ -220,20 +245,26 @@ export class PaymentsController {
     const country = this.normalizeCountry(opts?.country || undefined);
     const purpose = opts?.purpose || 'checkout';
 
-    return this.paymentMethodCatalog
+    let methods = this.paymentMethodCatalog
       .filter((m) => (purpose === 'boost' ? m.supportsBoost : true))
       .filter((m) => {
         if (!country) return true;
         return m.countries.includes('ALL') || m.countries.includes(country);
-      })
-      .map((m) => ({
-        id: m.id,
-        name: m.name,
-        country: m.countries.length === 1 ? m.countries[0] : 'MULTI',
-        countries: m.countries,
-        enabled: this.providerEnabled(m.id),
-        supportsBoost: m.supportsBoost,
-      }));
+      });
+
+    if (purpose === 'checkout' && country === 'ET') {
+      const allowedEthiopiaMethods: PaymentMethodId[] = ['EBIRR', 'CREDIT'];
+      methods = methods.filter((m) => allowedEthiopiaMethods.includes(m.id));
+    }
+
+    return methods.map((m) => ({
+      id: m.id,
+      name: m.name,
+      country: m.countries.length === 1 ? m.countries[0] : 'MULTI',
+      countries: m.countries,
+      enabled: this.providerEnabled(m.id),
+      supportsBoost: m.supportsBoost,
+    }));
   }
 
   @Get('methods')

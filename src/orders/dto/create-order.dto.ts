@@ -16,6 +16,9 @@ class ShippingAddressDto {
   @IsString() @IsNotEmpty() city!: string;
   @IsString() @IsNotEmpty() country!: string;
   @IsString() @IsNotEmpty() phoneNumber!: string;
+
+  @IsNumber() @IsOptional() latitude?: number;
+  @IsNumber() @IsOptional() longitude?: number;
 }
 
 class OrderItemDto {

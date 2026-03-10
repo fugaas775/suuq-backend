@@ -59,7 +59,13 @@ export class NotificationsService {
     const user = await this.usersService.findOne(userId);
     if (!user) {
       this.logger.warn(`Skip send: user ${userId} not found`);
-      return { successCount: 0, failureCount: 0 } as FirebaseMessagingResponse;
+      return {
+        successCount: 0,
+        failureCount: 0,
+        pushQueued: false,
+        pushDelivered: 'unknown' as const,
+        deviceTokenCount: 0,
+      };
     }
 
     // Fetch device tokens for the user
@@ -85,7 +91,13 @@ export class NotificationsService {
       this.logger.warn(
         `No device tokens found for user ${userId} (push skipped; ensure /api/notifications/register-device is called after login)`,
       );
-      return { successCount: 0, failureCount: 0 };
+      return {
+        successCount: 0,
+        failureCount: 0,
+        pushQueued: false,
+        pushDelivered: false as const,
+        deviceTokenCount: 0,
+      };
     }
     const message = {
       notification: { title, body, image },
@@ -100,7 +112,10 @@ export class NotificationsService {
         return {
           successCount: 0,
           failureCount: 0,
-        } as FirebaseMessagingResponse;
+          pushQueued: true,
+          pushDelivered: 'unknown' as const,
+          deviceTokenCount: deviceTokens.length,
+        };
       }
 
       const response = await messaging.sendEachForMulticast(message);
@@ -109,7 +124,10 @@ export class NotificationsService {
         return {
           successCount: 0,
           failureCount: 0,
-        } as FirebaseMessagingResponse;
+          pushQueued: true,
+          pushDelivered: 'unknown' as const,
+          deviceTokenCount: deviceTokens.length,
+        };
       }
       await this.pruneInvalidTokens(response, deviceTokens);
       this.logger.log(
@@ -147,13 +165,24 @@ export class NotificationsService {
           );
         }
       }
-      return response;
+      return {
+        ...response,
+        pushQueued: true,
+        pushDelivered: response.successCount > 0 ? true : false,
+        deviceTokenCount: deviceTokens.length,
+      };
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       this.logger.error(
         `Failed to send notification to user ${userId}: ${msg}`,
       );
-      return { successCount: 0, failureCount: 0 } as FirebaseMessagingResponse;
+      return {
+        successCount: 0,
+        failureCount: 0,
+        pushQueued: true,
+        pushDelivered: 'unknown' as const,
+        deviceTokenCount: deviceTokens.length,
+      };
     }
   }
 
@@ -209,11 +238,7 @@ export class NotificationsService {
     const userRecipient = await this.usersService.findOne(opts.userId);
     if (userRecipient && userRecipient.roles.includes(UserRole.DELIVERER)) {
       if (type === NotificationType.ORDER) {
-        // If specific order ID is present, go to detail, else dashboard
-        if (fcmData.id || fcmData.orderId) {
-          const oid = fcmData.id || fcmData.orderId;
-          fcmData['route'] = `/vendor-order-detail?id=${oid}`;
-        } else {
+        if (!fcmData['route']) {
           fcmData['route'] = '/deliverer-deliveries';
         }
       }
@@ -224,17 +249,25 @@ export class NotificationsService {
     // type and normalize to lowercase.
     if (!fcmData['type']) {
       fcmData['type'] = type.toLowerCase();
-    } else {
-      fcmData['type'] = fcmData['type'].toLowerCase();
     }
 
-    return this.sendToUser({
+    const pushResult = await this.sendToUser({
       userId: opts.userId,
       title: opts.title,
       body: opts.body,
       data: fcmData,
       image: opts.image,
     });
+
+    return {
+      notificationCreated: true,
+      notificationId: notification.id,
+      pushQueued: pushResult.pushQueued,
+      pushDelivered: pushResult.pushDelivered,
+      successCount: pushResult.successCount,
+      failureCount: pushResult.failureCount,
+      deviceTokenCount: pushResult.deviceTokenCount,
+    };
   }
 
   async findAllForUser(

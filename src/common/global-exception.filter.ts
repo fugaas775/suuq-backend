@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { Request, Response } from 'express';
 import * as Sentry from '@sentry/node';
+import * as crypto from 'crypto';
 
 @Catch()
 export class GlobalExceptionFilter implements ExceptionFilter {
@@ -25,6 +26,21 @@ export class GlobalExceptionFilter implements ExceptionFilter {
   private headerValue(value: string | string[] | undefined): string {
     if (Array.isArray(value)) return value[0] ?? '';
     return value ?? '';
+  }
+
+  private fingerprintValue(value: unknown): string | null {
+    const normalized = String(value || '')
+      .trim()
+      .toLowerCase();
+    if (!normalized) {
+      return null;
+    }
+
+    return crypto
+      .createHash('sha256')
+      .update(normalized)
+      .digest('hex')
+      .slice(0, 16);
   }
 
   catch(exception: unknown, host: ArgumentsHost) {
@@ -74,6 +90,12 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       message.includes(
         'You already have an active offer for this request. Update or withdraw it instead.',
       );
+    const isExpectedDuplicateRegistration =
+      status === 409 &&
+      request.method === 'POST' &&
+      path === '/api/auth/register' &&
+      typeof message === 'string' &&
+      message.includes('Email already in use');
     const paymentDeclineProviderCode =
       isExpectedPaymentDecline && details
         ? String(details?.providerCode || '')
@@ -90,10 +112,11 @@ export class GlobalExceptionFilter implements ExceptionFilter {
           ? 'EBIRR_EXPECTED_DECLINE_5309_INSUFFICIENT_BALANCE'
           : 'PAYMENT_EXPECTED_DECLINE');
 
-    // Reduce noise for expected denials (401/403), 404s, rate limits (429), and expected payment declines (402)
+    // Reduce noise for expected denials (401/403), conflicts (409), 404s, rate limits (429), and expected payment declines (402)
     if (
       status === 401 ||
       status === 403 ||
+      status === 409 ||
       status === 404 ||
       status === 429 ||
       isExpectedPaymentDecline ||
@@ -102,13 +125,15 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       const msg = `${
         status === 404
           ? 'Not Found'
-          : status === 429
-            ? 'Rate limited'
-            : isExpectedPaymentDecline
-              ? 'Payment declined'
-              : isExpectedDuplicateRequestOffer
-                ? 'Business-rule rejection'
-                : 'Auth denial'
+          : status === 409
+            ? 'Conflict'
+            : status === 429
+              ? 'Rate limited'
+              : isExpectedPaymentDecline
+                ? 'Payment declined'
+                : isExpectedDuplicateRequestOffer
+                  ? 'Business-rule rejection'
+                  : 'Auth denial'
       } ${status} on ${request.method} ${request.url}: ${
         typeof message === 'string' ? message : JSON.stringify(message)
       }`;
@@ -125,6 +150,12 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       } else if (isExpectedPaymentDecline) {
         this.logger.warn(
           `${msg} telemetryTag="${paymentDeclineTelemetryTag}" details=${JSON.stringify(details || {})} ua="${userAgent || 'unknown'}" ip="${clientIp || 'unknown'}"`,
+        );
+      } else if (isExpectedDuplicateRegistration) {
+        const emailHash = this.fingerprintValue(request.body?.email);
+        const ipFingerprint = this.fingerprintValue(clientIp);
+        this.logger.warn(
+          `Duplicate registration attempt status=${status} method=${request.method} path=${path} emailHash="${emailHash || 'unknown'}" ipFingerprint="${ipFingerprint || 'unknown'}" ua="${userAgent || 'unknown'}"`,
         );
       } else if (isExpectedDuplicateRequestOffer) {
         this.logger.warn(msg);

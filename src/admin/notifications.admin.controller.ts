@@ -6,6 +6,7 @@ import {
   Get,
   Query,
   Param,
+  ParseIntPipe,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { RolesGuard } from '../auth/roles.guard';
@@ -36,6 +37,11 @@ export class AdminNotificationsController {
     const limit = Number(limitRaw) || 20;
     const userId = userIdRaw ? Number(userIdRaw) : undefined;
     return this.notificationsService.findAll({ page, limit, type, userId });
+  }
+
+  @Get('debug/vendor-token-counts/:vendorId')
+  async getVendorTokenDebug(@Param('vendorId', ParseIntPipe) vendorId: number) {
+    return this.notificationsService.getVendorTokenDebug(vendorId);
   }
 
   @Post('send-user')

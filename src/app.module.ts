@@ -1,3 +1,4 @@
+import { ChatMiddleware } from './chat/chat.middleware';
 // src/app.module.ts
 /* eslint-disable @typescript-eslint/require-await */
 import { Module, MiddlewareConsumer, NestModule } from '@nestjs/common';
@@ -60,6 +61,7 @@ import { ChatModule } from './chat/chat.module';
 import { PromotionsModule } from './promotions/promotions.module';
 import { CreditModule } from './credit/credit.module';
 import { LinkingModule } from './linking/linking.module';
+import { StarpayModule } from './starpay/starpay.module';
 
 @Module({
   imports: [
@@ -232,6 +234,7 @@ import { LinkingModule } from './linking/linking.module';
     PromotionsModule,
     CreditModule,
     LinkingModule,
+    StarpayModule,
   ],
   controllers: [AppController],
   // Apply rate limiting globally
@@ -250,5 +253,6 @@ import { LinkingModule } from './linking/linking.module';
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
     consumer.apply(AppVersionMiddleware).forRoutes('*');
+    consumer.apply(ChatMiddleware).forRoutes('*');
   }
 }

@@ -540,6 +540,7 @@ export class OrdersService {
             id: String(order.id),
             route: `/vendor-order-detail?id=${order.id}`,
             click_action: 'FLUTTER_NOTIFICATION_CLICK',
+            vendorId: String(vendor.id),
           },
         });
       } catch (e) {
@@ -704,6 +705,33 @@ export class OrdersService {
     return order;
   }
 
+  private getDeliveryFailureReasonLabel(
+    reasonCode?: string | null,
+  ): string | null {
+    switch (
+      String(reasonCode || '')
+        .trim()
+        .toUpperCase()
+    ) {
+      case 'CUSTOMER_UNREACHABLE':
+        return 'Customer Unreachable';
+      case 'CUSTOMER_REJECTED':
+        return 'Customer Rejected Delivery';
+      case 'NO_SAFE_DROP_LOCATION':
+        return 'No Safe Drop Location';
+      case 'ADDRESS_NOT_FOUND':
+        return 'Address Not Found';
+      case 'SAFETY_CONCERN':
+        return 'Safety Concern';
+      case 'VEHICLE_ISSUE':
+        return 'Vehicle Issue';
+      case 'OTHER':
+        return 'Other';
+      default:
+        return null;
+    }
+  }
+
   private buildPaymentUiHint(order: {
     id: number;
     paymentMethod: PaymentMethod;
@@ -857,6 +885,12 @@ export class OrdersService {
       id: mapped.id,
       total: mapped.total,
       userId: mapped.user?.id,
+      proofOfDeliveryUrl: mapped.proofOfDeliveryUrl ?? null,
+      deliveryFailureReasonCode: mapped.deliveryFailureReasonCode ?? null,
+      deliveryFailureReasonLabel: this.getDeliveryFailureReasonLabel(
+        mapped.deliveryFailureReasonCode,
+      ),
+      deliveryFailureNotes: mapped.deliveryFailureNotes ?? null,
       delivererId: mapped.deliverer?.id,
       assignedDelivererId: deliverer?.id,
       assignedDelivererName: deliverer?.displayName ?? null,
@@ -884,17 +918,44 @@ export class OrdersService {
   private async notifyOrderStatusChange(order: Order, status: OrderStatus) {
     if (!order) return;
 
-    const userId = order.user?.id;
-    if (!userId) return;
+    let fullOrder = order;
+    if (
+      !fullOrder.user ||
+      !fullOrder.items ||
+      !fullOrder.items[0]?.product?.vendor
+    ) {
+      const fetched = await this.orderRepository.findOne({
+        where: { id: order.id },
+        relations: ['user', 'items', 'items.product', 'items.product.vendor'],
+      });
+      if (fetched) fullOrder = fetched;
+    }
 
-    const payload = buildOrderStatusNotification(order.id, status);
-    await this.notificationsService.createAndDispatch({
-      userId,
-      title: payload.title,
-      body: payload.body,
-      type: NotificationType.ORDER,
-      data: payload.data,
-    });
+    const userId = fullOrder.user?.id;
+    if (userId) {
+      const payload = buildOrderStatusNotification(fullOrder.id, status);
+      await this.notificationsService.createAndDispatch({
+        userId,
+        title: payload.title,
+        body: payload.body,
+        type: NotificationType.ORDER,
+        data: payload.data,
+      });
+    }
+
+    if (
+      status === OrderStatus.CANCELLED ||
+      status === OrderStatus.CANCELLED_BY_BUYER ||
+      status === OrderStatus.CANCELLED_BY_SELLER
+    ) {
+      this.emailService
+        .sendOrderCancelled(fullOrder)
+        .catch((e) =>
+          this.logger.error(
+            `Failed to send order cancelled email: ${e.message}`,
+          ),
+        );
+    }
   }
 
   /**
@@ -919,11 +980,6 @@ export class OrdersService {
     // TODO: Add restocking logic here if needed
     await this.orderRepository.save(order);
     await this.notifyOrderStatusChange(order, OrderStatus.CANCELLED);
-    this.emailService
-      .sendOrderCancelled(order)
-      .catch((e) =>
-        this.logger.error(`Failed to send order cancelled email: ${e.message}`),
-      );
     return order;
   }
 
@@ -1356,6 +1412,18 @@ export class OrdersService {
         orderItem.product = item.product;
         orderItem.quantity = item.quantity;
         orderItem.attributes = item.attributes || {};
+
+        // Snapshot the image URL into the order item itself so it persists if the product is deleted
+        orderItem.imageUrl = null;
+        if (item.product.images && item.product.images.length > 0) {
+          orderItem.imageUrl =
+            item.product.images[0].thumbnailSrc || item.product.images[0].src;
+        } else if (item.product.imageUrl) {
+          orderItem.imageUrl = item.product.imageUrl;
+        }
+
+        // Fallback for Flutter developers who might look specifically in json metadata
+        orderItem.attributes.image_url = orderItem.imageUrl;
 
         let finalPrice = Number(item.product.price);
 
@@ -1957,6 +2025,7 @@ export class OrdersService {
         order.status = OrderStatus.CANCELLED;
         order.paymentStatus = PaymentStatus.FAILED;
         await this.orderRepository.save(order);
+        await this.notifyOrderStatusChange(order, OrderStatus.CANCELLED);
       }
     }
   }
@@ -2077,6 +2146,12 @@ export class OrdersService {
         providerTxUpdatedAt,
       ),
       userId: mapped.user?.id,
+      proofOfDeliveryUrl: mapped.proofOfDeliveryUrl ?? null,
+      deliveryFailureReasonCode: mapped.deliveryFailureReasonCode ?? null,
+      deliveryFailureReasonLabel: this.getDeliveryFailureReasonLabel(
+        mapped.deliveryFailureReasonCode,
+      ),
+      deliveryFailureNotes: mapped.deliveryFailureNotes ?? null,
       delivererId: orderDeliverer?.id,
       assignedDelivererId: orderDeliverer?.id,
       assignedDelivererName: orderDeliverer?.displayName ?? null,
@@ -2788,6 +2863,7 @@ export class OrdersService {
 
     order.status = OrderStatus.CANCELLED;
     await this.orderRepository.save(order);
+    await this.notifyOrderStatusChange(order, OrderStatus.CANCELLED);
 
     this.logger.log(
       `Dispute ${dispute.id} refunded (Buyer Win). Order ${order.id} cancelled.`,

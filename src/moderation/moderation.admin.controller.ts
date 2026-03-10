@@ -170,6 +170,26 @@ export class AdminModerationController {
     return { items, total, page, perPage };
   }
 
+  @Get()
+  async queueRoot(
+    @Query('page') pageRaw?: string,
+    @Query('per_page') perPageRaw?: string,
+    @Query('sort') sortRaw?: string,
+    @Query('status') statusRaw?: string,
+  ) {
+    return this.queue(pageRaw, perPageRaw, sortRaw, statusRaw);
+  }
+
+  @Get(['list', 'items', 'images', 'images/queue'])
+  async queueAliases(
+    @Query('page') pageRaw?: string,
+    @Query('per_page') perPageRaw?: string,
+    @Query('sort') sortRaw?: string,
+    @Query('status') statusRaw?: string,
+  ) {
+    return this.queue(pageRaw, perPageRaw, sortRaw, statusRaw);
+  }
+
   @Patch(':id/approve')
   async approve(@Param('id', ParseIntPipe) id: number) {
     await this.pimRepo.update(id, {

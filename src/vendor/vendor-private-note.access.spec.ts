@@ -46,6 +46,11 @@ describe('Vendor private note access rules', () => {
       save: jest.fn(async (v: any) => v),
       createQueryBuilder: jest.fn(),
       query: jest.fn(async () => [{ '?column?': 1 }]),
+      manager: {
+        getRepository: jest.fn(() => ({
+          findOne: jest.fn(async () => null),
+        })),
+      },
     });
     Object.assign(userRepoMock, { findOneBy: jest.fn() });
     Object.assign(orderRepoMock, {

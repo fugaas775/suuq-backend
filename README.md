@@ -69,6 +69,49 @@ EBIRR_API_USER_ID=
 EBIRR_CUSTOMER_PREFIX=231438
 # Optional override when provider asks for a non-default method token
 EBIRR_PAYMENT_METHOD=MWALLET_ACCOUNT
+
+# StarPay gateway
+STARPAY_MERCHANT_NAME=
+STARPAY_MERCHANT_ID=
+STARPAY_SECRET_KEY=
+STARPAY_BASE_URL=https://starpayqa.starpayethiopia.com/v1/starpay-api
+STARPAY_TIMEOUT_MS=30000
+# StarPay QA/prod gateway uses x-api-secret style auth
+STARPAY_AUTH_MODE=x-api-key
+STARPAY_AUTH_SCHEME=Bearer
+STARPAY_SECRET_HEADER_NAME=x-api-secret
+STARPAY_MERCHANT_ID_HEADER_NAME=x-merchant-id
+STARPAY_MERCHANT_NAME_HEADER_NAME=x-merchant-name
+CALLBACK_SECRET=
+STARPAY_SIGNATURE_HEADER_NAME=x-signature
+STARPAY_TIMESTAMP_HEADER_NAME=x-timestamp
+STARPAY_VERIFY_PAYMENT_PATH=/trdp/verify
+
+# Optional: point the backend at an official SDK package instead of the built-in REST client.
+# When set, the exported SDK client must implement:
+# initiateBankPayment, initiateWalletPayment, generateDynamicQR,
+# createService, createBill, getEodReport, getBalanceHistory, getSettlementTransactions
+STARPAY_SDK_MODULE=
+STARPAY_SDK_EXPORT_NAME=default
+
+# All overrides are normalized under /v1/starpay-api/trdp/... to match portal docs.
+# These defaults already resolve to:
+#   https://.../v1/starpay-api/trdp/verify
+#   https://.../v1/starpay-api/trdp/bank/initiate
+STARPAY_BANK_PAYMENT_PATH=/trdp/bank/initiate
+STARPAY_WALLET_PAYMENT_PATH=/trdp/wallet/initiate
+STARPAY_DYNAMIC_QR_PATH=/trdp/qr/dynamic
+STARPAY_CREATE_SERVICE_PATH=/trdp/billing/services
+STARPAY_CREATE_BILL_PATH=/trdp/billing/bills
+STARPAY_EOD_REPORT_PATH=/trdp/reports/eod
+STARPAY_BALANCE_HISTORY_PATH=/trdp/accounts/e-money/balance-history
+STARPAY_SETTLEMENTS_PATH=/trdp/settlements
+
+### StarPay webhook replay
+
+- Replay a signed callback locally with `scripts/test-starpay-webhook.sh 417`
+- The script signs the DTO-normalized JSON payload shape used by the Nest validation pipeline.
+- Default callback path: `/api/callbacks/starpay/webhook`
 ```
 
 ## Running
@@ -120,6 +163,7 @@ EBIRR_PAYMENT_METHOD=MWALLET_ACCOUNT
 - **Idempotency**: `Idempotency-Key` header on write endpoints caches successful 2xx responses for `IDEMPOTENCY_TTL_SEC` (default 600s).
 - **Caching & ETags**: selective Redis cache via `CacheInterceptor`; ETag interceptor enabled for hot GETs.
 - **Feature flags**: `FEATURE_<FLAG>_ENABLED=true`, optional `FEATURE_<FLAG>_MIN_VERSION`, `FEATURE_<FLAG>_PCT` for percentage rollout. Client should send `X-App-Version` (and optionally `X-Device-Id`) for deterministic bucketing. Use `@RequireFeature('<FLAG>')` + `FeatureFlagGuard` or `FeatureFlagsService` in code.
+- **App update policy**: client should send `X-App-Version`, `X-App-Build`, and `X-Platform`. `GET /api/settings/app-versions` returns per-platform policy shaped as `{ ios: { min_version, latest_version, min_build, latest_build, force_update, store_url, message }, android: { ... } }`. The server also enforces this policy and responds with HTTP `426` when the app is below the minimum supported version/build or when `force_update=true` and the client is below the latest forced target.
 - **Security headers**: Helmet enabled; CSP tuned for Swagger; CORS via `ALLOWED_ORIGINS` (comma-separated). `TRUST_PROXY=1` recommended behind a reverse proxy.
 - **Sentry**: set `SENTRY_DSN` (+ optional `SENTRY_TRACES_SAMPLE_RATE`, `SENTRY_PROFILES_SAMPLE_RATE`); PII scrubbing applied before send.
 
@@ -191,6 +235,7 @@ type BoostMethodsResponse = {
   country: string | null;
   methods: Array<{
     id:
+      | 'STARPAY'
       | 'TELEBIRR'
       | 'EBIRR'
       | 'CBE'

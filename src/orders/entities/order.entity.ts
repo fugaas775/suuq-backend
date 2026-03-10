@@ -110,6 +110,8 @@ export class Order {
     city: string;
     country: string;
     phoneNumber: string;
+    latitude?: number;
+    longitude?: number;
   };
 
   @Column({ name: 'currency', type: 'char', length: 3, default: 'USD' })
@@ -147,6 +149,29 @@ export class Order {
   @CreateDateColumn()
   createdAt!: Date;
 
+  @Column({ type: 'timestamp', nullable: true })
+  deliveryAssignedAt?: Date | null;
+
+  @Column({ type: 'timestamp', nullable: true })
+  outForDeliveryAt?: Date | null;
+
+  @Column({ type: 'timestamp', nullable: true })
+  deliveryResolvedAt?: Date | null;
+
+  @Column('jsonb', { nullable: true, select: false })
+  deliveryAttentionNotificationState?: {
+    reminder?: {
+      phase?: string | null;
+      referenceAt?: string | null;
+      sentAt?: string | null;
+    } | null;
+    overdue?: {
+      phase?: string | null;
+      referenceAt?: string | null;
+      sentAt?: string | null;
+    } | null;
+  } | null;
+
   @Column({ type: 'varchar', nullable: true, select: false })
   deliveryCode?: string | null;
 
@@ -155,6 +180,12 @@ export class Order {
 
   @Column({ type: 'varchar', nullable: true })
   proofOfDeliveryUrl?: string | null;
+
+  @Column({ type: 'varchar', length: 64, nullable: true })
+  deliveryFailureReasonCode?: string | null;
+
+  @Column({ type: 'varchar', length: 1024, nullable: true })
+  deliveryFailureNotes?: string | null;
 
   @Column({ type: 'varchar', nullable: true })
   paymentProofUrl?: string | null;
@@ -186,6 +217,9 @@ export class OrderItem {
 
   @Column('jsonb', { default: {} })
   attributes!: Record<string, any>;
+
+  @Column({ name: 'image_url', type: 'varchar', length: 1024, nullable: true })
+  imageUrl?: string | null;
 
   @Column()
   quantity!: number;

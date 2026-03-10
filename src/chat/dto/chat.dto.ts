@@ -18,6 +18,18 @@ export class StartConversationDto {
   @IsOptional()
   orderId?: number;
 
+  @IsInt()
+  @IsOptional()
+  vendorId?: number;
+
+  @IsInt()
+  @IsOptional()
+  requestId?: number;
+
+  @IsInt()
+  @IsOptional()
+  userId?: number;
+
   @IsString()
   @IsNotEmpty()
   initialMessage!: string;

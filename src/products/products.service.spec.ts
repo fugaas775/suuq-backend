@@ -457,6 +457,78 @@ describe('ProductsService', () => {
     expect(out.order_class).toBeUndefined();
   });
 
+  it('rejects priceUnit for non-property categories', () => {
+    expect(() =>
+      (service as any).sanitizeAttributesForCategory(
+        { priceUnit: 'm2' },
+        { slug: 'health-beauty-products', name: 'Health & Beauty Products' },
+      ),
+    ).toThrow(BadRequestException);
+  });
+
+  it('normalizes property area unit from price_unit alias', () => {
+    const out = (service as any).sanitizeAttributesForCategory(
+      { price_unit: '/m2' },
+      { slug: 'property-for-rent', name: 'Property for rent' },
+    );
+
+    expect(out.priceUnit).toBe('m2');
+    expect(out.price_unit).toBeUndefined();
+  });
+
+  it('rejects personal-care content posted under property category', () => {
+    expect(() =>
+      (service as any).assertPropertyCategoryContentConsistency(
+        {
+          name: 'Rexona Men Deodorant',
+          description: 'Fragrance & Perfumes',
+          attributes: { brand: 'Rexona' },
+        },
+        { slug: 'property-for-sale', name: 'Property for sale' },
+      ),
+    ).toThrow(BadRequestException);
+  });
+
+  it('strips priceUnit from non-property payloads on read sanitization', () => {
+    const target: any = {
+      category: { slug: 'fragrances-perfumes', name: 'Fragrances & Perfumes' },
+      productType: 'physical',
+      attributes: { priceUnit: 'm2', keep: true },
+    };
+
+    const out = (service as any).sanitizeReadPayloadForCategory(target);
+    expect(out.attributes.keep).toBe(true);
+    expect(out.attributes.priceUnit).toBeUndefined();
+  });
+
+  it('keeps priceUnit for property payloads on read sanitization', () => {
+    const target: any = {
+      category: { slug: 'property-for-rent', name: 'Property for rent' },
+      productType: 'property',
+      attributes: { priceUnit: 'm2' },
+    };
+
+    const out = (service as any).sanitizeReadPayloadForCategory(target);
+    expect(out.attributes.priceUnit).toBe('m2');
+  });
+
+  it('strips /m2-like suffix from non-property price text fields on read', () => {
+    const target: any = {
+      category: { slug: 'fragrances-perfumes', name: 'Fragrances & Perfumes' },
+      productType: 'physical',
+      priceText: '800 ETB / m2',
+      attributes: {
+        price_text: '800 ETB per sqm',
+        unitPriceText: '1200 birr / sqft',
+      },
+    };
+
+    const out = (service as any).sanitizeReadPayloadForCategory(target);
+    expect(out.priceText).toBe('800 ETB');
+    expect(out.attributes.price_text).toBe('800 ETB');
+    expect(out.attributes.unitPriceText).toBe('1200 birr');
+  });
+
   it('merges top-level restaurant aliases into canonical attribute keys', () => {
     const out = (service as any).extractRestaurantTopLevelAliases({
       menu_section: 'beverages',

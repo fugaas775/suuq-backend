@@ -12,6 +12,11 @@ import axios from 'axios';
 export class ModerationScannerService {
   private readonly logger = new Logger(ModerationScannerService.name);
 
+  private shouldRunOnThisWorker(): boolean {
+    const pmId = process.env.pm_id;
+    return pmId === undefined || pmId === '0';
+  }
+
   constructor(
     @InjectRepository(Product) private productRepo: Repository<Product>,
     @InjectRepository(ProductImage)
@@ -23,13 +28,25 @@ export class ModerationScannerService {
 
   @Cron(CronExpression.EVERY_10_MINUTES)
   async scanRecent(): Promise<void> {
+    if (!this.shouldRunOnThisWorker()) {
+      return;
+    }
+
     // Scan latest images without a moderation record or still pending
     try {
       const recent = await this.productImageRepo
         .createQueryBuilder('img')
         .leftJoinAndSelect('img.product', 'product')
+        .leftJoin(
+          ProductImageModeration,
+          'pim',
+          'pim."productImageId" = img.id',
+        )
         .where('img."createdAt" > NOW() - INTERVAL \'7 days\'')
         .andWhere('img."productId" IS NOT NULL')
+        .andWhere('(pim.id IS NULL OR pim.status = :pending)', {
+          pending: 'pending',
+        })
         .orderBy('img."createdAt"', 'DESC')
         .limit(200)
         .getMany();

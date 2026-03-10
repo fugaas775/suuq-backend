@@ -34,6 +34,10 @@ export class OrderResponseDto {
     | 'PAID'
     | 'FAILED';
   @Expose() paymentProofUrl?: string;
+  @Expose() proofOfDeliveryUrl?: string;
+  @Expose() deliveryFailureReasonCode?: string;
+  @Expose() deliveryFailureReasonLabel?: string;
+  @Expose() deliveryFailureNotes?: string;
   @Expose() paymentProofStatus?: 'PENDING_REVIEW' | 'VERIFIED' | 'REJECTED';
   @Expose() createdAt: Date;
   @Expose() shippingAddress: any;

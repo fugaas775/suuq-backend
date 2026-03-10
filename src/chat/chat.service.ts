@@ -35,6 +35,9 @@ export class ChatService {
     data: {
       productId?: number;
       orderId?: number;
+      vendorId?: number;
+      requestId?: number;
+      userId?: number;
       initialMessage: string;
       autoOffer?: boolean;
     },
@@ -56,7 +59,43 @@ export class ChatService {
         userRoles,
       );
     }
+    if (data.userId) {
+      return this.startVendorChat(userId, data.userId, data.initialMessage);
+    }
+    if (data.vendorId) {
+      return this.startVendorChat(userId, data.vendorId, data.initialMessage);
+    }
     throw new ForbiddenException('Invalid conversation parameters');
+  }
+
+  private async startVendorChat(
+    buyerId: number,
+    vendorId: number,
+    initialMessage: string,
+  ) {
+    if (vendorId === buyerId) {
+      throw new ForbiddenException('Cannot chat with yourself');
+    }
+
+    let conversation = await this.conversationRepo.findOne({
+      where: {
+        buyer: { id: buyerId },
+        vendor: { id: vendorId },
+        product: null,
+        order: null,
+      },
+    });
+
+    if (!conversation) {
+      conversation = this.conversationRepo.create({
+        buyer: { id: buyerId },
+        vendor: { id: vendorId },
+      });
+      conversation = await this.conversationRepo.save(conversation);
+    }
+
+    await this.sendMessage(conversation.id, buyerId, initialMessage);
+    return conversation;
   }
 
   private async startProductChat(
@@ -187,17 +226,25 @@ export class ChatService {
       buyerState = order.user;
       delivererState = order.deliverer!;
     } else if (isBuyer) {
-      // Buyer initiating. Chat with Deliverer if assigned.
-      if (!order.deliverer)
-        throw new ForbiddenException('No deliverer assigned yet');
-      buyerState = order.user;
-      delivererState = order.deliverer;
+      // Buyer initiating.
+      // If there is no deliverer, they probably want to chat with the Vendor.
+      if (!order.deliverer) {
+        buyerState = order.user;
+        vendorState = order.items?.[0]?.product?.vendor;
+      } else {
+        buyerState = order.user;
+        delivererState = order.deliverer;
+      }
     } else if (isVendor) {
-      // Vendor initiating. Chat with Deliverer.
-      if (!order.deliverer)
-        throw new ForbiddenException('No deliverer assigned yet');
-      vendorState = order.items[0].product.vendor;
-      delivererState = order.deliverer;
+      // Vendor initiating.
+      // If there is no deliverer, they probably want to chat with the Buyer.
+      if (!order.deliverer) {
+        vendorState = order.items[0].product.vendor;
+        buyerState = order.user;
+      } else {
+        vendorState = order.items[0].product.vendor;
+        delivererState = order.deliverer;
+      }
     }
 
     // Find existing

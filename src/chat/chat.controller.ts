@@ -29,6 +29,7 @@ export class ChatController {
     @Body() dto: StartConversationDto,
     @Req() req: AuthenticatedRequest,
   ) {
+    console.log('Received start chat request body:', req.body);
     const roles = (
       typeof req.user.roles === 'string'
         ? [req.user.roles]
@@ -39,6 +40,9 @@ export class ChatController {
       {
         productId: dto.productId,
         orderId: dto.orderId,
+        vendorId: dto.vendorId,
+        requestId: dto.requestId,
+        userId: dto.userId,
         initialMessage: dto.initialMessage,
         autoOffer: dto.autoOffer,
       },
