@@ -96,6 +96,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       path === '/api/auth/register' &&
       typeof message === 'string' &&
       message.includes('Email already in use');
+    const isExpectedUpgradeRequired = status === 426;
     const paymentDeclineProviderCode =
       isExpectedPaymentDecline && details
         ? String(details?.providerCode || '')
@@ -112,10 +113,11 @@ export class GlobalExceptionFilter implements ExceptionFilter {
           ? 'EBIRR_EXPECTED_DECLINE_5309_INSUFFICIENT_BALANCE'
           : 'PAYMENT_EXPECTED_DECLINE');
 
-    // Reduce noise for expected denials (401/403), conflicts (409), 404s, rate limits (429), and expected payment declines (402)
+    // Reduce noise for expected denials (401/403/426), conflicts (409), 404s, rate limits (429), and expected payment declines (402)
     if (
       status === 401 ||
       status === 403 ||
+      status === 426 ||
       status === 409 ||
       status === 404 ||
       status === 429 ||
@@ -129,11 +131,13 @@ export class GlobalExceptionFilter implements ExceptionFilter {
             ? 'Conflict'
             : status === 429
               ? 'Rate limited'
-              : isExpectedPaymentDecline
-                ? 'Payment declined'
-                : isExpectedDuplicateRequestOffer
-                  ? 'Business-rule rejection'
-                  : 'Auth denial'
+              : isExpectedUpgradeRequired
+                ? 'Upgrade required'
+                : isExpectedPaymentDecline
+                  ? 'Payment declined'
+                  : isExpectedDuplicateRequestOffer
+                    ? 'Business-rule rejection'
+                    : 'Auth denial'
       } ${status} on ${request.method} ${request.url}: ${
         typeof message === 'string' ? message : JSON.stringify(message)
       }`;
@@ -147,6 +151,13 @@ export class GlobalExceptionFilter implements ExceptionFilter {
         );
       } else if (status === 429) {
         this.logger.debug(msg);
+      } else if (isExpectedUpgradeRequired) {
+        const appVersion = this.headerValue(request.headers['x-app-version']);
+        const appBuild = this.headerValue(request.headers['x-app-build']);
+        const platform = this.headerValue(request.headers['x-platform']);
+        this.logger.warn(
+          `${msg} version="${appVersion || 'unknown'}" build="${appBuild || 'unknown'}" platform="${platform || 'unknown'}" ua="${userAgent || 'unknown'}" ip="${clientIp || 'unknown'}"`,
+        );
       } else if (isExpectedPaymentDecline) {
         this.logger.warn(
           `${msg} telemetryTag="${paymentDeclineTelemetryTag}" details=${JSON.stringify(details || {})} ua="${userAgent || 'unknown'}" ip="${clientIp || 'unknown'}"`,

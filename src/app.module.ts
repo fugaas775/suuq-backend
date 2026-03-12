@@ -62,6 +62,13 @@ import { PromotionsModule } from './promotions/promotions.module';
 import { CreditModule } from './credit/credit.module';
 import { LinkingModule } from './linking/linking.module';
 import { StarpayModule } from './starpay/starpay.module';
+import { BranchesModule } from './branches/branches.module';
+import { BranchStaffModule } from './branch-staff/branch-staff.module';
+import { SuppliersModule } from './suppliers/suppliers.module';
+import { SupplierOffersModule } from './supplier-offers/supplier-offers.module';
+import { PurchaseOrdersModule } from './purchase-orders/purchase-orders.module';
+import { PartnerCredentialsModule } from './partner-credentials/partner-credentials.module';
+import { PosSyncModule } from './pos-sync/pos-sync.module';
 
 @Module({
   imports: [
@@ -235,6 +242,13 @@ import { StarpayModule } from './starpay/starpay.module';
     CreditModule,
     LinkingModule,
     StarpayModule,
+    BranchesModule,
+    BranchStaffModule,
+    SuppliersModule,
+    SupplierOffersModule,
+    PurchaseOrdersModule,
+    PartnerCredentialsModule,
+    PosSyncModule,
   ],
   controllers: [AppController],
   // Apply rate limiting globally

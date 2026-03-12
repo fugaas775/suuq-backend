@@ -92,6 +92,7 @@ const makeRepoMock = () => {
 describe('NotificationsService', () => {
   let service: NotificationsService;
   let repo: ReturnType<typeof makeRepoMock>;
+  let vendorStaffRepoMock: { find: jest.Mock };
   let usersService: jest.Mocked<{
     findOne: (id: number) => Promise<{ id: number } | null>;
     findRecipientsByRole: (role: any) => Promise<any[]>;
@@ -107,14 +108,14 @@ describe('NotificationsService', () => {
     } as any;
     firebaseMock = makeFirebaseMock({ successCount: 0, failureCount: 0 });
     repo = makeRepoMock();
+    vendorStaffRepoMock = {
+      find: jest.fn(async () => []),
+    };
 
     const notificationRepoMock = {
       create: jest.fn((dto: any) => dto),
       save: jest.fn(async (items: any[]) => items),
       findAndCount: jest.fn(async () => [[], 0]),
-    };
-    const vendorStaffRepoMock = {
-      find: jest.fn(async () => []),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -146,6 +147,8 @@ describe('NotificationsService', () => {
   beforeEach(async () => {
     await repo.query('DELETE FROM device_tokens');
     firebaseMock.__mock.sendEachForMulticast.mockReset();
+    vendorStaffRepoMock.find.mockReset();
+    vendorStaffRepoMock.find.mockResolvedValue([]);
     usersService.findOne.mockReset();
     usersService.findOne.mockResolvedValue({ id: 1 });
   });
@@ -200,5 +203,27 @@ describe('NotificationsService', () => {
     const remaining = await repo.find({ order: { token: 'ASC' } });
     expect(remaining.map((r) => r.token)).toEqual(['good']);
     expect(firebaseMock.__mock.sendEachForMulticast).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not fan out direct user notifications to vendor staff tokens', async () => {
+    await repo.save({ userId: 1, token: 'owner-token', platform: 'android' });
+    await repo.save({ userId: 2, token: 'staff-token', platform: 'android' });
+    vendorStaffRepoMock.find.mockResolvedValue([
+      { memberId: 2, permissions: ['VIEW_ORDERS'] },
+    ]);
+
+    const response: FirebaseMessagingResponse = {
+      successCount: 1,
+      failureCount: 0,
+      responses: [{ success: true }],
+    };
+    firebaseMock = makeFirebaseMock(response);
+    (service as any).firebase = firebaseMock as any;
+
+    await service.sendToUser({ userId: 1, title: 't', body: 'b' });
+
+    expect(firebaseMock.__mock.sendEachForMulticast).toHaveBeenCalledWith(
+      expect.objectContaining({ tokens: ['owner-token'] }),
+    );
   });
 });

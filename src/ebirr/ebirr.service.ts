@@ -130,15 +130,35 @@ export class EbirrService {
     const digits = String(phone || '').replace(/\D/g, '');
     if (!digits) return null;
 
-    if (digits.startsWith('2519') && digits.length === 12) {
+    // Handle 25109XXXXXXXX format (13 digits) caused by aggressive dial code merging
+    if (digits.startsWith('25109') && digits.length === 13) {
+      return `2519${digits.substring(5)}`;
+    }
+
+    // Handle 25107XXXXXXXX format (13 digits) for Safaricom/other carriers
+    if (digits.startsWith('25107') && digits.length === 13) {
+      return `2517${digits.substring(5)}`;
+    }
+
+    // Standard expected format (2519... or 2517...)
+    if (
+      (digits.startsWith('2519') || digits.startsWith('2517')) &&
+      digits.length === 12
+    ) {
       return digits;
     }
 
-    if (digits.startsWith('09') && digits.length === 10) {
+    if (
+      (digits.startsWith('09') || digits.startsWith('07')) &&
+      digits.length === 10
+    ) {
       return `251${digits.substring(1)}`;
     }
 
-    if (digits.startsWith('9') && digits.length === 9) {
+    if (
+      (digits.startsWith('9') || digits.startsWith('7')) &&
+      digits.length === 9
+    ) {
       return `251${digits}`;
     }
 
@@ -718,12 +738,46 @@ export class EbirrService {
       transactionUpdatedAt: latestTx?.updated_at || null,
     });
 
+    const rawResponse = (latestTx?.raw_response_payload || {}) as Record<
+      string,
+      any
+    >;
+    const checkoutUrl =
+      typeof rawResponse?.toPayUrl === 'string' && rawResponse.toPayUrl.trim()
+        ? rawResponse.toPayUrl.trim()
+        : null;
+    const receiveCode =
+      typeof rawResponse?.receiverCode === 'string' &&
+      rawResponse.receiverCode.trim()
+        ? rawResponse.receiverCode.trim()
+        : typeof rawResponse?.ussd === 'string' && rawResponse.ussd.trim()
+          ? rawResponse.ussd.trim()
+          : null;
+    const providerMessage =
+      latestTx?.response_msg ||
+      rawResponse?.responseMsg ||
+      rawResponse?.message ||
+      (paymentLifecycleState === 'FAILED'
+        ? null
+        : checkoutUrl || receiveCode
+          ? 'Continue the EBIRR confirmation using the provided handoff. The PIN prompt comes from the wallet flow, not from the app UI.'
+          : 'A payment request has been sent to the mobile wallet/SIM for the entered number. Confirm the provider PIN prompt on that line; the app cannot display the EBIRR popup by itself.');
+    const status =
+      paymentLifecycleState === 'PAID'
+        ? 'PAID'
+        : paymentLifecycleState === 'FAILED'
+          ? 'FAILED'
+          : 'PENDING';
+
     return {
       paymentStatus: order.paymentStatus,
-      status: order.paymentStatus === PaymentStatus.PAID ? 'PAID' : 'PENDING',
+      status,
       orderStatus: order.status,
       provider: 'EBIRR',
       paymentLifecycleState,
+      checkoutUrl,
+      receiveCode,
+      providerMessage,
       transaction: latestTx
         ? {
             status: latestTx.status,

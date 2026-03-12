@@ -83,6 +83,22 @@ describe('OrdersService', () => {
     expect(service).toBeDefined();
   });
 
+  it('normalizes duplicated country codes in EBIRR phones', () => {
+    expect((service as any).normalizeEbirrPhone('251+251912615526')).toBe(
+      '251912615526',
+    );
+  });
+
+  it('resolves verified EBIRR phone from stored profile number without double prefixing', () => {
+    expect(
+      (service as any).resolveVerifiedEbirrPhone({
+        isPhoneVerified: true,
+        phoneCountryCode: '+251',
+        phoneNumber: '251912615526',
+      }),
+    ).toBe('251912615526');
+  });
+
   it('rejects BUY_NOW checkout without items', async () => {
     await expect(
       service.createFromCart(
@@ -284,6 +300,7 @@ describe('OrdersService', () => {
               size: 'M',
               offerId: 999,
               client_ref: 'abc123',
+              image_url: 'https://cdn/thumb.png',
             },
             product: {
               id: 401,

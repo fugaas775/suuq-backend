@@ -70,22 +70,9 @@ export class NotificationsService {
 
     // Fetch device tokens for the user
     const tokens = await this.deviceTokenRepository.find({ where: { userId } });
-    const directTokens = Array.from(
+    const deviceTokens = Array.from(
       new Set(tokens.map((t) => String(t.token || '').trim()).filter(Boolean)),
     );
-    const { tokens: teamTokens, userIds: teamUserIds } =
-      await this.getVendorTeamTokens(userId);
-    const deviceTokens = Array.from(new Set([...directTokens, ...teamTokens]));
-
-    if (!directTokens.length && teamTokens.length) {
-      this.logger.warn(
-        `No direct device tokens for user ${userId}; using ${teamTokens.length} vendor-staff token(s) (Staff IDs: ${teamUserIds.join(', ')})`,
-      );
-    } else if (directTokens.length && teamTokens.length) {
-      this.logger.log(
-        `Vendor-team push fanout for user ${userId}: ownerTokens=${directTokens.length}, staffTokens=${teamTokens.length} (Staff IDs: ${teamUserIds.join(', ')})`,
-      );
-    }
 
     if (!deviceTokens.length) {
       this.logger.warn(

@@ -49,6 +49,7 @@ import {
   PayoutStatus,
 } from '../wallet/entities/payout-log.entity';
 import { Message, MessageType } from '../chat/entities/message.entity';
+import { Conversation } from '../chat/entities/conversation.entity';
 import { CreditService } from '../credit/credit.service';
 import { PromotionsService } from '../promotions/promotions.service';
 import { EbirrTransaction } from '../payments/entities/ebirr-transaction.entity';
@@ -69,7 +70,59 @@ export class OrdersService {
     'offer_id',
     'clientRef',
     'client_ref',
+    'image_url',
   ]);
+
+  private normalizeEbirrPhone(raw?: string | null): string | null {
+    const value = String(raw || '')
+      .trim()
+      .replace(/\D/g, '');
+    if (!value) return null;
+
+    // Recover from legacy concatenation like 251+251912345678.
+    if (value.startsWith('2512519') && value.length === 15) {
+      return value.substring(3);
+    }
+
+    if (value.startsWith('2519') && value.length === 12) return value;
+    if (value.startsWith('09') && value.length === 10)
+      return `251${value.substring(1)}`;
+    if (value.startsWith('9') && value.length === 9) return `251${value}`;
+
+    return value;
+  }
+
+  private resolveVerifiedEbirrPhone(
+    user?: Pick<
+      User,
+      'isPhoneVerified' | 'phoneCountryCode' | 'phoneNumber'
+    > | null,
+  ): string | null {
+    if (!user?.isPhoneVerified) {
+      return null;
+    }
+
+    const normalizedStoredPhone = this.normalizeEbirrPhone(user.phoneNumber);
+    if (normalizedStoredPhone) {
+      return normalizedStoredPhone;
+    }
+
+    const countryCodeDigits = String(user.phoneCountryCode || '').replace(
+      /\D/g,
+      '',
+    );
+    const phoneDigits = String(user.phoneNumber || '').replace(/\D/g, '');
+
+    if (!countryCodeDigits || !phoneDigits) {
+      return null;
+    }
+
+    if (phoneDigits.startsWith(countryCodeDigits)) {
+      return this.normalizeEbirrPhone(phoneDigits);
+    }
+
+    return this.normalizeEbirrPhone(`${countryCodeDigits}${phoneDigits}`);
+  }
 
   /**
    * Find all disputes for admin.
@@ -732,35 +785,70 @@ export class OrdersService {
     }
   }
 
-  private buildPaymentUiHint(order: {
-    id: number;
-    paymentMethod: PaymentMethod;
-    paymentStatus: PaymentStatus;
-  }): OrderResponseDto['paymentUiHint'] {
+  private buildPaymentUiHint(
+    order: {
+      id: number;
+      paymentMethod: PaymentMethod;
+      paymentStatus: PaymentStatus;
+    },
+    options?: {
+      checkoutUrl?: string | null;
+      receiveCode?: string | null;
+      providerMessage?: string | null;
+      stateOverride?: 'PENDING_PUSH_CONFIRMATION' | 'PAID' | 'FAILED';
+    },
+  ): OrderResponseDto['paymentUiHint'] {
     if (order.paymentMethod !== PaymentMethod.EBIRR) {
       return undefined;
     }
 
+    const checkoutUrl = options?.checkoutUrl || null;
+    const receiveCode = options?.receiveCode || null;
+    const providerMessage = options?.providerMessage || undefined;
+    const hasHandoff = !!(checkoutUrl || receiveCode);
+    const pendingMessage = hasHandoff
+      ? 'Continue the EBIRR confirmation using the provided handoff. The PIN prompt comes from the wallet flow, not from the app UI.'
+      : 'A payment request has been sent to the mobile wallet/SIM for the entered number. Confirm the provider PIN prompt on that line; the app cannot display the EBIRR popup by itself.';
+
     if (order.paymentStatus === PaymentStatus.PAID) {
       return {
         provider: 'EBIRR',
-        state: 'PAID',
+        state: options?.stateOverride || 'PAID',
         skipOrderConfirmationScreen: true,
-        disableWebCheckoutFallback: true,
+        disableWebCheckoutFallback: !hasHandoff,
         orderDetailsRoute: `/orders/${order.id}`,
+        checkoutUrl,
+        receiveCode,
+        message: providerMessage,
+      };
+    }
+
+    if (options?.stateOverride === 'FAILED') {
+      return {
+        provider: 'EBIRR',
+        state: 'FAILED',
+        message: providerMessage || 'Payment failed.',
+        checkStatusEndpoint: `/api/payments/sync-status/${order.id}`,
+        recommendedPollIntervalMs: 4000,
+        skipOrderConfirmationScreen: true,
+        disableWebCheckoutFallback: !hasHandoff,
+        orderDetailsRoute: `/orders/${order.id}`,
+        checkoutUrl,
+        receiveCode,
       };
     }
 
     return {
       provider: 'EBIRR',
-      state: 'PENDING_PUSH_CONFIRMATION',
-      message:
-        'A payment request has been sent to your phone. Confirm the system prompt/notification to complete payment.',
+      state: options?.stateOverride || 'PENDING_PUSH_CONFIRMATION',
+      message: providerMessage || pendingMessage,
       checkStatusEndpoint: `/api/payments/sync-status/${order.id}`,
       recommendedPollIntervalMs: 4000,
       skipOrderConfirmationScreen: true,
-      disableWebCheckoutFallback: true,
+      disableWebCheckoutFallback: !hasHandoff,
       orderDetailsRoute: `/orders/${order.id}`,
+      checkoutUrl,
+      receiveCode,
     };
   }
 
@@ -1422,9 +1510,6 @@ export class OrdersService {
           orderItem.imageUrl = item.product.imageUrl;
         }
 
-        // Fallback for Flutter developers who might look specifically in json metadata
-        orderItem.attributes.image_url = orderItem.imageUrl;
-
         let finalPrice = Number(item.product.price);
 
         // Use sale price if available and lower than regular price
@@ -1555,20 +1640,6 @@ export class OrdersService {
 
     // Payment method branching
     const paymentMethod = createOrderDto.paymentMethod.toUpperCase();
-    const normalizeEbirrPhone = (raw?: string | null): string | null => {
-      const value = String(raw || '')
-        .trim()
-        .replace(/\s+/g, '')
-        .replace(/^\+/, '');
-      if (!value) return null;
-
-      if (value.startsWith('2519') && value.length === 12) return value;
-      if (value.startsWith('09') && value.length === 10)
-        return `251${value.substring(1)}`;
-      if (value.startsWith('9') && value.length === 9) return `251${value}`;
-
-      return value;
-    };
 
     const explicitPhone = createOrderDto.phoneNumber?.trim();
     const legacyMpesaPhone = createOrderDto.mpesaPhone?.trim();
@@ -1722,9 +1793,10 @@ export class OrdersService {
         );
       }
 
-      const normalizedExplicitPhone = normalizeEbirrPhone(explicitPhone);
-      const normalizedShippingPhone = normalizeEbirrPhone(shippingPhone);
-      const normalizedLegacyMpesaPhone = normalizeEbirrPhone(legacyMpesaPhone);
+      const normalizedExplicitPhone = this.normalizeEbirrPhone(explicitPhone);
+      const normalizedShippingPhone = this.normalizeEbirrPhone(shippingPhone);
+      const normalizedLegacyMpesaPhone =
+        this.normalizeEbirrPhone(legacyMpesaPhone);
 
       if (
         normalizedExplicitPhone &&
@@ -1746,13 +1818,21 @@ export class OrdersService {
         );
       }
 
-      const normalizedSubmittedPhone = normalizeEbirrPhone(phoneNumber);
-      const normalizedDevicePhone = normalizeEbirrPhone(
+      const normalizedSubmittedPhone = this.normalizeEbirrPhone(phoneNumber);
+      const normalizedDevicePhone = this.normalizeEbirrPhone(
         createOrderDto.devicePhoneNumber,
       );
       const devicePlatform = String(
         createOrderDto.devicePlatform || 'unknown',
       ).toLowerCase();
+      const devicePhoneMatched =
+        !!normalizedSubmittedPhone &&
+        !!normalizedDevicePhone &&
+        normalizedSubmittedPhone === normalizedDevicePhone;
+
+      this.logger.log(
+        `EBIRR order phone telemetry: ${JSON.stringify({ userId, submittedPhone: normalizedSubmittedPhone, devicePhoneNumber: normalizedDevicePhone, devicePlatform, devicePhoneMatched })}`,
+      );
 
       if (
         devicePlatform === 'android' &&
@@ -1766,29 +1846,14 @@ export class OrdersService {
       }
 
       const user = await this.usersService.findOne(userId);
-      if (user?.isPhoneVerified) {
-        const normalizedVerifiedPhone =
-          normalizeEbirrPhone(
-            `${user.phoneCountryCode || ''}${user.phoneNumber || ''}`,
-          ) || normalizeEbirrPhone(user.phoneNumber);
-
-        const enforceVerifiedPhoneMatch =
-          String(process.env.EBIRR_ENFORCE_VERIFIED_PHONE_MATCH || 'false') ===
-          'true';
-
+      const normalizedVerifiedPhone = this.resolveVerifiedEbirrPhone(user);
+      if (normalizedVerifiedPhone) {
         if (
-          normalizedVerifiedPhone &&
           normalizedSubmittedPhone &&
           normalizedVerifiedPhone !== normalizedSubmittedPhone
         ) {
-          if (enforceVerifiedPhoneMatch) {
-            throw new BadRequestException(
-              'EBIRR phone mismatch: submitted number must match your verified profile phone.',
-            );
-          }
-
           this.logger.warn(
-            `EBIRR verified phone mismatch (soft-check): userId=${userId} submitted=${normalizedSubmittedPhone} verified=${normalizedVerifiedPhone}`,
+            `EBIRR verified phone mismatch (allowed): userId=${userId} submitted=${normalizedSubmittedPhone} verified=${normalizedVerifiedPhone}`,
           );
         }
       }
@@ -1848,13 +1913,30 @@ export class OrdersService {
       }
       phoneNumber = formattedPhone;
 
-      void this.processEbirrPaymentAsync({
+      const ebirrPaymentPromise = this.processEbirrPaymentAsync({
         orderId: savedOrder.id,
         userId,
         phoneNumber,
         total,
         currencyCode: currencyCode || 'ETB',
       });
+      const immediateEbirrWaitMs = Math.max(
+        0,
+        Number(process.env.EBIRR_CREATE_RESPONSE_WAIT_MS || 1500),
+      );
+      const immediateEbirrResult =
+        immediateEbirrWaitMs > 0
+          ? await Promise.race([
+              ebirrPaymentPromise,
+              new Promise<null>((resolve) => {
+                setTimeout(() => resolve(null), immediateEbirrWaitMs);
+              }),
+            ])
+          : null;
+
+      if (immediateEbirrResult === null) {
+        void ebirrPaymentPromise.catch(() => undefined);
+      }
 
       // Note: We do NOT clear cart yet if using Web Checkout, because payment isn't confirmed.
       // However, Suuq architecture usually clears cart on order creation to avoid double inventory lock.
@@ -1862,15 +1944,29 @@ export class OrdersService {
       if (!isDirectOrder) await this.cartService.clearCart(userId);
 
       const responseOrder = this.mapToResponseDto(savedOrder, currency);
-      const checkoutUi = this.getCheckoutUiDirectives(responseOrder);
+      const checkoutUi = {
+        skipOrderConfirmationScreen: true,
+        disableWebCheckoutFallback: !(
+          immediateEbirrResult?.checkoutUrl || immediateEbirrResult?.receiveCode
+        ),
+        paymentUiHint: this.buildPaymentUiHint(responseOrder, {
+          checkoutUrl: immediateEbirrResult?.checkoutUrl || null,
+          receiveCode: immediateEbirrResult?.receiveCode || null,
+          providerMessage: immediateEbirrResult?.providerMessage || undefined,
+          stateOverride:
+            immediateEbirrResult?.paymentLifecycleState === 'PAID'
+              ? 'PAID'
+              : 'PENDING_PUSH_CONFIRMATION',
+        }),
+      };
       this.logger.debug(
         `Returning Order DTO for Web Checkout: id=${responseOrder.id}`,
       );
 
       return {
         order: responseOrder,
-        receiveCode: null,
-        checkoutUrl: null,
+        receiveCode: immediateEbirrResult?.receiveCode || null,
+        checkoutUrl: immediateEbirrResult?.checkoutUrl || null,
         paymentUiHint: checkoutUi.paymentUiHint,
         skipOrderConfirmationScreen: checkoutUi.skipOrderConfirmationScreen,
         disableWebCheckoutFallback: checkoutUi.disableWebCheckoutFallback,
@@ -1898,32 +1994,102 @@ export class OrdersService {
       .skip((page - 1) * limit)
       .take(limit);
     const [orders, total] = await qb.getManyAndCount();
-    const response = orders.map((order) => {
-      const mapped = this.mapOrder(order, currency);
-      const deliverer = mapped.deliverer;
-      return plainToInstance(OrderResponseDto, {
-        ...mapped,
-        ...this.getCheckoutUiDirectives(mapped),
-        paymentLifecycleState: this.derivePaymentLifecycleState(mapped),
-        userId: mapped.user?.id,
-        delivererId: mapped.deliverer?.id,
-        assignedDelivererId: deliverer?.id,
-        assignedDelivererName: deliverer?.displayName ?? null,
-        assignedDelivererPhone: deliverer?.phoneNumber ?? null,
-        items:
-          mapped.items?.map((item) => ({
-            productId: item.product?.id,
-            productName: item.product?.name,
-            productImageUrl: item.product?.imageUrl ?? null,
-            quantity: item.quantity,
-            price: item.price,
-            price_display: (item as any).price_display,
-            attributes: this.mapOrderItemSelectionAttributes(item),
-          })) || [],
-        total_display: (mapped as any).total_display,
-        currency: (mapped as any).currency,
-      });
-    });
+    const response = await Promise.all(
+      orders.map(async (order) => {
+        const mapped = this.mapOrder(order, currency);
+        const deliverer = mapped.deliverer;
+        if (mapped.paymentMethod === PaymentMethod.EBIRR) {
+          try {
+            const paymentSync = (await this.ebirrService.checkOrderStatus(
+              String(mapped.id),
+            )) as any;
+            const providerTxStatus =
+              String(paymentSync?.transaction?.status || '').trim() || null;
+            const providerTxUpdatedAt =
+              paymentSync?.transaction?.updatedAt || null;
+            const paymentUiHint = this.buildPaymentUiHint(mapped, {
+              checkoutUrl:
+                typeof paymentSync?.checkoutUrl === 'string'
+                  ? paymentSync.checkoutUrl
+                  : null,
+              receiveCode:
+                typeof paymentSync?.receiveCode === 'string'
+                  ? paymentSync.receiveCode
+                  : null,
+              providerMessage:
+                typeof paymentSync?.providerMessage === 'string'
+                  ? paymentSync.providerMessage
+                  : undefined,
+              stateOverride:
+                paymentSync?.paymentLifecycleState === 'FAILED'
+                  ? 'FAILED'
+                  : paymentSync?.paymentLifecycleState === 'PAID'
+                    ? 'PAID'
+                    : 'PENDING_PUSH_CONFIRMATION',
+            });
+
+            return plainToInstance(OrderResponseDto, {
+              ...mapped,
+              skipOrderConfirmationScreen:
+                paymentUiHint?.skipOrderConfirmationScreen ?? true,
+              disableWebCheckoutFallback:
+                paymentUiHint?.disableWebCheckoutFallback ??
+                !(paymentSync?.checkoutUrl || paymentSync?.receiveCode),
+              paymentUiHint,
+              paymentLifecycleState: this.derivePaymentLifecycleState(
+                mapped,
+                providerTxStatus,
+                providerTxUpdatedAt,
+              ),
+              userId: mapped.user?.id,
+              delivererId: mapped.deliverer?.id,
+              assignedDelivererId: deliverer?.id,
+              assignedDelivererName: deliverer?.displayName ?? null,
+              assignedDelivererPhone: deliverer?.phoneNumber ?? null,
+              items:
+                mapped.items?.map((item) => ({
+                  productId: item.product?.id,
+                  productName: item.product?.name,
+                  productImageUrl: item.product?.imageUrl ?? null,
+                  quantity: item.quantity,
+                  price: item.price,
+                  price_display: (item as any).price_display,
+                  attributes: this.mapOrderItemSelectionAttributes(item),
+                })) || [],
+              total_display: (mapped as any).total_display,
+              currency: (mapped as any).currency,
+            });
+          } catch (error: any) {
+            this.logger.warn(
+              `Failed to enrich order list paymentLifecycleState for order=${mapped.id}: ${error?.message || error}`,
+            );
+          }
+        }
+
+        return plainToInstance(OrderResponseDto, {
+          ...mapped,
+          ...this.getCheckoutUiDirectives(mapped),
+          paymentLifecycleState: this.derivePaymentLifecycleState(mapped),
+          userId: mapped.user?.id,
+          delivererId: mapped.deliverer?.id,
+          assignedDelivererId: deliverer?.id,
+          assignedDelivererName: deliverer?.displayName ?? null,
+          assignedDelivererPhone: deliverer?.phoneNumber ?? null,
+          items:
+            mapped.items?.map((item) => ({
+              productId: item.product?.id,
+              productName: item.product?.name,
+              productImageUrl: item.product?.imageUrl ?? null,
+              quantity: item.quantity,
+              price: item.price,
+              price_display: (item as any).price_display,
+              attributes: this.mapOrderItemSelectionAttributes(item),
+            })) || [],
+          total_display: (mapped as any).total_display,
+          currency: (mapped as any).currency,
+        });
+      }),
+    );
     return { data: response, total };
   }
 
@@ -1933,7 +2099,12 @@ export class OrdersService {
     phoneNumber: string;
     total: number;
     currencyCode: string;
-  }): Promise<void> {
+  }): Promise<{
+    checkoutUrl: string | null;
+    receiveCode: string | null;
+    providerMessage: string | null;
+    paymentLifecycleState: 'PENDING_PUSH_CONFIRMATION' | 'PAID';
+  }> {
     const { orderId, userId, phoneNumber, total, currencyCode } = params;
     try {
       const paymentResponse = await this.ebirrService.initiatePayment({
@@ -1948,14 +2119,32 @@ export class OrdersService {
         `Ebirr initiated async. Response: ${JSON.stringify(paymentResponse)}`,
       );
 
-      const maybeCheckoutUrl =
+      const rawCheckoutUrl =
         paymentResponse?.toPayUrl &&
         typeof paymentResponse.toPayUrl === 'string'
           ? paymentResponse.toPayUrl.trim()
           : null;
-      if (maybeCheckoutUrl && !/^https?:\/\//i.test(maybeCheckoutUrl)) {
+      const checkoutUrl =
+        rawCheckoutUrl && /^https?:\/\//i.test(rawCheckoutUrl)
+          ? rawCheckoutUrl
+          : null;
+      const receiveCode =
+        typeof paymentResponse?.receiverCode === 'string' &&
+        paymentResponse.receiverCode.trim()
+          ? paymentResponse.receiverCode.trim()
+          : typeof paymentResponse?.ussd === 'string' &&
+              paymentResponse.ussd.trim()
+            ? paymentResponse.ussd.trim()
+            : null;
+      const providerMessage =
+        typeof paymentResponse?.responseMsg === 'string'
+          ? paymentResponse.responseMsg
+          : typeof paymentResponse?.message === 'string'
+            ? paymentResponse.message
+            : null;
+      if (rawCheckoutUrl && !checkoutUrl) {
         this.logger.warn(
-          `Ebirr checkout URL blocked (non-http): ${JSON.stringify({ telemetryTag: 'EBIRR_NON_HTTP_CHECKOUT_URL_BLOCKED', orderId, provider: 'EBIRR', scheme: maybeCheckoutUrl.split(':')[0] || 'unknown' })}`,
+          `Ebirr checkout URL blocked (non-http): ${JSON.stringify({ telemetryTag: 'EBIRR_NON_HTTP_CHECKOUT_URL_BLOCKED', orderId, provider: 'EBIRR', scheme: rawCheckoutUrl.split(':')[0] || 'unknown' })}`,
         );
       }
 
@@ -1968,7 +2157,20 @@ export class OrdersService {
           `Ebirr payment auto-approved for Order #${orderId}. Updating status to PAID.`,
         );
         await this.triggerPostPaymentProcessing(orderId);
+        return {
+          checkoutUrl,
+          receiveCode,
+          providerMessage,
+          paymentLifecycleState: 'PAID',
+        };
       }
+
+      return {
+        checkoutUrl,
+        receiveCode,
+        providerMessage,
+        paymentLifecycleState: 'PENDING_PUSH_CONFIRMATION',
+      };
     } catch (error) {
       const msg = error?.message || '';
       const providerCode = String(
@@ -2027,6 +2229,8 @@ export class OrdersService {
         await this.orderRepository.save(order);
         await this.notifyOrderStatusChange(order, OrderStatus.CANCELLED);
       }
+
+      throw error;
     }
   }
 
@@ -2130,6 +2334,73 @@ export class OrdersService {
         providerTxStatus =
           String(paymentSync?.transaction?.status || '').trim() || null;
         providerTxUpdatedAt = paymentSync?.transaction?.updatedAt || null;
+        const paymentUiHint = this.buildPaymentUiHint(mapped, {
+          checkoutUrl:
+            typeof paymentSync?.checkoutUrl === 'string'
+              ? paymentSync.checkoutUrl
+              : null,
+          receiveCode:
+            typeof paymentSync?.receiveCode === 'string'
+              ? paymentSync.receiveCode
+              : null,
+          providerMessage:
+            typeof paymentSync?.providerMessage === 'string'
+              ? paymentSync.providerMessage
+              : undefined,
+          stateOverride:
+            paymentSync?.paymentLifecycleState === 'FAILED'
+              ? 'FAILED'
+              : paymentSync?.paymentLifecycleState === 'PAID'
+                ? 'PAID'
+                : 'PENDING_PUSH_CONFIRMATION',
+        });
+        return plainToInstance(OrderResponseDto, {
+          ...mapped,
+          skipOrderConfirmationScreen:
+            paymentUiHint?.skipOrderConfirmationScreen ??
+            mapped.paymentMethod === PaymentMethod.EBIRR,
+          disableWebCheckoutFallback:
+            paymentUiHint?.disableWebCheckoutFallback ??
+            mapped.paymentMethod === PaymentMethod.EBIRR,
+          paymentUiHint,
+          paymentLifecycleState: this.derivePaymentLifecycleState(
+            mapped,
+            providerTxStatus,
+            providerTxUpdatedAt,
+          ),
+          userId: mapped.user?.id,
+          proofOfDeliveryUrl: mapped.proofOfDeliveryUrl ?? null,
+          deliveryFailureReasonCode: mapped.deliveryFailureReasonCode ?? null,
+          deliveryFailureReasonLabel: this.getDeliveryFailureReasonLabel(
+            mapped.deliveryFailureReasonCode,
+          ),
+          deliveryFailureNotes: mapped.deliveryFailureNotes ?? null,
+          delivererId: orderDeliverer?.id,
+          assignedDelivererId: orderDeliverer?.id,
+          assignedDelivererName: orderDeliverer?.displayName ?? null,
+          assignedDelivererPhone: orderDeliverer?.phoneNumber ?? null,
+          assignedDelivererVehicle:
+            (orderDeliverer as any)?.vehicleDetails?.model ||
+            (orderDeliverer as any)?.vehicleType ||
+            'Standard Delivery',
+          vendors,
+          vendorName:
+            vendors.length === 1
+              ? vendors[0].storeName || vendors[0].displayName || null
+              : null,
+          items:
+            mapped.items?.map((item) => ({
+              productId: item.product?.id,
+              productName: item.product?.name,
+              productImageUrl: item.product?.imageUrl ?? null,
+              quantity: item.quantity,
+              price: item.price,
+              price_display: (item as any).price_display,
+              attributes: this.mapOrderItemSelectionAttributes(item),
+            })) || [],
+          total_display: (mapped as any).total_display,
+          currency: (mapped as any).currency,
+        });
       } catch (error: any) {
         this.logger.warn(
           `Failed to enrich paymentLifecycleState for order=${mapped.id}: ${error?.message || error}`,
@@ -2277,18 +2548,27 @@ export class OrdersService {
     if (!existing) {
       throw new NotFoundException('Order not found');
     }
-    // If relations aren't cascaded, manually delete children first.
-    // OrderItem has onDelete: 'CASCADE', but ensure cleanup explicitly for safety in older rows.
-    await this.orderRepository.manager
-      .createQueryBuilder()
-      .delete()
-      .from(OrderItem)
-      .where('orderId = :id', { id })
-      .execute();
 
-    // If you later add payments/shipments tables, delete them here similarly.
+    await this.orderRepository.manager.transaction(async (manager) => {
+      await manager
+        .createQueryBuilder()
+        .delete()
+        .from(Conversation)
+        .where('orderId = :id', { id })
+        .execute();
 
-    await this.orderRepository.delete(id);
+      // OrderItem has onDelete: 'CASCADE', but ensure cleanup explicitly for safety in older rows.
+      await manager
+        .createQueryBuilder()
+        .delete()
+        .from(OrderItem)
+        .where('orderId = :id', { id })
+        .execute();
+
+      // If you later add payments/shipments tables, delete them here similarly.
+
+      await manager.delete(Order, id);
+    });
   }
 
   // --- Admin Item Updates ---

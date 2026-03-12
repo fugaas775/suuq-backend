@@ -25,7 +25,6 @@ import {
 import { TelebirrCallbackDto } from './telebirr-callback.dto';
 import { TelebirrService } from '../telebirr/telebirr.service';
 import { TelebirrTransaction } from './entities/telebirr-transaction.entity';
-import { EbirrTransaction } from './entities/ebirr-transaction.entity';
 import { ProductsService } from '../products/products.service';
 import {
   BoostPricingService,
@@ -146,8 +145,6 @@ export class PaymentsController {
     private readonly orderRepository: Repository<Order>,
     @InjectRepository(TelebirrTransaction)
     private readonly transactionRepository: Repository<TelebirrTransaction>,
-    @InjectRepository(EbirrTransaction)
-    private readonly ebirrTransactionRepository: Repository<EbirrTransaction>,
     private readonly ordersService: OrdersService,
     private readonly telebirrService: TelebirrService,
     private readonly ebirrService: EbirrService,
@@ -527,6 +524,7 @@ export class PaymentsController {
     }
   }
 
+  @Get('sync-status/:orderId')
   @Post('sync-status/:orderId')
   async syncStatus(
     @Param('orderId') orderId: number,
@@ -547,37 +545,35 @@ export class PaymentsController {
     let status = 'PENDING';
     let updated = false;
     let ebirrFailureDetails: Record<string, any> | null = null;
+    let paymentSync: Awaited<
+      ReturnType<EbirrService['checkOrderStatus']>
+    > | null = null;
 
     if (order.paymentStatus === PaymentStatus.PAID) {
       status = 'SUCCESS';
     } else if (order.paymentMethod === 'EBIRR') {
-      const refIds = [`REF-${order.id}`, `ORDER-${order.id}`];
-      const ebirrTx = await this.ebirrTransactionRepository
-        .createQueryBuilder('tx')
-        .where('tx.merch_order_id IN (:...refIds)', { refIds })
-        .orderBy('tx.updated_at', 'DESC')
-        .addOrderBy('tx.created_at', 'DESC')
-        .getOne();
+      paymentSync = await this.ebirrService.checkOrderStatus(String(order.id));
 
-      const txStatus = String(ebirrTx?.status || '').toUpperCase();
-      const failedByTx = ['FAILED', 'ERROR'].includes(txStatus);
-      const failedByOrder = order.paymentStatus === PaymentStatus.FAILED;
+      const failedBySync = paymentSync.paymentLifecycleState === 'FAILED';
+      const failedByOrder =
+        order.paymentStatus === PaymentStatus.FAILED ||
+        [
+          OrderStatus.CANCELLED,
+          OrderStatus.CANCELLED_BY_BUYER,
+          OrderStatus.CANCELLED_BY_SELLER,
+        ].includes(order.status);
 
-      if (failedByTx || failedByOrder) {
+      if (failedBySync || failedByOrder) {
         status = 'FAILED';
         const providerCode =
-          ebirrTx?.response_code ||
+          paymentSync.transaction?.responseCode ||
           (failedByOrder ? 'ORDER_PAYMENT_FAILED' : 'EBIRR_FAILED');
         const providerRef =
-          ebirrTx?.req_transaction_id ||
-          ebirrTx?.trans_id ||
-          ebirrTx?.issuer_trans_id ||
+          paymentSync.transaction?.requestId ||
+          paymentSync.transaction?.transactionId ||
+          paymentSync.transaction?.issuerTransactionId ||
           null;
-        const providerMessage =
-          ebirrTx?.response_msg ||
-          ebirrTx?.raw_response_payload?.responseMsg ||
-          ebirrTx?.raw_response_payload?.message ||
-          'Payment failed';
+        const providerMessage = paymentSync.providerMessage || 'Payment failed';
 
         ebirrFailureDetails = {
           provider: 'EBIRR',
@@ -623,17 +619,37 @@ export class PaymentsController {
         status: 'FAILED',
         updated: false,
         details: ebirrFailureDetails,
+        paymentLifecycleState: paymentSync?.paymentLifecycleState || 'FAILED',
+        orderStatus: order.status,
+        paymentStatus: order.paymentStatus,
+        checkoutUrl: paymentSync?.checkoutUrl || null,
+        receiveCode: paymentSync?.receiveCode || null,
+        providerMessage: paymentSync?.providerMessage || null,
         skipOrderConfirmationScreen:
           order.paymentMethod === PaymentMethod.EBIRR,
-        disableWebCheckoutFallback: order.paymentMethod === PaymentMethod.EBIRR,
+        disableWebCheckoutFallback:
+          order.paymentMethod === PaymentMethod.EBIRR &&
+          !(paymentSync?.checkoutUrl || paymentSync?.receiveCode),
       };
+    }
+
+    if (!paymentSync && order.paymentMethod === PaymentMethod.EBIRR) {
+      paymentSync = await this.ebirrService.checkOrderStatus(String(order.id));
     }
 
     return {
       status: status || 'Unknown',
       updated: false,
+      paymentLifecycleState: paymentSync?.paymentLifecycleState || null,
+      orderStatus: order.status,
+      paymentStatus: order.paymentStatus,
+      checkoutUrl: paymentSync?.checkoutUrl || null,
+      receiveCode: paymentSync?.receiveCode || null,
+      providerMessage: paymentSync?.providerMessage || null,
       skipOrderConfirmationScreen: order.paymentMethod === PaymentMethod.EBIRR,
-      disableWebCheckoutFallback: order.paymentMethod === PaymentMethod.EBIRR,
+      disableWebCheckoutFallback:
+        order.paymentMethod === PaymentMethod.EBIRR &&
+        !(paymentSync?.checkoutUrl || paymentSync?.receiveCode),
     };
   }
 

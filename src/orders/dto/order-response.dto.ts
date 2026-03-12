@@ -61,13 +61,15 @@ export class OrderResponseDto {
   @Expose()
   paymentUiHint?: {
     provider: 'EBIRR';
-    state: 'PENDING_PUSH_CONFIRMATION' | 'PAID';
+    state: 'PENDING_PUSH_CONFIRMATION' | 'PAID' | 'FAILED';
     message?: string;
     checkStatusEndpoint?: string;
     recommendedPollIntervalMs?: number;
     skipOrderConfirmationScreen?: boolean;
     disableWebCheckoutFallback?: boolean;
     orderDetailsRoute?: string;
+    checkoutUrl?: string | null;
+    receiveCode?: string | null;
   };
   @Expose() userId: number;
   @Expose() deliveryCode?: string;

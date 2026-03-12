@@ -312,7 +312,7 @@ For products with required listing/category variants, backend validates both car
 
 - Send selected variants in `attributes` as single-choice key/value pairs (for example `{ "size": "M", "color": "Black" }`).
 - If product/category has no required variants, no variant fields are required.
-- Internal metadata keys such as `offerId`, `offer_id`, `clientRef`, `client_ref` are ignored for variant validation and are not returned in order item attributes.
+- Internal metadata keys such as `offerId`, `offer_id`, `clientRef`, `client_ref`, `image_url` are ignored for variant validation and are not returned in order item attributes.
 
 Validation errors you should normalize client-side:
 

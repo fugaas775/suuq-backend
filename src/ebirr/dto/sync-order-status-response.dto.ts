@@ -34,8 +34,8 @@ export class SyncOrderStatusResponseDto {
   @ApiProperty({ enum: PaymentStatus, example: PaymentStatus.UNPAID })
   paymentStatus!: PaymentStatus;
 
-  @ApiProperty({ example: 'PENDING', enum: ['PAID', 'PENDING'] })
-  status!: 'PAID' | 'PENDING';
+  @ApiProperty({ example: 'PENDING', enum: ['PAID', 'PENDING', 'FAILED'] })
+  status!: 'PAID' | 'PENDING' | 'FAILED';
 
   @ApiProperty({ enum: OrderStatus, example: OrderStatus.PENDING })
   orderStatus!: OrderStatus;
@@ -56,4 +56,17 @@ export class SyncOrderStatusResponseDto {
 
   @ApiProperty({ type: () => EbirrSyncTransactionDto, nullable: true })
   transaction!: EbirrSyncTransactionDto | null;
+
+  @ApiProperty({ example: 'https://...', nullable: true, required: false })
+  checkoutUrl?: string | null;
+
+  @ApiProperty({ example: '*847#', nullable: true, required: false })
+  receiveCode?: string | null;
+
+  @ApiProperty({
+    example: 'Confirm the payment prompt on your phone.',
+    nullable: true,
+    required: false,
+  })
+  providerMessage?: string | null;
 }
