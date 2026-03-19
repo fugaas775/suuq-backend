@@ -25,6 +25,32 @@ export class MetricsV2Controller {
     private readonly feedInteractionService: FeedInteractionService,
   ) {}
 
+  private resolveFeedRequestId(
+    dto: CreateFeedInteractionDto,
+    req: any,
+  ): string | undefined {
+    const headerValue =
+      req?.headers?.['x-home-request-id'] ?? req?.headers?.['x-request-id'];
+    const headerRequestId = Array.isArray(headerValue)
+      ? headerValue.find((value) => typeof value === 'string' && value.trim())
+      : headerValue;
+
+    const candidates = [
+      dto?.requestId,
+      req?.body?.requestId,
+      req?.body?.request_id,
+      headerRequestId,
+    ];
+
+    for (const candidate of candidates) {
+      if (typeof candidate !== 'string') continue;
+      const trimmed = candidate.trim();
+      if (trimmed) return trimmed;
+    }
+
+    return undefined;
+  }
+
   @Post('feed-interaction')
   @UseGuards(OptionalJwtAuthGuard)
   @ApiOperation({
@@ -36,7 +62,11 @@ export class MetricsV2Controller {
     @Req() req: any,
   ) {
     const userId = req.user?.id;
-    await this.feedInteractionService.logInteraction(dto, userId);
+    const requestId = this.resolveFeedRequestId(dto, req);
+    await this.feedInteractionService.logInteraction(
+      requestId ? { ...dto, requestId } : dto,
+      userId,
+    );
     return { success: true };
   }
 

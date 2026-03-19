@@ -5,9 +5,11 @@ import {
   CreateDateColumn,
   ManyToOne,
   OneToMany,
+  JoinColumn,
 } from 'typeorm';
 import { User } from '../../users/entities/user.entity';
 import { Product } from '../../products/entities/product.entity';
+import { Branch } from '../../branches/entities/branch.entity';
 
 export enum PaymentMethod {
   COD = 'COD',
@@ -113,6 +115,16 @@ export class Order {
     latitude?: number;
     longitude?: number;
   };
+
+  @Column({ type: 'int', nullable: true })
+  fulfillmentBranchId?: number | null;
+
+  @ManyToOne(() => Branch, { nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'fulfillmentBranchId' })
+  fulfillmentBranch?: Branch | null;
+
+  @Column({ type: 'timestamp', nullable: true })
+  onlineReservationReleasedAt?: Date | null;
 
   @Column({ name: 'currency', type: 'char', length: 3, default: 'USD' })
   currency!: string;

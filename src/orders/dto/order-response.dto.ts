@@ -22,6 +22,7 @@ export class OrderItemResponseDto {
 
 export class OrderResponseDto {
   @Expose() id: number;
+  @Expose() fulfillmentBranchId?: number | null;
   @Expose() total: number;
   @Expose() status: OrderStatus;
   @Expose() paymentMethod: PaymentMethod;

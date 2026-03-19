@@ -10,6 +10,19 @@ import {
 import { Branch } from '../../branches/entities/branch.entity';
 import { PartnerCredential } from '../../partner-credentials/entities/partner-credential.entity';
 
+export type PosSyncFailedEntry = {
+  entryIndex: number;
+  productId?: number | null;
+  aliasType?: string | null;
+  aliasValue?: string | null;
+  quantity: number;
+  movementType?: string | null;
+  counterpartyBranchId?: number | null;
+  transferId?: number | null;
+  note?: string | null;
+  error: string;
+};
+
 export enum PosSyncType {
   STOCK_SNAPSHOT = 'STOCK_SNAPSHOT',
   STOCK_DELTA = 'STOCK_DELTA',
@@ -65,6 +78,9 @@ export class PosSyncJob {
 
   @Column({ type: 'timestamp', nullable: true })
   processedAt?: Date | null;
+
+  @Column({ type: 'jsonb', nullable: true, default: () => "'[]'::jsonb" })
+  failedEntries?: PosSyncFailedEntry[] | null;
 
   @CreateDateColumn()
   createdAt!: Date;

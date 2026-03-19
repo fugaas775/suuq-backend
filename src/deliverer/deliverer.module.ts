@@ -11,10 +11,12 @@ import { EmailModule } from '../email/email.module';
 import { CurrencyModule } from '../common/services/currency.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { RealtimeModule } from '../realtime/realtime.module';
+import { BranchesModule } from '../branches/branches.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([Order, Product, User]),
+    BranchesModule,
     WalletModule,
     SettingsModule,
     EmailModule,

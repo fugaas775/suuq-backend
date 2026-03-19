@@ -262,6 +262,34 @@ export class EmailService {
     return parts.length > 0 ? `(${parts.join(' | ')})` : '';
   }
 
+  private normalizeBaseUrl(url: string | null | undefined, fallback: string) {
+    return (url || fallback).replace(/\/+$/, '');
+  }
+
+  private normalizeApiBaseUrl(url: string | null | undefined) {
+    const normalized = this.normalizeBaseUrl(
+      url,
+      'https://suuq.ugasfuad.com/api',
+    );
+    return normalized.endsWith('/api') ? normalized : `${normalized}/api`;
+  }
+
+  private normalizeAppScheme(scheme: string | null | undefined) {
+    const trimmed = (scheme || 'suuq://').trim();
+    return trimmed.endsWith('://')
+      ? trimmed
+      : `${trimmed.replace(/:+$/, '')}://`;
+  }
+
+  private escapeHtml(value: string) {
+    return value
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
   async sendWelcomeEmail(user: { email: string; displayName?: string }) {
     const firstName = user.displayName?.split(' ')[0] || 'User';
     const mail = {
@@ -635,6 +663,62 @@ export class EmailService {
         <p>Best regards,<br/>The Suuq Team</p>
       `,
     };
+    await this.send(mail);
+  }
+
+  async sendProductRequestForwardedToVendor(
+    vendor: { email: string; displayName?: string; storeName?: string },
+    request: { id: number; title?: string | null },
+    note?: string | null,
+  ) {
+    if (!vendor?.email) return;
+
+    const firstName =
+      vendor.displayName?.split(' ')[0] || vendor.storeName || 'Vendor';
+    const requestTitle = request?.title?.trim() || `Request #${request.id}`;
+    const trimmedNote = note?.trim();
+    const siteUrl = this.normalizeBaseUrl(
+      this.configService.get('SITE_URL') || this.configService.get('ADMIN_URL'),
+      'https://suuq.ugasfuad.com',
+    );
+    const apiUrl = this.normalizeApiBaseUrl(this.configService.get('API_URL'));
+    const appScheme = this.normalizeAppScheme(
+      this.configService.get('APP_SCHEME'),
+    );
+    const requestId = encodeURIComponent(String(request.id));
+    const webLink = `${siteUrl}/request-detail?id=${requestId}`;
+    const rawMobileLink = `${appScheme}request-detail?id=${requestId}`;
+    const appLink = `${apiUrl}/open-app?target=${encodeURIComponent(rawMobileLink)}`;
+    const safeRequestTitle = this.escapeHtml(requestTitle);
+    const safeNote = trimmedNote ? this.escapeHtml(trimmedNote) : null;
+    const noteText = trimmedNote ? `\n\nAdmin note: ${trimmedNote}` : '';
+    const noteHtml = safeNote
+      ? `<p style="margin: 16px 0 0; padding: 12px 14px; background: #f4f1ea; border-left: 4px solid #b7791f; border-radius: 8px;"><strong>Admin note:</strong> ${safeNote}</p>`
+      : '';
+
+    const mail = {
+      to: vendor.email,
+      subject: `New request from Suuq: ${requestTitle}`,
+      text: `Hi ${firstName},\n\nA customer request that matches your business has been shared with you on Suuq.\n\nRequest: ${requestTitle}\n\nReview the details and send your offer while the request is still open.${noteText}\n\nOpen in the Suuq app: ${rawMobileLink}\nOpen in your browser: ${webLink}\n\nThanks,\nSuuq Marketplace`,
+      html: `
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: #1f2937; line-height: 1.6;">
+          <p style="margin: 0 0 8px; font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: #8b5e34;">Suuq Marketplace</p>
+          <h2 style="margin: 0 0 16px; font-size: 24px; color: #111827;">New request shared with your business</h2>
+          <p>Hi ${this.escapeHtml(firstName)},</p>
+          <p>A customer request that matches your business has been shared with you on Suuq.</p>
+          <p style="margin: 16px 0; padding: 16px 18px; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 10px;"><strong>${safeRequestTitle}</strong></p>
+          <p>Review the request details and send your offer while the request is still open.</p>
+          <p style="margin: 24px 0 16px;">
+            <a href="${appLink}" style="display: inline-block; background-color: #0f766e; color: #ffffff; padding: 12px 20px; text-decoration: none; border-radius: 999px; font-weight: 600;">Open in Suuq App</a>
+          </p>
+          <p style="margin: 0 0 8px; font-size: 14px; color: #4b5563;">If the app does not open, use the browser link below.</p>
+          <p style="margin: 0 0 16px;"><a href="${webLink}" style="color: #0f766e; text-decoration: none; font-weight: 600;">View request on web</a></p>
+        ${noteHtml}
+          <p style="margin: 24px 0 0;">Thanks,<br/>Suuq Marketplace</p>
+        </div>
+      `,
+    };
+
     await this.send(mail);
   }
 

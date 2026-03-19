@@ -22,16 +22,30 @@ import { WalletService } from '../wallet/wallet.service';
 import { PromotionsService } from '../promotions/promotions.service';
 import { PayoutLog } from '../wallet/entities/payout-log.entity';
 import { EbirrTransaction } from '../payments/entities/ebirr-transaction.entity';
+import { Branch } from '../branches/entities/branch.entity';
+import { InventoryLedgerService } from '../branches/inventory-ledger.service';
 
 describe('OrdersService', () => {
   let service: OrdersService;
-  let orderRepositoryMock: { findOne: jest.Mock; save: jest.Mock };
+  let orderRepositoryMock: {
+    findOne: jest.Mock;
+    save: jest.Mock;
+    create: jest.Mock;
+  };
   let cartServiceMock: { getCart: jest.Mock };
   let productsServiceMock: { findManyByIds: jest.Mock };
+  let branchesRepositoryMock: { findOne: jest.Mock };
+  let inventoryLedgerServiceMock: { adjustReservedOnline: jest.Mock };
+  let uiSettingRepoMock: { findOne: jest.Mock };
+  let emailServiceMock: {
+    sendOrderCancelled: jest.Mock;
+    sendOrderConfirmation: jest.Mock;
+  };
 
   beforeEach(async () => {
     orderRepositoryMock = {
       findOne: jest.fn().mockResolvedValue(null),
+      create: jest.fn((value: any) => ({ id: value.id ?? 999, ...value })),
       save: jest.fn(async (value: any) => value),
     };
 
@@ -41,6 +55,23 @@ describe('OrdersService', () => {
 
     productsServiceMock = {
       findManyByIds: jest.fn().mockResolvedValue([]),
+    };
+
+    branchesRepositoryMock = {
+      findOne: jest.fn().mockResolvedValue({ id: 11 }),
+    };
+
+    uiSettingRepoMock = {
+      findOne: jest.fn().mockResolvedValue(null),
+    };
+
+    inventoryLedgerServiceMock = {
+      adjustReservedOnline: jest.fn(),
+    };
+
+    emailServiceMock = {
+      sendOrderCancelled: jest.fn().mockResolvedValue(undefined),
+      sendOrderConfirmation: jest.fn().mockResolvedValue(undefined),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -56,13 +87,17 @@ describe('OrdersService', () => {
         { provide: NotificationsService, useValue: {} },
         { provide: DoSpacesService, useValue: {} },
         { provide: AuditService, useValue: {} },
-        { provide: getRepositoryToken(UiSetting), useValue: {} },
+        { provide: getRepositoryToken(UiSetting), useValue: uiSettingRepoMock },
         { provide: getRepositoryToken(Message), useValue: {} },
         { provide: getRepositoryToken(PayoutLog), useValue: {} },
         { provide: getRepositoryToken(EbirrTransaction), useValue: {} },
+        {
+          provide: getRepositoryToken(Branch),
+          useValue: branchesRepositoryMock,
+        },
         { provide: ProductsService, useValue: productsServiceMock },
         { provide: EbirrService, useValue: {} },
-        { provide: EmailService, useValue: {} },
+        { provide: EmailService, useValue: emailServiceMock },
         { provide: UsersService, useValue: {} },
         { provide: WalletService, useValue: {} },
         {
@@ -73,6 +108,10 @@ describe('OrdersService', () => {
           },
         },
         { provide: PromotionsService, useValue: {} },
+        {
+          provide: InventoryLedgerService,
+          useValue: inventoryLedgerServiceMock,
+        },
       ],
     }).compile();
 
@@ -379,6 +418,96 @@ describe('OrdersService', () => {
     expect(triggerSpy).not.toHaveBeenCalled();
     expect(result).toEqual(
       expect.objectContaining({ id: 378, paymentProofStatus: 'REJECTED' }),
+    );
+  });
+
+  it('reserves online inventory when a fulfillment branch is provided', async () => {
+    productsServiceMock.findManyByIds.mockResolvedValue([
+      {
+        id: 501,
+        price: 20,
+        currency: 'ETB',
+        vendor: { id: 90 },
+        images: [],
+        attributes: {},
+      },
+    ]);
+
+    await service.createFromCart(
+      1,
+      {
+        checkoutMode: 'BUY_NOW',
+        paymentMethod: 'COD',
+        fulfillmentBranchId: 11,
+        shippingAddress: {
+          fullName: 'Buyer',
+          address: 'Bole',
+          city: 'Addis Ababa',
+          country: 'ET',
+          phoneNumber: '251912345678',
+        },
+        items: [{ productId: 501, quantity: 2, attributes: {} }],
+      } as any,
+      'ETB',
+    );
+
+    expect(
+      inventoryLedgerServiceMock.adjustReservedOnline,
+    ).toHaveBeenCalledWith({
+      branchId: 11,
+      productId: 501,
+      quantityDelta: 2,
+    });
+  });
+
+  it('rejects an unknown fulfillment branch before order creation', async () => {
+    branchesRepositoryMock.findOne.mockResolvedValueOnce(null);
+
+    await expect(
+      service.createFromCart(
+        1,
+        {
+          checkoutMode: 'BUY_NOW',
+          paymentMethod: 'COD',
+          fulfillmentBranchId: 404,
+          shippingAddress: {
+            fullName: 'Buyer',
+            address: 'Bole',
+            city: 'Addis Ababa',
+            country: 'ET',
+            phoneNumber: '251912345678',
+          },
+          items: [],
+        } as any,
+        'ETB',
+      ),
+    ).rejects.toThrow('Fulfillment branch 404 not found.');
+  });
+
+  it('releases online inventory when an admin cancels a reserved order', async () => {
+    orderRepositoryMock.findOne.mockResolvedValue({
+      id: 901,
+      status: 'PENDING',
+      fulfillmentBranchId: 11,
+      onlineReservationReleasedAt: null,
+      items: [{ quantity: 2, product: { id: 501 } }],
+    });
+
+    await service.cancelOrderForAdmin(901);
+
+    expect(
+      inventoryLedgerServiceMock.adjustReservedOnline,
+    ).toHaveBeenCalledWith({
+      branchId: 11,
+      productId: 501,
+      quantityDelta: -2,
+    });
+    expect(orderRepositoryMock.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 901,
+        status: 'CANCELLED',
+        onlineReservationReleasedAt: expect.any(Date),
+      }),
     );
   });
 });

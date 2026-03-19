@@ -82,6 +82,27 @@ export class PurchaseOrder {
   @Column({ type: 'date', nullable: true })
   expectedDeliveryDate?: string | null;
 
+  @Column({ type: 'timestamp', nullable: true })
+  submittedAt?: Date | null;
+
+  @Column({ type: 'timestamp', nullable: true })
+  acknowledgedAt?: Date | null;
+
+  @Column({ type: 'timestamp', nullable: true })
+  shippedAt?: Date | null;
+
+  @Column({ type: 'timestamp', nullable: true })
+  receivedAt?: Date | null;
+
+  @Column({ type: 'timestamp', nullable: true })
+  reconciledAt?: Date | null;
+
+  @Column({ type: 'timestamp', nullable: true })
+  cancelledAt?: Date | null;
+
+  @Column({ type: 'jsonb', nullable: true, default: () => "'{}'::jsonb" })
+  statusMeta?: Record<string, any> | null;
+
   @OneToMany(() => PurchaseOrderItem, (item) => item.purchaseOrder, {
     cascade: true,
     eager: true,
@@ -128,6 +149,15 @@ export class PurchaseOrderItem {
 
   @Column({ type: 'int', default: 0 })
   receivedQuantity!: number;
+
+  @Column({ type: 'int', default: 0 })
+  shortageQuantity!: number;
+
+  @Column({ type: 'int', default: 0 })
+  damagedQuantity!: number;
+
+  @Column({ type: 'text', nullable: true })
+  note?: string | null;
 
   @Column({
     type: 'decimal',

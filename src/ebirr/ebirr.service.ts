@@ -560,11 +560,11 @@ export class EbirrService {
         paymentMethod,
         apiKey: ebirrConfig.apiKey,
         apiUserId: ebirrConfig.apiUserId,
-        ...(customerPrefix ? { prefix: customerPrefix } : {}),
         // returnUrl: defined below
         payerInfo: {
-          accountNo: formattedPhone,
-          ...(customerPrefix ? { prefix: customerPrefix } : {}),
+          accountNo: customerPrefix
+            ? `${customerPrefix}${formattedPhone}`
+            : formattedPhone,
         },
         transactionInfo: {
           referenceId: referenceId,

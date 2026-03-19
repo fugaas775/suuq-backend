@@ -51,6 +51,17 @@ import { AdminCreditController } from './credit.admin.controller';
 import { AdminAdsController } from './ads.admin.controller';
 import { TelebirrTransaction } from '../payments/entities/telebirr-transaction.entity';
 import { EbirrModule } from '../ebirr/ebirr.module';
+import { SuppliersModule } from '../suppliers/suppliers.module';
+import { PartnerCredentialsModule } from '../partner-credentials/partner-credentials.module';
+import { PurchaseOrdersModule } from '../purchase-orders/purchase-orders.module';
+import { AdminB2bController } from './b2b.admin.controller';
+import { AdminB2bService } from './b2b.admin.service';
+import { BranchTransfer } from '../branches/entities/branch-transfer.entity';
+import { BranchInventory } from '../branches/entities/branch-inventory.entity';
+import { StockMovement } from '../branches/entities/stock-movement.entity';
+import { PosSyncJob } from '../pos-sync/entities/pos-sync-job.entity';
+import { PurchaseOrderReceiptEvent } from '../purchase-orders/entities/purchase-order-receipt-event.entity';
+import { PurchaseOrder } from '../purchase-orders/entities/purchase-order.entity';
 
 @Module({
   // 2. Add UsersModule and OrdersModule here
@@ -72,6 +83,9 @@ import { EbirrModule } from '../ebirr/ebirr.module';
     EmailModule,
     CreditModule,
     EbirrModule,
+    SuppliersModule,
+    PartnerCredentialsModule,
+    PurchaseOrdersModule,
     TypeOrmModule.forFeature([
       Product,
       ProductImpression,
@@ -82,7 +96,13 @@ import { EbirrModule } from '../ebirr/ebirr.module';
       ProductRequest,
       ProductRequestForward,
       User,
+      BranchTransfer,
+      BranchInventory,
       EbirrTransaction,
+      PosSyncJob,
+      PurchaseOrder,
+      PurchaseOrderReceiptEvent,
+      StockMovement,
       TelebirrTransaction,
     ]),
   ],
@@ -104,11 +124,13 @@ import { EbirrModule } from '../ebirr/ebirr.module';
     AdminEbirrAuditController,
     AdminCreditController,
     AdminAdsController,
+    AdminB2bController,
   ],
   // 3. Remove the services from providers. They are now correctly provided by the imported modules.
   providers: [
     RolesGuard,
     GeoResolverService,
+    AdminB2bService,
     AdminOutreachService,
     FeatureFlagGuard,
   ],

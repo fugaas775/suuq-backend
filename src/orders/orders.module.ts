@@ -23,6 +23,8 @@ import { Message } from '../chat/entities/message.entity';
 import { Conversation } from '../chat/entities/conversation.entity';
 import { PayoutLog } from '../wallet/entities/payout-log.entity';
 import { EbirrTransaction } from '../payments/entities/ebirr-transaction.entity';
+import { Branch } from '../branches/entities/branch.entity';
+import { BranchesModule } from '../branches/branches.module';
 
 @Module({
   imports: [
@@ -35,7 +37,9 @@ import { EbirrTransaction } from '../payments/entities/ebirr-transaction.entity'
       Conversation,
       PayoutLog,
       EbirrTransaction,
+      Branch,
     ]),
+    BranchesModule,
     CartModule,
     ProductsModule,
     TelebirrModule,

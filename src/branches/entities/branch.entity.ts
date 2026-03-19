@@ -9,6 +9,7 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 import { User } from '../../users/entities/user.entity';
+import { RetailTenant } from '../../retail/entities/retail-tenant.entity';
 
 @Entity('branches')
 @Index(['ownerId', 'name'])
@@ -49,6 +50,16 @@ export class Branch {
 
   @Column({ type: 'varchar', length: 128, nullable: true })
   externalRef?: string | null;
+
+  @Column({ type: 'int', nullable: true })
+  retailTenantId?: number | null;
+
+  @ManyToOne(() => RetailTenant, (retailTenant) => retailTenant.branches, {
+    nullable: true,
+    onDelete: 'SET NULL',
+  })
+  @JoinColumn({ name: 'retailTenantId' })
+  retailTenant?: RetailTenant | null;
 
   @Column({ default: true })
   isActive!: boolean;

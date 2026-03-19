@@ -2,6 +2,41 @@
 
 NestJS + TypeORM API powering the Suuq marketplace (customers, vendors, deliverers, and admin back-office). This doc covers local setup, configuration, migrations/seeds, observability, and deployment pointers.
 
+## Retail OS Roadmap
+
+### Phase 1: Backend Foundation for Retail OS
+
+Status: complete
+
+Delivered backend scope:
+
+- tenant-scoped retail monetization using subscriptions and module entitlements
+- entitlement enforcement for monetized retail automation flows
+- alias-aware POS ingest, failed-entry replay, and remediation support
+- inventory-ledger-triggered replenishment from transfers, POS sync, and manual adjustments
+- replenishment policy controls stored in entitlement metadata
+- safe auto-submit through the purchase-order lifecycle service with audit and inventory projection preservation
+- retail ops APIs for stock health and replenishment draft review
+- admin and retail filtering for auto-replenishment review, including blocked-reason summaries
+- manual re-evaluation of blocked auto-replenishment drafts
+- surface-specific action hints and explicit re-evaluation outcome contracts on retail, admin, and hub purchase-order endpoints
+
+Validation completed:
+
+- focused unit coverage across replenishment, purchase-order lifecycle, retail ops, and admin B2B flows
+- e2e coverage for retail and admin re-evaluate replenishment endpoints
+- clean production build via `yarn build`
+
+### Phase 2: Next Retail OS Expansion
+
+Status: in progress
+
+Current focus:
+
+- build the next monetized supermarket operations slice on top of the Phase 1 replenishment foundation
+- expand `POS_CORE` from plan metadata into real retail ops contracts for branch sales throughput, payment recovery, and fulfillment backlog monitoring
+- keep new automation features tenant-scoped and policy-driven rather than introducing branch-local feature flags
+
 ### Stack
 
 - Node.js 20+, NestJS 11, TypeORM, PostgreSQL, Redis (optional for rate limiting/cache), S3-compatible storage, Jest.
@@ -279,6 +314,523 @@ type BoostMethodsResponse = {
 ```
 
 Flutter integration rule: show only `methods.where((m) => m.enabled && m.supportsBoost)` and send selected `id` as `provider` to `POST /api/payments/initiate-boost`.
+
+## Retail OS contracts
+
+### Admin: list Retail OS plan presets
+
+Endpoint: `GET /api/admin/retail-tenants/plan-presets`
+
+- Purpose: give the admin provisioning UI a backend-owned catalog of plan bundles and default module metadata.
+- Current presets:
+  - `RETAIL_STARTER`
+  - `RETAIL_AUTOMATION`
+  - `RETAIL_INTELLIGENCE`
+  - `RETAIL_ENTERPRISE`
+- `RETAIL_INTELLIGENCE` and `RETAIL_ENTERPRISE` both bundle `AI_ANALYTICS`.
+- `RETAIL_ENTERPRISE` also bundles `ACCOUNTING`.
+
+### Admin: apply a Retail OS plan preset
+
+Endpoint: `POST /api/admin/retail-tenants/:id/apply-plan-preset`
+
+- Purpose: create the tenant subscription and apply the bundled module entitlements in one admin action.
+- Notes:
+  - defaults to the preset billing configuration when amount/currency/interval are omitted
+  - defaults `startsAt` to now and `autoRenew` to `true`
+
+Example request body:
+
+```json
+{
+  "presetCode": "RETAIL_INTELLIGENCE"
+}
+```
+
+### Admin: enable AI analytics entitlement
+
+Endpoint: `PUT /api/admin/retail-tenants/:id/modules/AI_ANALYTICS`
+
+- Purpose: enable the paid Retail OS AI analytics slice for a tenant.
+- Guardrails: requires an active tenant subscription and module entitlement like the other Retail OS modules.
+- Optional metadata: `aiAnalyticsPolicy`
+  - `stalePurchaseOrderHours`: integer `1..720`; controls when open POs are treated as stale in the insight summary.
+  - `targetHealthScore`: integer `1..100`; raises a health-target alert when the live branch score falls below this threshold.
+
+Example request body:
+
+```json
+{
+  "enabled": true,
+  "reason": "Retail Pro Plus AI analytics add-on",
+  "metadata": {
+    "aiAnalyticsPolicy": {
+      "stalePurchaseOrderHours": 48,
+      "targetHealthScore": 90
+    }
+  }
+}
+```
+
+### Branch ops: stock health
+
+Endpoint: `GET /api/retail/v1/ops/stock-health?branchId=3&page=1&limit=20`
+
+CSV export: `GET /api/retail/v1/ops/stock-health/export?branchId=3&page=1&limit=20`
+
+- Entitlement required: `INVENTORY_CORE`
+- Purpose: return a branch stock-health queue with inventory records ordered by urgency.
+- Response includes:
+  - inventory summary counts for healthy, low-stock, reorder-now, and out-of-stock SKUs
+  - inbound open PO and committed-unit context
+  - CSV export with one row per surfaced inventory record for spreadsheet-style stock triage and vendor follow-up
+  - per-SKU inventory snapshots including available-to-sell, shortage to safety stock, and stock status
+
+### Branch ops: network command center
+
+Endpoint: `GET /api/retail/v1/ops/network-command-center?branchId=3&branchLimit=3&module=INVENTORY_CORE&status=CRITICAL&hasAlertsOnly=true&alertSeverity=CRITICAL`
+
+CSV export: `GET /api/retail/v1/ops/network-command-center/export?branchId=3&branchLimit=3&module=INVENTORY_CORE&status=CRITICAL&hasAlertsOnly=true&alertSeverity=CRITICAL`
+
+Report snapshot capture: `POST /api/retail/v1/ops/network-command-center/report-snapshots?branchId=3&branchLimit=3&module=INVENTORY_CORE&status=CRITICAL&hasAlertsOnly=true&alertSeverity=CRITICAL`
+
+Latest saved snapshot: `GET /api/retail/v1/ops/network-command-center/report-snapshots/latest?branchId=3&branchLimit=3&module=INVENTORY_CORE&status=CRITICAL&hasAlertsOnly=true&alertSeverity=CRITICAL`
+
+- Entitlement model: requires the branch to belong to an active Retail OS tenant with an active subscription; the response only includes modules that currently have an active entitlement on that tenant.
+- Purpose: return a tenant-level HQ command center summary that rolls up the active Retail OS operational modules anchored to the requested branch.
+- Response includes:
+  - per-module cards for POS operations, inventory health, replenishment automation, AI operating risk, accounting, and desktop back office when those modules are entitled
+  - optional `module`, `status=CRITICAL|HIGH|NORMAL`, `hasAlertsOnly=true|false`, and `alertSeverity=INFO|WATCH|CRITICAL` filters so HQ can isolate one module family, only the most urgent cards, or only cards with matching alert pressure
+  - a normalized severity ladder (`CRITICAL|HIGH|NORMAL`) so HQ can rank cross-module pressure quickly
+  - top alert rollups, key metrics, and branch previews that link operators back into the module-specific branch queues
+  - per-module trend metadata including previous status, status delta, direction (`WORSENING|STABLE|IMPROVING`), previous alert count, and previous headline metric value when a saved report snapshot exists
+  - direct actions to open each module's network summary or CSV export endpoint
+  - CSV export with one row per module branch preview, repeating module-level status, alert, and metric summaries for spreadsheet triage
+  - report snapshot capture for scheduled reporting workflows; snapshots are persisted as the comparison baseline used for future command-center trend fields
+  - latest-snapshot retrieval for reporting clients that need to fetch the stored baseline directly rather than always reading the live view
+
+Scheduled reporting:
+
+- Backend cron support is available through `RetailCommandCenterReportingService`.
+- Enable with `RETAIL_COMMAND_CENTER_SNAPSHOT_SCHEDULE_ENABLED=true`.
+- Provide JSON targets via `RETAIL_COMMAND_CENTER_SNAPSHOT_TARGETS`, for example:
+
+```json
+[
+  {
+    "branchId": 3,
+    "branchLimit": 3,
+    "module": "INVENTORY_CORE",
+    "status": "CRITICAL",
+    "hasAlertsOnly": true,
+    "alertSeverity": "CRITICAL"
+  }
+]
+```
+
+### Branch ops: POS operations
+
+Endpoint: `GET /api/retail/v1/ops/pos-operations?branchId=3&windowHours=24&topItemsLimit=5`
+
+CSV export: `GET /api/retail/v1/ops/pos-operations/export?branchId=3&windowHours=24&topItemsLimit=5`
+
+- Entitlement model: requires `POS_CORE` on the anchor branch tenant.
+- Purpose: return a branch POS operating snapshot covering sales throughput, payment recovery, open-order pressure, and the top-selling items in the selected window.
+- Response includes:
+  - order, payment, and fulfillment counters for the selected branch window
+  - active branch staffing counts based on assigned retail operators and managers
+  - alert cards for failed-payment recovery, fulfillment backlog, unpaid-order pressure, and idle sales windows
+  - payment-method mix, status mix, and top-selling items ranked by gross sales
+  - CSV export with one row per surfaced top item while repeating the branch-level POS summary for spreadsheet triage
+
+### Branch ops: POS network summary
+
+Endpoint: `GET /api/retail/v1/ops/pos-operations/network-summary?branchId=3&limit=10&windowHours=24&status=CRITICAL`
+
+CSV export: `GET /api/retail/v1/ops/pos-operations/network-summary/export?branchId=3&limit=10&windowHours=24&status=CRITICAL`
+
+- Entitlement model: requires `POS_CORE` on the anchor branch tenant.
+- Purpose: return a tenant-level POS operations summary across active branches for sales throughput, payment recovery pressure, and aged open-order exposure.
+- Response includes:
+  - per-branch priority cards using the same `CRITICAL|HIGH|NORMAL` ladder used by the command center
+  - aggregated order, sales, failed-payment, unpaid-order, and delayed-fulfillment counts for the selected window
+  - tenant-level alerts for payment recovery, fulfillment backlog, and staffed-but-idle branches
+  - direct actions that link HQ operators back into the branch POS operations snapshot
+  - CSV export with one row per surfaced branch
+
+### Branch ops: POS exception queue
+
+Endpoint: `GET /api/retail/v1/ops/pos-operations/exceptions?branchId=3&limit=25&windowHours=24&queueType=FAILED_PAYMENT&priority=CRITICAL`
+
+CSV export: `GET /api/retail/v1/ops/pos-operations/exceptions/export?branchId=3&limit=25&windowHours=24&queueType=FAILED_PAYMENT&priority=CRITICAL`
+
+- Entitlement model: requires `POS_CORE` on the anchor branch tenant.
+- Purpose: return actionable branch POS exceptions grouped into failed-payment recovery, payment-proof review, and delayed-fulfillment queues.
+- Response includes:
+  - optional `queueType=FAILED_PAYMENT|PAYMENT_REVIEW|FULFILLMENT_DELAY` and `priority=CRITICAL|HIGH|NORMAL` filters
+  - summary counts for total exceptions, filtered exceptions, and each queue family in the selected window
+  - one surfaced queue item per affected order using the highest-priority exception on that order
+  - direct actions back into the retail POS order drilldown and existing admin payment or cancellation routes
+  - CSV export with one row per surfaced exception while repeating the branch and summary context for spreadsheet triage
+
+### Branch ops: POS exception network summary
+
+Endpoint: `GET /api/retail/v1/ops/pos-operations/exceptions/network-summary?branchId=3&limit=10&windowHours=24&queueType=FAILED_PAYMENT&priority=CRITICAL`
+
+CSV export: `GET /api/retail/v1/ops/pos-operations/exceptions/network-summary/export?branchId=3&limit=10&windowHours=24&queueType=FAILED_PAYMENT&priority=CRITICAL`
+
+- Entitlement model: requires `POS_CORE` on the anchor branch tenant.
+- Purpose: return a tenant-level POS exception rollup so HQ operators can prioritize branches with the highest payment-recovery or fulfillment-delay pressure.
+- Response includes:
+  - optional `queueType=FAILED_PAYMENT|PAYMENT_REVIEW|FULFILLMENT_DELAY` and `priority=CRITICAL|HIGH|NORMAL` filters applied across active tenant branches
+  - per-branch exception cards with highest-priority classification, queue mix, oldest exception age, and branch action links
+  - tenant summary totals for surfaced branches, exception counts, critical branches, and queue-family totals
+  - network alerts for critical exception pressure, failed-payment recovery load, payment-review backlog, and fulfillment-delay exposure
+  - CSV export with one row per surfaced branch
+
+### Branch ops: POS order drilldown
+
+Endpoint: `GET /api/retail/v1/ops/pos-operations/orders/18?branchId=3`
+
+- Entitlement model: requires `POS_CORE` on the anchor branch tenant.
+- Purpose: return order-level POS drilldown detail for an exception queue item.
+- Response includes:
+  - order status, payment state, payment-proof review state, and fulfillment timestamps
+  - customer contact and shipping-city context for operator follow-up
+  - line-item detail with quantity, unit price, and line total
+  - action hints for payment-proof approval or rejection, bank-transfer approval, Ebirr status sync, and admin cancellation when those routes apply
+
+### Branch ops: stock health network summary
+
+Endpoint: `GET /api/retail/v1/ops/stock-health/network-summary?branchId=3&limit=10&stockStatus=OUT_OF_STOCK`
+
+CSV export: `GET /api/retail/v1/ops/stock-health/network-summary/export?branchId=3&limit=10&stockStatus=OUT_OF_STOCK`
+
+- Entitlement required: `INVENTORY_CORE`
+- Purpose: return a tenant-level inventory health summary across the branches tied to the requested branch.
+- Response includes:
+  - optional `stockStatus=HEALTHY|LOW_STOCK|REORDER_NOW|OUT_OF_STOCK` filtering based on each branch's worst live stock status
+  - tenant-wide totals for total SKUs, replenishment candidates, active stockouts, negative availability, inbound open PO units, and committed units
+  - branch-level ranking by worst live stock status so HQ operators can open the riskiest branch stock queues first
+  - network alerts for multi-branch stockout pressure, negative availability, and broader replenishment backlog
+  - `VIEW_BRANCH_STOCK_HEALTH` actions for each surfaced branch
+
+### Branch ops: AI insights
+
+Endpoint: `GET /api/retail/v1/ops/ai-insights?branchId=3&limit=10`
+
+CSV export: `GET /api/retail/v1/ops/ai-insights/export?branchId=3&limit=10`
+
+- Entitlement required: `AI_ANALYTICS`
+- Purpose: return a branch operating snapshot with a health score, action cards, and prioritized SKU risk recommendations.
+- Signals used:
+  - out-of-stock SKUs
+  - below-safety-stock exposure
+  - negative availability
+  - inbound open PO coverage
+  - stale open POs
+  - blocked auto-replenishment drafts
+  - CSV export with one row per surfaced product risk, plus branch health score and triggered insight codes for offline review
+
+### Branch ops: AI network summary
+
+Endpoint: `GET /api/retail/v1/ops/ai-insights/network-summary?branchId=3&limit=10&severity=CRITICAL`
+
+CSV export: `GET /api/retail/v1/ops/ai-insights/network-summary/export?branchId=3&limit=10&severity=CRITICAL`
+
+- Entitlement required: `AI_ANALYTICS`
+- Purpose: return a tenant-level AI operating summary across the branches tied to the requested branch.
+- Response includes:
+  - optional `severity=INFO|WATCH|CRITICAL` filtering based on each branch's highest active AI insight severity
+  - tenant-wide averages and totals for health score, at-risk SKUs, stockouts, negative availability, stale open POs, and blocked auto-submission drafts
+  - branch-level ranking by highest active AI severity and then health score so HQ operators can open the weakest branches first
+  - network alerts for multi-branch critical AI risk, automation blockers, and stale inbound degradation
+  - `VIEW_BRANCH_AI_INSIGHTS` actions for each surfaced branch
+
+### Branch ops: replenishment network summary
+
+Endpoint: `GET /api/retail/v1/ops/replenishment-drafts/network-summary?branchId=3&supplierProfileId=14&autoReplenishmentSubmissionMode=AUTO_SUBMIT&autoReplenishmentBlockedReason=MINIMUM_ORDER_TOTAL_NOT_MET&limit=10`
+
+CSV export: `GET /api/retail/v1/ops/replenishment-drafts/network-summary/export?branchId=3&supplierProfileId=14&autoReplenishmentSubmissionMode=AUTO_SUBMIT&autoReplenishmentBlockedReason=MINIMUM_ORDER_TOTAL_NOT_MET&limit=10`
+
+- Entitlement required: `INVENTORY_AUTOMATION`
+- Purpose: return a tenant-level replenishment automation summary across the branches tied to the requested branch.
+- Response includes:
+  - the same supplier, submission-mode, and blocked-reason pivots as the branch replenishment draft queue
+  - tenant-wide totals for stale drafts, draft value, supplier concentration, blocked auto-submit drafts, and ready auto-submit drafts
+  - branch-level ranking by replenishment automation urgency so HQ operators can open blocked branches before stale or normal queues
+  - network alerts for blocked automation, stale draft buildup, and ready-to-submit automation backlog
+  - `VIEW_BRANCH_REPLENISHMENT_DRAFTS` actions for each surfaced branch
+
+Response shape:
+
+```ts
+type RetailAiInsightsResponse = {
+  summary: {
+    branchId: number;
+    generatedAt: string;
+    healthScore: number;
+    totalSkus: number;
+    atRiskSkus: number;
+    outOfStockSkus: number;
+    negativeAvailableSkus: number;
+    inboundOpenPoUnits: number;
+    openPurchaseOrderCount: number;
+    openPurchaseOrderValue: number;
+    staleOpenPurchaseOrderCount: number;
+    blockedAutoSubmitDraftCount: number;
+  };
+  insights: Array<{
+    code: string;
+    severity: 'INFO' | 'WATCH' | 'CRITICAL';
+    title: string;
+    summary: string;
+    metric?: number | null;
+    action?: string | null;
+  }>;
+  productRisks: Array<{
+    productId: number;
+    stockStatus: 'HEALTHY' | 'LOW_STOCK' | 'REORDER_NOW' | 'OUT_OF_STOCK';
+    availableToSell: number;
+    safetyStock: number;
+    inboundOpenPo: number;
+    shortageToSafetyStock: number;
+    riskScore: number;
+    recommendedReorderUnits: number;
+    lastReceivedAt?: string | null;
+    lastPurchaseOrderId?: number | null;
+  }>;
+};
+```
+
+### Branch ops: accounting overview
+
+Endpoint: `GET /api/retail/v1/ops/accounting-overview?branchId=3&limit=20&accountingState=DISCREPANCY_REVIEW&supplierProfileId=14&slaBreachedOnly=true`
+
+CSV export: `GET /api/retail/v1/ops/accounting-overview/export?branchId=3&limit=20&accountingState=DISCREPANCY_REVIEW&priority=CRITICAL&supplierProfileId=14&slaBreachedOnly=true`
+
+- Entitlement required: `ACCOUNTING`
+- Purpose: return the branch accounting work queue for purchase-order commitments, receipt discrepancies, and reconciliation readiness.
+- Optional filters:
+  - `accountingState`
+  - `priority`
+  - `supplierProfileId`
+  - `slaBreachedOnly`
+- Response includes:
+  - summary counts and values for open commitments
+  - received orders pending reconciliation
+  - discrepancy review and approval queues
+  - priority counts for critical, high, and normal accounting work
+  - CSV export with one row per surfaced purchase-order queue item for downstream accounting handoff and audit trails
+  - per-order `priority` and `priorityReason` fields for triage
+  - per-purchase-order actions such as `VIEW_RECEIPT_EVENTS`, `APPROVE_DISCREPANCY`, and `MARK_RECONCILED`
+
+### Branch ops: accounting network summary
+
+Endpoint: `GET /api/retail/v1/ops/accounting-overview/network-summary?branchId=3&limit=10&priority=CRITICAL&accountingState=DISCREPANCY_REVIEW`
+
+CSV export: `GET /api/retail/v1/ops/accounting-overview/network-summary/export?branchId=3&limit=10&priority=CRITICAL&accountingState=DISCREPANCY_REVIEW`
+
+- Entitlement required: `ACCOUNTING`
+- Purpose: return a tenant-level accounting summary across the branches tied to the requested branch.
+- Response includes:
+  - optional `accountingState` filtering so HQ can isolate discrepancy review, open commitments, or reconciliation-specific branch queues
+  - optional `priority=CRITICAL|HIGH|NORMAL` branch filtering for HQ triage
+  - CSV export with one row per surfaced branch so HQ accounting teams can hand off queue state to downstream finance workflows
+  - tenant-wide totals for open commitments, discrepancy review, approved discrepancies, and reconcile-ready work
+  - aggregate accounting priority queue counts across tenant branches
+  - branch-level ranking by highest accounting priority so HQ operators can open the riskiest branch accounting queues first
+  - network alerts for discrepancy review risk and concentrated open-commitment exposure
+  - `VIEW_BRANCH_ACCOUNTING_OVERVIEW` actions for each surfaced branch
+
+### Branch ops: accounting payout exceptions
+
+Endpoint: `GET /api/retail/v1/ops/accounting-overview/payout-exceptions?branchId=3&limit=25&windowHours=168&exceptionType=AUTO_RETRY_REQUIRED&priority=CRITICAL`
+
+CSV export: `GET /api/retail/v1/ops/accounting-overview/payout-exceptions/export?branchId=3&limit=25&windowHours=168&exceptionType=AUTO_RETRY_REQUIRED&priority=CRITICAL`
+
+- Entitlement required: `ACCOUNTING`
+- Purpose: return a branch finance queue for failed auto vendor payouts and payout-debit reconciliation exceptions linked back to fulfilled branch orders.
+- Optional filters:
+  - `limit`
+  - `windowHours`
+  - `exceptionType=AUTO_RETRY_REQUIRED|RECONCILIATION_REQUIRED`
+  - `priority=CRITICAL|HIGH|NORMAL`
+- Response includes:
+  - summary counts for failed auto retries, reconciliation-required payout debits, priority levels, and amount at risk
+  - payout-level rows with vendor contact, order linkage, payout status, failure reason, and priority reason
+  - action hints to the existing admin wallet retry and reconcile endpoints plus the retail POS order drilldown
+  - CSV export with one row per surfaced payout exception for finance handoff and spreadsheet recovery workflows
+
+### Branch ops: accounting payout exception network summary
+
+Endpoint: `GET /api/retail/v1/ops/accounting-overview/payout-exceptions/network-summary?branchId=3&limit=10&windowHours=168&exceptionType=AUTO_RETRY_REQUIRED&priority=CRITICAL`
+
+CSV export: `GET /api/retail/v1/ops/accounting-overview/payout-exceptions/network-summary/export?branchId=3&limit=10&windowHours=168&exceptionType=AUTO_RETRY_REQUIRED&priority=CRITICAL`
+
+- Entitlement required: `ACCOUNTING`
+- Purpose: return a tenant-level payout-exception rollup so HQ finance teams can rank branches by payout recovery pressure.
+- Response includes:
+  - optional `exceptionType` filtering so HQ can isolate failed auto retries versus reconciliation-required payout debits
+  - optional `priority=CRITICAL|HIGH|NORMAL` branch filtering for finance triage
+  - tenant totals for payout exception counts, amount at risk, and priority queue mix across surfaced branches
+  - branch-level cards with highest priority, queue counts, oldest exception age, and `VIEW_BRANCH_ACCOUNTING_PAYOUT_EXCEPTIONS` actions
+  - network alerts for critical payout recovery pressure, failed auto payout backlog, and wallet-debit reconciliation backlog
+  - CSV export with one row per surfaced branch
+
+### Branch ops: desktop workbench
+
+Endpoint: `GET /api/retail/v1/ops/desktop-workbench?branchId=3&limit=10&windowHours=72&queueType=SYNC_QUEUE&priority=CRITICAL`
+
+CSV export: `GET /api/retail/v1/ops/desktop-workbench/export?branchId=3&limit=10&windowHours=72&queueType=SYNC_QUEUE&priority=CRITICAL`
+
+- Entitlement required: `DESKTOP_BACKOFFICE`
+- Purpose: return a branch desktop operations workbench combining POS sync failures, pending branch transfers, and inventory adjustment exceptions.
+- Optional filters:
+  - `limit`
+  - `windowHours`
+  - `queueType=SYNC_QUEUE|TRANSFER_QUEUE|STOCK_EXCEPTIONS`
+  - `priority=CRITICAL|HIGH|NORMAL`
+- Response includes:
+  - summary counts for failed/open POS sync jobs, rejected sync entries, pending transfers, and negative adjustments
+  - `alerts[]` for stale inbound transfer backlog, sync failures, and inventory drift
+  - CSV export with normalized rows across sync jobs, transfers, and stock exceptions so branch desktop teams can sort and share queue state externally
+  - `syncQueue[]` with `VIEW_SYNC_JOB` actions
+  - `transferQueue[]` with `VIEW_TRANSFER` actions
+  - `stockExceptions[]` with `VIEW_STOCK_MOVEMENTS` actions
+
+### Branch ops: desktop network summary
+
+Endpoint: `GET /api/retail/v1/ops/desktop-workbench/network-summary?branchId=3&limit=10&windowHours=72&queueType=STOCK_EXCEPTIONS&priority=HIGH`
+
+CSV export: `GET /api/retail/v1/ops/desktop-workbench/network-summary/export?branchId=3&limit=10&windowHours=72&queueType=STOCK_EXCEPTIONS&priority=HIGH`
+
+- Entitlement required: `DESKTOP_BACKOFFICE`
+- Purpose: return a tenant-level desktop operations summary across the branches tied to the requested branch.
+- Response includes:
+  - optional `queueType=SYNC_QUEUE|TRANSFER_QUEUE|STOCK_EXCEPTIONS` filtering for HQ pivots by work family
+  - optional `priority=CRITICAL|HIGH|NORMAL` branch filtering for HQ triage
+  - CSV export with one row per surfaced branch so desktop operations teams can circulate queue state outside the app
+  - tenant-wide totals for failed/open POS sync jobs, rejected sync entries, pending transfers, and negative inventory adjustments
+  - branch-level ranking by highest desktop priority so HQ operators can open the riskiest branch workbenches first
+  - network alerts for multi-branch sync failures, stale transfer backlog, and material adjustment drift
+  - `VIEW_BRANCH_DESKTOP_WORKBENCH` actions for each surfaced branch
+
+### Branch ops: desktop sync failed entries
+
+Endpoint: `GET /api/retail/v1/ops/desktop-workbench/sync-jobs/401/failed-entries?branchId=3&limit=25&priority=CRITICAL&movementType=TRANSFER&transferOnly=true`
+
+- Entitlement required: `DESKTOP_BACKOFFICE`
+- Purpose: inspect failed POS sync entries for a branch job without leaving the retail desktop surface.
+- Optional filters:
+  - `priority=CRITICAL|HIGH|NORMAL`
+  - `movementType`
+  - `transferOnly=true`
+- Response includes:
+  - job summary (`syncType`, `status`, rejected vs failed-entry counts)
+  - filtered triage counts for critical, high, normal, and transfer-linked failures
+  - `items[]` with per-entry error details, desktop triage priority, and per-entry actions
+  - actions for `VIEW_SYNC_JOB` and selective `REPLAY_SYNC_FAILURES`
+
+### Branch ops: desktop transfer detail
+
+Endpoint: `GET /api/retail/v1/ops/desktop-workbench/transfers/301?branchId=3&includeItems=true`
+
+- Entitlement required: `DESKTOP_BACKOFFICE`
+- Purpose: inspect a stale or pending branch transfer from the retail desktop surface.
+- Response includes:
+  - transfer summary (`direction`, `status`, `ageHours`, `priority`, timestamps)
+  - actionable transitions such as `DISPATCH_TRANSFER`, `RECEIVE_TRANSFER`, and `CANCEL_TRANSFER` when applicable
+  - role-aware action enablement based on platform roles or active branch-staff assignment on the requested branch
+  - optional transfer line items when `includeItems` is not set to `false`
+
+### Branch ops: desktop stock exception detail
+
+Endpoint: `GET /api/retail/v1/ops/desktop-workbench/stock-exceptions/201?branchId=3`
+
+- Entitlement required: `DESKTOP_BACKOFFICE`
+- Purpose: inspect a stock adjustment exception from the retail desktop surface.
+- Response includes:
+  - stock movement summary (`productId`, `quantityDelta`, `sourceType`, `sourceReferenceId`, `priority`, `ageHours`)
+  - actions for `VIEW_STOCK_MOVEMENTS`
+  - source-aware actions such as `VIEW_TRANSFER_DETAIL` when the exception is linked to a branch transfer
+
+Response shape:
+
+```ts
+type RetailAccountingOverviewResponse = {
+  summary: {
+    branchId: number;
+    openCommitmentCount: number;
+    openCommitmentValue: number;
+    receivedPendingReconciliationCount: number;
+    receivedPendingReconciliationValue: number;
+    discrepancyOpenCount: number;
+    discrepancyResolvedCount: number;
+    discrepancyApprovedCount: number;
+    reconcileReadyCount: number;
+    oldestOpenCommitmentAgeHours: number;
+    oldestReceivedPendingReconciliationAgeHours: number;
+    supplierExposure: Array<{
+      supplierProfileId: number;
+      openCommitmentCount: number;
+      openCommitmentValue: number;
+      receivedPendingReconciliationCount: number;
+      discrepancyOpenCount: number;
+      shortageUnitCount: number;
+      damagedUnitCount: number;
+      shortageValue: number;
+      damagedValue: number;
+    }>;
+    discrepancyOpenAgingBuckets: {
+      under24Hours: number;
+      between24And72Hours: number;
+      over72Hours: number;
+    };
+    discrepancyAwaitingApprovalAgingBuckets: {
+      under24Hours: number;
+      between24And72Hours: number;
+      over72Hours: number;
+    };
+  };
+  alerts: Array<{
+    code: string;
+    severity: 'INFO' | 'WATCH' | 'CRITICAL';
+    title: string;
+    summary: string;
+    metric: number | null;
+    action: string | null;
+  }>;
+  items: Array<{
+    purchaseOrderId: number;
+    orderNumber: string;
+    status: 'DRAFT' | 'SUBMITTED' | 'ACKNOWLEDGED' | 'SHIPPED' | 'RECEIVED';
+    supplierProfileId: number;
+    currency: string;
+    total: number;
+    outstandingUnitCount: number;
+    shortageUnitCount: number;
+    damagedUnitCount: number;
+    orderAgeHours: number;
+    accountingState:
+      | 'OPEN_COMMITMENT'
+      | 'RECEIVED_PENDING_RECONCILIATION'
+      | 'DISCREPANCY_REVIEW'
+      | 'DISCREPANCY_AWAITING_APPROVAL'
+      | 'READY_TO_RECONCILE';
+    lastDiscrepancyStatus: 'OPEN' | 'RESOLVED' | 'APPROVED' | null;
+    lastReceiptEventId: number | null;
+    lastReceiptEventAgeHours: number | null;
+    actions: Array<{
+      type: string;
+      method: 'GET' | 'PATCH';
+      path: string;
+      body: Record<string, any> | null;
+      enabled: boolean;
+    }>;
+  }>;
+};
+```
 
 ## Orders contract: Cart vs Buy Now (Flutter)
 

@@ -16,6 +16,9 @@ const configServiceMock = {
     if (key === 'EMAIL_USER') return 'user';
     if (key === 'EMAIL_PASS') return 'pass';
     if (key === 'EMAIL_VERIFY_ON_STARTUP') return 'true';
+    if (key === 'SITE_URL') return 'https://app.example.com';
+    if (key === 'API_URL') return 'https://api.example.com';
+    if (key === 'APP_SCHEME') return 'suuq://';
     return null;
   }),
 };
@@ -70,6 +73,33 @@ describe('EmailService', () => {
         to: 'test@suuqsapp.com',
         subject: 'Test',
       }),
+    );
+  });
+
+  it('sendProductRequestForwardedToVendor() should include app and web links', async () => {
+    await service.sendProductRequestForwardedToVendor(
+      {
+        email: 'vendor@suuqsapp.com',
+        displayName: 'Vendor One',
+        storeName: 'Vendor One Store',
+      },
+      { id: 42, title: 'Fresh Coffee Beans' },
+      'Please reply today.',
+    );
+
+    expect(queueMock.add).toHaveBeenCalledWith(
+      'send-email',
+      expect.objectContaining({
+        to: 'vendor@suuqsapp.com',
+        subject: 'New request from Suuq: Fresh Coffee Beans',
+        text: expect.stringContaining(
+          'Open in the Suuq app: suuq://request-detail?id=42',
+        ),
+        html: expect.stringContaining(
+          'https://api.example.com/api/open-app?target=suuq%3A%2F%2Frequest-detail%3Fid%3D42',
+        ),
+      }),
+      expect.anything(),
     );
   });
 });

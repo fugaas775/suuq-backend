@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { EntityManager, Repository } from 'typeorm';
 import { AuditLog } from './audit-log.entity';
 
 export type AuditFilters = {
@@ -80,16 +80,20 @@ export class AuditService {
     return qb;
   }
 
-  async log(entry: {
-    actorId?: number | null;
-    actorEmail?: string | null;
-    action: string;
-    targetType: string;
-    targetId: number;
-    reason?: string | null;
-    meta?: Record<string, any> | null;
-  }) {
-    const log = this.repo.create({
+  async log(
+    entry: {
+      actorId?: number | null;
+      actorEmail?: string | null;
+      action: string;
+      targetType: string;
+      targetId: number;
+      reason?: string | null;
+      meta?: Record<string, any> | null;
+    },
+    manager?: EntityManager,
+  ) {
+    const repo = manager?.getRepository(AuditLog) ?? this.repo;
+    const log = repo.create({
       actorId: entry.actorId ?? null,
       actorEmail: entry.actorEmail ?? null,
       action: entry.action,
@@ -98,7 +102,7 @@ export class AuditService {
       reason: entry.reason ?? null,
       meta: entry.meta ?? null,
     });
-    return this.repo.save(log);
+    return repo.save(log);
   }
 
   async listForTarget(targetType: string, targetId: number, limit = 20) {

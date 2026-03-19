@@ -53,6 +53,8 @@ import { Conversation } from '../chat/entities/conversation.entity';
 import { CreditService } from '../credit/credit.service';
 import { PromotionsService } from '../promotions/promotions.service';
 import { EbirrTransaction } from '../payments/entities/ebirr-transaction.entity';
+import { Branch } from '../branches/entities/branch.entity';
+import { InventoryLedgerService } from '../branches/inventory-ledger.service';
 import { MoreThan, In } from 'typeorm';
 import { subMinutes } from 'date-fns';
 import { buildOrderStatusNotification } from './order-notifications.util';
@@ -486,6 +488,8 @@ export class OrdersService {
     private readonly payoutLogRepository: Repository<PayoutLog>,
     @InjectRepository(EbirrTransaction)
     private readonly ebirrTransactionRepository: Repository<EbirrTransaction>,
+    @InjectRepository(Branch)
+    private readonly branchesRepository: Repository<Branch>,
     private readonly productsService: ProductsService,
     private readonly cartService: CartService,
     private readonly mpesaService: MpesaService,
@@ -500,6 +504,7 @@ export class OrdersService {
     private readonly walletService: WalletService,
     private readonly creditService: CreditService,
     private readonly promotionsService: PromotionsService,
+    private readonly inventoryLedgerService: InventoryLedgerService,
   ) {}
 
   private async sendConfirmationForOrder(orderId: number) {
@@ -971,6 +976,7 @@ export class OrdersService {
       ...this.getCheckoutUiDirectives(mapped),
       paymentLifecycleState: this.derivePaymentLifecycleState(mapped),
       id: mapped.id,
+      fulfillmentBranchId: mapped.fulfillmentBranchId ?? null,
       total: mapped.total,
       userId: mapped.user?.id,
       proofOfDeliveryUrl: mapped.proofOfDeliveryUrl ?? null,
@@ -1052,6 +1058,7 @@ export class OrdersService {
   async cancelOrderForAdmin(orderId: number): Promise<Order> {
     const order = await this.orderRepository.findOne({
       where: { id: orderId },
+      relations: ['items'],
     });
     if (!order) {
       throw new NotFoundException('Order not found');
@@ -1065,7 +1072,7 @@ export class OrdersService {
       throw new BadRequestException('Order cannot be cancelled');
     }
     order.status = OrderStatus.CANCELLED;
-    // TODO: Add restocking logic here if needed
+    await this.releaseOnlineReservation(order);
     await this.orderRepository.save(order);
     await this.notifyOrderStatusChange(order, OrderStatus.CANCELLED);
     return order;
@@ -1311,6 +1318,18 @@ export class OrdersService {
     createOrderDto: CreateOrderDto,
     currency?: string,
   ): Promise<any> {
+    if (createOrderDto.fulfillmentBranchId != null) {
+      const branch = await this.branchesRepository.findOne({
+        where: { id: createOrderDto.fulfillmentBranchId },
+      });
+
+      if (!branch) {
+        throw new BadRequestException(
+          `Fulfillment branch ${createOrderDto.fulfillmentBranchId} not found.`,
+        );
+      }
+    }
+
     const checkoutMode = String(createOrderDto.checkoutMode || '')
       .trim()
       .toUpperCase()
@@ -1668,6 +1687,7 @@ export class OrdersService {
       newOrder = this.orderRepository.create({
         user: { id: userId } as User,
         items: orderItems,
+        fulfillmentBranchId: createOrderDto.fulfillmentBranchId ?? null,
         total: total,
         couponCode: submittedCoupon,
         discountAmount,
@@ -1680,6 +1700,7 @@ export class OrdersService {
         exchangeRate: exchangeRate,
       });
       const savedOrder = await this.orderRepository.save(newOrder);
+      await this.applyOnlineReservation(savedOrder);
       if (!isDirectOrder) await this.cartService.clearCart(userId);
       this.sendConfirmationForOrder(savedOrder.id);
       return this.mapOrder(savedOrder, currency);
@@ -1692,6 +1713,7 @@ export class OrdersService {
       newOrder = this.orderRepository.create({
         user: { id: userId } as User,
         items: orderItems,
+        fulfillmentBranchId: createOrderDto.fulfillmentBranchId ?? null,
         total: total,
         couponCode: submittedCoupon,
         discountAmount,
@@ -1703,6 +1725,7 @@ export class OrdersService {
         exchangeRate: exchangeRate,
       });
       const savedOrder = await this.orderRepository.save(newOrder);
+      await this.applyOnlineReservation(savedOrder);
       await this.mpesaService.initiateStkPush(
         total,
         phoneNumber,
@@ -1725,6 +1748,7 @@ export class OrdersService {
       newOrder = this.orderRepository.create({
         user: { id: userId } as User,
         items: orderItems,
+        fulfillmentBranchId: createOrderDto.fulfillmentBranchId ?? null,
         total: total,
         shippingAddress: createOrderDto.shippingAddress,
         paymentMethod: PaymentMethod.TELEBIRR,
@@ -1771,6 +1795,7 @@ export class OrdersService {
         exchangeRate: exchangeRate,
       });
       const savedOrder = await this.orderRepository.save(newOrder);
+      await this.applyOnlineReservation(savedOrder);
 
       try {
         await this.creditService.useCredit(
@@ -1881,6 +1906,7 @@ export class OrdersService {
       newOrder = this.orderRepository.create({
         user: { id: userId } as User,
         items: orderItems,
+        fulfillmentBranchId: createOrderDto.fulfillmentBranchId ?? null,
         total: total,
         couponCode: submittedCoupon,
         discountAmount,
@@ -1892,6 +1918,7 @@ export class OrdersService {
         exchangeRate: exchangeRate,
       });
       const savedOrder = await this.orderRepository.save(newOrder);
+      await this.applyOnlineReservation(savedOrder);
 
       // Normalize to 2519XXXXXXXX and fail fast instead of silently defaulting server-side
       let formattedPhone = phoneNumber.replace(/\+/g, '');
@@ -2226,6 +2253,7 @@ export class OrdersService {
       if (order && order.paymentStatus !== PaymentStatus.PAID) {
         order.status = OrderStatus.CANCELLED;
         order.paymentStatus = PaymentStatus.FAILED;
+        await this.releaseOnlineReservation(order);
         await this.orderRepository.save(order);
         await this.notifyOrderStatusChange(order, OrderStatus.CANCELLED);
       }
@@ -2621,6 +2649,14 @@ export class OrdersService {
     });
     const aggregate = this.computeAggregateStatus(freshItems);
     if (item.order.status !== aggregate) {
+      if (
+        aggregate === OrderStatus.DELIVERED ||
+        aggregate === OrderStatus.CANCELLED ||
+        aggregate === OrderStatus.CANCELLED_BY_BUYER ||
+        aggregate === OrderStatus.CANCELLED_BY_SELLER
+      ) {
+        await this.releaseOnlineReservation(item.order);
+      }
       item.order.status = aggregate;
       await this.orderRepository.save(item.order);
       await this.notifyOrderStatusChange(item.order, aggregate);
@@ -3079,6 +3115,7 @@ export class OrdersService {
 
     // Release to Vendor: Mark as DELIVERED
     dispute.order.status = OrderStatus.DELIVERED;
+    await this.releaseOnlineReservation(dispute.order);
     await this.orderRepository.save(dispute.order);
 
     this.logger.log(
@@ -3142,6 +3179,7 @@ export class OrdersService {
     await this.disputeRepository.save(dispute);
 
     order.status = OrderStatus.CANCELLED;
+    await this.releaseOnlineReservation(order);
     await this.orderRepository.save(order);
     await this.notifyOrderStatusChange(order, OrderStatus.CANCELLED);
 
@@ -3149,5 +3187,51 @@ export class OrdersService {
       `Dispute ${dispute.id} refunded (Buyer Win). Order ${order.id} cancelled.`,
     );
     return dispute;
+  }
+
+  private async applyOnlineReservation(
+    order: Pick<
+      Order,
+      'fulfillmentBranchId' | 'items' | 'onlineReservationReleasedAt'
+    >,
+  ): Promise<void> {
+    if (!order.fulfillmentBranchId || !order.items?.length) {
+      return;
+    }
+
+    order.onlineReservationReleasedAt = null;
+
+    for (const item of order.items) {
+      await this.inventoryLedgerService.adjustReservedOnline({
+        branchId: order.fulfillmentBranchId,
+        productId: item.product.id,
+        quantityDelta: item.quantity,
+      });
+    }
+  }
+
+  private async releaseOnlineReservation(
+    order: Pick<
+      Order,
+      'fulfillmentBranchId' | 'items' | 'onlineReservationReleasedAt'
+    >,
+  ): Promise<void> {
+    if (
+      !order.fulfillmentBranchId ||
+      !order.items?.length ||
+      order.onlineReservationReleasedAt
+    ) {
+      return;
+    }
+
+    for (const item of order.items) {
+      await this.inventoryLedgerService.adjustReservedOnline({
+        branchId: order.fulfillmentBranchId,
+        productId: item.product?.id,
+        quantityDelta: -item.quantity,
+      });
+    }
+
+    order.onlineReservationReleasedAt = new Date();
   }
 }

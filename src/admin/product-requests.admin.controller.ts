@@ -24,6 +24,7 @@ import { AdminForwardToAllVerifiedDto } from './dto/admin-forward-all-verified.d
 import { SkipThrottle } from '@nestjs/throttler';
 import { NotificationsService } from '../notifications/notifications.service';
 import { User, VerificationStatus } from '../users/entities/user.entity';
+import { EmailService } from '../email/email.service';
 
 @UseGuards(AuthGuard('jwt'), RolesGuard)
 @SkipThrottle()
@@ -37,6 +38,7 @@ export class AdminProductRequestsController {
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
     private readonly notifications: NotificationsService,
+    private readonly emailService: EmailService,
   ) {}
 
   @Get()
@@ -226,9 +228,12 @@ export class AdminProductRequestsController {
     });
 
     // Notify vendors about the forwarded request (fire-and-forget)
-    this.notifyVendorsOnForward(id, request?.title, validToCreate).catch(
-      () => undefined,
-    );
+    this.notifyVendorsOnForward(
+      id,
+      request?.title,
+      validToCreate,
+      dto.note,
+    ).catch(() => undefined);
 
     return {
       ...request,
@@ -308,7 +313,7 @@ export class AdminProductRequestsController {
     await this.forwardRepo.save(newForwards);
 
     // 4. Notify
-    this.notifyVendorsOnForward(id, request?.title, toCreate).catch(
+    this.notifyVendorsOnForward(id, request?.title, toCreate, dto.note).catch(
       () => undefined,
     );
 
@@ -369,22 +374,40 @@ export class AdminProductRequestsController {
     requestId: number,
     title: string | undefined,
     vendorIds: number[],
+    note?: string | null,
   ) {
     if (!vendorIds?.length) return;
     const body = title
       ? `New request forwarded: ${title}`
       : 'A product request was forwarded to you';
     const titleText = 'New product request';
-    for (const vendorId of vendorIds) {
-      await this.notifications.sendToUser({
-        userId: vendorId,
-        title: titleText,
-        body,
-        data: {
-          type: 'PRODUCT_REQUEST_FORWARD',
-          requestId: String(requestId),
-        },
-      });
-    }
+    const vendors = await this.userRepo.find({
+      where: { id: In(vendorIds) },
+      select: ['id', 'email', 'displayName', 'storeName'],
+    });
+    const vendorsById = new Map(vendors.map((vendor) => [vendor.id, vendor]));
+
+    await Promise.allSettled(
+      vendorIds.map(async (vendorId) => {
+        await this.notifications.sendToUser({
+          userId: vendorId,
+          title: titleText,
+          body,
+          data: {
+            type: 'PRODUCT_REQUEST_FORWARD',
+            requestId: String(requestId),
+          },
+        });
+
+        const vendor = vendorsById.get(vendorId);
+        if (!vendor?.email) return;
+
+        await this.emailService.sendProductRequestForwardedToVendor(
+          vendor,
+          { id: requestId, title },
+          note,
+        );
+      }),
+    );
   }
 }

@@ -24,6 +24,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { NotificationType } from '../notifications/entities/notification.entity';
 import { buildOrderStatusNotification } from '../orders/order-notifications.util';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
+import { InventoryLedgerService } from '../branches/inventory-ledger.service';
 
 type DeliveryAttentionFilter = 'all' | 'needs_attention';
 
@@ -614,6 +615,7 @@ export class DelivererService {
     private readonly currencyService: CurrencyService,
     private readonly notificationsService: NotificationsService,
     private readonly realtimeGateway: RealtimeGateway,
+    private readonly inventoryLedgerService: InventoryLedgerService,
   ) {}
 
   @Cron(CronExpression.EVERY_10_MINUTES)
@@ -1240,6 +1242,8 @@ export class DelivererService {
    * Handles: Socket cleanup, Emails, Sales Count, Wallet Credits.
    */
   private async onOrderDelivered(order: Order) {
+    await this.releaseOnlineReservation(order);
+
     // 0. Clean up Socket Room
     await this.realtimeGateway.notifyOrderComplete(order.id);
 
@@ -1379,6 +1383,32 @@ export class DelivererService {
         }
       }
     }
+  }
+
+  private async releaseOnlineReservation(order: Order): Promise<void> {
+    if (
+      !order.fulfillmentBranchId ||
+      !Array.isArray(order.items) ||
+      order.items.length === 0 ||
+      order.onlineReservationReleasedAt
+    ) {
+      return;
+    }
+
+    for (const item of order.items) {
+      if (!item.product?.id) {
+        continue;
+      }
+
+      await this.inventoryLedgerService.adjustReservedOnline({
+        branchId: order.fulfillmentBranchId,
+        productId: item.product.id,
+        quantityDelta: -item.quantity,
+      });
+    }
+
+    order.onlineReservationReleasedAt = new Date();
+    await this.orderRepository.save(order);
   }
 
   async updateDeliveryStatus(

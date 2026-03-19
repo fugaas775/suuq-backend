@@ -35,6 +35,11 @@ class OrderItemDto {
 }
 
 export class CreateOrderDto {
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  fulfillmentBranchId?: number;
+
   @IsObject()
   @ValidateNested()
   @Type(() => ShippingAddressDto)

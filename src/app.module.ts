@@ -69,6 +69,8 @@ import { SupplierOffersModule } from './supplier-offers/supplier-offers.module';
 import { PurchaseOrdersModule } from './purchase-orders/purchase-orders.module';
 import { PartnerCredentialsModule } from './partner-credentials/partner-credentials.module';
 import { PosSyncModule } from './pos-sync/pos-sync.module';
+import { ProductAliasesModule } from './product-aliases/product-aliases.module';
+import { RetailModule } from './retail/retail.module';
 
 @Module({
   imports: [
@@ -248,7 +250,9 @@ import { PosSyncModule } from './pos-sync/pos-sync.module';
     SupplierOffersModule,
     PurchaseOrdersModule,
     PartnerCredentialsModule,
+    ProductAliasesModule,
     PosSyncModule,
+    RetailModule,
   ],
   controllers: [AppController],
   // Apply rate limiting globally
