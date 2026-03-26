@@ -4,6 +4,8 @@ import { AuditModule } from '../audit/audit.module';
 import { BranchesModule } from '../branches/branches.module';
 import { Branch } from '../branches/entities/branch.entity';
 import { Product } from '../products/entities/product.entity';
+import { ProcurementWebhooksModule } from '../procurement-webhooks/procurement-webhooks.module';
+import { RealtimeModule } from '../realtime/realtime.module';
 import { SupplierOffer } from '../supplier-offers/entities/supplier-offer.entity';
 import { SupplierProfile } from '../suppliers/entities/supplier-profile.entity';
 import {
@@ -18,6 +20,8 @@ import { PurchaseOrdersService } from './purchase-orders.service';
   imports: [
     AuditModule,
     forwardRef(() => BranchesModule),
+    ProcurementWebhooksModule,
+    RealtimeModule,
     TypeOrmModule.forFeature([
       PurchaseOrder,
       PurchaseOrderItem,

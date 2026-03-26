@@ -7,6 +7,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { SearchLog } from '../search/entities/search-log.entity';
 import { SkipThrottle } from '@nestjs/throttler';
+import { SearchLogQueryDto } from './dto/search-log-query.dto';
 
 @UseGuards(AuthGuard('jwt'), RolesGuard)
 @SkipThrottle()
@@ -19,21 +20,19 @@ export class AdminSearchLogController {
 
   @Get()
   @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
-  async list(
-    @Query('q') q?: string,
-    @Query('source') source?: string,
-    @Query('limit') limit?: string,
-  ) {
-    const take = limit ? Math.min(Number(limit) || 50, 200) : 50;
+  async list(@Query() query: SearchLogQueryDto) {
+    const take = query.limit ?? 50;
     const qb = this.searchLogRepo
       .createQueryBuilder('log')
       .orderBy('log.created_at', 'DESC')
       .take(take);
-    if (q && q.trim()) {
-      qb.andWhere('log.query ILIKE :q', { q: `%${q.trim()}%` });
+    const searchTerm = query.q?.trim();
+    if (searchTerm) {
+      qb.andWhere('log.query ILIKE :q', { q: `%${searchTerm}%` });
     }
-    if (source && source.trim()) {
-      qb.andWhere('log.source = :source', { source: source.trim() });
+    const source = query.source?.trim();
+    if (source) {
+      qb.andWhere('log.source = :source', { source });
     }
     return qb.getMany();
   }

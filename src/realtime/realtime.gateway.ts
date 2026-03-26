@@ -22,6 +22,9 @@ import { RedisService } from '../redis/redis.service';
 export class RealtimeGateway
   implements OnGatewayConnection, OnGatewayDisconnect
 {
+  private static readonly PROCUREMENT_INTERVENTIONS_ROOM =
+    'procurement_interventions';
+
   @WebSocketServer()
   server!: Server;
 
@@ -114,5 +117,67 @@ export class RealtimeGateway
     // Clean up Redis key immediately
     const redisKey = `location:order:${orderId}`;
     await this.redisService.del(redisKey);
+  }
+
+  @SubscribeMessage('joinProcurementInterventionsRoom')
+  handleJoinProcurementInterventionsRoom(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: { userId?: number },
+  ) {
+    // eslint-disable-next-line @typescript-eslint/no-floating-promises
+    client.join(RealtimeGateway.PROCUREMENT_INTERVENTIONS_ROOM);
+    this.logger.debug(
+      `User ${payload.userId ?? 'unknown'} joined room ${RealtimeGateway.PROCUREMENT_INTERVENTIONS_ROOM}`,
+    );
+    return {
+      event: 'joinedRoom',
+      room: RealtimeGateway.PROCUREMENT_INTERVENTIONS_ROOM,
+    };
+  }
+
+  @SubscribeMessage('leaveProcurementInterventionsRoom')
+  handleLeaveProcurementInterventionsRoom(@ConnectedSocket() client: Socket) {
+    // eslint-disable-next-line @typescript-eslint/no-floating-promises
+    client.leave(RealtimeGateway.PROCUREMENT_INTERVENTIONS_ROOM);
+    this.logger.debug(
+      `Client ${client.id} left room ${RealtimeGateway.PROCUREMENT_INTERVENTIONS_ROOM}`,
+    );
+  }
+
+  notifyProcurementInterventionUpdated(payload: {
+    supplierProfileId: number;
+    branchId: number;
+    action: string;
+    actorId: number | null;
+    actorEmail: string | null;
+    assigneeUserId: number | null;
+    note: string | null;
+    occurredAt: string;
+    intervention: Record<string, unknown>;
+  }) {
+    this.server
+      .to(RealtimeGateway.PROCUREMENT_INTERVENTIONS_ROOM)
+      .emit('procurementInterventionUpdated', payload);
+  }
+
+  notifyProcurementPurchaseOrderUpdated(payload: {
+    purchaseOrderId: number;
+    branchId: number;
+    supplierProfileId: number;
+    action: string;
+    previousStatus: string | null;
+    currentStatus: string;
+    actorId: number | null;
+    actorEmail: string | null;
+    reason: string | null;
+    trackingReference: string | null;
+    occurredAt: string;
+    metadata?: Record<string, unknown> | null;
+    receiptSummary?: Record<string, unknown>[] | null;
+    purchaseOrder: Record<string, unknown>;
+  }) {
+    this.server
+      .to(RealtimeGateway.PROCUREMENT_INTERVENTIONS_ROOM)
+      .emit('procurementPurchaseOrderUpdated', payload);
   }
 }

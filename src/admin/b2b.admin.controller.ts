@@ -2,11 +2,13 @@ import {
   Body,
   Controller,
   Get,
+  Header,
   Param,
   ParseIntPipe,
   Patch,
   Query,
   Req,
+  Res,
   UseGuards,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
@@ -17,6 +19,7 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { SkipThrottle } from '@nestjs/throttler';
+import { Response } from 'express';
 import { AuditService } from '../audit/audit.service';
 import { RolesGuard } from '../auth/roles.guard';
 import { UserRole } from '../auth/roles.enum';
@@ -28,8 +31,22 @@ import { PurchaseOrderStatus } from '../purchase-orders/entities/purchase-order.
 import { ApprovePurchaseOrderReceiptDiscrepancyDto } from '../purchase-orders/dto/approve-purchase-order-receipt-discrepancy.dto';
 import { PartnerCredentialsService } from '../partner-credentials/partner-credentials.service';
 import { SuppliersService } from '../suppliers/suppliers.service';
+import { ActOnSupplierProcurementBranchInterventionDto } from '../suppliers/dto/act-on-supplier-procurement-branch-intervention.dto';
 import { AdminB2bService } from './b2b.admin.service';
 import { SupplierOnboardingStatus } from '../suppliers/entities/supplier-profile.entity';
+import { SupplierProcurementScorecardQueryDto } from '../suppliers/dto/supplier-procurement-scorecard-query.dto';
+import {
+  SupplierProcurementBranchInterventionDashboardResponseDto,
+  SupplierProcurementBranchInterventionOverviewResponseDto,
+  SupplierProcurementBranchInterventionResponseDto,
+} from '../suppliers/dto/supplier-procurement-branch-intervention-response.dto';
+import { SupplierProcurementBranchInterventionDashboardQueryDto } from '../suppliers/dto/supplier-procurement-branch-intervention-dashboard-query.dto';
+import { SupplierProcurementBranchInterventionQueryDto } from '../suppliers/dto/supplier-procurement-branch-intervention-query.dto';
+import { SupplierProcurementBranchInterventionDetailQueryDto } from '../suppliers/dto/supplier-procurement-branch-intervention-detail-query.dto';
+import { SupplierProcurementBranchInterventionDetailResponseDto } from '../suppliers/dto/supplier-procurement-branch-intervention-detail-response.dto';
+import { SupplierProcurementScorecardResponseDto } from '../suppliers/dto/supplier-procurement-scorecard-response.dto';
+import { SupplierProcurementTrendQueryDto } from '../suppliers/dto/supplier-procurement-trend-query.dto';
+import { SupplierProcurementTrendResponseDto } from '../suppliers/dto/supplier-procurement-trend-response.dto';
 import { AdminSupplierReviewDto } from './dto/admin-supplier-review.dto';
 import { BranchTransferPageResponseDto } from './dto/branch-transfer-page-response.dto';
 import { BranchTransferQueryDto } from './dto/branch-transfer-query.dto';
@@ -43,12 +60,14 @@ import { PosSyncJobResponseDto } from './dto/pos-sync-job-response.dto';
 import { PurchaseOrderPageResponseDto } from './dto/purchase-order-page-response.dto';
 import { PurchaseOrderQueryDto } from './dto/purchase-order-query.dto';
 import { AdminPurchaseOrderReevaluationResponseDto } from './dto/purchase-order-response.dto';
+import { PurchaseOrderReceiptEventQueryDto } from './dto/purchase-order-receipt-event-query.dto';
 import { PurchaseOrderReceiptEventPageResponseDto } from './dto/purchase-order-receipt-event-page-response.dto';
 import { RotatePartnerCredentialBranchDto } from './dto/rotate-partner-credential-branch.dto';
 import { RevokePartnerCredentialDto } from './dto/revoke-partner-credential.dto';
 import { StockMovementPageResponseDto } from './dto/stock-movement-page-response.dto';
 import { StockMovementQueryDto } from './dto/stock-movement-query.dto';
 import { SupplierReviewQueueQueryDto } from './dto/supplier-review-queue-query.dto';
+import { AuditQueryDto } from './dto/audit-query.dto';
 import {
   PosSyncStatus,
   PosSyncType,
@@ -80,17 +99,445 @@ export class AdminB2bController {
     );
   }
 
+  @Get('supplier-profiles/procurement-scorecard')
+  @ApiOperation({
+    summary:
+      'Rank suppliers by procurement SLA, fill-rate, and discrepancy performance',
+  })
+  @ApiQuery({ name: 'windowDays', type: Number, required: false })
+  @ApiQuery({ name: 'limit', type: Number, required: false })
+  @ApiQuery({ name: 'includeInactive', type: Boolean, required: false })
+  @ApiQuery({ name: 'supplierProfileIds', type: String, required: false })
+  @ApiQuery({ name: 'branchIds', type: String, required: false })
+  @ApiQuery({ name: 'statuses', type: String, required: false })
+  @ApiQuery({ name: 'latestActions', type: String, required: false })
+  @ApiQuery({ name: 'actionAgeBuckets', type: String, required: false })
+  @ApiQuery({ name: 'sortBy', type: String, required: false })
+  @ApiQuery({ name: 'assigneeUserIds', type: String, required: false })
+  @ApiQuery({ name: 'includeUntriaged', type: Boolean, required: false })
+  @ApiQuery({ name: 'from', type: String, required: false })
+  @ApiQuery({ name: 'to', type: String, required: false })
+  @ApiQuery({
+    name: 'onboardingStatus',
+    enum: SupplierOnboardingStatus,
+    required: false,
+  })
+  @ApiOkResponse({ type: SupplierProcurementScorecardResponseDto })
+  procurementScorecard(@Query() query: SupplierProcurementScorecardQueryDto) {
+    return this.suppliersService.listProcurementScorecard(query);
+  }
+
+  @Get('supplier-profiles/procurement-scorecard/export')
+  @Header('Content-Type', 'text/csv; charset=utf-8')
+  @ApiOperation({ summary: 'Export the supplier procurement scorecard as CSV' })
+  @ApiQuery({ name: 'windowDays', type: Number, required: false })
+  @ApiQuery({ name: 'limit', type: Number, required: false })
+  @ApiQuery({ name: 'includeInactive', type: Boolean, required: false })
+  @ApiQuery({ name: 'supplierProfileIds', type: String, required: false })
+  @ApiQuery({ name: 'branchIds', type: String, required: false })
+  @ApiQuery({ name: 'statuses', type: String, required: false })
+  @ApiQuery({ name: 'from', type: String, required: false })
+  @ApiQuery({ name: 'to', type: String, required: false })
+  @ApiQuery({
+    name: 'onboardingStatus',
+    enum: SupplierOnboardingStatus,
+    required: false,
+  })
+  async procurementScorecardExport(
+    @Query() query: SupplierProcurementScorecardQueryDto,
+    @Res() res: Response,
+  ) {
+    const csv =
+      await this.suppliersService.exportProcurementScorecardCsv(query);
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="supplier_procurement_scorecard_${Date.now()}.csv"`,
+    );
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(csv);
+  }
+
+  @Get('supplier-profiles/procurement-branch-interventions/dashboard')
+  @ApiOperation({
+    summary:
+      'Return procurement intervention queue rollups for dashboards without the full intervention row payload',
+  })
+  @ApiQuery({ name: 'windowDays', type: Number, required: false })
+  @ApiQuery({ name: 'limit', type: Number, required: false })
+  @ApiQuery({ name: 'includeInactive', type: Boolean, required: false })
+  @ApiQuery({ name: 'supplierProfileIds', type: String, required: false })
+  @ApiQuery({ name: 'branchIds', type: String, required: false })
+  @ApiQuery({ name: 'statuses', type: String, required: false })
+  @ApiQuery({ name: 'latestActions', type: String, required: false })
+  @ApiQuery({ name: 'actionAgeBuckets', type: String, required: false })
+  @ApiQuery({ name: 'sortBy', type: String, required: false })
+  @ApiQuery({ name: 'assigneeUserIds', type: String, required: false })
+  @ApiQuery({ name: 'includeUntriaged', type: Boolean, required: false })
+  @ApiQuery({ name: 'supplierRollupSortBy', type: String, required: false })
+  @ApiQuery({ name: 'branchRollupSortBy', type: String, required: false })
+  @ApiQuery({ name: 'supplierRollupLimit', type: Number, required: false })
+  @ApiQuery({ name: 'branchRollupLimit', type: Number, required: false })
+  @ApiQuery({ name: 'from', type: String, required: false })
+  @ApiQuery({ name: 'to', type: String, required: false })
+  @ApiQuery({
+    name: 'onboardingStatus',
+    enum: SupplierOnboardingStatus,
+    required: false,
+  })
+  @ApiOkResponse({
+    type: SupplierProcurementBranchInterventionDashboardResponseDto,
+  })
+  procurementBranchInterventionsDashboard(
+    @Query() query: SupplierProcurementBranchInterventionDashboardQueryDto,
+  ) {
+    return this.suppliersService.getProcurementBranchInterventionDashboard(
+      query,
+    );
+  }
+
+  @Get('supplier-profiles/procurement-branch-interventions/dashboard/overview')
+  @ApiOperation({
+    summary:
+      'Return compact procurement intervention KPI cards with the top supplier and branch hotspots',
+  })
+  @ApiQuery({ name: 'windowDays', type: Number, required: false })
+  @ApiQuery({ name: 'limit', type: Number, required: false })
+  @ApiQuery({ name: 'includeInactive', type: Boolean, required: false })
+  @ApiQuery({ name: 'supplierProfileIds', type: String, required: false })
+  @ApiQuery({ name: 'branchIds', type: String, required: false })
+  @ApiQuery({ name: 'statuses', type: String, required: false })
+  @ApiQuery({ name: 'latestActions', type: String, required: false })
+  @ApiQuery({ name: 'actionAgeBuckets', type: String, required: false })
+  @ApiQuery({ name: 'sortBy', type: String, required: false })
+  @ApiQuery({ name: 'assigneeUserIds', type: String, required: false })
+  @ApiQuery({ name: 'includeUntriaged', type: Boolean, required: false })
+  @ApiQuery({ name: 'supplierRollupSortBy', type: String, required: false })
+  @ApiQuery({ name: 'branchRollupSortBy', type: String, required: false })
+  @ApiQuery({ name: 'supplierRollupLimit', type: Number, required: false })
+  @ApiQuery({ name: 'branchRollupLimit', type: Number, required: false })
+  @ApiQuery({ name: 'from', type: String, required: false })
+  @ApiQuery({ name: 'to', type: String, required: false })
+  @ApiQuery({
+    name: 'onboardingStatus',
+    enum: SupplierOnboardingStatus,
+    required: false,
+  })
+  @ApiOkResponse({
+    type: SupplierProcurementBranchInterventionOverviewResponseDto,
+  })
+  procurementBranchInterventionsDashboardOverview(
+    @Query() query: SupplierProcurementBranchInterventionDashboardQueryDto,
+  ) {
+    return this.suppliersService.getProcurementBranchInterventionOverview(
+      query,
+    );
+  }
+
+  @Get(
+    'supplier-profiles/procurement-branch-interventions/dashboard/overview/export',
+  )
+  @Header('Content-Type', 'text/csv; charset=utf-8')
+  @ApiOperation({
+    summary: 'Export compact procurement intervention overview cards as CSV',
+  })
+  @ApiQuery({ name: 'windowDays', type: Number, required: false })
+  @ApiQuery({ name: 'limit', type: Number, required: false })
+  @ApiQuery({ name: 'includeInactive', type: Boolean, required: false })
+  @ApiQuery({ name: 'supplierProfileIds', type: String, required: false })
+  @ApiQuery({ name: 'branchIds', type: String, required: false })
+  @ApiQuery({ name: 'statuses', type: String, required: false })
+  @ApiQuery({ name: 'latestActions', type: String, required: false })
+  @ApiQuery({ name: 'actionAgeBuckets', type: String, required: false })
+  @ApiQuery({ name: 'sortBy', type: String, required: false })
+  @ApiQuery({ name: 'assigneeUserIds', type: String, required: false })
+  @ApiQuery({ name: 'includeUntriaged', type: Boolean, required: false })
+  @ApiQuery({ name: 'supplierRollupSortBy', type: String, required: false })
+  @ApiQuery({ name: 'branchRollupSortBy', type: String, required: false })
+  @ApiQuery({ name: 'supplierRollupLimit', type: Number, required: false })
+  @ApiQuery({ name: 'branchRollupLimit', type: Number, required: false })
+  @ApiQuery({ name: 'from', type: String, required: false })
+  @ApiQuery({ name: 'to', type: String, required: false })
+  @ApiQuery({
+    name: 'onboardingStatus',
+    enum: SupplierOnboardingStatus,
+    required: false,
+  })
+  async procurementBranchInterventionsDashboardOverviewExport(
+    @Query() query: SupplierProcurementBranchInterventionDashboardQueryDto,
+    @Res() res: Response,
+  ) {
+    const csv =
+      await this.suppliersService.exportProcurementBranchInterventionOverviewCsv(
+        query,
+      );
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="supplier_procurement_branch_intervention_overview_${Date.now()}.csv"`,
+    );
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(csv);
+  }
+
+  @Get('supplier-profiles/procurement-branch-interventions/dashboard/export')
+  @Header('Content-Type', 'text/csv; charset=utf-8')
+  @ApiOperation({
+    summary: 'Export procurement intervention dashboard rollups as CSV',
+  })
+  @ApiQuery({ name: 'windowDays', type: Number, required: false })
+  @ApiQuery({ name: 'limit', type: Number, required: false })
+  @ApiQuery({ name: 'includeInactive', type: Boolean, required: false })
+  @ApiQuery({ name: 'supplierProfileIds', type: String, required: false })
+  @ApiQuery({ name: 'branchIds', type: String, required: false })
+  @ApiQuery({ name: 'statuses', type: String, required: false })
+  @ApiQuery({ name: 'latestActions', type: String, required: false })
+  @ApiQuery({ name: 'actionAgeBuckets', type: String, required: false })
+  @ApiQuery({ name: 'sortBy', type: String, required: false })
+  @ApiQuery({ name: 'assigneeUserIds', type: String, required: false })
+  @ApiQuery({ name: 'includeUntriaged', type: Boolean, required: false })
+  @ApiQuery({ name: 'supplierRollupLimit', type: Number, required: false })
+  @ApiQuery({ name: 'branchRollupLimit', type: Number, required: false })
+  @ApiQuery({ name: 'from', type: String, required: false })
+  @ApiQuery({ name: 'to', type: String, required: false })
+  @ApiQuery({
+    name: 'onboardingStatus',
+    enum: SupplierOnboardingStatus,
+    required: false,
+  })
+  async procurementBranchInterventionsDashboardExport(
+    @Query() query: SupplierProcurementBranchInterventionDashboardQueryDto,
+    @Res() res: Response,
+  ) {
+    const csv =
+      await this.suppliersService.exportProcurementBranchInterventionDashboardCsv(
+        query,
+      );
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="supplier_procurement_branch_intervention_dashboard_${Date.now()}.csv"`,
+    );
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(csv);
+  }
+
+  @Get('supplier-profiles/procurement-branch-interventions')
+  @ApiOperation({
+    summary:
+      'Rank supplier branch interventions by worsening procurement score, discrepancies, and work-queue pressure',
+  })
+  @ApiQuery({ name: 'windowDays', type: Number, required: false })
+  @ApiQuery({ name: 'limit', type: Number, required: false })
+  @ApiQuery({ name: 'includeInactive', type: Boolean, required: false })
+  @ApiQuery({ name: 'supplierProfileIds', type: String, required: false })
+  @ApiQuery({ name: 'branchIds', type: String, required: false })
+  @ApiQuery({ name: 'statuses', type: String, required: false })
+  @ApiQuery({ name: 'latestActions', type: String, required: false })
+  @ApiQuery({ name: 'actionAgeBuckets', type: String, required: false })
+  @ApiQuery({ name: 'sortBy', type: String, required: false })
+  @ApiQuery({ name: 'assigneeUserIds', type: String, required: false })
+  @ApiQuery({ name: 'includeUntriaged', type: Boolean, required: false })
+  @ApiQuery({ name: 'from', type: String, required: false })
+  @ApiQuery({ name: 'to', type: String, required: false })
+  @ApiQuery({
+    name: 'onboardingStatus',
+    enum: SupplierOnboardingStatus,
+    required: false,
+  })
+  @ApiOkResponse({ type: SupplierProcurementBranchInterventionResponseDto })
+  procurementBranchInterventions(
+    @Query() query: SupplierProcurementBranchInterventionQueryDto,
+  ) {
+    return this.suppliersService.listProcurementBranchInterventions(query);
+  }
+
+  @Get('supplier-profiles/procurement-branch-interventions/export')
+  @Header('Content-Type', 'text/csv; charset=utf-8')
+  @ApiOperation({ summary: 'Export procurement branch interventions as CSV' })
+  @ApiQuery({ name: 'windowDays', type: Number, required: false })
+  @ApiQuery({ name: 'limit', type: Number, required: false })
+  @ApiQuery({ name: 'includeInactive', type: Boolean, required: false })
+  @ApiQuery({ name: 'supplierProfileIds', type: String, required: false })
+  @ApiQuery({ name: 'branchIds', type: String, required: false })
+  @ApiQuery({ name: 'statuses', type: String, required: false })
+  @ApiQuery({ name: 'latestActions', type: String, required: false })
+  @ApiQuery({ name: 'actionAgeBuckets', type: String, required: false })
+  @ApiQuery({ name: 'sortBy', type: String, required: false })
+  @ApiQuery({ name: 'assigneeUserIds', type: String, required: false })
+  @ApiQuery({ name: 'includeUntriaged', type: Boolean, required: false })
+  @ApiQuery({ name: 'from', type: String, required: false })
+  @ApiQuery({ name: 'to', type: String, required: false })
+  @ApiQuery({
+    name: 'onboardingStatus',
+    enum: SupplierOnboardingStatus,
+    required: false,
+  })
+  async procurementBranchInterventionsExport(
+    @Query() query: SupplierProcurementBranchInterventionQueryDto,
+    @Res() res: Response,
+  ) {
+    const csv =
+      await this.suppliersService.exportProcurementBranchInterventionsCsv(
+        query,
+      );
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="supplier_procurement_branch_interventions_${Date.now()}.csv"`,
+    );
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(csv);
+  }
+
+  @Get(
+    'supplier-profiles/:supplierProfileId/branches/:branchId/procurement-intervention-detail',
+  )
+  @ApiOperation({
+    summary:
+      'Inspect the purchase orders and discrepancy events behind a supplier branch intervention',
+  })
+  @ApiQuery({ name: 'windowDays', type: Number, required: false })
+  @ApiQuery({ name: 'limit', type: Number, required: false })
+  @ApiQuery({ name: 'statuses', type: String, required: false })
+  @ApiQuery({ name: 'from', type: String, required: false })
+  @ApiQuery({ name: 'to', type: String, required: false })
+  @ApiOkResponse({
+    type: SupplierProcurementBranchInterventionDetailResponseDto,
+  })
+  procurementBranchInterventionDetail(
+    @Param('supplierProfileId', ParseIntPipe) supplierProfileId: number,
+    @Param('branchId', ParseIntPipe) branchId: number,
+    @Query() query: SupplierProcurementBranchInterventionDetailQueryDto,
+  ) {
+    return this.suppliersService.getProcurementBranchInterventionDetail(
+      supplierProfileId,
+      branchId,
+      query,
+    );
+  }
+
+  @Patch(
+    'supplier-profiles/:supplierProfileId/branches/:branchId/procurement-intervention-action',
+  )
+  @ApiOperation({
+    summary:
+      'Record an admin follow-up action for a supplier branch procurement intervention and return the refreshed drilldown',
+  })
+  @ApiOkResponse({
+    type: SupplierProcurementBranchInterventionDetailResponseDto,
+  })
+  procurementBranchInterventionAction(
+    @Param('supplierProfileId', ParseIntPipe) supplierProfileId: number,
+    @Param('branchId', ParseIntPipe) branchId: number,
+    @Body() dto: ActOnSupplierProcurementBranchInterventionDto,
+    @Req() req: any,
+  ) {
+    return this.suppliersService.actOnProcurementBranchIntervention(
+      supplierProfileId,
+      branchId,
+      dto,
+      {
+        id: req.user?.id ?? null,
+        email: req.user?.email ?? null,
+        roles: req.user?.roles ?? [],
+      },
+    );
+  }
+
+  @Get(
+    'supplier-profiles/:supplierProfileId/branches/:branchId/procurement-intervention-detail/export',
+  )
+  @Header('Content-Type', 'text/csv; charset=utf-8')
+  @ApiOperation({
+    summary:
+      'Export the purchase orders and discrepancy events behind a supplier branch intervention as CSV',
+  })
+  @ApiQuery({ name: 'windowDays', type: Number, required: false })
+  @ApiQuery({ name: 'limit', type: Number, required: false })
+  @ApiQuery({ name: 'statuses', type: String, required: false })
+  @ApiQuery({ name: 'from', type: String, required: false })
+  @ApiQuery({ name: 'to', type: String, required: false })
+  async procurementBranchInterventionDetailExport(
+    @Param('supplierProfileId', ParseIntPipe) supplierProfileId: number,
+    @Param('branchId', ParseIntPipe) branchId: number,
+    @Query() query: SupplierProcurementBranchInterventionDetailQueryDto,
+    @Res() res: Response,
+  ) {
+    const csv =
+      await this.suppliersService.exportProcurementBranchInterventionDetailCsv(
+        supplierProfileId,
+        branchId,
+        query,
+      );
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="supplier_procurement_branch_intervention_${supplierProfileId}_${branchId}_${Date.now()}.csv"`,
+    );
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(csv);
+  }
+
+  @Get('supplier-profiles/:id/procurement-trend')
+  @ApiOperation({
+    summary:
+      'Inspect 7, 30, and 90 day procurement trend snapshots for a supplier profile',
+  })
+  @ApiQuery({ name: 'branchIds', type: String, required: false })
+  @ApiQuery({ name: 'statuses', type: String, required: false })
+  @ApiQuery({ name: 'asOf', type: String, required: false })
+  @ApiOkResponse({ type: SupplierProcurementTrendResponseDto })
+  procurementTrend(
+    @Param('id', ParseIntPipe) id: number,
+    @Query() query: SupplierProcurementTrendQueryDto,
+    @Req() req: any,
+  ) {
+    return this.suppliersService.getProcurementTrend(id, query, {
+      id: req.user?.id ?? null,
+      email: req.user?.email ?? null,
+      roles: req.user?.roles ?? [],
+    });
+  }
+
+  @Get('supplier-profiles/:id/procurement-trend/export')
+  @Header('Content-Type', 'text/csv; charset=utf-8')
+  @ApiOperation({
+    summary:
+      'Export 7, 30, and 90 day procurement trend snapshots for a supplier profile as CSV',
+  })
+  @ApiQuery({ name: 'branchIds', type: String, required: false })
+  @ApiQuery({ name: 'statuses', type: String, required: false })
+  @ApiQuery({ name: 'asOf', type: String, required: false })
+  async procurementTrendExport(
+    @Param('id', ParseIntPipe) id: number,
+    @Query() query: SupplierProcurementTrendQueryDto,
+    @Req() req: any,
+    @Res() res: Response,
+  ) {
+    const csv = await this.suppliersService.exportProcurementTrendCsv(
+      id,
+      query,
+      {
+        id: req.user?.id ?? null,
+        email: req.user?.email ?? null,
+        roles: req.user?.roles ?? [],
+      },
+    );
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="supplier_procurement_trend_${id}_${Date.now()}.csv"`,
+    );
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(csv);
+  }
+
   @Get('purchase-orders/:id/audit')
   @ApiOperation({ summary: 'List audit-log entries for a purchase order' })
   @ApiQuery({ name: 'limit', type: Number, required: false })
   purchaseOrderAudit(
     @Param('id', ParseIntPipe) id: number,
-    @Query('limit') limit?: string,
+    @Query() query: AuditQueryDto,
   ) {
     return this.auditService.listForTarget(
       'PURCHASE_ORDER',
       id,
-      Number(limit) || 20,
+      query.limit ?? 20,
     );
   }
 
@@ -176,13 +623,12 @@ export class AdminB2bController {
   @ApiOkResponse({ type: PurchaseOrderReceiptEventPageResponseDto })
   purchaseOrderReceiptEvents(
     @Param('id', ParseIntPipe) id: number,
-    @Query('page') page?: string,
-    @Query('limit') limit?: string,
+    @Query() query: PurchaseOrderReceiptEventQueryDto,
   ) {
     return this.adminB2bService.listPurchaseOrderReceiptEvents(
       id,
-      Number(page) || 1,
-      Number(limit) || 20,
+      query.page ?? 1,
+      query.limit ?? 20,
     );
   }
 

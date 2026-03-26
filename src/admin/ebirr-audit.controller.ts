@@ -16,6 +16,8 @@ import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { UserRole } from '../auth/roles.enum';
 import { EbirrService } from '../ebirr/ebirr.service';
+import { AdminEbirrTransactionsQueryDto } from './dto/admin-ebirr-transactions-query.dto';
+import { AdminEbirrReconcileReportQueryDto } from './dto/admin-ebirr-reconcile-report-query.dto';
 
 @Controller('admin/ebirr')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -28,25 +30,25 @@ export class AdminEbirrAuditController {
 
   @Get('transactions')
   @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
-  async getTransactions(
-    @Query('page') page = 1,
-    @Query('limit') limit = 50,
-    @Query('search') search = '',
-  ) {
-    const query = this.ebirrRepo
+  async getTransactions(@Query() query: AdminEbirrTransactionsQueryDto) {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 50;
+    const search = query.search ?? '';
+
+    const queryBuilder = this.ebirrRepo
       .createQueryBuilder('et')
       .orderBy('et.request_timestamp', 'DESC')
       .take(limit)
       .skip((page - 1) * limit);
 
     if (search) {
-      query.where(
+      queryBuilder.where(
         'et.merch_order_id LIKE :search OR et.req_transaction_id LIKE :search OR et.invoiceId LIKE :search OR et.payer_account LIKE :search',
         { search: `%${search}%` },
       );
     }
 
-    const [data, total] = await query.getManyAndCount();
+    const [data, total] = await queryBuilder.getManyAndCount();
 
     return {
       data,
@@ -80,12 +82,11 @@ export class AdminEbirrAuditController {
   @Get('reconcile/initiated/report')
   @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
   async reconcileInitiatedReport(
-    @Query('olderThanMinutes') olderThanMinutes?: number,
-    @Query('limit') limit?: number,
+    @Query() query: AdminEbirrReconcileReportQueryDto,
   ) {
     return this.ebirrService.reconcileStuckInitiatedTransactions({
-      olderThanMinutes,
-      limit,
+      olderThanMinutes: query.olderThanMinutes,
+      limit: query.limit,
       dryRun: true,
     });
   }

@@ -4,6 +4,7 @@ import {
   forwardRef,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -15,6 +16,9 @@ import { ReplenishmentService } from '../branches/replenishment.service';
 import { Branch } from '../branches/entities/branch.entity';
 import { StockMovementType } from '../branches/entities/stock-movement.entity';
 import { Product } from '../products/entities/product.entity';
+import { ProcurementWebhookEventType } from '../procurement-webhooks/entities/procurement-webhook-subscription.entity';
+import { ProcurementWebhooksService } from '../procurement-webhooks/procurement-webhooks.service';
+import { RealtimeGateway } from '../realtime/realtime.gateway';
 import { SupplierOffer } from '../supplier-offers/entities/supplier-offer.entity';
 import {
   SupplierOnboardingStatus,
@@ -83,6 +87,8 @@ export type PurchaseOrderReevaluationResult = {
 
 @Injectable()
 export class PurchaseOrdersService {
+  private readonly logger = new Logger(PurchaseOrdersService.name);
+
   constructor(
     private readonly dataSource: DataSource,
     @InjectRepository(PurchaseOrder)
@@ -102,6 +108,8 @@ export class PurchaseOrdersService {
     private readonly inventoryLedgerService: InventoryLedgerService,
     @Inject(forwardRef(() => ReplenishmentService))
     private readonly replenishmentService: ReplenishmentService,
+    private readonly procurementWebhooksService: ProcurementWebhooksService,
+    private readonly realtimeGateway: RealtimeGateway,
   ) {}
 
   async create(dto: CreatePurchaseOrderDto): Promise<PurchaseOrder> {
@@ -219,6 +227,7 @@ export class PurchaseOrdersService {
     } = {},
   ): Promise<PurchaseOrder> {
     const purchaseOrder = await this.findOneById(id);
+    const previousStatus = purchaseOrder.status;
     const previousInboundProjection =
       this.buildInboundOpenPoProjection(purchaseOrder);
     const roles = actor.roles ?? [];
@@ -289,7 +298,24 @@ export class PurchaseOrdersService {
       );
     });
 
-    return this.findOneById(id);
+    const updatedPurchaseOrder = await this.findOneById(id);
+    void this.dispatchProcurementPurchaseOrderFanout(updatedPurchaseOrder, {
+      action: 'RECEIPT_RECORDED',
+      previousStatus,
+      currentStatus: updatedPurchaseOrder.status,
+      actorId: actor.id ?? null,
+      actorEmail: actor.email ?? null,
+      reason: dto.reason ?? null,
+      metadata: dto.metadata ?? null,
+      receiptSummary,
+      trackingReference:
+        (updatedPurchaseOrder.statusMeta?.shipping?.trackingReference as
+          | string
+          | null
+          | undefined) ?? null,
+    });
+
+    return updatedPurchaseOrder;
   }
 
   async acknowledgeReceiptEvent(
@@ -377,6 +403,19 @@ export class PurchaseOrdersService {
       },
     });
 
+    void this.dispatchProcurementReceiptDiscrepancyWebhookEvent(
+      purchaseOrderId,
+      savedEvent,
+      {
+        eventType: ProcurementWebhookEventType.RECEIPT_DISCREPANCY_RESOLVED,
+        action: 'DISCREPANCY_RESOLVED',
+        actorId: actor.id ?? null,
+        actorEmail: actor.email ?? null,
+        note: dto.resolutionNote,
+        metadata: dto.metadata ?? null,
+      },
+    );
+
     return savedEvent;
   }
 
@@ -424,6 +463,20 @@ export class PurchaseOrdersService {
         purchaseOrderId,
       },
     });
+
+    void this.dispatchProcurementReceiptDiscrepancyWebhookEvent(
+      purchaseOrderId,
+      savedEvent,
+      {
+        eventType: ProcurementWebhookEventType.RECEIPT_DISCREPANCY_APPROVED,
+        action: 'DISCREPANCY_APPROVED',
+        actorId: actor.id ?? null,
+        actorEmail: actor.email ?? null,
+        note: dto.note ?? null,
+        metadata: savedEvent.discrepancyMetadata ?? null,
+        approvalMode: 'STANDARD',
+      },
+    );
 
     return savedEvent;
   }
@@ -480,6 +533,21 @@ export class PurchaseOrdersService {
       },
     });
 
+    void this.dispatchProcurementReceiptDiscrepancyWebhookEvent(
+      purchaseOrderId,
+      savedEvent,
+      {
+        eventType: ProcurementWebhookEventType.RECEIPT_DISCREPANCY_APPROVED,
+        action: 'DISCREPANCY_APPROVED',
+        actorId: actor.id ?? null,
+        actorEmail: actor.email ?? null,
+        note: dto.note,
+        metadata: savedEvent.discrepancyMetadata ?? null,
+        approvalMode: 'FORCE_CLOSE',
+        previousDiscrepancyStatus,
+      },
+    );
+
     return savedEvent;
   }
 
@@ -493,7 +561,31 @@ export class PurchaseOrdersService {
     } = {},
   ): Promise<PurchaseOrder> {
     const purchaseOrder = await this.findOneById(id);
-    return this.updateLoadedStatus(purchaseOrder, dto, actor);
+    const previousStatus = purchaseOrder.status;
+    const updatedPurchaseOrder = await this.updateLoadedStatus(
+      purchaseOrder,
+      dto,
+      actor,
+    );
+
+    void this.dispatchProcurementPurchaseOrderFanout(updatedPurchaseOrder, {
+      action: 'STATUS_UPDATED',
+      previousStatus,
+      currentStatus: updatedPurchaseOrder.status,
+      actorId: actor.id ?? null,
+      actorEmail: actor.email ?? null,
+      reason: dto.reason ?? null,
+      metadata: dto.metadata ?? null,
+      trackingReference: dto.trackingReference ?? null,
+      receiptSummary:
+        dto.status === PurchaseOrderStatus.RECEIVED
+          ? ((updatedPurchaseOrder.statusMeta?.latestReceipt?.items as
+              | ReceiptLineSummary[]
+              | undefined) ?? null)
+          : null,
+    });
+
+    return updatedPurchaseOrder;
   }
 
   async updateStatusWithManager(
@@ -1118,6 +1210,121 @@ export class PurchaseOrdersService {
     throw new ForbiddenException(
       'Your role is not allowed to force-close receipt discrepancies',
     );
+  }
+
+  private async dispatchProcurementPurchaseOrderFanout(
+    purchaseOrder: PurchaseOrder,
+    payload: {
+      action: 'STATUS_UPDATED' | 'RECEIPT_RECORDED';
+      previousStatus: PurchaseOrderStatus | null;
+      currentStatus: PurchaseOrderStatus;
+      actorId: number | null;
+      actorEmail: string | null;
+      reason: string | null;
+      trackingReference?: string | null;
+      metadata?: Record<string, any> | null;
+      receiptSummary?: ReceiptLineSummary[] | null;
+    },
+  ): Promise<void> {
+    try {
+      this.realtimeGateway.notifyProcurementPurchaseOrderUpdated({
+        purchaseOrderId: purchaseOrder.id,
+        branchId: purchaseOrder.branchId,
+        supplierProfileId: purchaseOrder.supplierProfileId,
+        action: payload.action,
+        previousStatus: payload.previousStatus,
+        currentStatus: payload.currentStatus,
+        actorId: payload.actorId,
+        actorEmail: payload.actorEmail,
+        reason: payload.reason,
+        trackingReference: payload.trackingReference ?? null,
+        occurredAt: new Date().toISOString(),
+        metadata: payload.metadata ?? null,
+        receiptSummary: payload.receiptSummary ?? null,
+        purchaseOrder: purchaseOrder as unknown as Record<string, unknown>,
+      });
+      await this.procurementWebhooksService.dispatchProcurementEvent({
+        eventType: ProcurementWebhookEventType.PURCHASE_ORDER_UPDATED,
+        eventKey: `procurement-purchase-order:${purchaseOrder.id}:${payload.action}:${payload.currentStatus}:${Date.now()}`,
+        branchId: purchaseOrder.branchId,
+        supplierProfileId: purchaseOrder.supplierProfileId,
+        purchaseOrderId: purchaseOrder.id,
+        payload: {
+          purchaseOrderId: purchaseOrder.id,
+          branchId: purchaseOrder.branchId,
+          supplierProfileId: purchaseOrder.supplierProfileId,
+          action: payload.action,
+          previousStatus: payload.previousStatus,
+          currentStatus: payload.currentStatus,
+          actorId: payload.actorId,
+          actorEmail: payload.actorEmail,
+          reason: payload.reason,
+          trackingReference: payload.trackingReference ?? null,
+          occurredAt: new Date().toISOString(),
+          metadata: payload.metadata ?? null,
+          receiptSummary: payload.receiptSummary ?? null,
+          purchaseOrder,
+        },
+      });
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Unknown realtime error';
+      this.logger.warn(
+        `Failed to broadcast procurement purchase-order update ${purchaseOrder.id}: ${message}`,
+      );
+    }
+  }
+
+  private async dispatchProcurementReceiptDiscrepancyWebhookEvent(
+    purchaseOrderId: number,
+    receiptEvent: PurchaseOrderReceiptEvent,
+    payload: {
+      eventType:
+        | ProcurementWebhookEventType.RECEIPT_DISCREPANCY_RESOLVED
+        | ProcurementWebhookEventType.RECEIPT_DISCREPANCY_APPROVED;
+      action: 'DISCREPANCY_RESOLVED' | 'DISCREPANCY_APPROVED';
+      actorId: number | null;
+      actorEmail: string | null;
+      note: string | null;
+      metadata?: Record<string, any> | null;
+      approvalMode?: 'STANDARD' | 'FORCE_CLOSE';
+      previousDiscrepancyStatus?: PurchaseOrderReceiptDiscrepancyStatus | null;
+    },
+  ): Promise<void> {
+    try {
+      const purchaseOrder = await this.findOneById(purchaseOrderId);
+      await this.procurementWebhooksService.dispatchProcurementEvent({
+        eventType: payload.eventType,
+        eventKey: `procurement-purchase-order:${purchaseOrderId}:receipt-discrepancy:${receiptEvent.id}:${payload.action}:${receiptEvent.discrepancyStatus ?? 'UNKNOWN'}:${Date.now()}`,
+        branchId: purchaseOrder.branchId,
+        supplierProfileId: purchaseOrder.supplierProfileId,
+        purchaseOrderId,
+        payload: {
+          purchaseOrderId,
+          receiptEventId: receiptEvent.id,
+          branchId: purchaseOrder.branchId,
+          supplierProfileId: purchaseOrder.supplierProfileId,
+          action: payload.action,
+          discrepancyStatus: receiptEvent.discrepancyStatus ?? null,
+          previousDiscrepancyStatus: payload.previousDiscrepancyStatus ?? null,
+          actorId: payload.actorId,
+          actorEmail: payload.actorEmail,
+          note: payload.note,
+          occurredAt: new Date().toISOString(),
+          metadata: payload.metadata ?? null,
+          approvalMode: payload.approvalMode ?? null,
+          receiptSummary: receiptEvent.receiptLines ?? null,
+          receiptEvent,
+          purchaseOrder,
+        },
+      });
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Unknown webhook error';
+      this.logger.warn(
+        `Failed to dispatch procurement receipt discrepancy webhook for purchase order ${purchaseOrderId} and receipt event ${receiptEvent.id}: ${message}`,
+      );
+    }
   }
 
   private hasReceiptDiscrepancy(event: PurchaseOrderReceiptEvent): boolean {

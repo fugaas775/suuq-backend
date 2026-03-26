@@ -14,6 +14,7 @@ import { Repository } from 'typeorm';
 import { Product } from '../products/entities/product.entity';
 import { TelebirrTransaction } from '../payments/entities/telebirr-transaction.entity';
 import { EbirrTransaction } from '../payments/entities/ebirr-transaction.entity';
+import { AdminAdsAuditQueryDto } from './dto/admin-ads-audit-query.dto';
 
 @UseGuards(AuthGuard('jwt'), RolesGuard)
 @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
@@ -35,16 +36,12 @@ export class AdminAdsController {
   }
 
   @Get('audit')
-  async getAdsAudit(
-    @Query('state') state?: 'active' | 'expired' | 'all',
-    @Query('page') pageRaw?: string,
-    @Query('per_page') perPageRaw?: string,
-    @Query('q') q?: string,
-  ) {
-    const page = Math.max(Number(pageRaw || 1), 1);
-    const perPage = Math.min(Math.max(Number(perPageRaw || 20), 1), 200);
+  async getAdsAudit(@Query() query: AdminAdsAuditQueryDto) {
+    const page = query.page ?? 1;
+    const perPage = query.per_page ?? 20;
     const now = new Date();
-    const search = String(q || '').trim();
+    const search = query.q ?? '';
+    const state = query.state;
 
     const baseQb = this.productRepo
       .createQueryBuilder('p')

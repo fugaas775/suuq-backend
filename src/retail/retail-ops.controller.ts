@@ -40,6 +40,8 @@ import {
   RetailHrAttendanceMutationResponseDto,
   RetailHrAttendanceResponseDto,
 } from './dto/retail-hr-attendance-response.dto';
+import { RetailHrAttendanceComplianceExportQueryDto } from './dto/retail-hr-attendance-compliance-export-query.dto';
+import { RetailHrAttendanceComplianceSummaryResponseDto } from './dto/retail-hr-attendance-compliance-summary-response.dto';
 import { RetailHrAttendanceDetailQueryDto } from './dto/retail-hr-attendance-detail-query.dto';
 import { RetailHrAttendanceDetailResponseDto } from './dto/retail-hr-attendance-detail-response.dto';
 import {
@@ -160,8 +162,12 @@ export class RetailOpsController {
       'Get a branch staff attendance summary, late arrivals, and active shift coverage for the requested window',
   })
   @ApiOkResponse({ type: RetailHrAttendanceResponseDto })
-  hrAttendance(@Query() query: RetailHrAttendanceQueryDto) {
-    return this.retailAttendanceService.getAttendanceSummary(query);
+  hrAttendance(@Req() req, @Query() query: RetailHrAttendanceQueryDto) {
+    return this.retailAttendanceService.getAttendanceSummary(query, {
+      id: req.user?.id ?? null,
+      email: req.user?.email ?? null,
+      roles: req.user?.roles ?? [],
+    });
   }
 
   @Get('hr-attendance/staff/:userId')
@@ -184,9 +190,14 @@ export class RetailOpsController {
   @ApiOkResponse({ type: RetailHrAttendanceDetailResponseDto })
   hrAttendanceDetail(
     @Param('userId', ParseIntPipe) userId: number,
+    @Req() req,
     @Query() query: RetailHrAttendanceDetailQueryDto,
   ) {
-    return this.retailAttendanceService.getAttendanceDetail(userId, query);
+    return this.retailAttendanceService.getAttendanceDetail(userId, query, {
+      id: req.user?.id ?? null,
+      email: req.user?.email ?? null,
+      roles: req.user?.roles ?? [],
+    });
   }
 
   @Get('hr-attendance/staff/:userId/export')
@@ -210,11 +221,17 @@ export class RetailOpsController {
   async hrAttendanceDetailExport(
     @Param('userId', ParseIntPipe) userId: number,
     @Res() res: Response,
+    @Req() req,
     @Query() query: RetailHrAttendanceDetailQueryDto,
   ) {
     const csv = await this.retailAttendanceService.exportAttendanceDetailCsv(
       userId,
       query,
+      {
+        id: req.user?.id ?? null,
+        email: req.user?.email ?? null,
+        roles: req.user?.roles ?? [],
+      },
     );
     res.setHeader(
       'Content-Disposition',
@@ -252,8 +269,15 @@ export class RetailOpsController {
   })
   @ApiQuery({ name: 'windowHours', type: Number, required: false })
   @ApiOkResponse({ type: RetailHrAttendanceExceptionsResponseDto })
-  hrAttendanceExceptions(@Query() query: RetailHrAttendanceExceptionsQueryDto) {
-    return this.retailAttendanceService.getAttendanceExceptions(query);
+  hrAttendanceExceptions(
+    @Req() req,
+    @Query() query: RetailHrAttendanceExceptionsQueryDto,
+  ) {
+    return this.retailAttendanceService.getAttendanceExceptions(query, {
+      id: req.user?.id ?? null,
+      email: req.user?.email ?? null,
+      roles: req.user?.roles ?? [],
+    });
   }
 
   @Get('hr-attendance/exceptions/export')
@@ -283,10 +307,15 @@ export class RetailOpsController {
   @ApiQuery({ name: 'windowHours', type: Number, required: false })
   async hrAttendanceExceptionsExport(
     @Res() res: Response,
+    @Req() req,
     @Query() query: RetailHrAttendanceExceptionsQueryDto,
   ) {
     const csv =
-      await this.retailAttendanceService.exportAttendanceExceptionsCsv(query);
+      await this.retailAttendanceService.exportAttendanceExceptionsCsv(query, {
+        id: req.user?.id ?? null,
+        email: req.user?.email ?? null,
+        roles: req.user?.roles ?? [],
+      });
     res.setHeader(
       'Content-Disposition',
       `attachment; filename="retail_hr_attendance_exceptions_${query.branchId}_${Date.now()}.csv"`,
@@ -319,9 +348,14 @@ export class RetailOpsController {
   @ApiQuery({ name: 'windowHours', type: Number, required: false })
   @ApiOkResponse({ type: RetailHrAttendanceNetworkSummaryResponseDto })
   hrAttendanceNetworkSummary(
+    @Req() req,
     @Query() query: RetailHrAttendanceNetworkSummaryQueryDto,
   ) {
-    return this.retailAttendanceService.getAttendanceNetworkSummary(query);
+    return this.retailAttendanceService.getAttendanceNetworkSummary(query, {
+      id: req.user?.id ?? null,
+      email: req.user?.email ?? null,
+      roles: req.user?.roles ?? [],
+    });
   }
 
   @Get('hr-attendance/network-summary/export')
@@ -358,6 +392,75 @@ export class RetailOpsController {
     res.setHeader(
       'Content-Disposition',
       `attachment; filename="retail_hr_attendance_network_${Date.now()}.csv"`,
+    );
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(csv);
+  }
+
+  @Get('hr-attendance/compliance-summary')
+  @UseGuards(RetailModulesGuard)
+  @Roles(
+    UserRole.SUPER_ADMIN,
+    UserRole.ADMIN,
+    UserRole.POS_MANAGER,
+    UserRole.B2B_BUYER,
+  )
+  @RequireRetailModules(RetailOsModule.HR_ATTENDANCE)
+  @RetailBranchContext('query.branchId')
+  @ApiOperation({
+    summary:
+      'Get tenant-level HR attendance compliance aggregates across branches for HQ dashboards and audit review',
+  })
+  @ApiQuery({ name: 'branchId', type: Number, required: true })
+  @ApiQuery({ name: 'windowHours', type: Number, required: false })
+  @ApiQuery({ name: 'branchIds', type: String, required: false })
+  @ApiQuery({ name: 'userIds', type: String, required: false })
+  @ApiQuery({ name: 'statuses', type: String, required: false })
+  @ApiQuery({ name: 'queueTypes', type: String, required: false })
+  @ApiQuery({ name: 'priorities', type: String, required: false })
+  @ApiOkResponse({ type: RetailHrAttendanceComplianceSummaryResponseDto })
+  hrAttendanceComplianceSummary(
+    @Req() req,
+    @Query() query: RetailHrAttendanceComplianceExportQueryDto,
+  ) {
+    return this.retailAttendanceService.getAttendanceComplianceSummary(query, {
+      id: req.user?.id ?? null,
+      email: req.user?.email ?? null,
+      roles: req.user?.roles ?? [],
+    });
+  }
+
+  @Get('hr-attendance/compliance-export')
+  @UseGuards(RetailModulesGuard)
+  @Roles(
+    UserRole.SUPER_ADMIN,
+    UserRole.ADMIN,
+    UserRole.POS_MANAGER,
+    UserRole.B2B_BUYER,
+  )
+  @RequireRetailModules(RetailOsModule.HR_ATTENDANCE)
+  @RetailBranchContext('query.branchId')
+  @Header('Content-Type', 'text/csv; charset=utf-8')
+  @ApiOperation({
+    summary:
+      'Export tenant-level HR attendance compliance rows across branches for HQ payroll and audit review',
+  })
+  @ApiQuery({ name: 'branchId', type: Number, required: true })
+  @ApiQuery({ name: 'windowHours', type: Number, required: false })
+  @ApiQuery({ name: 'branchIds', type: String, required: false })
+  @ApiQuery({ name: 'userIds', type: String, required: false })
+  @ApiQuery({ name: 'statuses', type: String, required: false })
+  @ApiQuery({ name: 'queueTypes', type: String, required: false })
+  @ApiQuery({ name: 'priorities', type: String, required: false })
+  async hrAttendanceComplianceExport(
+    @Res() res: Response,
+    @Query() query: RetailHrAttendanceComplianceExportQueryDto,
+  ) {
+    const csv =
+      await this.retailAttendanceService.exportAttendanceComplianceCsv(query);
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="retail_hr_attendance_compliance_${Date.now()}.csv"`,
     );
     res.setHeader('Cache-Control', 'no-store');
     res.send(csv);

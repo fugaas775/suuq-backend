@@ -20,6 +20,8 @@ import { ProductsService } from '../products/products.service';
 import { SkipThrottle } from '@nestjs/throttler';
 import { Query } from '@nestjs/common';
 import { UpdateProductSubcategoryDto } from './dto/update-product-subcategory.dto';
+import { AdminProductListQueryDto } from './dto/admin-product-list-query.dto';
+import { AdminProductLeafSubcategoryQueryDto } from './dto/admin-product-leaf-subcategory-query.dto';
 
 @UseGuards(AuthGuard('jwt'), RolesGuard)
 @SkipThrottle()
@@ -39,20 +41,13 @@ export class AdminProductsController {
 
   @Get()
   @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
-  async list(
-    @Query('status') status?: string,
-    @Query('page') page?: string,
-    @Query('per_page') perPage?: string,
-    @Query('q') q?: string,
-    @Query('featured') featured?: string,
-  ) {
+  async list(@Query() query: AdminProductListQueryDto) {
     return this.products.listForAdmin({
-      status,
-      page: Number(page),
-      perPage: Number(perPage),
-      q,
-      featured:
-        featured === 'true' ? true : featured === 'false' ? false : undefined,
+      status: query.status,
+      page: query.page,
+      perPage: query.per_page,
+      q: query.q,
+      featured: query.featured,
     });
   }
 
@@ -65,14 +60,12 @@ export class AdminProductsController {
   @Get('subcategories/leaf')
   @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
   async listLeafSubcategories(
-    @Query('parentId') parentId?: string,
-    @Query('q') q?: string,
-    @Query('limit') limit?: string,
+    @Query() query: AdminProductLeafSubcategoryQueryDto,
   ) {
     return this.products.listLeafSubcategories({
-      parentId: Number(parentId),
-      q,
-      limit: Number(limit),
+      parentId: query.parentId,
+      q: query.q,
+      limit: query.limit,
     });
   }
 

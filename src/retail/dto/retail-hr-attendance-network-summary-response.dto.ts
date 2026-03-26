@@ -1,4 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { RetailHrAttendancePermissionsResponseDto } from './retail-hr-attendance-response.dto';
 
 export class RetailHrAttendanceNetworkActionResponseDto {
   @ApiProperty()
@@ -126,6 +127,9 @@ export class RetailHrAttendanceNetworkSummaryResponseDto {
 
   @ApiProperty()
   normalBranchCount!: number;
+
+  @ApiProperty({ type: RetailHrAttendancePermissionsResponseDto })
+  permissions!: RetailHrAttendancePermissionsResponseDto;
 
   @ApiProperty({ type: [RetailHrAttendanceNetworkAlertResponseDto] })
   alerts!: RetailHrAttendanceNetworkAlertResponseDto[];

@@ -56,6 +56,8 @@ import { PartnerCredentialsModule } from '../partner-credentials/partner-credent
 import { PurchaseOrdersModule } from '../purchase-orders/purchase-orders.module';
 import { AdminB2bController } from './b2b.admin.controller';
 import { AdminB2bService } from './b2b.admin.service';
+import { MarketingLeadsModule } from '../marketing-leads/marketing-leads.module';
+import { AdminMarketingLeadsController } from './marketing-leads.admin.controller';
 import { BranchTransfer } from '../branches/entities/branch-transfer.entity';
 import { BranchInventory } from '../branches/entities/branch-inventory.entity';
 import { StockMovement } from '../branches/entities/stock-movement.entity';
@@ -86,6 +88,7 @@ import { PurchaseOrder } from '../purchase-orders/entities/purchase-order.entity
     SuppliersModule,
     PartnerCredentialsModule,
     PurchaseOrdersModule,
+    MarketingLeadsModule,
     TypeOrmModule.forFeature([
       Product,
       ProductImpression,
@@ -125,6 +128,7 @@ import { PurchaseOrder } from '../purchase-orders/entities/purchase-order.entity
     AdminCreditController,
     AdminAdsController,
     AdminB2bController,
+    AdminMarketingLeadsController,
   ],
   // 3. Remove the services from providers. They are now correctly provided by the imported modules.
   providers: [

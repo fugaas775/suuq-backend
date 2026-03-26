@@ -64,6 +64,8 @@ describe('RetailOpsController', () => {
     overrideCheckOut: jest.Mock;
     getAttendanceNetworkSummary: jest.Mock;
     exportAttendanceNetworkSummaryCsv: jest.Mock;
+    getAttendanceComplianceSummary: jest.Mock;
+    exportAttendanceComplianceCsv: jest.Mock;
   };
 
   beforeEach(async () => {
@@ -225,6 +227,27 @@ describe('RetailOpsController', () => {
       exportAttendanceNetworkSummaryCsv: jest
         .fn()
         .mockResolvedValue('branchId,branchName\n3,"HQ"'),
+      getAttendanceComplianceSummary: jest.fn().mockResolvedValue({
+        summary: {
+          anchorBranchId: 3,
+          retailTenantId: 9,
+          branchCount: 2,
+          filteredBranchCount: 1,
+          windowHours: 168,
+          totalStaffCount: 4,
+          filteredStaffCount: 2,
+          totalExceptionCount: 3,
+          filteredExceptionCount: 1,
+          lastActivityAt: '2026-03-19T08:00:00.000Z',
+          permissions: { canOverrideAttendance: false },
+        },
+        statusCounts: [],
+        queueTypeCounts: [],
+        priorityCounts: [],
+      }),
+      exportAttendanceComplianceCsv: jest
+        .fn()
+        .mockResolvedValue('branchId,branchName,userId\n3,"HQ",11'),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -253,21 +276,47 @@ describe('RetailOpsController', () => {
   });
 
   it('delegates HR attendance queries to the retail attendance service', async () => {
-    await controller.hrAttendance({ branchId: 3, windowHours: 24, limit: 20 });
+    await controller.hrAttendance(
+      {
+        user: {
+          id: 18,
+          email: 'buyer@suuq.test',
+          roles: ['B2B_BUYER'],
+        },
+      },
+      { branchId: 3, windowHours: 24, limit: 20 },
+    );
 
-    expect(retailAttendanceService.getAttendanceSummary).toHaveBeenCalledWith({
-      branchId: 3,
-      windowHours: 24,
-      limit: 20,
-    });
+    expect(retailAttendanceService.getAttendanceSummary).toHaveBeenCalledWith(
+      {
+        branchId: 3,
+        windowHours: 24,
+        limit: 20,
+      },
+      {
+        id: 18,
+        email: 'buyer@suuq.test',
+        roles: ['B2B_BUYER'],
+      },
+    );
   });
 
   it('delegates HR attendance detail queries to the retail attendance service', async () => {
-    await controller.hrAttendanceDetail(11, {
-      branchId: 3,
-      limit: 10,
-      windowHours: 168,
-    });
+    await controller.hrAttendanceDetail(
+      11,
+      {
+        user: {
+          id: 18,
+          email: 'buyer@suuq.test',
+          roles: ['B2B_BUYER'],
+        },
+      },
+      {
+        branchId: 3,
+        limit: 10,
+        windowHours: 168,
+      },
+    );
 
     expect(retailAttendanceService.getAttendanceDetail).toHaveBeenCalledWith(
       11,
@@ -275,6 +324,11 @@ describe('RetailOpsController', () => {
         branchId: 3,
         limit: 10,
         windowHours: 168,
+      },
+      {
+        id: 18,
+        email: 'buyer@suuq.test',
+        roles: ['B2B_BUYER'],
       },
     );
   });
@@ -285,19 +339,38 @@ describe('RetailOpsController', () => {
       send: jest.fn(),
     } as any;
 
-    await controller.hrAttendanceDetailExport(11, res, {
-      branchId: 3,
-      limit: 10,
-      windowHours: 168,
-    });
+    await controller.hrAttendanceDetailExport(
+      11,
+      res,
+      {
+        user: {
+          id: 18,
+          email: 'buyer@suuq.test',
+          roles: ['B2B_BUYER'],
+        },
+      },
+      {
+        branchId: 3,
+        limit: 10,
+        windowHours: 168,
+      },
+    );
 
     expect(
       retailAttendanceService.exportAttendanceDetailCsv,
-    ).toHaveBeenCalledWith(11, {
-      branchId: 3,
-      limit: 10,
-      windowHours: 168,
-    });
+    ).toHaveBeenCalledWith(
+      11,
+      {
+        branchId: 3,
+        limit: 10,
+        windowHours: 168,
+      },
+      {
+        id: 18,
+        email: 'buyer@suuq.test',
+        roles: ['B2B_BUYER'],
+      },
+    );
     expect(res.setHeader).toHaveBeenCalledWith(
       'Content-Disposition',
       expect.stringMatching(
@@ -307,23 +380,39 @@ describe('RetailOpsController', () => {
   });
 
   it('delegates HR attendance exception queries to the retail attendance service', async () => {
-    await controller.hrAttendanceExceptions({
-      branchId: 3,
-      limit: 10,
-      queueType: 'ABSENT' as any,
-      priority: 'CRITICAL' as any,
-      windowHours: 24,
-    });
+    await controller.hrAttendanceExceptions(
+      {
+        user: {
+          id: 18,
+          email: 'buyer@suuq.test',
+          roles: ['B2B_BUYER'],
+        },
+      },
+      {
+        branchId: 3,
+        limit: 10,
+        queueType: 'ABSENT' as any,
+        priority: 'CRITICAL' as any,
+        windowHours: 24,
+      },
+    );
 
     expect(
       retailAttendanceService.getAttendanceExceptions,
-    ).toHaveBeenCalledWith({
-      branchId: 3,
-      limit: 10,
-      queueType: 'ABSENT',
-      priority: 'CRITICAL',
-      windowHours: 24,
-    });
+    ).toHaveBeenCalledWith(
+      {
+        branchId: 3,
+        limit: 10,
+        queueType: 'ABSENT',
+        priority: 'CRITICAL',
+        windowHours: 24,
+      },
+      {
+        id: 18,
+        email: 'buyer@suuq.test',
+        roles: ['B2B_BUYER'],
+      },
+    );
   });
 
   it('streams HR attendance exception exports from the retail attendance service', async () => {
@@ -332,23 +421,40 @@ describe('RetailOpsController', () => {
       send: jest.fn(),
     } as any;
 
-    await controller.hrAttendanceExceptionsExport(res, {
-      branchId: 3,
-      limit: 10,
-      queueType: 'ABSENT' as any,
-      priority: 'CRITICAL' as any,
-      windowHours: 24,
-    });
+    await controller.hrAttendanceExceptionsExport(
+      res,
+      {
+        user: {
+          id: 18,
+          email: 'buyer@suuq.test',
+          roles: ['B2B_BUYER'],
+        },
+      },
+      {
+        branchId: 3,
+        limit: 10,
+        queueType: 'ABSENT' as any,
+        priority: 'CRITICAL' as any,
+        windowHours: 24,
+      },
+    );
 
     expect(
       retailAttendanceService.exportAttendanceExceptionsCsv,
-    ).toHaveBeenCalledWith({
-      branchId: 3,
-      limit: 10,
-      queueType: 'ABSENT',
-      priority: 'CRITICAL',
-      windowHours: 24,
-    });
+    ).toHaveBeenCalledWith(
+      {
+        branchId: 3,
+        limit: 10,
+        queueType: 'ABSENT',
+        priority: 'CRITICAL',
+        windowHours: 24,
+      },
+      {
+        id: 18,
+        email: 'buyer@suuq.test',
+        roles: ['B2B_BUYER'],
+      },
+    );
     expect(res.setHeader).toHaveBeenCalledWith(
       'Content-Disposition',
       expect.stringMatching(
@@ -358,21 +464,37 @@ describe('RetailOpsController', () => {
   });
 
   it('delegates HR attendance network summary queries to the retail attendance service', async () => {
-    await controller.hrAttendanceNetworkSummary({
-      branchId: 3,
-      limit: 10,
-      risk: 'CRITICAL' as any,
-      windowHours: 24,
-    });
+    await controller.hrAttendanceNetworkSummary(
+      {
+        user: {
+          id: 18,
+          email: 'buyer@suuq.test',
+          roles: ['B2B_BUYER'],
+        },
+      },
+      {
+        branchId: 3,
+        limit: 10,
+        risk: 'CRITICAL' as any,
+        windowHours: 24,
+      },
+    );
 
     expect(
       retailAttendanceService.getAttendanceNetworkSummary,
-    ).toHaveBeenCalledWith({
-      branchId: 3,
-      limit: 10,
-      risk: 'CRITICAL',
-      windowHours: 24,
-    });
+    ).toHaveBeenCalledWith(
+      {
+        branchId: 3,
+        limit: 10,
+        risk: 'CRITICAL',
+        windowHours: 24,
+      },
+      {
+        id: 18,
+        email: 'buyer@suuq.test',
+        roles: ['B2B_BUYER'],
+      },
+    );
   });
 
   it('streams HR attendance network summary exports from the retail attendance service', async () => {
@@ -401,6 +523,81 @@ describe('RetailOpsController', () => {
       expect.stringMatching(
         /^attachment; filename="retail_hr_attendance_network_\d+\.csv"$/,
       ),
+    );
+  });
+
+  it('streams HR attendance compliance exports from the retail attendance service', async () => {
+    const res = {
+      setHeader: jest.fn(),
+      send: jest.fn(),
+    } as any;
+
+    await controller.hrAttendanceComplianceExport(res, {
+      branchId: 3,
+      windowHours: 168,
+      branchIds: [3, 4],
+      userIds: [11, 18],
+      statuses: ['ABSENT', 'LATE'] as any,
+      queueTypes: ['ABSENT'] as any,
+      priorities: ['CRITICAL'] as any,
+    });
+
+    expect(
+      retailAttendanceService.exportAttendanceComplianceCsv,
+    ).toHaveBeenCalledWith({
+      branchId: 3,
+      windowHours: 168,
+      branchIds: [3, 4],
+      userIds: [11, 18],
+      statuses: ['ABSENT', 'LATE'],
+      queueTypes: ['ABSENT'],
+      priorities: ['CRITICAL'],
+    });
+    expect(res.setHeader).toHaveBeenCalledWith(
+      'Content-Disposition',
+      expect.stringMatching(
+        /^attachment; filename="retail_hr_attendance_compliance_\d+\.csv"$/,
+      ),
+    );
+  });
+
+  it('delegates HR attendance compliance summaries to the retail attendance service', async () => {
+    await controller.hrAttendanceComplianceSummary(
+      {
+        user: {
+          id: 18,
+          email: 'buyer@suuq.test',
+          roles: ['B2B_BUYER'],
+        },
+      },
+      {
+        branchId: 3,
+        windowHours: 168,
+        branchIds: [3, 4],
+        userIds: [11, 18],
+        statuses: ['ABSENT', 'LATE'] as any,
+        queueTypes: ['ABSENT'] as any,
+        priorities: ['CRITICAL'] as any,
+      },
+    );
+
+    expect(
+      retailAttendanceService.getAttendanceComplianceSummary,
+    ).toHaveBeenCalledWith(
+      {
+        branchId: 3,
+        windowHours: 168,
+        branchIds: [3, 4],
+        userIds: [11, 18],
+        statuses: ['ABSENT', 'LATE'],
+        queueTypes: ['ABSENT'],
+        priorities: ['CRITICAL'],
+      },
+      {
+        id: 18,
+        email: 'buyer@suuq.test',
+        roles: ['B2B_BUYER'],
+      },
     );
   });
 

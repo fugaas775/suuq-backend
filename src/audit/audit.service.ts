@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, Repository } from 'typeorm';
 import { AuditLog } from './audit-log.entity';
@@ -9,6 +9,7 @@ export type AuditFilters = {
   actorId?: number;
   from?: Date;
   to?: Date;
+  metaEquals?: Record<string, string | number | boolean>;
 };
 
 export function prettyAuditActionLabel(
@@ -110,6 +111,39 @@ export class AuditService {
     return this.buildBaseQuery(targetType, targetId).take(l).getMany();
   }
 
+  async listForTargets(
+    targetType: string,
+    targetIds: number[],
+    opts: {
+      limit?: number;
+      filters?: AuditFilters;
+      actionPrefix?: string;
+    } = {},
+  ) {
+    const ids = Array.from(
+      new Set(targetIds.filter((targetId) => Number.isInteger(targetId))),
+    );
+    if (ids.length === 0) {
+      return [];
+    }
+
+    const qb = this.buildGlobalQuery(targetType).andWhere(
+      'a.targetId IN (:...targetIds)',
+      { targetIds: ids },
+    );
+    this.applyFilters(qb, opts.filters);
+    if (opts.actionPrefix) {
+      qb.andWhere('a.action LIKE :actionPrefix', {
+        actionPrefix: `${opts.actionPrefix}%`,
+      });
+    }
+    if (opts.limit != null) {
+      qb.take(this.clampLimit(opts.limit));
+    }
+
+    return qb.getMany();
+  }
+
   async listForTargetPaged(
     targetType: string,
     targetId: number,
@@ -141,14 +175,26 @@ export class AuditService {
   decodeCursor(cursor?: string): { createdAt?: Date; id?: number } {
     if (!cursor) return {};
     try {
-      const [iso, idStr] = Buffer.from(cursor, 'base64url')
+      const [iso, idStr, extra] = Buffer.from(cursor, 'base64url')
         .toString('utf8')
         .split('|');
       const createdAt = iso ? new Date(iso) : undefined;
       const id = idStr ? Number(idStr) : undefined;
+
+      if (
+        !iso ||
+        extra != null ||
+        !createdAt ||
+        Number.isNaN(createdAt.getTime()) ||
+        !Number.isInteger(id) ||
+        Number(id) <= 0
+      ) {
+        throw new Error('invalid');
+      }
+
       return { createdAt, id };
     } catch {
-      return {};
+      throw new BadRequestException('Invalid audit cursor');
     }
   }
 
@@ -268,6 +314,18 @@ export class AuditService {
     }
     if (filters.to) {
       qb.andWhere('a.createdAt <= :to', { to: filters.to });
+    }
+    if (filters.metaEquals) {
+      Object.entries(filters.metaEquals).forEach(([key, value], index) => {
+        if (!/^[A-Za-z0-9_]+$/.test(key)) {
+          return;
+        }
+
+        const valueParam = `metaValue_${index}`;
+        qb.andWhere(`a.meta ->> '${key}' = :${valueParam}`, {
+          [valueParam]: String(value),
+        });
+      });
     }
     return qb;
   }

@@ -197,6 +197,8 @@ async function bootstrap() {
 
   // CORS configuration (supports env list + robust preflight handling)
   const defaultAllowedOrigins = [
+    'https://ugasfuad.com',
+    'https://www.ugasfuad.com',
     'https://suuq.ugasfuad.com',
     'https://admin.suuq.ugasfuad.com',
     'https://api.suuq.ugasfuad.com',

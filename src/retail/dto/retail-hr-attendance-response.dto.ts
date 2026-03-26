@@ -18,6 +18,11 @@ export class RetailHrAttendancePolicyResponseDto {
   timeZone!: string;
 }
 
+export class RetailHrAttendancePermissionsResponseDto {
+  @ApiProperty()
+  canOverrideAttendance!: boolean;
+}
+
 export class RetailHrAttendanceItemResponseDto {
   @ApiProperty()
   userId!: number;
@@ -86,6 +91,9 @@ export class RetailHrAttendanceSummaryResponseDto {
 
   @ApiProperty({ type: RetailHrAttendancePolicyResponseDto })
   policy!: RetailHrAttendancePolicyResponseDto;
+
+  @ApiProperty({ type: RetailHrAttendancePermissionsResponseDto })
+  permissions!: RetailHrAttendancePermissionsResponseDto;
 }
 
 export class RetailHrAttendanceResponseDto {

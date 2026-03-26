@@ -67,10 +67,12 @@ import { BranchStaffModule } from './branch-staff/branch-staff.module';
 import { SuppliersModule } from './suppliers/suppliers.module';
 import { SupplierOffersModule } from './supplier-offers/supplier-offers.module';
 import { PurchaseOrdersModule } from './purchase-orders/purchase-orders.module';
+import { ProcurementWebhooksModule } from './procurement-webhooks/procurement-webhooks.module';
 import { PartnerCredentialsModule } from './partner-credentials/partner-credentials.module';
 import { PosSyncModule } from './pos-sync/pos-sync.module';
 import { ProductAliasesModule } from './product-aliases/product-aliases.module';
 import { RetailModule } from './retail/retail.module';
+import { MarketingLeadsModule } from './marketing-leads/marketing-leads.module';
 
 @Module({
   imports: [
@@ -249,10 +251,12 @@ import { RetailModule } from './retail/retail.module';
     SuppliersModule,
     SupplierOffersModule,
     PurchaseOrdersModule,
+    ProcurementWebhooksModule,
     PartnerCredentialsModule,
     ProductAliasesModule,
     PosSyncModule,
     RetailModule,
+    MarketingLeadsModule,
   ],
   controllers: [AppController],
   // Apply rate limiting globally

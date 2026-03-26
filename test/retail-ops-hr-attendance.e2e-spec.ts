@@ -22,6 +22,8 @@ describe('RetailOpsController HR attendance (e2e)', () => {
     overrideCheckOut: jest.Mock;
     getAttendanceNetworkSummary: jest.Mock;
     exportAttendanceNetworkSummaryCsv: jest.Mock;
+    getAttendanceComplianceSummary: jest.Mock;
+    exportAttendanceComplianceCsv: jest.Mock;
   };
 
   beforeAll(async () => {
@@ -45,6 +47,9 @@ describe('RetailOpsController HR attendance (e2e)', () => {
             gracePeriodMinutes: 15,
             overtimeThresholdHours: 9,
             timeZone: 'UTC',
+          },
+          permissions: {
+            canOverrideAttendance: false,
           },
         },
         items: [
@@ -86,6 +91,9 @@ describe('RetailOpsController HR attendance (e2e)', () => {
             overtimeThresholdHours: 9,
             timeZone: 'UTC',
           },
+          permissions: {
+            canOverrideAttendance: false,
+          },
         },
         actions: [],
         logs: [
@@ -122,6 +130,9 @@ describe('RetailOpsController HR attendance (e2e)', () => {
           highCount: 0,
           normalCount: 0,
           lastActivityAt: null,
+          permissions: {
+            canOverrideAttendance: false,
+          },
         },
         actions: [],
         items: [
@@ -250,6 +261,103 @@ describe('RetailOpsController HR attendance (e2e)', () => {
       exportAttendanceNetworkSummaryCsv: jest
         .fn()
         .mockResolvedValue('branchId,branchName\n4,"Bole"'),
+      getAttendanceComplianceSummary: jest.fn().mockResolvedValue({
+        summary: {
+          anchorBranchId: 3,
+          retailTenantId: 9,
+          branchCount: 2,
+          filteredBranchCount: 1,
+          windowHours: 168,
+          totalStaffCount: 4,
+          filteredStaffCount: 2,
+          totalExceptionCount: 3,
+          filteredExceptionCount: 1,
+          lastActivityAt: '2026-03-19T08:00:00.000Z',
+          permissions: {
+            canOverrideAttendance: false,
+          },
+        },
+        statusCounts: [{ key: 'ABSENT', count: 1 }],
+        queueTypeCounts: [{ key: 'ABSENT', count: 1 }],
+        priorityCounts: [{ key: 'CRITICAL', count: 1 }],
+        branches: [
+          {
+            branchId: 4,
+            branchName: 'Bole',
+            branchCode: 'BOLE',
+            filteredStaffCount: 2,
+            filteredExceptionCount: 1,
+            lastActivityAt: '2026-03-19T08:00:00.000Z',
+            statusCounts: [{ key: 'ABSENT', count: 1 }],
+            queueTypeCounts: [{ key: 'ABSENT', count: 1 }],
+            priorityCounts: [{ key: 'CRITICAL', count: 1 }],
+          },
+        ],
+        topStaffExceptions: [
+          {
+            branchId: 4,
+            branchName: 'Bole',
+            branchCode: 'BOLE',
+            userId: 18,
+            displayName: 'Operator',
+            email: 'operator@test.com',
+            role: 'OPERATOR',
+            currentStatus: 'ABSENT',
+            queueType: 'ABSENT',
+            priority: 'CRITICAL',
+            priorityReason: 'No recent attendance activity was found.',
+            latestCheckInAt: null,
+            latestCheckOutAt: null,
+            workedHours: null,
+            lateMinutes: 0,
+            overtimeHours: 0,
+          },
+        ],
+      }),
+      getAttendanceNetworkSummary: jest.fn().mockResolvedValue({
+        anchorBranchId: 3,
+        retailTenantId: 9,
+        branchCount: 2,
+        windowHours: 24,
+        activeStaffCount: 5,
+        checkedInStaffCount: 3,
+        onDutyCount: 3,
+        absentCount: 1,
+        lateCheckInCount: 1,
+        overtimeActiveCount: 0,
+        averageAttendanceRate: 60,
+        criticalBranchCount: 1,
+        highBranchCount: 1,
+        normalBranchCount: 0,
+        permissions: {
+          canOverrideAttendance: false,
+        },
+        alerts: [],
+        branches: [
+          {
+            branchId: 4,
+            branchName: 'Bole',
+            branchCode: 'BOLE',
+            highestRisk: 'CRITICAL',
+            highestRiskReason: 'Absent coverage is elevated.',
+            activeStaffCount: 3,
+            checkedInStaffCount: 1,
+            onDutyCount: 1,
+            absentCount: 1,
+            lateCheckInCount: 1,
+            overtimeActiveCount: 0,
+            attendanceRate: 33.33,
+            averageWorkedHours: 2,
+            lastActivityAt: '2026-03-19T08:00:00.000Z',
+            actions: [],
+          },
+        ],
+      }),
+      exportAttendanceComplianceCsv: jest
+        .fn()
+        .mockResolvedValue(
+          'retailTenantId,anchorBranchId,branchId,branchName,userId\n9,3,3,"HQ",11',
+        ),
     };
 
     const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -306,14 +414,24 @@ describe('RetailOpsController HR attendance (e2e)', () => {
           branchId: 3,
           activeStaffCount: 2,
           checkedInStaffCount: 1,
+          permissions: expect.objectContaining({
+            canOverrideAttendance: false,
+          }),
         }),
       }),
     );
-    expect(retailAttendanceService.getAttendanceSummary).toHaveBeenCalledWith({
-      branchId: 3,
-      windowHours: 24,
-      limit: 20,
-    });
+    expect(retailAttendanceService.getAttendanceSummary).toHaveBeenCalledWith(
+      {
+        branchId: 3,
+        windowHours: 24,
+        limit: 20,
+      },
+      {
+        id: 18,
+        email: 'buyer@test.com',
+        roles: ['B2B_BUYER'],
+      },
+    );
   });
 
   it('returns branch HR attendance detail for a staff member', async () => {
@@ -328,8 +446,24 @@ describe('RetailOpsController HR attendance (e2e)', () => {
           branchId: 3,
           userId: 11,
           currentStatus: 'ON_DUTY',
+          permissions: expect.objectContaining({
+            canOverrideAttendance: false,
+          }),
         }),
       }),
+    );
+    expect(retailAttendanceService.getAttendanceDetail).toHaveBeenCalledWith(
+      11,
+      {
+        branchId: 3,
+        limit: 10,
+        windowHours: 168,
+      },
+      {
+        id: 18,
+        email: 'buyer@test.com',
+        roles: ['B2B_BUYER'],
+      },
     );
   });
 
@@ -340,6 +474,21 @@ describe('RetailOpsController HR attendance (e2e)', () => {
       .expect(200);
 
     expect(response.text).toContain('branchId,userId');
+    expect(
+      retailAttendanceService.exportAttendanceDetailCsv,
+    ).toHaveBeenCalledWith(
+      11,
+      {
+        branchId: 3,
+        limit: 10,
+        windowHours: 168,
+      },
+      {
+        id: 18,
+        email: 'buyer@test.com',
+        roles: ['B2B_BUYER'],
+      },
+    );
   });
 
   it('returns a branch HR attendance exception queue', async () => {
@@ -358,8 +507,26 @@ describe('RetailOpsController HR attendance (e2e)', () => {
         summary: expect.objectContaining({
           branchId: 3,
           filteredExceptionCount: 1,
+          permissions: expect.objectContaining({
+            canOverrideAttendance: false,
+          }),
         }),
       }),
+    );
+    expect(
+      retailAttendanceService.getAttendanceExceptions,
+    ).toHaveBeenCalledWith(
+      {
+        branchId: 3,
+        queueType: 'ABSENT',
+        priority: 'CRITICAL',
+        windowHours: 24,
+      },
+      {
+        id: 18,
+        email: 'buyer@test.com',
+        roles: ['B2B_BUYER'],
+      },
     );
   });
 
@@ -375,6 +542,21 @@ describe('RetailOpsController HR attendance (e2e)', () => {
       .expect(200);
 
     expect(response.text).toContain('branchId,userId,queueType');
+    expect(
+      retailAttendanceService.exportAttendanceExceptionsCsv,
+    ).toHaveBeenCalledWith(
+      {
+        branchId: 3,
+        queueType: 'ABSENT',
+        priority: 'CRITICAL',
+        windowHours: 24,
+      },
+      {
+        id: 18,
+        email: 'buyer@test.com',
+        roles: ['B2B_BUYER'],
+      },
+    );
   });
 
   it('rejects HR attendance requests without a branchId query', async () => {
@@ -489,7 +671,25 @@ describe('RetailOpsController HR attendance (e2e)', () => {
       expect.objectContaining({
         anchorBranchId: 3,
         criticalBranchCount: 1,
+        permissions: expect.objectContaining({
+          canOverrideAttendance: false,
+        }),
       }),
+    );
+    expect(
+      retailAttendanceService.getAttendanceNetworkSummary,
+    ).toHaveBeenCalledWith(
+      {
+        branchId: 3,
+        limit: 10,
+        risk: 'CRITICAL',
+        windowHours: 24,
+      },
+      {
+        id: 18,
+        email: 'buyer@test.com',
+        roles: ['B2B_BUYER'],
+      },
     );
   });
 
@@ -500,5 +700,93 @@ describe('RetailOpsController HR attendance (e2e)', () => {
       .expect(200);
 
     expect(response.text).toContain('branchId,branchName');
+  });
+
+  it('exports tenant HR attendance compliance rows for HQ review as CSV', async () => {
+    const response = await request(app.getHttpServer())
+      .get('/api/retail/v1/ops/hr-attendance/compliance-export')
+      .query({
+        branchId: 3,
+        windowHours: 168,
+        branchIds: '3,4',
+        userIds: '11,18',
+        statuses: 'ABSENT,LATE',
+        queueTypes: 'ABSENT',
+        priorities: 'CRITICAL',
+      })
+      .expect(200);
+
+    expect(response.text).toContain(
+      'retailTenantId,anchorBranchId,branchId,branchName,userId',
+    );
+    expect(
+      retailAttendanceService.exportAttendanceComplianceCsv,
+    ).toHaveBeenCalledWith({
+      branchId: 3,
+      windowHours: 168,
+      branchIds: [3, 4],
+      userIds: [11, 18],
+      statuses: ['ABSENT', 'LATE'],
+      queueTypes: ['ABSENT'],
+      priorities: ['CRITICAL'],
+    });
+  });
+
+  it('returns tenant HR attendance compliance aggregates for HQ review', async () => {
+    const response = await request(app.getHttpServer())
+      .get('/api/retail/v1/ops/hr-attendance/compliance-summary')
+      .query({
+        branchId: 3,
+        windowHours: 168,
+        branchIds: '3,4',
+        userIds: '11,18',
+        statuses: 'ABSENT,LATE',
+        queueTypes: 'ABSENT',
+        priorities: 'CRITICAL',
+      })
+      .expect(200);
+
+    expect(response.body).toEqual(
+      expect.objectContaining({
+        summary: expect.objectContaining({
+          anchorBranchId: 3,
+          filteredExceptionCount: 1,
+          permissions: expect.objectContaining({
+            canOverrideAttendance: false,
+          }),
+        }),
+        branches: expect.arrayContaining([
+          expect.objectContaining({
+            branchId: 4,
+            filteredExceptionCount: 1,
+          }),
+        ]),
+        topStaffExceptions: expect.arrayContaining([
+          expect.objectContaining({
+            branchId: 4,
+            queueType: 'ABSENT',
+            priority: 'CRITICAL',
+          }),
+        ]),
+      }),
+    );
+    expect(
+      retailAttendanceService.getAttendanceComplianceSummary,
+    ).toHaveBeenCalledWith(
+      {
+        branchId: 3,
+        windowHours: 168,
+        branchIds: [3, 4],
+        userIds: [11, 18],
+        statuses: ['ABSENT', 'LATE'],
+        queueTypes: ['ABSENT'],
+        priorities: ['CRITICAL'],
+      },
+      {
+        id: 18,
+        email: 'buyer@test.com',
+        roles: ['B2B_BUYER'],
+      },
+    );
   });
 });

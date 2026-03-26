@@ -14,6 +14,7 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { UserRole } from '../auth/roles.enum';
 import { NotificationsService } from '../notifications/notifications.service';
 import { NotificationType } from '../notifications/entities/notification.entity';
+import { AdminNotificationHistoryQueryDto } from './dto/admin-notification-history-query.dto';
 
 import { ProductsService } from '../products/products.service';
 
@@ -27,16 +28,13 @@ export class AdminNotificationsController {
   ) {}
 
   @Get()
-  async getHistory(
-    @Query('page') pageRaw: number | string = 1,
-    @Query('limit') limitRaw: number | string = 20,
-    @Query('type') type?: NotificationType,
-    @Query('userId') userIdRaw?: number | string,
-  ) {
-    const page = Number(pageRaw) || 1;
-    const limit = Number(limitRaw) || 20;
-    const userId = userIdRaw ? Number(userIdRaw) : undefined;
-    return this.notificationsService.findAll({ page, limit, type, userId });
+  async getHistory(@Query() query: AdminNotificationHistoryQueryDto) {
+    return this.notificationsService.findAll({
+      page: query.page ?? 1,
+      limit: query.limit ?? 20,
+      type: query.type,
+      userId: query.userId,
+    });
   }
 
   @Get('debug/vendor-token-counts/:vendorId')

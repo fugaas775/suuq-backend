@@ -17,8 +17,10 @@ import { UsersService } from '../users/users.service';
 import { FindUsersQueryDto } from '../users/dto/find-users-query.dto';
 import { UserResponseDto } from '../users/dto/user-response.dto';
 import { ExtendSubscriptionDto } from '../users/dto/subscription-actions.dto';
-import { SubscriptionRequestStatus } from '../users/entities/subscription-request.entity';
 import { SubscriptionAnalyticsService } from '../metrics/subscription-analytics.service';
+import { AdminUsersPageQueryDto } from './dto/admin-users-page-query.dto';
+import { AdminSubscriptionRequestsQueryDto } from './dto/admin-subscription-requests-query.dto';
+import { AdminUserListQueryDto } from './dto/admin-user-list-query.dto';
 
 @UseGuards(AuthGuard('jwt'), RolesGuard)
 @SkipThrottle()
@@ -37,21 +39,23 @@ export class AdminUsersController {
 
   @Get('subscription/active')
   @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
-  async getActiveSubscriptions(
-    @Query('page') page: number = 1,
-    @Query('limit') limit: number = 20,
-  ) {
-    return this.usersService.findActiveProUsers(page, limit);
+  async getActiveSubscriptions(@Query() query: AdminUsersPageQueryDto) {
+    return this.usersService.findActiveProUsers(
+      query.page ?? 1,
+      query.limit ?? 20,
+    );
   }
 
   @Get('subscription/requests')
   @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
   async listSubscriptionRequests(
-    @Query('page') page: number = 1,
-    @Query('limit') limit: number = 20,
-    @Query('status') status?: SubscriptionRequestStatus,
+    @Query() query: AdminSubscriptionRequestsQueryDto,
   ) {
-    return this.usersService.findAllSubscriptionRequests(page, limit, status);
+    return this.usersService.findAllSubscriptionRequests(
+      query.page ?? 1,
+      query.limit ?? 20,
+      query.status,
+    );
   }
 
   @Post('subscription/:userId/extend')
@@ -65,10 +69,7 @@ export class AdminUsersController {
 
   @Get()
   @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
-  async list(
-    @Query() filters: FindUsersQueryDto,
-    @Query('meta') metaFlag?: string,
-  ) {
+  async list(@Query() filters: AdminUserListQueryDto) {
     const pageSize = filters.pageSize || filters.limit || 20;
     const {
       users,
@@ -85,7 +86,7 @@ export class AdminUsersController {
       plainToInstance(UserResponseDto, user, { excludeExtraneousValues: true }),
     );
 
-    if (metaFlag === '1') {
+    if (filters.meta === '1') {
       return { data, meta: { total, page, pageSize: effectivePageSize } };
     }
 

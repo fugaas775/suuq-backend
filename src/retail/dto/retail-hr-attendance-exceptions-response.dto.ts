@@ -4,6 +4,7 @@ import {
   RetailHrAttendanceExceptionPriorityFilter,
   RetailHrAttendanceExceptionQueueFilter,
 } from './retail-hr-attendance-exceptions-query.dto';
+import { RetailHrAttendancePermissionsResponseDto } from './retail-hr-attendance-response.dto';
 
 export class RetailHrAttendanceExceptionActionResponseDto {
   @ApiProperty()
@@ -55,6 +56,9 @@ export class RetailHrAttendanceExceptionsSummaryResponseDto {
 
   @ApiProperty({ nullable: true })
   lastActivityAt!: Date | null;
+
+  @ApiProperty({ type: RetailHrAttendancePermissionsResponseDto })
+  permissions!: RetailHrAttendancePermissionsResponseDto;
 }
 
 export class RetailHrAttendanceExceptionItemResponseDto {

@@ -18,6 +18,10 @@ import {
 } from '../orders/entities/order.entity';
 import { TelebirrTransaction } from '../payments/entities/telebirr-transaction.entity';
 import { EbirrTransaction } from '../payments/entities/ebirr-transaction.entity';
+import { AdminAnalyticsAggregationsQueryDto } from './dto/admin-analytics-aggregations-query.dto';
+import { AdminAnalyticsSearchKeywordsQueryDto } from './dto/admin-analytics-search-keywords-query.dto';
+import { AdminAnalyticsSummaryQueryDto } from './dto/admin-analytics-summary-query.dto';
+import { AdminAnalyticsTopKeywordsQueryDto } from './dto/admin-analytics-top-keywords-query.dto';
 
 type SortKey =
   | 'submit_desc'
@@ -478,139 +482,50 @@ export class AdminAnalyticsController {
   // Primary path
   @Get('admin/search-keywords')
   async listKeywordsPrimary(
-    @Query('page') page = 1,
-    @Query('perPage') perPage = 20,
-    @Query('from') from?: string,
-    @Query('to') to?: string,
-    @Query('minSubmits') minSubmits: string = '1',
-    @Query('q') q?: string,
-    @Query('sort') sort: SortKey = 'submit_desc',
-    @Query('city') city?: string,
-    @Query('country') country?: string,
-    @Query('vendor') vendor?: string,
+    @Query() query: AdminAnalyticsSearchKeywordsQueryDto,
   ) {
     return this.listKeywords(
-      page,
-      perPage,
-      from,
-      to,
-      minSubmits,
-      q,
-      sort,
-      city,
-      country,
-      vendor,
+      query.page ?? 1,
+      query.perPage ?? 20,
+      query.from,
+      query.to,
+      query.minSubmits ?? 1,
+      query.q,
+      (query.sort as SortKey | undefined) ?? 'submit_desc',
+      query.city,
+      query.country,
+      query.vendor,
     );
   }
 
   // Aliases to be resilient with the admin client
   @Get('admin/analytics/search-keywords')
   async listKeywordsAlias1(
-    @Query('page') page = 1,
-    @Query('perPage') perPage = 20,
-    @Query('from') from?: string,
-    @Query('to') to?: string,
-    @Query('minSubmits') minSubmits: string = '1',
-    @Query('q') q?: string,
-    @Query('sort') sort: SortKey = 'submit_desc',
-    @Query('city') city?: string,
-    @Query('country') country?: string,
-    @Query('vendor') vendor?: string,
+    @Query() query: AdminAnalyticsSearchKeywordsQueryDto,
   ) {
-    return this.listKeywords(
-      page,
-      perPage,
-      from,
-      to,
-      minSubmits,
-      q,
-      sort,
-      city,
-      country,
-      vendor,
-    );
+    return this.listKeywordsPrimary(query);
   }
 
   @Get('admin/search/keywords')
   async listKeywordsAlias2(
-    @Query('page') page = 1,
-    @Query('perPage') perPage = 20,
-    @Query('from') from?: string,
-    @Query('to') to?: string,
-    @Query('minSubmits') minSubmits: string = '1',
-    @Query('q') q?: string,
-    @Query('sort') sort: SortKey = 'submit_desc',
-    @Query('city') city?: string,
-    @Query('country') country?: string,
-    @Query('vendor') vendor?: string,
+    @Query() query: AdminAnalyticsSearchKeywordsQueryDto,
   ) {
-    return this.listKeywords(
-      page,
-      perPage,
-      from,
-      to,
-      minSubmits,
-      q,
-      sort,
-      city,
-      country,
-      vendor,
-    );
+    return this.listKeywordsPrimary(query);
   }
 
   // Additional aliases without the 'admin' segment to match some clients
   @Get('analytics/search-keywords')
   async listKeywordsAlias3(
-    @Query('page') page = 1,
-    @Query('perPage') perPage = 20,
-    @Query('from') from?: string,
-    @Query('to') to?: string,
-    @Query('minSubmits') minSubmits: string = '1',
-    @Query('q') q?: string,
-    @Query('sort') sort: SortKey = 'submit_desc',
-    @Query('city') city?: string,
-    @Query('country') country?: string,
-    @Query('vendor') vendor?: string,
+    @Query() query: AdminAnalyticsSearchKeywordsQueryDto,
   ) {
-    return this.listKeywords(
-      page,
-      perPage,
-      from,
-      to,
-      minSubmits,
-      q,
-      sort,
-      city,
-      country,
-      vendor,
-    );
+    return this.listKeywordsPrimary(query);
   }
 
   @Get('analytics/search/keywords')
   async listKeywordsAlias4(
-    @Query('page') page = 1,
-    @Query('perPage') perPage = 20,
-    @Query('from') from?: string,
-    @Query('to') to?: string,
-    @Query('minSubmits') minSubmits?: string,
-    @Query('q') q?: string,
-    @Query('sort') sort: SortKey = 'submit_desc',
-    @Query('city') city?: string,
-    @Query('country') country?: string,
-    @Query('vendor') vendor?: string,
+    @Query() query: AdminAnalyticsSearchKeywordsQueryDto,
   ) {
-    return this.listKeywords(
-      page,
-      perPage,
-      from,
-      to,
-      minSubmits || '1',
-      q,
-      sort,
-      city,
-      country,
-      vendor,
-    );
+    return this.listKeywordsPrimary(query);
   }
 
   // --- Top keywords by recent activity window ---
@@ -804,16 +719,13 @@ export class AdminAnalyticsController {
 
   // Primary top keywords endpoints
   @Get('admin/search-keywords/top')
-  async topKeywordsPrimary(
-    @Query('window') window: 'day' | 'week' | 'month' = 'day',
-    @Query('limit') limit = 100,
-  ) {
-    return this.topKeywords(window, Number(limit));
+  async topKeywordsPrimary(@Query() query: AdminAnalyticsTopKeywordsQueryDto) {
+    return this.topKeywords(query.window ?? 'day', query.limit ?? 100);
   }
 
   @Get('admin/search-keywords/top/summary')
-  async topKeywordsSummary(@Query('limit') limit = 100) {
-    const take = Math.min(Math.max(Number(limit) || 100, 1), 200);
+  async topKeywordsSummary(@Query() query: AdminAnalyticsSummaryQueryDto) {
+    const take = query.limit ?? 100;
     const [day, week, month, aggDay, aggWeek, aggMonth] = await Promise.all([
       this.topKeywords('day', take),
       this.topKeywords('week', take),
@@ -833,62 +745,43 @@ export class AdminAnalyticsController {
 
   // Aliases to be resilient with the admin client
   @Get('admin/analytics/search-keywords/top')
-  async topKeywordsAlias1(
-    @Query('window') timeWindow: 'day' | 'week' | 'month' = 'day',
-    @Query('limit') limit = 100,
-  ) {
-    return this.topKeywords(timeWindow, Number(limit));
+  async topKeywordsAlias1(@Query() query: AdminAnalyticsTopKeywordsQueryDto) {
+    return this.topKeywordsPrimary(query);
   }
 
   @Get('admin/search/keywords/top')
-  async topKeywordsAlias2(
-    @Query('window') timeWindow: 'day' | 'week' | 'month' = 'day',
-    @Query('limit') limit = 100,
-  ) {
-    return this.topKeywords(timeWindow, Number(limit));
+  async topKeywordsAlias2(@Query() query: AdminAnalyticsTopKeywordsQueryDto) {
+    return this.topKeywordsPrimary(query);
   }
 
   // Non-admin prefixed aliases (client fallbacks)
   @Get('analytics/search-keywords/top')
-  async topKeywordsAlias3(
-    @Query('window') timeWindow: 'day' | 'week' | 'month' = 'day',
-    @Query('limit') limit = 100,
-  ) {
-    return this.topKeywords(timeWindow, Number(limit));
+  async topKeywordsAlias3(@Query() query: AdminAnalyticsTopKeywordsQueryDto) {
+    return this.topKeywordsPrimary(query);
   }
 
   @Get('analytics/search/keywords/top')
-  async topKeywordsAlias4(
-    @Query('window') timeWindow: 'day' | 'week' | 'month' = 'day',
-    @Query('limit') limit = 100,
-  ) {
-    return this.topKeywords(timeWindow, Number(limit));
+  async topKeywordsAlias4(@Query() query: AdminAnalyticsTopKeywordsQueryDto) {
+    return this.topKeywordsPrimary(query);
   }
 
   // Aggregation endpoints (separate cards in UI)
   @Get('admin/search-keywords/aggregations')
   async aggregationsPrimary(
-    @Query('window') timeWindow: 'day' | 'week' | 'month' = 'week',
-    @Query('limit') limit = 10,
+    @Query() query: AdminAnalyticsAggregationsQueryDto,
   ) {
-    return this.topAggregations(timeWindow, Number(limit));
+    return this.topAggregations(query.window ?? 'week', query.limit ?? 10);
   }
 
   // Aliases for aggregations
   @Get('admin/analytics/search-keywords/aggregations')
-  async aggregationsAlias1(
-    @Query('window') timeWindow: 'day' | 'week' | 'month' = 'week',
-    @Query('limit') limit = 10,
-  ) {
-    return this.topAggregations(timeWindow, Number(limit));
+  async aggregationsAlias1(@Query() query: AdminAnalyticsAggregationsQueryDto) {
+    return this.aggregationsPrimary(query);
   }
 
   @Get('analytics/search-keywords/aggregations')
-  async aggregationsAlias2(
-    @Query('window') timeWindow: 'day' | 'week' | 'month' = 'week',
-    @Query('limit') limit = 10,
-  ) {
-    return this.topAggregations(timeWindow, Number(limit));
+  async aggregationsAlias2(@Query() query: AdminAnalyticsAggregationsQueryDto) {
+    return this.aggregationsPrimary(query);
   }
 
   private async listKeywords(
@@ -896,7 +789,7 @@ export class AdminAnalyticsController {
     perPage = 20,
     from?: string,
     to?: string,
-    minSubmits: string = '1',
+    minSubmits: number = 1,
     q?: string,
     sort: SortKey = 'submit_desc',
     city?: string,

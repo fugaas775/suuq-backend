@@ -8,6 +8,9 @@ import { InventoryLedgerService } from '../branches/inventory-ledger.service';
 import { ReplenishmentService } from '../branches/replenishment.service';
 import { Branch } from '../branches/entities/branch.entity';
 import { Product } from '../products/entities/product.entity';
+import { ProcurementWebhooksService } from '../procurement-webhooks/procurement-webhooks.service';
+import { ProcurementWebhookEventType } from '../procurement-webhooks/entities/procurement-webhook-subscription.entity';
+import { RealtimeGateway } from '../realtime/realtime.gateway';
 import { SupplierOffer } from '../supplier-offers/entities/supplier-offer.entity';
 import { SupplierProfile } from '../suppliers/entities/supplier-profile.entity';
 import { PurchaseOrdersService } from './purchase-orders.service';
@@ -40,6 +43,12 @@ describe('PurchaseOrdersService', () => {
   };
   let replenishmentService: {
     reevaluateDraftPurchaseOrder: jest.Mock;
+  };
+  let realtimeGateway: {
+    notifyProcurementPurchaseOrderUpdated: jest.Mock;
+  };
+  let procurementWebhooksService: {
+    dispatchProcurementEvent: jest.Mock;
   };
 
   beforeEach(async () => {
@@ -86,6 +95,14 @@ describe('PurchaseOrdersService', () => {
     replenishmentService = {
       reevaluateDraftPurchaseOrder: jest.fn(),
     };
+    realtimeGateway = {
+      notifyProcurementPurchaseOrderUpdated: jest
+        .fn()
+        .mockResolvedValue(undefined),
+    };
+    procurementWebhooksService = {
+      dispatchProcurementEvent: jest.fn().mockResolvedValue(undefined),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -106,6 +123,11 @@ describe('PurchaseOrdersService', () => {
         { provide: AuditService, useValue: auditService },
         { provide: InventoryLedgerService, useValue: inventoryLedgerService },
         { provide: ReplenishmentService, useValue: replenishmentService },
+        {
+          provide: ProcurementWebhooksService,
+          useValue: procurementWebhooksService,
+        },
+        { provide: RealtimeGateway, useValue: realtimeGateway },
       ],
     }).compile();
 
@@ -162,6 +184,39 @@ describe('PurchaseOrdersService', () => {
         }),
       }),
       expect.any(Object),
+    );
+    expect(
+      realtimeGateway.notifyProcurementPurchaseOrderUpdated,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        purchaseOrderId: 12,
+        branchId: 1,
+        supplierProfileId: 2,
+        action: 'STATUS_UPDATED',
+        previousStatus: PurchaseOrderStatus.SUBMITTED,
+        currentStatus: PurchaseOrderStatus.ACKNOWLEDGED,
+        actorId: 9,
+        actorEmail: 'supplier@example.com',
+        reason: 'Accepted by supplier',
+        purchaseOrder: expect.objectContaining({
+          id: 12,
+          status: PurchaseOrderStatus.ACKNOWLEDGED,
+        }),
+      }),
+    );
+    expect(
+      procurementWebhooksService.dispatchProcurementEvent,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        purchaseOrderId: 12,
+        branchId: 1,
+        supplierProfileId: 2,
+        eventType: 'PROCUREMENT_PURCHASE_ORDER_UPDATED',
+        payload: expect.objectContaining({
+          action: 'STATUS_UPDATED',
+          currentStatus: PurchaseOrderStatus.ACKNOWLEDGED,
+        }),
+      }),
     );
     expect(inventoryLedgerService.adjustInboundOpenPo).not.toHaveBeenCalled();
   });
@@ -286,6 +341,43 @@ describe('PurchaseOrdersService', () => {
           }),
         ],
         discrepancyStatus: PurchaseOrderReceiptDiscrepancyStatus.OPEN,
+      }),
+    );
+    expect(
+      realtimeGateway.notifyProcurementPurchaseOrderUpdated,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        purchaseOrderId: 14,
+        branchId: 1,
+        supplierProfileId: 2,
+        action: 'STATUS_UPDATED',
+        previousStatus: PurchaseOrderStatus.SHIPPED,
+        currentStatus: PurchaseOrderStatus.RECEIVED,
+        actorId: 10,
+        actorEmail: 'buyer@example.com',
+        reason: 'Goods received at branch',
+        receiptSummary: [
+          expect.objectContaining({
+            itemId: 3,
+            receivedQuantity: 2,
+            shortageQuantity: 1,
+            damagedQuantity: 1,
+          }),
+        ],
+      }),
+    );
+    expect(
+      procurementWebhooksService.dispatchProcurementEvent,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        purchaseOrderId: 14,
+        branchId: 1,
+        supplierProfileId: 2,
+        eventType: 'PROCUREMENT_PURCHASE_ORDER_UPDATED',
+        payload: expect.objectContaining({
+          action: 'STATUS_UPDATED',
+          currentStatus: PurchaseOrderStatus.RECEIVED,
+        }),
       }),
     );
   });
@@ -512,6 +604,43 @@ describe('PurchaseOrdersService', () => {
         metadata: { truck: 'T-1' },
       }),
     );
+    expect(
+      realtimeGateway.notifyProcurementPurchaseOrderUpdated,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        purchaseOrderId: 15,
+        branchId: 1,
+        supplierProfileId: 2,
+        action: 'RECEIPT_RECORDED',
+        previousStatus: PurchaseOrderStatus.RECEIVED,
+        currentStatus: PurchaseOrderStatus.RECEIVED,
+        actorId: 11,
+        actorEmail: 'buyer@example.com',
+        reason: 'Final pallet received',
+        metadata: { truck: 'T-1' },
+        receiptSummary: [
+          expect.objectContaining({
+            itemId: 7,
+            receivedQuantity: 1,
+            damagedQuantity: 1,
+          }),
+        ],
+      }),
+    );
+    expect(
+      procurementWebhooksService.dispatchProcurementEvent,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        purchaseOrderId: 15,
+        branchId: 1,
+        supplierProfileId: 2,
+        eventType: 'PROCUREMENT_PURCHASE_ORDER_UPDATED',
+        payload: expect.objectContaining({
+          action: 'RECEIPT_RECORDED',
+          metadata: { truck: 'T-1' },
+        }),
+      }),
+    );
   });
 
   it('does not persist receipt events or audits when ledger persistence fails during receipt recording', async () => {
@@ -603,6 +732,17 @@ describe('PurchaseOrdersService', () => {
   });
 
   it('resolves discrepant receipt events from the supplier side', async () => {
+    purchaseOrdersRepository.findOne.mockResolvedValue({
+      id: 15,
+      orderNumber: 'PO-15',
+      branchId: 1,
+      supplierProfileId: 2,
+      status: PurchaseOrderStatus.SHIPPED,
+      items: [],
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as PurchaseOrder);
+
     const receiptEvent = {
       id: 22,
       purchaseOrderId: 15,
@@ -640,6 +780,24 @@ describe('PurchaseOrdersService', () => {
       'Credit memo will cover the missing unit',
     );
     expect(result.discrepancyResolvedByUserId).toBe(13);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(
+      procurementWebhooksService.dispatchProcurementEvent,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: ProcurementWebhookEventType.RECEIPT_DISCREPANCY_RESOLVED,
+        purchaseOrderId: 15,
+        branchId: 1,
+        supplierProfileId: 2,
+        payload: expect.objectContaining({
+          action: 'DISCREPANCY_RESOLVED',
+          receiptEventId: 22,
+          discrepancyStatus: PurchaseOrderReceiptDiscrepancyStatus.RESOLVED,
+          note: 'Credit memo will cover the missing unit',
+          metadata: { creditMemoNumber: 'CM-101' },
+        }),
+      }),
+    );
   });
 
   it('rejects discrepancy resolution when the receipt event has no shortage or damage', async () => {
@@ -674,6 +832,17 @@ describe('PurchaseOrdersService', () => {
   });
 
   it('allows buyers to approve resolved discrepancy events', async () => {
+    purchaseOrdersRepository.findOne.mockResolvedValue({
+      id: 15,
+      orderNumber: 'PO-15',
+      branchId: 1,
+      supplierProfileId: 2,
+      status: PurchaseOrderStatus.SHIPPED,
+      items: [],
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as PurchaseOrder);
+
     const receiptEvent = {
       id: 24,
       purchaseOrderId: 15,
@@ -709,9 +878,38 @@ describe('PurchaseOrdersService', () => {
     expect(result.discrepancyApprovalNote).toBe(
       'Approved after confirming supplier credit memo',
     );
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(
+      procurementWebhooksService.dispatchProcurementEvent,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: ProcurementWebhookEventType.RECEIPT_DISCREPANCY_APPROVED,
+        purchaseOrderId: 15,
+        branchId: 1,
+        supplierProfileId: 2,
+        payload: expect.objectContaining({
+          action: 'DISCREPANCY_APPROVED',
+          receiptEventId: 24,
+          discrepancyStatus: PurchaseOrderReceiptDiscrepancyStatus.APPROVED,
+          note: 'Approved after confirming supplier credit memo',
+          approvalMode: 'STANDARD',
+        }),
+      }),
+    );
   });
 
   it('allows admins to force-close stale discrepancy events', async () => {
+    purchaseOrdersRepository.findOne.mockResolvedValue({
+      id: 15,
+      orderNumber: 'PO-15',
+      branchId: 1,
+      supplierProfileId: 2,
+      status: PurchaseOrderStatus.SHIPPED,
+      items: [],
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as PurchaseOrder);
+
     const receiptEvent = {
       id: 27,
       purchaseOrderId: 15,
@@ -755,6 +953,25 @@ describe('PurchaseOrdersService', () => {
           purchaseOrderId: 15,
           previousDiscrepancyStatus: PurchaseOrderReceiptDiscrepancyStatus.OPEN,
           nextDiscrepancyStatus: PurchaseOrderReceiptDiscrepancyStatus.APPROVED,
+        }),
+      }),
+    );
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(
+      procurementWebhooksService.dispatchProcurementEvent,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: ProcurementWebhookEventType.RECEIPT_DISCREPANCY_APPROVED,
+        purchaseOrderId: 15,
+        branchId: 1,
+        supplierProfileId: 2,
+        payload: expect.objectContaining({
+          action: 'DISCREPANCY_APPROVED',
+          receiptEventId: 27,
+          discrepancyStatus: PurchaseOrderReceiptDiscrepancyStatus.APPROVED,
+          note: 'Supplier non-responsive after escalation window expired',
+          approvalMode: 'FORCE_CLOSE',
+          previousDiscrepancyStatus: PurchaseOrderReceiptDiscrepancyStatus.OPEN,
         }),
       }),
     );

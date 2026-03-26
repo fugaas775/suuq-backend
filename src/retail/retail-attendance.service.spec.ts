@@ -10,6 +10,7 @@ import { RetailEntitlementsService } from './retail-entitlements.service';
 import { RetailModule } from './entities/tenant-module-entitlement.entity';
 import { HrAttendanceLog } from './entities/hr-attendance-log.entity';
 import { RetailAttendanceService } from './retail-attendance.service';
+import { RetailHrAttendanceComplianceStatusFilter } from './dto/retail-hr-attendance-compliance-export-query.dto';
 import {
   RetailHrAttendanceExceptionPriorityFilter,
   RetailHrAttendanceExceptionQueueFilter,
@@ -140,11 +141,22 @@ describe('RetailAttendanceService', () => {
       attendanceLogsQb,
     );
 
-    const result = await service.getAttendanceSummary({
+    branchStaffAssignmentsRepository.findOne.mockResolvedValue({
       branchId: 3,
-      windowHours: 24,
-      limit: 25,
+      userId: 11,
+      role: BranchStaffRole.MANAGER,
+      permissions: [],
+      isActive: true,
     });
+
+    const result = await service.getAttendanceSummary(
+      {
+        branchId: 3,
+        windowHours: 24,
+        limit: 25,
+      },
+      { id: 11, roles: ['B2B_BUYER'] },
+    );
 
     expect(
       retailEntitlementsService.assertBranchHasModules,
@@ -156,6 +168,9 @@ describe('RetailAttendanceService', () => {
         checkedInStaffCount: 2,
         onDutyCount: 1,
         completedShiftCount: 1,
+        permissions: {
+          canOverrideAttendance: true,
+        },
       }),
     );
     expect(result.items).toEqual(
@@ -199,9 +214,15 @@ describe('RetailAttendanceService', () => {
       attendanceLogsQb,
     );
 
-    const result = await service.getAttendanceSummary({ branchId: 3 });
+    branchStaffAssignmentsRepository.findOne.mockResolvedValue(null);
+
+    const result = await service.getAttendanceSummary(
+      { branchId: 3 },
+      { id: 99, roles: ['B2B_BUYER'] },
+    );
 
     expect(result.summary.absentCount).toBe(1);
+    expect(result.summary.permissions.canOverrideAttendance).toBe(false);
     expect(result.items[0]).toEqual(
       expect.objectContaining({
         userId: 12,
@@ -441,11 +462,22 @@ describe('RetailAttendanceService', () => {
       attendanceLogsQb,
     );
 
-    const result = await service.getAttendanceNetworkSummary({
+    branchStaffAssignmentsRepository.findOne.mockResolvedValue({
       branchId: 3,
-      limit: 10,
-      windowHours: 24,
+      userId: 11,
+      role: BranchStaffRole.MANAGER,
+      permissions: [],
+      isActive: true,
     });
+
+    const result = await service.getAttendanceNetworkSummary(
+      {
+        branchId: 3,
+        limit: 10,
+        windowHours: 24,
+      },
+      { id: 11, roles: ['B2B_BUYER'] },
+    );
 
     expect(result).toEqual(
       expect.objectContaining({
@@ -454,6 +486,9 @@ describe('RetailAttendanceService', () => {
         branchCount: 2,
         criticalBranchCount: 1,
         highBranchCount: 1,
+        permissions: {
+          canOverrideAttendance: true,
+        },
         branches: expect.arrayContaining([
           expect.objectContaining({ branchId: 4, highestRisk: 'CRITICAL' }),
           expect.objectContaining({ branchId: 3, highestRisk: 'HIGH' }),
@@ -532,12 +567,23 @@ describe('RetailAttendanceService', () => {
       attendanceLogsQb,
     );
 
-    const result = await service.getAttendanceExceptions({
+    branchStaffAssignmentsRepository.findOne.mockResolvedValue({
       branchId: 3,
-      queueType: RetailHrAttendanceExceptionQueueFilter.LATE,
-      priority: RetailHrAttendanceExceptionPriorityFilter.CRITICAL,
-      windowHours: 24,
+      userId: 22,
+      role: BranchStaffRole.OPERATOR,
+      permissions: [],
+      isActive: true,
     });
+
+    const result = await service.getAttendanceExceptions(
+      {
+        branchId: 3,
+        queueType: RetailHrAttendanceExceptionQueueFilter.LATE,
+        priority: RetailHrAttendanceExceptionPriorityFilter.CRITICAL,
+        windowHours: 24,
+      },
+      { id: 22, roles: ['B2B_BUYER'] },
+    );
 
     expect(result.summary).toEqual(
       expect.objectContaining({
@@ -546,6 +592,9 @@ describe('RetailAttendanceService', () => {
         filteredExceptionCount: 1,
         absentCount: 1,
         lateCount: 1,
+        permissions: {
+          canOverrideAttendance: false,
+        },
       }),
     );
     expect(result.items).toEqual([
@@ -555,6 +604,10 @@ describe('RetailAttendanceService', () => {
         priority: RetailHrAttendanceExceptionPriorityFilter.CRITICAL,
         actions: expect.arrayContaining([
           expect.objectContaining({ type: 'VIEW_HR_ATTENDANCE_STAFF_DETAIL' }),
+          expect.objectContaining({
+            type: 'OVERRIDE_HR_ATTENDANCE',
+            enabled: false,
+          }),
         ]),
       }),
     ]);
@@ -593,13 +646,21 @@ describe('RetailAttendanceService', () => {
       tenant: { id: 9 },
       entitlements: [{ module: RetailModule.HR_ATTENDANCE, metadata: null }],
     });
-    branchStaffAssignmentsRepository.findOne.mockResolvedValue({
-      branchId: 3,
-      userId: 11,
-      role: BranchStaffRole.MANAGER,
-      isActive: true,
-      user: { id: 11, email: 'manager@test.com', displayName: 'Manager' },
-    });
+    branchStaffAssignmentsRepository.findOne
+      .mockResolvedValueOnce({
+        branchId: 3,
+        userId: 11,
+        role: BranchStaffRole.MANAGER,
+        isActive: true,
+        user: { id: 11, email: 'manager@test.com', displayName: 'Manager' },
+      })
+      .mockResolvedValueOnce({
+        branchId: 3,
+        userId: 22,
+        role: BranchStaffRole.OPERATOR,
+        permissions: [],
+        isActive: true,
+      });
     const attendanceLogsQb = {
       where: jest.fn().mockReturnThis(),
       andWhere: jest.fn().mockReturnThis(),
@@ -626,11 +687,15 @@ describe('RetailAttendanceService', () => {
       { id: 99, email: 'auditor@test.com', displayName: 'Auditor' },
     ]);
 
-    const result = await service.getAttendanceDetail(11, {
-      branchId: 3,
-      limit: 10,
-      windowHours: 168,
-    });
+    const result = await service.getAttendanceDetail(
+      11,
+      {
+        branchId: 3,
+        limit: 10,
+        windowHours: 168,
+      },
+      { id: 22, roles: ['B2B_BUYER'] },
+    );
 
     expect(result.summary).toEqual(
       expect.objectContaining({
@@ -638,6 +703,9 @@ describe('RetailAttendanceService', () => {
         userId: 11,
         currentStatus: 'ON_DUTY',
         shiftCount: 1,
+        permissions: {
+          canOverrideAttendance: false,
+        },
       }),
     );
     expect(result.logs).toEqual([
@@ -653,8 +721,63 @@ describe('RetailAttendanceService', () => {
       expect.arrayContaining([
         expect.objectContaining({ type: 'VIEW_HR_ATTENDANCE' }),
         expect.objectContaining({ type: 'EXPORT_HR_ATTENDANCE_STAFF_DETAIL' }),
+        expect.objectContaining({
+          type: 'OVERRIDE_HR_ATTENDANCE_CHECK_OUT',
+          enabled: false,
+        }),
       ]),
     );
+  });
+
+  it('enables attendance override actions for manager actors on detail responses', async () => {
+    retailEntitlementsService.assertBranchHasModules.mockResolvedValue({
+      branch: { id: 3, timezone: 'UTC', retailTenantId: null },
+      tenant: { id: 9 },
+      entitlements: [{ module: RetailModule.HR_ATTENDANCE, metadata: null }],
+    });
+    branchStaffAssignmentsRepository.findOne
+      .mockResolvedValueOnce({
+        branchId: 3,
+        userId: 12,
+        role: BranchStaffRole.OPERATOR,
+        isActive: true,
+        user: { id: 12, email: 'operator@test.com', displayName: 'Operator' },
+      })
+      .mockResolvedValueOnce({
+        branchId: 3,
+        userId: 11,
+        role: BranchStaffRole.MANAGER,
+        permissions: [],
+        isActive: true,
+      });
+    const attendanceLogsQb = {
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      addOrderBy: jest.fn().mockReturnThis(),
+      limit: jest.fn().mockReturnThis(),
+      getMany: jest.fn().mockResolvedValue([]),
+    };
+    hrAttendanceLogsRepository.createQueryBuilder.mockReturnValue(
+      attendanceLogsQb,
+    );
+    usersRepository.find.mockResolvedValue([]);
+
+    const result = await service.getAttendanceDetail(
+      12,
+      { branchId: 3, limit: 10, windowHours: 168 },
+      { id: 11, roles: ['B2B_BUYER'] },
+    );
+
+    expect(result.actions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'OVERRIDE_HR_ATTENDANCE_CHECK_IN',
+          enabled: true,
+        }),
+      ]),
+    );
+    expect(result.summary.permissions.canOverrideAttendance).toBe(true);
   });
 
   it('exports attendance detail for a branch staff member as CSV', async () => {
@@ -691,5 +814,458 @@ describe('RetailAttendanceService', () => {
 
     expect(csv).toContain('branchId,userId,displayName,email,role,windowHours');
     expect(csv).toContain('policyShiftStartHour');
+  });
+
+  it('exports tenant-level HR attendance compliance rows across branches', async () => {
+    retailEntitlementsService.assertBranchHasModules.mockResolvedValue({
+      branch: { id: 3, timezone: 'UTC', retailTenantId: 9 },
+      tenant: { id: 9 },
+      entitlements: [{ module: RetailModule.HR_ATTENDANCE, metadata: null }],
+    });
+    branchesRepository.find.mockResolvedValue([
+      {
+        id: 3,
+        name: 'HQ',
+        code: 'HQ',
+        retailTenantId: 9,
+        timezone: 'UTC',
+        isActive: true,
+      },
+      {
+        id: 4,
+        name: 'Bole',
+        code: 'BOLE',
+        retailTenantId: 9,
+        timezone: 'UTC',
+        isActive: true,
+      },
+    ]);
+    branchStaffAssignmentsRepository.find.mockResolvedValue([
+      {
+        branchId: 3,
+        userId: 11,
+        role: BranchStaffRole.MANAGER,
+        isActive: true,
+        user: { id: 11, email: 'manager@test.com', displayName: 'Manager' },
+      },
+      {
+        branchId: 4,
+        userId: 12,
+        role: BranchStaffRole.OPERATOR,
+        isActive: true,
+        user: { id: 12, email: 'operator@test.com', displayName: 'Operator' },
+      },
+    ]);
+    const attendanceLogsQb = {
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      addOrderBy: jest.fn().mockReturnThis(),
+      getMany: jest.fn().mockResolvedValue([
+        {
+          id: 1,
+          branchId: 3,
+          userId: 11,
+          checkInAt: new Date(Date.now() - 2 * 60 * 60 * 1000),
+          checkOutAt: null,
+          source: 'MOBILE_APP',
+          note: 'Open shift',
+          metadata: { override: true, overrideByUserId: 99 },
+        },
+      ]),
+    };
+    hrAttendanceLogsRepository.createQueryBuilder.mockReturnValue(
+      attendanceLogsQb,
+    );
+    usersRepository.find.mockResolvedValue([
+      { id: 99, email: 'auditor@test.com', displayName: 'Auditor' },
+    ]);
+
+    const csv = await service.exportAttendanceComplianceCsv({
+      branchId: 3,
+      windowHours: 168,
+    });
+
+    expect(csv).toContain('retailTenantId,anchorBranchId,branchId,branchName');
+    expect(csv).toContain('manager@test.com');
+    expect(csv).toContain('operator@test.com');
+    expect(csv).toContain('ABSENT');
+  });
+
+  it('filters tenant-level HR attendance compliance exports by branch and staff ids', async () => {
+    retailEntitlementsService.assertBranchHasModules.mockResolvedValue({
+      branch: { id: 3, timezone: 'UTC', retailTenantId: 9 },
+      tenant: { id: 9 },
+      entitlements: [{ module: RetailModule.HR_ATTENDANCE, metadata: null }],
+    });
+    branchesRepository.find.mockResolvedValue([
+      {
+        id: 3,
+        name: 'HQ',
+        code: 'HQ',
+        retailTenantId: 9,
+        timezone: 'UTC',
+        isActive: true,
+      },
+      {
+        id: 4,
+        name: 'Bole',
+        code: 'BOLE',
+        retailTenantId: 9,
+        timezone: 'UTC',
+        isActive: true,
+      },
+    ]);
+    branchStaffAssignmentsRepository.find.mockResolvedValue([
+      {
+        branchId: 4,
+        userId: 12,
+        role: BranchStaffRole.OPERATOR,
+        isActive: true,
+        user: { id: 12, email: 'operator@test.com', displayName: 'Operator' },
+      },
+    ]);
+    const attendanceLogsQb = {
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      addOrderBy: jest.fn().mockReturnThis(),
+      getMany: jest.fn().mockResolvedValue([]),
+    };
+    hrAttendanceLogsRepository.createQueryBuilder.mockReturnValue(
+      attendanceLogsQb,
+    );
+    usersRepository.find.mockResolvedValue([]);
+
+    const csv = await service.exportAttendanceComplianceCsv({
+      branchId: 3,
+      windowHours: 168,
+      branchIds: [4],
+      userIds: [12],
+    });
+
+    expect(branchStaffAssignmentsRepository.find).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          branchId: expect.any(Object),
+          userId: expect.any(Object),
+          isActive: true,
+        }),
+      }),
+    );
+    expect(csv).toContain('operator@test.com');
+    expect(csv).not.toContain('manager@test.com');
+  });
+
+  it('filters tenant-level HR attendance compliance exports by status and exception queue type', async () => {
+    retailEntitlementsService.assertBranchHasModules.mockResolvedValue({
+      branch: { id: 3, timezone: 'UTC', retailTenantId: 9 },
+      tenant: { id: 9 },
+      entitlements: [{ module: RetailModule.HR_ATTENDANCE, metadata: null }],
+    });
+    branchesRepository.find.mockResolvedValue([
+      {
+        id: 3,
+        name: 'HQ',
+        code: 'HQ',
+        retailTenantId: 9,
+        timezone: 'UTC',
+        isActive: true,
+      },
+      {
+        id: 4,
+        name: 'Bole',
+        code: 'BOLE',
+        retailTenantId: 9,
+        timezone: 'UTC',
+        isActive: true,
+      },
+    ]);
+    branchStaffAssignmentsRepository.find.mockResolvedValue([
+      {
+        branchId: 3,
+        userId: 11,
+        role: BranchStaffRole.MANAGER,
+        isActive: true,
+        user: { id: 11, email: 'manager@test.com', displayName: 'Manager' },
+      },
+      {
+        branchId: 4,
+        userId: 12,
+        role: BranchStaffRole.OPERATOR,
+        isActive: true,
+        user: { id: 12, email: 'operator@test.com', displayName: 'Operator' },
+      },
+    ]);
+    const attendanceLogsQb = {
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      addOrderBy: jest.fn().mockReturnThis(),
+      getMany: jest.fn().mockResolvedValue([
+        {
+          id: 1,
+          branchId: 3,
+          userId: 11,
+          checkInAt: new Date(Date.now() - 2 * 60 * 60 * 1000),
+          checkOutAt: null,
+          source: 'MOBILE_APP',
+          note: 'Open shift',
+          metadata: {},
+        },
+      ]),
+    };
+    hrAttendanceLogsRepository.createQueryBuilder.mockReturnValue(
+      attendanceLogsQb,
+    );
+    usersRepository.find.mockResolvedValue([]);
+
+    const csv = await service.exportAttendanceComplianceCsv({
+      branchId: 3,
+      windowHours: 168,
+      statuses: [RetailHrAttendanceComplianceStatusFilter.ABSENT],
+      queueTypes: [RetailHrAttendanceExceptionQueueFilter.ABSENT],
+      priorities: [RetailHrAttendanceExceptionPriorityFilter.CRITICAL],
+    });
+
+    expect(csv).toContain('operator@test.com');
+    expect(csv).toContain('ABSENT');
+    expect(csv).not.toContain('manager@test.com');
+    expect(csv).not.toContain('ON_DUTY');
+  });
+
+  it('filters tenant-level HR attendance compliance exports by exception priority', async () => {
+    retailEntitlementsService.assertBranchHasModules.mockResolvedValue({
+      branch: { id: 3, timezone: 'UTC', retailTenantId: 9 },
+      tenant: { id: 9 },
+      entitlements: [{ module: RetailModule.HR_ATTENDANCE, metadata: null }],
+    });
+    branchesRepository.find.mockResolvedValue([
+      {
+        id: 3,
+        name: 'HQ',
+        code: 'HQ',
+        retailTenantId: 9,
+        timezone: 'UTC',
+        isActive: true,
+      },
+      {
+        id: 4,
+        name: 'Bole',
+        code: 'BOLE',
+        retailTenantId: 9,
+        timezone: 'UTC',
+        isActive: true,
+      },
+    ]);
+    branchStaffAssignmentsRepository.find.mockResolvedValue([
+      {
+        branchId: 3,
+        userId: 11,
+        role: BranchStaffRole.MANAGER,
+        isActive: true,
+        user: { id: 11, email: 'manager@test.com', displayName: 'Manager' },
+      },
+      {
+        branchId: 4,
+        userId: 12,
+        role: BranchStaffRole.OPERATOR,
+        isActive: true,
+        user: { id: 12, email: 'operator@test.com', displayName: 'Operator' },
+      },
+    ]);
+    const attendanceLogsQb = {
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      addOrderBy: jest.fn().mockReturnThis(),
+      getMany: jest.fn().mockResolvedValue([
+        {
+          id: 1,
+          branchId: 3,
+          userId: 11,
+          checkInAt: new Date(Date.now() - 30 * 60 * 1000),
+          checkOutAt: null,
+          source: 'MOBILE_APP',
+          note: 'Open shift',
+          metadata: {},
+        },
+        {
+          id: 2,
+          branchId: 4,
+          userId: 12,
+          checkInAt: new Date(Date.now() - 12 * 60 * 60 * 1000),
+          checkOutAt: null,
+          source: 'MOBILE_APP',
+          note: 'Extended shift',
+          metadata: {},
+        },
+      ]),
+    };
+    hrAttendanceLogsRepository.createQueryBuilder.mockReturnValue(
+      attendanceLogsQb,
+    );
+    usersRepository.find.mockResolvedValue([]);
+
+    const csv = await service.exportAttendanceComplianceCsv({
+      branchId: 3,
+      windowHours: 168,
+      queueTypes: [RetailHrAttendanceExceptionQueueFilter.OVERTIME],
+      priorities: [RetailHrAttendanceExceptionPriorityFilter.CRITICAL],
+    });
+
+    expect(csv).toContain('operator@test.com');
+    expect(csv).toContain('OVERTIME');
+    expect(csv).toContain('CRITICAL');
+    expect(csv).not.toContain('manager@test.com');
+  });
+
+  it('returns tenant-level HR attendance compliance aggregates for HQ dashboards', async () => {
+    const completedShiftCheckInAt = new Date('2026-03-18T08:00:00.000Z');
+    const completedShiftCheckOutAt = new Date('2026-03-18T16:00:00.000Z');
+
+    retailEntitlementsService.assertBranchHasModules.mockResolvedValue({
+      branch: { id: 3, timezone: 'UTC', retailTenantId: 9 },
+      tenant: { id: 9 },
+      entitlements: [{ module: RetailModule.HR_ATTENDANCE, metadata: null }],
+    });
+    branchesRepository.find.mockResolvedValue([
+      {
+        id: 3,
+        name: 'HQ',
+        code: 'HQ',
+        retailTenantId: 9,
+        timezone: 'UTC',
+        isActive: true,
+      },
+      {
+        id: 4,
+        name: 'Bole',
+        code: 'BOLE',
+        retailTenantId: 9,
+        timezone: 'UTC',
+        isActive: true,
+      },
+    ]);
+    branchStaffAssignmentsRepository.find.mockResolvedValue([
+      {
+        branchId: 3,
+        userId: 11,
+        role: BranchStaffRole.MANAGER,
+        isActive: true,
+        user: { id: 11, email: 'manager@test.com', displayName: 'Manager' },
+      },
+      {
+        branchId: 4,
+        userId: 12,
+        role: BranchStaffRole.OPERATOR,
+        isActive: true,
+        user: { id: 12, email: 'operator@test.com', displayName: 'Operator' },
+      },
+    ]);
+    branchStaffAssignmentsRepository.findOne.mockResolvedValue({
+      branchId: 3,
+      userId: 11,
+      role: BranchStaffRole.MANAGER,
+      permissions: [],
+      isActive: true,
+    });
+    const attendanceLogsQb = {
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      addOrderBy: jest.fn().mockReturnThis(),
+      getMany: jest.fn().mockResolvedValue([
+        {
+          id: 1,
+          branchId: 3,
+          userId: 11,
+          checkInAt: completedShiftCheckInAt,
+          checkOutAt: completedShiftCheckOutAt,
+          source: 'MOBILE_APP',
+          note: 'Completed shift',
+          metadata: {},
+        },
+      ]),
+    };
+    hrAttendanceLogsRepository.createQueryBuilder.mockReturnValue(
+      attendanceLogsQb,
+    );
+    usersRepository.find.mockResolvedValue([]);
+
+    const result = await service.getAttendanceComplianceSummary(
+      {
+        branchId: 3,
+        windowHours: 168,
+      },
+      { id: 11, roles: ['B2B_BUYER'] },
+    );
+
+    expect(result.summary).toEqual(
+      expect.objectContaining({
+        anchorBranchId: 3,
+        retailTenantId: 9,
+        branchCount: 2,
+        filteredBranchCount: 2,
+        totalStaffCount: 2,
+        filteredStaffCount: 2,
+        totalExceptionCount: 1,
+        filteredExceptionCount: 1,
+        permissions: {
+          canOverrideAttendance: true,
+        },
+      }),
+    );
+    expect(result.statusCounts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ key: 'ABSENT', count: 1 }),
+        expect.objectContaining({ key: 'COMPLETED', count: 1 }),
+      ]),
+    );
+    expect(result.queueTypeCounts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ key: 'ABSENT', count: 1 }),
+        expect.objectContaining({ key: 'LATE', count: 0 }),
+      ]),
+    );
+    expect(result.priorityCounts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ key: 'CRITICAL', count: 1 }),
+      ]),
+    );
+    expect(result.branches).toEqual([
+      expect.objectContaining({
+        branchId: 4,
+        branchName: 'Bole',
+        filteredStaffCount: 1,
+        filteredExceptionCount: 1,
+        statusCounts: expect.arrayContaining([
+          expect.objectContaining({ key: 'ABSENT', count: 1 }),
+        ]),
+        queueTypeCounts: expect.arrayContaining([
+          expect.objectContaining({ key: 'ABSENT', count: 1 }),
+        ]),
+      }),
+      expect.objectContaining({
+        branchId: 3,
+        branchName: 'HQ',
+        filteredStaffCount: 1,
+        filteredExceptionCount: 0,
+        statusCounts: expect.arrayContaining([
+          expect.objectContaining({ key: 'COMPLETED', count: 1 }),
+        ]),
+      }),
+    ]);
+    expect(result.topStaffExceptions).toEqual([
+      expect.objectContaining({
+        branchId: 4,
+        branchName: 'Bole',
+        userId: 12,
+        email: 'operator@test.com',
+        currentStatus: 'ABSENT',
+        queueType: RetailHrAttendanceExceptionQueueFilter.ABSENT,
+        priority: RetailHrAttendanceExceptionPriorityFilter.CRITICAL,
+      }),
+    ]);
   });
 });

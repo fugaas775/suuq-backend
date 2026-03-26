@@ -7,22 +7,27 @@ import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
 import { JwtAuthGuard } from '../src/auth/jwt-auth.guard';
 import { RolesGuard } from '../src/auth/roles.guard';
+import { InventoryLedgerService } from '../src/branches/inventory-ledger.service';
 import { closeE2eApp } from './utils/e2e-cleanup';
 
 const mockBuyerGuard = {
   canActivate: (ctx: any) => {
     const req = ctx.switchToHttp().getRequest();
-    req.user = {
-      email: 'buyer@test.com',
-      roles: ['SUPER_ADMIN', 'POS_MANAGER'],
-    };
+    req.user = currentAuthUser;
     return true;
   },
+};
+
+let currentAuthUser = {
+  id: 0,
+  email: 'buyer@test.com',
+  roles: ['SUPER_ADMIN', 'POS_MANAGER'],
 };
 
 describe('B2B Receipt Events (e2e)', () => {
   let app: INestApplication;
   let dataSource: DataSource;
+  let inventoryLedgerService: InventoryLedgerService;
   let userId: number;
   let productId: number;
   let branchId: number;
@@ -30,6 +35,65 @@ describe('B2B Receipt Events (e2e)', () => {
   let purchaseOrderId: number;
   let purchaseOrderItemId: number;
   const orderNumber = `PO-E2E-${Date.now()}`;
+
+  const createReceiptEvent = async () => {
+    await dataSource.query(
+      `DELETE FROM "stock_movements" WHERE "sourceType" = 'PURCHASE_ORDER' AND "sourceReferenceId" = $1`,
+      [purchaseOrderId],
+    );
+    await dataSource.query(
+      `DELETE FROM "purchase_order_receipt_events" WHERE "purchaseOrderId" = $1`,
+      [purchaseOrderId],
+    );
+    await dataSource.query(
+      `UPDATE "purchase_order_items" SET "receivedQuantity" = 0, "shortageQuantity" = 0, "damagedQuantity" = 0 WHERE "purchaseOrderId" = $1`,
+      [purchaseOrderId],
+    );
+    await dataSource.query(
+      `UPDATE "purchase_orders" SET "status" = 'SHIPPED', "receivedAt" = NULL WHERE "id" = $1`,
+      [purchaseOrderId],
+    );
+    await dataSource.query(
+      `DELETE FROM "branch_inventory" WHERE "branchId" = $1 AND "productId" = $2`,
+      [branchId, productId],
+    );
+    await inventoryLedgerService.adjustInboundOpenPo({
+      branchId,
+      productId,
+      quantityDelta: 5,
+    });
+
+    currentAuthUser = {
+      id: userId,
+      email: 'buyer@test.com',
+      roles: ['SUPER_ADMIN', 'POS_MANAGER'],
+    };
+
+    const response = await request(app.getHttpServer())
+      .post(`/api/hub/v1/purchase-orders/${purchaseOrderId}/receipt-events`)
+      .send({
+        reason: 'Lifecycle test delivery received',
+        metadata: { dockDoor: 'B2' },
+        receiptLines: [
+          {
+            itemId: purchaseOrderItemId,
+            receivedQuantity: 3,
+            shortageQuantity: 1,
+            damagedQuantity: 1,
+            note: 'One short and one damaged',
+          },
+        ],
+      });
+
+    expect(response.status).toBe(201);
+
+    const rows = await dataSource.query(
+      `SELECT id FROM "purchase_order_receipt_events" WHERE "purchaseOrderId" = $1 ORDER BY id DESC LIMIT 1`,
+      [purchaseOrderId],
+    );
+
+    return Number(rows[0].id);
+  };
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -47,6 +111,7 @@ describe('B2B Receipt Events (e2e)', () => {
     app.setGlobalPrefix('api');
     await app.init();
     dataSource = app.get(DataSource);
+    inventoryLedgerService = app.get(InventoryLedgerService);
 
     const userRow = await dataSource.query(
       'SELECT id FROM "user" ORDER BY id ASC LIMIT 1',
@@ -87,6 +152,12 @@ describe('B2B Receipt Events (e2e)', () => {
       [purchaseOrderId, productId, 5, 20],
     );
     purchaseOrderItemId = Number(insertedItem[0].id);
+
+    await inventoryLedgerService.adjustInboundOpenPo({
+      branchId,
+      productId,
+      quantityDelta: 5,
+    });
   });
 
   afterAll(async () => {
@@ -123,6 +194,16 @@ describe('B2B Receipt Events (e2e)', () => {
   });
 
   it('records and lists purchase-order receipt events through HTTP', async () => {
+    await dataSource.query(
+      `DELETE FROM "branch_inventory" WHERE "branchId" = $1 AND "productId" = $2`,
+      [branchId, productId],
+    );
+    await inventoryLedgerService.adjustInboundOpenPo({
+      branchId,
+      productId,
+      quantityDelta: 5,
+    });
+
     const postRes = await request(app.getHttpServer())
       .post(`/api/hub/v1/purchase-orders/${purchaseOrderId}/receipt-events`)
       .send({
@@ -137,8 +218,9 @@ describe('B2B Receipt Events (e2e)', () => {
             note: 'One short and one damaged',
           },
         ],
-      })
-      .expect(201);
+      });
+
+    expect(postRes.status).toBe(201);
 
     expect(postRes.body.status).toBe('RECEIVED');
     expect(postRes.body.items[0].receivedQuantity).toBe(3);
@@ -177,5 +259,157 @@ describe('B2B Receipt Events (e2e)', () => {
         ],
       })
       .expect(400);
+  });
+
+  it('acknowledges a persisted receipt event and stores supplier acknowledgement metadata', async () => {
+    const receiptEventId = await createReceiptEvent();
+
+    currentAuthUser = {
+      id: userId,
+      email: 'supplier@test.com',
+      roles: ['SUPPLIER_ACCOUNT'],
+    };
+
+    const response = await request(app.getHttpServer())
+      .patch(
+        `/api/hub/v1/purchase-orders/${purchaseOrderId}/receipt-events/${receiptEventId}/acknowledge`,
+      )
+      .send({ note: 'Supplier reviewed shortages and accepts branch receipt.' })
+      .expect(200);
+
+    expect(response.body.id).toBe(receiptEventId);
+    expect(response.body.supplierAcknowledgementNote).toBe(
+      'Supplier reviewed shortages and accepts branch receipt.',
+    );
+
+    const rows = await dataSource.query(
+      `SELECT "supplierAcknowledgedAt", "supplierAcknowledgedByUserId", "supplierAcknowledgementNote" FROM "purchase_order_receipt_events" WHERE "id" = $1`,
+      [receiptEventId],
+    );
+
+    expect(rows[0].supplierAcknowledgedAt).toBeTruthy();
+    expect(Number(rows[0].supplierAcknowledgedByUserId)).toBe(userId);
+    expect(rows[0].supplierAcknowledgementNote).toBe(
+      'Supplier reviewed shortages and accepts branch receipt.',
+    );
+  });
+
+  it('resolves a persisted discrepancy and stores supplier resolution metadata', async () => {
+    const receiptEventId = await createReceiptEvent();
+
+    currentAuthUser = {
+      id: userId,
+      email: 'supplier@test.com',
+      roles: ['SUPPLIER_ACCOUNT'],
+    };
+
+    const response = await request(app.getHttpServer())
+      .patch(
+        `/api/hub/v1/purchase-orders/${purchaseOrderId}/receipt-events/${receiptEventId}/discrepancy-resolution`,
+      )
+      .send({
+        resolutionNote:
+          'Supplier will issue a credit note for the missing unit and replace the damaged carton tomorrow.',
+        metadata: { creditMemoNumber: 'CM-101', replacementEta: '2026-03-23' },
+      })
+      .expect(200);
+
+    expect(response.body.id).toBe(receiptEventId);
+    expect(response.body.discrepancyStatus).toBe('RESOLVED');
+
+    const rows = await dataSource.query(
+      `SELECT "discrepancyStatus", "discrepancyResolutionNote", "discrepancyMetadata", "discrepancyResolvedAt", "discrepancyResolvedByUserId" FROM "purchase_order_receipt_events" WHERE "id" = $1`,
+      [receiptEventId],
+    );
+
+    expect(rows[0].discrepancyStatus).toBe('RESOLVED');
+    expect(rows[0].discrepancyResolutionNote).toBe(
+      'Supplier will issue a credit note for the missing unit and replace the damaged carton tomorrow.',
+    );
+    expect(rows[0].discrepancyMetadata).toEqual({
+      creditMemoNumber: 'CM-101',
+      replacementEta: '2026-03-23',
+    });
+    expect(rows[0].discrepancyResolvedAt).toBeTruthy();
+    expect(Number(rows[0].discrepancyResolvedByUserId)).toBe(userId);
+  });
+
+  it('approves a resolved persisted discrepancy and stores buyer approval metadata', async () => {
+    const receiptEventId = await createReceiptEvent();
+
+    currentAuthUser = {
+      id: userId,
+      email: 'supplier@test.com',
+      roles: ['SUPPLIER_ACCOUNT'],
+    };
+
+    await request(app.getHttpServer())
+      .patch(
+        `/api/hub/v1/purchase-orders/${purchaseOrderId}/receipt-events/${receiptEventId}/discrepancy-resolution`,
+      )
+      .send({
+        resolutionNote:
+          'Supplier will issue a credit note for the missing unit and replace the damaged carton tomorrow.',
+      })
+      .expect(200);
+
+    currentAuthUser = {
+      id: userId,
+      email: 'buyer@test.com',
+      roles: ['POS_MANAGER'],
+    };
+
+    const response = await request(app.getHttpServer())
+      .patch(
+        `/api/hub/v1/purchase-orders/${purchaseOrderId}/receipt-events/${receiptEventId}/discrepancy-approval`,
+      )
+      .send({ note: 'Approved after reviewing supplier credit memo.' })
+      .expect(200);
+
+    expect(response.body.id).toBe(receiptEventId);
+    expect(response.body.discrepancyStatus).toBe('APPROVED');
+
+    const rows = await dataSource.query(
+      `SELECT "discrepancyStatus", "discrepancyApprovedAt", "discrepancyApprovedByUserId", "discrepancyApprovalNote" FROM "purchase_order_receipt_events" WHERE "id" = $1`,
+      [receiptEventId],
+    );
+
+    expect(rows[0].discrepancyStatus).toBe('APPROVED');
+    expect(rows[0].discrepancyApprovedAt).toBeTruthy();
+    expect(Number(rows[0].discrepancyApprovedByUserId)).toBe(userId);
+    expect(rows[0].discrepancyApprovalNote).toBe(
+      'Approved after reviewing supplier credit memo.',
+    );
+  });
+
+  it('rejects discrepancy approval until supplier resolution is persisted', async () => {
+    const receiptEventId = await createReceiptEvent();
+
+    currentAuthUser = {
+      id: userId,
+      email: 'buyer@test.com',
+      roles: ['POS_MANAGER'],
+    };
+
+    const response = await request(app.getHttpServer())
+      .patch(
+        `/api/hub/v1/purchase-orders/${purchaseOrderId}/receipt-events/${receiptEventId}/discrepancy-approval`,
+      )
+      .send({ note: 'Attempting approval before supplier resolution exists.' })
+      .expect(400);
+
+    expect(response.body.message).toBe(
+      'Only resolved receipt discrepancies can be approved',
+    );
+
+    const rows = await dataSource.query(
+      `SELECT "discrepancyStatus", "discrepancyApprovedAt", "discrepancyApprovedByUserId", "discrepancyApprovalNote" FROM "purchase_order_receipt_events" WHERE "id" = $1`,
+      [receiptEventId],
+    );
+
+    expect(rows[0].discrepancyStatus).toBe('OPEN');
+    expect(rows[0].discrepancyApprovedAt).toBeNull();
+    expect(rows[0].discrepancyApprovedByUserId).toBeNull();
+    expect(rows[0].discrepancyApprovalNote).toBeNull();
   });
 });

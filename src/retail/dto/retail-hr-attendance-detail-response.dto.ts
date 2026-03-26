@@ -1,6 +1,9 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { BranchStaffRole } from '../../branch-staff/entities/branch-staff-assignment.entity';
-import { RetailHrAttendancePolicyResponseDto } from './retail-hr-attendance-response.dto';
+import {
+  RetailHrAttendancePermissionsResponseDto,
+  RetailHrAttendancePolicyResponseDto,
+} from './retail-hr-attendance-response.dto';
 
 export class RetailHrAttendanceDetailActionResponseDto {
   @ApiProperty()
@@ -67,6 +70,9 @@ export class RetailHrAttendanceDetailSummaryResponseDto {
 
   @ApiProperty({ type: RetailHrAttendancePolicyResponseDto })
   policy!: RetailHrAttendancePolicyResponseDto;
+
+  @ApiProperty({ type: RetailHrAttendancePermissionsResponseDto })
+  permissions!: RetailHrAttendancePermissionsResponseDto;
 }
 
 export class RetailHrAttendanceDetailLogResponseDto {

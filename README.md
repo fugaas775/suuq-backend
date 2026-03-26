@@ -147,6 +147,368 @@ STARPAY_SETTLEMENTS_PATH=/trdp/settlements
 - Replay a signed callback locally with `scripts/test-starpay-webhook.sh 417`
 - The script signs the DTO-normalized JSON payload shape used by the Nest validation pipeline.
 - Default callback path: `/api/callbacks/starpay/webhook`
+
+### Procurement webhook admin governance
+
+Endpoints:
+- `GET /api/admin/b2b/procurement-webhooks/replay-operations/summary?subscriptionId=12&actorId=7&actorEmail=admin@example.com&from=2026-03-20T00:00:00.000Z&to=2026-03-21T00:00:00.000Z`
+- `GET /api/admin/b2b/procurement-webhooks/replay-operations/summary/export?subscriptionId=12&actorId=7&actorEmail=admin@example.com&from=2026-03-20T00:00:00.000Z&to=2026-03-21T00:00:00.000Z`
+- `GET /api/admin/b2b/procurement-webhooks/replay-operations/export?subscriptionId=12&actorId=9&actorEmail=admin@example.com&replayScope=BULK_TERMINAL_FAILURES&replayExecutionMode=PREVIEW_CONFIRMED_PAGE&previewConfirmed=true&from=2026-03-20T00:00:00.000Z&to=2026-03-21T00:00:00.000Z`
+
+Purpose:
+- return cross-subscription replay governance totals using the same audit filters as the replay-operation listing
+- export the filtered replay governance totals as a single CSV row for spreadsheet triage and audit handoff
+- export filtered replay operations row by row for event-level governance audit trails
+
+Filter contract:
+- `subscriptionId`, `actorId`, `actorEmail`, `from`, and `to` are supported on both the JSON summary and CSV export endpoints
+- `replayScope`, `replayExecutionMode`, and `previewConfirmed` are additionally supported on the row-level replay export endpoint
+- `actorEmail` must be a valid email address
+- if both `from` and `to` are supplied, `from <= to` is required
+
+Subscription detail contract additions on `GET /api/admin/b2b/procurement-webhooks/subscriptions/:id`:
+- `hasReplayHistory`: true when replay-operation audit history exists for the subscription
+- `hasPreviewConfirmedReplayHistory`: true when preview-confirmed replay history exists
+- `hasAutoPauseHistory`: true when auto-pause audit history exists
+- `replayOperationsExportRoute`: row-level CSV export route for filtered replay audit trails anchored to the subscription
+- `replayGovernanceSummaryRoute`: JSON replay governance summary route anchored to the subscription
+- `replayGovernanceSummaryExportRoute`: summary CSV export route anchored to the subscription
+- these booleans are derived from filtered remediation-summary totals rather than the length of embedded recent activity arrays
+
+### Admin supplier procurement operations
+
+Endpoints:
+- `GET /api/admin/b2b/supplier-profiles/procurement-scorecard?windowDays=30&limit=15&includeInactive=false&onboardingStatus=APPROVED&supplierProfileIds=7,9&branchIds=3,4&statuses=SUBMITTED,RECEIVED&from=2026-03-01T00:00:00.000Z&to=2026-03-19T23:59:59.999Z`
+- `GET /api/admin/b2b/supplier-profiles/procurement-scorecard/export?...same filters...`
+- `GET /api/admin/b2b/supplier-profiles/procurement-branch-interventions/dashboard?supplierProfileIds=7&branchIds=3&statuses=RECEIVED&latestActions=ASSIGN&actionAgeBuckets=OVER_24H&sortBy=STALE_FIRST&assigneeUserIds=21&includeUntriaged=false&supplierRollupSortBy=UNTRIAGED_DESC&branchRollupSortBy=INTERVENTION_COUNT_DESC&supplierRollupLimit=5&branchRollupLimit=3&from=2026-03-01T00:00:00.000Z&to=2026-03-20T08:00:00.000Z`
+- `GET /api/admin/b2b/supplier-profiles/procurement-branch-interventions/dashboard/export?...same filters...`
+- `GET /api/admin/b2b/supplier-profiles/procurement-branch-interventions/dashboard/overview?...same filters...`
+- `GET /api/admin/b2b/supplier-profiles/procurement-branch-interventions/dashboard/overview/export?...same filters...`
+- `GET /api/admin/b2b/supplier-profiles/procurement-branch-interventions?...same queue filters...`
+- `GET /api/admin/b2b/supplier-profiles/procurement-branch-interventions/export?...same queue filters...`
+- `GET /api/admin/b2b/supplier-profiles/:supplierProfileId/branches/:branchId/procurement-intervention-detail?windowDays=30&limit=10&statuses=RECEIVED&from=2026-03-01T00:00:00.000Z&to=2026-03-20T08:00:00.000Z`
+- `PATCH /api/admin/b2b/supplier-profiles/:supplierProfileId/branches/:branchId/procurement-intervention-action`
+- `GET /api/admin/b2b/supplier-profiles/:supplierProfileId/branches/:branchId/procurement-intervention-detail/export?...same detail filters...`
+- `GET /api/admin/b2b/supplier-profiles/:id/procurement-trend?branchIds=3,4&statuses=RECEIVED&asOf=2026-03-19T12:00:00.000Z`
+- `GET /api/admin/b2b/supplier-profiles/:id/procurement-trend/export?...same trend filters...`
+
+Purpose:
+- let admin operators rank suppliers by procurement performance, export scorecards, and drill into branch-level intervention hotspots
+- expose compact dashboard and overview rollups for queue triage without requiring the full branch intervention payload
+- support intervention audit workflows with detail drilldowns, action recording, and CSV exports
+- provide supplier trend snapshots for 7, 30, and 90 day comparisons from the admin surface
+
+Filter contract:
+- `supplierProfileIds`, `branchIds`, `assigneeUserIds`, `statuses`, `latestActions`, and `actionAgeBuckets` accept comma-separated values and are validated instead of silently ignored
+- `from`, `to`, and `asOf` must be valid ISO-style datetimes
+- malformed supplier-procurement enum, id, and datetime filters now return `400` instead of being dropped and widening the query
+- branch intervention detail and dashboard/list services require `from <= to` when both bounds are supplied
+- scorecard filters also accept `includeInactive`, `onboardingStatus`, `windowDays`, and `limit`
+- dashboard endpoints additionally accept `sortBy`, `includeUntriaged`, `supplierRollupSortBy`, `branchRollupSortBy`, `supplierRollupLimit`, and `branchRollupLimit`
+
+Intervention action contract:
+- body shape: `{ action, note?, assigneeUserId? }`
+- supported `action` values: `ACKNOWLEDGE`, `ESCALATE`, `ASSIGN`, `RESOLVE`
+- `note` is optional and capped at 500 characters
+- `assigneeUserId`, when supplied, must be a positive integer
+
+### Admin B2B retail operations audit surfaces
+
+Endpoints:
+- `GET /api/admin/b2b/branch-inventory?branchId=4&productId=55&page=1&limit=50`
+- `GET /api/admin/b2b/stock-movements?branchId=4&productId=55&movementType=PURCHASE_RECEIPT&from=2026-03-10T00:00:00.000Z&to=2026-03-16T23:59:59.999Z&page=1&limit=50`
+- `GET /api/admin/b2b/purchase-orders/:id/receipt-events?page=1&limit=20`
+- `PATCH /api/admin/b2b/purchase-orders/:id/receipt-events/:eventId/discrepancy-approval`
+- `PATCH /api/admin/b2b/purchase-orders/:id/receipt-events/:eventId/discrepancy-force-close`
+- `GET /api/admin/b2b/pos-sync-jobs?branchId=4&partnerCredentialId=12&syncType=CATALOG&status=FAILED&failedOnly=true&page=1&limit=20`
+- `GET /api/admin/b2b/pos-sync-jobs/:id`
+
+Purpose:
+- let admin operators audit current branch stock positions without leaving the B2B review surface
+- expose chronological stock movement history and purchase-order receipt activity for replenishment investigations
+- surface POS sync backlog and failed-entry detail for tenant-wide branch operations triage
+- allow admin reviewers to resolve supplier receipt discrepancies from the same audit flow
+
+Filter contract:
+- branch inventory accepts optional `branchId`, `productId`, `page`, and `limit`
+- stock movements additionally accept `movementType`, `from`, and `to`; `from` and `to` must be valid ISO-style datetimes
+- receipt events are paginated with optional `page` and `limit` and return newest events first
+- POS sync jobs accept optional `branchId`, `partnerCredentialId`, `syncType`, `status`, `failedOnly`, `page`, and `limit`
+- `failedOnly=true` narrows the POS sync queue to jobs with rejected entries, explicit `FAILED` status, or captured failed-entry payloads
+
+Receipt discrepancy action contract:
+- discrepancy approval body shape: `{ note }`
+- discrepancy force-close body shape: `{ note }`
+- both actions attach admin actor metadata server-side and target a specific purchase-order receipt event
+
+### Admin B2B purchase-order and transfer review
+
+Endpoints:
+- `GET /api/admin/b2b/branch-transfers?fromBranchId=3&toBranchId=8&status=DISPATCHED&page=2&limit=10`
+- `GET /api/admin/b2b/branch-transfers/:id`
+- `GET /api/admin/b2b/purchase-orders?branchId=3&supplierProfileId=14&status=DRAFT&autoReplenishment=true&autoReplenishmentSubmissionMode=AUTO_SUBMIT&autoReplenishmentBlockedReason=MINIMUM_ORDER_TOTAL_NOT_MET&page=2&limit=10`
+- `GET /api/admin/b2b/purchase-orders/:id/audit?limit=15`
+- `PATCH /api/admin/b2b/purchase-orders/:id/re-evaluate-auto-replenishment`
+
+Purpose:
+- let admin operators review persisted branch transfer documents alongside the replenishment and fulfillment state they create
+- expose purchase-order review filters tailored to auto-replenishment draft governance
+- expose a direct purchase-order audit helper route for status-change and workflow investigation without leaving the admin B2B surface
+- allow admin users to re-evaluate blocked auto-replenishment drafts against the latest automation policy without leaving the B2B surface
+
+Filter contract:
+- branch transfer review accepts optional `fromBranchId`, `toBranchId`, `status`, `page`, and `limit`
+- purchase-order review accepts optional `branchId`, `supplierProfileId`, `status`, `page`, and `limit`
+- purchase-order review additionally supports `autoReplenishment`, `autoReplenishmentSubmissionMode`, and `autoReplenishmentBlockedReason`
+- purchase-order audit accepts optional `limit` and defaults to `20` when omitted
+- invalid enum and pagination filters return `400`
+
+Re-evaluation contract:
+- `PATCH /api/admin/b2b/purchase-orders/:id/re-evaluate-auto-replenishment` attaches admin actor metadata server-side
+- the response includes `reevaluationOutcome` so operators can inspect the previous status, next status, and whether the draft was submitted or remained blocked
+
+### Admin supplier onboarding and partner credential operations
+
+Endpoints:
+- `GET /api/admin/b2b/supplier-profiles/review-queue?status=PENDING_REVIEW`
+- `PATCH /api/admin/b2b/supplier-profiles/:id/approve`
+- `PATCH /api/admin/b2b/supplier-profiles/:id/reject`
+- `PATCH /api/admin/b2b/partner-credentials/:id/revoke`
+- `PATCH /api/admin/b2b/partner-credentials/:id/branch-assignment`
+
+Purpose:
+- let admin operators work the supplier onboarding queue from the same B2B surface used for procurement review
+- attach actor metadata and optional rationale when approving or rejecting supplier profiles
+- support POS terminal governance by revoking stale partner credentials and rotating active credentials between branches with audit context
+
+Contract:
+- supplier review queue accepts optional `status`; when omitted it defaults to `PENDING_REVIEW`
+- supplier approval and rejection bodies accept optional `{ reason }` with a maximum of 500 characters
+- partner credential revocation accepts optional `{ reason }` with a maximum of 500 characters
+- partner credential branch rotation requires `{ branchId }` and accepts optional `{ reason }` with a maximum of 500 characters
+- invalid review statuses and malformed body payloads return `400`
+
+### Admin search log operations
+
+Endpoints:
+- `GET /api/admin/search-logs?q=coffee&source=mobile&limit=50`
+
+Purpose:
+- let admin operators inspect recent search activity by query text and search source without querying the database directly
+
+Contract:
+- `q` and `source` are optional string filters and are trimmed before query execution
+- `limit` is optional, defaults to `50`, and must be between `1` and `200`
+- malformed `limit` values return `400`
+
+### Admin notification history operations
+
+Endpoints:
+- `GET /api/admin/notifications?page=2&limit=50&type=ORDER&userId=7`
+
+Purpose:
+- let admin operators inspect persisted notification history for a specific user or notification type without opening the database directly
+
+Contract:
+- `page` is optional, defaults to `1`, and must be a positive integer
+- `limit` is optional, defaults to `20`, and must be between `1` and `200`
+- `type` is optional and must be a valid notification enum value
+- `userId` is optional and must be a positive integer when supplied
+- malformed history filters return `400`
+
+### Admin vendor review operations
+
+Endpoints:
+- `GET /api/admin/vendors?page=2&limit=50&vendorId=7&sort=verifiedAt&verificationStatus=APPROVED&certificationStatus=certified&country=ET&region=Addis&city=Bole&subscriptionTier=pro&minSales=100&minRating=4.5&meta=1`
+- `GET /api/admin/vendors/search?q=acme&certificationStatus=certified&subscriptionTier=pro&limit=25&meta=1`
+- `GET /api/admin/vendors/:id`
+- `GET /api/admin/vendors/:id/audit?page=2&limit=10&actions=vendor.active.update&actorEmail=admin@example.com&actorId=9&from=2026-03-01T00:00:00.000Z&to=2026-03-20T23:59:59.999Z`
+- `POST /api/admin/vendors/:id/confirm-telebirr`
+- `PATCH /api/admin/vendors/:id/verification`
+- `PATCH /api/admin/vendors/:id/active`
+
+Purpose:
+- let admin operators review vendor discovery filters, autocomplete candidates, and audit history from the back-office surface
+- support targeted investigation of vendor verification and active-state changes without raw database access
+- let admins confirm Telebirr status, update vendor verification, and gate active-state changes with audit logging
+
+Contract:
+- vendor list accepts optional `page`, `limit`, `q`, `search`, `vendorId`, `sort`, `verificationStatus`, `certificationStatus`, `country`, `region`, `city`, `subscriptionTier`, `minSales`, `minRating`, and `meta`
+- `vendorId`, when supplied, takes precedence over `q` and `search` for the effective search term
+- vendor search accepts optional `q`, `certificationStatus`, `subscriptionTier`, `limit`, and `meta`
+- vendor audit accepts optional `page`, `limit`, `after`, `actions`, `actorEmail`, `actorId`, `from`, and `to`
+- `limit` is capped at `100` for vendor list, search, and audit endpoints; malformed enum, numeric, and datetime filters return `400`
+
+### Admin product-request review operations
+
+Endpoints:
+- `GET /api/admin/product-requests?status=OPEN,IN_PROGRESS&limit=25`
+
+Purpose:
+- let admin operators review buyer product requests with strict status filtering instead of permissive raw query parsing
+- keep malformed list filters from silently widening the request queue shown to the admin surface
+
+Contract:
+- `status` is optional, accepts comma-separated product-request statuses, and must be one or more of `OPEN`, `IN_PROGRESS`, `FULFILLED`, `CANCELLED`, or `EXPIRED`
+- `limit` is optional, defaults to `50`, and must be an integer between `1` and `100`
+- malformed `status` and `limit` filters now return `400`
+
+### Admin product review operations
+
+Endpoints:
+- `GET /api/admin/products?status=pending_approval&page=2&per_page=25&q=acme&featured=true`
+- `GET /api/admin/products/subcategories/leaf?parentId=17&q=milk&limit=300`
+
+Purpose:
+- let admin operators review pending and featured product queues without permissive raw pagination parsing
+- support admin subcategory reassignment flows with validated leaf-subcategory lookup filters instead of silently dropping malformed values
+
+Contract:
+- product review accepts optional `status`, `page`, `per_page`, `q`, and `featured`
+- `status` remains aligned with the admin product queue values such as `publish`, `draft`, `pending`, `pending_approval`, `rejected`, and `all`
+- `page` must be a positive integer and `per_page` must be an integer between `1` and `200`
+- `featured` accepts only boolean query values
+- leaf-subcategory lookup accepts optional `parentId`, `q`, and `limit`
+- `parentId` must be a positive integer and `limit` must be between `1` and `2000`
+- malformed product review and leaf-subcategory filters now return `400`
+
+### Admin wallet operations
+
+Endpoints:
+- `GET /api/admin/wallet/top-ups?page=2&limit=25&status=APPROVED`
+- `GET /api/admin/wallet/payouts?page=3&limit=10&status=FAILED`
+- `GET /api/admin/wallet/payouts/auto-failures?page=4&limit=9`
+- `GET /api/admin/wallet/payouts/exceptions?page=5&limit=8`
+- `GET /api/admin/wallet/payouts/auto-failures/export?from=2026-03-01T00:00:00.000Z&to=2026-03-20T00:00:00.000Z`
+- `GET /api/admin/wallet/transactions?page=2&limit=30&type=PURCHASE&orderId=17&userId=29&startDate=2026-03-01T00:00:00.000Z&endDate=2026-03-20T00:00:00.000Z`
+
+Purpose:
+- harden the admin wallet reporting surfaces so malformed pagination, status, date, and transaction-type filters fail fast instead of being silently widened or dropped
+- preserve the legacy frontend transaction aliases while validating the rest of the query contract strictly
+
+Contract:
+- wallet top-up review accepts optional `page`, `limit`, and `status`
+- top-up `status` must be one of `PENDING`, `APPROVED`, or `REJECTED`
+- payout review accepts optional `page`, `limit`, and `status`
+- payout `status` must be one of `PENDING`, `SUCCESS`, or `FAILED`
+- failed auto-payout and payout-exception review accept positive integer `page` and `limit`
+- failed auto-payout export accepts optional ISO `from` and `to` filters
+- wallet transaction review accepts optional `page`, `limit`, `type`, `orderId`, `userId`, `startDate`, and `endDate`
+- transaction `type` remains compatible with legacy aliases: `PURCHASE -> PAYMENT` and `SUBSCRIPTION_EXTENSION -> SUBSCRIPTION`
+- malformed wallet query filters now return `400`
+
+### Admin ads audit operations
+
+Endpoints:
+- `GET /api/admin/ads/audit?state=expired&page=2&per_page=25&q=boost`
+
+Purpose:
+- harden the admin featured-ads audit queue so malformed state or pagination filters fail fast instead of being silently coerced
+- preserve the current repository-backed audit payload while validating the query boundary strictly
+
+Contract:
+- ads audit accepts optional `state`, `page`, `per_page`, and `q`
+- `state` must be one of `active`, `expired`, or `all`
+- `page` must be a positive integer and `per_page` must be an integer between `1` and `200`
+- `q` is trimmed before being applied to the featured-product search filter
+- malformed ads audit filters now return `400`
+
+### Admin Ebirr audit operations
+
+Endpoints:
+- `GET /api/admin/ebirr/transactions?page=2&limit=75&search=BOOST-22`
+- `GET /api/admin/ebirr/reconcile/initiated/report?olderThanMinutes=45&limit=150`
+
+Purpose:
+- harden the Ebirr admin audit surface so malformed pagination and reconciliation report filters fail fast instead of being silently coerced
+- preserve the existing repository-backed transaction search and initiated-reconciliation dry-run behavior
+
+Contract:
+- Ebirr transaction audit accepts optional `page`, `limit`, and `search`
+- `page` and `limit` must be positive integers; `search` is trimmed before being applied to the transaction search clause
+- initiated reconciliation report accepts optional `olderThanMinutes` and `limit`
+- `olderThanMinutes` must be a positive integer and `limit` must be an integer between `1` and `500`, matching the downstream reconciliation cap
+- malformed Ebirr audit query filters now return `400`
+
+### Admin user subscription and listing operations
+
+Endpoints:
+- `GET /api/admin/users/subscription/active?page=2&limit=25`
+- `GET /api/admin/users/subscription/requests?page=3&limit=15&status=APPROVED`
+- `GET /api/admin/users?page=2&limit=50&q=vendor&meta=1`
+
+Purpose:
+- harden the remaining raw admin user pagination and subscription request filters so malformed values fail fast instead of being silently coerced
+- preserve the existing admin user list contract while validating the `meta` response toggle explicitly
+
+Contract:
+- active subscription review accepts optional positive integer `page` and `limit`
+- subscription request review accepts optional positive integer `page`, positive integer `limit`, and `status`
+- subscription request `status` must be one of `PENDING`, `APPROVED`, or `REJECTED`
+- admin user list `meta` must be either `0` or `1`; only `meta=1` returns the `{ data, meta }` envelope
+- malformed admin user query filters now return `400`
+
+### Admin credit operations
+
+Endpoints:
+- `GET /api/admin/credit/users?page=2&limit=30&search=acme`
+
+Purpose:
+- harden the admin credit-limit review list so malformed pagination filters fail fast instead of being coerced into unexpected query-builder values
+
+Contract:
+- credit user review accepts optional positive integer `page`, positive integer `limit`, and `search`
+- `search` is trimmed before being applied to the user email and display-name filter
+- malformed credit list filters now return `400`
+
+### Admin analytics search-keyword operations
+
+Endpoints:
+- `GET /api/admin/search-keywords?page=2&perPage=25&from=2026-03-01T00:00:00.000Z&to=2026-03-20T23:59:59.999Z&minSubmits=3&q=flour&sort=total_desc&city=Addis&country=ET&vendor=Acme`
+- `GET /api/admin/search-keywords/top?window=week&limit=120`
+- `GET /api/admin/search-keywords/top/summary?limit=150`
+- `GET /api/admin/search-keywords/aggregations?window=month&limit=20`
+
+Purpose:
+- harden the largest remaining analytics query surface so malformed pagination, date, sort, and window filters fail fast instead of being silently coerced
+- keep the primary and alias search-keyword analytics routes on one validated query contract
+
+Contract:
+- search-keyword listing accepts optional `page`, `perPage`, `from`, `to`, `minSubmits`, `q`, `sort`, `city`, `country`, and `vendor`
+- `page` must be a positive integer and `perPage` must be an integer between `1` and `100`
+- `from` and `to` must be ISO datetimes when provided
+- `minSubmits` must be an integer greater than or equal to `0`
+- `sort` must be one of `submit_desc`, `submit_asc`, `total_desc`, `total_asc`, `last_desc`, `last_asc`, `noresult_desc`, or `noresult_asc`
+- top-keyword routes accept `window` in `day | week | month` and `limit` in `1..200`
+- aggregation routes accept `window` in `day | week | month` and `limit` in `1..50`
+- malformed analytics search-keyword filters now return `400`
+
+### Hub purchase-order receipt-event lifecycle
+
+Endpoints:
+- `GET /api/hub/v1/purchase-orders/:id/receipt-events`
+- `POST /api/hub/v1/purchase-orders/:id/receipt-events`
+- `PATCH /api/hub/v1/purchase-orders/:id/receipt-events/:eventId/acknowledge`
+- `PATCH /api/hub/v1/purchase-orders/:id/receipt-events/:eventId/discrepancy-resolution`
+- `PATCH /api/hub/v1/purchase-orders/:id/receipt-events/:eventId/discrepancy-approval`
+
+Purpose:
+- expose the buyer and supplier receipt-event lifecycle for incremental receipt logging, supplier acknowledgement, discrepancy resolution, and final buyer approval
+- document the contract that already exists on the hub controller, not only the mirrored admin receipt-event review routes
+
+Contract:
+- receipt-event listing returns the recorded receipt-event timeline for the purchase order
+- receipt-event recording accepts optional `{ reason, metadata, receiptLines }`; `metadata` must be an object and `receiptLines` use incremental quantities per event
+- supplier acknowledgement accepts optional `{ note }` with a maximum of `500` characters
+- discrepancy resolution requires `{ resolutionNote }`, accepts optional `{ metadata }`, and rejects notes longer than `1000` characters
+- discrepancy approval accepts optional `{ note }` with a maximum of `1000` characters
+- malformed receipt-event payloads return `400`
+
+Mutation contract:
+- `POST /api/admin/vendors/:id/confirm-telebirr` body shape: `{ status }` where `status` must be `APPROVED` or `REJECTED`
+- `PATCH /api/admin/vendors/:id/verification` body shape: `{ status, reason? }` where `status` must be a valid vendor verification enum value
+- `PATCH /api/admin/vendors/:id/active` body shape: `{ isActive }` where `isActive` must be a boolean
+- active-state changes are restricted to `SUPER_ADMIN`; non-super-admin callers receive `403`
 ```
 
 ## Running

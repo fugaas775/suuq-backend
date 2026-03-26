@@ -25,6 +25,9 @@ import {
 } from '../audit/audit.service';
 import { UpdateVendorVerificationDto } from './dto/update-vendor-verification.dto';
 import { UpdateVendorActiveDto } from './dto/update-vendor-active.dto';
+import { AdminVendorListQueryDto } from './dto/admin-vendor-list-query.dto';
+import { AdminVendorSearchQueryDto } from './dto/admin-vendor-search-query.dto';
+import { AuditQueryDto } from './dto/audit-query.dto';
 import { SkipThrottle } from '@nestjs/throttler';
 
 @UseGuards(AuthGuard('jwt'), RolesGuard)
@@ -63,54 +66,27 @@ export class AdminVendorsController {
   }
 
   @Get()
-  async list(
-    @Query('page') page?: string,
-    @Query('limit') limit?: string,
-    @Query('q') q?: string,
-    @Query('search') search?: string,
-    @Query('vendorId') vendorId?: string,
-    @Query('sort') sort?: 'name' | 'recent' | 'popular' | 'verifiedAt',
-    @Query('verificationStatus')
-    verificationStatus?: 'APPROVED' | 'PENDING' | 'REJECTED',
-    @Query('certificationStatus')
-    certificationStatus?: 'certified' | 'uncertified',
-    @Query('country') country?: string,
-    @Query('region') region?: string,
-    @Query('city') city?: string,
-    @Query('subscriptionTier') subscriptionTier?: 'free' | 'pro',
-    @Query('minSales') minSales?: string,
-    @Query('minRating') minRating?: string,
-    @Query('meta') metaFlag?: string,
-  ) {
-    const p = Math.max(Number(page) || 1, 1);
-    const l = Math.min(Math.max(Number(limit) || 20, 1), 100);
-    const minSalesNum =
-      minSales !== undefined && minSales !== '' ? Number(minSales) : undefined;
-    const minRatingNum =
-      minRating !== undefined && minRating !== ''
-        ? Number(minRating)
-        : undefined;
-
+  async list(@Query() query: AdminVendorListQueryDto) {
+    const p = query.page ?? 1;
+    const l = query.limit ?? 20;
     // Prioritize specific vendor ID if provided
     const effectiveSearch =
-      vendorId && !Number.isNaN(Number(vendorId)) ? vendorId : search || q;
+      query.vendorId != null ? String(query.vendorId) : query.search || query.q;
 
     const result = await this.vendorService.findPublicVendors({
       page: p,
       limit: l,
       search: effectiveSearch,
-      sort: sort || 'recent',
-      verificationStatus,
-      certificationStatus,
+      sort: query.sort || 'recent',
+      verificationStatus: query.verificationStatus,
+      certificationStatus: query.certificationStatus,
       role: 'VENDOR',
-      country,
-      region,
-      city,
-      subscriptionTier,
-      minSales: Number.isFinite(minSalesNum as any) ? minSalesNum : undefined,
-      minRating: Number.isFinite(minRatingNum as any)
-        ? minRatingNum
-        : undefined,
+      country: query.country,
+      region: query.region,
+      city: query.city,
+      subscriptionTier: query.subscriptionTier,
+      minSales: query.minSales,
+      minRating: query.minRating,
       skipRoleFilter: true, // Allow admins to find any user (e.g. Suuq S default admin account)
       withProductsOnly: false,
     } as any);
@@ -121,26 +97,21 @@ export class AdminVendorsController {
       perPage: l,
       totalPages: result.totalPages,
     };
-    return metaFlag === '1' ? { data: payload.items, meta: payload } : payload;
+    return query.meta === '1'
+      ? { data: payload.items, meta: payload }
+      : payload;
   }
 
   // Lightweight search endpoint for admin autocomplete use-cases
   @Get('search')
-  async search(
-    @Query('q') q?: string,
-    @Query('certificationStatus')
-    certificationStatus?: 'certified' | 'uncertified',
-    @Query('subscriptionTier') subscriptionTier?: 'free' | 'pro',
-    @Query('limit') limit?: string,
-    @Query('meta') metaFlag?: string,
-  ) {
-    const l = Math.min(Math.max(Number(limit) || 20, 1), 100);
+  async search(@Query() query: AdminVendorSearchQueryDto) {
+    const l = query.limit ?? 20;
     const result = await this.vendorService.findPublicVendors({
       page: 1,
       limit: l,
-      search: q,
-      certificationStatus,
-      subscriptionTier,
+      search: query.q,
+      certificationStatus: query.certificationStatus,
+      subscriptionTier: query.subscriptionTier,
       sort: 'recent',
       skipRoleFilter: true, // Allow finding any user for admin purposes
       role: 'VENDOR',
@@ -154,7 +125,9 @@ export class AdminVendorsController {
       perPage: l,
       totalPages: result.totalPages,
     };
-    return metaFlag === '1' ? { data: payload.items, meta: payload } : payload;
+    return query.meta === '1'
+      ? { data: payload.items, meta: payload }
+      : payload;
   }
 
   @Get(':id')
@@ -165,14 +138,7 @@ export class AdminVendorsController {
   @Get(':id/audit')
   async getAudit(
     @Param('id', ParseIntPipe) id: number,
-    @Query('page') page?: string,
-    @Query('limit') limit?: string,
-    @Query('after') after?: string,
-    @Query('actions') actions?: string, // CSV list
-    @Query('actorEmail') actorEmail?: string,
-    @Query('actorId') actorId?: string,
-    @Query('from') from?: string,
-    @Query('to') to?: string,
+    @Query() query: AuditQueryDto,
   ) {
     const mapItem = (it: any) => ({
       id: it.id,
@@ -185,32 +151,26 @@ export class AdminVendorsController {
       createdAt: it.createdAt,
     });
 
-    const toDate = (value?: string) => {
-      if (!value) return undefined;
-      const d = new Date(value);
-      return Number.isNaN(d.getTime()) ? undefined : d;
-    };
-
-    const p = Math.max(Number(page) || 1, 1);
-    const l = Math.min(Math.max(Number(limit) || 20, 1), 100);
-    const useCursor = !!after;
-    const actionList = (actions || '')
+    const p = query.page ?? 1;
+    const l = query.limit ?? 20;
+    const useCursor = !!query.after;
+    const actionList = (query.actions || '')
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean);
     const filters: AuditFilters = {
       actions: actionList.length ? actionList : undefined,
-      actorEmail: actorEmail || undefined,
-      actorId: actorId ? Number(actorId) : undefined,
-      from: toDate(from),
-      to: toDate(to),
+      actorEmail: query.actorEmail || undefined,
+      actorId: query.actorId,
+      from: query.from ? new Date(query.from) : undefined,
+      to: query.to ? new Date(query.to) : undefined,
     };
 
     if (useCursor) {
       const { items, nextCursor } = await this.audit.listForTargetCursor(
         'vendor',
         id,
-        { after, limit: l, filters },
+        { after: query.after, limit: l, filters },
       );
       return { items: items.map(mapItem), nextCursor };
     }

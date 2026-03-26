@@ -48,6 +48,16 @@ import {
   RetailHrAttendanceExceptionItemResponseDto,
   RetailHrAttendanceExceptionsResponseDto,
 } from './dto/retail-hr-attendance-exceptions-response.dto';
+import {
+  RetailHrAttendanceComplianceExportQueryDto,
+  RetailHrAttendanceComplianceStatusFilter,
+} from './dto/retail-hr-attendance-compliance-export-query.dto';
+import {
+  RetailHrAttendanceComplianceBranchSummaryResponseDto,
+  RetailHrAttendanceComplianceCountEntryResponseDto,
+  RetailHrAttendanceComplianceSummaryResponseDto,
+  RetailHrAttendanceComplianceTopStaffExceptionResponseDto,
+} from './dto/retail-hr-attendance-compliance-summary-response.dto';
 import { RetailHrAttendanceDetailQueryDto } from './dto/retail-hr-attendance-detail-query.dto';
 import {
   RetailHrAttendanceDetailActionResponseDto,
@@ -61,6 +71,28 @@ type HrAttendancePolicy = {
   gracePeriodMinutes: number;
   overtimeThresholdHours: number;
   timeZone: string;
+};
+
+type AttendanceActorContext = {
+  id?: number | null;
+  email?: string | null;
+  roles?: string[];
+};
+
+type AttendanceComplianceClassification = {
+  queueType: RetailHrAttendanceExceptionQueueFilter;
+  priority: RetailHrAttendanceExceptionPriorityFilter;
+  priorityReason: string;
+};
+
+type AttendanceComplianceRow = {
+  branch: Branch;
+  assignment: BranchStaffAssignment;
+  currentItem: RetailHrAttendanceItemResponseDto;
+  exception: AttendanceComplianceClassification | null;
+  detailLogs: RetailHrAttendanceDetailLogResponseDto[];
+  lastActivityAt: Date | null;
+  policy: HrAttendancePolicy;
 };
 
 @Injectable()
@@ -79,6 +111,7 @@ export class RetailAttendanceService {
 
   async getAttendanceSummary(
     query: RetailHrAttendanceQueryDto,
+    actor: AttendanceActorContext = {},
   ): Promise<RetailHrAttendanceResponseDto> {
     const access = await this.retailEntitlementsService.assertBranchHasModules(
       query.branchId,
@@ -93,6 +126,11 @@ export class RetailAttendanceService {
     const policy = this.resolvePolicy(
       access.branch.timezone ?? null,
       entitlement?.metadata?.hrAttendancePolicy ?? null,
+    );
+    const canOverride = await this.canOverrideAttendance(
+      query.branchId,
+      actor.id ?? null,
+      actor.roles ?? [],
     );
     const windowStart = new Date(Date.now() - windowHours * 60 * 60 * 1000);
     const now = new Date();
@@ -216,6 +254,9 @@ export class RetailAttendanceService {
               )
             : 0,
         policy: policy,
+        permissions: {
+          canOverrideAttendance: canOverride,
+        },
       },
       items,
     };
@@ -223,6 +264,7 @@ export class RetailAttendanceService {
 
   async getAttendanceNetworkSummary(
     query: RetailHrAttendanceNetworkSummaryQueryDto,
+    actor: AttendanceActorContext = {},
   ): Promise<RetailHrAttendanceNetworkSummaryResponseDto> {
     const access = await this.retailEntitlementsService.assertBranchHasModules(
       query.branchId,
@@ -237,6 +279,11 @@ export class RetailAttendanceService {
     const windowHours = Math.min(Math.max(query.windowHours ?? 24, 1), 168);
     const windowStart = new Date(Date.now() - windowHours * 60 * 60 * 1000);
     const now = new Date();
+    const canOverride = await this.canOverrideAttendance(
+      query.branchId,
+      actor.id ?? null,
+      actor.roles ?? [],
+    );
     const tenantBranches =
       anchorBranch.retailTenantId != null
         ? await this.branchesRepository.find({
@@ -360,6 +407,9 @@ export class RetailAttendanceService {
       normalBranchCount: branchCards.filter(
         (branch) => branch.highestRisk === 'NORMAL',
       ).length,
+      permissions: {
+        canOverrideAttendance: canOverride,
+      },
       alerts: this.buildAttendanceNetworkAlerts(branchCards),
       branches: branchCards,
     };
@@ -413,12 +463,17 @@ export class RetailAttendanceService {
 
   async getAttendanceExceptions(
     query: RetailHrAttendanceExceptionsQueryDto,
+    actor: AttendanceActorContext = {},
   ): Promise<RetailHrAttendanceExceptionsResponseDto> {
-    const attendance = await this.getAttendanceSummary({
-      branchId: query.branchId,
-      limit: 100,
-      windowHours: query.windowHours,
-    });
+    const attendance = await this.getAttendanceSummary(
+      {
+        branchId: query.branchId,
+        limit: 100,
+        windowHours: query.windowHours,
+      },
+      actor,
+    );
+    const canOverride = attendance.summary.permissions.canOverrideAttendance;
     const limit = Math.min(Math.max(query.limit ?? 25, 1), 100);
     const allItems = attendance.items
       .map((item) =>
@@ -426,6 +481,7 @@ export class RetailAttendanceService {
           query.branchId,
           attendance.summary.windowHours,
           item,
+          canOverride,
         ),
       )
       .filter(
@@ -479,6 +535,9 @@ export class RetailAttendanceService {
             item.priority === RetailHrAttendanceExceptionPriorityFilter.NORMAL,
         ).length,
         lastActivityAt,
+        permissions: {
+          canOverrideAttendance: canOverride,
+        },
       },
       actions: [
         {
@@ -495,8 +554,9 @@ export class RetailAttendanceService {
 
   async exportAttendanceExceptionsCsv(
     query: RetailHrAttendanceExceptionsQueryDto,
+    actor: AttendanceActorContext = {},
   ): Promise<string> {
-    const exceptions = await this.getAttendanceExceptions(query);
+    const exceptions = await this.getAttendanceExceptions(query, actor);
     const header = [
       'branchId',
       'windowHours',
@@ -534,7 +594,10 @@ export class RetailAttendanceService {
           item.lateMinutes,
           item.overtimeHours,
           this.escapeCsvValue(
-            item.actions.map((action) => action.type).join('|'),
+            item.actions
+              .filter((action) => action.enabled)
+              .map((action) => action.type)
+              .join('|'),
           ),
         ].join(','),
       );
@@ -546,6 +609,7 @@ export class RetailAttendanceService {
   async getAttendanceDetail(
     userId: number,
     query: RetailHrAttendanceDetailQueryDto,
+    actor: AttendanceActorContext = {},
   ): Promise<RetailHrAttendanceDetailResponseDto> {
     const access = await this.retailEntitlementsService.assertBranchHasModules(
       query.branchId,
@@ -562,6 +626,11 @@ export class RetailAttendanceService {
     const windowHours = Math.min(Math.max(query.windowHours ?? 168, 1), 720);
     const windowStart = new Date(Date.now() - windowHours * 60 * 60 * 1000);
     const now = new Date();
+    const canOverride = await this.canOverrideAttendance(
+      query.branchId,
+      actor.id ?? null,
+      actor.roles ?? [],
+    );
     const policy = this.resolvePolicy(
       access.branch.timezone ?? null,
       entitlement?.metadata?.hrAttendancePolicy ?? null,
@@ -635,12 +704,16 @@ export class RetailAttendanceService {
           .length,
         lastActivityAt,
         policy,
+        permissions: {
+          canOverrideAttendance: canOverride,
+        },
       },
       actions: this.buildAttendanceDetailActions(
         userId,
         query.branchId,
         windowHours,
         currentItem.attendanceStatus,
+        canOverride,
       ),
       logs: detailLogs,
     };
@@ -649,8 +722,9 @@ export class RetailAttendanceService {
   async exportAttendanceDetailCsv(
     userId: number,
     query: RetailHrAttendanceDetailQueryDto,
+    actor: AttendanceActorContext = {},
   ): Promise<string> {
-    const detail = await this.getAttendanceDetail(userId, query);
+    const detail = await this.getAttendanceDetail(userId, query, actor);
     const header = [
       'branchId',
       'userId',
@@ -746,13 +820,219 @@ export class RetailAttendanceService {
           this.escapeCsvValue(String(log.overrideByUserDisplayName ?? '')),
           this.escapeCsvValue(String(log.overrideByUserEmail ?? '')),
           this.escapeCsvValue(
-            detail.actions.map((action) => action.type).join('|'),
+            detail.actions
+              .filter((action) => action.enabled)
+              .map((action) => action.type)
+              .join('|'),
           ),
         ].join(','),
       );
     }
 
     return lines.join('\n');
+  }
+
+  async exportAttendanceComplianceCsv(
+    query: RetailHrAttendanceComplianceExportQueryDto,
+  ): Promise<string> {
+    const { anchorBranch, windowHours, rows } =
+      await this.getAttendanceComplianceDataset(query);
+
+    const header = [
+      'retailTenantId',
+      'anchorBranchId',
+      'branchId',
+      'branchName',
+      'branchCode',
+      'userId',
+      'displayName',
+      'email',
+      'role',
+      'windowHours',
+      'currentStatus',
+      'exceptionQueueType',
+      'exceptionPriority',
+      'exceptionPriorityReason',
+      'latestCheckInAt',
+      'latestCheckOutAt',
+      'workedHours',
+      'lateMinutes',
+      'overtimeHours',
+      'shiftCount',
+      'openShiftCount',
+      'lastActivityAt',
+      'policyShiftStartHour',
+      'policyShiftEndHour',
+      'policyGracePeriodMinutes',
+      'policyOvertimeThresholdHours',
+      'policyTimeZone',
+      'attendanceLogId',
+      'logStatus',
+      'logCheckInAt',
+      'logCheckOutAt',
+      'logWorkedHours',
+      'logLateMinutes',
+      'logOvertimeHours',
+      'logSource',
+      'logNote',
+      'logIsOverride',
+      'overrideByUserId',
+      'overrideByUserDisplayName',
+      'overrideByUserEmail',
+    ];
+    const lines = [header.join(',')];
+
+    for (const row of rows) {
+      const exportLogs =
+        row.detailLogs.length > 0
+          ? row.detailLogs
+          : [
+              {
+                attendanceLogId: '',
+                status: '',
+                checkInAt: null,
+                checkOutAt: null,
+                workedHours: '',
+                lateMinutes: '',
+                overtimeHours: '',
+                source: '',
+                note: '',
+                isOverride: '',
+                overrideByUserId: '',
+                overrideByUserDisplayName: '',
+                overrideByUserEmail: '',
+              },
+            ];
+
+      for (const log of exportLogs) {
+        lines.push(
+          [
+            row.branch.retailTenantId ?? '',
+            anchorBranch.id,
+            row.branch.id,
+            this.escapeCsvValue(row.branch.name),
+            this.escapeCsvValue(row.branch.code ?? ''),
+            row.assignment.userId,
+            this.escapeCsvValue(row.assignment.user?.displayName ?? ''),
+            this.escapeCsvValue(row.assignment.user?.email ?? ''),
+            this.escapeCsvValue(row.assignment.role),
+            windowHours,
+            this.escapeCsvValue(row.currentItem.attendanceStatus),
+            this.escapeCsvValue(row.exception?.queueType ?? ''),
+            this.escapeCsvValue(row.exception?.priority ?? ''),
+            this.escapeCsvValue(row.exception?.priorityReason ?? ''),
+            this.formatCsvDate(row.currentItem.latestCheckInAt),
+            this.formatCsvDate(row.currentItem.latestCheckOutAt),
+            row.currentItem.workedHours ?? '',
+            row.currentItem.lateMinutes,
+            row.currentItem.overtimeHours,
+            row.detailLogs.length,
+            row.detailLogs.filter((detailLog) => detailLog.checkOutAt == null)
+              .length,
+            this.formatCsvDate(row.lastActivityAt),
+            row.policy.shiftStartHour,
+            row.policy.shiftEndHour,
+            row.policy.gracePeriodMinutes,
+            row.policy.overtimeThresholdHours,
+            this.escapeCsvValue(row.policy.timeZone),
+            log.attendanceLogId,
+            this.escapeCsvValue(String(log.status ?? '')),
+            this.formatCsvDate(log.checkInAt as Date | string | null),
+            this.formatCsvDate(log.checkOutAt as Date | string | null),
+            log.workedHours ?? '',
+            log.lateMinutes ?? '',
+            log.overtimeHours ?? '',
+            this.escapeCsvValue(String(log.source ?? '')),
+            this.escapeCsvValue(String(log.note ?? '')),
+            log.isOverride,
+            log.overrideByUserId ?? '',
+            this.escapeCsvValue(String(log.overrideByUserDisplayName ?? '')),
+            this.escapeCsvValue(String(log.overrideByUserEmail ?? '')),
+          ].join(','),
+        );
+      }
+    }
+
+    return lines.join('\n');
+  }
+
+  async getAttendanceComplianceSummary(
+    query: RetailHrAttendanceComplianceExportQueryDto,
+    actor: AttendanceActorContext = {},
+  ): Promise<RetailHrAttendanceComplianceSummaryResponseDto> {
+    const {
+      anchorBranch,
+      tenantBranches,
+      windowHours,
+      rows,
+      totalStaffCount,
+      totalExceptionCount,
+    } = await this.getAttendanceComplianceDataset(query);
+    const canOverride = await this.canOverrideAttendance(
+      query.branchId,
+      actor.id ?? null,
+      actor.roles ?? [],
+    );
+    const filteredExceptionCount = rows.filter(
+      (row) => row.exception != null,
+    ).length;
+    const filteredBranchCount = new Set(rows.map((row) => row.branch.id)).size;
+    const lastActivityAt =
+      rows
+        .map((row) => row.lastActivityAt)
+        .filter((value): value is Date => value != null)
+        .sort((left, right) => right.getTime() - left.getTime())[0] ?? null;
+
+    return {
+      summary: {
+        anchorBranchId: anchorBranch.id,
+        retailTenantId: anchorBranch.retailTenantId ?? null,
+        branchCount: tenantBranches.length,
+        filteredBranchCount,
+        windowHours,
+        totalStaffCount,
+        filteredStaffCount: rows.length,
+        totalExceptionCount,
+        filteredExceptionCount,
+        lastActivityAt,
+        permissions: {
+          canOverrideAttendance: canOverride,
+        },
+      },
+      statusCounts: this.buildAttendanceComplianceCountEntries(
+        rows.map((row) => row.currentItem.attendanceStatus),
+        ['ABSENT', 'COMPLETED', 'LATE', 'ON_DUTY', 'OVERTIME'],
+      ),
+      queueTypeCounts: this.buildAttendanceComplianceCountEntries(
+        rows
+          .map((row) => row.exception?.queueType ?? null)
+          .filter(
+            (value): value is RetailHrAttendanceExceptionQueueFilter =>
+              value != null,
+          ),
+        [
+          RetailHrAttendanceExceptionQueueFilter.ABSENT,
+          RetailHrAttendanceExceptionQueueFilter.LATE,
+          RetailHrAttendanceExceptionQueueFilter.OVERTIME,
+        ],
+      ),
+      priorityCounts: this.buildAttendanceComplianceCountEntries(
+        rows
+          .map((row) => row.exception?.priority ?? null)
+          .filter(
+            (value): value is RetailHrAttendanceExceptionPriorityFilter =>
+              value != null,
+          ),
+        [
+          RetailHrAttendanceExceptionPriorityFilter.CRITICAL,
+          RetailHrAttendanceExceptionPriorityFilter.HIGH,
+          RetailHrAttendanceExceptionPriorityFilter.NORMAL,
+        ],
+      ),
+      branches: this.buildAttendanceComplianceBranchSummaries(rows),
+      topStaffExceptions:
+        this.buildAttendanceComplianceTopStaffExceptions(rows),
+    };
   }
 
   async checkIn(
@@ -1170,88 +1450,34 @@ export class RetailAttendanceService {
     branchId: number,
     windowHours: number,
     item: RetailHrAttendanceItemResponseDto,
+    canOverride: boolean,
   ): RetailHrAttendanceExceptionItemResponseDto | null {
-    if (item.attendanceStatus === 'ABSENT') {
-      return {
-        userId: item.userId,
-        displayName: item.displayName,
-        email: item.email,
-        role: item.role,
-        queueType: RetailHrAttendanceExceptionQueueFilter.ABSENT,
-        priority: RetailHrAttendanceExceptionPriorityFilter.CRITICAL,
-        priorityReason:
-          'No recent attendance activity was found for this active branch staff member.',
-        latestCheckInAt: item.latestCheckInAt,
-        latestCheckOutAt: item.latestCheckOutAt,
-        workedHours: item.workedHours,
-        lateMinutes: item.lateMinutes,
-        overtimeHours: item.overtimeHours,
-        actions: this.buildAttendanceExceptionActions(
-          branchId,
-          windowHours,
-          item.userId,
-          RetailHrAttendanceExceptionQueueFilter.ABSENT,
-        ),
-      };
+    const classification = this.mapAttendanceExceptionClassification(item);
+    if (!classification) {
+      return null;
     }
 
-    if (item.attendanceStatus === 'OVERTIME' || item.overtimeHours > 0) {
-      return {
-        userId: item.userId,
-        displayName: item.displayName,
-        email: item.email,
-        role: item.role,
-        queueType: RetailHrAttendanceExceptionQueueFilter.OVERTIME,
-        priority:
-          item.overtimeHours >= 2
-            ? RetailHrAttendanceExceptionPriorityFilter.CRITICAL
-            : RetailHrAttendanceExceptionPriorityFilter.HIGH,
-        priorityReason:
-          'The active shift is beyond the configured overtime threshold.',
-        latestCheckInAt: item.latestCheckInAt,
-        latestCheckOutAt: item.latestCheckOutAt,
-        workedHours: item.workedHours,
-        lateMinutes: item.lateMinutes,
-        overtimeHours: item.overtimeHours,
-        actions: this.buildAttendanceExceptionActions(
-          branchId,
-          windowHours,
-          item.userId,
-          RetailHrAttendanceExceptionQueueFilter.OVERTIME,
-        ),
-      };
-    }
-
-    if (item.lateMinutes > 0) {
-      return {
-        userId: item.userId,
-        displayName: item.displayName,
-        email: item.email,
-        role: item.role,
-        queueType: RetailHrAttendanceExceptionQueueFilter.LATE,
-        priority:
-          item.lateMinutes >= 60
-            ? RetailHrAttendanceExceptionPriorityFilter.CRITICAL
-            : item.lateMinutes >= 15
-              ? RetailHrAttendanceExceptionPriorityFilter.HIGH
-              : RetailHrAttendanceExceptionPriorityFilter.NORMAL,
-        priorityReason:
-          'The staff member checked in after the configured grace period.',
-        latestCheckInAt: item.latestCheckInAt,
-        latestCheckOutAt: item.latestCheckOutAt,
-        workedHours: item.workedHours,
-        lateMinutes: item.lateMinutes,
-        overtimeHours: item.overtimeHours,
-        actions: this.buildAttendanceExceptionActions(
-          branchId,
-          windowHours,
-          item.userId,
-          RetailHrAttendanceExceptionQueueFilter.LATE,
-        ),
-      };
-    }
-
-    return null;
+    return {
+      userId: item.userId,
+      displayName: item.displayName,
+      email: item.email,
+      role: item.role,
+      queueType: classification.queueType,
+      priority: classification.priority,
+      priorityReason: classification.priorityReason,
+      latestCheckInAt: item.latestCheckInAt,
+      latestCheckOutAt: item.latestCheckOutAt,
+      workedHours: item.workedHours,
+      lateMinutes: item.lateMinutes,
+      overtimeHours: item.overtimeHours,
+      actions: this.buildAttendanceExceptionActions(
+        branchId,
+        windowHours,
+        item.userId,
+        classification.queueType,
+        canOverride,
+      ),
+    };
   }
 
   private mapAttendanceDetailLog(
@@ -1319,6 +1545,7 @@ export class RetailAttendanceService {
     branchId: number,
     windowHours: number,
     currentStatus: string,
+    canOverride: boolean,
   ): RetailHrAttendanceDetailActionResponseDto[] {
     return [
       {
@@ -1356,7 +1583,7 @@ export class RetailAttendanceService {
           branchId,
           targetUserId: userId,
         },
-        enabled: true,
+        enabled: canOverride,
       },
     ];
   }
@@ -1366,6 +1593,7 @@ export class RetailAttendanceService {
     windowHours: number,
     userId: number,
     queueType: RetailHrAttendanceExceptionQueueFilter,
+    canOverride: boolean,
   ): RetailHrAttendanceExceptionActionResponseDto[] {
     return [
       {
@@ -1400,9 +1628,450 @@ export class RetailAttendanceService {
           branchId,
           targetUserId: userId,
         },
-        enabled: true,
+        enabled: canOverride,
       },
     ];
+  }
+
+  private mapAttendanceExceptionClassification(
+    item: RetailHrAttendanceItemResponseDto,
+  ): AttendanceComplianceClassification | null {
+    if (item.attendanceStatus === 'ABSENT') {
+      return {
+        queueType: RetailHrAttendanceExceptionQueueFilter.ABSENT,
+        priority: RetailHrAttendanceExceptionPriorityFilter.CRITICAL,
+        priorityReason:
+          'No recent attendance activity was found for this active branch staff member.',
+      };
+    }
+
+    if (item.attendanceStatus === 'OVERTIME' || item.overtimeHours > 0) {
+      return {
+        queueType: RetailHrAttendanceExceptionQueueFilter.OVERTIME,
+        priority:
+          item.overtimeHours >= 2
+            ? RetailHrAttendanceExceptionPriorityFilter.CRITICAL
+            : RetailHrAttendanceExceptionPriorityFilter.HIGH,
+        priorityReason:
+          'The active shift is beyond the configured overtime threshold.',
+      };
+    }
+
+    if (item.lateMinutes > 0) {
+      return {
+        queueType: RetailHrAttendanceExceptionQueueFilter.LATE,
+        priority:
+          item.lateMinutes >= 60
+            ? RetailHrAttendanceExceptionPriorityFilter.CRITICAL
+            : item.lateMinutes >= 15
+              ? RetailHrAttendanceExceptionPriorityFilter.HIGH
+              : RetailHrAttendanceExceptionPriorityFilter.NORMAL,
+        priorityReason:
+          'The staff member checked in after the configured grace period.',
+      };
+    }
+
+    return null;
+  }
+
+  private async getAttendanceComplianceDataset(
+    query: RetailHrAttendanceComplianceExportQueryDto,
+  ): Promise<{
+    anchorBranch: Branch;
+    tenantBranches: Branch[];
+    windowHours: number;
+    rows: AttendanceComplianceRow[];
+    totalStaffCount: number;
+    totalExceptionCount: number;
+  }> {
+    const access = await this.retailEntitlementsService.assertBranchHasModules(
+      query.branchId,
+      [RetailModule.HR_ATTENDANCE],
+    );
+    const anchorBranch = access.branch;
+    const entitlement = access.entitlements.find(
+      (entry) => entry.module === RetailModule.HR_ATTENDANCE,
+    );
+    const windowHours = Math.min(Math.max(query.windowHours ?? 168, 1), 720);
+    const windowStart = new Date(Date.now() - windowHours * 60 * 60 * 1000);
+    const now = new Date();
+    const tenantBranches =
+      anchorBranch.retailTenantId != null
+        ? await this.branchesRepository.find({
+            where: {
+              retailTenantId: anchorBranch.retailTenantId,
+              isActive: true,
+            },
+            order: { name: 'ASC' },
+          })
+        : [anchorBranch];
+    const tenantBranchIds = tenantBranches.map((branch) => branch.id);
+    const branchIds =
+      query.branchIds?.filter((branchId) =>
+        tenantBranchIds.includes(branchId),
+      ) ?? tenantBranchIds;
+    const userIds = query.userIds ?? null;
+    const statuses = query.statuses?.length
+      ? new Set<RetailHrAttendanceComplianceStatusFilter>(query.statuses)
+      : null;
+    const queueTypes = query.queueTypes?.length
+      ? new Set<RetailHrAttendanceExceptionQueueFilter>(query.queueTypes)
+      : null;
+    const priorities = query.priorities?.length
+      ? new Set<RetailHrAttendanceExceptionPriorityFilter>(query.priorities)
+      : null;
+    const branchById = new Map<number, Branch>(
+      tenantBranches.map((branch) => [branch.id, branch]),
+    );
+
+    const [assignments, logs] =
+      branchIds.length > 0
+        ? await Promise.all([
+            this.branchStaffAssignmentsRepository.find({
+              where: {
+                branchId: In(branchIds),
+                ...(userIds ? { userId: In(userIds) } : {}),
+                isActive: true,
+              },
+              relations: { user: true },
+            }),
+            this.hrAttendanceLogsRepository
+              .createQueryBuilder('attendance')
+              .where('attendance.branchId IN (:...branchIds)', { branchIds })
+              .andWhere(
+                '(attendance.checkInAt >= :windowStart OR attendance.checkOutAt IS NULL)',
+                {
+                  windowStart: windowStart.toISOString(),
+                },
+              )
+              .andWhere(
+                userIds?.length ? 'attendance.userId IN (:...userIds)' : '1=1',
+                userIds?.length ? { userIds } : undefined,
+              )
+              .orderBy('attendance.branchId', 'ASC')
+              .addOrderBy('attendance.userId', 'ASC')
+              .addOrderBy('attendance.checkInAt', 'DESC')
+              .addOrderBy('attendance.id', 'DESC')
+              .getMany(),
+          ])
+        : [[], []];
+    const overrideActorIds = Array.from(
+      new Set(
+        logs
+          .map((log) =>
+            this.normalizeOptionalNumber(log.metadata?.overrideByUserId),
+          )
+          .filter((value): value is number => value != null),
+      ),
+    );
+    const overrideActors =
+      overrideActorIds.length > 0
+        ? await this.usersRepository.find({
+            where: { id: In(overrideActorIds) },
+            select: { id: true, displayName: true, email: true } as any,
+          })
+        : [];
+    const overrideActorById = new Map<
+      number,
+      Pick<User, 'id' | 'displayName' | 'email'>
+    >(overrideActors.map((user) => [user.id, user]));
+    const logsByAssignmentKey = new Map<string, HrAttendanceLog[]>();
+
+    for (const log of logs) {
+      const key = `${log.branchId}:${log.userId}`;
+      const existingLogs = logsByAssignmentKey.get(key);
+      if (existingLogs) {
+        existingLogs.push(log);
+      } else {
+        logsByAssignmentKey.set(key, [log]);
+      }
+    }
+
+    const sortedAssignments = [...assignments].sort((left, right) => {
+      const leftBranch = branchById.get(left.branchId);
+      const rightBranch = branchById.get(right.branchId);
+      const branchNameDelta = (leftBranch?.name ?? '').localeCompare(
+        rightBranch?.name ?? '',
+      );
+      if (branchNameDelta !== 0) {
+        return branchNameDelta;
+      }
+
+      return (left.user?.displayName ?? left.user?.email ?? '').localeCompare(
+        right.user?.displayName ?? right.user?.email ?? '',
+      );
+    });
+
+    const rows: AttendanceComplianceRow[] = [];
+    let totalExceptionCount = 0;
+
+    for (const assignment of sortedAssignments) {
+      const branch = branchById.get(assignment.branchId);
+      if (!branch) {
+        continue;
+      }
+
+      const policy = this.resolvePolicy(
+        branch.timezone ?? null,
+        entitlement?.metadata?.hrAttendancePolicy ?? null,
+      );
+      const detailLogs = (
+        logsByAssignmentKey.get(
+          `${assignment.branchId}:${assignment.userId}`,
+        ) ?? []
+      ).map((log) =>
+        this.mapAttendanceDetailLog(log, policy, now, overrideActorById),
+      );
+      const currentItem = this.mapAttendanceItem(
+        assignment,
+        (logsByAssignmentKey.get(
+          `${assignment.branchId}:${assignment.userId}`,
+        ) ?? [])[0] ?? null,
+        policy,
+        now,
+        windowStart,
+      );
+      const lastActivityAt =
+        detailLogs
+          .flatMap((log) => [log.checkInAt, log.checkOutAt].filter(Boolean))
+          .sort((left, right) => right.getTime() - left.getTime())[0] ?? null;
+      const exception = this.mapAttendanceExceptionClassification(currentItem);
+      if (exception) {
+        totalExceptionCount += 1;
+      }
+
+      if (
+        statuses &&
+        !statuses.has(
+          currentItem.attendanceStatus as RetailHrAttendanceComplianceStatusFilter,
+        )
+      ) {
+        continue;
+      }
+
+      if (queueTypes && (!exception || !queueTypes.has(exception.queueType))) {
+        continue;
+      }
+
+      if (priorities && (!exception || !priorities.has(exception.priority))) {
+        continue;
+      }
+
+      rows.push({
+        branch,
+        assignment,
+        currentItem,
+        exception,
+        detailLogs,
+        lastActivityAt,
+        policy,
+      });
+    }
+
+    return {
+      anchorBranch,
+      tenantBranches,
+      windowHours,
+      rows,
+      totalStaffCount: sortedAssignments.length,
+      totalExceptionCount,
+    };
+  }
+
+  private buildAttendanceComplianceCountEntries<T extends string>(
+    values: T[],
+    order: T[],
+  ): RetailHrAttendanceComplianceCountEntryResponseDto[] {
+    return order.map((key) => ({
+      key,
+      count: values.filter((value) => value === key).length,
+    }));
+  }
+
+  private buildAttendanceComplianceBranchSummaries(
+    rows: AttendanceComplianceRow[],
+  ): RetailHrAttendanceComplianceBranchSummaryResponseDto[] {
+    const groupedRows = new Map<number, AttendanceComplianceRow[]>();
+
+    for (const row of rows) {
+      const existingRows = groupedRows.get(row.branch.id);
+      if (existingRows) {
+        existingRows.push(row);
+      } else {
+        groupedRows.set(row.branch.id, [row]);
+      }
+    }
+
+    return Array.from(groupedRows.values())
+      .map((branchRows) => {
+        const branch = branchRows[0].branch;
+        const lastActivityAt =
+          branchRows
+            .map((row) => row.lastActivityAt)
+            .filter((value): value is Date => value != null)
+            .sort((left, right) => right.getTime() - left.getTime())[0] ?? null;
+
+        return {
+          branchId: branch.id,
+          branchName: branch.name,
+          branchCode: branch.code ?? null,
+          filteredStaffCount: branchRows.length,
+          filteredExceptionCount: branchRows.filter(
+            (row) => row.exception != null,
+          ).length,
+          lastActivityAt,
+          statusCounts: this.buildAttendanceComplianceCountEntries(
+            branchRows.map((row) => row.currentItem.attendanceStatus),
+            ['ABSENT', 'COMPLETED', 'LATE', 'ON_DUTY', 'OVERTIME'],
+          ),
+          queueTypeCounts: this.buildAttendanceComplianceCountEntries(
+            branchRows
+              .map((row) => row.exception?.queueType ?? null)
+              .filter(
+                (value): value is RetailHrAttendanceExceptionQueueFilter =>
+                  value != null,
+              ),
+            [
+              RetailHrAttendanceExceptionQueueFilter.ABSENT,
+              RetailHrAttendanceExceptionQueueFilter.LATE,
+              RetailHrAttendanceExceptionQueueFilter.OVERTIME,
+            ],
+          ),
+          priorityCounts: this.buildAttendanceComplianceCountEntries(
+            branchRows
+              .map((row) => row.exception?.priority ?? null)
+              .filter(
+                (value): value is RetailHrAttendanceExceptionPriorityFilter =>
+                  value != null,
+              ),
+            [
+              RetailHrAttendanceExceptionPriorityFilter.CRITICAL,
+              RetailHrAttendanceExceptionPriorityFilter.HIGH,
+              RetailHrAttendanceExceptionPriorityFilter.NORMAL,
+            ],
+          ),
+        };
+      })
+      .sort((left, right) => {
+        const exceptionDelta =
+          right.filteredExceptionCount - left.filteredExceptionCount;
+        if (exceptionDelta !== 0) {
+          return exceptionDelta;
+        }
+
+        const staffDelta = right.filteredStaffCount - left.filteredStaffCount;
+        if (staffDelta !== 0) {
+          return staffDelta;
+        }
+
+        return left.branchName.localeCompare(right.branchName);
+      });
+  }
+
+  private buildAttendanceComplianceTopStaffExceptions(
+    rows: AttendanceComplianceRow[],
+  ): RetailHrAttendanceComplianceTopStaffExceptionResponseDto[] {
+    return rows
+      .filter(
+        (
+          row,
+        ): row is AttendanceComplianceRow & {
+          exception: AttendanceComplianceClassification;
+        } => row.exception != null,
+      )
+      .map((row) => ({
+        branchId: row.branch.id,
+        branchName: row.branch.name,
+        branchCode: row.branch.code ?? null,
+        userId: row.assignment.userId,
+        displayName: row.assignment.user?.displayName ?? null,
+        email: row.assignment.user?.email ?? '',
+        role: row.assignment.role,
+        currentStatus: row.currentItem.attendanceStatus,
+        queueType: row.exception.queueType,
+        priority: row.exception.priority,
+        priorityReason: row.exception.priorityReason,
+        latestCheckInAt: row.currentItem.latestCheckInAt,
+        latestCheckOutAt: row.currentItem.latestCheckOutAt,
+        workedHours: row.currentItem.workedHours,
+        lateMinutes: row.currentItem.lateMinutes,
+        overtimeHours: row.currentItem.overtimeHours,
+      }))
+      .sort((left, right) =>
+        this.compareAttendanceExceptionItem(
+          {
+            userId: left.userId,
+            displayName: left.displayName,
+            email: left.email,
+            role: left.role,
+            queueType: left.queueType,
+            priority: left.priority,
+            priorityReason: left.priorityReason,
+            latestCheckInAt: left.latestCheckInAt,
+            latestCheckOutAt: left.latestCheckOutAt,
+            workedHours: left.workedHours,
+            lateMinutes: left.lateMinutes,
+            overtimeHours: left.overtimeHours,
+            actions: [],
+          },
+          {
+            userId: right.userId,
+            displayName: right.displayName,
+            email: right.email,
+            role: right.role,
+            queueType: right.queueType,
+            priority: right.priority,
+            priorityReason: right.priorityReason,
+            latestCheckInAt: right.latestCheckInAt,
+            latestCheckOutAt: right.latestCheckOutAt,
+            workedHours: right.workedHours,
+            lateMinutes: right.lateMinutes,
+            overtimeHours: right.overtimeHours,
+            actions: [],
+          },
+        ),
+      );
+  }
+
+  private async canOverrideAttendance(
+    branchId: number,
+    actorUserId: number | null,
+    roles: string[],
+  ): Promise<boolean> {
+    if (
+      this.hasAnyRole(roles, [
+        UserRole.SUPER_ADMIN,
+        UserRole.ADMIN,
+        UserRole.POS_MANAGER,
+      ])
+    ) {
+      return true;
+    }
+
+    if (!actorUserId) {
+      return false;
+    }
+
+    const assignment = await this.branchStaffAssignmentsRepository.findOne({
+      where: {
+        branchId,
+        userId: actorUserId,
+        isActive: true,
+      },
+    });
+
+    if (!assignment) {
+      return false;
+    }
+
+    const permissions = Array.isArray(assignment.permissions)
+      ? assignment.permissions.map((permission) => permission.toUpperCase())
+      : [];
+
+    return (
+      assignment.role === BranchStaffRole.MANAGER ||
+      permissions.includes('HR_ATTENDANCE_OVERRIDE')
+    );
   }
 
   private buildAttendanceExceptionQuery(
@@ -1644,38 +2313,7 @@ export class RetailAttendanceService {
       RetailModule.HR_ATTENDANCE,
     ]);
 
-    if (
-      this.hasAnyRole(roles, [
-        UserRole.SUPER_ADMIN,
-        UserRole.ADMIN,
-        UserRole.POS_MANAGER,
-      ])
-    ) {
-      return;
-    }
-
-    const assignment = await this.branchStaffAssignmentsRepository.findOne({
-      where: {
-        branchId,
-        userId: actorUserId ?? -1,
-        isActive: true,
-      },
-    });
-
-    if (!assignment) {
-      throw new ForbiddenException(
-        'The current user does not have authority to override attendance for this branch',
-      );
-    }
-
-    const permissions = Array.isArray(assignment.permissions)
-      ? assignment.permissions.map((permission) => permission.toUpperCase())
-      : [];
-
-    if (
-      assignment.role === BranchStaffRole.MANAGER ||
-      permissions.includes('HR_ATTENDANCE_OVERRIDE')
-    ) {
+    if (await this.canOverrideAttendance(branchId, actorUserId, roles)) {
       return;
     }
 

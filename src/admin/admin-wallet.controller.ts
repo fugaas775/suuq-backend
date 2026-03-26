@@ -18,9 +18,12 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { UserRole } from '../auth/roles.enum';
-import { TopUpStatus } from '../wallet/entities/top-up-request.entity';
-import { TransactionType } from '../wallet/entities/wallet-transaction.entity';
 import { PayoutStatus } from '../wallet/entities/payout-log.entity';
+import { AdminWalletAutoPayoutExportQueryDto } from './dto/admin-wallet-auto-payout-export-query.dto';
+import { AdminWalletPageQueryDto } from './dto/admin-wallet-page-query.dto';
+import { AdminWalletPayoutQueryDto } from './dto/admin-wallet-payout-query.dto';
+import { AdminWalletTopUpQueryDto } from './dto/admin-wallet-top-up-query.dto';
+import { AdminWalletTransactionsQueryDto } from './dto/admin-wallet-transactions-query.dto';
 
 @Controller('admin/wallet')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -72,27 +75,22 @@ export class AdminWalletController {
 
   @Get('top-ups')
   @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
-  async listTopUpRequests(
-    @Query('page') page: number = 1,
-    @Query('limit') limit: number = 20,
-    @Query('status') status?: TopUpStatus,
-  ) {
-    return this.walletService.findAllTopUpRequests(page, limit, status);
+  async listTopUpRequests(@Query() query: AdminWalletTopUpQueryDto) {
+    return this.walletService.findAllTopUpRequests(
+      query.page ?? 1,
+      query.limit ?? 20,
+      query.status,
+    );
   }
 
   @Get('payouts')
   @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
-  async listPayouts(
-    @Query('page') page: number = 1,
-    @Query('limit') limit: number = 20,
-    @Query('status') status?: string,
-  ) {
-    // Optional status filter
-    const filterStatus =
-      status && Object.values(PayoutStatus).includes(status as PayoutStatus)
-        ? (status as PayoutStatus)
-        : undefined;
-    return this.walletService.getAllPayouts(page, limit, filterStatus);
+  async listPayouts(@Query() query: AdminWalletPayoutQueryDto) {
+    return this.walletService.getAllPayouts(
+      query.page ?? 1,
+      query.limit ?? 20,
+      query.status,
+    );
   }
 
   @Get('payouts/export')
@@ -105,20 +103,20 @@ export class AdminWalletController {
 
   @Get('payouts/auto-failures')
   @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
-  async listAutoPayoutFailures(
-    @Query('page') page: number = 1,
-    @Query('limit') limit: number = 20,
-  ) {
-    return this.walletService.getFailedAutoEbirrPayouts(page, limit);
+  async listAutoPayoutFailures(@Query() query: AdminWalletPageQueryDto) {
+    return this.walletService.getFailedAutoEbirrPayouts(
+      query.page ?? 1,
+      query.limit ?? 20,
+    );
   }
 
   @Get('payouts/exceptions')
   @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
-  async listPayoutExceptions(
-    @Query('page') page: number = 1,
-    @Query('limit') limit: number = 20,
-  ) {
-    return this.walletService.getReconcileRequiredPayoutExceptions(page, limit);
+  async listPayoutExceptions(@Query() query: AdminWalletPageQueryDto) {
+    return this.walletService.getReconcileRequiredPayoutExceptions(
+      query.page ?? 1,
+      query.limit ?? 20,
+    );
   }
 
   @Get('payouts/auto-failures/export')
@@ -129,10 +127,12 @@ export class AdminWalletController {
     'attachment; filename="failed_auto_ebirr_payouts.csv"',
   )
   async exportAutoPayoutFailures(
-    @Query('from') from?: string,
-    @Query('to') to?: string,
+    @Query() query: AdminWalletAutoPayoutExportQueryDto,
   ) {
-    return this.walletService.exportFailedAutoEbirrPayouts(from, to);
+    return this.walletService.exportFailedAutoEbirrPayouts(
+      query.from,
+      query.to,
+    );
   }
 
   @Post('payouts/:id/retry-auto')
@@ -191,36 +191,15 @@ export class AdminWalletController {
 
   @Get('transactions')
   @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
-  async listTransactions(
-    @Query('page') page: number = 1,
-    @Query('limit') limit: number = 20,
-    @Query('type') type?: string,
-    @Query('orderId') orderId?: number,
-    @Query('userId') userId?: number,
-    @Query('startDate') startDate?: string,
-    @Query('endDate') endDate?: string,
-  ) {
-    // Map frontend types to backend enum
-    if (type === 'PURCHASE') type = TransactionType.PAYMENT;
-    if (type === 'SUBSCRIPTION_EXTENSION') type = TransactionType.SUBSCRIPTION;
-
-    // Validate type against enum if provided
-    let validType: TransactionType | undefined;
-    if (
-      type &&
-      Object.values(TransactionType).includes(type as TransactionType)
-    ) {
-      validType = type as TransactionType;
-    }
-
+  async listTransactions(@Query() query: AdminWalletTransactionsQueryDto) {
     return this.walletService.findAllTransactions(
-      page,
-      limit,
-      validType,
-      orderId,
-      userId,
-      startDate,
-      endDate,
+      query.page ?? 1,
+      query.limit ?? 20,
+      query.type,
+      query.orderId,
+      query.userId,
+      query.startDate,
+      query.endDate,
     );
   }
 }

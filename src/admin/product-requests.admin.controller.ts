@@ -21,6 +21,7 @@ import { ProductRequest } from '../product-requests/entities/product-request.ent
 import { ProductRequestForward } from '../product-requests/entities/product-request-forward.entity';
 import { AdminForwardProductRequestDto } from './dto/admin-forward-product-request.dto';
 import { AdminForwardToAllVerifiedDto } from './dto/admin-forward-all-verified.dto';
+import { AdminProductRequestListQueryDto } from './dto/admin-product-request-list-query.dto';
 import { SkipThrottle } from '@nestjs/throttler';
 import { NotificationsService } from '../notifications/notifications.service';
 import { User, VerificationStatus } from '../users/entities/user.entity';
@@ -43,8 +44,8 @@ export class AdminProductRequestsController {
 
   @Get()
   @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
-  async list(@Query('status') status?: string, @Query('limit') limit?: string) {
-    const take = limit ? Math.min(Number(limit) || 50, 100) : 50;
+  async list(@Query() query: AdminProductRequestListQueryDto) {
+    const take = query.limit ?? 50;
 
     const qb = this.requestRepo
       .createQueryBuilder('request')
@@ -53,16 +54,12 @@ export class AdminProductRequestsController {
       .orderBy('request.id', 'DESC')
       .take(take);
 
-    if (status) {
-      const statuses = status
-        .split(',')
-        .map((s) => s.trim())
-        .filter(Boolean);
-      if (statuses.length === 1) {
-        qb.where('request.status = :status', { status: statuses[0] });
-      } else if (statuses.length > 1) {
-        qb.where('request.status IN (:...statuses)', { statuses });
-      }
+    if (query.status?.length === 1) {
+      qb.where('request.status = :status', { status: query.status[0] });
+    } else if (query.status?.length) {
+      qb.where('request.status IN (:...statuses)', {
+        statuses: query.status,
+      });
     }
 
     qb.loadRelationCountAndMap('request.forwardedCount', 'request.forwards');

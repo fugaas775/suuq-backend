@@ -17,6 +17,7 @@ import { UserRole } from '../auth/roles.enum';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { IsNumber, Min, IsString, IsOptional } from 'class-validator';
 import { Type } from 'class-transformer';
+import { AdminCreditUsersQueryDto } from './dto/admin-credit-users-query.dto';
 
 export class SetLimitDto {
   @IsNumber()
@@ -43,15 +44,11 @@ export class AdminCreditController {
   constructor(private readonly creditService: CreditService) {}
 
   @Get('users')
-  async getUsers(
-    @Query('page') page = 1,
-    @Query('limit') limit = 10,
-    @Query('search') search?: string,
-  ) {
+  async getUsers(@Query() query: AdminCreditUsersQueryDto) {
     return this.creditService.findAllLimits(
-      Number(page),
-      Number(limit),
-      search,
+      query.page ?? 1,
+      query.limit ?? 10,
+      query.search,
     );
   }
 

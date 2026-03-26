@@ -6,6 +6,7 @@ import { ProductRequestForward } from '../product-requests/entities/product-requ
 import { User } from '../users/entities/user.entity';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../email/email.service';
+import { ProductRequestStatus } from '../product-requests/entities/product-request.entity';
 
 describe('AdminProductRequestsController - Forward Validation', () => {
   let controller: AdminProductRequestsController;
@@ -14,8 +15,26 @@ describe('AdminProductRequestsController - Forward Validation', () => {
   let mockRequestRepo: any;
   let mockNotifications: any;
   let mockEmailService: any;
+  let requestQueryBuilder: any;
 
   beforeEach(async () => {
+    requestQueryBuilder = {
+      leftJoinAndSelect: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      take: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      loadRelationCountAndMap: jest.fn().mockReturnThis(),
+      getMany: jest.fn().mockResolvedValue([
+        {
+          id: 1,
+          title: 'Test Request',
+          buyerId: 50,
+          buyer: { email: 'buyer@example.com' },
+          category: { name: 'Food' },
+        },
+      ]),
+    };
+
     mockUserRepo = {
       find: jest.fn(),
     };
@@ -26,6 +45,7 @@ describe('AdminProductRequestsController - Forward Validation', () => {
     };
     mockRequestRepo = {
       findOne: jest.fn().mockResolvedValue({ id: 1, title: 'Test Request' }),
+      createQueryBuilder: jest.fn().mockReturnValue(requestQueryBuilder),
     };
     mockNotifications = {
       sendToUser: jest.fn().mockResolvedValue(undefined),
@@ -109,6 +129,46 @@ describe('AdminProductRequestsController - Forward Validation', () => {
       expect.objectContaining({ id: vendorId, email: 'vendor@example.com' }),
       { id: 1, title: 'Test Request' },
       undefined,
+    );
+  });
+
+  it('lists product requests with the default limit', async () => {
+    const result = await controller.list({});
+
+    expect(mockRequestRepo.createQueryBuilder).toHaveBeenCalledWith('request');
+    expect(requestQueryBuilder.take).toHaveBeenCalledWith(50);
+    expect(result).toEqual([
+      expect.objectContaining({
+        id: 1,
+        categoryName: 'Food',
+        buyerName: 'buyer@example.com',
+      }),
+    ]);
+  });
+
+  it('applies a single validated status filter', async () => {
+    await controller.list({
+      status: [ProductRequestStatus.OPEN],
+      limit: 25,
+    });
+
+    expect(requestQueryBuilder.take).toHaveBeenCalledWith(25);
+    expect(requestQueryBuilder.where).toHaveBeenCalledWith(
+      'request.status = :status',
+      { status: ProductRequestStatus.OPEN },
+    );
+  });
+
+  it('applies multi-status filters without reparsing raw query strings', async () => {
+    await controller.list({
+      status: [ProductRequestStatus.OPEN, ProductRequestStatus.IN_PROGRESS],
+    });
+
+    expect(requestQueryBuilder.where).toHaveBeenCalledWith(
+      'request.status IN (:...statuses)',
+      {
+        statuses: [ProductRequestStatus.OPEN, ProductRequestStatus.IN_PROGRESS],
+      },
     );
   });
 });
