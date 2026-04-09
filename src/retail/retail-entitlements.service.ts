@@ -7,16 +7,23 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Branch } from '../branches/entities/branch.entity';
+import {
+  Category,
+  PosUserFitCategory,
+} from '../categories/entities/category.entity';
 import { User } from '../users/entities/user.entity';
 import { CreateRetailTenantDto } from './dto/create-retail-tenant.dto';
 import { ApplyRetailPlanPresetDto } from './dto/apply-retail-plan-preset.dto';
 import { CreateTenantSubscriptionDto } from './dto/create-tenant-subscription.dto';
+import { ListRetailTenantsQueryDto } from './dto/list-retail-tenants-query.dto';
+import { UpdateRetailTenantOnboardingProfileDto } from './dto/update-retail-tenant-onboarding-profile.dto';
 import {
   AppliedRetailPlanPresetResponseDto,
   RetailPlanPresetResponseDto,
 } from './dto/retail-plan-preset-response.dto';
 import { UpsertTenantModuleEntitlementDto } from './dto/upsert-tenant-module-entitlement.dto';
 import {
+  RetailTenantOnboardingProfile,
   RetailTenant,
   RetailTenantStatus,
 } from './entities/retail-tenant.entity';
@@ -35,11 +42,69 @@ import {
   RetailPlanPreset,
 } from './retail-plan-presets';
 
+type PosWorkspaceStatus =
+  | 'ACTIVE'
+  | 'TENANT_SETUP_REQUIRED'
+  | 'TENANT_INACTIVE'
+  | 'MODULE_SETUP_REQUIRED'
+  | 'PAYMENT_REQUIRED'
+  | 'TRIAL'
+  | 'PAST_DUE'
+  | 'EXPIRED'
+  | 'CANCELLED';
+
+const MILLISECONDS_PER_DAY = 86_400_000;
+
+type RetailTenantWithPosWorkspaceAudit = RetailTenant & {
+  posWorkspaceAudit: {
+    provisioningSource: 'POS_SELF_SERVE' | 'ADMIN_OR_BACKOFFICE';
+    onboardingStatus:
+      | 'ACTIVE'
+      | 'BILLING_ACTIVATION_REQUIRED'
+      | 'BILLING_RESTRICTED'
+      | 'MODULE_SETUP_REQUIRED'
+      | 'TENANT_INACTIVE'
+      | 'NO_BRANCH_WORKSPACE';
+    activationStatus:
+      | 'ACTIVATED'
+      | 'TRIAL'
+      | 'PENDING_MONTHLY_BILLING'
+      | 'PAST_DUE'
+      | 'EXPIRED'
+      | 'CANCELLED'
+      | 'MODULE_SETUP_REQUIRED'
+      | 'TENANT_INACTIVE'
+      | 'NO_BRANCH_WORKSPACE';
+    nextBillingStep: string;
+    ownerEmail: string | null;
+    billingEmail: string | null;
+    latestSubscriptionStatus: TenantSubscriptionStatus | null;
+    latestPlanCode: string | null;
+    workspaceCount: number;
+    activeWorkspaceCount: number;
+    activationRequiredCount: number;
+    branchWorkspaces: Array<{
+      branchId: number;
+      branchName: string;
+      branchCode: string | null;
+      workspaceStatus: PosWorkspaceStatus;
+      subscriptionStatus: TenantSubscriptionStatus | null;
+      planCode: string | null;
+      isSelfServeProvisioned: boolean;
+      trialStartedAt: string | null;
+      trialEndsAt: string | null;
+      trialDaysRemaining: number | null;
+    }>;
+  };
+};
+
 @Injectable()
 export class RetailEntitlementsService {
   constructor(
     @InjectRepository(RetailTenant)
     private readonly retailTenantsRepository: Repository<RetailTenant>,
+    @InjectRepository(Category)
+    private readonly categoriesRepository: Repository<Category>,
     @InjectRepository(TenantSubscription)
     private readonly tenantSubscriptionsRepository: Repository<TenantSubscription>,
     @InjectRepository(TenantModuleEntitlement)
@@ -75,15 +140,44 @@ export class RetailEntitlementsService {
     return this.findTenantOrThrow(tenant.id);
   }
 
-  async listTenants(): Promise<RetailTenant[]> {
-    return this.retailTenantsRepository.find({
+  async listTenants(
+    query: ListRetailTenantsQueryDto = {},
+  ): Promise<RetailTenantWithPosWorkspaceAudit[]> {
+    const tenants = await this.retailTenantsRepository.find({
       order: { createdAt: 'DESC' },
-      relations: { branches: true, subscriptions: true, entitlements: true },
+      relations: {
+        owner: true,
+        branches: true,
+        subscriptions: true,
+        entitlements: true,
+      },
     });
+
+    return tenants
+      .map((tenant) => this.decorateTenantWithPosWorkspaceAudit(tenant))
+      .filter((tenant) => {
+        if (
+          query.provisioningSource &&
+          tenant.posWorkspaceAudit.provisioningSource !==
+            query.provisioningSource
+        ) {
+          return false;
+        }
+
+        if (
+          query.activationStatus &&
+          tenant.posWorkspaceAudit.activationStatus !== query.activationStatus
+        ) {
+          return false;
+        }
+
+        return true;
+      });
   }
 
-  async getTenant(id: number): Promise<RetailTenant> {
-    return this.findTenantOrThrow(id);
+  async getTenant(id: number): Promise<RetailTenantWithPosWorkspaceAudit> {
+    const tenant = await this.findTenantOrThrow(id);
+    return this.decorateTenantWithPosWorkspaceAudit(tenant);
   }
 
   listPlanPresets(): RetailPlanPresetResponseDto[] {
@@ -133,6 +227,19 @@ export class RetailEntitlementsService {
     });
 
     return this.tenantSubscriptionsRepository.save(subscription);
+  }
+
+  async updateOnboardingProfile(
+    tenantId: number,
+    dto: UpdateRetailTenantOnboardingProfileDto,
+  ): Promise<RetailTenantWithPosWorkspaceAudit> {
+    const tenant = await this.findTenantOrThrow(tenantId);
+
+    tenant.onboardingProfile = await this.normalizeOnboardingProfile(dto);
+    await this.retailTenantsRepository.save(tenant);
+
+    const refreshedTenant = await this.findTenantOrThrow(tenantId);
+    return this.decorateTenantWithPosWorkspaceAudit(refreshedTenant);
   }
 
   async applyPlanPreset(
@@ -209,60 +316,39 @@ export class RetailEntitlementsService {
       throw new BadRequestException('At least one retail module is required');
     }
 
-    const branch = await this.findBranchOrThrow(branchId);
-    if (!branch.retailTenantId) {
+    const workspace = await this.getBranchWorkspaceStatus(branchId);
+
+    if (!workspace.tenant) {
       throw new ForbiddenException(
         `Branch ${branchId} is not assigned to a Retail OS tenant`,
       );
     }
 
-    const tenant = await this.findTenantOrThrow(branch.retailTenantId);
-    if (tenant.status !== RetailTenantStatus.ACTIVE) {
+    if (
+      workspace.workspaceStatus !== 'ACTIVE' &&
+      workspace.workspaceStatus !== 'TRIAL'
+    ) {
       throw new ForbiddenException(
-        `Retail tenant ${tenant.id} is not active for branch ${branchId}`,
+        `Retail tenant ${workspace.tenant.id} does not have an active POS workspace for branch ${branchId}`,
       );
     }
 
-    const activeSubscription = await this.tenantSubscriptionsRepository.findOne(
-      {
-        where: { tenantId: tenant.id, status: TenantSubscriptionStatus.ACTIVE },
-        order: { createdAt: 'DESC' },
-      },
-    );
-
-    if (!activeSubscription) {
-      throw new ForbiddenException(
-        `Retail tenant ${tenant.id} does not have an active subscription`,
-      );
-    }
-
-    const entitlements = await this.tenantModuleEntitlementsRepository.find({
-      where: { tenantId: tenant.id },
-    });
-    const now = Date.now();
+    const entitlements = workspace.entitlements;
 
     for (const module of modules) {
       const entitlement = entitlements.find((entry) => entry.module === module);
       if (!entitlement || !entitlement.enabled) {
         throw new ForbiddenException(
-          `Retail tenant ${tenant.id} is not entitled to module ${module}`,
-        );
-      }
-
-      if (entitlement.startsAt && entitlement.startsAt.getTime() > now) {
-        throw new ForbiddenException(
-          `Retail module ${module} is not yet active for tenant ${tenant.id}`,
-        );
-      }
-
-      if (entitlement.expiresAt && entitlement.expiresAt.getTime() < now) {
-        throw new ForbiddenException(
-          `Retail module ${module} has expired for tenant ${tenant.id}`,
+          `Retail tenant ${workspace.tenant.id} is not entitled to module ${module}`,
         );
       }
     }
 
-    return { branch, tenant, entitlements };
+    return {
+      branch: workspace.branch,
+      tenant: workspace.tenant,
+      entitlements,
+    };
   }
 
   async hasActiveBranchModules(
@@ -289,34 +375,68 @@ export class RetailEntitlementsService {
     tenant: RetailTenant;
     entitlements: TenantModuleEntitlement[];
   }> {
-    const branch = await this.findBranchOrThrow(branchId);
-    if (!branch.retailTenantId) {
+    const workspace = await this.getBranchWorkspaceStatus(branchId);
+
+    if (!workspace.tenant) {
       throw new ForbiddenException(
         `Branch ${branchId} is not assigned to a Retail OS tenant`,
       );
     }
 
+    if (
+      workspace.workspaceStatus !== 'ACTIVE' &&
+      workspace.workspaceStatus !== 'TRIAL'
+    ) {
+      throw new ForbiddenException(
+        `Retail tenant ${workspace.tenant.id} does not have an active subscription for branch ${branchId}`,
+      );
+    }
+
+    return {
+      branch: workspace.branch,
+      tenant: workspace.tenant,
+      entitlements: workspace.entitlements,
+    };
+  }
+
+  async getBranchWorkspaceStatus(branchId: number): Promise<{
+    branch: Branch;
+    tenant: RetailTenant | null;
+    subscription: TenantSubscription | null;
+    entitlements: TenantModuleEntitlement[];
+    hasPosModule: boolean;
+    workspaceStatus: PosWorkspaceStatus;
+    trialStartedAt: string | null;
+    trialEndsAt: string | null;
+    trialDaysRemaining: number | null;
+  }> {
+    const branch = await this.findBranchOrThrow(branchId);
+
+    if (!branch.retailTenantId) {
+      return {
+        branch,
+        tenant: null,
+        subscription: null,
+        entitlements: [],
+        hasPosModule: false,
+        workspaceStatus: 'TENANT_SETUP_REQUIRED',
+        trialStartedAt: null,
+        trialEndsAt: null,
+        trialDaysRemaining: null,
+      };
+    }
+
     const tenant = await this.findTenantOrThrow(branch.retailTenantId);
-    if (tenant.status !== RetailTenantStatus.ACTIVE) {
-      throw new ForbiddenException(
-        `Retail tenant ${tenant.id} is not active for branch ${branchId}`,
-      );
-    }
-
-    const activeSubscription = await this.tenantSubscriptionsRepository.findOne(
-      {
-        where: { tenantId: tenant.id, status: TenantSubscriptionStatus.ACTIVE },
-        order: { createdAt: 'DESC' },
-      },
-    );
-
-    if (!activeSubscription) {
-      throw new ForbiddenException(
-        `Retail tenant ${tenant.id} does not have an active subscription`,
-      );
-    }
-
+    const subscription = await this.tenantSubscriptionsRepository.findOne({
+      where: { tenantId: tenant.id },
+      order: { createdAt: 'DESC' },
+    });
     const now = Date.now();
+    const effectiveSubscriptionStatus = this.resolveEffectiveSubscriptionStatus(
+      subscription,
+      now,
+    );
+    const trialMetadata = this.getTrialMetadata(subscription, now);
     const entitlements = (
       await this.tenantModuleEntitlementsRepository.find({
         where: { tenantId: tenant.id },
@@ -336,8 +456,74 @@ export class RetailEntitlementsService {
 
       return true;
     });
+    const hasPosModule = entitlements.some(
+      (entitlement) => entitlement.module === RetailModule.POS_CORE,
+    );
 
-    return { branch, tenant, entitlements };
+    if (tenant.status !== RetailTenantStatus.ACTIVE) {
+      return {
+        branch,
+        tenant,
+        subscription,
+        entitlements,
+        hasPosModule,
+        workspaceStatus: 'TENANT_INACTIVE',
+        ...trialMetadata,
+      };
+    }
+
+    if (!hasPosModule) {
+      return {
+        branch,
+        tenant,
+        subscription,
+        entitlements,
+        hasPosModule,
+        workspaceStatus: 'MODULE_SETUP_REQUIRED',
+        ...trialMetadata,
+      };
+    }
+
+    if (!subscription) {
+      return {
+        branch,
+        tenant,
+        subscription: null,
+        entitlements,
+        hasPosModule,
+        workspaceStatus: 'PAYMENT_REQUIRED',
+        trialStartedAt: null,
+        trialEndsAt: null,
+        trialDaysRemaining: null,
+      };
+    }
+
+    const subscriptionStatusMap: Record<
+      TenantSubscriptionStatus,
+      'ACTIVE' | 'TRIAL' | 'PAST_DUE' | 'EXPIRED' | 'CANCELLED'
+    > = {
+      [TenantSubscriptionStatus.ACTIVE]: 'ACTIVE',
+      [TenantSubscriptionStatus.TRIAL]: 'TRIAL',
+      [TenantSubscriptionStatus.PAST_DUE]: 'PAST_DUE',
+      [TenantSubscriptionStatus.EXPIRED]: 'EXPIRED',
+      [TenantSubscriptionStatus.CANCELLED]: 'CANCELLED',
+    };
+
+    const nextSubscription =
+      effectiveSubscriptionStatus &&
+      effectiveSubscriptionStatus !== subscription.status
+        ? { ...subscription, status: effectiveSubscriptionStatus }
+        : subscription;
+
+    return {
+      branch,
+      tenant,
+      subscription: nextSubscription,
+      entitlements,
+      hasPosModule,
+      workspaceStatus: subscriptionStatusMap[effectiveSubscriptionStatus],
+      ...trialMetadata,
+    };
   }
 
   async getActiveBranchModuleEntitlement(
@@ -364,7 +550,12 @@ export class RetailEntitlementsService {
   private async findTenantOrThrow(id: number): Promise<RetailTenant> {
     const tenant = await this.retailTenantsRepository.findOne({
       where: { id },
-      relations: { branches: true, subscriptions: true, entitlements: true },
+      relations: {
+        owner: true,
+        branches: true,
+        subscriptions: true,
+        entitlements: true,
+      },
     });
 
     if (!tenant) {
@@ -412,6 +603,358 @@ export class RetailEntitlementsService {
         metadata: module.metadata ?? null,
       })),
     };
+  }
+
+  private async normalizeOnboardingProfile(
+    dto: UpdateRetailTenantOnboardingProfileDto,
+  ): Promise<RetailTenantOnboardingProfile> {
+    const normalizeValue = (value?: string | null) => {
+      const trimmedValue = String(value ?? '').trim();
+      return trimmedValue ? trimmedValue : null;
+    };
+    const normalizeUserFit = (
+      value?: PosUserFitCategory | null,
+    ): PosUserFitCategory | null => {
+      const normalizedValue = normalizeValue(value);
+      return normalizedValue &&
+        Object.values(PosUserFitCategory).includes(
+          normalizedValue as PosUserFitCategory,
+        )
+        ? (normalizedValue as PosUserFitCategory)
+        : null;
+    };
+
+    const categoryId = Number.isFinite(Number(dto.categoryId))
+      ? Number(dto.categoryId)
+      : null;
+    let category: Category | null = null;
+
+    if (categoryId) {
+      category = await this.categoriesRepository.findOne({
+        where: { id: categoryId },
+        relations: { parent: true },
+      });
+
+      if (!category) {
+        throw new NotFoundException(`Category with ID ${categoryId} not found`);
+      }
+    }
+
+    const suggestedUserFit = category?.posSuggestedUserFit ?? null;
+
+    return {
+      categoryId: category?.id ?? null,
+      categorySlug: category?.slug ?? null,
+      categoryName: category?.name ?? null,
+      userFit: normalizeUserFit(dto.userFit),
+      suggestedUserFit,
+      notes: normalizeValue(dto.notes),
+    };
+  }
+
+  private resolveEffectiveSubscriptionStatus(
+    subscription: TenantSubscription | null,
+    now: number,
+  ): TenantSubscriptionStatus | null {
+    if (!subscription) {
+      return null;
+    }
+
+    const endsAt = subscription.endsAt?.getTime() ?? null;
+
+    if (
+      endsAt != null &&
+      endsAt < now &&
+      (subscription.status === TenantSubscriptionStatus.ACTIVE ||
+        subscription.status === TenantSubscriptionStatus.TRIAL)
+    ) {
+      return TenantSubscriptionStatus.EXPIRED;
+    }
+
+    return subscription.status;
+  }
+
+  private getTrialMetadata(
+    subscription: TenantSubscription | null,
+    now: number,
+  ): {
+    trialStartedAt: string | null;
+    trialEndsAt: string | null;
+    trialDaysRemaining: number | null;
+  } {
+    if (!subscription) {
+      return {
+        trialStartedAt: null,
+        trialEndsAt: null,
+        trialDaysRemaining: null,
+      };
+    }
+
+    const trialStartedAt = subscription.startsAt
+      ? subscription.startsAt.toISOString()
+      : null;
+    const trialEndsAt = subscription.endsAt
+      ? subscription.endsAt.toISOString()
+      : null;
+    const isTrialSubscription =
+      subscription.status === TenantSubscriptionStatus.TRIAL ||
+      String(
+        subscription.metadata?.lastActivationPaymentMethod || '',
+      ).toUpperCase() === 'TRIAL';
+
+    if (!isTrialSubscription) {
+      return {
+        trialStartedAt: null,
+        trialEndsAt: null,
+        trialDaysRemaining: null,
+      };
+    }
+
+    const trialDaysRemaining = trialEndsAt
+      ? Math.max(
+          0,
+          Math.ceil((Date.parse(trialEndsAt) - now) / MILLISECONDS_PER_DAY),
+        )
+      : null;
+
+    return {
+      trialStartedAt,
+      trialEndsAt,
+      trialDaysRemaining,
+    };
+  }
+
+  private decorateTenantWithPosWorkspaceAudit(
+    tenant: RetailTenant,
+  ): RetailTenantWithPosWorkspaceAudit {
+    const latestSubscription = this.getLatestTenantSubscription(tenant);
+    const trialMetadata = this.getTrialMetadata(latestSubscription, Date.now());
+    const provisioningSource: 'POS_SELF_SERVE' | 'ADMIN_OR_BACKOFFICE' =
+      this.isSelfServeProvisioned(tenant)
+        ? 'POS_SELF_SERVE'
+        : 'ADMIN_OR_BACKOFFICE';
+    const branchWorkspaces = (tenant.branches ?? []).map((branch) => {
+      const workspaceStatus = this.resolveTenantWorkspaceStatus(
+        tenant,
+        latestSubscription,
+      );
+      return {
+        branchId: branch.id,
+        branchName: branch.name,
+        branchCode: branch.code ?? null,
+        workspaceStatus,
+        subscriptionStatus: latestSubscription?.status ?? null,
+        planCode: latestSubscription?.planCode ?? null,
+        isSelfServeProvisioned: provisioningSource === 'POS_SELF_SERVE',
+        trialStartedAt: trialMetadata.trialStartedAt,
+        trialEndsAt: trialMetadata.trialEndsAt,
+        trialDaysRemaining: trialMetadata.trialDaysRemaining,
+      };
+    });
+    const activationRequiredCount = branchWorkspaces.filter(
+      (workspace) => workspace.workspaceStatus === 'PAYMENT_REQUIRED',
+    ).length;
+    const activeWorkspaceCount = branchWorkspaces.filter((workspace) =>
+      ['ACTIVE', 'TRIAL'].includes(workspace.workspaceStatus),
+    ).length;
+    const primaryWorkspaceStatus =
+      branchWorkspaces[0]?.workspaceStatus ?? 'TENANT_SETUP_REQUIRED';
+    const auditStatus = this.mapAuditStatus(primaryWorkspaceStatus);
+
+    return Object.assign(tenant, {
+      posWorkspaceAudit: {
+        provisioningSource,
+        onboardingStatus: auditStatus.onboardingStatus,
+        activationStatus: auditStatus.activationStatus,
+        nextBillingStep: this.describeNextBillingStep(
+          primaryWorkspaceStatus,
+          latestSubscription,
+        ),
+        ownerEmail: tenant.owner?.email ?? tenant.billingEmail ?? null,
+        billingEmail: tenant.billingEmail ?? null,
+        latestSubscriptionStatus: latestSubscription?.status ?? null,
+        latestPlanCode: latestSubscription?.planCode ?? null,
+        workspaceCount: branchWorkspaces.length,
+        activeWorkspaceCount,
+        activationRequiredCount,
+        branchWorkspaces,
+      },
+    });
+  }
+
+  private getLatestTenantSubscription(
+    tenant: RetailTenant,
+  ): TenantSubscription | null {
+    const subscriptions = Array.isArray(tenant.subscriptions)
+      ? [...tenant.subscriptions]
+      : [];
+
+    if (subscriptions.length === 0) {
+      return null;
+    }
+
+    return subscriptions.sort((left, right) => {
+      const leftTime = new Date(left.startsAt ?? left.createdAt ?? 0).getTime();
+      const rightTime = new Date(
+        right.startsAt ?? right.createdAt ?? 0,
+      ).getTime();
+      return rightTime - leftTime;
+    })[0];
+  }
+
+  private isSelfServeProvisioned(tenant: RetailTenant): boolean {
+    return (tenant.entitlements ?? []).some((entitlement) =>
+      String(entitlement.reason ?? '')
+        .toLowerCase()
+        .includes('self-serve onboarding'),
+    );
+  }
+
+  private resolveTenantWorkspaceStatus(
+    tenant: RetailTenant,
+    latestSubscription: TenantSubscription | null,
+  ): PosWorkspaceStatus {
+    const now = Date.now();
+    const hasPosModule = (tenant.entitlements ?? []).some((entitlement) => {
+      if (
+        entitlement.module !== RetailModule.POS_CORE ||
+        !entitlement.enabled
+      ) {
+        return false;
+      }
+
+      if (entitlement.startsAt && entitlement.startsAt.getTime() > now) {
+        return false;
+      }
+
+      if (entitlement.expiresAt && entitlement.expiresAt.getTime() < now) {
+        return false;
+      }
+
+      return true;
+    });
+
+    if ((tenant.branches ?? []).length === 0) {
+      return 'TENANT_SETUP_REQUIRED';
+    }
+
+    if (tenant.status !== RetailTenantStatus.ACTIVE) {
+      return 'TENANT_INACTIVE';
+    }
+
+    if (!hasPosModule) {
+      return 'MODULE_SETUP_REQUIRED';
+    }
+
+    if (!latestSubscription) {
+      return 'PAYMENT_REQUIRED';
+    }
+
+    switch (latestSubscription.status) {
+      case TenantSubscriptionStatus.ACTIVE:
+        return 'ACTIVE';
+      case TenantSubscriptionStatus.TRIAL:
+        return 'TRIAL';
+      case TenantSubscriptionStatus.PAST_DUE:
+        return 'PAST_DUE';
+      case TenantSubscriptionStatus.EXPIRED:
+        return 'EXPIRED';
+      case TenantSubscriptionStatus.CANCELLED:
+        return 'CANCELLED';
+      default:
+        return 'PAYMENT_REQUIRED';
+    }
+  }
+
+  private mapAuditStatus(workspaceStatus: PosWorkspaceStatus): {
+    onboardingStatus: RetailTenantWithPosWorkspaceAudit['posWorkspaceAudit']['onboardingStatus'];
+    activationStatus: RetailTenantWithPosWorkspaceAudit['posWorkspaceAudit']['activationStatus'];
+  } {
+    switch (workspaceStatus) {
+      case 'ACTIVE':
+        return {
+          onboardingStatus: 'ACTIVE',
+          activationStatus: 'ACTIVATED',
+        };
+      case 'TRIAL':
+        return {
+          onboardingStatus: 'ACTIVE',
+          activationStatus: 'TRIAL',
+        };
+      case 'PAYMENT_REQUIRED':
+        return {
+          onboardingStatus: 'BILLING_ACTIVATION_REQUIRED',
+          activationStatus: 'PENDING_MONTHLY_BILLING',
+        };
+      case 'PAST_DUE':
+        return {
+          onboardingStatus: 'BILLING_RESTRICTED',
+          activationStatus: 'PAST_DUE',
+        };
+      case 'EXPIRED':
+        return {
+          onboardingStatus: 'BILLING_RESTRICTED',
+          activationStatus: 'EXPIRED',
+        };
+      case 'CANCELLED':
+        return {
+          onboardingStatus: 'BILLING_RESTRICTED',
+          activationStatus: 'CANCELLED',
+        };
+      case 'MODULE_SETUP_REQUIRED':
+        return {
+          onboardingStatus: 'MODULE_SETUP_REQUIRED',
+          activationStatus: 'MODULE_SETUP_REQUIRED',
+        };
+      case 'TENANT_INACTIVE':
+        return {
+          onboardingStatus: 'TENANT_INACTIVE',
+          activationStatus: 'TENANT_INACTIVE',
+        };
+      default:
+        return {
+          onboardingStatus: 'NO_BRANCH_WORKSPACE',
+          activationStatus: 'NO_BRANCH_WORKSPACE',
+        };
+    }
+  }
+
+  private describeNextBillingStep(
+    workspaceStatus: PosWorkspaceStatus,
+    latestSubscription: TenantSubscription | null,
+  ): string {
+    switch (workspaceStatus) {
+      case 'ACTIVE':
+        return 'No immediate billing action is required.';
+      case 'TRIAL':
+        return latestSubscription?.endsAt
+          ? `Trial access is open now. Collect the first monthly POS payment before ${this.formatAuditDate(latestSubscription.endsAt)}.`
+          : 'Trial access is open now. Collect the first monthly POS payment before the trial ends.';
+      case 'PAYMENT_REQUIRED':
+        return 'Collect the first monthly POS workspace activation payment before branch access can open in POS-S.';
+      case 'PAST_DUE':
+        return 'Collect the overdue monthly POS payment, then reactivate the branch workspace.';
+      case 'EXPIRED':
+        return 'Create a new monthly subscription or reactivation payment before reopening the branch workspace.';
+      case 'CANCELLED':
+        return 'Restore billing with a new monthly subscription before reopening the branch workspace.';
+      case 'MODULE_SETUP_REQUIRED':
+        return 'Enable POS_CORE entitlement before requesting billing activation.';
+      case 'TENANT_INACTIVE':
+        return 'Reactivate the retail tenant before attempting monthly billing activation.';
+      default:
+        return latestSubscription
+          ? 'Review the latest monthly subscription and branch workspace status.'
+          : 'Create the tenant branch workspace before billing activation can begin.';
+    }
+  }
+
+  private formatAuditDate(value: Date): string {
+    return new Intl.DateTimeFormat('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+    }).format(value);
   }
 
   private normalizeModuleMetadata(

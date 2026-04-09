@@ -1,5 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
+import { DataSource } from 'typeorm';
 import { BranchTransfersService } from '../branches/branch-transfers.service';
 import { InventoryLedgerService } from '../branches/inventory-ledger.service';
 import { Branch } from '../branches/entities/branch.entity';
@@ -24,6 +25,7 @@ describe('PosSyncService', () => {
   };
   let branchesRepository: { findOne: jest.Mock };
   let partnerCredentialsRepository: { findOne: jest.Mock };
+  let dataSource: { transaction: jest.Mock };
   let branchTransfersService: {
     create: jest.Mock;
     dispatch: jest.Mock;
@@ -35,6 +37,7 @@ describe('PosSyncService', () => {
     recordMovement: jest.Mock;
     transferStock: jest.Mock;
     getOnHand: jest.Mock;
+    getOnHandWithManager: jest.Mock;
     adjustInboundOpenPo: jest.Mock;
     adjustReservedOnline: jest.Mock;
     adjustOutboundTransfers: jest.Mock;
@@ -57,6 +60,20 @@ describe('PosSyncService', () => {
       findOne: jest.fn().mockResolvedValue(null),
     };
 
+    dataSource = {
+      transaction: jest.fn(async (callback) =>
+        callback({
+          getRepository: jest.fn((entity) => {
+            if (entity === PosSyncJob) {
+              return posSyncJobsRepository;
+            }
+
+            return null;
+          }),
+        }),
+      ),
+    };
+
     branchTransfersService = {
       create: jest.fn(),
       dispatch: jest.fn(),
@@ -69,6 +86,7 @@ describe('PosSyncService', () => {
       recordMovement: jest.fn(),
       transferStock: jest.fn(),
       getOnHand: jest.fn().mockResolvedValue(12),
+      getOnHandWithManager: jest.fn().mockResolvedValue(12),
       adjustInboundOpenPo: jest.fn(),
       adjustReservedOnline: jest.fn(),
       adjustOutboundTransfers: jest.fn(),
@@ -80,6 +98,7 @@ describe('PosSyncService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         PosSyncService,
+        { provide: DataSource, useValue: dataSource },
         {
           provide: getRepositoryToken(PosSyncJob),
           useValue: posSyncJobsRepository,
@@ -165,7 +184,24 @@ describe('PosSyncService', () => {
         quantityDelta: -4,
         note: 'retry me',
       }),
+      expect.any(Object),
     );
+  });
+
+  it('rejects empty ingest batches before creating a sync job', async () => {
+    await expect(
+      service.ingest(
+        {
+          branchId: 3,
+          syncType: PosSyncType.SALES_SUMMARY,
+          entries: [],
+        },
+        { id: 17, roles: ['POS_MANAGER'] },
+      ),
+    ).rejects.toThrow('POS sync ingestion requires at least one entry');
+
+    expect(posSyncJobsRepository.create).not.toHaveBeenCalled();
+    expect(posSyncJobsRepository.save).not.toHaveBeenCalled();
   });
 
   it('rejects replay when no failed entries match the requested selection', async () => {
@@ -207,14 +243,12 @@ describe('PosSyncService', () => {
       rejectedCount: 0,
     } as PosSyncJob;
 
-    posSyncJobsRepository.findOne
-      .mockResolvedValueOnce(baseJob)
-      .mockResolvedValueOnce({
-        ...baseJob,
-        status: PosSyncStatus.PROCESSED,
-        acceptedCount: 1,
-        rejectedCount: 0,
-      });
+    posSyncJobsRepository.findOne.mockResolvedValueOnce({
+      ...baseJob,
+      status: PosSyncStatus.PROCESSED,
+      acceptedCount: 1,
+      rejectedCount: 0,
+    });
 
     const result = await service.ingest(
       {
@@ -232,7 +266,9 @@ describe('PosSyncService', () => {
         movementType: StockMovementType.SALE,
         quantityDelta: -4,
       }),
+      expect.any(Object),
     );
+    expect(posSyncJobsRepository.save).toHaveBeenCalledTimes(2);
     expect(result.status).toBe(PosSyncStatus.PROCESSED);
   });
 
@@ -246,14 +282,12 @@ describe('PosSyncService', () => {
       rejectedCount: 0,
     } as PosSyncJob;
 
-    posSyncJobsRepository.findOne
-      .mockResolvedValueOnce(baseJob)
-      .mockResolvedValueOnce({
-        ...baseJob,
-        status: PosSyncStatus.PROCESSED,
-        acceptedCount: 1,
-        rejectedCount: 0,
-      });
+    posSyncJobsRepository.findOne.mockResolvedValueOnce({
+      ...baseJob,
+      status: PosSyncStatus.PROCESSED,
+      acceptedCount: 1,
+      rejectedCount: 0,
+    });
 
     await service.ingest(
       {
@@ -264,12 +298,17 @@ describe('PosSyncService', () => {
       { id: 17, roles: ['POS_MANAGER'] },
     );
 
-    expect(inventoryLedgerService.getOnHand).toHaveBeenCalledWith(3, 9);
+    expect(inventoryLedgerService.getOnHandWithManager).toHaveBeenCalledWith(
+      3,
+      9,
+      expect.any(Object),
+    );
     expect(inventoryLedgerService.recordMovement).toHaveBeenCalledWith(
       expect.objectContaining({
         movementType: StockMovementType.ADJUSTMENT,
         quantityDelta: 3,
       }),
+      expect.any(Object),
     );
   });
 
@@ -283,14 +322,12 @@ describe('PosSyncService', () => {
       rejectedCount: 0,
     } as PosSyncJob;
 
-    posSyncJobsRepository.findOne
-      .mockResolvedValueOnce(baseJob)
-      .mockResolvedValueOnce({
-        ...baseJob,
-        status: PosSyncStatus.PROCESSED,
-        acceptedCount: 1,
-        rejectedCount: 0,
-      });
+    posSyncJobsRepository.findOne.mockResolvedValueOnce({
+      ...baseJob,
+      status: PosSyncStatus.PROCESSED,
+      acceptedCount: 1,
+      rejectedCount: 0,
+    });
     partnerCredentialsRepository.findOne.mockResolvedValueOnce({
       id: 12,
       branchId: 3,
@@ -321,6 +358,7 @@ describe('PosSyncService', () => {
         productId: 55,
         movementType: StockMovementType.SALE,
       }),
+      expect.any(Object),
     );
   });
 
@@ -334,14 +372,12 @@ describe('PosSyncService', () => {
       rejectedCount: 0,
     } as PosSyncJob;
 
-    posSyncJobsRepository.findOne
-      .mockResolvedValueOnce(baseJob)
-      .mockResolvedValueOnce({
-        ...baseJob,
-        status: PosSyncStatus.PROCESSED,
-        acceptedCount: 1,
-        rejectedCount: 0,
-      });
+    posSyncJobsRepository.findOne.mockResolvedValueOnce({
+      ...baseJob,
+      status: PosSyncStatus.PROCESSED,
+      acceptedCount: 1,
+      rejectedCount: 0,
+    });
     branchTransfersService.create.mockResolvedValue({ id: 501 });
 
     await service.ingest(
@@ -373,11 +409,13 @@ describe('PosSyncService', () => {
         sourceReferenceId: 41,
         sourceEntryIndex: 0,
       }),
+      expect.any(Object),
     );
     expect(branchTransfersService.dispatch).toHaveBeenCalledWith(
       501,
       expect.objectContaining({ id: 17 }),
       'Move to kiosk branch',
+      expect.any(Object),
     );
   });
 
@@ -391,14 +429,12 @@ describe('PosSyncService', () => {
       rejectedCount: 0,
     } as PosSyncJob;
 
-    posSyncJobsRepository.findOne
-      .mockResolvedValueOnce(baseJob)
-      .mockResolvedValueOnce({
-        ...baseJob,
-        status: PosSyncStatus.PROCESSED,
-        acceptedCount: 1,
-        rejectedCount: 0,
-      });
+    posSyncJobsRepository.findOne.mockResolvedValueOnce({
+      ...baseJob,
+      status: PosSyncStatus.PROCESSED,
+      acceptedCount: 1,
+      rejectedCount: 0,
+    });
     branchTransfersService.findOne.mockResolvedValue({
       id: 602,
       fromBranchId: 4,
@@ -428,6 +464,7 @@ describe('PosSyncService', () => {
       602,
       expect.objectContaining({ id: 17 }),
       'Receive from kiosk branch',
+      expect.any(Object),
     );
   });
 
@@ -533,28 +570,26 @@ describe('PosSyncService', () => {
       failedEntries: [],
     } as PosSyncJob;
 
-    posSyncJobsRepository.findOne
-      .mockResolvedValueOnce(baseJob)
-      .mockResolvedValueOnce({
-        ...baseJob,
-        status: PosSyncStatus.FAILED,
-        acceptedCount: 0,
-        rejectedCount: 1,
-        failedEntries: [
-          {
-            entryIndex: 0,
-            productId: 9,
-            aliasType: null,
-            aliasValue: null,
-            quantity: 2,
-            movementType: StockMovementType.TRANSFER,
-            counterpartyBranchId: null,
-            transferId: null,
-            note: null,
-            error: 'counterpartyBranchId is required for transfer sync entries',
-          },
-        ],
-      });
+    posSyncJobsRepository.findOne.mockResolvedValueOnce({
+      ...baseJob,
+      status: PosSyncStatus.FAILED,
+      acceptedCount: 0,
+      rejectedCount: 1,
+      failedEntries: [
+        {
+          entryIndex: 0,
+          productId: 9,
+          aliasType: null,
+          aliasValue: null,
+          quantity: 2,
+          movementType: StockMovementType.TRANSFER,
+          counterpartyBranchId: null,
+          transferId: null,
+          note: null,
+          error: 'counterpartyBranchId is required for transfer sync entries',
+        },
+      ],
+    });
 
     await service.ingest(
       {
@@ -602,28 +637,26 @@ describe('PosSyncService', () => {
       failedEntries: [],
     } as PosSyncJob;
 
-    posSyncJobsRepository.findOne
-      .mockResolvedValueOnce(baseJob)
-      .mockResolvedValueOnce({
-        ...baseJob,
-        status: PosSyncStatus.FAILED,
-        acceptedCount: 0,
-        rejectedCount: 1,
-        failedEntries: [
-          {
-            entryIndex: 0,
-            productId: null,
-            aliasType: ProductAliasType.LOCAL_SKU,
-            aliasValue: 'sku-001',
-            quantity: 4,
-            movementType: null,
-            counterpartyBranchId: null,
-            transferId: null,
-            note: null,
-            error: 'No product alias matched LOCAL_SKU:sku-001',
-          },
-        ],
-      });
+    posSyncJobsRepository.findOne.mockResolvedValueOnce({
+      ...baseJob,
+      status: PosSyncStatus.FAILED,
+      acceptedCount: 0,
+      rejectedCount: 1,
+      failedEntries: [
+        {
+          entryIndex: 0,
+          productId: null,
+          aliasType: ProductAliasType.LOCAL_SKU,
+          aliasValue: 'sku-001',
+          quantity: 4,
+          movementType: null,
+          counterpartyBranchId: null,
+          transferId: null,
+          note: null,
+          error: 'No product alias matched LOCAL_SKU:sku-001',
+        },
+      ],
+    });
     productAliasesService.resolveProductIdForBranch.mockResolvedValueOnce(null);
 
     await service.ingest(

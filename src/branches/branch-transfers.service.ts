@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, In, Repository } from 'typeorm';
+import { DataSource, EntityManager, In, Repository } from 'typeorm';
 import { BranchInventory } from './entities/branch-inventory.entity';
 import {
   BranchTransfer,
@@ -49,11 +49,15 @@ export class BranchTransfersService {
     dto: CreateBranchTransferDto,
     actor?: BranchTransferActor,
     source?: BranchTransferSource,
+    manager?: EntityManager,
   ): Promise<BranchTransfer> {
-    await this.assertTransferDraftIsValid(dto);
+    await this.assertTransferDraftIsValid(dto, manager);
+
+    const branchTransfersRepository =
+      manager?.getRepository(BranchTransfer) ?? this.branchTransfersRepository;
 
     const now = new Date();
-    const transfer = this.branchTransfersRepository.create({
+    const transfer = branchTransfersRepository.create({
       transferNumber: `BT-${Date.now()}`,
       fromBranchId: dto.fromBranchId,
       toBranchId: dto.toBranchId,
@@ -78,7 +82,7 @@ export class BranchTransfersService {
       })) as BranchTransferItem[],
     });
 
-    return this.branchTransfersRepository.save(transfer);
+    return branchTransfersRepository.save(transfer);
   }
 
   async findBySource(
@@ -151,8 +155,11 @@ export class BranchTransfersService {
     };
   }
 
-  async findOne(id: number): Promise<BranchTransfer> {
-    const transfer = await this.branchTransfersRepository.findOne({
+  async findOne(id: number, manager?: EntityManager): Promise<BranchTransfer> {
+    const branchTransfersRepository =
+      manager?.getRepository(BranchTransfer) ?? this.branchTransfersRepository;
+
+    const transfer = await branchTransfersRepository.findOne({
       where: { id },
       relations: {
         fromBranch: true,
@@ -168,16 +175,21 @@ export class BranchTransfersService {
     return transfer;
   }
 
-  async dispatch(id: number, actor?: BranchTransferActor, note?: string) {
-    const transfer = await this.findOne(id);
-    if (transfer.status !== BranchTransferStatus.REQUESTED) {
-      throw new BadRequestException(
-        'Only requested branch transfers can be dispatched',
-      );
-    }
+  async dispatch(
+    id: number,
+    actor?: BranchTransferActor,
+    note?: string,
+    manager?: EntityManager,
+  ) {
+    const execute = async (scopedManager: EntityManager) => {
+      const transfer = await this.findOne(id, scopedManager);
+      if (transfer.status !== BranchTransferStatus.REQUESTED) {
+        throw new BadRequestException(
+          'Only requested branch transfers can be dispatched',
+        );
+      }
 
-    return this.dataSource.transaction(async (manager) => {
-      const inventoryRepository = manager.getRepository(BranchInventory);
+      const inventoryRepository = scopedManager.getRepository(BranchInventory);
 
       for (const item of transfer.items) {
         const inventory = await inventoryRepository.findOne({
@@ -210,7 +222,7 @@ export class BranchTransfersService {
               productId: item.productId,
               quantityDelta: item.quantity,
             },
-            manager,
+            scopedManager,
           );
 
         await this.replenishmentService.maybeCreateDraftPurchaseOrder(
@@ -220,7 +232,7 @@ export class BranchTransfersService {
             sourceTransferId: transfer.id,
             trigger: 'DISPATCHED_TRANSFER',
           },
-          manager,
+          scopedManager,
         );
       }
 
@@ -236,19 +248,32 @@ export class BranchTransfersService {
         note,
       );
 
-      return manager.getRepository(BranchTransfer).save(transfer);
-    });
-  }
+      return scopedManager.getRepository(BranchTransfer).save(transfer);
+    };
 
-  async receive(id: number, actor?: BranchTransferActor, note?: string) {
-    const transfer = await this.findOne(id);
-    if (transfer.status !== BranchTransferStatus.DISPATCHED) {
-      throw new BadRequestException(
-        'Only dispatched branch transfers can be received',
-      );
+    if (manager) {
+      return execute(manager);
     }
 
-    return this.dataSource.transaction(async (manager) => {
+    return this.dataSource.transaction((transactionManager) =>
+      execute(transactionManager),
+    );
+  }
+
+  async receive(
+    id: number,
+    actor?: BranchTransferActor,
+    note?: string,
+    manager?: EntityManager,
+  ) {
+    const execute = async (scopedManager: EntityManager) => {
+      const transfer = await this.findOne(id, scopedManager);
+      if (transfer.status !== BranchTransferStatus.DISPATCHED) {
+        throw new BadRequestException(
+          'Only dispatched branch transfers can be received',
+        );
+      }
+
       for (const item of transfer.items) {
         await this.inventoryLedgerService.adjustOutboundTransfers(
           {
@@ -256,7 +281,7 @@ export class BranchTransfersService {
             productId: item.productId,
             quantityDelta: -item.quantity,
           },
-          manager,
+          scopedManager,
         );
 
         await this.inventoryLedgerService.recordMovement(
@@ -272,7 +297,7 @@ export class BranchTransfersService {
               ? `${note} | transfer-to:${transfer.toBranchId}`
               : `transfer-to:${transfer.toBranchId}`,
           },
-          manager,
+          scopedManager,
         );
 
         await this.inventoryLedgerService.recordMovement(
@@ -288,7 +313,7 @@ export class BranchTransfersService {
               ? `${note} | transfer-from:${transfer.fromBranchId}`
               : `transfer-from:${transfer.fromBranchId}`,
           },
-          manager,
+          scopedManager,
         );
       }
 
@@ -304,22 +329,35 @@ export class BranchTransfersService {
         note,
       );
 
-      return manager.getRepository(BranchTransfer).save(transfer);
-    });
-  }
+      return scopedManager.getRepository(BranchTransfer).save(transfer);
+    };
 
-  async cancel(id: number, actor?: BranchTransferActor, note?: string) {
-    const transfer = await this.findOne(id);
-    if (
-      transfer.status !== BranchTransferStatus.REQUESTED &&
-      transfer.status !== BranchTransferStatus.DISPATCHED
-    ) {
-      throw new BadRequestException(
-        'Only requested or dispatched branch transfers can be cancelled',
-      );
+    if (manager) {
+      return execute(manager);
     }
 
-    return this.dataSource.transaction(async (manager) => {
+    return this.dataSource.transaction((transactionManager) =>
+      execute(transactionManager),
+    );
+  }
+
+  async cancel(
+    id: number,
+    actor?: BranchTransferActor,
+    note?: string,
+    manager?: EntityManager,
+  ) {
+    const execute = async (scopedManager: EntityManager) => {
+      const transfer = await this.findOne(id, scopedManager);
+      if (
+        transfer.status !== BranchTransferStatus.REQUESTED &&
+        transfer.status !== BranchTransferStatus.DISPATCHED
+      ) {
+        throw new BadRequestException(
+          'Only requested or dispatched branch transfers can be cancelled',
+        );
+      }
+
       if (transfer.status === BranchTransferStatus.DISPATCHED) {
         for (const item of transfer.items) {
           await this.inventoryLedgerService.adjustOutboundTransfers(
@@ -328,7 +366,7 @@ export class BranchTransfersService {
               productId: item.productId,
               quantityDelta: -item.quantity,
             },
-            manager,
+            scopedManager,
           );
         }
       }
@@ -346,13 +384,27 @@ export class BranchTransfersService {
         note,
       );
 
-      return manager.getRepository(BranchTransfer).save(transfer);
-    });
+      return scopedManager.getRepository(BranchTransfer).save(transfer);
+    };
+
+    if (manager) {
+      return execute(manager);
+    }
+
+    return this.dataSource.transaction((transactionManager) =>
+      execute(transactionManager),
+    );
   }
 
   private async assertTransferDraftIsValid(
     dto: CreateBranchTransferDto,
+    manager?: EntityManager,
   ): Promise<void> {
+    const branchesRepository =
+      manager?.getRepository(Branch) ?? this.branchesRepository;
+    const productsRepository =
+      manager?.getRepository(Product) ?? this.productsRepository;
+
     if (dto.fromBranchId === dto.toBranchId) {
       throw new BadRequestException(
         'Branch transfer origin and destination must be different',
@@ -369,9 +421,9 @@ export class BranchTransfersService {
     }
 
     const [fromBranch, toBranch, products] = await Promise.all([
-      this.branchesRepository.findOne({ where: { id: dto.fromBranchId } }),
-      this.branchesRepository.findOne({ where: { id: dto.toBranchId } }),
-      this.productsRepository.findBy({ id: In(distinctProductIds) }),
+      branchesRepository.findOne({ where: { id: dto.fromBranchId } }),
+      branchesRepository.findOne({ where: { id: dto.toBranchId } }),
+      productsRepository.findBy({ id: In(distinctProductIds) }),
     ]);
 
     if (!fromBranch) {

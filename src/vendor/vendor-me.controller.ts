@@ -10,18 +10,9 @@ export class VendorMeController {
 
   @Get('stores')
   async getMyStores(@Req() req: AuthenticatedRequest) {
-    const userId = req.user.id;
-    const staffRecords =
-      await this.vendorStaffService.findStoresForUser(userId);
-
-    // Map to a clean response format
-    return staffRecords.map((record) => ({
-      vendorId: record.vendor.id,
-      storeName:
-        record.vendor.storeName || record.vendor.displayName || 'Unnamed Store',
-      permissions: record.permissions,
-      title: record.title,
-      joinedAt: record.createdAt,
-    }));
+    return this.vendorStaffService.getStoreSummariesForUser({
+      id: req.user.id,
+      roles: req.user.roles,
+    });
   }
 }

@@ -64,6 +64,8 @@ import { StockMovement } from '../branches/entities/stock-movement.entity';
 import { PosSyncJob } from '../pos-sync/entities/pos-sync-job.entity';
 import { PurchaseOrderReceiptEvent } from '../purchase-orders/entities/purchase-order-receipt-event.entity';
 import { PurchaseOrder } from '../purchase-orders/entities/purchase-order.entity';
+import { BranchStaffModule } from '../branch-staff/branch-staff.module';
+import { SellerWorkspaceModule } from '../seller-workspace/seller-workspace.module';
 
 @Module({
   // 2. Add UsersModule and OrdersModule here
@@ -89,6 +91,8 @@ import { PurchaseOrder } from '../purchase-orders/entities/purchase-order.entity
     PartnerCredentialsModule,
     PurchaseOrdersModule,
     MarketingLeadsModule,
+    BranchStaffModule,
+    SellerWorkspaceModule,
     TypeOrmModule.forFeature([
       Product,
       ProductImpression,

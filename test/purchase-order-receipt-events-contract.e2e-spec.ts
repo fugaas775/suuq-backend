@@ -88,17 +88,21 @@ describe('PurchaseOrdersController receipt-event contract (e2e)', () => {
   it('lists purchase-order receipt events', async () => {
     const response = await request(app.getHttpServer())
       .get('/api/hub/v1/purchase-orders/42/receipt-events')
+      .query({ branchId: 7 })
       .expect(200);
 
     expect(response.body).toEqual([
       expect.objectContaining({ id: 81, purchaseOrderId: 42 }),
     ]);
-    expect(purchaseOrdersService.listReceiptEvents).toHaveBeenCalledWith(42);
+    expect(purchaseOrdersService.listReceiptEvents).toHaveBeenCalledWith(42, {
+      branchId: 7,
+    });
   });
 
   it('records receipt events with actor metadata', async () => {
     const response = await request(app.getHttpServer())
       .post('/api/hub/v1/purchase-orders/42/receipt-events')
+      .query({ branchId: 7 })
       .send({
         reason: 'Second truck delivered remaining cartons.',
         metadata: { dockDoor: 'B2' },
@@ -124,6 +128,7 @@ describe('PurchaseOrdersController receipt-event contract (e2e)', () => {
       }),
       {
         id: 7,
+        branchId: 7,
         email: 'buyer@test.com',
         roles: ['ADMIN', 'B2B_BUYER'],
       },
@@ -133,6 +138,7 @@ describe('PurchaseOrdersController receipt-event contract (e2e)', () => {
   it('acknowledges receipt events with actor metadata', async () => {
     const response = await request(app.getHttpServer())
       .patch('/api/hub/v1/purchase-orders/42/receipt-events/81/acknowledge')
+      .query({ branchId: 7 })
       .send({ note: 'Supplier reviewed the branch receipt.' })
       .expect(200);
 
@@ -145,6 +151,7 @@ describe('PurchaseOrdersController receipt-event contract (e2e)', () => {
       { note: 'Supplier reviewed the branch receipt.' },
       {
         id: 7,
+        branchId: 7,
         email: 'buyer@test.com',
         roles: ['ADMIN', 'B2B_BUYER'],
       },
@@ -156,6 +163,7 @@ describe('PurchaseOrdersController receipt-event contract (e2e)', () => {
       .patch(
         '/api/hub/v1/purchase-orders/42/receipt-events/81/discrepancy-resolution',
       )
+      .query({ branchId: 7 })
       .send({
         resolutionNote:
           'Supplier will issue a credit note and replace the damaged carton tomorrow.',
@@ -177,6 +185,7 @@ describe('PurchaseOrdersController receipt-event contract (e2e)', () => {
       }),
       {
         id: 7,
+        branchId: 7,
         email: 'buyer@test.com',
         roles: ['ADMIN', 'B2B_BUYER'],
       },
@@ -188,6 +197,7 @@ describe('PurchaseOrdersController receipt-event contract (e2e)', () => {
       .patch(
         '/api/hub/v1/purchase-orders/42/receipt-events/81/discrepancy-approval',
       )
+      .query({ branchId: 7 })
       .send({ note: 'Approved after reviewing supplier credit memo.' })
       .expect(200);
 
@@ -202,6 +212,7 @@ describe('PurchaseOrdersController receipt-event contract (e2e)', () => {
       { note: 'Approved after reviewing supplier credit memo.' },
       {
         id: 7,
+        branchId: 7,
         email: 'buyer@test.com',
         roles: ['ADMIN', 'B2B_BUYER'],
       },

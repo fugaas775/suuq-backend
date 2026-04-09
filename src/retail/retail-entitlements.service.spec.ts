@@ -6,6 +6,7 @@ import {
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { Branch } from '../branches/entities/branch.entity';
+import { Category } from '../categories/entities/category.entity';
 import { User } from '../users/entities/user.entity';
 import { RetailEntitlementsService } from './retail-entitlements.service';
 import {
@@ -25,6 +26,7 @@ import {
 describe('RetailEntitlementsService', () => {
   let service: RetailEntitlementsService;
   let retailTenantsRepository: any;
+  let categoriesRepository: any;
   let tenantSubscriptionsRepository: any;
   let tenantModuleEntitlementsRepository: any;
   let branchesRepository: any;
@@ -35,6 +37,9 @@ describe('RetailEntitlementsService', () => {
       create: jest.fn((value: any) => value),
       save: jest.fn(async (value: any) => value),
       find: jest.fn().mockResolvedValue([]),
+      findOne: jest.fn(),
+    };
+    categoriesRepository = {
       findOne: jest.fn(),
     };
     tenantSubscriptionsRepository = {
@@ -62,6 +67,10 @@ describe('RetailEntitlementsService', () => {
         {
           provide: getRepositoryToken(RetailTenant),
           useValue: retailTenantsRepository,
+        },
+        {
+          provide: getRepositoryToken(Category),
+          useValue: categoriesRepository,
         },
         {
           provide: getRepositoryToken(TenantSubscription),
@@ -119,6 +128,66 @@ describe('RetailEntitlementsService', () => {
       expect.objectContaining({ id: 8, retailTenantId: 5 }),
     );
     expect(result.retailTenantId).toBe(5);
+  });
+
+  it('updates the tenant onboarding profile', async () => {
+    categoriesRepository.findOne.mockResolvedValue({
+      id: 14,
+      slug: 'cafeteria',
+      name: 'Cafeteria',
+      posSuggestedUserFit: 'FOOD_SERVICE_PRESET_FIT',
+      parent: null,
+    });
+    retailTenantsRepository.findOne
+      .mockResolvedValueOnce({
+        id: 5,
+        branches: [],
+        subscriptions: [],
+        entitlements: [],
+        onboardingProfile: null,
+      })
+      .mockResolvedValueOnce({
+        id: 5,
+        branches: [],
+        subscriptions: [],
+        entitlements: [],
+        onboardingProfile: {
+          categoryId: 14,
+          categorySlug: 'cafeteria',
+          categoryName: 'Cafeteria',
+          userFit: 'FOOD_SERVICE_PRESET_FIT',
+          suggestedUserFit: 'FOOD_SERVICE_PRESET_FIT',
+          notes: 'Counter-service rollout',
+        },
+      });
+
+    const result = await service.updateOnboardingProfile(5, {
+      categoryId: 14,
+      userFit: 'FOOD_SERVICE_PRESET_FIT',
+      notes: 'Counter-service rollout',
+    });
+
+    expect(retailTenantsRepository.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 5,
+        onboardingProfile: {
+          categoryId: 14,
+          categorySlug: 'cafeteria',
+          categoryName: 'Cafeteria',
+          userFit: 'FOOD_SERVICE_PRESET_FIT',
+          suggestedUserFit: 'FOOD_SERVICE_PRESET_FIT',
+          notes: 'Counter-service rollout',
+        },
+      }),
+    );
+    expect(result.onboardingProfile).toEqual({
+      categoryId: 14,
+      categorySlug: 'cafeteria',
+      categoryName: 'Cafeteria',
+      userFit: 'FOOD_SERVICE_PRESET_FIT',
+      suggestedUserFit: 'FOOD_SERVICE_PRESET_FIT',
+      notes: 'Counter-service rollout',
+    });
   });
 
   it('upserts a tenant module entitlement', async () => {
@@ -311,6 +380,76 @@ describe('RetailEntitlementsService', () => {
     );
   });
 
+  it('reports a distinct TRIAL activation state with trial timing for admin tenant audits', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-04-03T00:00:00.000Z'));
+    retailTenantsRepository.find.mockResolvedValue([
+      {
+        id: 5,
+        name: 'Bole Retail',
+        status: RetailTenantStatus.ACTIVE,
+        billingEmail: 'billing@suuq.test',
+        owner: { email: 'owner@suuq.test' },
+        branches: [
+          {
+            id: 8,
+            name: 'Bole Flagship',
+            code: 'BL-01',
+          },
+        ],
+        subscriptions: [
+          {
+            id: 71,
+            tenantId: 5,
+            planCode: 'POS_BRANCH',
+            status: TenantSubscriptionStatus.TRIAL,
+            billingInterval: TenantBillingInterval.MONTHLY,
+            amount: 1900,
+            currency: 'ETB',
+            startsAt: new Date('2026-04-03T00:00:00.000Z'),
+            endsAt: new Date('2026-04-18T00:00:00.000Z'),
+            autoRenew: false,
+            metadata: {
+              lastActivationPaymentMethod: 'TRIAL',
+            },
+          },
+        ],
+        entitlements: [
+          {
+            id: 91,
+            tenantId: 5,
+            module: RetailModule.POS_CORE,
+            enabled: true,
+            startsAt: null,
+            expiresAt: null,
+            reason: 'Enabled during POS-S self-serve onboarding',
+          },
+        ],
+      },
+    ]);
+
+    const result = await service.listTenants({
+      activationStatus: 'TRIAL' as any,
+    });
+
+    expect(result).toHaveLength(1);
+    expect(result[0].posWorkspaceAudit).toMatchObject({
+      provisioningSource: 'POS_SELF_SERVE',
+      activationStatus: 'TRIAL',
+      latestSubscriptionStatus: TenantSubscriptionStatus.TRIAL,
+      branchWorkspaces: [
+        expect.objectContaining({
+          branchId: 8,
+          workspaceStatus: 'TRIAL',
+          trialStartedAt: '2026-04-03T00:00:00.000Z',
+          trialEndsAt: '2026-04-18T00:00:00.000Z',
+          trialDaysRemaining: 15,
+        }),
+      ],
+    });
+
+    jest.useRealTimers();
+  });
+
   it('applies a retail plan preset by creating a subscription and bundled entitlements', async () => {
     retailTenantsRepository.findOne.mockResolvedValue({
       id: 5,
@@ -486,6 +625,11 @@ describe('RetailEntitlementsService', () => {
       billingInterval: TenantBillingInterval.MONTHLY,
     });
     tenantModuleEntitlementsRepository.find.mockResolvedValue([
+      {
+        tenantId: 5,
+        module: RetailModule.POS_CORE,
+        enabled: true,
+      },
       {
         tenantId: 5,
         module: RetailModule.INVENTORY_AUTOMATION,

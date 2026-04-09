@@ -88,25 +88,23 @@ describe('SettingsService', () => {
 
   it('builds app version policy from legacy fallback settings', async () => {
     systemSettingRepo.findOne.mockResolvedValue(null);
-    uiSettingRepo.findOne.mockImplementation(async ({ where }: any) => {
-      const values: Record<string, any> = {
-        app_version_android_min: { value: '3.0.0' },
-        app_version_android_latest: { value: '3.1.0' },
-        app_build_android_min: { value: 300 },
-        app_build_android_latest: { value: 310 },
-        app_version_ios_min: { value: '4.0.0' },
-        app_version_ios_latest: { value: '4.2.0' },
-        app_build_ios_min: { value: '400' },
-        app_build_ios_latest: { value: '420' },
-        app_update_message: { value: 'Critical update available' },
-        app_store_url_android: {
-          value: 'https://play.google.com/store/apps/details?id=test',
-        },
-        app_store_url_ios: { value: 'https://apps.apple.com/app/id456' },
-        app_force_update_global: { value: true },
-      };
-      return values[where.key] || null;
-    });
+    uiSettingRepo.find.mockResolvedValue([
+      { key: 'app_version_android_min', value: '3.0.0' },
+      { key: 'app_version_android_latest', value: '3.1.0' },
+      { key: 'app_build_android_min', value: 300 },
+      { key: 'app_build_android_latest', value: 310 },
+      { key: 'app_version_ios_min', value: '4.0.0' },
+      { key: 'app_version_ios_latest', value: '4.2.0' },
+      { key: 'app_build_ios_min', value: '400' },
+      { key: 'app_build_ios_latest', value: '420' },
+      { key: 'app_update_message', value: 'Critical update available' },
+      {
+        key: 'app_store_url_android',
+        value: 'https://play.google.com/store/apps/details?id=test',
+      },
+      { key: 'app_store_url_ios', value: 'https://apps.apple.com/app/id456' },
+      { key: 'app_force_update_global', value: true },
+    ]);
 
     const policies = await service.getAppVersionPolicies();
 
@@ -121,5 +119,19 @@ describe('SettingsService', () => {
     expect(policies.ios.min_build).toBe(400);
     expect(policies.ios.latest_build).toBe(420);
     expect(policies.ios.store_url).toContain('apps.apple.com');
+  });
+
+  it('reuses the in-memory ui settings cache for hot reads', async () => {
+    uiSettingRepo.find.mockResolvedValue([
+      { key: 'site_name', value: 'Suuq' },
+      { key: 'theme', value: 'marketplace' },
+    ]);
+
+    const first = await service.getAllSettings();
+    const second = await service.getAllSettings();
+
+    expect(first).toEqual({ site_name: 'Suuq', theme: 'marketplace' });
+    expect(second).toEqual(first);
+    expect(uiSettingRepo.find).toHaveBeenCalledTimes(1);
   });
 });

@@ -113,7 +113,9 @@ export class AuthController {
     const user = await this.authService
       .getUsersService()
       .findById(req.user.id, ['employments']);
-    return plainToInstance(UserResponseDto, user, {
+    const authenticatedUser =
+      await this.authService.buildAuthenticatedUser(user);
+    return plainToInstance(UserResponseDto, authenticatedUser, {
       excludeExtraneousValues: true,
     });
   }

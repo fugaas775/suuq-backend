@@ -199,6 +199,25 @@ describe('RetailAdminController entitlement validation (e2e)', () => {
     expect(retailEntitlementsService.listPlanPresets).toHaveBeenCalled();
   });
 
+  it('forwards provisioning and activation filters when listing retail tenants', async () => {
+    retailEntitlementsService.listTenants.mockResolvedValue([]);
+
+    await request(app.getHttpServer())
+      .get('/api/admin/retail-tenants')
+      .query({
+        provisioningSource: 'POS_SELF_SERVE',
+        activationStatus: 'PENDING_MONTHLY_BILLING',
+      })
+      .expect(200);
+
+    expect(retailEntitlementsService.listTenants).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provisioningSource: 'POS_SELF_SERVE',
+        activationStatus: 'PENDING_MONTHLY_BILLING',
+      }),
+    );
+  });
+
   it('applies a retail plan preset to a tenant', async () => {
     await request(app.getHttpServer())
       .post('/api/admin/retail-tenants/5/apply-plan-preset')

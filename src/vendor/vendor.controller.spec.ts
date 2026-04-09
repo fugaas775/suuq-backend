@@ -2,12 +2,14 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { VendorController } from './vendor.controller';
 import { VendorService } from './vendor.service';
 import { VendorStaffService } from './vendor-staff.service';
+import { BulkCreateVendorProductsDto } from './dto/bulk-create-vendor-products.dto';
 
 describe('VendorController', () => {
   let controller: VendorController;
   const vendorServiceMock = {
     getVendorProducts: jest.fn(),
     getVendorProductsManage: jest.fn(),
+    createMyProductsBulk: jest.fn(),
   };
 
   beforeEach(async () => {
@@ -121,5 +123,40 @@ describe('VendorController', () => {
         expect(typeof item.listedBy.id).toBe('number');
       }
     }
+  });
+
+  it('passes bulk product creation through to the service', async () => {
+    const dto: BulkCreateVendorProductsDto = {
+      continueOnError: true,
+      rows: [
+        {
+          name: 'Bulk product',
+          price: 12,
+          currency: 'USD',
+        } as any,
+      ],
+    };
+    const response = {
+      totalRows: 1,
+      createdCount: 1,
+      failedCount: 0,
+      stoppedEarly: false,
+      created: [
+        { rowIndex: 0, productId: 77, name: 'Bulk product', status: 'publish' },
+      ],
+      failures: [],
+    };
+    vendorServiceMock.createMyProductsBulk.mockResolvedValue(response);
+
+    const out = await controller.createMyProductsBulk({ id: 12 } as any, dto, {
+      user: { id: 55 },
+    } as any);
+
+    expect(vendorServiceMock.createMyProductsBulk).toHaveBeenCalledWith(
+      12,
+      dto,
+      { id: 55 },
+    );
+    expect(out).toEqual(response);
   });
 });

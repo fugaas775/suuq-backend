@@ -22,6 +22,10 @@ import { EmailService } from '../email/email.service';
 import { AppleAuthDto } from './dto/apple-auth.dto';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
 import { RedisService } from '../redis/redis.service';
+import { EffectiveUserRoleService } from './effective-user-role.service';
+import { DataSource } from 'typeorm';
+import { BranchStaffAssignment } from '../branch-staff/entities/branch-staff-assignment.entity';
+import { BranchStaffInvite } from '../branch-staff/entities/branch-staff-invite.entity';
 
 @Injectable()
 export class AuthService {
@@ -29,21 +33,32 @@ export class AuthService {
   private readonly oauthClient: OAuth2Client | null = null;
   private appleJwks?: ReturnType<typeof createRemoteJWKSet>;
 
+  private getGoogleAudienceIds(): string[] {
+    return [
+      this.configService.get<string>('GOOGLE_WEB_CLIENT_ID'),
+      this.configService.get<string>('GOOGLE_CLIENT_ID'),
+      this.configService.get<string>('GOOGLE_ANDROID_CLIENT_ID'),
+      this.configService.get<string>('GOOGLE_IOS_CLIENT_ID'),
+    ].filter((id): id is string => !!id);
+  }
+
   constructor(
     private readonly usersService: UsersService,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
     private readonly emailService: EmailService,
     private readonly redisService: RedisService,
+    private readonly effectiveUserRoleService: EffectiveUserRoleService,
+    private readonly dataSource: DataSource,
   ) {
-    const googleClientId = this.configService.get<string>(
-      'GOOGLE_WEB_CLIENT_ID',
-    );
+    const googleClientId =
+      this.configService.get<string>('GOOGLE_WEB_CLIENT_ID') ??
+      this.configService.get<string>('GOOGLE_CLIENT_ID');
     if (googleClientId) {
       this.oauthClient = new OAuth2Client(googleClientId);
     } else {
       this.logger.warn(
-        'GOOGLE_WEB_CLIENT_ID is not configured. Google Sign-In will be disabled.',
+        'Neither GOOGLE_WEB_CLIENT_ID nor GOOGLE_CLIENT_ID is configured. Google Sign-In will be disabled.',
       );
     }
   }
@@ -67,6 +82,10 @@ export class AuthService {
 
   public getUsersService() {
     return this.usersService;
+  }
+
+  async buildAuthenticatedUser(user: User): Promise<User> {
+    return this.effectiveUserRoleService.applyEffectiveRoles(user);
   }
 
   async register(dto: RegisterDto): Promise<User> {
@@ -195,12 +214,16 @@ export class AuthService {
       });
     }
 
+    await this.claimPendingPosBranchInvites(user);
     return this.generateTokens(user);
   }
 
-  async googleLogin(dto: {
-    idToken: string;
-  }): Promise<{ accessToken: string; refreshToken: string; user: User }> {
+  async googleLogin(dto: { idToken: string }): Promise<{
+    accessToken: string;
+    refreshToken: string;
+    user: User;
+    isNewUser?: boolean;
+  }> {
     const startedAt = Date.now();
     const idToken = dto.idToken;
     this.logger.log(`[googleLogin] Attempting Google login`);
@@ -219,11 +242,7 @@ export class AuthService {
       const verifyStartedAt = Date.now();
       const ticket = await this.oauthClient.verifyIdToken({
         idToken: idToken,
-        audience: [
-          this.configService.get<string>('GOOGLE_WEB_CLIENT_ID'),
-          this.configService.get<string>('GOOGLE_ANDROID_CLIENT_ID'),
-          this.configService.get<string>('GOOGLE_IOS_CLIENT_ID'),
-        ].filter((id) => !!id),
+        audience: this.getGoogleAudienceIds(),
       });
       verifyMs = Date.now() - verifyStartedAt;
       googlePayload = ticket.getPayload();
@@ -273,6 +292,7 @@ export class AuthService {
       });
     }
 
+    await this.claimPendingPosBranchInvites(user);
     const tokenStartedAt = Date.now();
     const result = await this.generateTokens(user);
     const tokenMs = Date.now() - tokenStartedAt;
@@ -287,7 +307,10 @@ export class AuthService {
       );
     }
 
-    return result;
+    return {
+      ...result,
+      isNewUser: createdUser,
+    };
   }
 
   async appleLogin(
@@ -391,7 +414,71 @@ export class AuthService {
       });
     }
 
+    await this.claimPendingPosBranchInvites(user);
     return this.generateTokens(user);
+  }
+
+  private async claimPendingPosBranchInvites(
+    user: Pick<User, 'id' | 'email'>,
+  ): Promise<number> {
+    const email = user.email?.trim().toLowerCase();
+    if (!user.id || !email) {
+      return 0;
+    }
+
+    return this.dataSource.transaction(async (manager) => {
+      const invitesRepository = manager.getRepository(BranchStaffInvite);
+      const assignmentsRepository = manager.getRepository(
+        BranchStaffAssignment,
+      );
+      const invites = await invitesRepository.find({
+        where: { email, isActive: true },
+        relations: { branch: true },
+      });
+
+      if (!invites.length) {
+        return 0;
+      }
+
+      const acceptedAt = new Date();
+      let claimedCount = 0;
+
+      for (const invite of invites) {
+        if (!invite.branch?.isActive) {
+          invite.isActive = false;
+          await invitesRepository.save(invite);
+          continue;
+        }
+
+        const assignment = await assignmentsRepository.findOne({
+          where: { branchId: invite.branchId, userId: user.id },
+        });
+
+        const mergedAssignment = assignmentsRepository.create({
+          ...(assignment ?? {}),
+          branchId: invite.branchId,
+          userId: user.id,
+          role: invite.role,
+          permissions: Array.from(new Set(invite.permissions ?? [])).sort(),
+          isActive: true,
+        });
+        await assignmentsRepository.save(mergedAssignment);
+
+        invite.isActive = false;
+        invite.acceptedAt = acceptedAt;
+        invite.acceptedByUserId = user.id;
+        await invitesRepository.save(invite);
+        claimedCount += 1;
+      }
+
+      if (claimedCount > 0) {
+        this.logger.log(
+          `[claimPendingPosBranchInvites] Claimed ${claimedCount} invite(s) for userId=${user.id}`,
+        );
+      }
+
+      return claimedCount;
+    });
   }
 
   async refreshToken(
@@ -450,7 +537,12 @@ export class AuthService {
   private async generateTokens(
     user: User,
   ): Promise<{ accessToken: string; refreshToken: string; user: User }> {
-    const payload = { sub: user.id, email: user.email, roles: user.roles };
+    const authenticatedUser = await this.buildAuthenticatedUser(user);
+    const payload = {
+      sub: authenticatedUser.id,
+      email: authenticatedUser.email,
+      roles: authenticatedUser.roles,
+    };
 
     const [accessToken, refreshToken] = await Promise.all([
       this.jwtService.signAsync(payload, {
@@ -466,7 +558,7 @@ export class AuthService {
       ),
     ]);
 
-    return { accessToken, refreshToken, user };
+    return { accessToken, refreshToken, user: authenticatedUser };
   }
 
   /**

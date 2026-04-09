@@ -720,7 +720,7 @@ export class RetailOpsService {
       }),
     ]);
 
-    const branches = tenantBranches
+    const matchedBranches = tenantBranches
       .map((branch) => {
         const branchOrders = orders.filter(
           (order) => order.fulfillmentBranchId === branch.id,
@@ -739,7 +739,9 @@ export class RetailOpsService {
       })
       .filter((branch) =>
         this.matchesPosNetworkStatus(branch.highestPriority, query.status),
-      )
+      );
+
+    const branches = [...matchedBranches]
       .sort((left, right) => this.comparePosNetworkBranch(left, right))
       .slice(0, limit);
 
@@ -747,41 +749,43 @@ export class RetailOpsService {
       anchorBranchId: anchorBranch.id,
       retailTenantId: anchorBranch.retailTenantId ?? null,
       branchCount: tenantBranches.length,
+      matchedBranchCount: matchedBranches.length,
+      visibleBranchCount: branches.length,
       windowHours,
-      totalOrderCount: branches.reduce(
+      totalOrderCount: matchedBranches.reduce(
         (sum, branch) => sum + branch.orderCount,
         0,
       ),
-      totalGrossSales: branches.reduce(
+      totalGrossSales: matchedBranches.reduce(
         (sum, branch) => sum + branch.grossSales,
         0,
       ),
-      totalPaidSales: branches.reduce(
+      totalPaidSales: matchedBranches.reduce(
         (sum, branch) => sum + branch.paidSales,
         0,
       ),
-      totalUnpaidOrderCount: branches.reduce(
+      totalUnpaidOrderCount: matchedBranches.reduce(
         (sum, branch) => sum + branch.unpaidOrderCount,
         0,
       ),
-      totalFailedPaymentOrderCount: branches.reduce(
+      totalFailedPaymentOrderCount: matchedBranches.reduce(
         (sum, branch) => sum + branch.failedPaymentOrderCount,
         0,
       ),
-      totalDelayedFulfillmentOrderCount: branches.reduce(
+      totalDelayedFulfillmentOrderCount: matchedBranches.reduce(
         (sum, branch) => sum + branch.delayedFulfillmentOrderCount,
         0,
       ),
-      criticalBranchCount: branches.filter(
+      criticalBranchCount: matchedBranches.filter(
         (branch) => branch.highestPriority === 'CRITICAL',
       ).length,
-      highBranchCount: branches.filter(
+      highBranchCount: matchedBranches.filter(
         (branch) => branch.highestPriority === 'HIGH',
       ).length,
-      normalBranchCount: branches.filter(
+      normalBranchCount: matchedBranches.filter(
         (branch) => branch.highestPriority === 'NORMAL',
       ).length,
-      alerts: this.buildPosNetworkAlerts(branches),
+      alerts: this.buildPosNetworkAlerts(matchedBranches),
       branches,
     };
   }
@@ -1002,7 +1006,7 @@ export class RetailOpsService {
       },
     });
 
-    const branches = tenantBranches
+    const matchedBranches = tenantBranches
       .map((branch) => {
         const branchOrders = orders.filter(
           (order) => order.fulfillmentBranchId === branch.id,
@@ -1028,7 +1032,9 @@ export class RetailOpsService {
           branch.highestPriority,
           query.priority,
         ),
-      )
+      );
+
+    const branches = [...matchedBranches]
       .sort((left, right) => this.comparePosExceptionNetworkBranch(left, right))
       .slice(0, limit);
 
@@ -1036,33 +1042,35 @@ export class RetailOpsService {
       anchorBranchId: anchorBranch.id,
       retailTenantId: anchorBranch.retailTenantId ?? null,
       branchCount: tenantBranches.length,
+      matchedBranchCount: matchedBranches.length,
+      visibleBranchCount: branches.length,
       windowHours,
-      totalExceptionCount: branches.reduce(
+      totalExceptionCount: matchedBranches.reduce(
         (sum, branch) => sum + branch.exceptionCount,
         0,
       ),
-      totalFailedPaymentCount: branches.reduce(
+      totalFailedPaymentCount: matchedBranches.reduce(
         (sum, branch) => sum + branch.failedPaymentCount,
         0,
       ),
-      totalPaymentReviewCount: branches.reduce(
+      totalPaymentReviewCount: matchedBranches.reduce(
         (sum, branch) => sum + branch.paymentReviewCount,
         0,
       ),
-      totalDelayedFulfillmentCount: branches.reduce(
+      totalDelayedFulfillmentCount: matchedBranches.reduce(
         (sum, branch) => sum + branch.delayedFulfillmentCount,
         0,
       ),
-      criticalBranchCount: branches.filter(
+      criticalBranchCount: matchedBranches.filter(
         (branch) => branch.highestPriority === 'CRITICAL',
       ).length,
-      highBranchCount: branches.filter(
+      highBranchCount: matchedBranches.filter(
         (branch) => branch.highestPriority === 'HIGH',
       ).length,
-      normalBranchCount: branches.filter(
+      normalBranchCount: matchedBranches.filter(
         (branch) => branch.highestPriority === 'NORMAL',
       ).length,
-      alerts: this.buildPosExceptionNetworkAlerts(branches),
+      alerts: this.buildPosExceptionNetworkAlerts(matchedBranches),
       branches,
     };
   }
@@ -1360,7 +1368,7 @@ export class RetailOpsService {
       },
     });
 
-    const branchCards = tenantBranches
+    const matchedBranchCards = tenantBranches
       .map((branch) => {
         const branchItems = inventories
           .filter((item) => item.branchId === branch.id)
@@ -1380,7 +1388,9 @@ export class RetailOpsService {
           branch.worstStockStatus,
           query.stockStatus,
         ),
-      )
+      );
+
+    const branchCards = [...matchedBranchCards]
       .sort((left, right) => this.compareStockHealthNetworkBranch(left, right))
       .slice(0, limit);
 
@@ -1388,41 +1398,44 @@ export class RetailOpsService {
       anchorBranchId: anchorBranch.id,
       retailTenantId: anchorBranch.retailTenantId ?? null,
       branchCount: tenantBranches.length,
-      totalSkus: branchCards.reduce((sum, branch) => sum + branch.totalSkus, 0),
-      healthyCount: branchCards.reduce(
+      totalSkus: matchedBranchCards.reduce(
+        (sum, branch) => sum + branch.totalSkus,
+        0,
+      ),
+      healthyCount: matchedBranchCards.reduce(
         (sum, branch) => sum + branch.healthyCount,
         0,
       ),
-      replenishmentCandidateCount: branchCards.reduce(
+      replenishmentCandidateCount: matchedBranchCards.reduce(
         (sum, branch) => sum + branch.replenishmentCandidateCount,
         0,
       ),
-      outOfStockCount: branchCards.reduce(
+      outOfStockCount: matchedBranchCards.reduce(
         (sum, branch) => sum + branch.outOfStockCount,
         0,
       ),
-      negativeAvailableCount: branchCards.reduce(
+      negativeAvailableCount: matchedBranchCards.reduce(
         (sum, branch) => sum + branch.negativeAvailableCount,
         0,
       ),
-      inboundOpenPoUnits: branchCards.reduce(
+      inboundOpenPoUnits: matchedBranchCards.reduce(
         (sum, branch) => sum + branch.inboundOpenPoUnits,
         0,
       ),
-      committedUnits: branchCards.reduce(
+      committedUnits: matchedBranchCards.reduce(
         (sum, branch) => sum + branch.committedUnits,
         0,
       ),
-      outOfStockBranchCount: branchCards.filter(
+      outOfStockBranchCount: matchedBranchCards.filter(
         (branch) => branch.worstStockStatus === 'OUT_OF_STOCK',
       ).length,
-      reorderNowBranchCount: branchCards.filter(
+      reorderNowBranchCount: matchedBranchCards.filter(
         (branch) => branch.worstStockStatus === 'REORDER_NOW',
       ).length,
-      lowStockBranchCount: branchCards.filter(
+      lowStockBranchCount: matchedBranchCards.filter(
         (branch) => branch.worstStockStatus === 'LOW_STOCK',
       ).length,
-      alerts: this.buildStockHealthNetworkAlerts(branchCards),
+      alerts: this.buildStockHealthNetworkAlerts(matchedBranchCards),
       branches: branchCards,
     };
   }
@@ -1695,7 +1708,7 @@ export class RetailOpsService {
       }),
     ]);
 
-    const branchCards = (
+    const matchedBranchCards = (
       await Promise.all(
         tenantBranches.map(async (branch) => {
           const entitlement =
@@ -1731,10 +1744,11 @@ export class RetailOpsService {
           return this.mapAiNetworkBranch(branch, summary, insights);
         }),
       )
-    )
-      .filter((branch) =>
-        this.matchesAiNetworkSeverity(branch.highestSeverity, query.severity),
-      )
+    ).filter((branch) =>
+      this.matchesAiNetworkSeverity(branch.highestSeverity, query.severity),
+    );
+
+    const branchCards = [...matchedBranchCards]
       .sort((left, right) => this.compareAiNetworkBranch(left, right))
       .slice(0, limit);
 
@@ -1742,42 +1756,44 @@ export class RetailOpsService {
       anchorBranchId: anchorBranch.id,
       retailTenantId: anchorBranch.retailTenantId ?? null,
       branchCount: tenantBranches.length,
-      averageHealthScore: branchCards.length
+      averageHealthScore: matchedBranchCards.length
         ? Math.round(
-            branchCards.reduce((sum, branch) => sum + branch.healthScore, 0) /
-              branchCards.length,
+            matchedBranchCards.reduce(
+              (sum, branch) => sum + branch.healthScore,
+              0,
+            ) / matchedBranchCards.length,
           )
         : 0,
-      criticalBranchCount: branchCards.filter(
+      criticalBranchCount: matchedBranchCards.filter(
         (branch) => branch.highestSeverity === 'CRITICAL',
       ).length,
-      watchBranchCount: branchCards.filter(
+      watchBranchCount: matchedBranchCards.filter(
         (branch) => branch.highestSeverity === 'WATCH',
       ).length,
-      infoBranchCount: branchCards.filter(
+      infoBranchCount: matchedBranchCards.filter(
         (branch) => branch.highestSeverity === 'INFO',
       ).length,
-      totalAtRiskSkus: branchCards.reduce(
+      totalAtRiskSkus: matchedBranchCards.reduce(
         (sum, branch) => sum + branch.atRiskSkus,
         0,
       ),
-      totalOutOfStockSkus: branchCards.reduce(
+      totalOutOfStockSkus: matchedBranchCards.reduce(
         (sum, branch) => sum + branch.outOfStockSkus,
         0,
       ),
-      totalNegativeAvailableSkus: branchCards.reduce(
+      totalNegativeAvailableSkus: matchedBranchCards.reduce(
         (sum, branch) => sum + branch.negativeAvailableSkus,
         0,
       ),
-      totalStaleOpenPurchaseOrderCount: branchCards.reduce(
+      totalStaleOpenPurchaseOrderCount: matchedBranchCards.reduce(
         (sum, branch) => sum + branch.staleOpenPurchaseOrderCount,
         0,
       ),
-      totalBlockedAutoSubmitDraftCount: branchCards.reduce(
+      totalBlockedAutoSubmitDraftCount: matchedBranchCards.reduce(
         (sum, branch) => sum + branch.blockedAutoSubmitDraftCount,
         0,
       ),
-      alerts: this.buildAiNetworkAlerts(branchCards),
+      alerts: this.buildAiNetworkAlerts(matchedBranchCards),
       branches: branchCards,
     };
   }
@@ -2053,7 +2069,7 @@ export class RetailOpsService {
       return accumulator;
     }, new Map());
 
-    const branchCards = tenantBranches
+    const matchedBranchCards = tenantBranches
       .map((branch) => {
         const branchItems = orders
           .filter((order) => order.branchId === branch.id)
@@ -2080,7 +2096,9 @@ export class RetailOpsService {
           branch.highestPriority,
           query.priority,
         ),
-      )
+      );
+
+    const branchCards = [...matchedBranchCards]
       .sort((left, right) => this.compareAccountingNetworkBranch(left, right))
       .slice(0, limit);
 
@@ -2088,31 +2106,31 @@ export class RetailOpsService {
       anchorBranchId: anchorBranch.id,
       retailTenantId: anchorBranch.retailTenantId ?? null,
       branchCount: tenantBranches.length,
-      openCommitmentCount: branchCards.reduce(
+      openCommitmentCount: matchedBranchCards.reduce(
         (sum, branch) => sum + branch.openCommitmentCount,
         0,
       ),
-      openCommitmentValue: branchCards.reduce(
+      openCommitmentValue: matchedBranchCards.reduce(
         (sum, branch) => sum + branch.openCommitmentValue,
         0,
       ),
-      receivedPendingReconciliationCount: branchCards.reduce(
+      receivedPendingReconciliationCount: matchedBranchCards.reduce(
         (sum, branch) => sum + branch.receivedPendingReconciliationCount,
         0,
       ),
-      discrepancyOpenCount: branchCards.reduce(
+      discrepancyOpenCount: matchedBranchCards.reduce(
         (sum, branch) => sum + branch.discrepancyOpenCount,
         0,
       ),
-      discrepancyApprovedCount: branchCards.reduce(
+      discrepancyApprovedCount: matchedBranchCards.reduce(
         (sum, branch) => sum + branch.discrepancyApprovedCount,
         0,
       ),
-      reconcileReadyCount: branchCards.reduce(
+      reconcileReadyCount: matchedBranchCards.reduce(
         (sum, branch) => sum + branch.reconcileReadyCount,
         0,
       ),
-      priorityQueue: branchCards.reduce(
+      priorityQueue: matchedBranchCards.reduce(
         (accumulator, branch) => {
           accumulator.critical += branch.priorityQueue.critical;
           accumulator.high += branch.priorityQueue.high;
@@ -2121,16 +2139,16 @@ export class RetailOpsService {
         },
         { critical: 0, high: 0, normal: 0 },
       ),
-      criticalBranchCount: branchCards.filter(
+      criticalBranchCount: matchedBranchCards.filter(
         (branch) => branch.highestPriority === 'CRITICAL',
       ).length,
-      highBranchCount: branchCards.filter(
+      highBranchCount: matchedBranchCards.filter(
         (branch) => branch.highestPriority === 'HIGH',
       ).length,
-      normalBranchCount: branchCards.filter(
+      normalBranchCount: matchedBranchCards.filter(
         (branch) => branch.highestPriority === 'NORMAL',
       ).length,
-      alerts: this.buildAccountingNetworkAlerts(branchCards),
+      alerts: this.buildAccountingNetworkAlerts(matchedBranchCards),
       branches: branchCards,
     };
   }
@@ -2321,7 +2339,7 @@ export class RetailOpsService {
       windowHours,
     );
 
-    const branchCards = tenantBranches
+    const matchedBranchCards = tenantBranches
       .map((branch) => {
         const branchItems = items
           .filter((item) => item.branchId === branch.id)
@@ -2348,7 +2366,9 @@ export class RetailOpsService {
           branch.highestPriority,
           query.priority,
         ),
-      )
+      );
+
+    const branchCards = [...matchedBranchCards]
       .sort((left, right) =>
         this.compareAccountingPayoutNetworkBranch(left, right),
       )
@@ -2359,23 +2379,23 @@ export class RetailOpsService {
       retailTenantId: anchorBranch.retailTenantId ?? null,
       branchCount: tenantBranches.length,
       windowHours,
-      exceptionCount: branchCards.reduce(
+      exceptionCount: matchedBranchCards.reduce(
         (sum, branch) => sum + branch.exceptionCount,
         0,
       ),
-      autoRetryRequiredCount: branchCards.reduce(
+      autoRetryRequiredCount: matchedBranchCards.reduce(
         (sum, branch) => sum + branch.autoRetryRequiredCount,
         0,
       ),
-      reconciliationRequiredCount: branchCards.reduce(
+      reconciliationRequiredCount: matchedBranchCards.reduce(
         (sum, branch) => sum + branch.reconciliationRequiredCount,
         0,
       ),
-      totalAmountAtRisk: branchCards.reduce(
+      totalAmountAtRisk: matchedBranchCards.reduce(
         (sum, branch) => sum + branch.totalAmountAtRisk,
         0,
       ),
-      priorityQueue: branchCards.reduce(
+      priorityQueue: matchedBranchCards.reduce(
         (accumulator, branch) => {
           accumulator.critical += branch.priorityQueue.critical;
           accumulator.high += branch.priorityQueue.high;
@@ -2384,16 +2404,16 @@ export class RetailOpsService {
         },
         { critical: 0, high: 0, normal: 0 },
       ),
-      criticalBranchCount: branchCards.filter(
+      criticalBranchCount: matchedBranchCards.filter(
         (branch) => branch.highestPriority === 'CRITICAL',
       ).length,
-      highBranchCount: branchCards.filter(
+      highBranchCount: matchedBranchCards.filter(
         (branch) => branch.highestPriority === 'HIGH',
       ).length,
-      normalBranchCount: branchCards.filter(
+      normalBranchCount: matchedBranchCards.filter(
         (branch) => branch.highestPriority === 'NORMAL',
       ).length,
-      alerts: this.buildAccountingPayoutNetworkAlerts(branchCards),
+      alerts: this.buildAccountingPayoutNetworkAlerts(matchedBranchCards),
       branches: branchCards,
     };
   }
@@ -2657,7 +2677,7 @@ export class RetailOpsService {
       }),
     ]);
 
-    const branchCards = tenantBranches
+    const matchedBranchCards = tenantBranches
       .map((branch) => {
         const branchSyncQueue = syncJobs
           .filter((job) => job.branchId === branch.id)
@@ -2716,7 +2736,9 @@ export class RetailOpsService {
           branch.highestPriority,
           query.priority,
         ),
-      )
+      );
+
+    const branchCards = [...matchedBranchCards]
       .sort(
         (left, right) =>
           this.compareDesktopPriority(
@@ -2734,48 +2756,48 @@ export class RetailOpsService {
       retailTenantId: anchorBranch.retailTenantId ?? null,
       branchCount: tenantBranches.length,
       windowHours,
-      failedPosSyncJobCount: branchCards.reduce(
+      failedPosSyncJobCount: matchedBranchCards.reduce(
         (sum, branch) => sum + branch.failedPosSyncJobCount,
         0,
       ),
-      openPosSyncJobCount: branchCards.reduce(
+      openPosSyncJobCount: matchedBranchCards.reduce(
         (sum, branch) => sum + branch.openPosSyncJobCount,
         0,
       ),
-      rejectedSyncEntryCount: branchCards.reduce(
+      rejectedSyncEntryCount: matchedBranchCards.reduce(
         (sum, branch) => sum + branch.rejectedSyncEntryCount,
         0,
       ),
-      pendingTransferCount: branchCards.reduce(
+      pendingTransferCount: matchedBranchCards.reduce(
         (sum, branch) => sum + branch.pendingTransferCount,
         0,
       ),
-      inboundTransferPendingCount: branchCards.reduce(
+      inboundTransferPendingCount: matchedBranchCards.reduce(
         (sum, branch) => sum + branch.inboundTransferPendingCount,
         0,
       ),
-      outboundTransferPendingCount: branchCards.reduce(
+      outboundTransferPendingCount: matchedBranchCards.reduce(
         (sum, branch) => sum + branch.outboundTransferPendingCount,
         0,
       ),
-      negativeAdjustmentCount: branchCards.reduce(
+      negativeAdjustmentCount: matchedBranchCards.reduce(
         (sum, branch) => sum + branch.negativeAdjustmentCount,
         0,
       ),
-      totalNegativeAdjustmentUnits: branchCards.reduce(
+      totalNegativeAdjustmentUnits: matchedBranchCards.reduce(
         (sum, branch) => sum + branch.totalNegativeAdjustmentUnits,
         0,
       ),
-      criticalBranchCount: branchCards.filter(
+      criticalBranchCount: matchedBranchCards.filter(
         (branch) => branch.highestPriority === 'CRITICAL',
       ).length,
-      highBranchCount: branchCards.filter(
+      highBranchCount: matchedBranchCards.filter(
         (branch) => branch.highestPriority === 'HIGH',
       ).length,
-      normalBranchCount: branchCards.filter(
+      normalBranchCount: matchedBranchCards.filter(
         (branch) => branch.highestPriority === 'NORMAL',
       ).length,
-      alerts: this.buildDesktopNetworkAlerts(branchCards),
+      alerts: this.buildDesktopNetworkAlerts(matchedBranchCards),
       branches: branchCards,
     };
 
@@ -3375,7 +3397,7 @@ export class RetailOpsService {
       } as any,
     });
 
-    const branchCards = tenantBranches
+    const matchedBranchCards = tenantBranches
       .map((branch) => {
         const branchDrafts = drafts
           .filter((order) => order.branchId === branch.id)
@@ -3386,7 +3408,9 @@ export class RetailOpsService {
 
         return this.mapReplenishmentNetworkBranch(branch, branchDrafts, query);
       })
-      .filter((branch) => branch.totalDrafts > 0)
+      .filter((branch) => branch.totalDrafts > 0);
+
+    const branchCards = [...matchedBranchCards]
       .sort((left, right) =>
         this.compareReplenishmentNetworkBranch(left, right),
       )
@@ -3396,44 +3420,44 @@ export class RetailOpsService {
       anchorBranchId: anchorBranch.id,
       retailTenantId: anchorBranch.retailTenantId ?? null,
       branchCount: tenantBranches.length,
-      totalDrafts: branchCards.reduce(
+      totalDrafts: matchedBranchCards.reduce(
         (sum, branch) => sum + branch.totalDrafts,
         0,
       ),
-      staleDraftCount: branchCards.reduce(
+      staleDraftCount: matchedBranchCards.reduce(
         (sum, branch) => sum + branch.staleDraftCount,
         0,
       ),
-      totalDraftValue: branchCards.reduce(
+      totalDraftValue: matchedBranchCards.reduce(
         (sum, branch) => sum + branch.totalDraftValue,
         0,
       ),
-      supplierCount: branchCards.reduce(
+      supplierCount: matchedBranchCards.reduce(
         (sum, branch) => sum + branch.supplierCount,
         0,
       ),
-      autoSubmitDraftCount: branchCards.reduce(
+      autoSubmitDraftCount: matchedBranchCards.reduce(
         (sum, branch) => sum + branch.autoSubmitDraftCount,
         0,
       ),
-      blockedAutoSubmitDraftCount: branchCards.reduce(
+      blockedAutoSubmitDraftCount: matchedBranchCards.reduce(
         (sum, branch) => sum + branch.blockedAutoSubmitDraftCount,
         0,
       ),
-      readyAutoSubmitDraftCount: branchCards.reduce(
+      readyAutoSubmitDraftCount: matchedBranchCards.reduce(
         (sum, branch) => sum + branch.readyAutoSubmitDraftCount,
         0,
       ),
-      criticalBranchCount: branchCards.filter(
+      criticalBranchCount: matchedBranchCards.filter(
         (branch) => branch.highestPriority === 'CRITICAL',
       ).length,
-      highBranchCount: branchCards.filter(
+      highBranchCount: matchedBranchCards.filter(
         (branch) => branch.highestPriority === 'HIGH',
       ).length,
-      normalBranchCount: branchCards.filter(
+      normalBranchCount: matchedBranchCards.filter(
         (branch) => branch.highestPriority === 'NORMAL',
       ).length,
-      alerts: this.buildReplenishmentNetworkAlerts(branchCards),
+      alerts: this.buildReplenishmentNetworkAlerts(matchedBranchCards),
       branches: branchCards,
     };
   }

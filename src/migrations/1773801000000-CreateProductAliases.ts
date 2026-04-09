@@ -4,8 +4,18 @@ export class CreateProductAliases1773801000000 implements MigrationInterface {
   name = 'CreateProductAliases1773801000000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
+    if (await queryRunner.hasTable('product_aliases')) {
+      return;
+    }
+
     await queryRunner.query(
-      `CREATE TYPE "product_aliases_aliastype_enum" AS ENUM ('LOCAL_SKU', 'BARCODE', 'GTIN', 'EXTERNAL_PRODUCT_ID')`,
+      `DO $$ BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_type WHERE typname = 'product_aliases_aliastype_enum'
+        ) THEN
+          CREATE TYPE "product_aliases_aliastype_enum" AS ENUM ('LOCAL_SKU', 'BARCODE', 'GTIN', 'EXTERNAL_PRODUCT_ID');
+        END IF;
+      END $$`,
     );
     await queryRunner.query(
       `CREATE TABLE "product_aliases" (

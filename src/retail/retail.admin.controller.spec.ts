@@ -26,6 +26,7 @@ describe('RetailAdminController', () => {
       applyPlanPreset: jest.fn().mockResolvedValue({}),
       assignBranchToTenant: jest.fn(),
       upsertModuleEntitlement: jest.fn(),
+      updateOnboardingProfile: jest.fn(),
       createSubscription: jest.fn(),
     };
 
@@ -60,6 +61,22 @@ describe('RetailAdminController', () => {
 
     expect(retailEntitlementsService.applyPlanPreset).toHaveBeenCalledWith(5, {
       presetCode: 'RETAIL_INTELLIGENCE',
+    });
+  });
+
+  it('delegates onboarding profile updates to the entitlements service', async () => {
+    await controller.updateOnboardingProfile(5, {
+      categoryId: 14,
+      userFit: 'FOOD_SERVICE_PRESET_FIT',
+      notes: 'Counter-service rollout',
+    });
+
+    expect(
+      retailEntitlementsService.updateOnboardingProfile,
+    ).toHaveBeenCalledWith(5, {
+      categoryId: 14,
+      userFit: 'FOOD_SERVICE_PRESET_FIT',
+      notes: 'Counter-service rollout',
     });
   });
 });

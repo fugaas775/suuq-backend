@@ -1121,8 +1121,14 @@ describe('RetailAttendanceService', () => {
   });
 
   it('returns tenant-level HR attendance compliance aggregates for HQ dashboards', async () => {
-    const completedShiftCheckInAt = new Date('2026-03-18T08:00:00.000Z');
-    const completedShiftCheckOutAt = new Date('2026-03-18T16:00:00.000Z');
+    const completedShiftCheckInAt = new Date();
+    completedShiftCheckInAt.setUTCDate(
+      completedShiftCheckInAt.getUTCDate() - 1,
+    );
+    completedShiftCheckInAt.setUTCHours(8, 0, 0, 0);
+
+    const completedShiftCheckOutAt = new Date(completedShiftCheckInAt);
+    completedShiftCheckOutAt.setUTCHours(15, 0, 0, 0);
 
     retailEntitlementsService.assertBranchHasModules.mockResolvedValue({
       branch: { id: 3, timezone: 'UTC', retailTenantId: 9 },

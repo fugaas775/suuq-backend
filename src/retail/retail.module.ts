@@ -1,6 +1,7 @@
 import { forwardRef, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Branch } from '../branches/entities/branch.entity';
+import { Category } from '../categories/entities/category.entity';
 import { BranchInventory } from '../branches/entities/branch-inventory.entity';
 import { BranchTransfer } from '../branches/entities/branch-transfer.entity';
 import { StockMovement } from '../branches/entities/stock-movement.entity';
@@ -32,6 +33,7 @@ import { RetailModulesGuard } from './retail-modules.guard';
     RedisModule,
     TypeOrmModule.forFeature([
       RetailTenant,
+      Category,
       TenantSubscription,
       TenantModuleEntitlement,
       Branch,

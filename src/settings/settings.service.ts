@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { UserSettings } from './entities/user-settings.entity';
 import { Repository } from 'typeorm';
@@ -27,6 +27,21 @@ export type AppVersionPolicies = {
 
 @Injectable()
 export class SettingsService {
+  private readonly logger = new Logger(SettingsService.name);
+  private readonly uiSettingsMemoryCacheTtlMs = parseInt(
+    process.env.UI_SETTINGS_MEMORY_CACHE_TTL_MS || '60000',
+    10,
+  );
+  private uiSettingsCache: {
+    expiresAt: number;
+    value: Record<string, any>;
+  } | null = null;
+  private uiSettingsLoadPromise: Promise<Record<string, any>> | null = null;
+  private readonly uiSettingValueCache = new Map<
+    string,
+    { expiresAt: number; value: any }
+  >();
+
   constructor(
     @InjectRepository(UserSettings)
     private settingsRepo: Repository<UserSettings>,
@@ -247,22 +262,66 @@ export class SettingsService {
   }
 
   async getAllSettings(): Promise<Record<string, any>> {
-    const settings = await this.uiSettingRepo.find({
-      cache: { id: 'ui-settings', milliseconds: 30000 },
-    });
-    const result: Record<string, any> = {};
-    settings.forEach((s) => {
-      result[s.key] = s.value;
-    });
-    return result;
+    const now = Date.now();
+    if (this.uiSettingsCache && this.uiSettingsCache.expiresAt > now) {
+      return this.uiSettingsCache.value;
+    }
+
+    if (this.uiSettingsLoadPromise !== null) {
+      return this.uiSettingsLoadPromise;
+    }
+
+    this.uiSettingsLoadPromise = this.uiSettingRepo
+      .find({
+        cache: { id: 'ui-settings', milliseconds: 30000 },
+      })
+      .then((settings) => {
+        const result: Record<string, any> = {};
+        for (const setting of settings) {
+          result[setting.key] = setting.value;
+          this.uiSettingValueCache.set(setting.key, {
+            expiresAt: now + this.uiSettingsMemoryCacheTtlMs,
+            value: setting.value,
+          });
+        }
+        this.uiSettingsCache = {
+          expiresAt: now + this.uiSettingsMemoryCacheTtlMs,
+          value: result,
+        };
+        return result;
+      })
+      .finally(() => {
+        this.uiSettingsLoadPromise = null;
+      });
+
+    return this.uiSettingsLoadPromise;
   }
 
   async getSetting(key: string, defaultValue: any = null): Promise<any> {
+    const now = Date.now();
+    const cached = this.uiSettingValueCache.get(key);
+    if (cached && cached.expiresAt > now) {
+      return cached.value;
+    }
+
+    if (
+      this.uiSettingsCache &&
+      this.uiSettingsCache.expiresAt > now &&
+      Object.prototype.hasOwnProperty.call(this.uiSettingsCache.value, key)
+    ) {
+      return this.uiSettingsCache.value[key];
+    }
+
     const setting = await this.uiSettingRepo.findOne({
       where: { key },
       cache: { id: `ui-setting-${key}`, milliseconds: 30000 },
     });
-    return setting ? setting.value : defaultValue;
+    const value = setting ? setting.value : defaultValue;
+    this.uiSettingValueCache.set(key, {
+      expiresAt: now + this.uiSettingsMemoryCacheTtlMs,
+      value,
+    });
+    return value;
   }
 
   async updateSetting(dto: UpdateUiSettingDto): Promise<UiSetting> {
@@ -305,37 +364,25 @@ export class SettingsService {
       setting.value = dto.value ?? setting.value;
     }
 
-    return this.uiSettingRepo.save(setting);
+    const saved = await this.uiSettingRepo.save(setting);
+    this.invalidateUiSettingsCache(saved.key, saved.value);
+    return saved;
   }
 
   private async getLegacyAppVersionFallbackSettings(): Promise<AppVersionPolicies> {
-    const [
-      androidMinVersion,
-      androidLatestVersion,
-      androidMinBuild,
-      androidLatestBuild,
-      iosMinVersion,
-      iosLatestVersion,
-      iosMinBuild,
-      iosLatestBuild,
-      updateMessage,
-      androidStoreUrl,
-      iosStoreUrl,
-      globalForceUpdate,
-    ] = await Promise.all([
-      this.getSetting('app_version_android_min', null),
-      this.getSetting('app_version_android_latest', null),
-      this.getSetting('app_build_android_min', null),
-      this.getSetting('app_build_android_latest', null),
-      this.getSetting('app_version_ios_min', null),
-      this.getSetting('app_version_ios_latest', null),
-      this.getSetting('app_build_ios_min', null),
-      this.getSetting('app_build_ios_latest', null),
-      this.getSetting('app_update_message', null),
-      this.getSetting('app_store_url_android', null),
-      this.getSetting('app_store_url_ios', null),
-      this.getSetting('app_force_update_global', null),
-    ]);
+    const settings = await this.getAllSettings();
+    const androidMinVersion = settings.app_version_android_min ?? null;
+    const androidLatestVersion = settings.app_version_android_latest ?? null;
+    const androidMinBuild = settings.app_build_android_min ?? null;
+    const androidLatestBuild = settings.app_build_android_latest ?? null;
+    const iosMinVersion = settings.app_version_ios_min ?? null;
+    const iosLatestVersion = settings.app_version_ios_latest ?? null;
+    const iosMinBuild = settings.app_build_ios_min ?? null;
+    const iosLatestBuild = settings.app_build_ios_latest ?? null;
+    const updateMessage = settings.app_update_message ?? null;
+    const androidStoreUrl = settings.app_store_url_android ?? null;
+    const iosStoreUrl = settings.app_store_url_ios ?? null;
+    const globalForceUpdate = settings.app_force_update_global ?? null;
 
     return {
       android: {
@@ -371,6 +418,24 @@ export class SettingsService {
         message: this.normalizeNullableString(this.firstString(updateMessage)),
       },
     };
+  }
+
+  private invalidateUiSettingsCache(key?: string, value?: any): void {
+    this.uiSettingsCache = null;
+    this.uiSettingsLoadPromise = null;
+    if (!key) {
+      this.uiSettingValueCache.clear();
+      return;
+    }
+
+    this.uiSettingValueCache.delete(key);
+    if (typeof value !== 'undefined') {
+      this.uiSettingValueCache.set(key, {
+        expiresAt: Date.now() + this.uiSettingsMemoryCacheTtlMs,
+        value,
+      });
+    }
+    this.logger.debug(`Invalidated ui settings cache for key=${key}`);
   }
 
   private pickPlatformValue(

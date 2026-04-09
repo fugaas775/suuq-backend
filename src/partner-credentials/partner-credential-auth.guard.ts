@@ -5,6 +5,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { PartnerCredentialsService } from './partner-credentials.service';
+import { PosPartnerScope } from './partner-credential-scopes';
 
 @Injectable()
 export class PartnerCredentialAuthGuard implements CanActivate {
@@ -23,8 +24,7 @@ export class PartnerCredentialAuthGuard implements CanActivate {
 
     const credential =
       await this.partnerCredentialsService.authenticatePosCredential(apiKey, [
-        'sync:write',
-        'pos:ingest',
+        PosPartnerScope.POS_SYNC_WRITE,
       ]);
 
     req.partnerCredential = credential;

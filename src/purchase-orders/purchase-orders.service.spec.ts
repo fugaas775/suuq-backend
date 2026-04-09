@@ -700,6 +700,17 @@ describe('PurchaseOrdersService', () => {
   });
 
   it('allows suppliers to acknowledge receipt events', async () => {
+    purchaseOrdersRepository.findOne.mockResolvedValue({
+      id: 15,
+      orderNumber: 'PO-15',
+      branchId: 1,
+      supplierProfileId: 2,
+      status: PurchaseOrderStatus.SHIPPED,
+      items: [],
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as PurchaseOrder);
+
     const receiptEvent = {
       id: 21,
       purchaseOrderId: 15,
@@ -801,6 +812,17 @@ describe('PurchaseOrdersService', () => {
   });
 
   it('rejects discrepancy resolution when the receipt event has no shortage or damage', async () => {
+    purchaseOrdersRepository.findOne.mockResolvedValue({
+      id: 15,
+      orderNumber: 'PO-15',
+      branchId: 1,
+      supplierProfileId: 2,
+      status: PurchaseOrderStatus.SHIPPED,
+      items: [],
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as PurchaseOrder);
+
     const receiptEvent = {
       id: 23,
       purchaseOrderId: 15,

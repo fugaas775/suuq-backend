@@ -1,11 +1,157 @@
 import { Expose, Exclude } from 'class-transformer';
 import { UserRole } from '../../auth/roles.enum';
 import { VendorStaff } from '../../vendor/entities/vendor-staff.entity';
+import { BranchStaffRole } from '../../branch-staff/entities/branch-staff-assignment.entity';
+import { RetailModule } from '../../retail/entities/tenant-module-entitlement.entity';
+import {
+  TenantBillingInterval,
+  TenantSubscriptionStatus,
+} from '../../retail/entities/tenant-subscription.entity';
 import {
   CertificationStatus,
   SubscriptionTier,
   resolveCertificationStatus,
 } from '../entities/user.entity';
+import {
+  SellerPlanCode,
+  SellerWorkspaceBillingStatusDto,
+} from '../../seller-workspace/dto/seller-workspace-response.dto';
+
+@Exclude()
+export class UserPosBranchAssignmentDto {
+  @Expose()
+  branchId!: number;
+
+  @Expose()
+  branchName!: string;
+
+  @Expose()
+  branchCode!: string | null;
+
+  @Expose()
+  role!: BranchStaffRole;
+
+  @Expose()
+  permissions!: string[];
+
+  @Expose()
+  isOwner!: boolean;
+
+  @Expose()
+  retailTenantId!: number | null;
+
+  @Expose()
+  retailTenantName!: string | null;
+
+  @Expose()
+  modules!: RetailModule[];
+
+  @Expose()
+  joinedAt!: Date;
+}
+
+@Exclude()
+export class UserPosWorkspaceActivationCandidateDto {
+  @Expose()
+  branchId!: number;
+
+  @Expose()
+  branchName!: string;
+
+  @Expose()
+  branchCode!: string | null;
+
+  @Expose()
+  role!: BranchStaffRole;
+
+  @Expose()
+  isOwner!: boolean;
+
+  @Expose()
+  retailTenantId!: number | null;
+
+  @Expose()
+  retailTenantName!: string | null;
+
+  @Expose()
+  workspaceStatus!:
+    | 'TENANT_SETUP_REQUIRED'
+    | 'TENANT_INACTIVE'
+    | 'MODULE_SETUP_REQUIRED'
+    | 'PAYMENT_REQUIRED'
+    | 'TRIAL'
+    | 'PAST_DUE'
+    | 'EXPIRED'
+    | 'CANCELLED';
+
+  @Expose()
+  subscriptionStatus!: TenantSubscriptionStatus | null;
+
+  @Expose()
+  planCode!: string | null;
+
+  @Expose()
+  pricing!: {
+    amount: number;
+    currency: string;
+    billingInterval: TenantBillingInterval;
+    paymentMethod: string;
+  };
+}
+
+@Exclude()
+export class UserSellerWorkspaceSummaryDto {
+  @Expose()
+  windowHours!: number;
+
+  @Expose()
+  storeCount!: number;
+
+  @Expose()
+  branchCount!: number;
+
+  @Expose()
+  orderCount!: number;
+
+  @Expose()
+  grossSales!: number;
+
+  @Expose()
+  purchaseOrderCount!: number;
+
+  @Expose()
+  openPurchaseOrderCount!: number;
+
+  @Expose()
+  checkoutCount!: number;
+
+  @Expose()
+  failedCheckoutCount!: number;
+
+  @Expose()
+  syncJobCount!: number;
+
+  @Expose()
+  failedSyncJobCount!: number;
+
+  @Expose()
+  catalogProductCount!: number;
+
+  @Expose()
+  registerSessionCount!: number;
+
+  @Expose()
+  currentPlanCode!: SellerPlanCode;
+
+  @Expose()
+  recommendedPlanCode!: SellerPlanCode;
+
+  @Expose()
+  billingStatus!: SellerWorkspaceBillingStatusDto;
+
+  @Expose()
+  status!: string;
+}
 
 @Exclude()
 export class UserResponseDto {
@@ -155,6 +301,15 @@ export class UserResponseDto {
 
   @Expose()
   createdAt?: Date; // helpful for sorting / UI display
+
+  @Expose()
+  posBranchAssignments?: UserPosBranchAssignmentDto[];
+
+  @Expose()
+  posWorkspaceActivationCandidates?: UserPosWorkspaceActivationCandidateDto[];
+
+  @Expose()
+  sellerWorkspaceSummary?: UserSellerWorkspaceSummaryDto | null;
 
   // Explicitly exclude sensitive/internal fields:
   // @Exclude() password!: string;

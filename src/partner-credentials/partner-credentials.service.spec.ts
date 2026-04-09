@@ -1,4 +1,4 @@
-import { NotFoundException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { AuditService } from '../audit/audit.service';
@@ -13,6 +13,11 @@ import {
   PartnerCredentialStatus,
   PartnerType,
 } from './entities/partner-credential.entity';
+import {
+  DEFAULT_POS_PARTNER_SCOPES,
+  PosPartnerScope,
+  PosPartnerScopePreset,
+} from './partner-credential-scopes';
 
 describe('PartnerCredentialsService', () => {
   let service: PartnerCredentialsService;
@@ -73,7 +78,7 @@ describe('PartnerCredentialsService', () => {
       id: 7,
       name: 'POS Link',
       partnerType: PartnerType.POS,
-      scopes: ['sync:write'],
+      scopes: [PosPartnerScope.POS_SYNC_WRITE],
       keyHash: 'hashed-key',
       status: PartnerCredentialStatus.ACTIVE,
       createdAt: new Date(),
@@ -108,13 +113,13 @@ describe('PartnerCredentialsService', () => {
     );
   });
 
-  it('authenticates active POS credentials with matching scopes and updates lastUsedAt', async () => {
+  it('authenticates active POS credentials with matching explicit scopes and updates lastUsedAt', async () => {
     const credential: PartnerCredential = {
       id: 8,
       name: 'POS Link',
       partnerType: PartnerType.POS,
       branchId: 3,
-      scopes: ['sync:write'],
+      scopes: [PosPartnerScope.POS_SYNC_WRITE],
       keyHash:
         '2bb80d537b1da3e38bd30361aa855686bde0eacd7162fef6a25fe97bf527a25b',
       status: PartnerCredentialStatus.ACTIVE,
@@ -125,7 +130,7 @@ describe('PartnerCredentialsService', () => {
     partnerCredentialsRepository.find.mockResolvedValue([credential]);
 
     const result = await service.authenticatePosCredential('secret', [
-      'sync:write',
+      PosPartnerScope.POS_SYNC_WRITE,
     ]);
 
     expect(result.id).toBe(8);
@@ -211,7 +216,7 @@ describe('PartnerCredentialsService', () => {
       name: 'Branch POS',
       partnerType: PartnerType.POS,
       branchId: 3,
-      scopes: ['sync:write'],
+      scopes: [PosPartnerScope.POS_SYNC_WRITE],
       keyHash: 'secret',
     });
 
@@ -220,6 +225,45 @@ describe('PartnerCredentialsService', () => {
     });
     expect(created.branchId).toBe(3);
     expect(created.keyHash).toHaveLength(64);
+  });
+
+  it('defaults new POS credentials to the explicit partner scope bundle', async () => {
+    const created = await service.create({
+      name: 'Branch POS',
+      partnerType: PartnerType.POS,
+      branchId: 3,
+      keyHash: 'secret',
+    });
+
+    expect(created.scopes).toEqual(DEFAULT_POS_PARTNER_SCOPES);
+  });
+
+  it('applies a cashier terminal preset when creating POS credentials', async () => {
+    const created = await service.create({
+      name: 'Cashier POS',
+      partnerType: PartnerType.POS,
+      branchId: 3,
+      scopePreset: PosPartnerScopePreset.CASHIER_TERMINAL,
+      keyHash: 'secret',
+    });
+
+    expect(created.scopes).toEqual([
+      PosPartnerScope.POS_CHECKOUT_READ,
+      PosPartnerScope.POS_CHECKOUT_WRITE,
+      PosPartnerScope.POS_REGISTER_READ,
+      PosPartnerScope.POS_REGISTER_WRITE,
+    ]);
+  });
+
+  it('rejects scope presets for non-POS partner credentials', async () => {
+    await expect(
+      service.create({
+        name: 'Supplier Link',
+        partnerType: PartnerType.SUPPLIER,
+        scopePreset: PosPartnerScopePreset.FULL_TERMINAL,
+        keyHash: 'secret',
+      }),
+    ).rejects.toThrow(BadRequestException);
   });
 
   it('does not duplicate createdAt ordering when createdAt is already the selected primary sort', async () => {
@@ -264,7 +308,7 @@ describe('PartnerCredentialsService', () => {
       name: 'POS Link',
       partnerType: PartnerType.POS,
       branchId: 3,
-      scopes: ['sync:write'],
+      scopes: [PosPartnerScope.POS_SYNC_WRITE],
       keyHash: 'hashed-key',
       status: PartnerCredentialStatus.ACTIVE,
       createdAt: new Date(),
@@ -294,5 +338,56 @@ describe('PartnerCredentialsService', () => {
         }),
       }),
     );
+  });
+
+  it('accepts legacy sync scopes for existing POS credentials during authentication', async () => {
+    const credential: PartnerCredential = {
+      id: 10,
+      name: 'Legacy POS Link',
+      partnerType: PartnerType.POS,
+      branchId: 3,
+      scopes: ['sync:write'],
+      keyHash:
+        '2bb80d537b1da3e38bd30361aa855686bde0eacd7162fef6a25fe97bf527a25b',
+      status: PartnerCredentialStatus.ACTIVE,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as PartnerCredential;
+
+    partnerCredentialsRepository.find.mockResolvedValue([credential]);
+
+    const result = await service.authenticatePosCredential('secret', [
+      PosPartnerScope.POS_SYNC_WRITE,
+    ]);
+
+    expect(result.id).toBe(10);
+  });
+
+  it('rejects unsupported explicit scopes when creating POS credentials', async () => {
+    await expect(
+      service.create({
+        name: 'Branch POS',
+        partnerType: PartnerType.POS,
+        branchId: 3,
+        scopes: ['orders:write'],
+        keyHash: 'secret',
+      }),
+    ).rejects.toThrow('Unsupported POS partner scope: orders:write');
+  });
+
+  it('canonicalizes legacy sync aliases into explicit POS scopes when creating POS credentials', async () => {
+    const created = await service.create({
+      name: 'Branch POS',
+      partnerType: PartnerType.POS,
+      branchId: 3,
+      scopePreset: PosPartnerScopePreset.SYNC_ONLY,
+      scopes: ['sync:write', 'pos:ingest', PosPartnerScope.POS_CHECKOUT_READ],
+      keyHash: 'secret',
+    });
+
+    expect(created.scopes).toEqual([
+      PosPartnerScope.POS_SYNC_WRITE,
+      PosPartnerScope.POS_CHECKOUT_READ,
+    ]);
   });
 });

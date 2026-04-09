@@ -7,13 +7,13 @@ export class AddProcurementWebhookRetryState1774100600000
 
   public async up(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.query(
-      `ALTER TABLE "procurement_webhook_deliveries" ADD "nextRetryAt" TIMESTAMP`,
+      `ALTER TABLE "procurement_webhook_deliveries" ADD COLUMN IF NOT EXISTS "nextRetryAt" TIMESTAMP`,
     );
     await queryRunner.query(
-      `ALTER TABLE "procurement_webhook_deliveries" ADD "finalFailureAt" TIMESTAMP`,
+      `ALTER TABLE "procurement_webhook_deliveries" ADD COLUMN IF NOT EXISTS "finalFailureAt" TIMESTAMP`,
     );
     await queryRunner.query(
-      `CREATE INDEX "IDX_procurement_webhook_deliveries_next_retry" ON "procurement_webhook_deliveries" ("nextRetryAt")`,
+      `CREATE INDEX IF NOT EXISTS "IDX_procurement_webhook_deliveries_next_retry" ON "procurement_webhook_deliveries" ("nextRetryAt")`,
     );
   }
 

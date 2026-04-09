@@ -11,6 +11,12 @@ import {
 export class ProductRequestsCronService {
   private readonly logger = new Logger(ProductRequestsCronService.name);
 
+  private shouldRunOnCurrentInstance(): boolean {
+    const instanceId =
+      process.env.INSTANCE_ID ?? process.env.NODE_APP_INSTANCE ?? null;
+    return !instanceId || instanceId === '0';
+  }
+
   constructor(
     @InjectRepository(ProductRequest)
     private readonly productRequestRepo: Repository<ProductRequest>,
@@ -18,6 +24,7 @@ export class ProductRequestsCronService {
 
   @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
   async cleanupDeletedRequests() {
+    if (!this.shouldRunOnCurrentInstance()) return;
     this.logger.log('Starting cleanup of soft-deleted product requests...');
     try {
       // Hard delete queries bypass the automatic "deletedAt IS NULL" check
@@ -48,6 +55,7 @@ export class ProductRequestsCronService {
 
   @Cron(CronExpression.EVERY_HOUR)
   async handleExpiredRequests() {
+    if (!this.shouldRunOnCurrentInstance()) return;
     this.logger.log('Checking for expired product requests...');
 
     try {

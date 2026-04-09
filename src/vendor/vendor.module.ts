@@ -24,13 +24,16 @@ import { VendorStaff } from './entities/vendor-staff.entity';
 import { VendorStaffService } from './vendor-staff.service';
 import { VendorStaffController } from './vendor-staff.controller';
 import { VendorMeController } from './vendor-me.controller';
+import { VendorPortalAuthController } from './vendor-portal-auth.controller';
 import { EmailModule } from '../email/email.module';
+import { AuditModule } from '../audit/audit.module';
 
 @Module({
   imports: [
     ShippingModule,
     SettingsModule,
     EmailModule,
+    AuditModule,
     // ✨ 2. PRODUCTIMAGE ENTITY ADDED HERE
     TypeOrmModule.forFeature([
       User,
@@ -57,6 +60,7 @@ import { EmailModule } from '../email/email.module';
     VendorAnalyticsController,
     VendorStaffController,
     VendorMeController,
+    VendorPortalAuthController,
   ],
   providers: [VendorService, VendorStaffService],
   exports: [VendorService, VendorStaffService],

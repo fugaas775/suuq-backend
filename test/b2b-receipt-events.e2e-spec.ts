@@ -71,6 +71,7 @@ describe('B2B Receipt Events (e2e)', () => {
 
     const response = await request(app.getHttpServer())
       .post(`/api/hub/v1/purchase-orders/${purchaseOrderId}/receipt-events`)
+      .query({ branchId })
       .send({
         reason: 'Lifecycle test delivery received',
         metadata: { dockDoor: 'B2' },
@@ -206,6 +207,7 @@ describe('B2B Receipt Events (e2e)', () => {
 
     const postRes = await request(app.getHttpServer())
       .post(`/api/hub/v1/purchase-orders/${purchaseOrderId}/receipt-events`)
+      .query({ branchId })
       .send({
         reason: 'Initial delivery received',
         metadata: { dockDoor: 'B2' },
@@ -229,6 +231,7 @@ describe('B2B Receipt Events (e2e)', () => {
 
     const getRes = await request(app.getHttpServer())
       .get(`/api/hub/v1/purchase-orders/${purchaseOrderId}/receipt-events`)
+      .query({ branchId })
       .expect(200);
 
     expect(Array.isArray(getRes.body)).toBe(true);
@@ -247,6 +250,7 @@ describe('B2B Receipt Events (e2e)', () => {
   it('rejects receipt events whose totals exceed ordered quantity', async () => {
     await request(app.getHttpServer())
       .post(`/api/hub/v1/purchase-orders/${purchaseOrderId}/receipt-events`)
+      .query({ branchId })
       .send({
         reason: 'Invalid over-receipt',
         receiptLines: [
@@ -274,6 +278,7 @@ describe('B2B Receipt Events (e2e)', () => {
       .patch(
         `/api/hub/v1/purchase-orders/${purchaseOrderId}/receipt-events/${receiptEventId}/acknowledge`,
       )
+      .query({ branchId })
       .send({ note: 'Supplier reviewed shortages and accepts branch receipt.' })
       .expect(200);
 
@@ -307,6 +312,7 @@ describe('B2B Receipt Events (e2e)', () => {
       .patch(
         `/api/hub/v1/purchase-orders/${purchaseOrderId}/receipt-events/${receiptEventId}/discrepancy-resolution`,
       )
+      .query({ branchId })
       .send({
         resolutionNote:
           'Supplier will issue a credit note for the missing unit and replace the damaged carton tomorrow.',
@@ -347,6 +353,7 @@ describe('B2B Receipt Events (e2e)', () => {
       .patch(
         `/api/hub/v1/purchase-orders/${purchaseOrderId}/receipt-events/${receiptEventId}/discrepancy-resolution`,
       )
+      .query({ branchId })
       .send({
         resolutionNote:
           'Supplier will issue a credit note for the missing unit and replace the damaged carton tomorrow.',
@@ -363,6 +370,7 @@ describe('B2B Receipt Events (e2e)', () => {
       .patch(
         `/api/hub/v1/purchase-orders/${purchaseOrderId}/receipt-events/${receiptEventId}/discrepancy-approval`,
       )
+      .query({ branchId })
       .send({ note: 'Approved after reviewing supplier credit memo.' })
       .expect(200);
 
@@ -395,6 +403,7 @@ describe('B2B Receipt Events (e2e)', () => {
       .patch(
         `/api/hub/v1/purchase-orders/${purchaseOrderId}/receipt-events/${receiptEventId}/discrepancy-approval`,
       )
+      .query({ branchId })
       .send({ note: 'Attempting approval before supplier resolution exists.' })
       .expect(400);
 
@@ -411,5 +420,43 @@ describe('B2B Receipt Events (e2e)', () => {
     expect(rows[0].discrepancyApprovedAt).toBeNull();
     expect(rows[0].discrepancyApprovedByUserId).toBeNull();
     expect(rows[0].discrepancyApprovalNote).toBeNull();
+  });
+
+  it('rejects receipt-event reads when the request branch scope does not match the purchase order branch', async () => {
+    await request(app.getHttpServer())
+      .get(`/api/hub/v1/purchase-orders/${purchaseOrderId}/receipt-events`)
+      .query({ branchId: branchId + 999 })
+      .expect(404);
+  });
+
+  it('allows POS buyer roles to acknowledge and resolve receipt discrepancies within the scoped branch', async () => {
+    const receiptEventId = await createReceiptEvent();
+
+    currentAuthUser = {
+      id: userId,
+      email: 'buyer@test.com',
+      roles: ['POS_MANAGER'],
+    };
+
+    await request(app.getHttpServer())
+      .patch(
+        `/api/hub/v1/purchase-orders/${purchaseOrderId}/receipt-events/${receiptEventId}/acknowledge`,
+      )
+      .query({ branchId })
+      .send({ note: 'POS buyer acknowledged branch receipt review.' })
+      .expect(200);
+
+    const resolutionResponse = await request(app.getHttpServer())
+      .patch(
+        `/api/hub/v1/purchase-orders/${purchaseOrderId}/receipt-events/${receiptEventId}/discrepancy-resolution`,
+      )
+      .query({ branchId })
+      .send({
+        resolutionNote:
+          'POS buyer reviewed shortage and damaged quantities with the branch receiving team.',
+      })
+      .expect(200);
+
+    expect(resolutionResponse.body.discrepancyStatus).toBe('RESOLVED');
   });
 });

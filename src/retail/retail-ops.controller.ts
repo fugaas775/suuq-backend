@@ -11,6 +11,7 @@ import {
   Req,
   Res,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
 import {
   ApiBody,
@@ -24,6 +25,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { UserRole } from '../auth/roles.enum';
 import { Roles } from '../common/decorators/roles.decorator';
+import { ActionPathNormalizationInterceptor } from '../common/interceptors/action-path-normalization.interceptor';
 import { RetailBranchContext } from './decorators/retail-branch-context.decorator';
 import { RequireRetailModules } from './decorators/require-retail-modules.decorator';
 import { RetailModule as RetailOsModule } from './entities/tenant-module-entitlement.entity';
@@ -141,6 +143,7 @@ import { ReplenishmentPolicySubmissionMode } from './dto/upsert-tenant-module-en
 @ApiTags('Retail Ops')
 @Controller('retail/v1/ops')
 @UseGuards(JwtAuthGuard, RolesGuard)
+@UseInterceptors(new ActionPathNormalizationInterceptor())
 export class RetailOpsController {
   constructor(
     private readonly retailOpsService: RetailOpsService,

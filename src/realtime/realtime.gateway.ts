@@ -154,10 +154,11 @@ export class RealtimeGateway
     note: string | null;
     occurredAt: string;
     intervention: Record<string, unknown>;
-  }) {
+  }): Promise<void> {
     this.server
       .to(RealtimeGateway.PROCUREMENT_INTERVENTIONS_ROOM)
       .emit('procurementInterventionUpdated', payload);
+    return Promise.resolve();
   }
 
   notifyProcurementPurchaseOrderUpdated(payload: {
@@ -175,9 +176,10 @@ export class RealtimeGateway
     metadata?: Record<string, unknown> | null;
     receiptSummary?: Record<string, unknown>[] | null;
     purchaseOrder: Record<string, unknown>;
-  }) {
+  }): Promise<void> {
     this.server
       .to(RealtimeGateway.PROCUREMENT_INTERVENTIONS_ROOM)
       .emit('procurementPurchaseOrderUpdated', payload);
+    return Promise.resolve();
   }
 }

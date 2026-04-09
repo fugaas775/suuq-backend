@@ -14,6 +14,13 @@ import {
 import { Product } from '../../products/entities/product.entity';
 import { Exclude, Expose } from 'class-transformer'; // <-- Import Exclude
 
+export enum PosUserFitCategory {
+  DIRECT_RETAIL_FIT = 'DIRECT_RETAIL_FIT',
+  FOOD_SERVICE_PRESET_FIT = 'FOOD_SERVICE_PRESET_FIT',
+  HOSPITALITY_EXTENSION_FIT = 'HOSPITALITY_EXTENSION_FIT',
+  HOSPITALITY_LAYER_REQUIRED = 'HOSPITALITY_LAYER_REQUIRED',
+}
+
 @Entity()
 @Tree('closure-table')
 export class Category {
@@ -45,6 +52,9 @@ export class Category {
   @Column({ type: 'int', default: 0 })
   @Index()
   sortOrder: number;
+
+  @Column({ nullable: true })
+  posSuggestedUserFit?: PosUserFitCategory | null;
 
   @AfterLoad()
   encodeIconUrl() {

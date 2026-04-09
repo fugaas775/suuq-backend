@@ -13,6 +13,15 @@ import { UsersService } from '../users/users.service';
 import { InviteStaffDto } from './dto/invite-staff.dto';
 import { UpdateStaffPermissionsDto } from './dto/update-staff-permissions.dto';
 import { EmailService } from '../email/email.service';
+import { UserRole } from '../auth/roles.enum';
+
+export interface VendorStoreSummary {
+  vendorId: number;
+  storeName: string;
+  permissions: VendorPermission[];
+  title: string | null;
+  joinedAt: Date;
+}
 
 @Injectable()
 export class VendorStaffService {
@@ -192,6 +201,30 @@ export class VendorStaffService {
       where: { member: { id: userId } },
       relations: ['vendor'],
     });
+  }
+
+  async getStoreSummariesForUser(
+    user: number | { id: number; roles?: string[] },
+  ): Promise<VendorStoreSummary[]> {
+    const userId = typeof user === 'number' ? user : user.id;
+    const roles = typeof user === 'number' ? [] : (user.roles ?? []);
+
+    let staffRecords = await this.findStoresForUser(userId);
+
+    if (!staffRecords.length && roles.includes(UserRole.VENDOR)) {
+      const fullUser = await this.usersService.findById(userId);
+      await this.bootstrapOwner(fullUser);
+      staffRecords = await this.findStoresForUser(userId);
+    }
+
+    return staffRecords.map((record) => ({
+      vendorId: record.vendor.id,
+      storeName:
+        record.vendor.storeName || record.vendor.displayName || 'Unnamed Store',
+      permissions: record.permissions,
+      title: record.title ?? null,
+      joinedAt: record.createdAt,
+    }));
   }
 
   async invite(vendor: User, dto: InviteStaffDto): Promise<VendorStaff> {

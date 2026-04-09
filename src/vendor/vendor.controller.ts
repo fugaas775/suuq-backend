@@ -1,5 +1,9 @@
 // ...existing imports...
 import { CreateVendorProductDto } from './dto/create-vendor-product.dto';
+import {
+  BulkCreateVendorProductsDto,
+  BulkCreateVendorProductsResponseDto,
+} from './dto/bulk-create-vendor-products.dto';
 import { UpdateVendorProductDto } from './dto/update-vendor-product.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
 import { OrderStatus } from '../orders/entities/order.entity';
@@ -20,6 +24,12 @@ import {
   ParseIntPipe,
   BadRequestException,
 } from '@nestjs/common';
+import {
+  ApiBody,
+  ApiCreatedResponse,
+  ApiOperation,
+  ApiTags,
+} from '@nestjs/swagger';
 import { VendorService } from './vendor.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
@@ -32,6 +42,7 @@ import { VendorPermission } from './vendor-permissions.enum';
 import { User } from '../users/entities/user.entity';
 import { RateLimitInterceptor } from '../common/interceptors/rate-limit.interceptor';
 
+@ApiTags('vendor')
 @Controller()
 export class VendorController {
   @UseGuards(JwtAuthGuard, VendorPermissionGuard)
@@ -139,6 +150,36 @@ export class VendorController {
     @Req() req: AuthenticatedRequest,
   ) {
     return this.vendorService.createMyProduct(vendor.id, dto, req.user as any);
+  }
+
+  @UseGuards(JwtAuthGuard, VendorPermissionGuard)
+  @RequireVendorPermission(VendorPermission.MANAGE_PRODUCTS)
+  @Post('vendor/products/bulk')
+  @UseInterceptors(
+    new RateLimitInterceptor({
+      maxRps: 1,
+      burst: 2,
+      keyBy: 'userOrIp',
+      scope: 'route',
+      headers: true,
+    }),
+  )
+  @ApiOperation({
+    summary:
+      'Create vendor products in a single bounded batch with row-level results',
+  })
+  @ApiBody({ type: BulkCreateVendorProductsDto })
+  @ApiCreatedResponse({ type: BulkCreateVendorProductsResponseDto })
+  async createMyProductsBulk(
+    @ActiveVendor() vendor: User,
+    @Body() dto: BulkCreateVendorProductsDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.vendorService.createMyProductsBulk(
+      vendor.id,
+      dto,
+      req.user as any,
+    );
   }
 
   // Fetch a single product owned by the current vendor (for edit prefill)

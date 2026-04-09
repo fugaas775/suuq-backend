@@ -11,16 +11,12 @@ describe('PosPartnerSyncController', () => {
   let controller: PosPartnerSyncController;
   let posSyncService: {
     ingest: jest.Mock;
-    listTransferConfirmations: jest.Mock;
-    replayFailedEntries: jest.Mock;
   };
   let partnerCredentialsService: { assertCredentialBranchAccess: jest.Mock };
 
   beforeEach(async () => {
     posSyncService = {
       ingest: jest.fn(),
-      listTransferConfirmations: jest.fn().mockResolvedValue([]),
-      replayFailedEntries: jest.fn(),
     };
 
     partnerCredentialsService = {
@@ -94,44 +90,5 @@ describe('PosPartnerSyncController', () => {
     ).toThrow(UnauthorizedException);
 
     expect(posSyncService.ingest).not.toHaveBeenCalled();
-  });
-
-  it('returns partner-scoped transfer confirmations for a sync job', async () => {
-    await controller.partnerTransferConfirmations(
-      41,
-      { branchId: 3 },
-      {
-        partnerCredential: { id: 9, branchId: 3 },
-      },
-    );
-
-    expect(
-      partnerCredentialsService.assertCredentialBranchAccess,
-    ).toHaveBeenCalledWith({ id: 9, branchId: 3 }, 3);
-    expect(posSyncService.listTransferConfirmations).toHaveBeenCalledWith(
-      41,
-      3,
-      9,
-    );
-  });
-
-  it('replays partner-scoped failed entries for a sync job', async () => {
-    await controller.partnerReplayFailures(
-      41,
-      { branchId: 3, entryIndexes: [0] },
-      {
-        partnerCredential: { id: 9, branchId: 3 },
-      },
-    );
-
-    expect(
-      partnerCredentialsService.assertCredentialBranchAccess,
-    ).toHaveBeenCalledWith({ id: 9, branchId: 3 }, 3);
-    expect(posSyncService.replayFailedEntries).toHaveBeenCalledWith(
-      41,
-      { branchId: 3, entryIndexes: [0] },
-      expect.any(Object),
-      9,
-    );
   });
 });

@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
 import {
+  ApiBody,
   ApiCreatedResponse,
   ApiOkResponse,
   ApiOperation,
@@ -19,6 +20,14 @@ import {
 import { PartnerCredentialPageResponseDto } from './dto/partner-credential-page-response.dto';
 import { PartnerCredentialResponseDto } from './dto/partner-credential-response.dto';
 import { PartnerCredential } from './entities/partner-credential.entity';
+import {
+  PartnerCredentialStatus,
+  PartnerType,
+} from './entities/partner-credential.entity';
+import {
+  DEFAULT_POS_PARTNER_SCOPES,
+  PosPartnerScope,
+} from './partner-credential-scopes';
 import { PartnerCredentialsService } from './partner-credentials.service';
 
 @ApiTags('Admin Partner Credentials')
@@ -60,7 +69,47 @@ export class PartnerCredentialsController {
     enum: SortDirection,
     required: false,
   })
-  @ApiOkResponse({ type: PartnerCredentialPageResponseDto })
+  @ApiOkResponse({
+    type: PartnerCredentialPageResponseDto,
+    content: {
+      'application/json': {
+        examples: {
+          posCredentialsPage: {
+            summary: 'POS credential page with branch summary',
+            value: {
+              items: [
+                {
+                  id: 10,
+                  name: 'Front Lane Cashier',
+                  partnerType: PartnerType.POS,
+                  branchId: 3,
+                  branch: {
+                    id: 3,
+                    name: 'Main Branch',
+                    code: 'MB-01',
+                    city: 'Mogadishu',
+                    country: 'Somalia',
+                  },
+                  scopes: [PosPartnerScope.POS_CHECKOUT_READ],
+                  status: PartnerCredentialStatus.ACTIVE,
+                  lastUsedAt: '2026-04-01T00:10:00.000Z',
+                  revokedAt: null,
+                  revokedByUserId: null,
+                  revocationReason: null,
+                  createdAt: '2026-04-01T00:00:00.000Z',
+                  updatedAt: '2026-04-01T00:05:00.000Z',
+                },
+              ],
+              total: 1,
+              page: 1,
+              perPage: 20,
+              totalPages: 1,
+            },
+          },
+        },
+      },
+    },
+  })
   @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
   async findAll(
     @Query() query: PartnerCredentialListQueryDto,
@@ -78,9 +127,71 @@ export class PartnerCredentialsController {
   @Post()
   @ApiOperation({
     summary:
-      'Create a partner credential and return the documented admin response shape',
+      'Create a partner credential; for POS terminals prefer scopePreset and reserve explicit scopes for advanced overrides',
   })
-  @ApiCreatedResponse({ type: PartnerCredentialResponseDto })
+  @ApiBody({
+    type: CreatePartnerCredentialDto,
+    examples: {
+      cashierTerminal: {
+        summary: 'Standard cashier terminal',
+        value: {
+          name: 'Front Lane Cashier',
+          partnerType: 'POS',
+          branchId: 3,
+          scopePreset: 'CASHIER_TERMINAL',
+          keyHash: 'terminal-secret',
+        },
+      },
+      syncOnlyTerminal: {
+        summary: 'Inventory sync terminal',
+        value: {
+          name: 'Backroom Scanner',
+          partnerType: 'POS',
+          branchId: 3,
+          scopePreset: 'SYNC_ONLY',
+          keyHash: 'terminal-secret',
+        },
+      },
+      customOverride: {
+        summary: 'Advanced custom POS override',
+        value: {
+          name: 'Hybrid POS Device',
+          partnerType: 'POS',
+          branchId: 3,
+          scopePreset: 'INVENTORY_TERMINAL',
+          scopes: ['pos:checkout:write'],
+          keyHash: 'terminal-secret',
+        },
+      },
+    },
+  })
+  @ApiCreatedResponse({
+    type: PartnerCredentialResponseDto,
+    content: {
+      'application/json': {
+        examples: {
+          cashierPresetResponse: {
+            summary: 'Effective scopes returned for a cashier preset',
+            value: {
+              id: 11,
+              name: 'Front Lane Cashier',
+              partnerType: PartnerType.POS,
+              branchId: 3,
+              branch: null,
+              scopes: DEFAULT_POS_PARTNER_SCOPES,
+              status: PartnerCredentialStatus.ACTIVE,
+              lastUsedAt: null,
+              revokedAt: null,
+              revokedByUserId: null,
+              revocationReason: null,
+              createdAt: '2026-04-01T00:00:00.000Z',
+              updatedAt: '2026-04-01T00:05:00.000Z',
+            },
+          },
+        },
+      },
+    },
+  })
   @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
   async create(
     @Body() dto: CreatePartnerCredentialDto,

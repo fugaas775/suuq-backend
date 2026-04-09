@@ -359,11 +359,67 @@ describe('RetailOpsService', () => {
     });
 
     expect(result.branchCount).toBe(2);
+    expect(result.matchedBranchCount).toBe(2);
+    expect(result.visibleBranchCount).toBe(2);
     expect(result.totalOrderCount).toBe(2);
     expect(result.criticalBranchCount).toBe(1);
     expect(result.highBranchCount).toBe(1);
     expect(result.alerts[0].code).toBe('NETWORK_POS_CRITICAL_BRANCHES');
     expect(result.branches[0].highestPriority).toBe('CRITICAL');
+  });
+
+  it('keeps tenant POS network totals based on all matched branches when limiting the visible list', async () => {
+    branchesRepository.find.mockResolvedValue([
+      { id: 3, name: 'HQ', code: 'HQ-3', retailTenantId: 21, isActive: true },
+      {
+        id: 8,
+        name: 'Airport',
+        code: 'BR-8',
+        retailTenantId: 21,
+        isActive: true,
+      },
+    ]);
+    ordersRepository.find.mockResolvedValue([
+      {
+        id: 11,
+        fulfillmentBranchId: 3,
+        total: 120,
+        paymentMethod: PaymentMethod.COD,
+        paymentStatus: PaymentStatus.FAILED,
+        status: OrderStatus.PROCESSING,
+        createdAt: new Date('2026-03-18T10:00:00.000Z'),
+        items: [],
+      },
+      {
+        id: 14,
+        fulfillmentBranchId: 8,
+        total: 90,
+        paymentMethod: PaymentMethod.COD,
+        paymentStatus: PaymentStatus.UNPAID,
+        status: OrderStatus.PENDING,
+        createdAt: new Date('2026-03-19T09:00:00.000Z'),
+        items: [],
+      },
+    ] as any);
+    branchStaffAssignmentsRepository.find.mockResolvedValue([
+      { branchId: 3, role: BranchStaffRole.MANAGER, isActive: true },
+      { branchId: 8, role: BranchStaffRole.OPERATOR, isActive: true },
+    ]);
+
+    const result = await service.getPosNetworkSummary({
+      branchId: 3,
+      limit: 1,
+      windowHours: 24,
+      status: undefined,
+    });
+
+    expect(result.branchCount).toBe(2);
+    expect(result.matchedBranchCount).toBe(2);
+    expect(result.visibleBranchCount).toBe(1);
+    expect(result.totalOrderCount).toBe(2);
+    expect(result.totalGrossSales).toBe(210);
+    expect(result.totalUnpaidOrderCount).toBe(1);
+    expect(result.branches).toHaveLength(1);
   });
 
   it('returns a branch POS exception queue', async () => {
@@ -422,6 +478,9 @@ describe('RetailOpsService', () => {
   });
 
   it('returns a tenant POS exception network summary', async () => {
+    const failedPaymentCreatedAt = new Date(Date.now() - 13 * 60 * 60 * 1000);
+    const paymentReviewCreatedAt = new Date(Date.now() - 6 * 60 * 60 * 1000);
+
     branchesRepository.find.mockResolvedValue([
       { id: 3, name: 'HQ', code: 'HQ-3', retailTenantId: 21, isActive: true },
       {
@@ -441,7 +500,7 @@ describe('RetailOpsService', () => {
         paymentStatus: PaymentStatus.FAILED,
         paymentProofStatus: null,
         status: OrderStatus.PROCESSING,
-        createdAt: new Date('2026-03-18T12:00:00.000Z'),
+        createdAt: failedPaymentCreatedAt,
         deliveryAssignedAt: null,
         outForDeliveryAt: null,
         deliveryResolvedAt: null,
@@ -456,7 +515,7 @@ describe('RetailOpsService', () => {
         paymentStatus: PaymentStatus.UNPAID,
         paymentProofStatus: 'PENDING_REVIEW',
         status: OrderStatus.PENDING,
-        createdAt: new Date('2026-03-19T06:00:00.000Z'),
+        createdAt: paymentReviewCreatedAt,
         deliveryAssignedAt: null,
         outForDeliveryAt: null,
         deliveryResolvedAt: null,
@@ -474,11 +533,77 @@ describe('RetailOpsService', () => {
     });
 
     expect(result.branchCount).toBe(2);
+    expect(result.matchedBranchCount).toBe(2);
+    expect(result.visibleBranchCount).toBe(2);
     expect(result.totalExceptionCount).toBe(2);
     expect(result.criticalBranchCount).toBe(1);
     expect(result.highBranchCount).toBe(1);
     expect(result.alerts[0].code).toBe('NETWORK_POS_EXCEPTION_CRITICAL');
     expect(result.branches[0].highestPriority).toBe('CRITICAL');
+  });
+
+  it('keeps tenant POS exception totals based on all matched branches when limiting the visible list', async () => {
+    const failedPaymentCreatedAt = new Date(Date.now() - 13 * 60 * 60 * 1000);
+    const paymentReviewCreatedAt = new Date(Date.now() - 6 * 60 * 60 * 1000);
+
+    branchesRepository.find.mockResolvedValue([
+      { id: 3, name: 'HQ', code: 'HQ-3', retailTenantId: 21, isActive: true },
+      {
+        id: 8,
+        name: 'Airport',
+        code: 'BR-8',
+        retailTenantId: 21,
+        isActive: true,
+      },
+    ]);
+    ordersRepository.find.mockResolvedValue([
+      {
+        id: 18,
+        fulfillmentBranchId: 3,
+        total: 80,
+        paymentMethod: PaymentMethod.BANK_TRANSFER,
+        paymentStatus: PaymentStatus.FAILED,
+        paymentProofStatus: null,
+        status: OrderStatus.PROCESSING,
+        createdAt: failedPaymentCreatedAt,
+        deliveryAssignedAt: null,
+        outForDeliveryAt: null,
+        deliveryResolvedAt: null,
+        shippingAddress: { fullName: 'Buyer One', phoneNumber: '251900000001' },
+        items: [{ quantity: 1 }],
+      },
+      {
+        id: 19,
+        fulfillmentBranchId: 8,
+        total: 120,
+        paymentMethod: PaymentMethod.BANK_TRANSFER,
+        paymentStatus: PaymentStatus.UNPAID,
+        paymentProofStatus: 'PENDING_REVIEW',
+        status: OrderStatus.PENDING,
+        createdAt: paymentReviewCreatedAt,
+        deliveryAssignedAt: null,
+        outForDeliveryAt: null,
+        deliveryResolvedAt: null,
+        shippingAddress: { fullName: 'Buyer Two', phoneNumber: '251900000002' },
+        items: [{ quantity: 2 }],
+      },
+    ] as any);
+
+    const result = await service.getPosExceptionNetworkSummary({
+      branchId: 3,
+      limit: 1,
+      windowHours: 24,
+      queueType: undefined,
+      priority: undefined,
+    });
+
+    expect(result.branchCount).toBe(2);
+    expect(result.matchedBranchCount).toBe(2);
+    expect(result.visibleBranchCount).toBe(1);
+    expect(result.totalExceptionCount).toBe(2);
+    expect(result.totalFailedPaymentCount).toBe(1);
+    expect(result.totalPaymentReviewCount).toBe(1);
+    expect(result.branches).toHaveLength(1);
   });
 
   it('exports the branch POS exception queue as CSV', async () => {
@@ -1707,6 +1832,66 @@ describe('RetailOpsService', () => {
     );
   });
 
+  it('keeps stock health network totals based on all matched branches when limiting the visible list', async () => {
+    branchesRepository.find.mockResolvedValue([
+      { id: 3, name: 'HQ', code: 'HQ-3', retailTenantId: 21, isActive: true },
+      {
+        id: 8,
+        name: 'Airport',
+        code: 'BR-8',
+        retailTenantId: 21,
+        isActive: true,
+      },
+    ]);
+    branchInventoryRepository.find.mockResolvedValue([
+      {
+        id: 1,
+        branchId: 3,
+        productId: 9,
+        quantityOnHand: 0,
+        reservedQuantity: 0,
+        reservedOnline: 0,
+        reservedStoreOps: 0,
+        inboundOpenPo: 4,
+        outboundTransfers: 0,
+        safetyStock: 5,
+        availableToSell: -1,
+        version: 1,
+        lastReceivedAt: null,
+        lastPurchaseOrderId: null,
+        createdAt: new Date('2026-03-18T08:00:00.000Z'),
+        updatedAt: new Date('2026-03-18T09:00:00.000Z'),
+      },
+      {
+        id: 2,
+        branchId: 8,
+        productId: 10,
+        quantityOnHand: 0,
+        reservedQuantity: 0,
+        reservedOnline: 0,
+        reservedStoreOps: 0,
+        inboundOpenPo: 2,
+        outboundTransfers: 0,
+        safetyStock: 4,
+        availableToSell: 0,
+        version: 1,
+        lastReceivedAt: null,
+        lastPurchaseOrderId: null,
+        createdAt: new Date('2026-03-18T07:00:00.000Z'),
+        updatedAt: new Date('2026-03-18T08:30:00.000Z'),
+      },
+    ]);
+
+    const result = await service.getStockHealthNetworkSummary({
+      branchId: 3,
+      limit: 1,
+    });
+
+    expect(result.outOfStockBranchCount).toBe(2);
+    expect(result.outOfStockCount).toBe(2);
+    expect(result.branches).toHaveLength(1);
+  });
+
   it('returns AI insights with health score, alerts, and product risks', async () => {
     const openPurchaseOrderSummaryQb = {
       select: jest.fn().mockReturnThis(),
@@ -1908,6 +2093,64 @@ describe('RetailOpsService', () => {
         ],
       }),
     );
+  });
+
+  it('keeps AI network totals based on all matched branches when limiting the visible list', async () => {
+    branchesRepository.find.mockResolvedValue([
+      { id: 3, name: 'HQ', code: 'HQ-3', retailTenantId: 21, isActive: true },
+      {
+        id: 8,
+        name: 'Airport',
+        code: 'BR-8',
+        retailTenantId: 21,
+        isActive: true,
+      },
+    ]);
+    branchInventoryRepository.find.mockResolvedValue([
+      {
+        id: 1,
+        branchId: 3,
+        productId: 9,
+        quantityOnHand: 0,
+        reservedQuantity: 0,
+        reservedOnline: 0,
+        reservedStoreOps: 0,
+        inboundOpenPo: 0,
+        outboundTransfers: 0,
+        safetyStock: 5,
+        availableToSell: -1,
+        version: 1,
+        lastReceivedAt: null,
+        lastPurchaseOrderId: null,
+        createdAt: new Date('2026-03-18T08:00:00.000Z'),
+        updatedAt: new Date('2026-03-18T09:00:00.000Z'),
+      },
+      {
+        id: 2,
+        branchId: 8,
+        productId: 10,
+        quantityOnHand: 0,
+        reservedQuantity: 0,
+        reservedOnline: 0,
+        reservedStoreOps: 0,
+        inboundOpenPo: 0,
+        outboundTransfers: 0,
+        safetyStock: 4,
+        availableToSell: 0,
+        version: 1,
+        lastReceivedAt: null,
+        lastPurchaseOrderId: null,
+        createdAt: new Date('2026-03-18T07:00:00.000Z'),
+        updatedAt: new Date('2026-03-18T08:30:00.000Z'),
+      },
+    ]);
+    purchaseOrdersRepository.find.mockResolvedValue([]);
+
+    const result = await service.getAiNetworkSummary({ branchId: 3, limit: 1 });
+
+    expect(result.criticalBranchCount).toBe(2);
+    expect(result.totalOutOfStockSkus).toBe(2);
+    expect(result.branches).toHaveLength(1);
   });
 
   it('returns an accounting overview for open commitments and reconciliation work', async () => {
@@ -2410,6 +2653,76 @@ describe('RetailOpsService', () => {
     ]);
   });
 
+  it('keeps accounting network totals based on all matched branches when limiting the visible list', async () => {
+    branchesRepository.find.mockResolvedValue([
+      { id: 3, name: 'HQ', code: 'HQ-3', retailTenantId: 21, isActive: true },
+      {
+        id: 8,
+        name: 'Airport',
+        code: 'BR-8',
+        retailTenantId: 21,
+        isActive: true,
+      },
+    ]);
+    purchaseOrdersRepository.find.mockResolvedValue([
+      {
+        id: 81,
+        orderNumber: 'PO-81',
+        branchId: 3,
+        supplierProfileId: 14,
+        createdAt: new Date(Date.now() - 90 * 60 * 60 * 1000),
+        status: PurchaseOrderStatus.RECEIVED,
+        currency: 'USD',
+        total: 220,
+        items: [
+          {
+            orderedQuantity: 5,
+            receivedQuantity: 4,
+            shortageQuantity: 1,
+            damagedQuantity: 0,
+          },
+        ],
+      },
+      {
+        id: 83,
+        orderNumber: 'PO-83',
+        branchId: 8,
+        supplierProfileId: 18,
+        createdAt: new Date(Date.now() - 96 * 60 * 60 * 1000),
+        status: PurchaseOrderStatus.SUBMITTED,
+        currency: 'USD',
+        total: 900,
+        items: [
+          {
+            orderedQuantity: 10,
+            receivedQuantity: 0,
+            shortageQuantity: 0,
+            damagedQuantity: 0,
+          },
+        ],
+      },
+    ]);
+    purchaseOrderReceiptEventsRepository.find.mockResolvedValue([
+      {
+        id: 501,
+        purchaseOrderId: 81,
+        discrepancyStatus: PurchaseOrderReceiptDiscrepancyStatus.OPEN,
+        createdAt: new Date(Date.now() - 80 * 60 * 60 * 1000),
+      },
+    ]);
+
+    const result = await service.getAccountingNetworkSummary({
+      branchId: 3,
+      limit: 1,
+    });
+
+    expect(result.openCommitmentCount).toBe(1);
+    expect(result.discrepancyOpenCount).toBe(1);
+    expect(result.priorityQueue.critical).toBe(1);
+    expect(result.priorityQueue.high).toBe(1);
+    expect(result.branches).toHaveLength(1);
+  });
+
   it('returns accounting payout exceptions for the requested branch', async () => {
     payoutLogRepository.find.mockResolvedValue([
       {
@@ -2871,6 +3184,54 @@ describe('RetailOpsService', () => {
     ]);
   });
 
+  it('keeps desktop network totals based on all matched branches when limiting the visible list', async () => {
+    branchesRepository.find.mockResolvedValue([
+      { id: 3, name: 'HQ', code: 'HQ-3', retailTenantId: 21, isActive: true },
+      {
+        id: 8,
+        name: 'Airport',
+        code: 'BR-8',
+        retailTenantId: 21,
+        isActive: true,
+      },
+    ]);
+    posSyncJobsRepository.find.mockResolvedValue([
+      {
+        id: 401,
+        branchId: 3,
+        syncType: PosSyncType.STOCK_DELTA,
+        status: PosSyncStatus.FAILED,
+        rejectedCount: 2,
+        failedEntries: [{ entryIndex: 1, quantity: 2, error: 'alias missing' }],
+        createdAt: new Date(Date.now() - 5 * 60 * 60 * 1000),
+        processedAt: null,
+      },
+      {
+        id: 402,
+        branchId: 8,
+        syncType: PosSyncType.STOCK_SNAPSHOT,
+        status: PosSyncStatus.RECEIVED,
+        rejectedCount: 0,
+        failedEntries: [],
+        createdAt: new Date(Date.now() - 3 * 60 * 60 * 1000),
+        processedAt: null,
+      },
+    ]);
+    branchTransfersRepository.find.mockResolvedValue([]);
+    stockMovementsRepository.find.mockResolvedValue([]);
+
+    const result = await service.getDesktopNetworkSummary({
+      branchId: 3,
+      limit: 1,
+      windowHours: 72,
+    });
+
+    expect(result.failedPosSyncJobCount).toBe(1);
+    expect(result.openPosSyncJobCount).toBe(1);
+    expect(result.rejectedSyncEntryCount).toBe(2);
+    expect(result.branches).toHaveLength(1);
+  });
+
   it('filters desktop workbench queues by queue type and priority', async () => {
     posSyncJobsRepository.find.mockResolvedValue([
       {
@@ -3280,6 +3641,86 @@ describe('RetailOpsService', () => {
     );
   });
 
+  it('keeps accounting payout network totals based on all matched branches when limiting the visible list', async () => {
+    branchesRepository.find.mockResolvedValue([
+      { id: 3, name: 'HQ', code: 'HQ-3', retailTenantId: 21, isActive: true },
+      {
+        id: 8,
+        name: 'Airport',
+        code: 'BR-8',
+        retailTenantId: 21,
+        isActive: true,
+      },
+    ]);
+    payoutLogRepository.find.mockResolvedValue([
+      {
+        id: 901,
+        provider: PayoutProvider.EBIRR,
+        status: PayoutStatus.FAILED,
+        amount: 80,
+        currency: 'ETB',
+        phoneNumber: '251900000111',
+        transactionReference: 'ORD-18-ITEM-201',
+        orderId: 18,
+        orderItemId: 201,
+        failureReason: 'Gateway timeout',
+        createdAt: new Date(Date.now() - 30 * 60 * 60 * 1000),
+        vendor: {
+          id: 77,
+          displayName: 'Vendor One',
+          phoneNumber: '251900000111',
+        },
+      },
+      {
+        id: 902,
+        provider: PayoutProvider.EBIRR,
+        status: PayoutStatus.SUCCESS,
+        amount: 120,
+        currency: 'ETB',
+        phoneNumber: '251900000222',
+        transactionReference: 'ORD-19-ITEM-202',
+        orderId: 19,
+        orderItemId: 202,
+        failureReason:
+          'RECONCILE_REQUIRED: Wallet debit failed after provider payout success',
+        createdAt: new Date(Date.now() - 20 * 60 * 60 * 1000),
+        vendor: {
+          id: 78,
+          displayName: 'Vendor Two',
+          phoneNumber: '251900000222',
+        },
+      },
+    ]);
+    ordersRepository.find.mockResolvedValue([
+      {
+        id: 18,
+        fulfillmentBranchId: 3,
+        paymentMethod: PaymentMethod.EBIRR,
+        paymentStatus: PaymentStatus.PAID,
+        status: OrderStatus.DELIVERED,
+      },
+      {
+        id: 19,
+        fulfillmentBranchId: 8,
+        paymentMethod: PaymentMethod.EBIRR,
+        paymentStatus: PaymentStatus.PAID,
+        status: OrderStatus.DELIVERED,
+      },
+    ] as any);
+
+    const result = await service.getAccountingPayoutNetworkSummary({
+      branchId: 3,
+      limit: 1,
+      windowHours: 168,
+    });
+
+    expect(result.exceptionCount).toBe(2);
+    expect(result.autoRetryRequiredCount).toBe(1);
+    expect(result.reconciliationRequiredCount).toBe(1);
+    expect(result.totalAmountAtRisk).toBe(200);
+    expect(result.branches).toHaveLength(1);
+  });
+
   it('surfaces blocked auto-submit reasons on replenishment drafts', async () => {
     const summaryQb = {
       select: jest.fn().mockReturnThis(),
@@ -3522,6 +3963,66 @@ describe('RetailOpsService', () => {
         ]),
       }),
     );
+  });
+
+  it('keeps replenishment network totals based on all matched branches when limiting the visible list', async () => {
+    branchesRepository.find.mockResolvedValue([
+      { id: 3, name: 'HQ', code: 'HQ-3', retailTenantId: 21, isActive: true },
+      {
+        id: 8,
+        name: 'Airport',
+        code: 'BR-8',
+        retailTenantId: 21,
+        isActive: true,
+      },
+    ]);
+    purchaseOrdersRepository.find.mockResolvedValue([
+      {
+        id: 71,
+        orderNumber: 'PO-71',
+        branchId: 3,
+        supplierProfileId: 14,
+        status: PurchaseOrderStatus.DRAFT,
+        total: 125,
+        currency: 'USD',
+        statusMeta: {
+          autoReplenishment: true,
+          autoReplenishmentSubmissionMode: 'AUTO_SUBMIT',
+          lastAutoSubmissionAttempt: {
+            eligible: false,
+            blockedReason: 'MINIMUM_ORDER_TOTAL_NOT_MET',
+          },
+        },
+        createdAt: new Date(Date.now() - 30 * 60 * 60 * 1000),
+        items: [],
+      },
+      {
+        id: 72,
+        orderNumber: 'PO-72',
+        branchId: 8,
+        supplierProfileId: 14,
+        status: PurchaseOrderStatus.DRAFT,
+        total: 75,
+        currency: 'USD',
+        statusMeta: {
+          autoReplenishment: true,
+          autoReplenishmentSubmissionMode: 'AUTO_SUBMIT',
+          lastAutoSubmissionAttempt: { eligible: true, blockedReason: '' },
+        },
+        createdAt: new Date(Date.now() - 8 * 60 * 60 * 1000),
+        items: [],
+      },
+    ]);
+
+    const result = await service.getReplenishmentNetworkSummary({
+      branchId: 3,
+      limit: 1,
+    });
+
+    expect(result.totalDrafts).toBe(2);
+    expect(result.blockedAutoSubmitDraftCount).toBe(1);
+    expect(result.readyAutoSubmitDraftCount).toBe(1);
+    expect(result.branches).toHaveLength(1);
   });
 
   it('includes automation-not-entitled drafts in the blocked reason breakdown', async () => {

@@ -31,6 +31,10 @@ export function prettyAuditActionLabel(
       if (a === false) return 'Deactivated vendor';
       return 'Changed vendor active state';
     }
+    case 'user.pos.assignment.create':
+      return 'Assigned POS branch access';
+    case 'user.pos.assignment.remove':
+      return 'Removed POS branch access';
     case 'SELF_PURCHASE_BLOCKED':
       return 'Self purchase blocked';
     case 'SIGNED_DOWNLOAD_ISSUED':

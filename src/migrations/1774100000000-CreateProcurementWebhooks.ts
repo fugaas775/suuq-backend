@@ -6,17 +6,48 @@ export class CreateProcurementWebhooks1774100000000
   name = 'CreateProcurementWebhooks1774100000000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
+    if (
+      (await queryRunner.hasTable('procurement_webhook_subscriptions')) &&
+      (await queryRunner.hasTable('procurement_webhook_deliveries'))
+    ) {
+      return;
+    }
+
     await queryRunner.query(
-      `CREATE TYPE "procurement_webhook_subscriptions_status_enum" AS ENUM ('ACTIVE', 'PAUSED')`,
+      `DO $$ BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_type WHERE typname = 'procurement_webhook_subscriptions_status_enum'
+        ) THEN
+          CREATE TYPE "procurement_webhook_subscriptions_status_enum" AS ENUM ('ACTIVE', 'PAUSED');
+        END IF;
+      END $$`,
     );
     await queryRunner.query(
-      `CREATE TYPE "procurement_webhook_subscriptions_lastdeliverystatus_enum" AS ENUM ('SUCCEEDED', 'FAILED')`,
+      `DO $$ BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_type WHERE typname = 'procurement_webhook_subscriptions_lastdeliverystatus_enum'
+        ) THEN
+          CREATE TYPE "procurement_webhook_subscriptions_lastdeliverystatus_enum" AS ENUM ('SUCCEEDED', 'FAILED');
+        END IF;
+      END $$`,
     );
     await queryRunner.query(
-      `CREATE TYPE "procurement_webhook_deliveries_eventtype_enum" AS ENUM ('PROCUREMENT_INTERVENTION_UPDATED', 'PROCUREMENT_PURCHASE_ORDER_UPDATED')`,
+      `DO $$ BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_type WHERE typname = 'procurement_webhook_deliveries_eventtype_enum'
+        ) THEN
+          CREATE TYPE "procurement_webhook_deliveries_eventtype_enum" AS ENUM ('PROCUREMENT_INTERVENTION_UPDATED', 'PROCUREMENT_PURCHASE_ORDER_UPDATED');
+        END IF;
+      END $$`,
     );
     await queryRunner.query(
-      `CREATE TYPE "procurement_webhook_deliveries_status_enum" AS ENUM ('PENDING', 'SUCCEEDED', 'FAILED')`,
+      `DO $$ BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_type WHERE typname = 'procurement_webhook_deliveries_status_enum'
+        ) THEN
+          CREATE TYPE "procurement_webhook_deliveries_status_enum" AS ENUM ('PENDING', 'SUCCEEDED', 'FAILED');
+        END IF;
+      END $$`,
     );
     await queryRunner.query(
       `CREATE TABLE "procurement_webhook_subscriptions" (

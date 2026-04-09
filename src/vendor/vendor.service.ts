@@ -1,9 +1,14 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import { SettingsService } from '../settings/settings.service';
+import {
+  BulkCreateVendorProductsDto,
+  BulkCreateVendorProductsResponseDto,
+} from './dto/bulk-create-vendor-products.dto';
 import { CreateVendorProductDto } from './dto/create-vendor-product.dto';
 import { FindAllVendorsDto } from './dto/find-all-vendors.dto';
 import { UpdateVendorProductDto } from './dto/update-vendor-product.dto';
@@ -50,6 +55,8 @@ import { EmailService } from '../email/email.service';
 
 @Injectable()
 export class VendorService {
+  private static readonly BULK_CREATE_MAX_ROWS = 100;
+
   constructor(
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
@@ -79,6 +86,41 @@ export class VendorService {
 
   private readonly logger = new Logger(VendorService.name);
   private readonly supportedCurrencies = ['ETB', 'SOS', 'KES', 'DJF', 'USD'];
+
+  private getHumanReadableErrorMessage(error: unknown): string {
+    if (
+      error &&
+      typeof error === 'object' &&
+      'response' in error &&
+      (error as any).response
+    ) {
+      const response = (error as any).response;
+      if (typeof response === 'string' && response.trim()) {
+        return response;
+      }
+      if (Array.isArray(response?.message) && response.message.length) {
+        return response.message.join('; ');
+      }
+      if (typeof response?.message === 'string' && response.message.trim()) {
+        return response.message;
+      }
+      if (typeof response?.error === 'string' && response.error.trim()) {
+        return response.error;
+      }
+    }
+
+    if (
+      error &&
+      typeof error === 'object' &&
+      'message' in error &&
+      typeof (error as any).message === 'string' &&
+      (error as any).message.trim()
+    ) {
+      return (error as any).message;
+    }
+
+    return 'Unexpected bulk product import error';
+  }
   private readonly allowedDigitalExt = new Set(['pdf', 'epub', 'zip']);
   private privateNoteColumnsAvailable: boolean | null = null;
 
@@ -895,6 +937,61 @@ export class VendorService {
       where: { id: savedProduct.id },
       relations: ['images', 'vendor', 'category', 'tags'],
     });
+  }
+
+  async createMyProductsBulk(
+    userId: number,
+    dto: BulkCreateVendorProductsDto,
+    creator?: Partial<User>,
+  ): Promise<BulkCreateVendorProductsResponseDto> {
+    const rows = Array.isArray(dto?.rows) ? dto.rows : [];
+    if (!rows.length) {
+      throw new BadRequestException(
+        'Bulk product import requires at least one row.',
+      );
+    }
+    if (rows.length > VendorService.BULK_CREATE_MAX_ROWS) {
+      throw new BadRequestException(
+        `Bulk product import is limited to ${VendorService.BULK_CREATE_MAX_ROWS} rows per request.`,
+      );
+    }
+
+    const continueOnError = dto?.continueOnError !== false;
+    const created: BulkCreateVendorProductsResponseDto['created'] = [];
+    const failures: BulkCreateVendorProductsResponseDto['failures'] = [];
+    let stoppedEarly = false;
+
+    for (const [rowIndex, row] of rows.entries()) {
+      try {
+        const product = await this.createMyProduct(userId, row, creator);
+        created.push({
+          rowIndex,
+          productId: product.id,
+          name: product.name,
+          status: product.status,
+        });
+      } catch (error) {
+        failures.push({
+          rowIndex,
+          row,
+          error: this.getHumanReadableErrorMessage(error),
+        });
+
+        if (!continueOnError) {
+          stoppedEarly = true;
+          break;
+        }
+      }
+    }
+
+    return {
+      totalRows: rows.length,
+      createdCount: created.length,
+      failedCount: failures.length,
+      stoppedEarly,
+      created,
+      failures,
+    };
   }
 
   // ✅ FIX: This function is now type-safe and handles image updates

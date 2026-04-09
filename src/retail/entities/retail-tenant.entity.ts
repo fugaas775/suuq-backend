@@ -11,6 +11,7 @@ import {
 } from 'typeorm';
 import { User } from '../../users/entities/user.entity';
 import { Branch } from '../../branches/entities/branch.entity';
+import { PosUserFitCategory } from '../../categories/entities/category.entity';
 import { TenantModuleEntitlement } from './tenant-module-entitlement.entity';
 import { TenantSubscription } from './tenant-subscription.entity';
 
@@ -19,6 +20,15 @@ export enum RetailTenantStatus {
   SUSPENDED = 'SUSPENDED',
   ARCHIVED = 'ARCHIVED',
 }
+
+export type RetailTenantOnboardingProfile = {
+  categoryId: number | null;
+  categorySlug: string | null;
+  categoryName: string | null;
+  userFit: PosUserFitCategory | null;
+  suggestedUserFit: PosUserFitCategory | null;
+  notes: string | null;
+};
 
 @Entity('retail_tenants')
 @Index(['name'], { unique: true })
@@ -44,6 +54,9 @@ export class RetailTenant {
 
   @Column({ type: 'varchar', length: 8, nullable: true })
   defaultCurrency?: string | null;
+
+  @Column({ type: 'jsonb', nullable: true })
+  onboardingProfile?: RetailTenantOnboardingProfile | null;
 
   @Column({ type: 'int', nullable: true })
   ownerUserId?: number | null;

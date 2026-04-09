@@ -39,6 +39,27 @@ import { Response } from 'express';
 import { CurrencyService } from '../common/services/currency.service';
 import { ProductsService } from '../products/products.service';
 import { DelivererService } from '../deliverer/deliverer.service';
+import { BranchStaffService } from '../branch-staff/branch-staff.service';
+import { AssignUserPosBranchDto } from './dto/assign-user-pos-branch.dto';
+import { BranchStaffRole } from '../branch-staff/entities/branch-staff-assignment.entity';
+import {
+  AuditFilters,
+  AuditService,
+  prettyAuditActionLabel,
+} from '../audit/audit.service';
+import { AuditQueryDto } from './dto/audit-query.dto';
+import { SellerWorkspaceService } from '../seller-workspace/seller-workspace.service';
+import {
+  SellerWorkspaceProfileResponseDto,
+  SellerWorkspaceOverviewResponseDto,
+} from '../seller-workspace/dto/seller-workspace-response.dto';
+import { SellerWorkspaceQueryDto } from '../seller-workspace/dto/seller-workspace-query.dto';
+
+const SELLER_ROLES = new Set([
+  UserRole.VENDOR,
+  UserRole.POS_MANAGER,
+  UserRole.POS_OPERATOR,
+]);
 
 // ✨ FINAL FIX: Use AuthGuard('jwt') to match your other working controllers
 @UseGuards(AuthGuard('jwt'), RolesGuard)
@@ -53,6 +74,9 @@ export class AdminController {
     private readonly currencyService: CurrencyService,
     private readonly productsService: ProductsService,
     private readonly delivererService: DelivererService,
+    private readonly branchStaffService: BranchStaffService,
+    private readonly auditService: AuditService,
+    private readonly sellerWorkspaceService: SellerWorkspaceService,
   ) {}
 
   // Prefer a specific route before the generic :id matcher to avoid ParseIntPipe errors
@@ -133,6 +157,12 @@ export class AdminController {
   @Get('users/:id')
   async getUser(@Param('id', ParseIntPipe) id: number) {
     const user = await this.usersService.findById(id);
+    const posAccess =
+      await this.branchStaffService.getAdminPosAccessForUser(id);
+    const roles = Array.isArray(user.roles) ? user.roles : [];
+    const sellerWorkspaceSummary = roles.some((role) => SELLER_ROLES.has(role))
+      ? await this.safeGetSellerWorkspaceSummary(id)
+      : null;
     const dto = plainToInstance(AdminUserResponseDto, user, {
       excludeExtraneousValues: true,
     });
@@ -148,7 +178,224 @@ export class AdminController {
       ...(dto as any),
       verificationDocuments: docs,
       productCount,
+      posBranchAssignments: posAccess.branchAssignments,
+      posWorkspaceActivationCandidates: posAccess.workspaceActivationCandidates,
+      sellerWorkspaceSummary,
     } as AdminUserResponseDto;
+  }
+
+  @Get('users/:id/pos-access')
+  async getUserPosAccess(@Param('id', ParseIntPipe) id: number) {
+    return this.branchStaffService.getAdminPosAccessForUser(id);
+  }
+
+  @Get('users/:id/seller-workspace')
+  async getUserSellerWorkspace(
+    @Param('id', ParseIntPipe) id: number,
+    @Query() query: SellerWorkspaceQueryDto,
+  ): Promise<SellerWorkspaceProfileResponseDto> {
+    await this.usersService.findById(id);
+    return this.sellerWorkspaceService.getProfile(id, query.windowHours);
+  }
+
+  @Get('users/:id/seller-workspace/overview')
+  async getUserSellerWorkspaceOverview(
+    @Param('id', ParseIntPipe) id: number,
+    @Query() query: SellerWorkspaceQueryDto,
+  ): Promise<SellerWorkspaceOverviewResponseDto> {
+    await this.usersService.findById(id);
+    return this.sellerWorkspaceService.getOverview(id, query.windowHours);
+  }
+
+  @Get('users/:id/audit')
+  async getUserAudit(
+    @Param('id', ParseIntPipe) id: number,
+    @Query() query: AuditQueryDto,
+  ) {
+    const mapItem = (it: any) => ({
+      id: it.id,
+      action: it.action,
+      actionLabel: prettyAuditActionLabel(it.action, it.meta),
+      reason: it.reason ?? null,
+      actorId: it.actorId ?? null,
+      actorEmail: it.actorEmail ?? null,
+      meta: it.meta ?? null,
+      createdAt: it.createdAt,
+    });
+
+    const p = query.page ?? 1;
+    const l = query.limit ?? 20;
+    const useCursor = !!query.after;
+    const actionList = (query.actions || '')
+      .split(',')
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+    const filters: AuditFilters = {
+      actions: actionList.length ? actionList : undefined,
+      actorEmail: query.actorEmail || undefined,
+      actorId: query.actorId,
+      from: query.from ? new Date(query.from) : undefined,
+      to: query.to ? new Date(query.to) : undefined,
+    };
+
+    if (useCursor) {
+      const { items, nextCursor } = await this.auditService.listForTargetCursor(
+        'user',
+        id,
+        { after: query.after, limit: l, filters },
+      );
+      return { items: items.map(mapItem), nextCursor };
+    }
+
+    const {
+      items,
+      total,
+      perPage,
+      totalPages,
+      page: currentPage,
+    } = await this.auditService.listForTargetPaged('user', id, {
+      page: p,
+      limit: l,
+      filters,
+    });
+
+    return {
+      items: items.map(mapItem),
+      total,
+      page: currentPage,
+      perPage,
+      totalPages,
+    };
+  }
+
+  private async safeGetSellerWorkspaceSummary(userId: number) {
+    try {
+      const overview = await this.sellerWorkspaceService.getOverview(userId);
+      return {
+        windowHours: overview.windowHours,
+        storeCount: overview.storeCount,
+        branchCount: overview.branchCount,
+        orderCount: overview.orderCount,
+        grossSales: overview.grossSales,
+        purchaseOrderCount: overview.purchaseOrderCount,
+        openPurchaseOrderCount: overview.openPurchaseOrderCount,
+        checkoutCount: overview.checkoutCount,
+        failedCheckoutCount: overview.failedCheckoutCount,
+        syncJobCount: overview.syncJobCount,
+        failedSyncJobCount: overview.failedSyncJobCount,
+        catalogProductCount: overview.catalogProductCount,
+        registerSessionCount: overview.registerSessionCount,
+        currentPlanCode: overview.currentPlanCode,
+        recommendedPlanCode: overview.recommendedPlanCode,
+        billingStatus: overview.workspace.billingStatus,
+        status: overview.workspace.status,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  @Post('users/:id/pos-assignments')
+  async assignUserPosBranch(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: AssignUserPosBranchDto,
+    @Req() req: any,
+  ) {
+    await this.usersService.findById(id);
+
+    const assignment = await this.branchStaffService.assign(dto.branchId, {
+      userId: id,
+      role: dto.role,
+      permissions: dto.permissions ?? [],
+    });
+    const posAccess =
+      await this.branchStaffService.getAdminPosAccessForUser(id);
+    const matchedAssignment = (posAccess.branchAssignments || []).find(
+      (entry) => entry.branchId === assignment.branchId,
+    );
+    await this.auditService.log({
+      action: 'user.pos.assignment.create',
+      targetType: 'user',
+      targetId: id,
+      actorId: req?.user?.id ?? null,
+      actorEmail: req?.user?.email ?? null,
+      meta: {
+        branchId: assignment.branchId,
+        branchName: matchedAssignment?.branchName ?? null,
+        retailTenantId: matchedAssignment?.retailTenantId ?? null,
+        retailTenantName: matchedAssignment?.retailTenantName ?? null,
+        role: assignment.role,
+        permissions: Array.isArray(assignment.permissions)
+          ? assignment.permissions
+          : [],
+      },
+    });
+
+    return {
+      assignment: {
+        id: assignment.id,
+        branchId: assignment.branchId,
+        userId: assignment.userId,
+        role: assignment.role,
+        permissions: Array.isArray(assignment.permissions)
+          ? assignment.permissions
+          : [],
+        isActive: assignment.isActive,
+        createdAt: assignment.createdAt,
+        updatedAt: assignment.updatedAt,
+      },
+      branchAssignments: posAccess.branchAssignments,
+      workspaceActivationCandidates: posAccess.workspaceActivationCandidates,
+    };
+  }
+
+  @Delete('users/:id/pos-assignments/:branchId')
+  async unassignUserPosBranch(
+    @Param('id', ParseIntPipe) id: number,
+    @Param('branchId', ParseIntPipe) branchId: number,
+    @Req() req: any,
+  ) {
+    await this.usersService.findById(id);
+
+    const existingPosAccess =
+      await this.branchStaffService.getAdminPosAccessForUser(id);
+    const matchedAssignment = (existingPosAccess.branchAssignments || []).find(
+      (entry) => entry.branchId === branchId,
+    );
+    const assignment = await this.branchStaffService.unassign(branchId, id);
+    await this.auditService.log({
+      action: 'user.pos.assignment.remove',
+      targetType: 'user',
+      targetId: id,
+      actorId: req?.user?.id ?? null,
+      actorEmail: req?.user?.email ?? null,
+      meta: {
+        branchId: assignment.branchId,
+        branchName: matchedAssignment?.branchName ?? null,
+        retailTenantId: matchedAssignment?.retailTenantId ?? null,
+        retailTenantName: matchedAssignment?.retailTenantName ?? null,
+        role: assignment.role,
+      },
+    });
+    const posAccess =
+      await this.branchStaffService.getAdminPosAccessForUser(id);
+
+    return {
+      assignment: {
+        id: assignment.id,
+        branchId: assignment.branchId,
+        userId: assignment.userId,
+        role: assignment.role,
+        permissions: Array.isArray(assignment.permissions)
+          ? assignment.permissions
+          : [],
+        isActive: assignment.isActive,
+        createdAt: assignment.createdAt,
+        updatedAt: assignment.updatedAt,
+      },
+      branchAssignments: posAccess.branchAssignments,
+      workspaceActivationCandidates: posAccess.workspaceActivationCandidates,
+    };
   }
 
   @Patch('users/:id')

@@ -37,6 +37,164 @@ Current focus:
 - expand `POS_CORE` from plan metadata into real retail ops contracts for branch sales throughput, payment recovery, and fulfillment backlog monitoring
 - keep new automation features tenant-scoped and policy-driven rather than introducing branch-local feature flags
 
+## POS-S Contract
+
+POS-S should be built against the implemented backend contract in `retail-ops.controller.ts` and `purchase-orders.controller.ts`, not against admin procurement routes or inferred backend behavior.
+
+POS portal auth/session routes:
+
+- `POST /api/pos-portal/auth/login`
+- `POST /api/pos-portal/auth/google`
+- `POST /api/pos-portal/auth/apple`
+- `GET /api/pos-portal/auth/session`
+
+POS checkout sync routes for the local-first register outbox:
+
+- `GET /api/pos/v1/checkouts?branchId=4&page=1&limit=20&status=PROCESSED&transactionType=SALE`
+- `GET /api/pos/v1/checkouts/:id?branchId=4`
+- `POST /api/pos/v1/checkouts/ingest`
+
+POS partner-device routes for terminals using partner credentials instead of staff JWTs:
+
+- `GET /api/pos/v1/checkouts/partner-history?branchId=4&page=1&limit=20`
+- `GET /api/pos/v1/checkouts/partner-history/:id?branchId=4`
+- `POST /api/pos/v1/checkouts/partner-ingest`
+- `GET /api/pos/v1/register/partner-sessions?branchId=4&page=1&limit=20`
+- `POST /api/pos/v1/register/partner-sessions`
+- `POST /api/pos/v1/register/partner-sessions/:id/close`
+- `GET /api/pos/v1/register/partner-suspended-carts?branchId=4&page=1&limit=20`
+- `POST /api/pos/v1/register/partner-suspended-carts`
+- `POST /api/pos/v1/register/partner-suspended-carts/:id/resume`
+- `POST /api/pos/v1/register/partner-suspended-carts/:id/discard`
+
+POS partner scope model:
+
+- `pos:sync:write` for inventory-oriented POS sync ingestion
+- `pos:checkout:read` for checkout history/detail reads
+- `pos:checkout:write` for checkout receipt ingestion
+- `pos:register:read` for register session and suspended-cart reads
+- `pos:register:write` for register session open/close and suspended-cart mutations
+- legacy scopes `sync:write` and `pos:ingest` are still accepted only as aliases for `pos:sync:write` during the transition
+- when admin creates a new POS credential without explicitly supplying scopes, the backend now defaults it to the full explicit POS terminal bundle above
+
+POS partner scope presets for admin issuance:
+
+- `FULL_TERMINAL`: full checkout, register, and sync access
+- `CASHIER_TERMINAL`: checkout read/write plus register read/write, without inventory sync
+- `INVENTORY_TERMINAL`: sync write plus read-only checkout/register visibility
+- `SYNC_ONLY`: inventory sync only
+- admin clients should prefer `scopePreset` for normal POS terminal issuance and only send explicit `scopes` when they need a custom override beyond the standard preset bundles
+
+POS portal auth purpose:
+
+- exchange email/password, Google ID token, or Apple identity token for the normal Suuq JWT pair
+- resolve active POS branch workspaces from branch ownership or branch staff assignments
+- filter branch access down to branches with active Retail OS access that explicitly include the `POS_CORE` entitlement
+- return a portal-ready payload with `branches`, `defaultBranchId`, `requiresBranchSelection`, and `portalKey`
+- reject authenticated accounts that are not linked to any active POS branch workspace
+
+POS-S workspace model:
+
+- POS-S is one branch-workspace product, not a different product per seller category or seller size
+- seller workspace data remains the business-level view, while each branch workspace is the operating and billable unit for checkout, stock, staff, and supplier execution
+- grocery, pharmacy, fashion, electronics, and other retail categories all enter through the same branch-workspace contract when they need `POS_CORE`
+- small sellers usually begin with one branch workspace, medium sellers add more branch coordination, and large sellers depend on the same backend truth across many branch workspaces rather than switching to a separate POS system
+- Suuq S demand, POS-S operations, and B2B replenishment must continue to read from the same backend truth instead of forking category-specific workspace rules
+
+Best-fit POS-S user categories:
+
+- direct retail fit: grocery, pharmacy, fashion, electronics
+- food-service preset fit: cafeteria, bakery counter, juice bar, takeaway kiosk
+- hospitality extension fit: quick-service restaurant
+- hospitality layer required: full-service restaurant
+
+POS portal activation routes:
+
+- `POST /api/pos-portal/auth/activation/trial`
+- `POST /api/pos-portal/auth/activation`
+
+POS portal activation contract:
+
+- `POST /api/pos-portal/auth/activation/trial` request body: `{ "branchId": 21 }`
+- trial activation response returns `branchId`, `branchName`, `status="TRIAL"`, `trialStartedAt`, `trialEndsAt`, `trialDaysRemaining`, and `providerMessage`
+- `POST /api/pos-portal/auth/activation` request body: `{ "branchId": 21, "phoneNumber": "0911223344" }`
+- paid activation response returns `branchId`, `branchName`, `referenceId`, `status`, `checkoutUrl`, `receiveCode`, and `providerMessage`
+- trial activation is for the one 15-day branch-workspace opening path; paid activation remains the monthly Ebirr path
+
+POS portal session payload fields used by POS-S and admin audit:
+
+- each branch summary can now include `workspaceStatus`, `subscriptionStatus`, `planCode`, `canStartTrial`, `canStartActivation`, `canOpenNow`, `trialStartedAt`, `trialEndsAt`, and `trialDaysRemaining`
+- `canStartTrial=true` means the branch is eligible to open immediately through the self-serve trial path
+- `canOpenNow=true` means the branch already has access through `ACTIVE` or `TRIAL` workspace status and can be entered directly from the current POS session
+- admin and seller surfaces should treat these fields as backend truth instead of rebuilding branch activation state from older subscription heuristics
+
+Retail Ops routes already implemented for POS-S:
+
+- `GET /api/retail/v1/ops/pos-operations`
+- `GET /api/retail/v1/ops/pos-operations/network-summary`
+- `GET /api/retail/v1/ops/pos-operations/exceptions`
+- `GET /api/retail/v1/ops/pos-operations/exceptions/network-summary`
+- `GET /api/retail/v1/ops/pos-operations/orders/:id`
+- `GET /api/retail/v1/ops/stock-health`
+- `GET /api/retail/v1/ops/stock-health/network-summary`
+- `GET /api/retail/v1/ops/replenishment-drafts`
+- `GET /api/retail/v1/ops/replenishment-drafts/network-summary`
+- `POST /api/retail/v1/ops/replenishment-drafts/:id/re-evaluate`
+- `GET /api/retail/v1/ops/hr-attendance`
+- `GET /api/retail/v1/ops/hr-attendance/staff/:userId`
+- `GET /api/retail/v1/ops/hr-attendance/exceptions`
+- `GET /api/retail/v1/ops/hr-attendance/network-summary`
+- `GET /api/retail/v1/ops/hr-attendance/compliance-summary`
+
+Hub purchase-order routes used by POS-S:
+
+- `GET /api/hub/v1/purchase-orders`
+- `POST /api/hub/v1/purchase-orders`
+- `POST /api/hub/v1/purchase-orders/:id/re-evaluate-auto-replenishment`
+- `PATCH /api/hub/v1/purchase-orders/:id/status`
+- `GET /api/hub/v1/purchase-orders/:id/receipt-events`
+- `POST /api/hub/v1/purchase-orders/:id/receipt-events`
+- `PATCH /api/hub/v1/purchase-orders/:id/receipt-events/:eventId/acknowledge`
+- `PATCH /api/hub/v1/purchase-orders/:id/receipt-events/:eventId/discrepancy-resolution`
+- `PATCH /api/hub/v1/purchase-orders/:id/receipt-events/:eventId/discrepancy-approval`
+
+POS-S branch-scoping rules:
+
+- retail routes remain explicitly branch-driven by `branchId` in query or body DTOs
+- hub purchase-order reads and mutations now accept optional `branchId` query scoping for POS-S alignment
+- when `branchId` is provided on hub purchase-order routes, list/read/mutation access is constrained to that branch
+- POS-S should send `branchId` on hub purchase-order requests when operating as a branch workspace
+
+Role expectations for POS-S purchase-order actions:
+
+- `POS_MANAGER` and `B2B_BUYER` may list, create, re-evaluate, update status, record receipt events, acknowledge receipt events, resolve discrepancies, and approve discrepancy resolutions
+- `SUPPLIER_ACCOUNT` remains valid on supplier-side purchase-order and receipt workflows where already allowed by the controller
+- POS-S should not assume access to admin procurement endpoints or admin-only discrepancy force-close behavior
+
+Guardrails for POS-S:
+
+- do not switch POS-S to admin procurement routes
+- do not assume a dedicated hub purchase-order detail endpoint exists unless it is added explicitly
+- keep hub re-evaluation on `POST /api/hub/v1/purchase-orders/:id/re-evaluate-auto-replenishment`
+- keep frontend form payloads aligned to shared DTO validation for positive ids, numeric quantities, and 3-letter currency codes
+- keep register checkout sync separate from inventory-only POS sync jobs; the new checkout surface is the receipt/outbox contract
+- partner-device routes use the same branch binding as POS sync keys; do not send a branch outside the credential's bound branch
+- issue new POS terminal credentials with explicit `pos:*` scopes instead of the legacy sync aliases so read and write surfaces can be separated per device
+
+POS checkout sync contract:
+
+- `POST /api/pos/v1/checkouts/ingest` accepts a branch-scoped register receipt payload with `transactionType=SALE|RETURN`, totals, tenders, and line items.
+- `registerSessionId` now references the server-side numeric session opened through `/api/pos/v1/register/sessions`; `suspendedCartId` optionally consumes a cart created through `/api/pos/v1/register/suspended-carts`.
+- Each line item must include either `productId` or `aliasType` plus `aliasValue`; alias resolution follows the same branch and partner precedence used by POS sync jobs.
+- Receipt ingestion is idempotent by `idempotencyKey` or `externalCheckoutId` within a branch.
+- Successful `SALE` checkouts write one negative `SALE` stock movement per item; successful `RETURN` checkouts write one positive `ADJUSTMENT` stock movement per item.
+- Checkout ingestion is atomic at the receipt level for inventory side effects; business-rule failures are persisted as `FAILED` checkout records with `failureReason` so POS-S can reconcile its local outbox.
+- When `registerSessionId` is supplied, the checkout must target an open session on the same branch and register; when `suspendedCartId` is supplied, the cart must still be `SUSPENDED` and is marked `RESUMED` after a successful sale checkout.
+- `GET /api/pos/v1/checkouts` returns paginated branch history with optional `status`, `transactionType`, `registerId`, and `registerSessionId` filters.
+- `GET /api/pos/v1/checkouts/:id` returns the full stored receipt payload, including `items[]`, `tenders[]`, and any persisted failure reason.
+- The `partner-history` and `partner-ingest` checkout routes mirror the JWT checkout contract but derive `partnerCredentialId` from the presented POS key.
+- The `partner-sessions` and `partner-suspended-carts` routes mirror the JWT register contract for hardware terminals that authenticate with partner credentials instead of staff sessions.
+
 ### Stack
 
 - Node.js 20+, NestJS 11, TypeORM, PostgreSQL, Redis (optional for rate limiting/cache), S3-compatible storage, Jest.
@@ -52,6 +210,109 @@ yarn install
 cp .env.example .env   # if you keep one; otherwise create from sample below
 yarn start:dev          # runs on http://localhost:3000 by default
 ```
+
+## Vendor Portal Auth Contract
+
+The vendor portal should use a social-first auth flow and must not rely on manual JWT paste as the primary production path.
+
+Portal-specific endpoints:
+
+- `POST /api/vendor-portal/auth/login`
+- `POST /api/vendor-portal/auth/google`
+- `POST /api/vendor-portal/auth/apple`
+- `GET /api/vendor-portal/auth/session`
+
+Purpose:
+
+- exchange email/password, Google ID token, or Apple identity token for the normal Suuq JWT pair
+- immediately resolve the authenticated user's vendor and vendor-staff store memberships
+- return a portal-ready session payload so the frontend can auto-enter a single-store workspace or show a store chooser
+- reject authenticated accounts that are not linked to any vendor workspace
+
+Login request bodies:
+
+- Google: `{ "idToken": "..." }`
+- Apple: `{ "idToken": "..." }` or `{ "identityToken": "...", "email"?: "...", "name"?: "..." }`
+
+Response shape for login/session:
+
+```json
+{
+  "accessToken": "jwt",
+  "refreshToken": "jwt",
+  "user": {
+    "id": 123,
+    "email": "vendor@example.com",
+    "roles": ["VENDOR"]
+  },
+  "stores": [
+    {
+      "vendorId": 123,
+      "storeName": "My Store",
+      "permissions": ["MANAGE_PRODUCTS"],
+      "title": "Owner",
+      "joinedAt": "2026-03-28T00:00:00.000Z"
+    }
+  ],
+  "defaultVendorId": 123,
+  "requiresStoreSelection": false
+}
+```
+
+Non-vendor rejection contract:
+
+- status: `403`
+- body code: `VENDOR_PORTAL_ACCESS_DENIED`
+- body message: `This account is not linked to any vendor store or staff workspace.`
+
+Required backend env for social sign-in:
+
+- Google: `GOOGLE_WEB_CLIENT_ID` and, if used by mobile/native clients, `GOOGLE_ANDROID_CLIENT_ID`, `GOOGLE_IOS_CLIENT_ID`
+- Apple: `APPLE_AUDIENCES` or `APPLE_CLIENT_IDS` or `APPLE_BUNDLE_ID`
+
+Google Cloud Console requirements for the vendor portal web client:
+
+- the Google OAuth web client used as `VITE_GOOGLE_CLIENT_ID` must list `https://vendor.ugasfuad.com` under Authorized JavaScript origins
+- add any additional real portal origins separately, for example `https://www.vendor.ugasfuad.com` if that hostname is served
+- if local development uses Google Sign-In, register the exact dev origin too, for example `http://localhost:5173`
+- `origin_mismatch` happens before `/api/vendor-portal/auth/google` is called, so it is a Google OAuth client configuration issue rather than a backend token-exchange issue
+
+Google Cloud Console requirements for the POS portal web client:
+
+- the Google OAuth web client used as `VITE_GOOGLE_CLIENT_ID` for POS-S must list `https://pos.ugasfuad.com` under Authorized JavaScript origins
+- add any additional real POS origins separately, for example `https://www.pos.ugasfuad.com` if that hostname is served
+- if local development uses Google Sign-In, register the exact dev origin too, for example `http://localhost:5173`
+- `origin_mismatch` happens before `/api/pos-portal/auth/google` is called, so it is a Google OAuth client configuration issue rather than a backend token-exchange issue
+
+## Seller Workspace Contract
+
+The seller-facing workspace should read from the backend seller projection instead of stitching vendor, POS, and subscription data independently in every client.
+
+Workspace endpoints:
+
+- `GET /api/seller/v1/workspace/profile`
+- `GET /api/seller/v1/workspace/overview?windowHours=24`
+- `GET /api/seller/v1/workspace/plans?windowHours=24`
+
+Purpose:
+
+- project the authenticated seller identity across vendor stores and POS branch workspaces
+- expose channel connectivity across POS-S, Suuq S, B2B, and the shared backend
+- translate current operational signals into a seller plan recommendation
+- surface onboarding readiness without creating a second tenant or billing model
+
+Current backend behavior:
+
+- access is granted when the authenticated account is linked to at least one vendor store or POS branch workspace
+- current plan is derived from active retail tenant subscriptions first, then falls back to legacy user subscription metadata when needed
+- recommended plan is derived from live branch count, order volume, sales volume, and purchase-order activity in the requested window
+- onboarding status is derived from linked store access, branch access, active retail subscriptions, published catalog, register activity, and supplier purchasing activity
+
+Seller workspace rejection contract:
+
+- status: `403`
+- body code: `SELLER_WORKSPACE_ACCESS_DENIED`
+- body message: `This account is not linked to any seller store or POS workspace.`
 
 ### Sample .env
 
@@ -70,7 +331,7 @@ DB_PASSWORD=postgres
 DB_DATABASE=suuq
 
 # CORS / origins
-ALLOWED_ORIGINS=http://localhost:5173,http://localhost:3000
+ALLOWED_ORIGINS=http://localhost:5173,http://localhost:3000,https://pos.ugasfuad.com,https://vendor.ugasfuad.com
 
 # Redis (optional but recommended for throttling/cache/idempotency)
 REDIS_URL=redis://localhost:6379

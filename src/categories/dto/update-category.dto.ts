@@ -1,5 +1,13 @@
-import { IsString, IsOptional, IsInt, Matches, Min } from 'class-validator';
+import {
+  IsString,
+  IsOptional,
+  IsInt,
+  Matches,
+  Min,
+  IsEnum,
+} from 'class-validator';
 import { Transform } from 'class-transformer';
+import { PosUserFitCategory } from '../entities/category.entity';
 
 export class UpdateCategoryDto {
   @IsString()
@@ -62,4 +70,15 @@ export class UpdateCategoryDto {
       : Number(value),
   )
   sortOrder?: number;
+
+  @IsEnum(PosUserFitCategory)
+  @IsOptional()
+  @Transform(({ value }: { value: unknown }) => {
+    if (value === '' || value === null) {
+      return null;
+    }
+
+    return typeof value === 'string' ? value.trim().toUpperCase() : value;
+  })
+  posSuggestedUserFit?: PosUserFitCategory | null;
 }

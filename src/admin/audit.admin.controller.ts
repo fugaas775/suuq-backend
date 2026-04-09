@@ -21,6 +21,7 @@ import { AuditQueryDto } from './dto/audit-query.dto';
 
 const ALLOWED_TARGET_TYPES = new Set([
   'vendor',
+  'user',
   'ORDER_SELF_PURCHASE',
   'ORDER_ITEM_DOWNLOAD',
   'FREE_PRODUCT_DOWNLOAD',

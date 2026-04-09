@@ -22,8 +22,12 @@ describe('Vendor Staff Integration (e2e)', () => {
   let staffUser: User;
   let staffRecordId: number;
 
+  let customerToken: string;
+  let customerUser: User;
+
   const vendorEmail = `vendor_${Date.now()}@test.com`;
   const staffEmail = `staff_${Date.now()}@test.com`;
+  const customerEmail = `customer_${Date.now()}@test.com`;
   const password = 'Password@123';
 
   const emailServiceMock = {
@@ -92,12 +96,29 @@ describe('Vendor Staff Integration (e2e)', () => {
 
     staffToken = staffLogin.body.accessToken;
     staffUser = await userRepo.findOne({ where: { email: staffEmail } });
+
+    await request(app.getHttpServer())
+      .post('/auth/register')
+      .send({
+        email: customerEmail,
+        password: password,
+      })
+      .expect(200);
+
+    const customerLogin = await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ email: customerEmail, password: password })
+      .expect(200);
+
+    customerToken = customerLogin.body.accessToken;
+    customerUser = await userRepo.findOne({ where: { email: customerEmail } });
   }, 120000);
 
   afterAll(async () => {
     try {
       if (vendorUser) await userRepo.delete(vendorUser.id);
       if (staffUser) await userRepo.delete(staffUser.id);
+      if (customerUser) await userRepo.delete(customerUser.id);
     } catch {
       /* ignore */
     } finally {
@@ -184,6 +205,35 @@ describe('Vendor Staff Integration (e2e)', () => {
         expect(store).toBeDefined();
         expect(store.title).toBe('Owner');
         expect(store.storeName).toBeDefined();
+      });
+  });
+
+  it('/vendor-portal/auth/session (GET) - Returns vendor portal session payload', async () => {
+    await request(app.getHttpServer())
+      .get('/vendor-portal/auth/session')
+      .set('Authorization', `Bearer ${vendorToken}`)
+      .expect(200)
+      .expect((res: any) => {
+        expect(res.body.user).toBeDefined();
+        expect(res.body.user.id).toBe(vendorUser.id);
+        expect(Array.isArray(res.body.stores)).toBe(true);
+        expect(res.body.stores).toHaveLength(1);
+        expect(res.body.stores[0].vendorId).toBe(vendorUser.id);
+        expect(res.body.defaultVendorId).toBe(vendorUser.id);
+        expect(res.body.requiresStoreSelection).toBe(false);
+      });
+  });
+
+  it('/vendor-portal/auth/session (GET) - Rejects non-vendor accounts', async () => {
+    await request(app.getHttpServer())
+      .get('/vendor-portal/auth/session')
+      .set('Authorization', `Bearer ${customerToken}`)
+      .expect(403)
+      .expect((res: any) => {
+        expect(res.body.message).toBe(
+          'This account is not linked to any vendor store or staff workspace.',
+        );
+        expect(res.body.code).toBe('VENDOR_PORTAL_ACCESS_DENIED');
       });
   });
 

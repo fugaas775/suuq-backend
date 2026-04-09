@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, jest } from '@jest/globals';
 import { Test, TestingModule } from '@nestjs/testing';
+import { ForbiddenException } from '@nestjs/common';
 import { VendorService } from './vendor.service';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { User } from '../users/entities/user.entity';
@@ -354,6 +355,95 @@ describe('VendorService', () => {
     const firstSavedPayload = txProductSave.mock.calls[0][0];
     expect(firstSavedPayload.createdById).toBe(99);
     expect(firstSavedPayload.createdByName).toBe('Vendor Staff');
+  });
+
+  it('createMyProductsBulk returns per-row results and continues after failures by default', async () => {
+    const createSpy = jest
+      .spyOn(service, 'createMyProduct')
+      .mockResolvedValueOnce({
+        id: 1001,
+        name: 'Row 1',
+        status: 'publish',
+      } as any)
+      .mockRejectedValueOnce(new ForbiddenException('Row 2 failed'))
+      .mockResolvedValueOnce({
+        id: 1003,
+        name: 'Row 3',
+        status: 'publish',
+      } as any);
+
+    const result = await service.createMyProductsBulk(
+      1,
+      {
+        rows: [
+          { name: 'Row 1', price: 10, currency: 'USD' } as any,
+          { name: 'Row 2', price: 11, currency: 'USD' } as any,
+          { name: 'Row 3', price: 12, currency: 'USD' } as any,
+        ],
+      },
+      { id: 99 } as any,
+    );
+
+    expect(createSpy).toHaveBeenCalledTimes(3);
+    expect(result).toEqual({
+      totalRows: 3,
+      createdCount: 2,
+      failedCount: 1,
+      stoppedEarly: false,
+      created: [
+        { rowIndex: 0, productId: 1001, name: 'Row 1', status: 'publish' },
+        { rowIndex: 2, productId: 1003, name: 'Row 3', status: 'publish' },
+      ],
+      failures: [
+        {
+          rowIndex: 1,
+          row: { name: 'Row 2', price: 11, currency: 'USD' },
+          error: 'Row 2 failed',
+        },
+      ],
+    });
+  });
+
+  it('createMyProductsBulk stops on first failure when continueOnError is false', async () => {
+    const createSpy = jest
+      .spyOn(service, 'createMyProduct')
+      .mockResolvedValueOnce({
+        id: 1001,
+        name: 'Row 1',
+        status: 'publish',
+      } as any)
+      .mockRejectedValueOnce(new ForbiddenException('Row 2 failed'));
+
+    const result = await service.createMyProductsBulk(
+      1,
+      {
+        continueOnError: false,
+        rows: [
+          { name: 'Row 1', price: 10, currency: 'USD' } as any,
+          { name: 'Row 2', price: 11, currency: 'USD' } as any,
+          { name: 'Row 3', price: 12, currency: 'USD' } as any,
+        ],
+      },
+      { id: 99 } as any,
+    );
+
+    expect(createSpy).toHaveBeenCalledTimes(2);
+    expect(result).toEqual({
+      totalRows: 3,
+      createdCount: 1,
+      failedCount: 1,
+      stoppedEarly: true,
+      created: [
+        { rowIndex: 0, productId: 1001, name: 'Row 1', status: 'publish' },
+      ],
+      failures: [
+        {
+          rowIndex: 1,
+          row: { name: 'Row 2', price: 11, currency: 'USD' },
+          error: 'Row 2 failed',
+        },
+      ],
+    });
   });
 
   it('getVendorProducts returns explicit listedBy staff classification', async () => {

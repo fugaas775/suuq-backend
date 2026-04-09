@@ -6,6 +6,7 @@ import {
   ParseIntPipe,
   Patch,
   Post,
+  Query,
   Put,
   UseGuards,
 } from '@nestjs/common';
@@ -18,6 +19,8 @@ import { ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ApplyRetailPlanPresetDto } from './dto/apply-retail-plan-preset.dto';
 import { CreateRetailTenantDto } from './dto/create-retail-tenant.dto';
 import { CreateTenantSubscriptionDto } from './dto/create-tenant-subscription.dto';
+import { ListRetailTenantsQueryDto } from './dto/list-retail-tenants-query.dto';
+import { UpdateRetailTenantOnboardingProfileDto } from './dto/update-retail-tenant-onboarding-profile.dto';
 import {
   AppliedRetailPlanPresetResponseDto,
   RetailPlanPresetResponseDto,
@@ -48,8 +51,8 @@ export class RetailAdminController {
   }
 
   @Get()
-  listTenants() {
-    return this.retailEntitlementsService.listTenants();
+  listTenants(@Query() query: ListRetailTenantsQueryDto) {
+    return this.retailEntitlementsService.listTenants(query);
   }
 
   @Get(':id')
@@ -97,6 +100,14 @@ export class RetailAdminController {
       module,
       dto,
     );
+  }
+
+  @Patch(':id/onboarding-profile')
+  updateOnboardingProfile(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateRetailTenantOnboardingProfileDto,
+  ) {
+    return this.retailEntitlementsService.updateOnboardingProfile(id, dto);
   }
 
   @Post(':id/subscriptions')

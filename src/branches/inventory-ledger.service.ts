@@ -1,7 +1,9 @@
 import {
   BadRequestException,
+  Inject,
   Injectable,
   NotFoundException,
+  forwardRef,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, Repository } from 'typeorm';
@@ -48,6 +50,7 @@ type AdjustProjectionParams = {
 export class InventoryLedgerService {
   constructor(
     private readonly dataSource: DataSource,
+    @Inject(forwardRef(() => ReplenishmentService))
     private readonly replenishmentService: ReplenishmentService,
     @InjectRepository(Branch)
     private readonly branchesRepository: Repository<Branch>,
@@ -61,6 +64,22 @@ export class InventoryLedgerService {
 
   async getOnHand(branchId: number, productId: number): Promise<number> {
     const inventory = await this.branchInventoryRepository.findOne({
+      where: { branchId, productId },
+    });
+
+    return inventory?.quantityOnHand ?? 0;
+  }
+
+  async getOnHandWithManager(
+    branchId: number,
+    productId: number,
+    manager?: EntityManager,
+  ): Promise<number> {
+    if (!manager) {
+      return this.getOnHand(branchId, productId);
+    }
+
+    const inventory = await manager.getRepository(BranchInventory).findOne({
       where: { branchId, productId },
     });
 

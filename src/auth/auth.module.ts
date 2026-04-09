@@ -8,6 +8,7 @@ import { JwtStrategy } from './jwt.strategy';
 import { UsersModule } from '../users/users.module';
 import { EmailModule } from '../email/email.module';
 import { RedisModule } from '../redis/redis.module';
+import { EffectiveUserRoleService } from './effective-user-role.service';
 
 @Global() // 2. Add the @Global() decorator
 @Module({
@@ -24,7 +25,12 @@ import { RedisModule } from '../redis/redis.module';
     EmailModule,
     RedisModule,
   ],
-  providers: [AuthService, JwtStrategy, ConfigService],
+  providers: [
+    AuthService,
+    JwtStrategy,
+    ConfigService,
+    EffectiveUserRoleService,
+  ],
   controllers: [AuthController],
   exports: [AuthService],
 })

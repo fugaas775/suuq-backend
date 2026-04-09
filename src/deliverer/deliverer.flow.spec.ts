@@ -15,6 +15,7 @@ import { EmailService } from '../email/email.service';
 import { CurrencyService } from '../common/services/currency.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
+import { InventoryLedgerService } from '../branches/inventory-ledger.service';
 import { NotFoundException, ForbiddenException } from '@nestjs/common';
 
 describe('DelivererService - Reject Assignment Flow', () => {
@@ -70,6 +71,7 @@ describe('DelivererService - Reject Assignment Flow', () => {
           useValue: { createAndDispatch: jest.fn() },
         },
         { provide: RealtimeGateway, useValue: {} },
+        { provide: InventoryLedgerService, useValue: {} },
       ],
     }).compile();
 

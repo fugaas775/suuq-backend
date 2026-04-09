@@ -3,6 +3,7 @@
 import {
   Controller,
   Get,
+  Header,
   Put,
   Patch,
   Body,
@@ -71,12 +72,14 @@ export class SettingsController {
 
   // This endpoint is now correctly PUBLIC
   @Get('ui-settings')
+  @Header('Cache-Control', 'public, max-age=60, stale-while-revalidate=120')
   async getUiSettings() {
     return this.settingsService.getAllSettings();
   }
 
   // Explicit root handler for /api/settings
   @Get()
+  @Header('Cache-Control', 'public, max-age=60, stale-while-revalidate=120')
   async getAllRoot() {
     return this.settingsService.getAllSettings();
   }

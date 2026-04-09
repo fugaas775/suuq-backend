@@ -11,6 +11,7 @@
     "sourceMap": true,
     "outDir": "./dist",
     "noEmit": false,
+    "ignoreDeprecations": "5.0",
     "baseUrl": "./",
     "incremental": true,
     "skipLibCheck": true,

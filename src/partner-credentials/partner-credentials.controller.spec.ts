@@ -9,6 +9,11 @@ import {
   PartnerCredentialStatus,
   PartnerType,
 } from './entities/partner-credential.entity';
+import {
+  DEFAULT_POS_PARTNER_SCOPES,
+  PosPartnerScope,
+  PosPartnerScopePreset,
+} from './partner-credential-scopes';
 
 describe('PartnerCredentialsController', () => {
   let controller: PartnerCredentialsController;
@@ -51,7 +56,7 @@ describe('PartnerCredentialsController', () => {
             city: 'Mogadishu',
             country: 'Somalia',
           },
-          scopes: ['sync:write'],
+          scopes: [PosPartnerScope.POS_SYNC_WRITE],
           keyHash: 'should-not-be-exposed',
           status: PartnerCredentialStatus.ACTIVE,
           createdAt: new Date('2026-03-16T00:00:00.000Z'),
@@ -101,7 +106,7 @@ describe('PartnerCredentialsController', () => {
               city: 'Mogadishu',
               country: 'Somalia',
             },
-            scopes: ['sync:write'],
+            scopes: [PosPartnerScope.POS_SYNC_WRITE],
             status: PartnerCredentialStatus.ACTIVE,
           }),
         ],
@@ -117,7 +122,7 @@ describe('PartnerCredentialsController', () => {
       partnerType: PartnerType.POS,
       branchId: 3,
       branch: null,
-      scopes: ['sync:write'],
+      scopes: DEFAULT_POS_PARTNER_SCOPES,
       keyHash: 'should-not-be-exposed',
       status: PartnerCredentialStatus.ACTIVE,
       createdAt: new Date('2026-03-16T00:00:00.000Z'),
@@ -128,7 +133,8 @@ describe('PartnerCredentialsController', () => {
       name: 'POS Link',
       partnerType: PartnerType.POS,
       branchId: 3,
-      scopes: ['sync:write'],
+      scopePreset: PosPartnerScopePreset.FULL_TERMINAL,
+      scopes: undefined,
       keyHash: 'secret',
     });
 
@@ -139,7 +145,7 @@ describe('PartnerCredentialsController', () => {
         partnerType: PartnerType.POS,
         branchId: 3,
         branch: null,
-        scopes: ['sync:write'],
+        scopes: DEFAULT_POS_PARTNER_SCOPES,
         status: PartnerCredentialStatus.ACTIVE,
       }),
     );

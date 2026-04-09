@@ -50,6 +50,17 @@ type ReceiptLineSummary = {
   note?: string | null;
 };
 
+type PurchaseOrderScope = {
+  branchId?: number;
+};
+
+type PurchaseOrderActorContext = {
+  id?: number | null;
+  email?: string | null;
+  roles?: string[];
+  branchId?: number;
+};
+
 const PURCHASE_ORDER_TRANSITIONS: Record<
   PurchaseOrderStatus,
   PurchaseOrderStatus[]
@@ -198,8 +209,9 @@ export class PurchaseOrdersService {
     return this.findOneById(purchaseOrder.id);
   }
 
-  async findAll(): Promise<PurchaseOrder[]> {
+  async findAll(scope: PurchaseOrderScope = {}): Promise<PurchaseOrder[]> {
     return this.purchaseOrdersRepository.find({
+      where: scope.branchId ? { branchId: scope.branchId } : undefined,
       order: { createdAt: 'DESC' },
       relations: {
         branch: true,
@@ -209,8 +221,11 @@ export class PurchaseOrdersService {
     });
   }
 
-  async listReceiptEvents(id: number): Promise<PurchaseOrderReceiptEvent[]> {
-    await this.findOneById(id);
+  async listReceiptEvents(
+    id: number,
+    scope: PurchaseOrderScope = {},
+  ): Promise<PurchaseOrderReceiptEvent[]> {
+    await this.findOneById(id, scope);
     return this.purchaseOrderReceiptEventsRepository.find({
       where: { purchaseOrderId: id },
       order: { createdAt: 'DESC' },
@@ -220,13 +235,11 @@ export class PurchaseOrdersService {
   async recordReceiptEvent(
     id: number,
     dto: RecordPurchaseOrderReceiptDto,
-    actor: {
-      id?: number | null;
-      email?: string | null;
-      roles?: string[];
-    } = {},
+    actor: PurchaseOrderActorContext = {},
   ): Promise<PurchaseOrder> {
-    const purchaseOrder = await this.findOneById(id);
+    const purchaseOrder = await this.findOneById(id, {
+      branchId: actor.branchId,
+    });
     const previousStatus = purchaseOrder.status;
     const previousInboundProjection =
       this.buildInboundOpenPoProjection(purchaseOrder);
@@ -322,17 +335,14 @@ export class PurchaseOrdersService {
     purchaseOrderId: number,
     eventId: number,
     dto: AcknowledgePurchaseOrderReceiptDto,
-    actor: {
-      id?: number | null;
-      email?: string | null;
-      roles?: string[];
-    } = {},
+    actor: PurchaseOrderActorContext = {},
   ): Promise<PurchaseOrderReceiptEvent> {
-    this.assertSupplierReceiptRole(actor.roles ?? []);
+    this.assertReceiptAcknowledgementRole(actor.roles ?? []);
 
     const receiptEvent = await this.findReceiptEventOrThrow(
       purchaseOrderId,
       eventId,
+      { branchId: actor.branchId },
     );
     if (receiptEvent.supplierAcknowledgedAt) {
       return receiptEvent;
@@ -363,17 +373,14 @@ export class PurchaseOrdersService {
     purchaseOrderId: number,
     eventId: number,
     dto: ResolvePurchaseOrderReceiptDiscrepancyDto,
-    actor: {
-      id?: number | null;
-      email?: string | null;
-      roles?: string[];
-    } = {},
+    actor: PurchaseOrderActorContext = {},
   ): Promise<PurchaseOrderReceiptEvent> {
-    this.assertSupplierReceiptRole(actor.roles ?? []);
+    this.assertReceiptAcknowledgementRole(actor.roles ?? []);
 
     const receiptEvent = await this.findReceiptEventOrThrow(
       purchaseOrderId,
       eventId,
+      { branchId: actor.branchId },
     );
     if (!this.hasReceiptDiscrepancy(receiptEvent)) {
       throw new BadRequestException(
@@ -423,17 +430,14 @@ export class PurchaseOrdersService {
     purchaseOrderId: number,
     eventId: number,
     dto: ApprovePurchaseOrderReceiptDiscrepancyDto,
-    actor: {
-      id?: number | null;
-      email?: string | null;
-      roles?: string[];
-    } = {},
+    actor: PurchaseOrderActorContext = {},
   ): Promise<PurchaseOrderReceiptEvent> {
     this.assertBuyerReceiptApprovalRole(actor.roles ?? []);
 
     const receiptEvent = await this.findReceiptEventOrThrow(
       purchaseOrderId,
       eventId,
+      { branchId: actor.branchId },
     );
     if (
       receiptEvent.discrepancyStatus !==
@@ -485,17 +489,14 @@ export class PurchaseOrdersService {
     purchaseOrderId: number,
     eventId: number,
     dto: ForceClosePurchaseOrderReceiptDiscrepancyDto,
-    actor: {
-      id?: number | null;
-      email?: string | null;
-      roles?: string[];
-    } = {},
+    actor: PurchaseOrderActorContext = {},
   ): Promise<PurchaseOrderReceiptEvent> {
     this.assertAdminReceiptOverrideRole(actor.roles ?? []);
 
     const receiptEvent = await this.findReceiptEventOrThrow(
       purchaseOrderId,
       eventId,
+      { branchId: actor.branchId },
     );
     if (!this.hasReceiptDiscrepancy(receiptEvent)) {
       throw new BadRequestException(
@@ -554,13 +555,11 @@ export class PurchaseOrdersService {
   async updateStatus(
     id: number,
     dto: UpdatePurchaseOrderStatusDto,
-    actor: {
-      id?: number | null;
-      email?: string | null;
-      roles?: string[];
-    } = {},
+    actor: PurchaseOrderActorContext = {},
   ): Promise<PurchaseOrder> {
-    const purchaseOrder = await this.findOneById(id);
+    const purchaseOrder = await this.findOneById(id, {
+      branchId: actor.branchId,
+    });
     const previousStatus = purchaseOrder.status;
     const updatedPurchaseOrder = await this.updateLoadedStatus(
       purchaseOrder,
@@ -592,26 +591,19 @@ export class PurchaseOrdersService {
     id: number,
     dto: UpdatePurchaseOrderStatusDto,
     manager: EntityManager,
-    actor: {
-      id?: number | null;
-      email?: string | null;
-      roles?: string[];
-    } = {},
+    actor: PurchaseOrderActorContext = {},
   ): Promise<PurchaseOrder> {
     const purchaseOrder = await this.findOneByIdUsingRepository(
       manager.getRepository(PurchaseOrder),
       id,
+      { branchId: actor.branchId },
     );
     return this.updateLoadedStatus(purchaseOrder, dto, actor, manager);
   }
 
   async reevaluateAutoReplenishmentDraft(
     id: number,
-    actor: {
-      id?: number | null;
-      email?: string | null;
-      roles?: string[];
-    } = {},
+    actor: PurchaseOrderActorContext = {},
   ): Promise<PurchaseOrder> {
     const result = await this.reevaluateAutoReplenishmentDraftDetailed(
       id,
@@ -622,13 +614,11 @@ export class PurchaseOrdersService {
 
   async reevaluateAutoReplenishmentDraftDetailed(
     id: number,
-    actor: {
-      id?: number | null;
-      email?: string | null;
-      roles?: string[];
-    } = {},
+    actor: PurchaseOrderActorContext = {},
   ): Promise<PurchaseOrderReevaluationResult> {
-    const purchaseOrder = await this.findOneById(id);
+    const purchaseOrder = await this.findOneById(id, {
+      branchId: actor.branchId,
+    });
 
     if (purchaseOrder.status !== PurchaseOrderStatus.DRAFT) {
       throw new BadRequestException(
@@ -1044,16 +1034,24 @@ export class PurchaseOrdersService {
     );
   }
 
-  private async findOneById(id: number): Promise<PurchaseOrder> {
-    return this.findOneByIdUsingRepository(this.purchaseOrdersRepository, id);
+  private async findOneById(
+    id: number,
+    scope: PurchaseOrderScope = {},
+  ): Promise<PurchaseOrder> {
+    return this.findOneByIdUsingRepository(
+      this.purchaseOrdersRepository,
+      id,
+      scope,
+    );
   }
 
   private async findOneByIdUsingRepository(
     repository: Repository<PurchaseOrder>,
     id: number,
+    scope: PurchaseOrderScope = {},
   ): Promise<PurchaseOrder> {
     const purchaseOrder = await repository.findOne({
-      where: { id },
+      where: scope.branchId ? { id, branchId: scope.branchId } : { id },
       relations: {
         branch: true,
         supplierProfile: true,
@@ -1071,7 +1069,10 @@ export class PurchaseOrdersService {
   private async findReceiptEventOrThrow(
     purchaseOrderId: number,
     eventId: number,
+    scope: PurchaseOrderScope = {},
   ): Promise<PurchaseOrderReceiptEvent> {
+    await this.findOneById(purchaseOrderId, scope);
+
     const receiptEvent =
       await this.purchaseOrderReceiptEventsRepository.findOne({
         where: { id: eventId, purchaseOrderId },
@@ -1169,10 +1170,12 @@ export class PurchaseOrdersService {
     );
   }
 
-  private assertSupplierReceiptRole(roles: string[]): void {
+  private assertReceiptAcknowledgementRole(roles: string[]): void {
     if (
       this.hasAnyRole(roles, [
         UserRole.SUPPLIER_ACCOUNT,
+        UserRole.POS_MANAGER,
+        UserRole.B2B_BUYER,
         UserRole.SUPER_ADMIN,
         UserRole.ADMIN,
       ])
@@ -1181,7 +1184,7 @@ export class PurchaseOrdersService {
     }
 
     throw new ForbiddenException(
-      'Your role is not allowed to manage supplier receipt acknowledgements or discrepancy resolutions',
+      'Your role is not allowed to manage receipt acknowledgements or discrepancy resolutions',
     );
   }
 
@@ -1227,7 +1230,7 @@ export class PurchaseOrdersService {
     },
   ): Promise<void> {
     try {
-      this.realtimeGateway.notifyProcurementPurchaseOrderUpdated({
+      void this.realtimeGateway.notifyProcurementPurchaseOrderUpdated({
         purchaseOrderId: purchaseOrder.id,
         branchId: purchaseOrder.branchId,
         supplierProfileId: purchaseOrder.supplierProfileId,

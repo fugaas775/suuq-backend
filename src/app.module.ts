@@ -73,6 +73,7 @@ import { PosSyncModule } from './pos-sync/pos-sync.module';
 import { ProductAliasesModule } from './product-aliases/product-aliases.module';
 import { RetailModule } from './retail/retail.module';
 import { MarketingLeadsModule } from './marketing-leads/marketing-leads.module';
+import { SellerWorkspaceModule } from './seller-workspace/seller-workspace.module';
 
 @Module({
   imports: [
@@ -257,6 +258,7 @@ import { MarketingLeadsModule } from './marketing-leads/marketing-leads.module';
     PosSyncModule,
     RetailModule,
     MarketingLeadsModule,
+    SellerWorkspaceModule,
   ],
   controllers: [AppController],
   // Apply rate limiting globally

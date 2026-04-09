@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, EntityManager, Repository } from 'typeorm';
 import { BranchTransfersService } from '../branches/branch-transfers.service';
 import { StockMovementType } from '../branches/entities/stock-movement.entity';
 import { InventoryLedgerService } from '../branches/inventory-ledger.service';
@@ -13,6 +13,8 @@ import { PartnerCredential } from '../partner-credentials/entities/partner-crede
 import { ProductAliasesService } from '../product-aliases/product-aliases.service';
 import { CreatePosSyncJobDto } from './dto/create-pos-sync-job.dto';
 import { IngestPosSyncDto, PosSyncEntryDto } from './dto/ingest-pos-sync.dto';
+import { ListPosSyncJobsQueryDto } from './dto/list-pos-sync-jobs-query.dto';
+import { PosSyncJobPageResponseDto } from './dto/pos-sync-job-response.dto';
 import { PosSyncTransferConfirmationResponseDto } from './dto/pos-sync-transfer-confirmation-response.dto';
 import { ReplayPosSyncFailuresDto } from './dto/replay-pos-sync-failures.dto';
 import { UpdatePosSyncJobStatusDto } from './dto/update-pos-sync-job-status.dto';
@@ -31,6 +33,7 @@ const POS_SYNC_TRANSITIONS: Record<PosSyncStatus, PosSyncStatus[]> = {
 @Injectable()
 export class PosSyncService {
   constructor(
+    private readonly dataSource: DataSource,
     @InjectRepository(PosSyncJob)
     private readonly posSyncJobsRepository: Repository<PosSyncJob>,
     @InjectRepository(Branch)
@@ -43,6 +46,59 @@ export class PosSyncService {
   ) {}
 
   async create(dto: CreatePosSyncJobDto): Promise<PosSyncJob> {
+    const syncJob = await this.createJob(dto);
+    return this.findOneById(syncJob.id);
+  }
+
+  async findAll(
+    query: ListPosSyncJobsQueryDto,
+  ): Promise<PosSyncJobPageResponseDto> {
+    const page = Math.max(query.page ?? 1, 1);
+    const perPage = Math.min(Math.max(query.limit ?? 20, 1), 200);
+
+    const qb = this.posSyncJobsRepository
+      .createQueryBuilder('job')
+      .leftJoinAndSelect('job.branch', 'branch')
+      .leftJoinAndSelect('job.partnerCredential', 'partnerCredential')
+      .where('job.branchId = :branchId', { branchId: query.branchId })
+      .orderBy('job.createdAt', 'DESC')
+      .addOrderBy('job.id', 'DESC')
+      .skip((page - 1) * perPage)
+      .take(perPage);
+
+    if (query.syncType) {
+      qb.andWhere('job.syncType = :syncType', { syncType: query.syncType });
+    }
+
+    if (query.status) {
+      qb.andWhere('job.status = :status', { status: query.status });
+    }
+
+    if (query.failedOnly) {
+      qb.andWhere(
+        '(job.rejectedCount > 0 OR job.status = :failedStatus OR COALESCE(jsonb_array_length(job.failedEntries), 0) > 0)',
+        { failedStatus: PosSyncStatus.FAILED },
+      );
+    }
+
+    const [items, total] = await qb.getManyAndCount();
+
+    return {
+      items: items.map((item) => ({
+        ...item,
+        failedEntries: item.failedEntries ?? [],
+      })),
+      total,
+      page,
+      perPage,
+      totalPages: Math.ceil(total / perPage),
+    };
+  }
+
+  private async createJob(
+    dto: CreatePosSyncJobDto,
+    manager?: EntityManager,
+  ): Promise<PosSyncJob> {
     if (dto.branchId == null && dto.partnerCredentialId == null) {
       throw new BadRequestException(
         'A POS sync job must reference a branch or partner credential',
@@ -71,7 +127,8 @@ export class PosSyncService {
       }
     }
 
-    const syncJob = this.posSyncJobsRepository.create({
+    const posSyncJobsRepository = this.getPosSyncJobsRepository(manager);
+    const syncJob = posSyncJobsRepository.create({
       ...dto,
       externalJobId: dto.externalJobId?.trim() || null,
       idempotencyKey: dto.idempotencyKey?.trim() || null,
@@ -80,15 +137,8 @@ export class PosSyncService {
       rejectedCount: dto.rejectedCount ?? 0,
       failedEntries: [],
     });
-    await this.posSyncJobsRepository.save(syncJob);
-    return this.findOneById(syncJob.id);
-  }
 
-  async findAll(): Promise<PosSyncJob[]> {
-    return this.posSyncJobsRepository.find({
-      order: { createdAt: 'DESC' },
-      relations: { branch: true, partnerCredential: true },
-    });
+    return posSyncJobsRepository.save(syncJob);
   }
 
   async ingest(
@@ -99,50 +149,67 @@ export class PosSyncService {
       roles?: string[];
     } = {},
   ): Promise<PosSyncJob> {
-    const existingJob = await this.findExistingJobForIdempotency(dto);
-    if (existingJob) {
-      return this.findOneById(existingJob.id);
+    if (!dto.entries.length) {
+      throw new BadRequestException(
+        'POS sync ingestion requires at least one entry',
+      );
     }
 
-    const syncJob = await this.create({
-      branchId: dto.branchId,
-      partnerCredentialId: dto.partnerCredentialId,
-      syncType: dto.syncType,
-      externalJobId: dto.externalJobId,
-      idempotencyKey: dto.idempotencyKey,
-      acceptedCount: 0,
-      rejectedCount: 0,
+    const syncJobId = await this.dataSource.transaction(async (manager) => {
+      const existingJob = await this.findExistingJobForIdempotency(
+        dto,
+        manager,
+      );
+      if (existingJob) {
+        return existingJob.id;
+      }
+
+      const syncJob = await this.createJob(
+        {
+          branchId: dto.branchId,
+          partnerCredentialId: dto.partnerCredentialId,
+          syncType: dto.syncType,
+          externalJobId: dto.externalJobId,
+          idempotencyKey: dto.idempotencyKey,
+          acceptedCount: 0,
+          rejectedCount: 0,
+        },
+        manager,
+      );
+
+      let acceptedCount = 0;
+      let rejectedCount = 0;
+      const failedEntries: PosSyncFailedEntry[] = [];
+
+      for (const [entryIndex, entry] of dto.entries.entries()) {
+        try {
+          await this.processInventoryEntry(
+            syncJob,
+            dto,
+            entry,
+            entryIndex,
+            actor.id ?? null,
+            manager,
+          );
+          acceptedCount += 1;
+        } catch (error) {
+          rejectedCount += 1;
+          failedEntries.push(this.toFailedEntry(entryIndex, entry, error));
+        }
+      }
+
+      syncJob.acceptedCount = acceptedCount;
+      syncJob.rejectedCount = rejectedCount;
+      syncJob.processedAt = new Date();
+      syncJob.failedEntries = failedEntries;
+      syncJob.status =
+        acceptedCount > 0 ? PosSyncStatus.PROCESSED : PosSyncStatus.FAILED;
+
+      await this.getPosSyncJobsRepository(manager).save(syncJob);
+      return syncJob.id;
     });
 
-    let acceptedCount = 0;
-    let rejectedCount = 0;
-    const failedEntries: PosSyncFailedEntry[] = [];
-
-    for (const [entryIndex, entry] of dto.entries.entries()) {
-      try {
-        await this.processInventoryEntry(
-          syncJob,
-          dto,
-          entry,
-          entryIndex,
-          actor.id ?? null,
-        );
-        acceptedCount += 1;
-      } catch (error) {
-        rejectedCount += 1;
-        failedEntries.push(this.toFailedEntry(entryIndex, entry, error));
-      }
-    }
-
-    syncJob.acceptedCount = acceptedCount;
-    syncJob.rejectedCount = rejectedCount;
-    syncJob.processedAt = new Date();
-    syncJob.failedEntries = failedEntries;
-    syncJob.status =
-      acceptedCount > 0 ? PosSyncStatus.PROCESSED : PosSyncStatus.FAILED;
-
-    await this.posSyncJobsRepository.save(syncJob);
-    return this.findOneById(syncJob.id);
+    return this.findOneById(syncJobId);
   }
 
   async updateStatus(
@@ -317,41 +384,50 @@ export class PosSyncService {
     entry: PosSyncEntryDto,
     entryIndex: number,
     actorUserId?: number | null,
+    manager?: EntityManager,
   ): Promise<void> {
     const productId = await this.resolveProductId(dto, entry);
 
     if (dto.syncType === 'STOCK_SNAPSHOT') {
-      const currentOnHand = await this.inventoryLedgerService.getOnHand(
-        dto.branchId,
-        productId,
-      );
+      const currentOnHand =
+        await this.inventoryLedgerService.getOnHandWithManager(
+          dto.branchId,
+          productId,
+          manager,
+        );
       const delta = entry.quantity - currentOnHand;
       if (delta !== 0) {
-        await this.inventoryLedgerService.recordMovement({
-          branchId: dto.branchId,
-          productId,
-          movementType: StockMovementType.ADJUSTMENT,
-          quantityDelta: delta,
-          sourceType: 'POS_SYNC',
-          sourceReferenceId: syncJob.id,
-          actorUserId,
-          note: entry.note ?? 'POS stock snapshot reconciliation',
-        });
+        await this.inventoryLedgerService.recordMovement(
+          {
+            branchId: dto.branchId,
+            productId,
+            movementType: StockMovementType.ADJUSTMENT,
+            quantityDelta: delta,
+            sourceType: 'POS_SYNC',
+            sourceReferenceId: syncJob.id,
+            actorUserId,
+            note: entry.note ?? 'POS stock snapshot reconciliation',
+          },
+          manager,
+        );
       }
       return;
     }
 
     if (dto.syncType === 'SALES_SUMMARY') {
-      await this.inventoryLedgerService.recordMovement({
-        branchId: dto.branchId,
-        productId,
-        movementType: StockMovementType.SALE,
-        quantityDelta: -Math.abs(entry.quantity),
-        sourceType: 'POS_SYNC',
-        sourceReferenceId: syncJob.id,
-        actorUserId,
-        note: entry.note ?? 'POS sales summary',
-      });
+      await this.inventoryLedgerService.recordMovement(
+        {
+          branchId: dto.branchId,
+          productId,
+          movementType: StockMovementType.SALE,
+          quantityDelta: -Math.abs(entry.quantity),
+          sourceType: 'POS_SYNC',
+          sourceReferenceId: syncJob.id,
+          actorUserId,
+          note: entry.note ?? 'POS sales summary',
+        },
+        manager,
+      );
       return;
     }
 
@@ -389,11 +465,13 @@ export class PosSyncService {
             sourceReferenceId: syncJob.id,
             sourceEntryIndex: entryIndex,
           },
+          manager,
         );
         await this.branchTransfersService.dispatch(
           transfer.id,
           { id: actorUserId ?? null },
           entry.note ?? 'POS transfer out',
+          manager,
         );
         return;
       }
@@ -406,6 +484,7 @@ export class PosSyncService {
 
       const transfer = await this.branchTransfersService.findOne(
         entry.transferId,
+        manager,
       );
 
       if (transfer.toBranchId !== dto.branchId) {
@@ -434,42 +513,51 @@ export class PosSyncService {
         transfer.id,
         { id: actorUserId ?? null },
         entry.note ?? 'POS transfer in',
+        manager,
       );
       return;
     }
 
     if (entry.movementType === StockMovementType.SALE) {
-      await this.inventoryLedgerService.recordMovement({
-        branchId: dto.branchId,
-        productId,
-        movementType: StockMovementType.SALE,
-        quantityDelta: -Math.abs(entry.quantity),
-        sourceType: 'POS_SYNC',
-        sourceReferenceId: syncJob.id,
-        actorUserId,
-        note: entry.note ?? 'POS sale delta',
-      });
+      await this.inventoryLedgerService.recordMovement(
+        {
+          branchId: dto.branchId,
+          productId,
+          movementType: StockMovementType.SALE,
+          quantityDelta: -Math.abs(entry.quantity),
+          sourceType: 'POS_SYNC',
+          sourceReferenceId: syncJob.id,
+          actorUserId,
+          note: entry.note ?? 'POS sale delta',
+        },
+        manager,
+      );
       return;
     }
 
-    await this.inventoryLedgerService.recordMovement({
-      branchId: dto.branchId,
-      productId,
-      movementType: StockMovementType.ADJUSTMENT,
-      quantityDelta: entry.quantity,
-      sourceType: 'POS_SYNC',
-      sourceReferenceId: syncJob.id,
-      actorUserId,
-      note: entry.note ?? 'POS stock delta adjustment',
-    });
+    await this.inventoryLedgerService.recordMovement(
+      {
+        branchId: dto.branchId,
+        productId,
+        movementType: StockMovementType.ADJUSTMENT,
+        quantityDelta: entry.quantity,
+        sourceType: 'POS_SYNC',
+        sourceReferenceId: syncJob.id,
+        actorUserId,
+        note: entry.note ?? 'POS stock delta adjustment',
+      },
+      manager,
+    );
   }
 
   private async findExistingJobForIdempotency(
     dto: IngestPosSyncDto,
+    manager?: EntityManager,
   ): Promise<PosSyncJob | null> {
+    const posSyncJobsRepository = this.getPosSyncJobsRepository(manager);
     const idempotencyKey = dto.idempotencyKey?.trim();
     if (idempotencyKey) {
-      return this.posSyncJobsRepository.findOne({
+      return posSyncJobsRepository.findOne({
         where:
           dto.partnerCredentialId != null
             ? {
@@ -487,7 +575,7 @@ export class PosSyncService {
 
     const externalJobId = dto.externalJobId?.trim();
     if (externalJobId) {
-      return this.posSyncJobsRepository.findOne({
+      return posSyncJobsRepository.findOne({
         where:
           dto.partnerCredentialId != null
             ? {
@@ -563,5 +651,11 @@ export class PosSyncService {
     const baseJobId = syncJob.externalJobId?.trim() || `job-${syncJob.id}`;
     const replaySuffix = `replay-${Date.now()}`;
     return `${baseJobId}:${replaySuffix}`.slice(0, 255);
+  }
+
+  private getPosSyncJobsRepository(
+    manager?: EntityManager,
+  ): Repository<PosSyncJob> {
+    return manager?.getRepository(PosSyncJob) ?? this.posSyncJobsRepository;
   }
 }

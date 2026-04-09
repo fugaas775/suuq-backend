@@ -82,6 +82,52 @@ describe('AdminAuditController', () => {
     });
   });
 
+  it('accepts user target types for global audit browsing', async () => {
+    auditService.listAllPaged.mockResolvedValue({
+      items: [
+        {
+          id: 9,
+          action: 'user.pos.assignment.create',
+          actorId: 7,
+          actorEmail: 'ops@example.com',
+          targetType: 'user',
+          targetId: 41,
+          meta: { branchId: 8, role: 'OPERATOR' },
+          reason: null,
+          createdAt: new Date('2026-03-20T10:00:00.000Z'),
+        },
+      ],
+      total: 1,
+      perPage: 20,
+      totalPages: 1,
+      page: 1,
+    });
+
+    const result = await controller.list({
+      page: 1,
+      limit: 20,
+      targetType: 'user',
+      targetId: 41,
+    } as any);
+
+    expect(auditService.listAllPaged).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targetType: 'user',
+        targetId: 41,
+      }),
+    );
+    expect(result).toEqual(
+      expect.objectContaining({
+        items: [
+          expect.objectContaining({
+            targetType: 'user',
+            actionLabel: 'Assigned POS branch access',
+          }),
+        ],
+      }),
+    );
+  });
+
   it('propagates malformed cursor failures from the audit service', async () => {
     auditService.listAllCursor.mockRejectedValue(
       new BadRequestException('Invalid audit cursor'),

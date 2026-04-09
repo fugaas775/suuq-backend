@@ -13,6 +13,7 @@ import {
 import { OrdersService } from '../orders/orders.service';
 import { ProductsService } from '../products/products.service';
 import { EbirrService } from '../ebirr/ebirr.service';
+import { PosWorkspaceActivationService } from '../branch-staff/pos-workspace-activation.service';
 import { BoostTier } from '../products/boost-pricing.service';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { Response } from 'express';
@@ -23,6 +24,26 @@ import { Request } from 'express';
 @Controller('callbacks/ebirr')
 export class EbirrCallbackController {
   private readonly logger = new Logger(EbirrCallbackController.name);
+
+  private buildPosActivationRedirect(params: {
+    status: 'success' | 'failed';
+    referenceId?: string | null;
+    reason?: string | null;
+  }): string {
+    const portalUrl = process.env.POS_PORTAL_URL || 'https://pos.ugasfuad.com';
+    const query = new URLSearchParams();
+    query.set('activationStatus', params.status);
+
+    if (params.referenceId) {
+      query.set('activationRef', params.referenceId);
+    }
+
+    if (params.reason) {
+      query.set('activationReason', params.reason);
+    }
+
+    return `${portalUrl}/?${query.toString()}`;
+  }
 
   private normalizeHeaderValue(value: string | string[] | undefined): string {
     if (Array.isArray(value)) {
@@ -171,6 +192,7 @@ export class EbirrCallbackController {
     private readonly ordersService: OrdersService,
     private readonly productsService: ProductsService,
     private readonly ebirrService: EbirrService,
+    private readonly posWorkspaceActivationService: PosWorkspaceActivationService,
   ) {}
 
   @Post('webhook')
@@ -181,7 +203,19 @@ export class EbirrCallbackController {
   ) {
     this.assertWebhookAuthorized(headers, body);
     this.logger.log(`Received Ebirr Webhook: ${JSON.stringify(body)}`);
-    await this.ebirrService.processCallback(body);
+    const result = await this.ebirrService.processCallback(body);
+
+    if (
+      result?.status === 'COMPLETED' &&
+      this.posWorkspaceActivationService.isPosWorkspaceActivationReference(
+        result.referenceId,
+      )
+    ) {
+      await this.posWorkspaceActivationService.completeEbirrActivationPayment(
+        result.referenceId,
+      );
+    }
+
     return { status: 'OK' };
   }
 
@@ -203,9 +237,38 @@ export class EbirrCallbackController {
         this.logger.warn(
           `Ebirr return callback rejected before completion: ${JSON.stringify(verifiedReturn)}`,
         );
+        if (
+          this.posWorkspaceActivationService.isPosWorkspaceActivationReference(
+            verifiedReturn.referenceId,
+          )
+        ) {
+          return res.redirect(
+            this.buildPosActivationRedirect({
+              status: 'failed',
+              referenceId: verifiedReturn.referenceId,
+              reason: String(verifiedReturn.reason || 'invalid_return'),
+            }),
+          );
+        }
         const siteUrl = process.env.SITE_URL || 'https://suuq.ugasfuad.com';
         return res.redirect(
           `${siteUrl}/payment/ebirr/finish?status=failed&reason=${encodeURIComponent(String(verifiedReturn.reason || 'invalid_return'))}`,
+        );
+      }
+
+      if (
+        this.posWorkspaceActivationService.isPosWorkspaceActivationReference(
+          verifiedReturn.referenceId,
+        )
+      ) {
+        await this.posWorkspaceActivationService.completeEbirrActivationPayment(
+          verifiedReturn.referenceId,
+        );
+        return res.redirect(
+          this.buildPosActivationRedirect({
+            status: 'success',
+            referenceId: verifiedReturn.referenceId,
+          }),
         );
       }
 
@@ -290,6 +353,25 @@ export class EbirrCallbackController {
       }
     } catch (e: any) {
       this.logger.error(`Ebirr callback processing failed: ${e.message}`);
+      const failedRefId =
+        query.referenceId ||
+        query.refId ||
+        query.ReferenceId ||
+        query.ref ||
+        null;
+      if (
+        this.posWorkspaceActivationService.isPosWorkspaceActivationReference(
+          failedRefId,
+        )
+      ) {
+        return res.redirect(
+          this.buildPosActivationRedirect({
+            status: 'failed',
+            referenceId: failedRefId,
+            reason: e?.message || 'callback_processing_failed',
+          }),
+        );
+      }
       // Redirect to failure page
       const siteUrl = process.env.SITE_URL || 'https://suuq.ugasfuad.com';
       return res.redirect(`${siteUrl}/payment/ebirr/finish?status=error`);

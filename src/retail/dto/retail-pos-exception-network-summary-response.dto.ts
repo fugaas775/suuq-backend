@@ -62,6 +62,12 @@ export class RetailPosExceptionNetworkSummaryResponseDto {
   branchCount!: number;
 
   @ApiProperty()
+  matchedBranchCount!: number;
+
+  @ApiProperty()
+  visibleBranchCount!: number;
+
+  @ApiProperty()
   windowHours!: number;
 
   @ApiProperty()

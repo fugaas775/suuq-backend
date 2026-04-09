@@ -6,6 +6,7 @@ import {
   IsObject,
   IsOptional,
   IsString,
+  ArrayMinSize,
   MaxLength,
   ValidateNested,
 } from 'class-validator';
@@ -80,6 +81,7 @@ export class IngestPosSyncDto {
   idempotencyKey?: string;
 
   @IsArray()
+  @ArrayMinSize(1)
   @ValidateNested({ each: true })
   @Type(() => PosSyncEntryDto)
   entries!: PosSyncEntryDto[];

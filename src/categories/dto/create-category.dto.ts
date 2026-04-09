@@ -5,8 +5,10 @@ import {
   IsInt,
   Matches,
   Min,
+  IsEnum,
 } from 'class-validator';
 import { Transform } from 'class-transformer';
+import { PosUserFitCategory } from '../entities/category.entity';
 
 export class CreateCategoryDto {
   @IsString()
@@ -67,4 +69,11 @@ export class CreateCategoryDto {
       : Number(value),
   )
   sortOrder?: number;
+
+  @IsEnum(PosUserFitCategory)
+  @IsOptional()
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim().toUpperCase() : value,
+  )
+  posSuggestedUserFit?: PosUserFitCategory;
 }

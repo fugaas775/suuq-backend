@@ -3,6 +3,7 @@ import {
   PartnerCredentialStatus,
   PartnerType,
 } from '../entities/partner-credential.entity';
+import { POS_PARTNER_SCOPE_INPUT_VALUES } from '../partner-credential-scopes';
 
 export class PartnerCredentialBranchSummaryDto {
   @ApiProperty()
@@ -37,7 +38,12 @@ export class PartnerCredentialResponseDto {
   @ApiPropertyOptional({ type: PartnerCredentialBranchSummaryDto })
   branch?: PartnerCredentialBranchSummaryDto | null;
 
-  @ApiProperty({ type: [String] })
+  @ApiProperty({
+    type: [String],
+    enum: POS_PARTNER_SCOPE_INPUT_VALUES,
+    description:
+      'Effective credential scopes after preset expansion and legacy POS scope canonicalization.',
+  })
   scopes!: string[];
 
   @ApiProperty({ enum: PartnerCredentialStatus })

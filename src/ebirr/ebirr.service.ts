@@ -27,6 +27,41 @@ import { format, subMinutes } from 'date-fns';
 export class EbirrService {
   private readonly logger = new Logger(EbirrService.name);
 
+  private parseOrderIdFromReference(
+    referenceId: string | null | undefined,
+  ): number | null {
+    const value = String(referenceId || '').trim();
+    const match = value.match(/^REF-(\d+)$/u);
+    if (!match?.[1]) {
+      return null;
+    }
+
+    const orderId = Number.parseInt(match[1], 10);
+    return Number.isInteger(orderId) && orderId > 0 ? orderId : null;
+  }
+
+  private parseOrderIdFromInvoice(
+    invoiceId: string | null | undefined,
+  ): number | null {
+    const value = String(invoiceId || '').trim();
+    const prefixedMatch = value.match(/^INV-(\d+)$/u);
+    const directMatch = value.match(/^(\d+)$/u);
+    const candidate = prefixedMatch?.[1] || directMatch?.[1] || null;
+
+    if (!candidate) {
+      return null;
+    }
+
+    const orderId = Number.parseInt(candidate, 10);
+    return Number.isInteger(orderId) && orderId > 0 ? orderId : null;
+  }
+
+  private shouldRunOnCurrentInstance(): boolean {
+    const instanceId =
+      process.env.INSTANCE_ID ?? process.env.NODE_APP_INSTANCE ?? null;
+    return !instanceId || instanceId === '0';
+  }
+
   private validatePayoutPreflight(params: {
     phoneNumberRaw: string;
     normalizedPhone: string | null;
@@ -269,6 +304,9 @@ export class EbirrService {
   async checkPendingTransactions() {
     // Locking to prevent multiple instances from running this job simultaneously
     const client = this.redisService.getClient();
+    if (!client && !this.shouldRunOnCurrentInstance()) {
+      return;
+    }
     if (client) {
       const lockKey = 'lock:ebirr:check-pending';
       // Try to acquire lock for 55 seconds (since it runs every minute)
@@ -794,7 +832,11 @@ export class EbirrService {
     };
   }
 
-  async processCallback(payload: any) {
+  async processCallback(payload: any): Promise<{
+    referenceId: string | null;
+    status: string;
+    invoiceId: string | null;
+  }> {
     // Ebirr payload structure usually contains referenceId or issuerTransactionId
     // Example: { referenceId: '...', status: 'Paid', ... }
 
@@ -802,7 +844,11 @@ export class EbirrService {
     const refId = payload.referenceId || payload.merch_order_id;
     if (!refId) {
       this.logger.warn('Ebirr Callback received without referenceId');
-      return;
+      return {
+        referenceId: null,
+        status: 'IGNORED',
+        invoiceId: null,
+      };
     }
 
     const tx = await this.ebirrTransactionRepo.findOne({
@@ -812,14 +858,22 @@ export class EbirrService {
       this.logger.warn(
         `Ebirr Callback: Transaction not found for ref ${refId}`,
       );
-      return;
+      return {
+        referenceId: refId,
+        status: 'NOT_FOUND',
+        invoiceId: null,
+      };
     }
 
     if (tx.status === 'COMPLETED') {
       this.logger.warn(
         `Ebirr Callback duplicate ignored for completed transaction ref ${refId}`,
       );
-      return;
+      return {
+        referenceId: refId,
+        status: 'COMPLETED',
+        invoiceId: tx.invoiceId || null,
+      };
     }
 
     tx.raw_response_payload = { ...tx.raw_response_payload, callback: payload };
@@ -837,15 +891,11 @@ export class EbirrService {
         tx.issuer_trans_id = payload.issuerTransactionId;
       await this.ebirrTransactionRepo.save(tx);
 
-      if (tx.invoiceId) {
-        const matches = String(tx.invoiceId).match(/(\d+)/);
-        const orderId = matches?.[0] ? parseInt(matches[0], 10) : NaN;
-        if (!orderId || isNaN(orderId)) {
-          this.logger.error(
-            `Ebirr callback could not parse orderId from invoiceId=${tx.invoiceId}`,
-          );
-          return;
-        }
+      const orderId =
+        this.parseOrderIdFromInvoice(tx.invoiceId) ??
+        this.parseOrderIdFromReference(refId);
+
+      if (orderId) {
         try {
           await this.ordersService.completeOrderFromPaymentCallback(orderId);
         } catch (error) {
@@ -854,9 +904,20 @@ export class EbirrService {
           );
         }
       }
+
+      return {
+        referenceId: refId,
+        status: tx.status,
+        invoiceId: tx.invoiceId || null,
+      };
     } else {
       tx.status = 'FAILED';
       await this.ebirrTransactionRepo.save(tx);
+      return {
+        referenceId: refId,
+        status: tx.status,
+        invoiceId: tx.invoiceId || null,
+      };
     }
   }
 
@@ -892,27 +953,19 @@ export class EbirrService {
       };
     }
 
-    const refOrderMatch = String(refId).match(/(\d+)/);
-    const refOrderId = refOrderMatch?.[0]
-      ? parseInt(refOrderMatch[0], 10)
-      : NaN;
-    const invoiceOrderMatch = String(tx.invoiceId || '').match(/(\d+)/);
-    const invoiceOrderId = invoiceOrderMatch?.[0]
-      ? parseInt(invoiceOrderMatch[0], 10)
-      : NaN;
+    const refOrderId = this.parseOrderIdFromReference(refId);
+    const invoiceOrderId = this.parseOrderIdFromInvoice(tx.invoiceId);
 
     const orderId =
-      !isNaN(invoiceOrderId) && invoiceOrderId > 0
+      invoiceOrderId != null
         ? invoiceOrderId
-        : !isNaN(refOrderId) && refOrderId > 0
+        : refOrderId != null
           ? refOrderId
           : null;
 
     if (
-      !isNaN(refOrderId) &&
-      refOrderId > 0 &&
-      !isNaN(invoiceOrderId) &&
-      invoiceOrderId > 0 &&
+      refOrderId != null &&
+      invoiceOrderId != null &&
       refOrderId !== invoiceOrderId
     ) {
       this.logger.error(

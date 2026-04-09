@@ -201,17 +201,31 @@ async function bootstrap() {
     'https://www.ugasfuad.com',
     'https://suuq.ugasfuad.com',
     'https://admin.suuq.ugasfuad.com',
+    'https://pos.ugasfuad.com',
+    'https://www.pos.ugasfuad.com',
+    'https://vendor.ugasfuad.com',
+    'https://www.vendor.ugasfuad.com',
     'https://api.suuq.ugasfuad.com',
     'http://localhost:5173',
     'http://localhost:3000',
     'http://localhost:3001',
     'http://localhost:58599', // Added specific CORS bypass
   ];
-  const allowedOrigins = (
-    process.env.ALLOWED_ORIGINS
-      ? process.env.ALLOWED_ORIGINS.split(',')
-      : defaultAllowedOrigins
-  ).map((o) => o.trim());
+  const normalizeCorsOrigin = (value: string) => {
+    try {
+      const parsed = new URL(value.trim());
+      return parsed.origin.toLowerCase();
+    } catch {
+      return value.trim().replace(/\/+$/, '').toLowerCase();
+    }
+  };
+  const envAllowedOrigins = (process.env.ALLOWED_ORIGINS || '')
+    .split(',')
+    .map((o) => o.trim())
+    .filter(Boolean);
+  const allowedOrigins = new Set(
+    [...defaultAllowedOrigins, ...envAllowedOrigins].map(normalizeCorsOrigin),
+  );
 
   app.enableCors({
     origin: (
@@ -220,7 +234,8 @@ async function bootstrap() {
     ) => {
       // Allow no-origin requests (mobile apps, curl, server-to-server)
       if (!origin || origin === 'null') return callback(null, true);
-      if (allowedOrigins.includes(origin)) return callback(null, true);
+      const normalizedOrigin = normalizeCorsOrigin(origin);
+      if (allowedOrigins.has(normalizedOrigin)) return callback(null, true);
       console.error(`CORS blocked origin: ${origin}`);
       return callback(new Error('Not allowed by CORS'));
     },
@@ -253,6 +268,14 @@ async function bootstrap() {
       'if-match',
       'If-Modified-Since',
       'if-modified-since',
+      'x-workspace-id',
+      'X-Workspace-Id',
+      'x-branch-id',
+      'X-Branch-Id',
+      'x-vendor-id',
+      'X-Vendor-Id',
+      'x-portal-surface',
+      'X-Portal-Surface',
     ],
     exposedHeaders: [
       'Authorization',

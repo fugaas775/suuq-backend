@@ -9,6 +9,13 @@ import { createHash, timingSafeEqual } from 'crypto';
 import { Repository } from 'typeorm';
 import { AuditService } from '../audit/audit.service';
 import { Branch } from '../branches/entities/branch.entity';
+import {
+  canonicalizePosScopeInputs,
+  isSupportedPosScopeInput,
+  PosPartnerScope,
+  resolvePosPresetScopes,
+  resolveGrantedPosScopes,
+} from './partner-credential-scopes';
 import { CreatePartnerCredentialDto } from './dto/create-partner-credential.dto';
 import {
   PartnerCredentialListQueryDto,
@@ -33,10 +40,12 @@ export class PartnerCredentialsService {
 
   async create(dto: CreatePartnerCredentialDto): Promise<PartnerCredential> {
     await this.assertBranchBinding(dto);
+    this.assertSupportedScopes(dto);
+    const scopes = this.resolveScopesForCreate(dto);
 
     const credential = this.partnerCredentialsRepository.create({
       ...dto,
-      scopes: dto.scopes ?? [],
+      scopes,
       keyHash: this.normalizeCredentialSecret(dto.keyHash),
     });
     return this.partnerCredentialsRepository.save(credential);
@@ -222,7 +231,7 @@ export class PartnerCredentialsService {
 
   async authenticatePosCredential(
     presentedKey: string,
-    requiredScopes: string[] = ['sync:write'],
+    requiredScopes: PosPartnerScope[] = [PosPartnerScope.POS_SYNC_WRITE],
   ): Promise<PartnerCredential> {
     const candidates = await this.partnerCredentialsRepository.find({
       where: {
@@ -241,11 +250,11 @@ export class PartnerCredentialsService {
     }
 
     if (requiredScopes.length > 0) {
-      const scopes = credential.scopes ?? [];
-      const hasScope = requiredScopes.some((scope) => scopes.includes(scope));
+      const grantedScopes = resolveGrantedPosScopes(credential.scopes ?? []);
+      const hasScope = requiredScopes.some((scope) => grantedScopes.has(scope));
       if (!hasScope) {
         throw new UnauthorizedException(
-          'Partner credential is missing required POS sync scope',
+          `Partner credential is missing required POS scope: ${requiredScopes.join(', ')}`,
         );
       }
     }
@@ -301,5 +310,40 @@ export class PartnerCredentialsService {
     if (!branch) {
       throw new NotFoundException(`Branch with ID ${dto.branchId} not found`);
     }
+  }
+
+  private assertSupportedScopes(dto: CreatePartnerCredentialDto): void {
+    if (dto.partnerType !== PartnerType.POS) {
+      if (dto.scopePreset) {
+        throw new BadRequestException(
+          'scopePreset is only supported for POS partner credentials',
+        );
+      }
+
+      return;
+    }
+
+    const invalidScope = (dto.scopes ?? []).find(
+      (scope) => !isSupportedPosScopeInput(scope),
+    );
+
+    if (invalidScope) {
+      throw new BadRequestException(
+        `Unsupported POS partner scope: ${invalidScope}`,
+      );
+    }
+  }
+
+  private resolveScopesForCreate(dto: CreatePartnerCredentialDto): string[] {
+    if (dto.partnerType !== PartnerType.POS) {
+      return dto.scopes ?? [];
+    }
+
+    const presetScopes = resolvePosPresetScopes(dto.scopePreset);
+    if (!dto.scopes || dto.scopes.length === 0) {
+      return presetScopes;
+    }
+
+    return canonicalizePosScopeInputs([...presetScopes, ...dto.scopes]);
   }
 }

@@ -144,6 +144,7 @@ export class CategoriesService {
       iconUrl,
       iconName: dto.iconName,
       sortOrder: dto.sortOrder,
+      posSuggestedUserFit: dto.posSuggestedUserFit ?? null,
       nameTranslations: dto.nameTranslations, // <-- Added translation map
       iconVersion: 0,
     });

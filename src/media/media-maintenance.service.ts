@@ -33,7 +33,8 @@ export class MediaMaintenanceService {
   ): Promise<boolean> {
     const client = this.redisService.getClient();
     if (!client) {
-      const instanceId = process.env.NODE_APP_INSTANCE;
+      const instanceId =
+        process.env.INSTANCE_ID ?? process.env.NODE_APP_INSTANCE ?? null;
       return !instanceId || instanceId === '0';
     }
 

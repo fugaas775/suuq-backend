@@ -10,6 +10,7 @@ import {
   Req,
   Res,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import {
@@ -26,6 +27,7 @@ import { UserRole } from '../auth/roles.enum';
 import { StockMovementType } from '../branches/entities/stock-movement.entity';
 import { BranchTransferStatus } from '../branches/entities/branch-transfer.entity';
 import { Roles } from '../common/decorators/roles.decorator';
+import { ActionPathNormalizationInterceptor } from '../common/interceptors/action-path-normalization.interceptor';
 import { PurchaseOrdersService } from '../purchase-orders/purchase-orders.service';
 import { PurchaseOrderStatus } from '../purchase-orders/entities/purchase-order.entity';
 import { ApprovePurchaseOrderReceiptDiscrepancyDto } from '../purchase-orders/dto/approve-purchase-order-receipt-discrepancy.dto';
@@ -79,6 +81,7 @@ import { ReplenishmentPolicySubmissionMode } from '../retail/dto/upsert-tenant-m
 @SkipThrottle()
 @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
 @Controller('admin/b2b')
+@UseInterceptors(new ActionPathNormalizationInterceptor())
 export class AdminB2bController {
   constructor(
     private readonly suppliersService: SuppliersService,

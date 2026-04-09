@@ -6,6 +6,7 @@ import {
   ParseIntPipe,
   Patch,
   Post,
+  Query,
   Req,
   UseGuards,
 } from '@nestjs/common';
@@ -17,6 +18,7 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { ApprovePurchaseOrderReceiptDiscrepancyDto } from './dto/approve-purchase-order-receipt-discrepancy.dto';
 import { AcknowledgePurchaseOrderReceiptDto } from './dto/acknowledge-purchase-order-receipt.dto';
 import { CreatePurchaseOrderDto } from './dto/create-purchase-order.dto';
+import { PurchaseOrderBranchScopeQueryDto } from './dto/purchase-order-branch-scope-query.dto';
 import { PurchaseOrderReceiptEventResponseDto } from './dto/purchase-order-receipt-event-response.dto';
 import { RecordPurchaseOrderReceiptDto } from './dto/record-purchase-order-receipt.dto';
 import { ResolvePurchaseOrderReceiptDiscrepancyDto } from './dto/resolve-purchase-order-receipt-discrepancy.dto';
@@ -41,8 +43,8 @@ export class PurchaseOrdersController {
     UserRole.B2B_BUYER,
     UserRole.SUPPLIER_ACCOUNT,
   )
-  findAll() {
-    return this.purchaseOrdersService.findAll();
+  findAll(@Query() query: PurchaseOrderBranchScopeQueryDto) {
+    return this.purchaseOrdersService.findAll({ branchId: query.branchId });
   }
 
   @Post()
@@ -71,6 +73,7 @@ export class PurchaseOrdersController {
   )
   reevaluateAutoReplenishmentDraft(
     @Param('id', ParseIntPipe) id: number,
+    @Query() query: PurchaseOrderBranchScopeQueryDto,
     @Req() req,
   ) {
     return this.purchaseOrdersService
@@ -78,6 +81,7 @@ export class PurchaseOrdersController {
         id: req.user?.id ?? null,
         email: req.user?.email ?? null,
         roles: req.user?.roles ?? [],
+        branchId: query.branchId,
       })
       .then((result) => ({
         ...result.purchaseOrder,
@@ -99,6 +103,7 @@ export class PurchaseOrdersController {
   )
   updateStatus(
     @Param('id', ParseIntPipe) id: number,
+    @Query() query: PurchaseOrderBranchScopeQueryDto,
     @Body() dto: UpdatePurchaseOrderStatusDto,
     @Req() req,
   ) {
@@ -106,6 +111,7 @@ export class PurchaseOrdersController {
       id: req.user?.id ?? null,
       email: req.user?.email ?? null,
       roles: req.user?.roles ?? [],
+      branchId: query.branchId,
     });
   }
 
@@ -121,8 +127,13 @@ export class PurchaseOrdersController {
     UserRole.B2B_BUYER,
     UserRole.SUPPLIER_ACCOUNT,
   )
-  listReceiptEvents(@Param('id', ParseIntPipe) id: number) {
-    return this.purchaseOrdersService.listReceiptEvents(id);
+  listReceiptEvents(
+    @Param('id', ParseIntPipe) id: number,
+    @Query() query: PurchaseOrderBranchScopeQueryDto,
+  ) {
+    return this.purchaseOrdersService.listReceiptEvents(id, {
+      branchId: query.branchId,
+    });
   }
 
   @Post(':id/receipt-events')
@@ -138,6 +149,7 @@ export class PurchaseOrdersController {
   )
   recordReceiptEvent(
     @Param('id', ParseIntPipe) id: number,
+    @Query() query: PurchaseOrderBranchScopeQueryDto,
     @Body() dto: RecordPurchaseOrderReceiptDto,
     @Req() req,
   ) {
@@ -145,18 +157,27 @@ export class PurchaseOrdersController {
       id: req.user?.id ?? null,
       email: req.user?.email ?? null,
       roles: req.user?.roles ?? [],
+      branchId: query.branchId,
     });
   }
 
   @Patch(':id/receipt-events/:eventId/acknowledge')
   @ApiOperation({
-    summary: 'Allow a supplier account to acknowledge a recorded receipt event',
+    summary:
+      'Allow supplier or POS buyer roles to acknowledge a recorded receipt event',
   })
   @ApiBody({ type: AcknowledgePurchaseOrderReceiptDto, required: false })
-  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.SUPPLIER_ACCOUNT)
+  @Roles(
+    UserRole.SUPER_ADMIN,
+    UserRole.ADMIN,
+    UserRole.SUPPLIER_ACCOUNT,
+    UserRole.POS_MANAGER,
+    UserRole.B2B_BUYER,
+  )
   acknowledgeReceiptEvent(
     @Param('id', ParseIntPipe) id: number,
     @Param('eventId', ParseIntPipe) eventId: number,
+    @Query() query: PurchaseOrderBranchScopeQueryDto,
     @Body() dto: AcknowledgePurchaseOrderReceiptDto,
     @Req() req,
   ) {
@@ -168,6 +189,7 @@ export class PurchaseOrdersController {
         id: req.user?.id ?? null,
         email: req.user?.email ?? null,
         roles: req.user?.roles ?? [],
+        branchId: query.branchId,
       },
     );
   }
@@ -175,13 +197,20 @@ export class PurchaseOrdersController {
   @Patch(':id/receipt-events/:eventId/discrepancy-resolution')
   @ApiOperation({
     summary:
-      'Allow a supplier account to resolve shortages or damage recorded on a receipt event',
+      'Allow supplier or POS buyer roles to resolve shortages or damage recorded on a receipt event',
   })
   @ApiBody({ type: ResolvePurchaseOrderReceiptDiscrepancyDto })
-  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.SUPPLIER_ACCOUNT)
+  @Roles(
+    UserRole.SUPER_ADMIN,
+    UserRole.ADMIN,
+    UserRole.SUPPLIER_ACCOUNT,
+    UserRole.POS_MANAGER,
+    UserRole.B2B_BUYER,
+  )
   resolveReceiptEventDiscrepancy(
     @Param('id', ParseIntPipe) id: number,
     @Param('eventId', ParseIntPipe) eventId: number,
+    @Query() query: PurchaseOrderBranchScopeQueryDto,
     @Body() dto: ResolvePurchaseOrderReceiptDiscrepancyDto,
     @Req() req,
   ) {
@@ -193,6 +222,7 @@ export class PurchaseOrdersController {
         id: req.user?.id ?? null,
         email: req.user?.email ?? null,
         roles: req.user?.roles ?? [],
+        branchId: query.branchId,
       },
     );
   }
@@ -212,6 +242,7 @@ export class PurchaseOrdersController {
   approveReceiptEventDiscrepancy(
     @Param('id', ParseIntPipe) id: number,
     @Param('eventId', ParseIntPipe) eventId: number,
+    @Query() query: PurchaseOrderBranchScopeQueryDto,
     @Body() dto: ApprovePurchaseOrderReceiptDiscrepancyDto,
     @Req() req,
   ) {
@@ -223,6 +254,7 @@ export class PurchaseOrdersController {
         id: req.user?.id ?? null,
         email: req.user?.email ?? null,
         roles: req.user?.roles ?? [],
+        branchId: query.branchId,
       },
     );
   }

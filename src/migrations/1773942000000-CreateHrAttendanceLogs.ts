@@ -4,6 +4,10 @@ export class CreateHrAttendanceLogs1773942000000 implements MigrationInterface {
   name = 'CreateHrAttendanceLogs1773942000000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
+    if (await queryRunner.hasTable('hr_attendance_logs')) {
+      return;
+    }
+
     await queryRunner.query(`
       CREATE TABLE "hr_attendance_logs" (
         "id" SERIAL NOT NULL,

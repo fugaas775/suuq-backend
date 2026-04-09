@@ -21,6 +21,15 @@ import { SubscriptionAnalyticsService } from '../metrics/subscription-analytics.
 import { AdminUsersPageQueryDto } from './dto/admin-users-page-query.dto';
 import { AdminSubscriptionRequestsQueryDto } from './dto/admin-subscription-requests-query.dto';
 import { AdminUserListQueryDto } from './dto/admin-user-list-query.dto';
+import { BranchStaffService } from '../branch-staff/branch-staff.service';
+import { SellerWorkspaceService } from '../seller-workspace/seller-workspace.service';
+
+const POS_ROLES = new Set([UserRole.POS_MANAGER, UserRole.POS_OPERATOR]);
+const SELLER_ROLES = new Set([
+  UserRole.VENDOR,
+  UserRole.POS_MANAGER,
+  UserRole.POS_OPERATOR,
+]);
 
 @UseGuards(AuthGuard('jwt'), RolesGuard)
 @SkipThrottle()
@@ -29,6 +38,8 @@ export class AdminUsersController {
   constructor(
     private readonly usersService: UsersService,
     private readonly subscriptionAnalytics: SubscriptionAnalyticsService,
+    private readonly branchStaffService: BranchStaffService,
+    private readonly sellerWorkspaceService: SellerWorkspaceService,
   ) {}
 
   @Get('subscription/analytics')
@@ -82,7 +93,30 @@ export class AdminUsersController {
       pageSize,
     });
 
-    const data = users.map((user) =>
+    const enrichedUsers = await Promise.all(
+      users.map(async (user) => {
+        const roles = Array.isArray(user.roles) ? user.roles : [];
+        const enrichedUser: Record<string, unknown> = { ...user };
+
+        if (roles.some((role) => POS_ROLES.has(role))) {
+          const posAccess =
+            await this.branchStaffService.getAdminPosAccessForUser(user.id);
+
+          enrichedUser.posBranchAssignments = posAccess.branchAssignments;
+          enrichedUser.posWorkspaceActivationCandidates =
+            posAccess.workspaceActivationCandidates;
+        }
+
+        if (roles.some((role) => SELLER_ROLES.has(role))) {
+          enrichedUser.sellerWorkspaceSummary =
+            await this.safeGetSellerWorkspaceSummary(user.id);
+        }
+
+        return enrichedUser;
+      }),
+    );
+
+    const data = enrichedUsers.map((user) =>
       plainToInstance(UserResponseDto, user, { excludeExtraneousValues: true }),
     );
 
@@ -91,5 +125,32 @@ export class AdminUsersController {
     }
 
     return data;
+  }
+
+  private async safeGetSellerWorkspaceSummary(userId: number) {
+    try {
+      const overview = await this.sellerWorkspaceService.getOverview(userId);
+      return {
+        windowHours: overview.windowHours,
+        storeCount: overview.storeCount,
+        branchCount: overview.branchCount,
+        orderCount: overview.orderCount,
+        grossSales: overview.grossSales,
+        purchaseOrderCount: overview.purchaseOrderCount,
+        openPurchaseOrderCount: overview.openPurchaseOrderCount,
+        checkoutCount: overview.checkoutCount,
+        failedCheckoutCount: overview.failedCheckoutCount,
+        syncJobCount: overview.syncJobCount,
+        failedSyncJobCount: overview.failedSyncJobCount,
+        catalogProductCount: overview.catalogProductCount,
+        registerSessionCount: overview.registerSessionCount,
+        currentPlanCode: overview.currentPlanCode,
+        recommendedPlanCode: overview.recommendedPlanCode,
+        billingStatus: overview.workspace.billingStatus,
+        status: overview.workspace.status,
+      };
+    } catch {
+      return null;
+    }
   }
 }
