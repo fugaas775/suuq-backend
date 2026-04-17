@@ -88,3 +88,13 @@ bfg-*.jar
 
 # Nested dependency/cache artifacts accidentally created under source
 /src/node_modules/
+
+# Scratch and recovery artifacts that should stay local
+/.copilot-recovered-admin/
+/Untitled-*.ipynb
+/fix_*.js
+/patch*.js
+/patch*.sh
+/src/branch-staff/fix_ui.js
+/et -a
+/t { Client } = require('pg');
