@@ -1,5 +1,12 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsInt, IsNotEmpty, IsString, Matches, Min } from 'class-validator';
+import {
+  IsInt,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  Matches,
+  Min,
+} from 'class-validator';
 
 export class StartPosWorkspaceActivationDto {
   @ApiProperty({ example: 21 })
@@ -21,6 +28,14 @@ export class StartPosWorkspaceTrialDto {
   @IsInt()
   @Min(1)
   branchId!: number;
+
+  @ApiPropertyOptional({ example: 'QSR' })
+  @IsOptional()
+  @IsString()
+  @Matches(/^(RETAIL|CAFETERIA|QSR|FSR)$/iu, {
+    message: 'serviceFormat must be one of RETAIL, CAFETERIA, QSR, or FSR.',
+  })
+  serviceFormat?: string;
 }
 
 export class PosWorkspaceActivationPaymentResponseDto {
@@ -70,6 +85,9 @@ export class PosWorkspaceTrialActivationResponseDto {
 
   @ApiPropertyOptional({ nullable: true, example: 15 })
   trialDaysRemaining!: number | null;
+
+  @ApiPropertyOptional({ nullable: true, example: 'QSR' })
+  serviceFormat!: string | null;
 
   @ApiPropertyOptional({
     nullable: true,

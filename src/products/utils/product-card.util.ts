@@ -1,5 +1,8 @@
 import { Product } from '../entities/product.entity';
 
+// Minimum offline POS safety buffer (prevent overselling by keeping a physical margin)
+const SUUQ_S_ONLINE_SAFETY_BUFFER = 1;
+
 type RatingSummary = {
   average?: number;
   count?: number;
@@ -293,8 +296,14 @@ export function toProductCard(p: Product): ProductCard {
 
     // Physical
     dispatchDays: p.dispatchDays,
-    stockQuantity: p.stockQuantity,
-    stock_quantity: p.stockQuantity, // Legacy support
+    stockQuantity:
+      p.stockQuantity != null
+        ? Math.max(0, p.stockQuantity - SUUQ_S_ONLINE_SAFETY_BUFFER)
+        : undefined,
+    stock_quantity:
+      p.stockQuantity != null
+        ? Math.max(0, p.stockQuantity - SUUQ_S_ONLINE_SAFETY_BUFFER)
+        : undefined, // Legacy support
     sale_price: p.salePrice ?? undefined, // Legacy support
     shippingCost: p.shippingCost,
     shippingNotes: p.shippingNotes,

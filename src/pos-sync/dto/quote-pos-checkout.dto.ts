@@ -106,6 +106,11 @@ export class QuotePosCheckoutDto {
   @MaxLength(64)
   promoCode?: string;
 
+  @ApiPropertyOptional({ type: Object })
+  @IsOptional()
+  @IsObject()
+  customerProfile?: Record<string, any>;
+
   @ApiProperty({ type: [QuotePosCheckoutItemDto] })
   @IsArray()
   @ArrayMinSize(1)

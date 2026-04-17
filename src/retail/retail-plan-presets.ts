@@ -29,14 +29,19 @@ export const RETAIL_PLAN_PRESETS: RetailPlanPreset[] = [
     description:
       'Core branch POS and inventory visibility for single-store operators.',
     billingInterval: TenantBillingInterval.MONTHLY,
-    amount: 99,
-    currency: 'USD',
+    amount: 1900,
+    currency: 'ETB',
     defaultStatus: TenantSubscriptionStatus.ACTIVE,
     modules: [
       {
         module: RetailModule.POS_CORE,
         enabled: true,
         reason: 'Included in Retail Starter preset',
+        metadata: {
+          includedBranches: 1,
+          additionalBranchFee: 1300,
+          additionalBranchCurrency: 'ETB',
+        },
       },
       {
         module: RetailModule.INVENTORY_CORE,

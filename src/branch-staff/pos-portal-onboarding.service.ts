@@ -2,8 +2,14 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Branch } from '../branches/entities/branch.entity';
+import { PosUserFitCategory } from '../categories/entities/category.entity';
 import { RetailEntitlementsService } from '../retail/retail-entitlements.service';
 import { RetailModule } from '../retail/entities/tenant-module-entitlement.entity';
+import {
+  assertAllowedSelfServeServiceFormat,
+  buildSelfServeServiceFormatMetadata,
+  getDefaultAllowedSelfServeServiceFormats,
+} from '../retail/self-serve-service-format.policy';
 import { User } from '../users/entities/user.entity';
 import { BranchStaffService } from './branch-staff.service';
 import {
@@ -47,6 +53,15 @@ export class PosPortalOnboardingService {
       );
     }
 
+    const serviceFormat = assertAllowedSelfServeServiceFormat(
+      dto.serviceFormat,
+      'POS self-serve onboarding',
+      getDefaultAllowedSelfServeServiceFormats(),
+    );
+    const categoryId = Number.isFinite(Number(dto.categoryId))
+      ? Number(dto.categoryId)
+      : null;
+
     const tenant = await this.retailEntitlementsService.createTenant({
       name: dto.businessName.trim(),
       billingEmail: user.email,
@@ -59,6 +74,7 @@ export class PosPortalOnboardingService {
         name: dto.branchName.trim(),
         ownerId: user.id,
         retailTenantId: tenant.id,
+        serviceFormat,
         address: dto.address?.trim() || null,
         city: dto.city?.trim() || null,
         country: dto.country?.trim() || null,
@@ -83,6 +99,7 @@ export class PosPortalOnboardingService {
         {
           enabled: true,
           reason: 'Enabled during POS-S self-serve onboarding',
+          metadata: buildSelfServeServiceFormatMetadata(),
         },
       ),
       this.retailEntitlementsService.upsertModuleEntitlement(
@@ -94,6 +111,23 @@ export class PosPortalOnboardingService {
         },
       ),
     ]);
+
+    const userFit = dto.userFit ?? null;
+    const updatedTenant =
+      categoryId || userFit
+        ? await this.retailEntitlementsService.updateOnboardingProfile(
+            tenant.id,
+            {
+              categoryId,
+              userFit,
+              notes: null,
+            },
+            {
+              id: user.id,
+              email: user.email,
+            },
+          )
+        : null;
 
     const createdCandidates =
       await this.branchStaffService.getPosWorkspaceActivationCandidatesForUser({
@@ -107,7 +141,7 @@ export class PosPortalOnboardingService {
     return {
       onboardingState: 'BRANCH_WORKSPACE_ACTIVATION_REQUIRED',
       message:
-        'Your first POS workspace was created. Activate it to open POS-S.',
+        'Your POS-S workspace was created. Start your 15-day free trial to open it.',
       workspace: {
         tenantId: tenant.id,
         tenantName: tenant.name,
@@ -119,6 +153,7 @@ export class PosPortalOnboardingService {
       },
       pricing: this.branchStaffService.getPosWorkspacePricing(),
       activationCandidates: createdCandidates,
+      onboardingProfile: updatedTenant?.onboardingProfile ?? null,
     };
   }
 }

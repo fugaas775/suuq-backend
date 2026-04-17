@@ -19,6 +19,7 @@ import {
 import { Order } from '../orders/entities/order.entity';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
+import { UpdateProductPosCatalogDto } from '../admin/dto/update-product-pos-catalog.dto';
 import { ProductImage } from './entities/product-image.entity';
 import { ProductFilterDto } from './dto/ProductFilterDto';
 import { TieredProductsDto } from './dto/tiered-products.dto';
@@ -3549,6 +3550,134 @@ export class ProductsService {
     });
 
     return this.findOne(productId);
+  }
+
+  async findOneForAdmin(id: number): Promise<Product> {
+    const product = await this.productRepo.findOne({
+      where: { id, deletedAt: IsNull() },
+      relations: ['vendor', 'category', 'tags', 'images'],
+    });
+
+    if (!product) {
+      throw new NotFoundException(`Product with ID ${id} not found`);
+    }
+
+    return normalizeProductMedia(product as any) as Product;
+  }
+
+  async adminUpdatePosCatalog(
+    productId: number,
+    update: UpdateProductPosCatalogDto,
+    opts: { actorId?: number | null } = {},
+  ): Promise<Product> {
+    const product = await this.productRepo.findOne({
+      where: { id: productId, deletedAt: IsNull() },
+      relations: ['category'],
+    });
+    if (!product) {
+      throw new NotFoundException('Product not found');
+    }
+
+    const currentAttributes =
+      product.attributes && typeof product.attributes === 'object'
+        ? { ...product.attributes }
+        : {};
+    const previousSnapshot = {
+      browseCategory: currentAttributes.browseCategory ?? null,
+      unitOfMeasure: currentAttributes.unitOfMeasure ?? null,
+      packagingChargeAmount: currentAttributes.packagingChargeAmount ?? null,
+      aliases: Array.isArray(currentAttributes.aliases)
+        ? currentAttributes.aliases
+        : [],
+      localizedNames:
+        currentAttributes.localizedNames &&
+        typeof currentAttributes.localizedNames === 'object'
+          ? currentAttributes.localizedNames
+          : null,
+    };
+
+    const normalizedBrowseCategory =
+      typeof update.browseCategory === 'string'
+        ? update.browseCategory.trim()
+        : '';
+    if (normalizedBrowseCategory) {
+      currentAttributes.browseCategory = normalizedBrowseCategory;
+    } else {
+      delete currentAttributes.browseCategory;
+    }
+
+    const normalizedUnitOfMeasure =
+      typeof update.unitOfMeasure === 'string'
+        ? update.unitOfMeasure.trim()
+        : '';
+    if (normalizedUnitOfMeasure) {
+      currentAttributes.unitOfMeasure = normalizedUnitOfMeasure;
+    } else {
+      delete currentAttributes.unitOfMeasure;
+    }
+
+    if (typeof update.packagingChargeAmount === 'number') {
+      currentAttributes.packagingChargeAmount = update.packagingChargeAmount;
+    } else {
+      delete currentAttributes.packagingChargeAmount;
+    }
+
+    if (Array.isArray(update.aliases)) {
+      const aliases = Array.from(
+        new Set(
+          update.aliases
+            .map((value) => (typeof value === 'string' ? value.trim() : ''))
+            .filter(Boolean),
+        ),
+      );
+      if (aliases.length) {
+        currentAttributes.aliases = aliases;
+      } else {
+        delete currentAttributes.aliases;
+      }
+    }
+
+    if (update.localizedNames && typeof update.localizedNames === 'object') {
+      const localizedNames = Object.fromEntries(
+        Object.entries(update.localizedNames)
+          .map(([key, value]) => [
+            key.trim(),
+            typeof value === 'string' ? value.trim() : '',
+          ])
+          .filter(([key, value]) => Boolean(key) && Boolean(value)),
+      );
+      if (Object.keys(localizedNames).length) {
+        currentAttributes.localizedNames = localizedNames;
+      } else {
+        delete currentAttributes.localizedNames;
+      }
+    }
+
+    product.attributes = this.sanitizeAttributesForCategory(
+      currentAttributes,
+      product.category,
+    ) as any;
+    await this.productRepo.save(product);
+
+    await this.audit.log({
+      actorId: opts.actorId ?? null,
+      action: 'ADMIN_PRODUCT_UPDATE_POS_CATALOG',
+      targetType: 'PRODUCT',
+      targetId: productId,
+      meta: {
+        previous: previousSnapshot,
+        next: {
+          browseCategory: product.attributes?.browseCategory ?? null,
+          unitOfMeasure: product.attributes?.unitOfMeasure ?? null,
+          packagingChargeAmount:
+            product.attributes?.packagingChargeAmount ?? null,
+          aliases: product.attributes?.aliases ?? [],
+          localizedNames: product.attributes?.localizedNames ?? null,
+        },
+      },
+    });
+
+    return this.findOneForAdmin(productId);
   }
 
   async approveProduct(

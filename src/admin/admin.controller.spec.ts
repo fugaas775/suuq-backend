@@ -286,11 +286,18 @@ describe('AdminController', () => {
       { user: { id: 9, email: 'admin@suuq.test' } },
     );
 
-    expect(branchStaffService.assign).toHaveBeenCalledWith(8, {
-      userId: 41,
-      role: BranchStaffRole.OPERATOR,
-      permissions: ['OPEN_REGISTER'],
-    });
+    expect(branchStaffService.assign).toHaveBeenCalledWith(
+      8,
+      {
+        userId: 41,
+        role: BranchStaffRole.OPERATOR,
+        permissions: ['OPEN_REGISTER'],
+      },
+      {
+        id: 9,
+        email: 'admin@suuq.test',
+      },
+    );
     expect(auditService.log).toHaveBeenCalledWith(
       expect.objectContaining({
         action: 'user.pos.assignment.create',
@@ -321,7 +328,10 @@ describe('AdminController', () => {
       user: { id: 9, email: 'admin@suuq.test' },
     });
 
-    expect(branchStaffService.unassign).toHaveBeenCalledWith(8, 41);
+    expect(branchStaffService.unassign).toHaveBeenCalledWith(8, 41, {
+      id: 9,
+      email: 'admin@suuq.test',
+    });
     expect(auditService.log).toHaveBeenCalledWith(
       expect.objectContaining({
         action: 'user.pos.assignment.remove',

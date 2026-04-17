@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -9,6 +10,11 @@ import { In, Repository } from 'typeorm';
 import { User, SubscriptionTier } from '../users/entities/user.entity';
 import { VendorStaffService } from '../vendor/vendor-staff.service';
 import { BranchStaffService } from '../branch-staff/branch-staff.service';
+import {
+  BranchStaffAssignment,
+  BranchStaffRole,
+} from '../branch-staff/entities/branch-staff-assignment.entity';
+import { Branch } from '../branches/entities/branch.entity';
 import { Order, PaymentStatus } from '../orders/entities/order.entity';
 import {
   PurchaseOrder,
@@ -24,12 +30,23 @@ import {
 } from '../pos-sync/entities/pos-sync-job.entity';
 import { RetailTenant } from '../retail/entities/retail-tenant.entity';
 import {
+  RetailModule,
+  TenantModuleEntitlement,
+} from '../retail/entities/tenant-module-entitlement.entity';
+import {
+  assertAllowedSelfServeServiceFormat,
+  getPosCoreEntitlement,
+  resolveAllowedSelfServeServiceFormats,
+} from '../retail/self-serve-service-format.policy';
+import {
   TenantSubscription,
   TenantSubscriptionStatus,
 } from '../retail/entities/tenant-subscription.entity';
 import { Product } from '../products/entities/product.entity';
 import { PosRegisterSession } from '../pos-sync/entities/pos-register-session.entity';
+import { UserRole } from '../auth/roles.enum';
 import { BootstrapSellerWorkspaceDto } from './dto/bootstrap-seller-workspace.dto';
+import { CreateSellerBranchWorkspaceDto } from './dto/create-seller-branch-workspace.dto';
 import {
   SellerPlanCode,
   SellerWorkspaceBranchWorkspaceDto,
@@ -51,6 +68,7 @@ import {
   SellerWorkspaceUserSummaryDto,
 } from './dto/seller-workspace-response.dto';
 import { UpdateSellerWorkspaceChannelDto } from './dto/update-seller-workspace-channel.dto';
+import { UpdateBranchServiceFormatDto } from './dto/update-branch-service-format.dto';
 import { UpdateSellerWorkspaceOnboardingDto } from './dto/update-seller-workspace-onboarding.dto';
 import { UpdateSellerWorkspacePlanDto } from './dto/update-seller-workspace-plan.dto';
 import {
@@ -148,6 +166,8 @@ export class SellerWorkspaceService {
     private readonly posSyncJobsRepository: Repository<PosSyncJob>,
     @InjectRepository(RetailTenant)
     private readonly retailTenantsRepository: Repository<RetailTenant>,
+    @InjectRepository(TenantModuleEntitlement)
+    private readonly tenantModuleEntitlementsRepository: Repository<TenantModuleEntitlement>,
     @InjectRepository(TenantSubscription)
     private readonly tenantSubscriptionsRepository: Repository<TenantSubscription>,
     @InjectRepository(Product)
@@ -264,9 +284,20 @@ export class SellerWorkspaceService {
           .filter((tenantId): tenantId is number => Number.isInteger(tenantId)),
       ),
     );
-    const subscriptions = await this.findRelevantSubscriptions(tenantIds);
+    const [subscriptions, tenants, rosterSummaries] = await Promise.all([
+      this.findRelevantSubscriptions(tenantIds),
+      this.findTenantsByIds(tenantIds),
+      this.branchStaffService.getBranchRosterSummaries(
+        [...activeBranches, ...activationCandidates].map(
+          (branch) => branch.branchId,
+        ),
+      ),
+    ]);
     const latestSubscriptionByTenantId = new Map<number, TenantSubscription>();
-
+    const tenantById = new Map(tenants.map((tenant) => [tenant.id, tenant]));
+    const rosterByBranchId = new Map(
+      rosterSummaries.map((summary) => [summary.branchId, summary]),
+    );
     for (const subscription of subscriptions) {
       if (!latestSubscriptionByTenantId.has(subscription.tenantId)) {
         latestSubscriptionByTenantId.set(subscription.tenantId, subscription);
@@ -278,13 +309,19 @@ export class SellerWorkspaceService {
         const subscription = branch.retailTenantId
           ? latestSubscriptionByTenantId.get(branch.retailTenantId) || null
           : null;
+        const roster = rosterByBranchId.get(branch.branchId);
+        const tenant = branch.retailTenantId
+          ? tenantById.get(branch.retailTenantId) || null
+          : null;
 
         return {
           branchId: branch.branchId,
           branchName: branch.branchName,
           branchCode: branch.branchCode,
+          serviceFormat: branch.serviceFormat ?? null,
           role: branch.role,
           isOwner: branch.isOwner,
+          isTenantOwner: branch.isTenantOwner,
           retailTenantId: branch.retailTenantId,
           retailTenantName: branch.retailTenantName,
           workspaceStatus: branch.workspaceStatus,
@@ -293,6 +330,28 @@ export class SellerWorkspaceService {
             subscription?.status ??
             TenantSubscriptionStatus.ACTIVE,
           planCode: branch.planCode ?? subscription?.planCode ?? null,
+          managerCount: roster?.managerCount ?? 0,
+          operatorCount: roster?.operatorCount ?? 0,
+          assignedManagers: (roster?.assignedManagers ?? []).map((manager) => ({
+            userId: manager.userId,
+            email: manager.email,
+            displayName: manager.displayName,
+            phone: null,
+            status: manager.isOwner ? 'ACTIVE' : null,
+            lastLoginAt: null,
+          })),
+          assignedOperators: (roster?.assignedOperators ?? []).map(
+            (operator) => ({
+              userId: operator.userId,
+              email: operator.email,
+              displayName: operator.displayName,
+              phone: null,
+              status: null,
+              lastLoginAt: null,
+            }),
+          ),
+          tenantDefaultUserFit: tenant?.onboardingProfile?.userFit ?? null,
+          categoryOverrideUserFit: null,
           modules: branch.modules,
           pricing,
           canStartActivation: false,
@@ -304,27 +363,58 @@ export class SellerWorkspaceService {
           joinedAt: branch.joinedAt,
         };
       }),
-      ...activationCandidates.map((candidate) => ({
-        branchId: candidate.branchId,
-        branchName: candidate.branchName,
-        branchCode: candidate.branchCode,
-        role: candidate.role,
-        isOwner: candidate.isOwner,
-        retailTenantId: candidate.retailTenantId,
-        retailTenantName: candidate.retailTenantName,
-        workspaceStatus: candidate.workspaceStatus,
-        subscriptionStatus: candidate.subscriptionStatus,
-        planCode: candidate.planCode,
-        modules: [],
-        pricing: candidate.pricing as SellerWorkspacePricingDto,
-        canStartActivation: candidate.canStartActivation,
-        canStartTrial: candidate.canStartTrial,
-        canOpenNow: candidate.canOpenNow,
-        trialStartedAt: candidate.trialStartedAt,
-        trialEndsAt: candidate.trialEndsAt,
-        trialDaysRemaining: candidate.trialDaysRemaining,
-        joinedAt: new Date(0),
-      })),
+      ...activationCandidates.map((candidate) => {
+        const roster = rosterByBranchId.get(candidate.branchId);
+        const tenant = candidate.retailTenantId
+          ? tenantById.get(candidate.retailTenantId) || null
+          : null;
+
+        return {
+          branchId: candidate.branchId,
+          branchName: candidate.branchName,
+          branchCode: candidate.branchCode,
+          serviceFormat: candidate.serviceFormat ?? null,
+          role: candidate.role,
+          isOwner: candidate.isOwner,
+          isTenantOwner: candidate.isTenantOwner,
+          retailTenantId: candidate.retailTenantId,
+          retailTenantName: candidate.retailTenantName,
+          workspaceStatus: candidate.workspaceStatus,
+          subscriptionStatus: candidate.subscriptionStatus,
+          planCode: candidate.planCode,
+          managerCount: roster?.managerCount ?? 0,
+          operatorCount: roster?.operatorCount ?? 0,
+          assignedManagers: (roster?.assignedManagers ?? []).map((manager) => ({
+            userId: manager.userId,
+            email: manager.email,
+            displayName: manager.displayName,
+            phone: null,
+            status: manager.isOwner ? 'ACTIVE' : null,
+            lastLoginAt: null,
+          })),
+          assignedOperators: (roster?.assignedOperators ?? []).map(
+            (operator) => ({
+              userId: operator.userId,
+              email: operator.email,
+              displayName: operator.displayName,
+              phone: null,
+              status: null,
+              lastLoginAt: null,
+            }),
+          ),
+          tenantDefaultUserFit: tenant?.onboardingProfile?.userFit ?? null,
+          categoryOverrideUserFit: null,
+          modules: [],
+          pricing: candidate.pricing as SellerWorkspacePricingDto,
+          canStartActivation: candidate.canStartActivation,
+          canStartTrial: candidate.canStartTrial,
+          canOpenNow: candidate.canOpenNow,
+          trialStartedAt: candidate.trialStartedAt,
+          trialEndsAt: candidate.trialEndsAt,
+          trialDaysRemaining: candidate.trialDaysRemaining,
+          joinedAt: new Date(0),
+        };
+      }),
     ].sort((left, right) => {
       if (left.canOpenNow !== right.canOpenNow) {
         return left.canOpenNow ? -1 : 1;
@@ -338,6 +428,187 @@ export class SellerWorkspaceService {
     });
 
     return { items };
+  }
+
+  async createBranchWorkspace(
+    userId: number,
+    dto: CreateSellerBranchWorkspaceDto,
+  ): Promise<SellerWorkspaceBranchWorkspaceDto> {
+    const user = await this.usersRepository.findOne({ where: { id: userId } });
+    if (!user) {
+      throw new NotFoundException(`User with ID ${userId} not found`);
+    }
+
+    const [activeBranches, activationCandidates, workspace] = await Promise.all(
+      [
+        this.branchStaffService.getPosBranchSummariesForUser({
+          id: user.id,
+          roles: user.roles,
+        }),
+        this.branchStaffService.getPosWorkspaceActivationCandidatesForUser({
+          id: user.id,
+          roles: user.roles,
+        }),
+        this.sellerWorkspacesRepository.findOne({
+          where: { ownerUserId: user.id },
+        }),
+      ],
+    );
+
+    const accessItems = [...activeBranches, ...activationCandidates];
+    if (!accessItems.length) {
+      throw new ForbiddenException({
+        code: 'SELLER_WORKSPACE_ACCESS_DENIED',
+        message:
+          'This account is not linked to any seller store or POS workspace.',
+      });
+    }
+
+    const targetTenantId = this.resolveTargetTenantIdForBranchCreation(
+      accessItems,
+      workspace?.primaryRetailTenantId ?? null,
+    );
+
+    if (
+      !this.canCreateBranchWorkspaceForTenant(user, accessItems, targetTenantId)
+    ) {
+      throw new ForbiddenException(
+        'Only a tenant owner, branch owner, or approved admin can create another branch.',
+      );
+    }
+
+    const normalizedBranchName = this.normalizeRequiredString(
+      dto.branchName,
+      'branchName is required',
+    );
+    const normalizedCurrency = this.normalizeRequiredString(
+      dto.defaultCurrency,
+      'defaultCurrency is required',
+    ).toUpperCase();
+    const posCoreEntitlement =
+      await this.tenantModuleEntitlementsRepository.findOne({
+        where: {
+          tenantId: targetTenantId,
+          module: RetailModule.POS_CORE,
+        },
+      });
+    if (
+      posCoreEntitlement?.metadata &&
+      typeof posCoreEntitlement.metadata === 'object' &&
+      typeof (posCoreEntitlement.metadata as any).includedBranches === 'number'
+    ) {
+      const includedBranches = (posCoreEntitlement.metadata as any)
+        .includedBranches as number;
+      const tenantBranches = await this.retailTenantsRepository.manager.query(
+        `SELECT COUNT(id) FROM branches WHERE "retailTenantId" = $1`,
+        [targetTenantId],
+      );
+      const currentCount = parseInt(tenantBranches[0].count, 10);
+      if (currentCount >= includedBranches) {
+        const additionalFee =
+          (posCoreEntitlement.metadata as any).additionalBranchFee || '1,300';
+        const additionalCurrency =
+          (posCoreEntitlement.metadata as any).additionalBranchCurrency ||
+          'ETB';
+        throw new ForbiddenException(
+          `Branch limit reached. Please upgrade your plan or pay the additional branch fee of ${additionalFee} ${additionalCurrency}/month to add more branches.`,
+        );
+      }
+    }
+    const normalizedServiceFormat = assertAllowedSelfServeServiceFormat(
+      dto.serviceFormat,
+      'Seller HQ branch creation',
+      resolveAllowedSelfServeServiceFormats(
+        getPosCoreEntitlement([posCoreEntitlement].filter(Boolean)),
+      ),
+    );
+    const normalizedAddress = this.normalizeOptionalString(dto.address);
+    const normalizedCity = this.normalizeOptionalString(dto.city);
+    const normalizedCountry = this.normalizeOptionalString(dto.country);
+
+    let createdBranchId: number | null = null;
+
+    await this.sellerWorkspacesRepository.manager.transaction(
+      async (manager) => {
+        const branchesRepository = manager.getRepository(Branch);
+        const assignmentsRepository = manager.getRepository(
+          BranchStaffAssignment,
+        );
+        const tenantsRepository = manager.getRepository(RetailTenant);
+
+        const tenant = await tenantsRepository.findOne({
+          where: { id: targetTenantId },
+        });
+        if (!tenant) {
+          throw new NotFoundException(
+            `Retail tenant with ID ${targetTenantId} not found`,
+          );
+        }
+
+        const existingBranches = await branchesRepository.find({
+          where: { retailTenantId: targetTenantId },
+        });
+
+        if (
+          existingBranches.some(
+            (branch) =>
+              String(branch.name || '')
+                .trim()
+                .toLowerCase() === normalizedBranchName.toLowerCase(),
+          )
+        ) {
+          throw new ConflictException(
+            'A branch with this name or generated code already exists in the tenant.',
+          );
+        }
+
+        const branch = branchesRepository.create({
+          name: normalizedBranchName,
+          code: await this.generateUniqueBranchCode(
+            branchesRepository,
+            normalizedBranchName,
+          ),
+          serviceFormat: normalizedServiceFormat,
+          ownerId: user.id,
+          retailTenantId: tenant.id,
+          address: normalizedAddress,
+          city: normalizedCity,
+          country: normalizedCountry,
+          isActive: true,
+        });
+        const savedBranch = await branchesRepository.save(branch);
+
+        await assignmentsRepository.save(
+          assignmentsRepository.create({
+            branchId: savedBranch.id,
+            userId: user.id,
+            role: BranchStaffRole.MANAGER,
+            permissions: [],
+            isActive: true,
+          }),
+        );
+
+        if (!tenant.defaultCurrency && normalizedCurrency) {
+          tenant.defaultCurrency = normalizedCurrency;
+          await tenantsRepository.save(tenant);
+        }
+
+        createdBranchId = savedBranch.id;
+      },
+    );
+
+    const refreshed = await this.getBranchWorkspaces(userId);
+    const createdWorkspace = refreshed.items.find(
+      (item) => item.branchId === createdBranchId,
+    );
+
+    if (!createdWorkspace) {
+      throw new NotFoundException(
+        'Created branch workspace could not be resolved after creation.',
+      );
+    }
+
+    return createdWorkspace;
   }
 
   async updatePlanSelection(
@@ -487,6 +758,10 @@ export class SellerWorkspaceService {
     };
 
     const tenantById = new Map(tenants.map((tenant) => [tenant.id, tenant]));
+    const governanceByTenantId = await this.buildTenantGovernanceMap(
+      tenants,
+      subscriptions,
+    );
     const currentPlanCode = this.resolveCurrentPlanCode(
       user,
       subscriptions,
@@ -519,6 +794,7 @@ export class SellerWorkspaceService {
       workspace,
       branches,
       tenantById,
+      governanceByTenantId,
     );
 
     return {
@@ -535,9 +811,11 @@ export class SellerWorkspaceService {
         branchId: branch.branchId,
         branchName: branch.branchName,
         branchCode: branch.branchCode,
+        serviceFormat: branch.serviceFormat ?? null,
         role: branch.role,
         permissions: [...branch.permissions],
         isOwner: branch.isOwner,
+        isTenantOwner: branch.isTenantOwner,
         retailTenantId: branch.retailTenantId,
         retailTenantName: branch.retailTenantName,
         modules: [...branch.modules],
@@ -690,6 +968,7 @@ export class SellerWorkspaceService {
 
     return this.retailTenantsRepository.find({
       where: { id: In(tenantIds) },
+      relations: { owner: true, branches: true, entitlements: true },
     });
   }
 
@@ -697,6 +976,28 @@ export class SellerWorkspaceService {
     workspace: SellerWorkspace,
     branches: SellerWorkspaceBranchSummaryDto[],
     tenantById: Map<number, RetailTenant>,
+    governanceByTenantId: Map<
+      number,
+      {
+        owner: {
+          userId: number | null;
+          email: string | null;
+          displayName: string | null;
+          phone: string | null;
+          status: string | null;
+          lastLoginAt: string | null;
+        };
+        activationReadiness: {
+          canActivate: boolean;
+          status: 'READY' | 'BLOCKED';
+          blockers: string[];
+          branchCount: number;
+          managersAssignedCount: number;
+          operatorsAssignedCount: number;
+          subscriptionState: string;
+        };
+      }
+    >,
   ): SellerWorkspaceRetailContextDto | null {
     const primaryTenantId =
       workspace.primaryRetailTenantId ??
@@ -709,11 +1010,14 @@ export class SellerWorkspaceService {
     }
 
     const tenant = tenantById.get(primaryTenantId);
+    const governance = governanceByTenantId.get(primaryTenantId) || null;
     if (!tenant) {
       return {
         tenantId: primaryTenantId,
         tenantName: null,
         onboardingProfile: null,
+        owner: governance?.owner ?? null,
+        activationReadiness: governance?.activationReadiness ?? null,
       };
     }
 
@@ -730,7 +1034,139 @@ export class SellerWorkspaceService {
             notes: tenant.onboardingProfile.notes ?? null,
           }
         : null,
+      owner: governance?.owner ?? this.buildOwnerSummary(tenant.owner ?? null),
+      activationReadiness: governance?.activationReadiness ?? null,
     };
+  }
+
+  private buildOwnerSummary(owner: User | null) {
+    if (!owner) {
+      return null;
+    }
+
+    return {
+      userId: owner.id,
+      email: owner.email ?? null,
+      displayName: owner.displayName ?? owner.contactName ?? null,
+      phone:
+        [owner.phoneCountryCode, owner.phoneNumber]
+          .filter((value) => typeof value === 'string' && value.trim())
+          .join(' ')
+          .trim() ||
+        owner.vendorPhoneNumber ||
+        null,
+      status: owner.isActive ? 'ACTIVE' : 'SUSPENDED',
+      lastLoginAt: owner.lastLoginAt?.toISOString() ?? null,
+    };
+  }
+
+  private async buildTenantGovernanceMap(
+    tenants: RetailTenant[],
+    subscriptions: TenantSubscription[],
+  ) {
+    const latestSubscriptionByTenantId = new Map<number, TenantSubscription>();
+
+    for (const subscription of subscriptions) {
+      if (!latestSubscriptionByTenantId.has(subscription.tenantId)) {
+        latestSubscriptionByTenantId.set(subscription.tenantId, subscription);
+      }
+    }
+
+    const rosterSummaries =
+      await this.branchStaffService.getBranchRosterSummaries(
+        tenants.flatMap(
+          (tenant) => tenant.branches?.map((branch) => branch.id) || [],
+        ),
+      );
+    const rosterByBranchId = new Map(
+      rosterSummaries.map((summary) => [summary.branchId, summary]),
+    );
+
+    return new Map(
+      tenants.map((tenant) => {
+        const owner = this.buildOwnerSummary(tenant.owner ?? null);
+        const activeBranches = (tenant.branches ?? []).filter(
+          (branch) => branch.isActive !== false,
+        );
+        const hasPosCore = (tenant.entitlements ?? []).some((entitlement) => {
+          if (entitlement.module !== 'POS_CORE' || !entitlement.enabled) {
+            return false;
+          }
+
+          const now = Date.now();
+          if (entitlement.startsAt && entitlement.startsAt.getTime() > now) {
+            return false;
+          }
+
+          if (entitlement.expiresAt && entitlement.expiresAt.getTime() < now) {
+            return false;
+          }
+
+          return true;
+        });
+        const managersAssignedCount = activeBranches.reduce((total, branch) => {
+          return total + (rosterByBranchId.get(branch.id)?.managerCount ?? 0);
+        }, 0);
+        const operatorsAssignedCount = activeBranches.reduce(
+          (total, branch) => {
+            return (
+              total + (rosterByBranchId.get(branch.id)?.operatorCount ?? 0)
+            );
+          },
+          0,
+        );
+        const blockers: string[] = [];
+
+        if (tenant.status !== 'ACTIVE') {
+          blockers.push('Activate the retail tenant before POS activation.');
+        }
+
+        if (!owner?.userId) {
+          blockers.push('Assign a tenant owner account.');
+        }
+
+        if (!hasPosCore) {
+          blockers.push('Enable POS_CORE entitlement.');
+        }
+
+        if (!activeBranches.length) {
+          blockers.push('Assign at least one active branch to this tenant.');
+        }
+
+        if (
+          activeBranches.length &&
+          activeBranches.some(
+            (branch) =>
+              (rosterByBranchId.get(branch.id)?.managerCount ?? 0) === 0,
+          )
+        ) {
+          blockers.push(
+            'Assign a branch manager or owner for every active branch.',
+          );
+        }
+
+        const readinessStatus: 'READY' | 'BLOCKED' =
+          blockers.length === 0 ? 'READY' : 'BLOCKED';
+
+        return [
+          tenant.id,
+          {
+            owner,
+            activationReadiness: {
+              canActivate: blockers.length === 0,
+              status: readinessStatus,
+              blockers,
+              branchCount: activeBranches.length,
+              managersAssignedCount,
+              operatorsAssignedCount,
+              subscriptionState:
+                latestSubscriptionByTenantId.get(tenant.id)?.status ||
+                'NOT_STARTED',
+            },
+          },
+        ];
+      }),
+    );
   }
 
   private resolveCurrentPlanCode(
@@ -1119,6 +1555,140 @@ export class SellerWorkspaceService {
     }
   }
 
+  private resolveTargetTenantIdForBranchCreation(
+    branches: Array<{
+      retailTenantId: number | null;
+      isOwner: boolean;
+      isTenantOwner: boolean;
+    }>,
+    requestedTenantId?: number | null,
+  ): number {
+    const tenantIds = Array.from(
+      new Set(
+        branches
+          .map((branch) => branch.retailTenantId)
+          .filter((tenantId): tenantId is number => Number.isInteger(tenantId)),
+      ),
+    );
+
+    if (!tenantIds.length) {
+      throw new ForbiddenException(
+        'This account is not linked to a retail tenant that can host another branch.',
+      );
+    }
+
+    if (requestedTenantId != null) {
+      if (tenantIds.includes(requestedTenantId)) {
+        return requestedTenantId;
+      }
+
+      throw new ForbiddenException(
+        `Seller workspace cannot target tenant ${requestedTenantId} without access`,
+      );
+    }
+
+    if (tenantIds.length === 1) {
+      return tenantIds[0];
+    }
+
+    const ownedTenantIds = Array.from(
+      new Set(
+        branches
+          .filter((branch) => branch.isOwner || branch.isTenantOwner)
+          .map((branch) => branch.retailTenantId)
+          .filter((tenantId): tenantId is number => Number.isInteger(tenantId)),
+      ),
+    );
+
+    if (ownedTenantIds.length === 1) {
+      return ownedTenantIds[0];
+    }
+
+    throw new BadRequestException(
+      'Branch creation is ambiguous across multiple retail tenants. Set a primary retail tenant in Seller HQ first.',
+    );
+  }
+
+  private canCreateBranchWorkspaceForTenant(
+    user: Pick<User, 'roles'>,
+    branches: Array<{
+      retailTenantId: number | null;
+      isOwner: boolean;
+      isTenantOwner: boolean;
+    }>,
+    tenantId: number,
+  ): boolean {
+    const normalizedRoles = new Set(
+      (user.roles ?? []).map((role) =>
+        String(role || '')
+          .trim()
+          .toUpperCase(),
+      ),
+    );
+
+    if (
+      normalizedRoles.has(UserRole.ADMIN) ||
+      normalizedRoles.has(UserRole.SUPER_ADMIN)
+    ) {
+      return true;
+    }
+
+    return branches.some(
+      (branch) =>
+        branch.retailTenantId === tenantId &&
+        (branch.isOwner || branch.isTenantOwner),
+    );
+  }
+
+  private normalizeRequiredString(
+    value: string | null | undefined,
+    message: string,
+  ) {
+    const normalized = String(value || '').trim();
+    if (!normalized) {
+      throw new BadRequestException(message);
+    }
+
+    return normalized;
+  }
+
+  private normalizeOptionalString(value?: string | null): string | null {
+    const normalized = String(value || '').trim();
+    return normalized || null;
+  }
+
+  private async generateUniqueBranchCode(
+    branchesRepository: Repository<Branch>,
+    branchName: string,
+  ): Promise<string> {
+    const base =
+      branchName
+        .toUpperCase()
+        .replace(/[^A-Z0-9]+/g, ' ')
+        .trim()
+        .split(/\s+/)
+        .filter(Boolean)
+        .slice(0, 3)
+        .map((token) => token.slice(0, 3))
+        .join('')
+        .slice(0, 9) || 'BRANCH';
+
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const suffix = `${Date.now()}`.slice(-6);
+      const code = `${base}-${suffix}${attempt ? `-${attempt}` : ''}`.slice(
+        0,
+        64,
+      );
+      const existing = await branchesRepository.findOne({ where: { code } });
+      if (!existing) {
+        return code;
+      }
+    }
+
+    throw new ConflictException(
+      'A branch with this name or generated code already exists in the tenant.',
+    );
+  }
   private resolvePersistedBillingStatus(
     subscriptions: TenantSubscription[],
     hasSelectedPlan: boolean,
@@ -1231,5 +1801,51 @@ export class SellerWorkspaceService {
       createdAt: workspace.createdAt,
       updatedAt: workspace.updatedAt,
     };
+  }
+  async updateBranchWorkspaceServiceFormat(
+    userId: number,
+    branchId: number,
+    dto: UpdateBranchServiceFormatDto,
+  ): Promise<SellerWorkspaceBranchWorkspaceDto> {
+    const branch = await this.sellerWorkspacesRepository.manager
+      .getRepository(Branch)
+      .findOne({
+        where: { id: branchId },
+        relations: ['retailTenant', 'retailTenant.owner'],
+      });
+    if (!branch) {
+      throw new NotFoundException(
+        `Branch workspace with ID ${branchId} not found.`,
+      );
+    }
+    const tenantId = branch.retailTenantId;
+    const posCoreEntitlement =
+      await this.tenantModuleEntitlementsRepository.findOne({
+        where: {
+          tenantId,
+          module: RetailModule.POS_CORE,
+        },
+      });
+    const normalizedServiceFormat = assertAllowedSelfServeServiceFormat(
+      dto.serviceFormat,
+      'Branch service format update',
+      resolveAllowedSelfServeServiceFormats(
+        getPosCoreEntitlement([posCoreEntitlement].filter(Boolean)),
+      ),
+    );
+    await this.sellerWorkspacesRepository.manager
+      .getRepository(Branch)
+      .update(branchId, { serviceFormat: normalizedServiceFormat });
+    branch.serviceFormat = normalizedServiceFormat;
+    const refreshed = await this.getBranchWorkspaces(userId);
+    const updatedWorkspace = refreshed.items.find(
+      (item) => item.branchId === branchId,
+    );
+    if (!updatedWorkspace) {
+      throw new NotFoundException(
+        'Updated branch workspace could not be resolved.',
+      );
+    }
+    return updatedWorkspace;
   }
 }

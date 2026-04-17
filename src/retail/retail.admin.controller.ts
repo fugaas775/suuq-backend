@@ -7,6 +7,7 @@ import {
   Patch,
   Post,
   Query,
+  Req,
   Put,
   UseGuards,
 } from '@nestjs/common';
@@ -16,10 +17,12 @@ import { RolesGuard } from '../auth/roles.guard';
 import { UserRole } from '../auth/roles.enum';
 import { Roles } from '../common/decorators/roles.decorator';
 import { ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { AuthenticatedRequest } from '../common/interfaces/authenticated-request.interface';
 import { ApplyRetailPlanPresetDto } from './dto/apply-retail-plan-preset.dto';
 import { CreateRetailTenantDto } from './dto/create-retail-tenant.dto';
 import { CreateTenantSubscriptionDto } from './dto/create-tenant-subscription.dto';
 import { ListRetailTenantsQueryDto } from './dto/list-retail-tenants-query.dto';
+import { UpdateRetailTenantOwnerDto } from './dto/update-retail-tenant-owner.dto';
 import { UpdateRetailTenantOnboardingProfileDto } from './dto/update-retail-tenant-onboarding-profile.dto';
 import {
   AppliedRetailPlanPresetResponseDto,
@@ -106,8 +109,24 @@ export class RetailAdminController {
   updateOnboardingProfile(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateRetailTenantOnboardingProfileDto,
+    @Req() req: AuthenticatedRequest,
   ) {
-    return this.retailEntitlementsService.updateOnboardingProfile(id, dto);
+    return this.retailEntitlementsService.updateOnboardingProfile(id, dto, {
+      id: req.user?.id ?? null,
+      email: req.user?.email ?? null,
+    });
+  }
+
+  @Patch(':id/owner')
+  updateOwner(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateRetailTenantOwnerDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.retailEntitlementsService.updateTenantOwner(id, dto, {
+      id: req.user?.id ?? null,
+      email: req.user?.email ?? null,
+    });
   }
 
   @Post(':id/subscriptions')

@@ -3,6 +3,11 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { BranchStaffService } from '../branch-staff/branch-staff.service';
 import {
+  BranchStaffAssignment,
+  BranchStaffRole,
+} from '../branch-staff/entities/branch-staff-assignment.entity';
+import { Branch } from '../branches/entities/branch.entity';
+import {
   Order,
   PaymentMethod,
   PaymentStatus,
@@ -29,6 +34,10 @@ import {
 } from '../purchase-orders/entities/purchase-order.entity';
 import { RetailTenant } from '../retail/entities/retail-tenant.entity';
 import {
+  RetailModule,
+  TenantModuleEntitlement,
+} from '../retail/entities/tenant-module-entitlement.entity';
+import {
   TenantBillingInterval,
   TenantSubscription,
   TenantSubscriptionStatus,
@@ -48,6 +57,7 @@ describe('SellerWorkspaceService', () => {
   let posCheckoutsRepository: { createQueryBuilder: jest.Mock };
   let posSyncJobsRepository: { createQueryBuilder: jest.Mock };
   let retailTenantsRepository: { find: jest.Mock };
+  let tenantModuleEntitlementsRepository: { findOne: jest.Mock };
   let tenantSubscriptionsRepository: { find: jest.Mock };
   let productsRepository: { createQueryBuilder: jest.Mock };
   let posRegisterSessionsRepository: { count: jest.Mock };
@@ -55,21 +65,29 @@ describe('SellerWorkspaceService', () => {
     findOne: jest.Mock;
     create: jest.Mock;
     save: jest.Mock;
+    manager: {
+      transaction: jest.Mock;
+    };
   };
   let vendorStaffService: { getStoreSummariesForUser: jest.Mock };
   let branchStaffService: {
     getPosBranchSummariesForUser: jest.Mock;
     getPosWorkspaceActivationCandidatesForUser: jest.Mock;
+    getBranchRosterSummaries: jest.Mock;
     getPosWorkspacePricing: jest.Mock;
   };
 
   beforeEach(async () => {
+    delete process.env.POS_HOSPITALITY_SERVICE_FORMATS_ENABLED;
     usersRepository = { findOne: jest.fn() };
     ordersRepository = { createQueryBuilder: jest.fn() };
     purchaseOrdersRepository = { find: jest.fn() };
     posCheckoutsRepository = { createQueryBuilder: jest.fn() };
     posSyncJobsRepository = { createQueryBuilder: jest.fn() };
-    retailTenantsRepository = { find: jest.fn() };
+    retailTenantsRepository = { find: jest.fn().mockResolvedValue([]) };
+    tenantModuleEntitlementsRepository = {
+      findOne: jest.fn().mockResolvedValue(null),
+    };
     tenantSubscriptionsRepository = { find: jest.fn() };
     productsRepository = { createQueryBuilder: jest.fn() };
     posRegisterSessionsRepository = { count: jest.fn() };
@@ -82,11 +100,15 @@ describe('SellerWorkspaceService', () => {
         updatedAt: new Date('2026-03-05T00:00:00.000Z'),
         ...value,
       })),
+      manager: {
+        transaction: jest.fn(),
+      },
     };
     vendorStaffService = { getStoreSummariesForUser: jest.fn() };
     branchStaffService = {
       getPosBranchSummariesForUser: jest.fn(),
       getPosWorkspaceActivationCandidatesForUser: jest.fn(),
+      getBranchRosterSummaries: jest.fn().mockResolvedValue([]),
       getPosWorkspacePricing: jest.fn(() => ({
         amount: 1900,
         currency: 'ETB',
@@ -115,6 +137,10 @@ describe('SellerWorkspaceService', () => {
         {
           provide: getRepositoryToken(RetailTenant),
           useValue: retailTenantsRepository,
+        },
+        {
+          provide: getRepositoryToken(TenantModuleEntitlement),
+          useValue: tenantModuleEntitlementsRepository,
         },
         {
           provide: getRepositoryToken(TenantSubscription),
@@ -544,5 +570,289 @@ describe('SellerWorkspaceService', () => {
         paymentMethod: 'EBIRR',
       }),
     });
+  });
+
+  it('creates another branch transactionally and returns the normalized workspace summary', async () => {
+    const user = {
+      id: 41,
+      email: 'seller@suuq.test',
+      roles: ['POS_MANAGER'],
+      subscriptionTier: SubscriptionTier.PRO,
+    } as User;
+    const existingTenant = {
+      id: 13,
+      name: 'Seller Tenant',
+      defaultCurrency: null,
+      onboardingProfile: null,
+    };
+    const branchesRepository = {
+      find: jest.fn().mockResolvedValue([]),
+      findOne: jest.fn().mockResolvedValue(null),
+      create: jest.fn((value) => value),
+      save: jest.fn(async (value) => ({
+        id: 8,
+        createdAt: new Date('2026-03-08T00:00:00.000Z'),
+        ...value,
+      })),
+    };
+    const assignmentsRepository = {
+      create: jest.fn((value) => value),
+      save: jest.fn(async (value) => ({ id: 71, ...value })),
+    };
+    const tenantsRepository = {
+      findOne: jest.fn().mockResolvedValue(existingTenant),
+      save: jest.fn(async (value) => value),
+    };
+
+    usersRepository.findOne.mockResolvedValue(user);
+    sellerWorkspacesRepository.findOne.mockResolvedValue({
+      id: 901,
+      ownerUserId: 41,
+      primaryRetailTenantId: 13,
+    });
+    sellerWorkspacesRepository.manager.transaction.mockImplementation(
+      async (callback) =>
+        callback({
+          getRepository: (entity) => {
+            if (entity === Branch) {
+              return branchesRepository;
+            }
+            if (entity === BranchStaffAssignment) {
+              return assignmentsRepository;
+            }
+            if (entity === RetailTenant) {
+              return tenantsRepository;
+            }
+            throw new Error(`Unexpected repository request: ${entity?.name}`);
+          },
+        }),
+    );
+    branchStaffService.getPosWorkspaceActivationCandidatesForUser
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+    tenantModuleEntitlementsRepository.findOne.mockResolvedValue({
+      tenantId: 13,
+      module: RetailModule.POS_CORE,
+      enabled: true,
+      metadata: {
+        allowedSelfServeServiceFormats: ['RETAIL', 'QSR', 'FSR'],
+      },
+    });
+    branchStaffService.getPosBranchSummariesForUser
+      .mockResolvedValueOnce([
+        {
+          branchId: 7,
+          branchName: 'HQ',
+          branchCode: 'HQ-7',
+          serviceFormat: 'RETAIL',
+          role: 'MANAGER',
+          permissions: ['OPEN_REGISTER'],
+          isOwner: true,
+          isTenantOwner: false,
+          retailTenantId: 13,
+          retailTenantName: 'Seller Tenant',
+          modules: ['POS_CORE'],
+          workspaceStatus: 'ACTIVE',
+          subscriptionStatus: TenantSubscriptionStatus.ACTIVE,
+          planCode: 'POS_BRANCH',
+          canStartTrial: false,
+          canStartActivation: false,
+          canOpenNow: true,
+          trialStartedAt: null,
+          trialEndsAt: null,
+          trialDaysRemaining: null,
+          joinedAt: new Date('2026-03-01T00:00:00.000Z'),
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          branchId: 7,
+          branchName: 'HQ',
+          branchCode: 'HQ-7',
+          serviceFormat: 'RETAIL',
+          role: 'MANAGER',
+          permissions: ['OPEN_REGISTER'],
+          isOwner: true,
+          isTenantOwner: false,
+          retailTenantId: 13,
+          retailTenantName: 'Seller Tenant',
+          modules: ['POS_CORE'],
+          workspaceStatus: 'ACTIVE',
+          subscriptionStatus: TenantSubscriptionStatus.ACTIVE,
+          planCode: 'POS_BRANCH',
+          canStartTrial: false,
+          canStartActivation: false,
+          canOpenNow: true,
+          trialStartedAt: null,
+          trialEndsAt: null,
+          trialDaysRemaining: null,
+          joinedAt: new Date('2026-03-01T00:00:00.000Z'),
+        },
+        {
+          branchId: 8,
+          branchName: 'Megenagna Annex',
+          branchCode: 'MEG-8',
+          serviceFormat: 'QSR',
+          role: 'MANAGER',
+          permissions: [],
+          isOwner: true,
+          isTenantOwner: false,
+          retailTenantId: 13,
+          retailTenantName: 'Seller Tenant',
+          modules: ['POS_CORE'],
+          workspaceStatus: 'ACTIVE',
+          subscriptionStatus: TenantSubscriptionStatus.ACTIVE,
+          planCode: 'POS_BRANCH',
+          canStartTrial: false,
+          canStartActivation: false,
+          canOpenNow: true,
+          trialStartedAt: null,
+          trialEndsAt: null,
+          trialDaysRemaining: null,
+          joinedAt: new Date('2026-03-08T00:00:00.000Z'),
+        },
+      ]);
+    branchStaffService.getBranchRosterSummaries.mockResolvedValue([
+      {
+        branchId: 7,
+        managerCount: 1,
+        operatorCount: 0,
+        assignedManagers: [],
+        assignedOperators: [],
+      },
+      {
+        branchId: 8,
+        managerCount: 1,
+        operatorCount: 0,
+        assignedManagers: [
+          {
+            userId: 41,
+            email: 'seller@suuq.test',
+            displayName: 'Seller User',
+            isOwner: true,
+          },
+        ],
+        assignedOperators: [],
+      },
+    ]);
+    retailTenantsRepository.find.mockResolvedValue([existingTenant]);
+    tenantSubscriptionsRepository.find.mockResolvedValue([
+      {
+        tenantId: 13,
+        planCode: 'POS_BRANCH',
+        status: TenantSubscriptionStatus.ACTIVE,
+        billingInterval: TenantBillingInterval.MONTHLY,
+        amount: 1900,
+        currency: 'ETB',
+        startsAt: new Date('2026-03-01T00:00:00.000Z'),
+        endsAt: null,
+        autoRenew: true,
+      },
+    ]);
+
+    const result = await service.createBranchWorkspace(41, {
+      branchName: 'Megenagna Annex',
+      city: 'Addis Ababa',
+      country: 'Ethiopia',
+      address: 'Megenagna Square',
+      serviceFormat: 'QSR' as any,
+      defaultCurrency: 'ETB',
+    });
+
+    expect(sellerWorkspacesRepository.manager.transaction).toHaveBeenCalled();
+    expect(branchesRepository.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'Megenagna Annex',
+        serviceFormat: 'QSR',
+        ownerId: 41,
+        retailTenantId: 13,
+      }),
+    );
+    expect(assignmentsRepository.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        branchId: 8,
+        userId: 41,
+        role: BranchStaffRole.MANAGER,
+      }),
+    );
+    expect(result).toMatchObject({
+      branchId: 8,
+      branchName: 'Megenagna Annex',
+      serviceFormat: 'QSR',
+      retailTenantId: 13,
+      canOpenNow: true,
+    });
+  });
+
+  it('rejects hospitality branch creation until rollout is enabled', async () => {
+    const user = {
+      id: 41,
+      email: 'seller@suuq.test',
+      roles: ['POS_MANAGER'],
+      subscriptionTier: SubscriptionTier.PRO,
+    } as User;
+
+    usersRepository.findOne.mockResolvedValue(user);
+    tenantModuleEntitlementsRepository.findOne.mockResolvedValue({
+      tenantId: 13,
+      module: RetailModule.POS_CORE,
+      enabled: true,
+      metadata: {
+        allowedSelfServeServiceFormats: ['RETAIL'],
+      },
+    });
+    sellerWorkspacesRepository.findOne.mockResolvedValue({
+      id: 901,
+      ownerUserId: 41,
+      primaryRetailTenantId: 13,
+    });
+    branchStaffService.getPosWorkspaceActivationCandidatesForUser.mockResolvedValue(
+      [],
+    );
+    branchStaffService.getPosBranchSummariesForUser.mockResolvedValue([
+      {
+        branchId: 7,
+        branchName: 'HQ',
+        branchCode: 'HQ-7',
+        serviceFormat: 'RETAIL',
+        role: 'MANAGER',
+        permissions: ['OPEN_REGISTER'],
+        isOwner: true,
+        isTenantOwner: false,
+        retailTenantId: 13,
+        retailTenantName: 'Seller Tenant',
+        modules: ['POS_CORE'],
+        workspaceStatus: 'ACTIVE',
+        subscriptionStatus: TenantSubscriptionStatus.ACTIVE,
+        planCode: 'POS_BRANCH',
+        canStartTrial: false,
+        canStartActivation: false,
+        canOpenNow: true,
+        trialStartedAt: null,
+        trialEndsAt: null,
+        trialDaysRemaining: null,
+        joinedAt: new Date('2026-03-01T00:00:00.000Z'),
+      },
+    ]);
+    retailTenantsRepository.find.mockResolvedValue([
+      {
+        id: 13,
+        name: 'Seller Tenant',
+        defaultCurrency: 'ETB',
+      },
+    ]);
+
+    await expect(
+      service.createBranchWorkspace(41, {
+        branchName: 'Megenagna Annex',
+        city: 'Addis Ababa',
+        country: 'Ethiopia',
+        address: 'Megenagna Square',
+        serviceFormat: 'FSR' as any,
+        defaultCurrency: 'ETB',
+      }),
+    ).rejects.toThrow(
+      'Seller HQ branch creation only supports RETAIL until hospitality rollout is enabled for this tenant.',
+    );
   });
 });

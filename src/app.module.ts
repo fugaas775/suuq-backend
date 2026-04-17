@@ -74,6 +74,7 @@ import { ProductAliasesModule } from './product-aliases/product-aliases.module';
 import { RetailModule } from './retail/retail.module';
 import { MarketingLeadsModule } from './marketing-leads/marketing-leads.module';
 import { SellerWorkspaceModule } from './seller-workspace/seller-workspace.module';
+import { HospitalityModule } from './hospitality/hospitality.module';
 
 @Module({
   imports: [
@@ -258,6 +259,7 @@ import { SellerWorkspaceModule } from './seller-workspace/seller-workspace.modul
     PosSyncModule,
     RetailModule,
     MarketingLeadsModule,
+    HospitalityModule,
     SellerWorkspaceModule,
   ],
   controllers: [AppController],

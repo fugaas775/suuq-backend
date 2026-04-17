@@ -1,5 +1,6 @@
 import { forwardRef, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { AuditModule } from '../audit/audit.module';
 import { Branch } from '../branches/entities/branch.entity';
 import { Category } from '../categories/entities/category.entity';
 import { BranchInventory } from '../branches/entities/branch-inventory.entity';
@@ -30,6 +31,7 @@ import { RetailModulesGuard } from './retail-modules.guard';
 @Module({
   imports: [
     forwardRef(() => PurchaseOrdersModule),
+    AuditModule,
     RedisModule,
     TypeOrmModule.forFeature([
       RetailTenant,

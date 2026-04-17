@@ -39,6 +39,9 @@ export class Branch {
   @Column({ type: 'varchar', length: 128, nullable: true })
   country?: string | null;
 
+  @Column({ type: 'varchar', length: 32, nullable: true })
+  serviceFormat?: string | null;
+
   @Column({ type: 'varchar', length: 64, nullable: true })
   timezone?: string | null;
 

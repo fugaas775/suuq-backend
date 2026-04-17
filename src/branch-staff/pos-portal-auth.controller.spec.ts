@@ -187,6 +187,10 @@ describe('PosPortalAuthController', () => {
           trialStartedAt: null,
           trialEndsAt: null,
           trialDaysRemaining: null,
+          activationBlockers: [
+            'Start a 15-day trial or complete the first monthly billing activation for this branch workspace.',
+            'Set a branch service format such as RETAIL before starting activation.',
+          ],
           pricing: {
             amount: 1900,
             currency: 'ETB',
@@ -282,6 +286,9 @@ describe('PosPortalAuthController', () => {
           trialStartedAt: null,
           trialEndsAt: null,
           trialDaysRemaining: null,
+          activationBlockers: [
+            'Start a 15-day trial or complete the first monthly billing activation for this branch workspace.',
+          ],
           pricing: {
             amount: 1900,
             currency: 'ETB',
@@ -313,6 +320,9 @@ describe('PosPortalAuthController', () => {
             branchId: 9,
             workspaceStatus: 'PAYMENT_REQUIRED',
             canStartTrial: true,
+            activationBlockers: expect.arrayContaining([
+              'Start a 15-day trial or complete the first monthly billing activation for this branch workspace.',
+            ]),
           }),
         ],
       }),
@@ -409,7 +419,7 @@ describe('PosPortalAuthController', () => {
     posPortalOnboardingServiceMock.createWorkspaceForUser.mockResolvedValue({
       onboardingState: 'BRANCH_WORKSPACE_ACTIVATION_REQUIRED',
       message:
-        'Your first POS workspace was created. Activate it to open POS-S.',
+        'Your POS-S workspace was created. Start your 15-day free trial to open it.',
       workspace: {
         tenantId: 31,
         tenantName: 'Airport Retail',

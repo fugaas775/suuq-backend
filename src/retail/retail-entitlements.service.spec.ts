@@ -5,6 +5,8 @@ import {
 } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
+import { AuditService } from '../audit/audit.service';
+import { BranchStaffAssignment } from '../branch-staff/entities/branch-staff-assignment.entity';
 import { Branch } from '../branches/entities/branch.entity';
 import { Category } from '../categories/entities/category.entity';
 import { User } from '../users/entities/user.entity';
@@ -29,8 +31,10 @@ describe('RetailEntitlementsService', () => {
   let categoriesRepository: any;
   let tenantSubscriptionsRepository: any;
   let tenantModuleEntitlementsRepository: any;
+  let branchStaffAssignmentsRepository: any;
   let branchesRepository: any;
   let usersRepository: any;
+  let auditService: any;
 
   beforeEach(async () => {
     retailTenantsRepository = {
@@ -53,12 +57,19 @@ describe('RetailEntitlementsService', () => {
       findOne: jest.fn(),
       find: jest.fn(),
     };
+    branchStaffAssignmentsRepository = {
+      find: jest.fn().mockResolvedValue([]),
+    };
     branchesRepository = {
       findOne: jest.fn(),
+      find: jest.fn().mockResolvedValue([]),
       save: jest.fn(async (value: any) => value),
     };
     usersRepository = {
       findOne: jest.fn(),
+    };
+    auditService = {
+      log: jest.fn(),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -80,8 +91,13 @@ describe('RetailEntitlementsService', () => {
           provide: getRepositoryToken(TenantModuleEntitlement),
           useValue: tenantModuleEntitlementsRepository,
         },
+        {
+          provide: getRepositoryToken(BranchStaffAssignment),
+          useValue: branchStaffAssignmentsRepository,
+        },
         { provide: getRepositoryToken(Branch), useValue: branchesRepository },
         { provide: getRepositoryToken(User), useValue: usersRepository },
+        { provide: AuditService, useValue: auditService },
       ],
     }).compile();
 

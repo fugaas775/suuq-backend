@@ -1,0 +1,30 @@
+--- product-card.util.ts
++++ product-card.util.ts
+@@ -1,6 +1,9 @@
+ import { Product } from '../../entities/product.entity';
+ import { normalizeDigitalAttributes } from '../../utils/digital-product.util';
+ 
++// Minimum offline POS safety buffer (if stock drops to 1, mark out-of-stock online)
++const SUUQ_S_ONLINE_SAFETY_BUFFER = 1;
++
+ export interface ProductCardDto {
+   id: number;
+   name: string;
+@@ -293,9 +296,15 @@
+     sizeSqm: p.sizeSqm,
+     furnished: p.furnished,
+ 
+     // Physical
+     dispatchDays: p.dispatchDays,
+-    stockQuantity: p.stockQuantity,
+-    stock_quantity: p.stockQuantity, // Legacy support
++    stockQuantity:
++      p.stockQuantity != null
++        ? Math.max(0, p.stockQuantity - SUUQ_S_ONLINE_SAFETY_BUFFER)
++        : undefined,
++    stock_quantity:
++      p.stockQuantity != null
++        ? Math.max(0, p.stockQuantity - SUUQ_S_ONLINE_SAFETY_BUFFER)
++        : undefined,
+     sale_price: p.salePrice ?? undefined, // Legacy support
+     shippingCost: p.shippingCost,

@@ -18,9 +18,11 @@ import {
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { AuthenticatedRequest } from '../common/interfaces/authenticated-request.interface';
 import { BootstrapSellerWorkspaceDto } from './dto/bootstrap-seller-workspace.dto';
+import { CreateSellerBranchWorkspaceDto } from './dto/create-seller-branch-workspace.dto';
 import { SellerWorkspaceQueryDto } from './dto/seller-workspace-query.dto';
 import {
   SellerWorkspaceAccessDeniedResponseDto,
+  SellerWorkspaceBranchWorkspaceDto,
   SellerWorkspaceBranchWorkspacesResponseDto,
   SellerWorkspaceOverviewResponseDto,
   SellerWorkspacePlansResponseDto,
@@ -30,6 +32,7 @@ import {
 import { UpdateSellerWorkspaceChannelDto } from './dto/update-seller-workspace-channel.dto';
 import { UpdateSellerWorkspaceOnboardingDto } from './dto/update-seller-workspace-onboarding.dto';
 import { UpdateSellerWorkspacePlanDto } from './dto/update-seller-workspace-plan.dto';
+import { UpdateBranchServiceFormatDto } from './dto/update-branch-service-format.dto';
 import { SellerWorkspaceService } from './seller-workspace.service';
 
 @ApiTags('Seller Workspace')
@@ -90,6 +93,15 @@ export class SellerWorkspaceController {
     return this.sellerWorkspaceService.getBranchWorkspaces(req.user.id);
   }
 
+  @Post('branch-workspaces')
+  @ApiOkResponse({ type: SellerWorkspaceBranchWorkspaceDto })
+  createBranchWorkspace(
+    @Req() req: AuthenticatedRequest,
+    @Body() dto: CreateSellerBranchWorkspaceDto,
+  ) {
+    return this.sellerWorkspaceService.createBranchWorkspace(req.user.id, dto);
+  }
+
   @Patch('plan')
   @ApiOkResponse({ type: SellerWorkspaceStateResponseDto })
   updatePlan(
@@ -118,6 +130,20 @@ export class SellerWorkspaceController {
     return this.sellerWorkspaceService.updateChannelState(
       req.user.id,
       channelKey,
+      dto,
+    );
+  }
+
+  @Patch('branch-workspaces/:branchId/service-format')
+  @ApiOkResponse({ type: SellerWorkspaceBranchWorkspaceDto })
+  updateBranchServiceFormat(
+    @Req() req: AuthenticatedRequest,
+    @Param('branchId') branchId: number,
+    @Body() dto: UpdateBranchServiceFormatDto,
+  ) {
+    return this.sellerWorkspaceService.updateBranchWorkspaceServiceFormat(
+      req.user.id,
+      branchId,
       dto,
     );
   }

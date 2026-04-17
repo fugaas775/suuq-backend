@@ -167,6 +167,11 @@ export class CreateVendorProductDto {
   @IsBoolean()
   isFree?: boolean;
 
+  @IsOptional()
+  @Type(() => Boolean)
+  @IsBoolean()
+  publishToConsumerApp?: boolean;
+
   // --- Property & Real Estate optional fields ---
   @IsOptional()
   @IsIn(['sale', 'rent'])

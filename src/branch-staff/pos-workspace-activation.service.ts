@@ -25,6 +25,9 @@ const POS_WORKSPACE_REFERENCE_PREFIX = 'POSACT';
 const POS_WORKSPACE_MONTHLY_PRICE = 1900;
 const POS_WORKSPACE_CURRENCY = 'ETB';
 const POS_WORKSPACE_TRIAL_LENGTH_DAYS = 15;
+export const PRIMARY_RETAIL_CATEGORY_BLOCKER =
+  'Choose a primary retail category.';
+export const POS_FIT_CATEGORY_BLOCKER = 'Choose a POS fit category.';
 
 @Injectable()
 export class PosWorkspaceActivationService {
@@ -104,7 +107,7 @@ export class PosWorkspaceActivationService {
 
   async startTrialActivation(
     user: { id: number; roles?: string[] },
-    params: { branchId: number },
+    params: { branchId: number; serviceFormat?: string | null },
   ) {
     const candidate = await this.getTrialEligibleActivationCandidate(
       user,
@@ -120,6 +123,13 @@ export class PosWorkspaceActivationService {
         `Branch ${candidate.branchId} is not linked to a retail tenant for POS activation.`,
       );
     }
+
+    this.assertTenantGovernanceReady(workspace, {
+      serviceFormat:
+        params.serviceFormat ||
+        candidate.serviceFormat ||
+        workspace.branch?.serviceFormat,
+    });
 
     const hasPosCore = workspace.entitlements.some(
       (entitlement) => entitlement.module === RetailModule.POS_CORE,
@@ -176,6 +186,11 @@ export class PosWorkspaceActivationService {
       trialStartedAt: now.toISOString(),
       trialEndsAt: trialEndsAt.toISOString(),
       trialDaysRemaining: POS_WORKSPACE_TRIAL_LENGTH_DAYS,
+      serviceFormat: this.normalizeServiceFormat(
+        params.serviceFormat ||
+          candidate.serviceFormat ||
+          workspace.branch?.serviceFormat,
+      ),
       providerMessage: `The 15-day trial is active. The first monthly charge should begin on ${this.formatDisplayDate(trialEndsAt)}.`,
     };
   }
@@ -197,6 +212,10 @@ export class PosWorkspaceActivationService {
         `Branch ${branchId} is not linked to a retail tenant for POS activation.`,
       );
     }
+
+    this.assertTenantGovernanceReady(workspace, {
+      serviceFormat: workspace.branch?.serviceFormat,
+    });
 
     const hasPosCore = workspace.entitlements.some(
       (entitlement) => entitlement.module === RetailModule.POS_CORE,
@@ -304,6 +323,13 @@ export class PosWorkspaceActivationService {
       );
     }
 
+    const workspace =
+      await this.retailEntitlementsService.getBranchWorkspaceStatus(branchId);
+
+    this.assertTenantGovernanceReady(workspace, {
+      serviceFormat: candidate.serviceFormat || workspace.branch?.serviceFormat,
+    });
+
     const posEntitlement =
       await this.tenantModuleEntitlementsRepository.findOne({
         where: {
@@ -319,6 +345,62 @@ export class PosWorkspaceActivationService {
     }
 
     return candidate;
+  }
+
+  private normalizeServiceFormat(value?: string | null) {
+    const normalized = String(value || '')
+      .trim()
+      .toUpperCase();
+
+    if (!normalized) {
+      return null;
+    }
+
+    if (!['RETAIL', 'CAFETERIA', 'QSR', 'FSR'].includes(normalized)) {
+      return null;
+    }
+
+    return normalized;
+  }
+
+  private assertTenantGovernanceReady(
+    workspace: {
+      branch?: { serviceFormat?: string | null };
+      governance?: {
+        activationReadiness?: { canActivate?: boolean; blockers?: string[] };
+      } | null;
+    },
+    options: { serviceFormat?: string | null } = {},
+  ) {
+    if (workspace.governance?.activationReadiness?.canActivate) {
+      return;
+    }
+
+    const hasServiceFormat = Boolean(
+      this.normalizeServiceFormat(
+        options.serviceFormat || workspace.branch?.serviceFormat || null,
+      ),
+    );
+    const blockers = (
+      workspace.governance?.activationReadiness?.blockers || []
+    ).filter(
+      (blocker) =>
+        !(
+          hasServiceFormat &&
+          (blocker === PRIMARY_RETAIL_CATEGORY_BLOCKER ||
+            blocker === POS_FIT_CATEGORY_BLOCKER)
+        ),
+    );
+
+    if (blockers.length === 0) {
+      return;
+    }
+
+    const blockerMessage =
+      blockers[0] ||
+      'Tenant governance setup is incomplete for POS activation.';
+
+    throw new ForbiddenException(blockerMessage);
   }
 
   private async getTrialEligibleActivationCandidate(

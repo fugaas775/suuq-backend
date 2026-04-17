@@ -232,6 +232,7 @@ export class RetailEntitlementsService {
   async updateOnboardingProfile(
     tenantId: number,
     dto: UpdateRetailTenantOnboardingProfileDto,
+    auditUser?: { id: number | null; email: string | null },
   ): Promise<RetailTenantWithPosWorkspaceAudit> {
     const tenant = await this.findTenantOrThrow(tenantId);
 
@@ -1346,5 +1347,14 @@ export class RetailEntitlementsService {
     }
 
     return normalizedOvertimeHours;
+  }
+
+  async updateTenantOwner(
+    tenantId: number,
+    dto: import('./dto/update-retail-tenant-owner.dto').UpdateRetailTenantOwnerDto,
+    auditUser?: { id: number | null; email: string | null },
+  ): Promise<any> {
+    const tenant = await this.findTenantOrThrow(tenantId);
+    return this.decorateTenantWithPosWorkspaceAudit(tenant);
   }
 }

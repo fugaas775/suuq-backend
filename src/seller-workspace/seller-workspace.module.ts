@@ -5,6 +5,7 @@ import { Order } from '../orders/entities/order.entity';
 import { Product } from '../products/entities/product.entity';
 import { PurchaseOrder } from '../purchase-orders/entities/purchase-order.entity';
 import { RetailTenant } from '../retail/entities/retail-tenant.entity';
+import { TenantModuleEntitlement } from '../retail/entities/tenant-module-entitlement.entity';
 import { TenantSubscription } from '../retail/entities/tenant-subscription.entity';
 import { User } from '../users/entities/user.entity';
 import { VendorModule } from '../vendor/vendor.module';
@@ -26,6 +27,7 @@ import { SellerWorkspaceService } from './seller-workspace.service';
       PosRegisterSession,
       SellerWorkspace,
       RetailTenant,
+      TenantModuleEntitlement,
       TenantSubscription,
       Product,
     ]),

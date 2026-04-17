@@ -212,6 +212,14 @@ export class IngestPosCheckoutDto {
   metadata?: Record<string, any>;
 
   @IsOptional()
+  @IsObject()
+  customerProfile?: Record<string, any>;
+
+  @IsOptional()
+  @IsObject()
+  loyaltySummary?: Record<string, any>;
+
+  @IsOptional()
   @IsString()
   @MaxLength(128)
   sourceReceiptId?: string;

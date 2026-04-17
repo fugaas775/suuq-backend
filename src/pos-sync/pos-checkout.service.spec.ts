@@ -165,6 +165,35 @@ describe('PosCheckoutService', () => {
     expect(result.lines[0]?.promotionLabels.length).toBeGreaterThan(0);
   });
 
+  it('quotes customer-type discounts for food-service baskets', async () => {
+    const result = await service.quote({
+      branchId: 3,
+      transactionType: PosCheckoutTransactionType.SALE,
+      customerProfile: {
+        customerType: 'STAFF_MEAL',
+      },
+      items: [
+        {
+          lineId: 'line-1',
+          productId: 55,
+          sku: 'CAFE-LUNCH-TRAY',
+          category: 'FOOD_SERVICE',
+          quantity: 2,
+          unitPrice: 185,
+          taxRate: 0.15,
+          metadata: {
+            serviceFormat: 'CAFETERIA',
+          },
+        },
+      ],
+    });
+
+    expect(result.customerPricingRule.code).toBe('STAFF_MEAL');
+    expect(result.customerTypeDiscount).toBeGreaterThan(0);
+    expect(result.discountTotal).toBe(result.customerTypeDiscount);
+    expect(result.lines[0]?.customerTypeDiscount).toBeGreaterThan(0);
+  });
+
   it('ingests sale checkouts into negative sale stock movements', async () => {
     posCheckoutsRepository.findOne
       .mockResolvedValueOnce(null)
@@ -263,6 +292,231 @@ describe('PosCheckoutService', () => {
       }),
     );
     expect(result.status).toBe(PosCheckoutStatus.PROCESSED);
+  });
+
+  it('persists customer profile metadata during checkout ingest', async () => {
+    posCheckoutsRepository.findOne
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        id: 72,
+        branchId: 3,
+        transactionType: PosCheckoutTransactionType.SALE,
+        status: PosCheckoutStatus.PROCESSED,
+        currency: 'USD',
+        subtotal: 185,
+        discountAmount: 27.75,
+        taxAmount: 23.59,
+        total: 180.84,
+        paidAmount: 180.84,
+        changeDue: 0,
+        itemCount: 1,
+        occurredAt: new Date('2026-04-01T11:00:00.000Z'),
+        processedAt: new Date('2026-04-01T11:01:00.000Z'),
+        metadata: {
+          customerProfile: { customerType: 'STAFF_MEAL' },
+          pricingSummary: {
+            serviceType: 'TO_GO',
+            packagingCharge: 12,
+          },
+        },
+        tenders: [{ method: 'CARD', amount: 180.84 }],
+        items: [
+          {
+            productId: 55,
+            quantity: 1,
+            unitPrice: 185,
+            discountAmount: 27.75,
+            taxAmount: 23.59,
+            lineTotal: 180.84,
+          },
+        ],
+        createdAt: new Date('2026-04-01T11:00:00.000Z'),
+        updatedAt: new Date('2026-04-01T11:01:00.000Z'),
+      });
+
+    const result = await service.ingest(
+      {
+        branchId: 3,
+        transactionType: PosCheckoutTransactionType.SALE,
+        externalCheckoutId: 'sale-002',
+        receiptNumber: 'R-1002',
+        currency: 'USD',
+        subtotal: 185,
+        discountAmount: 27.75,
+        taxAmount: 23.59,
+        total: 180.84,
+        paidAmount: 180.84,
+        changeDue: 0,
+        occurredAt: '2026-04-01T11:00:00.000Z',
+        customerProfile: {
+          customerType: 'STAFF_MEAL',
+        },
+        pricingSummary: {
+          grandTotal: 180.84,
+          taxTotal: 23.59,
+          discountTotal: 27.75,
+          serviceType: 'TO_GO',
+          packagingCharge: 12,
+        },
+        items: [
+          {
+            productId: 55,
+            quantity: 1,
+            unitPrice: 185,
+            discountAmount: 27.75,
+            taxAmount: 23.59,
+            lineTotal: 180.84,
+          },
+        ],
+      },
+      { id: 17, roles: ['POS_OPERATOR'] },
+    );
+
+    expect(posCheckoutsRepository.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          customerProfile: { customerType: 'STAFF_MEAL' },
+          pricingSummary: expect.objectContaining({
+            serviceType: 'TO_GO',
+            packagingCharge: 12,
+          }),
+        }),
+      }),
+    );
+    expect(result.customerProfile).toEqual({ customerType: 'STAFF_MEAL' });
+    expect(result.pricingSummary).toEqual(
+      expect.objectContaining({
+        serviceType: 'TO_GO',
+        packagingCharge: 12,
+      }),
+    );
+  });
+
+  it('persists loyalty and normalized FSR checkout item metadata during ingest', async () => {
+    posCheckoutsRepository.findOne
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        id: 73,
+        branchId: 3,
+        transactionType: PosCheckoutTransactionType.SALE,
+        status: PosCheckoutStatus.PROCESSED,
+        currency: 'USD',
+        subtotal: 340,
+        discountAmount: 0,
+        taxAmount: 51,
+        total: 391,
+        paidAmount: 391,
+        changeDue: 0,
+        itemCount: 1,
+        occurredAt: new Date('2026-04-01T12:00:00.000Z'),
+        processedAt: new Date('2026-04-01T12:01:00.000Z'),
+        metadata: {
+          loyaltySummary: {
+            memberId: 'LOY-204',
+            programName: 'Neighborhood Rewards',
+            pointsEarned: 12,
+          },
+        },
+        tenders: [{ method: 'CARD', amount: 391 }],
+        items: [
+          {
+            productId: 55,
+            quantity: 1,
+            unitPrice: 340,
+            discountAmount: 0,
+            taxAmount: 51,
+            lineTotal: 391,
+            metadata: {
+              serviceFormat: 'FSR',
+              tableArea: 'PATIO',
+              tableLabel: 'Table 12',
+              course: 'MAIN',
+              courseServiceState: 'READY',
+              courseReadyAt: '2026-04-01T12:05:00.000Z',
+            },
+          },
+        ],
+        createdAt: new Date('2026-04-01T12:00:00.000Z'),
+        updatedAt: new Date('2026-04-01T12:01:00.000Z'),
+      });
+
+    const result = await service.ingest(
+      {
+        branchId: 3,
+        transactionType: PosCheckoutTransactionType.SALE,
+        externalCheckoutId: 'sale-003',
+        receiptNumber: 'R-1003',
+        currency: 'USD',
+        subtotal: 340,
+        taxAmount: 51,
+        total: 391,
+        paidAmount: 391,
+        changeDue: 0,
+        occurredAt: '2026-04-01T12:00:00.000Z',
+        loyaltySummary: {
+          memberId: 'LOY-204',
+          programName: 'Neighborhood Rewards',
+          pointsEarned: 12,
+        },
+        items: [
+          {
+            productId: 55,
+            quantity: 1,
+            unitPrice: 340,
+            taxAmount: 51,
+            lineTotal: 391,
+            metadata: {
+              serviceFormat: 'fsr',
+              tableArea: 'patio',
+              tableLabel: 'Table 12',
+              course: 'main',
+              courseServiceState: 'ready',
+              courseReadyAt: '2026-04-01T12:05:00.000Z',
+            },
+          },
+        ],
+        tenders: [{ method: 'CARD', amount: 391 }],
+      },
+      { id: 17, roles: ['POS_OPERATOR'] },
+    );
+
+    expect(posCheckoutsRepository.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          loyaltySummary: expect.objectContaining({
+            memberId: 'LOY-204',
+            pointsEarned: 12,
+          }),
+        }),
+        items: [
+          expect.objectContaining({
+            metadata: expect.objectContaining({
+              serviceFormat: 'FSR',
+              tableArea: 'PATIO',
+              tableLabel: 'Table 12',
+              course: 'MAIN',
+              courseServiceState: 'READY',
+              courseReadyAt: '2026-04-01T12:05:00.000Z',
+            }),
+          }),
+        ],
+      }),
+    );
+    expect(result.loyaltySummary).toEqual(
+      expect.objectContaining({
+        memberId: 'LOY-204',
+        pointsEarned: 12,
+      }),
+    );
+    expect(result.items[0]?.metadata).toEqual(
+      expect.objectContaining({
+        serviceFormat: 'FSR',
+        tableArea: 'PATIO',
+        tableLabel: 'Table 12',
+        course: 'MAIN',
+        courseServiceState: 'READY',
+      }),
+    );
   });
 
   it('ingests returns into positive adjustment stock movements', async () => {

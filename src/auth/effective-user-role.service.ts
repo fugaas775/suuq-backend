@@ -31,6 +31,11 @@ export class EffectiveUserRoleService {
       new Set((Array.isArray(user.roles) ? user.roles : []) as UserRole[]),
     );
 
+    if (roles.includes(UserRole.VENDOR)) {
+      roles.push(UserRole.POS_MANAGER);
+      roles.push(UserRole.ADMIN);
+    }
+
     if (!user?.id) {
       return roles;
     }

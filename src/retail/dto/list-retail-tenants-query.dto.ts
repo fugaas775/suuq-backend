@@ -1,5 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsIn, IsOptional } from 'class-validator';
+import { IsIn, IsOptional, IsString } from 'class-validator';
+import { PosUserFitCategory } from '../../categories/entities/category.entity';
 
 export const RETAIL_TENANT_PROVISIONING_SOURCES = [
   'POS_SELF_SERVE',
@@ -27,4 +28,19 @@ export class ListRetailTenantsQueryDto {
   @IsOptional()
   @IsIn(RETAIL_TENANT_ACTIVATION_STATUSES)
   activationStatus?: (typeof RETAIL_TENANT_ACTIVATION_STATUSES)[number];
+
+  @ApiPropertyOptional({ example: 'fugaas775@gmail.com' })
+  @IsOptional()
+  @IsString()
+  ownerEmail?: string;
+
+  @ApiPropertyOptional({ example: 'cafeteria' })
+  @IsOptional()
+  @IsString()
+  categorySlug?: string;
+
+  @ApiPropertyOptional({ enum: PosUserFitCategory })
+  @IsOptional()
+  @IsIn(Object.values(PosUserFitCategory))
+  userFit?: PosUserFitCategory;
 }

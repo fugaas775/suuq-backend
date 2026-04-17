@@ -272,8 +272,6 @@ Required backend env for social sign-in:
 
 Google Cloud Console requirements for the vendor portal web client:
 
-- the Google OAuth web client used as `VITE_GOOGLE_CLIENT_ID` must list `https://vendor.ugasfuad.com` under Authorized JavaScript origins
-- add any additional real portal origins separately, for example `https://www.vendor.ugasfuad.com` if that hostname is served
 - if local development uses Google Sign-In, register the exact dev origin too, for example `http://localhost:5173`
 - `origin_mismatch` happens before `/api/vendor-portal/auth/google` is called, so it is a Google OAuth client configuration issue rather than a backend token-exchange issue
 
@@ -331,7 +329,7 @@ DB_PASSWORD=postgres
 DB_DATABASE=suuq
 
 # CORS / origins
-ALLOWED_ORIGINS=http://localhost:5173,http://localhost:3000,https://pos.ugasfuad.com,https://vendor.ugasfuad.com
+ALLOWED_ORIGINS=http://localhost:5173,http://localhost:3000,https://pos.ugasfuad.com
 
 # Redis (optional but recommended for throttling/cache/idempotency)
 REDIS_URL=redis://localhost:6379

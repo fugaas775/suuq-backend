@@ -74,6 +74,9 @@ export class SellerWorkspaceBranchSummaryDto {
   @ApiPropertyOptional({ nullable: true })
   branchCode!: string | null;
 
+  @ApiPropertyOptional({ nullable: true, example: 'CAFETERIA' })
+  serviceFormat!: string | null;
+
   @ApiProperty()
   role!: string;
 
@@ -82,6 +85,9 @@ export class SellerWorkspaceBranchSummaryDto {
 
   @ApiProperty()
   isOwner!: boolean;
+
+  @ApiProperty()
+  isTenantOwner!: boolean;
 
   @ApiPropertyOptional({ nullable: true })
   retailTenantId!: number | null;
@@ -148,6 +154,49 @@ export class SellerWorkspaceRetailOnboardingProfileDto {
   notes!: string | null;
 }
 
+export class SellerWorkspaceRetailOwnerDto {
+  @ApiPropertyOptional({ nullable: true })
+  userId!: number | null;
+
+  @ApiPropertyOptional({ nullable: true })
+  email!: string | null;
+
+  @ApiPropertyOptional({ nullable: true })
+  displayName!: string | null;
+
+  @ApiPropertyOptional({ nullable: true })
+  phone!: string | null;
+
+  @ApiPropertyOptional({ nullable: true, example: 'ACTIVE' })
+  status!: string | null;
+
+  @ApiPropertyOptional({ nullable: true })
+  lastLoginAt!: string | null;
+}
+
+export class SellerWorkspaceRetailActivationReadinessDto {
+  @ApiProperty()
+  canActivate!: boolean;
+
+  @ApiProperty({ example: 'READY' })
+  status!: 'READY' | 'BLOCKED';
+
+  @ApiProperty({ isArray: true })
+  blockers!: string[];
+
+  @ApiProperty()
+  branchCount!: number;
+
+  @ApiProperty()
+  managersAssignedCount!: number;
+
+  @ApiProperty()
+  operatorsAssignedCount!: number;
+
+  @ApiProperty({ example: 'NOT_STARTED' })
+  subscriptionState!: string;
+}
+
 export class SellerWorkspaceRetailContextDto {
   @ApiPropertyOptional({ nullable: true })
   tenantId!: number | null;
@@ -160,6 +209,18 @@ export class SellerWorkspaceRetailContextDto {
     nullable: true,
   })
   onboardingProfile!: SellerWorkspaceRetailOnboardingProfileDto | null;
+
+  @ApiPropertyOptional({
+    type: SellerWorkspaceRetailOwnerDto,
+    nullable: true,
+  })
+  owner!: SellerWorkspaceRetailOwnerDto | null;
+
+  @ApiPropertyOptional({
+    type: SellerWorkspaceRetailActivationReadinessDto,
+    nullable: true,
+  })
+  activationReadiness!: SellerWorkspaceRetailActivationReadinessDto | null;
 }
 
 export class SellerWorkspacePricingDto {
@@ -186,11 +247,17 @@ export class SellerWorkspaceBranchWorkspaceDto {
   @ApiPropertyOptional({ nullable: true })
   branchCode!: string | null;
 
+  @ApiPropertyOptional({ nullable: true, example: 'CAFETERIA' })
+  serviceFormat!: string | null;
+
   @ApiProperty()
   role!: string;
 
   @ApiProperty()
   isOwner!: boolean;
+
+  @ApiProperty()
+  isTenantOwner!: boolean;
 
   @ApiPropertyOptional({ nullable: true })
   retailTenantId!: number | null;
@@ -206,6 +273,24 @@ export class SellerWorkspaceBranchWorkspaceDto {
 
   @ApiPropertyOptional({ nullable: true })
   planCode!: string | null;
+
+  @ApiProperty()
+  managerCount!: number;
+
+  @ApiProperty()
+  operatorCount!: number;
+
+  @ApiProperty({ type: SellerWorkspaceRetailOwnerDto, isArray: true })
+  assignedManagers!: SellerWorkspaceRetailOwnerDto[];
+
+  @ApiProperty({ type: SellerWorkspaceRetailOwnerDto, isArray: true })
+  assignedOperators!: SellerWorkspaceRetailOwnerDto[];
+
+  @ApiPropertyOptional({ enum: PosUserFitCategory, nullable: true })
+  tenantDefaultUserFit!: PosUserFitCategory | null;
+
+  @ApiPropertyOptional({ enum: PosUserFitCategory, nullable: true })
+  categoryOverrideUserFit!: PosUserFitCategory | null;
 
   @ApiProperty({ enum: RetailModule, isArray: true })
   modules!: RetailModule[];

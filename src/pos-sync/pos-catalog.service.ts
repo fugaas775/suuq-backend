@@ -16,6 +16,14 @@ import {
   PosCatalogSearchResponseDto,
 } from './dto/pos-catalog-search-response.dto';
 
+type PosCatalogMetadata = {
+  aliases: string[];
+  localizedNames: Record<string, string> | null;
+  browseCategory: string | null;
+  unitOfMeasure: string | null;
+  packagingChargeAmount: number | null;
+};
+
 @Injectable()
 export class PosCatalogService {
   constructor(
@@ -76,7 +84,7 @@ export class PosCatalogService {
       )
       .where("COALESCE(product.status, 'publish') = 'publish'")
       .andWhere(
-        "(LOWER(product.name) LIKE :search OR LOWER(COALESCE(product.sku, '')) LIKE :search OR LOWER(COALESCE(alias.aliasValue, '')) LIKE :search OR LOWER(COALESCE(alias.normalizedAliasValue, '')) LIKE :search)",
+        "(LOWER(product.name) LIKE :search OR LOWER(COALESCE(product.sku, '')) LIKE :search OR LOWER(COALESCE(alias.aliasValue, '')) LIKE :search OR LOWER(COALESCE(alias.normalizedAliasValue, '')) LIKE :search OR LOWER(COALESCE(product.attributes::text, '')) LIKE :search)",
         { search: `%${search}%` },
       )
       .select([
@@ -87,6 +95,7 @@ export class PosCatalogService {
         'product.currency AS product_currency',
         'product.price AS product_price',
         'product.sale_price AS product_sale_price',
+        'product.attributes AS product_attributes',
         'alias.aliasType AS alias_type',
         'alias.aliasValue AS alias_value',
         'inventory.availableToSell AS inventory_available_to_sell',
@@ -115,6 +124,9 @@ export class PosCatalogService {
       }
 
       if (!seen.has(productId)) {
+        const posCatalog = this.extractPosCatalogMetadata(
+          row.product_attributes,
+        );
         const availableToSell = Number(row.inventory_available_to_sell ?? 0);
         const safetyStock = Number(row.inventory_safety_stock ?? 0);
         let stockStatus:
@@ -142,6 +154,11 @@ export class PosCatalogService {
           stockStatus,
           matchedAliasType: row.alias_type ?? null,
           matchedAliasValue: row.alias_value ?? null,
+          aliases: posCatalog.aliases,
+          localizedNames: posCatalog.localizedNames,
+          browseCategory: posCatalog.browseCategory,
+          unitOfMeasure: posCatalog.unitOfMeasure,
+          packagingChargeAmount: posCatalog.packagingChargeAmount,
         });
       }
 
@@ -152,6 +169,63 @@ export class PosCatalogService {
 
     return {
       items: Array.from(seen.values()),
+    };
+  }
+
+  private extractPosCatalogMetadata(
+    rawAttributes: unknown,
+  ): PosCatalogMetadata {
+    const attributes =
+      rawAttributes && typeof rawAttributes === 'object'
+        ? (rawAttributes as Record<string, unknown>)
+        : {};
+    const aliasValues = Array.isArray(attributes.aliases)
+      ? attributes.aliases
+      : [];
+    const aliases = Array.from(
+      new Set(
+        aliasValues
+          .map((value) => (typeof value === 'string' ? value.trim() : ''))
+          .filter(Boolean),
+      ),
+    );
+    const rawLocalizedNames =
+      attributes.localizedNames && typeof attributes.localizedNames === 'object'
+        ? (attributes.localizedNames as Record<string, unknown>)
+        : null;
+    const localizedNames = rawLocalizedNames
+      ? Object.fromEntries(
+          Object.entries(rawLocalizedNames)
+            .map(([key, value]) => [
+              key,
+              typeof value === 'string' ? value.trim() : '',
+            ])
+            .filter(([, value]) => Boolean(value)),
+        )
+      : null;
+    const browseCategory =
+      typeof attributes.browseCategory === 'string' &&
+      attributes.browseCategory.trim()
+        ? attributes.browseCategory.trim()
+        : null;
+    const unitOfMeasure =
+      typeof attributes.unitOfMeasure === 'string' &&
+      attributes.unitOfMeasure.trim()
+        ? attributes.unitOfMeasure.trim()
+        : null;
+    const packagingChargeAmount = Number(attributes.packagingChargeAmount);
+
+    return {
+      aliases,
+      localizedNames:
+        localizedNames && Object.keys(localizedNames).length
+          ? localizedNames
+          : null,
+      browseCategory,
+      unitOfMeasure,
+      packagingChargeAmount: Number.isFinite(packagingChargeAmount)
+        ? packagingChargeAmount
+        : null,
     };
   }
 }

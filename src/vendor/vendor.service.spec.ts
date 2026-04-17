@@ -19,6 +19,7 @@ import { CurrencyService } from '../common/services/currency.service';
 import { ShippingService } from '../shipping/shipping.service';
 import { SettingsService } from '../settings/settings.service';
 import { EmailService } from '../email/email.service';
+import { InventoryLedgerService } from '../branches/inventory-ledger.service';
 
 const j = jest as any;
 
@@ -33,6 +34,7 @@ describe('VendorService', () => {
   const tagRepoMock: any = {};
   const notificationsMock: any = {};
   const emailMock: any = { sendEmail: j.fn(), sendWelcomeEmail: j.fn() };
+  const inventoryLedgerMock: any = { recordMovement: j.fn() };
   const doSpacesMock: any = {
     extractKeyFromUrl: j.fn((url: string) => {
       try {
@@ -130,6 +132,7 @@ describe('VendorService', () => {
       create: j.fn((v: any) => v),
     });
     Object.assign(notificationsMock, { sendToUser: j.fn() });
+    Object.assign(inventoryLedgerMock, { recordMovement: j.fn() });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -152,6 +155,7 @@ describe('VendorService', () => {
         { provide: ShippingService, useValue: { generateLabel: j.fn() } },
         { provide: SettingsService, useValue: { getSystemSetting: j.fn() } },
         { provide: EmailService, useValue: emailMock },
+        { provide: InventoryLedgerService, useValue: inventoryLedgerMock },
       ],
     }).compile();
 
@@ -357,6 +361,64 @@ describe('VendorService', () => {
     expect(firstSavedPayload.createdByName).toBe('Vendor Staff');
   });
 
+  it('createMyProduct seeds inventory for the active branch import context', async () => {
+    const vendor = {
+      id: 1,
+      verified: true,
+      verificationStatus: VerificationStatus.APPROVED,
+      roles: ['VENDOR'],
+    } as any;
+
+    userRepoMock.findOneBy.mockResolvedValue(vendor);
+    productRepoMock.manager.getRepository = j.fn((entity: any) => {
+      if (entity === Category) {
+        return categoryRepoMock;
+      }
+
+      return {
+        findOne: j
+          .fn()
+          .mockResolvedValue({ id: 22, ownerId: 1, isActive: true }),
+      };
+    });
+    productRepoMock.save = j.fn(async (value: any) => ({ ...value, id: 777 }));
+    productRepoMock.create = (value: any) => value;
+    productRepoMock.findOneOrFail.mockResolvedValue({
+      id: 777,
+      images: [],
+      vendor,
+      category: null,
+      tags: [],
+    });
+    tagRepoMock.find = j.fn().mockResolvedValue([]);
+    tagRepoMock.create = (value: any) => value;
+    tagRepoMock.save = j.fn().mockResolvedValue([]);
+
+    const getSysSetting = (service as any).settingsService.getSystemSetting;
+    getSysSetting.mockResolvedValue('5');
+
+    await service.createMyProduct(
+      1,
+      {
+        name: 'Imported coffee',
+        price: 10,
+        currency: 'USD',
+        stockQuantity: 8,
+      } as any,
+      { id: 1 } as any,
+      { branchId: 22 },
+    );
+
+    expect(inventoryLedgerMock.recordMovement).toHaveBeenCalledWith(
+      expect.objectContaining({
+        branchId: 22,
+        productId: 777,
+        quantityDelta: 8,
+        sourceType: 'VENDOR_PRODUCT_IMPORT',
+      }),
+    );
+  });
+
   it('createMyProductsBulk returns per-row results and continues after failures by default', async () => {
     const createSpy = jest
       .spyOn(service, 'createMyProduct')
@@ -382,9 +444,17 @@ describe('VendorService', () => {
         ],
       },
       { id: 99 } as any,
+      { branchId: 31 },
     );
 
     expect(createSpy).toHaveBeenCalledTimes(3);
+    expect(createSpy).toHaveBeenNthCalledWith(
+      1,
+      1,
+      { name: 'Row 1', price: 10, currency: 'USD' },
+      { id: 99 },
+      { branchId: 31 },
+    );
     expect(result).toEqual({
       totalRows: 3,
       createdCount: 2,
@@ -425,6 +495,7 @@ describe('VendorService', () => {
         ],
       },
       { id: 99 } as any,
+      { branchId: 31 },
     );
 
     expect(createSpy).toHaveBeenCalledTimes(2);

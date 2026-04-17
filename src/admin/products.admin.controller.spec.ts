@@ -6,6 +6,8 @@ describe('AdminProductsController', () => {
   let controller: AdminProductsController;
   let productsService: {
     searchBasic: jest.Mock;
+    findOneForAdmin: jest.Mock;
+    adminUpdatePosCatalog: jest.Mock;
     listForAdmin: jest.Mock;
     listLeafSubcategories: jest.Mock;
   };
@@ -13,6 +15,8 @@ describe('AdminProductsController', () => {
   beforeEach(async () => {
     productsService = {
       searchBasic: jest.fn().mockResolvedValue([]),
+      findOneForAdmin: jest.fn().mockResolvedValue({ id: 17 }),
+      adminUpdatePosCatalog: jest.fn().mockResolvedValue({ id: 17 }),
       listForAdmin: jest
         .fn()
         .mockResolvedValue({ items: [], total: 0, page: 1, perPage: 20 }),
@@ -57,5 +61,37 @@ describe('AdminProductsController', () => {
       q: 'milk',
       limit: 300,
     });
+  });
+
+  it('loads an admin product detail by id', async () => {
+    await controller.findOne(17);
+
+    expect(productsService.findOneForAdmin).toHaveBeenCalledWith(17);
+  });
+
+  it('forwards POS catalog metadata updates', async () => {
+    await controller.updatePosCatalog(
+      17,
+      {
+        browseCategory: 'BEVERAGES',
+        unitOfMeasure: 'cup',
+        packagingChargeAmount: 12,
+        aliases: ['buna', 'coffee'],
+        localizedNames: { en: 'Coffee', am: 'ቡና' },
+      },
+      { user: { id: 9 } } as any,
+    );
+
+    expect(productsService.adminUpdatePosCatalog).toHaveBeenCalledWith(
+      17,
+      {
+        browseCategory: 'BEVERAGES',
+        unitOfMeasure: 'cup',
+        packagingChargeAmount: 12,
+        aliases: ['buna', 'coffee'],
+        localizedNames: { en: 'Coffee', am: 'ቡና' },
+      },
+      { actorId: 9 },
+    );
   });
 });

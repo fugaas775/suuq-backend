@@ -15,6 +15,7 @@ import { BranchStaffInvite } from './entities/branch-staff-invite.entity';
 import { BranchStaffAssignment } from './entities/branch-staff-assignment.entity';
 import { PosPortalAuthController } from './pos-portal-auth.controller';
 import { PosPortalOnboardingService } from './pos-portal-onboarding.service';
+import { PosSupportController } from './pos-support.controller';
 import { PosWorkspaceActivationService } from './pos-workspace-activation.service';
 
 @Module({
@@ -33,7 +34,11 @@ import { PosWorkspaceActivationService } from './pos-workspace-activation.servic
       TenantModuleEntitlement,
     ]),
   ],
-  controllers: [BranchStaffController, PosPortalAuthController],
+  controllers: [
+    BranchStaffController,
+    PosPortalAuthController,
+    PosSupportController,
+  ],
   providers: [
     BranchStaffService,
     PosWorkspaceActivationService,

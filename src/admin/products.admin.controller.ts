@@ -20,6 +20,7 @@ import { ProductsService } from '../products/products.service';
 import { SkipThrottle } from '@nestjs/throttler';
 import { Query } from '@nestjs/common';
 import { UpdateProductSubcategoryDto } from './dto/update-product-subcategory.dto';
+import { UpdateProductPosCatalogDto } from './dto/update-product-pos-catalog.dto';
 import { AdminProductListQueryDto } from './dto/admin-product-list-query.dto';
 import { AdminProductLeafSubcategoryQueryDto } from './dto/admin-product-leaf-subcategory-query.dto';
 
@@ -37,6 +38,12 @@ export class AdminProductsController {
   @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
   async searchBasic(@Query('q') q: string) {
     return this.products.searchBasic(q);
+  }
+
+  @Get(':id')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  async findOne(@Param('id', ParseIntPipe) id: number) {
+    return this.products.findOneForAdmin(id);
   }
 
   @Get()
@@ -122,6 +129,17 @@ export class AdminProductsController {
     return this.products.adminChangeSubcategory(id, body.subcategoryId, {
       actorId,
     });
+  }
+
+  @Patch(':id/pos-catalog')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  async updatePosCatalog(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: UpdateProductPosCatalogDto,
+    @Req() req: any,
+  ) {
+    const actorId = (req?.user?.id as number) || null;
+    return this.products.adminUpdatePosCatalog(id, body, { actorId });
   }
 
   @Post('bulk-approve')

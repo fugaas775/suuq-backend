@@ -1,9 +1,11 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
+import { AuditService } from '../audit/audit.service';
 import { EmailService } from '../email/email.service';
 import { User } from '../users/entities/user.entity';
 import { Branch } from '../branches/entities/branch.entity';
 import { RetailEntitlementsService } from '../retail/retail-entitlements.service';
+import { RetailTenant } from '../retail/entities/retail-tenant.entity';
 import { RetailModule } from '../retail/entities/tenant-module-entitlement.entity';
 import {
   TenantBillingInterval,
@@ -37,7 +39,9 @@ describe('BranchStaffService', () => {
     find: jest.Mock;
   };
   let usersRepository: { findOne: jest.Mock };
+  let retailTenantsRepository: { find: jest.Mock };
   let emailService: { send: jest.Mock };
+  let auditService: { log: jest.Mock };
   let retailEntitlementsService: {
     getActiveBranchRetailAccess: jest.Mock;
     getBranchWorkspaceStatus: jest.Mock;
@@ -63,8 +67,14 @@ describe('BranchStaffService', () => {
     usersRepository = {
       findOne: jest.fn(),
     };
+    retailTenantsRepository = {
+      find: jest.fn().mockResolvedValue([]),
+    };
     emailService = {
       send: jest.fn(),
+    };
+    auditService = {
+      log: jest.fn(),
     };
     retailEntitlementsService = {
       getActiveBranchRetailAccess: jest.fn(),
@@ -90,7 +100,12 @@ describe('BranchStaffService', () => {
           provide: getRepositoryToken(User),
           useValue: usersRepository,
         },
+        {
+          provide: getRepositoryToken(RetailTenant),
+          useValue: retailTenantsRepository,
+        },
         { provide: EmailService, useValue: emailService },
+        { provide: AuditService, useValue: auditService },
         {
           provide: RetailEntitlementsService,
           useValue: retailEntitlementsService,
@@ -259,6 +274,7 @@ describe('BranchStaffService', () => {
 
     expect(assignmentsRepository.findOne).toHaveBeenCalledWith({
       where: { branchId: 7, userId: 51, isActive: true },
+      relations: { user: true },
     });
     expect(assignmentsRepository.save).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -304,6 +320,91 @@ describe('BranchStaffService', () => {
       branchAssignments: [],
       workspaceActivationCandidates: [],
     });
+  });
+
+  it('returns portal diagnostics for an activation-blocked user email', async () => {
+    usersRepository.findOne.mockResolvedValue({
+      id: 2008,
+      email: 'global.me23@gmail.com',
+      roles: ['VENDOR'],
+      displayName: 'Global Me',
+    });
+    jest
+      .spyOn(service, 'getPosBranchSummariesForUser')
+      .mockResolvedValue([] as any);
+    jest
+      .spyOn(service, 'getPosWorkspaceActivationCandidatesForUser')
+      .mockResolvedValue([
+        {
+          branchId: 41,
+          branchName: 'Jigjiga',
+          branchCode: null,
+          serviceFormat: null,
+          role: BranchStaffRole.MANAGER,
+          isOwner: true,
+          isTenantOwner: false,
+          retailTenantId: 34,
+          retailTenantName: 'Smart Tech',
+          workspaceStatus: 'PAYMENT_REQUIRED',
+          subscriptionStatus: null,
+          planCode: null,
+          canStartTrial: true,
+          canStartActivation: true,
+          canOpenNow: false,
+          trialStartedAt: null,
+          trialEndsAt: null,
+          trialDaysRemaining: null,
+          activationBlockers: [
+            'Set a branch service format such as RETAIL before starting activation.',
+          ],
+          pricing: {
+            amount: 1900,
+            currency: 'ETB',
+            billingInterval: TenantBillingInterval.MONTHLY,
+            paymentMethod: 'EBIRR',
+          },
+        },
+      ] as any);
+
+    const result = await service.getPortalAccessDiagnosticsByEmail(
+      'global.me23@gmail.com',
+    );
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        searchedEmail: 'global.me23@gmail.com',
+        user: expect.objectContaining({ id: 2008 }),
+        branchAssignments: [],
+        workspaceActivationCandidates: [
+          expect.objectContaining({ branchId: 41 }),
+        ],
+        summary: expect.objectContaining({
+          status: 'ACTIVATION_REQUIRED',
+          likelyRootCause:
+            'Set a branch service format such as RETAIL before starting activation.',
+        }),
+      }),
+    );
+  });
+
+  it('returns portal diagnostics when the user email does not exist', async () => {
+    usersRepository.findOne.mockResolvedValue(null);
+
+    const result = await service.getPortalAccessDiagnosticsByEmail(
+      'missing@example.com',
+    );
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        searchedEmail: 'missing@example.com',
+        user: null,
+        branchAssignments: [],
+        workspaceActivationCandidates: [],
+        summary: expect.objectContaining({
+          status: 'USER_NOT_FOUND',
+        }),
+      }),
+    );
   });
 
   it('lists only active pending invites for a branch', async () => {

@@ -34,6 +34,9 @@ export class PosPortalBranchSummaryDto {
   @ApiPropertyOptional({ nullable: true })
   branchCode!: string | null;
 
+  @ApiPropertyOptional({ nullable: true, example: 'CAFETERIA' })
+  serviceFormat!: string | null;
+
   @ApiProperty({ enum: BranchStaffRole })
   role!: BranchStaffRole;
 
@@ -42,6 +45,9 @@ export class PosPortalBranchSummaryDto {
 
   @ApiProperty()
   isOwner!: boolean;
+
+  @ApiProperty()
+  isTenantOwner!: boolean;
 
   @ApiPropertyOptional({ nullable: true })
   retailTenantId!: number | null;
@@ -135,11 +141,17 @@ export class PosPortalActivationCandidateDto {
   @ApiPropertyOptional({ nullable: true })
   branchCode!: string | null;
 
+  @ApiPropertyOptional({ nullable: true, example: 'CAFETERIA' })
+  serviceFormat!: string | null;
+
   @ApiProperty({ enum: BranchStaffRole })
   role!: BranchStaffRole;
 
   @ApiProperty()
   isOwner!: boolean;
+
+  @ApiProperty()
+  isTenantOwner!: boolean;
 
   @ApiPropertyOptional({ nullable: true })
   retailTenantId!: number | null;
@@ -173,6 +185,9 @@ export class PosPortalActivationCandidateDto {
 
   @ApiPropertyOptional({ nullable: true })
   trialDaysRemaining!: number | null;
+
+  @ApiProperty({ type: [String] })
+  activationBlockers!: string[];
 
   @ApiProperty({ type: PosPortalWorkspacePricingDto })
   pricing!: PosPortalWorkspacePricingDto;

@@ -77,6 +77,7 @@ describe('PosWorkspaceActivationService', () => {
         {
           branchId: 21,
           branchName: 'Bole Flagship',
+          serviceFormat: 'RETAIL',
           role: 'MANAGER',
           isOwner: true,
           retailTenantId: 31,
@@ -90,6 +91,15 @@ describe('PosWorkspaceActivationService', () => {
         },
       ],
     );
+    retailEntitlementsServiceMock.getBranchWorkspaceStatus.mockResolvedValue({
+      branch: { id: 21, serviceFormat: 'RETAIL' },
+      governance: {
+        activationReadiness: {
+          canActivate: true,
+          blockers: [],
+        },
+      },
+    });
     tenantModuleEntitlementsRepository.findOne.mockResolvedValue({
       module: RetailModule.POS_CORE,
       enabled: true,
@@ -244,6 +254,7 @@ describe('PosWorkspaceActivationService', () => {
         {
           branchId: 21,
           branchName: 'Bole Flagship',
+          serviceFormat: 'QSR',
           role: 'MANAGER',
           isOwner: true,
           retailTenantId: 31,
@@ -258,8 +269,15 @@ describe('PosWorkspaceActivationService', () => {
       ],
     );
     retailEntitlementsServiceMock.getBranchWorkspaceStatus.mockResolvedValue({
+      branch: { id: 21, serviceFormat: 'QSR' },
       tenant: { id: 31, name: 'Bole Retail' },
       entitlements: [{ module: RetailModule.POS_CORE }],
+      governance: {
+        activationReadiness: {
+          canActivate: true,
+          blockers: [],
+        },
+      },
       trialStartedAt: null,
       trialEndsAt: null,
       trialDaysRemaining: null,
@@ -288,6 +306,56 @@ describe('PosWorkspaceActivationService', () => {
       branchName: 'Bole Flagship',
       status: 'TRIAL',
       trialDaysRemaining: 15,
+      serviceFormat: 'QSR',
     });
+  });
+
+  it('starts a trial when service format is present even if primary retail category is the only blocker', async () => {
+    branchStaffServiceMock.getPosWorkspaceActivationCandidatesForUser.mockResolvedValue(
+      [
+        {
+          branchId: 21,
+          branchName: 'Bole Flagship',
+          serviceFormat: 'RETAIL',
+          role: 'MANAGER',
+          isOwner: true,
+          retailTenantId: 31,
+          workspaceStatus: 'PAYMENT_REQUIRED',
+          canStartTrial: true,
+          canStartActivation: true,
+          canOpenNow: false,
+          trialStartedAt: null,
+          trialEndsAt: null,
+          trialDaysRemaining: null,
+        },
+      ],
+    );
+    retailEntitlementsServiceMock.getBranchWorkspaceStatus.mockResolvedValue({
+      branch: { id: 21, serviceFormat: null },
+      tenant: { id: 31, name: 'Bole Retail' },
+      entitlements: [{ module: RetailModule.POS_CORE }],
+      governance: {
+        activationReadiness: {
+          canActivate: false,
+          blockers: ['Choose a primary retail category.'],
+        },
+      },
+      trialStartedAt: null,
+      trialEndsAt: null,
+      trialDaysRemaining: null,
+    });
+    tenantSubscriptionsRepository.findOne.mockResolvedValue(null);
+
+    const result = await service.startTrialActivation(
+      { id: 9, roles: ['POS_MANAGER'] },
+      { branchId: 21, serviceFormat: 'RETAIL' },
+    );
+
+    expect(result).toMatchObject({
+      branchId: 21,
+      status: 'TRIAL',
+      serviceFormat: 'RETAIL',
+    });
+    expect(tenantSubscriptionsRepository.save).toHaveBeenCalled();
   });
 });

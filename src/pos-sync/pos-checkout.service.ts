@@ -60,17 +60,44 @@ const POS_PROMO_CODES = {
   },
 } as const;
 
+const POS_CUSTOMER_PRICING_RULES = {
+  PUBLIC: {
+    code: 'PUBLIC',
+    label: 'Public guest',
+    description:
+      'Standard menu pricing for regular cafeteria or restaurant checkout.',
+    discountRate: 0,
+  },
+  STAFF_MEAL: {
+    code: 'STAFF_MEAL',
+    label: 'Staff meal',
+    description: 'Apply a 15% meal discount for internal staff orders.',
+    discountRate: 0.15,
+  },
+  COMPANY_SUBSIDIZED: {
+    code: 'COMPANY_SUBSIDIZED',
+    label: 'Company subsidized',
+    description: 'Apply a 30% subsidy for approved internal meal programs.',
+    discountRate: 0.3,
+  },
+} as const;
+
+type PosCustomerPricingRule =
+  (typeof POS_CUSTOMER_PRICING_RULES)[keyof typeof POS_CUSTOMER_PRICING_RULES];
+
 type QuoteLine = {
   lineId?: string | null;
   productId?: number | null;
   sku?: string | null;
   title?: string | null;
   category?: string | null;
+  metadata?: Record<string, any> | null;
   currency: string;
   taxRate: number;
   unitPrice: number;
   quantity: number;
   grossSubtotal: number;
+  customerTypeDiscount: number;
   automaticDiscount: number;
   promoCodeDiscount: number;
   taxableBase: number;
@@ -85,11 +112,34 @@ type ResolvedQuoteLineInput = {
   sku?: string | null;
   title?: string | null;
   category?: string | null;
+  metadata?: Record<string, any> | null;
   currency: string;
   taxRate: number;
   unitPrice: number;
   quantity: number;
 };
+
+const NORMALIZED_CHECKOUT_ITEM_METADATA_KEYS = [
+  'serviceFormat',
+  'serviceType',
+  'tableArea',
+  'tableStatus',
+  'course',
+  'courseServiceState',
+] as const;
+
+const NORMALIZED_CHECKOUT_ITEM_LABEL_KEYS = [
+  'tableId',
+  'tableLabel',
+  'seatLabel',
+  'billId',
+  'billLabel',
+  'serviceOwner',
+  'courseOrderedAt',
+  'courseFiredAt',
+  'courseReadyAt',
+  'courseServedAt',
+] as const;
 
 @Injectable()
 export class PosCheckoutService {
@@ -255,7 +305,7 @@ export class PosCheckoutService {
           reasonCode: this.normalizeOptionalString(item.reasonCode),
           discountAmount: item.discountAmount ?? 0,
           taxAmount: item.taxAmount ?? 0,
-          metadata: item.metadata ?? null,
+          metadata: this.normalizeCheckoutItemMetadata(item.metadata),
         })),
       }),
     );
@@ -432,6 +482,7 @@ export class PosCheckoutService {
       currency:
         this.normalizeOptionalString(item.currency ?? product?.currency) ??
         'ETB',
+      metadata: this.normalizeCheckoutItemMetadata(item.metadata),
       taxRate: Number(item.taxRate ?? 0),
       unitPrice,
       quantity: Math.max(0.000001, Number(item.quantity || 0)),
@@ -476,9 +527,20 @@ export class PosCheckoutService {
     dto: QuotePosCheckoutDto,
     resolvedLines: ResolvedQuoteLineInput[],
   ): PosCheckoutQuoteResponseDto {
+    const customerPricingRule = this.getCustomerPricingRule(
+      dto.customerProfile?.customerType,
+    );
     const baseLines = resolvedLines.map((line) => ({
       ...line,
       grossSubtotal: this.roundMoney(line.unitPrice * line.quantity),
+      customerTypeDiscount:
+        customerPricingRule.discountRate > 0 &&
+        this.isFoodServiceQuoteLine(line)
+          ? this.roundMoney(
+              this.roundMoney(line.unitPrice * line.quantity) *
+                customerPricingRule.discountRate,
+            )
+          : 0,
       automaticDiscount: 0,
       promoCodeDiscount: 0,
       taxableBase: 0,
@@ -486,6 +548,10 @@ export class PosCheckoutService {
       total: 0,
       promotionLabels: [] as string[],
     }));
+
+    const customerTypeDiscount = this.roundMoney(
+      baseLines.reduce((sum, line) => sum + line.customerTypeDiscount, 0),
+    );
 
     const automaticPromotions = this.buildAutomaticPromotions(baseLines);
     const automaticDiscount = this.roundMoney(
@@ -514,7 +580,7 @@ export class PosCheckoutService {
       baseLines.reduce((sum, line) => sum + line.grossSubtotal, 0),
     );
     const subtotalAfterAutomatic = this.roundMoney(
-      subtotal - automaticDiscount,
+      subtotal - customerTypeDiscount - automaticDiscount,
     );
     const { promoCode, promoCodeError } = this.resolvePromoCode(
       dto.promoCode,
@@ -537,7 +603,9 @@ export class PosCheckoutService {
               (sum, candidate) =>
                 sum +
                 this.roundMoney(
-                  ((candidate.grossSubtotal - candidate.automaticDiscount) /
+                  ((candidate.grossSubtotal -
+                    candidate.customerTypeDiscount -
+                    candidate.automaticDiscount) /
                     safeSubtotalAfterAutomatic) *
                     promoCodeDiscountTotal,
                 ),
@@ -548,7 +616,9 @@ export class PosCheckoutService {
           );
         } else {
           promoCodeDiscount = this.roundMoney(
-            ((line.grossSubtotal - line.automaticDiscount) /
+            ((line.grossSubtotal -
+              line.customerTypeDiscount -
+              line.automaticDiscount) /
               safeSubtotalAfterAutomatic) *
               promoCodeDiscountTotal,
           );
@@ -556,7 +626,10 @@ export class PosCheckoutService {
       }
 
       const taxableBase = this.roundMoney(
-        line.grossSubtotal - line.automaticDiscount - promoCodeDiscount,
+        line.grossSubtotal -
+          line.customerTypeDiscount -
+          line.automaticDiscount -
+          promoCodeDiscount,
       );
       const taxAmount = this.roundMoney(taxableBase * line.taxRate);
 
@@ -570,7 +643,7 @@ export class PosCheckoutService {
     });
 
     const discountTotal = this.roundMoney(
-      automaticDiscount + promoCodeDiscountTotal,
+      customerTypeDiscount + automaticDiscount + promoCodeDiscountTotal,
     );
     const netSubtotal = this.roundMoney(subtotal - discountTotal);
     const taxTotal = this.roundMoney(
@@ -584,6 +657,7 @@ export class PosCheckoutService {
       currency: lines[0]?.currency || 'ETB',
       lines,
       subtotal,
+      customerTypeDiscount,
       automaticDiscount,
       promoCodeDiscount: promoCodeDiscountTotal,
       discountTotal,
@@ -592,6 +666,7 @@ export class PosCheckoutService {
       grandTotal,
       totalItems: lines.reduce((sum, line) => sum + line.quantity, 0),
       promoCode,
+      customerPricingRule,
       promoCodeError,
       pricingSource: 'BACKEND_QUOTE',
     };
@@ -603,14 +678,21 @@ export class PosCheckoutService {
     >((promotions, line) => {
       let discount = 0;
       let label = '';
+      const promotionBaseSubtotal = this.roundMoney(
+        line.grossSubtotal - line.customerTypeDiscount,
+      );
+      const promotionUnitPrice =
+        line.quantity > 0
+          ? this.roundMoney(promotionBaseSubtotal / line.quantity)
+          : line.unitPrice;
 
       if (line.category === 'SNACK' && line.quantity >= 3) {
-        discount += line.unitPrice * line.quantity * 0.1;
+        discount += promotionBaseSubtotal * 0.1;
         label = '10% snack volume discount';
       }
 
       if (line.sku === 'WATER-600' && line.quantity >= 4) {
-        discount += line.unitPrice;
+        discount += promotionUnitPrice;
         label = label ? `${label} + water basket bonus` : 'Water basket bonus';
       }
 
@@ -625,6 +707,36 @@ export class PosCheckoutService {
       });
       return promotions;
     }, []);
+  }
+
+  private getCustomerPricingRule(
+    customerType?: string | null,
+  ): PosCustomerPricingRule {
+    const normalizedCustomerType = String(customerType || '')
+      .trim()
+      .toUpperCase();
+
+    return (
+      POS_CUSTOMER_PRICING_RULES[
+        normalizedCustomerType as keyof typeof POS_CUSTOMER_PRICING_RULES
+      ] ?? POS_CUSTOMER_PRICING_RULES.PUBLIC
+    );
+  }
+
+  private isFoodServiceQuoteLine(line: ResolvedQuoteLineInput): boolean {
+    const serviceFormat = String(line.metadata?.serviceFormat || '')
+      .trim()
+      .toUpperCase();
+    const category = String(line.category || '')
+      .trim()
+      .toUpperCase();
+
+    return (
+      category === 'FOOD_SERVICE' ||
+      serviceFormat === 'CAFETERIA' ||
+      serviceFormat === 'QSR' ||
+      serviceFormat === 'FSR'
+    );
   }
 
   private resolvePromoCode(code?: string | null, subtotal = 0) {
@@ -808,7 +920,44 @@ export class PosCheckoutService {
       baseMetadata.pricingSummary = dto.pricingSummary;
     }
 
+    if (dto.customerProfile && Object.keys(dto.customerProfile).length > 0) {
+      baseMetadata.customerProfile = dto.customerProfile;
+    }
+
+    if (dto.loyaltySummary && Object.keys(dto.loyaltySummary).length > 0) {
+      baseMetadata.loyaltySummary = dto.loyaltySummary;
+    }
+
     return Object.keys(baseMetadata).length ? baseMetadata : null;
+  }
+
+  private normalizeCheckoutItemMetadata(
+    metadata?: Record<string, any> | null,
+  ): Record<string, any> | null {
+    if (!metadata || typeof metadata !== 'object') {
+      return null;
+    }
+
+    const normalized: Record<string, any> = { ...metadata };
+
+    for (const key of NORMALIZED_CHECKOUT_ITEM_METADATA_KEYS) {
+      const value = this.normalizeOptionalString(metadata[key]);
+      normalized[key] = value ? value.toUpperCase() : null;
+    }
+
+    for (const key of NORMALIZED_CHECKOUT_ITEM_LABEL_KEYS) {
+      normalized[key] = this.normalizeOptionalString(metadata[key]);
+    }
+
+    if (metadata.guestCount != null) {
+      const guestCount = Number(metadata.guestCount);
+      normalized.guestCount =
+        Number.isFinite(guestCount) && guestCount > 0 ? guestCount : null;
+    }
+
+    return Object.keys(normalized).some((key) => normalized[key] != null)
+      ? normalized
+      : null;
   }
 
   private assertPricingSummary(

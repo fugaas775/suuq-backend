@@ -33,6 +33,21 @@ export class PosCatalogSearchItemResponseDto {
 
   @ApiPropertyOptional()
   matchedAliasValue?: string | null;
+
+  @ApiProperty({ type: [String] })
+  aliases!: string[];
+
+  @ApiPropertyOptional({ type: Object })
+  localizedNames?: Record<string, string> | null;
+
+  @ApiPropertyOptional()
+  browseCategory?: string | null;
+
+  @ApiPropertyOptional()
+  unitOfMeasure?: string | null;
+
+  @ApiPropertyOptional()
+  packagingChargeAmount?: number | null;
 }
 
 export class PosCatalogSearchResponseDto {

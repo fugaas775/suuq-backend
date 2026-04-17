@@ -52,6 +52,9 @@ import { ShippingService } from '../shipping/shipping.service';
 import { GenerateLabelDto } from './dto/generate-label.dto';
 import { UserReport } from '../moderation/entities/user-report.entity';
 import { EmailService } from '../email/email.service';
+import { InventoryLedgerService } from '../branches/inventory-ledger.service';
+import { Branch } from '../branches/entities/branch.entity';
+import { StockMovementType } from '../branches/entities/stock-movement.entity';
 
 @Injectable()
 export class VendorService {
@@ -82,6 +85,7 @@ export class VendorService {
     private readonly shippingService: ShippingService,
     private readonly settingsService: SettingsService,
     private readonly emailService: EmailService,
+    private readonly inventoryLedgerService: InventoryLedgerService,
   ) {}
 
   private readonly logger = new Logger(VendorService.name);
@@ -127,6 +131,64 @@ export class VendorService {
   private normalizeCurrency(value?: string | null): string {
     const upper = (value || '').trim().toUpperCase();
     return this.supportedCurrencies.includes(upper) ? upper : 'ETB';
+  }
+
+  private async resolveImportBranchSeeding(
+    vendorId: number,
+    creator: Partial<User> | undefined,
+    branchId?: number | null,
+  ): Promise<Branch | null> {
+    const normalizedBranchId = Number(branchId);
+
+    if (!Number.isInteger(normalizedBranchId) || normalizedBranchId <= 0) {
+      return null;
+    }
+
+    const branch = await this.productRepository.manager
+      .getRepository(Branch)
+      .findOne({ where: { id: normalizedBranchId, isActive: true } });
+
+    if (!branch) {
+      return null;
+    }
+
+    const actorIds = new Set(
+      [vendorId, Number(creator?.id || 0)].filter(
+        (value) => Number.isInteger(value) && value > 0,
+      ),
+    );
+
+    if (!branch.ownerId || !actorIds.has(branch.ownerId)) {
+      return null;
+    }
+
+    return branch;
+  }
+
+  private async seedImportedProductToBranch(
+    branchId: number,
+    productId: number,
+    requestedStockQuantity: unknown,
+    actorUserId?: number | null,
+  ): Promise<void> {
+    const quantity = Number(requestedStockQuantity);
+    const normalizedQuantity = Number.isFinite(quantity)
+      ? Math.max(0, Math.trunc(quantity))
+      : 0;
+
+    await this.inventoryLedgerService.recordMovement({
+      branchId,
+      productId,
+      movementType: StockMovementType.ADJUSTMENT,
+      quantityDelta: normalizedQuantity,
+      sourceType: 'VENDOR_PRODUCT_IMPORT',
+      sourceReferenceId: productId,
+      actorUserId: actorUserId ?? null,
+      note:
+        normalizedQuantity > 0
+          ? 'Seeded branch inventory from vendor catalog import.'
+          : 'Created branch inventory row from vendor catalog import.',
+    });
   }
 
   private isMissingPrivateNoteColumnError(err: unknown): boolean {
@@ -608,11 +670,17 @@ export class VendorService {
     userId: number,
     dto: CreateVendorProductDto,
     creator?: Partial<User>,
+    options?: { branchId?: number | null },
   ): Promise<Product> {
     const vendor = await this.userRepository.findOneBy({ id: userId });
     if (!vendor) {
       throw new NotFoundException(`Vendor with ID ${userId} not found.`);
     }
+    const importBranch = await this.resolveImportBranchSeeding(
+      userId,
+      creator,
+      options?.branchId,
+    );
 
     let createdById: number | undefined;
     let createdByName: string | undefined;
@@ -849,7 +917,7 @@ export class VendorService {
 
     const newProduct = this.productRepository.create({
       ...normalizedProductData,
-      status: 'publish',
+      status: (dto as any).publishToConsumerApp === false ? 'draft' : 'publish',
       vendor: vendor,
       createdById,
       createdByName,
@@ -932,6 +1000,15 @@ export class VendorService {
       await this.productImageRepository.save(imageEntities);
     }
 
+    if (importBranch) {
+      await this.seedImportedProductToBranch(
+        importBranch.id,
+        savedProduct.id,
+        normalizedProductData.stockQuantity,
+        Number(creator?.id || vendor.id) || null,
+      );
+    }
+
     // 4. Return the full product with all its new relations
     return this.productRepository.findOneOrFail({
       where: { id: savedProduct.id },
@@ -943,6 +1020,7 @@ export class VendorService {
     userId: number,
     dto: BulkCreateVendorProductsDto,
     creator?: Partial<User>,
+    options?: { branchId?: number | null },
   ): Promise<BulkCreateVendorProductsResponseDto> {
     const rows = Array.isArray(dto?.rows) ? dto.rows : [];
     if (!rows.length) {
@@ -963,7 +1041,12 @@ export class VendorService {
 
     for (const [rowIndex, row] of rows.entries()) {
       try {
-        const product = await this.createMyProduct(userId, row, creator);
+        const product = await this.createMyProduct(
+          userId,
+          row,
+          creator,
+          options,
+        );
         created.push({
           rowIndex,
           productId: product.id,
@@ -1028,6 +1111,7 @@ export class VendorService {
       featuredPaidAmount, // Destructure
       featuredPaidCurrency, // Destructure
       privateNote,
+      publishToConsumerApp,
       ...productData
     } = dto as any;
 
@@ -1068,6 +1152,10 @@ export class VendorService {
       } else {
         effectiveCategory = null;
       }
+    }
+
+    if (typeof publishToConsumerApp === 'boolean') {
+      product.status = publishToConsumerApp ? 'publish' : 'draft';
     }
 
     // Update simple fields (exclude computed getters like posterUrl/videoUrl)

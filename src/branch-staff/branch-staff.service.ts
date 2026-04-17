@@ -4,8 +4,9 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { AuditService } from '../audit/audit.service';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { AssignBranchStaffDto } from './dto/assign-branch-staff.dto';
 import { InviteBranchStaffDto } from './dto/invite-branch-staff.dto';
 import {
@@ -16,6 +17,7 @@ import { BranchStaffInvite } from './entities/branch-staff-invite.entity';
 import { Branch } from '../branches/entities/branch.entity';
 import { EmailService } from '../email/email.service';
 import { RetailEntitlementsService } from '../retail/retail-entitlements.service';
+import { RetailTenant } from '../retail/entities/retail-tenant.entity';
 import { RetailModule } from '../retail/entities/tenant-module-entitlement.entity';
 import {
   TenantBillingInterval,
@@ -27,9 +29,11 @@ export interface PosBranchSummary {
   branchId: number;
   branchName: string;
   branchCode: string | null;
+  serviceFormat: string | null;
   role: BranchStaffRole;
   permissions: string[];
   isOwner: boolean;
+  isTenantOwner: boolean;
   retailTenantId: number | null;
   retailTenantName: string | null;
   modules: RetailModule[];
@@ -49,8 +53,10 @@ export interface PosWorkspaceActivationCandidate {
   branchId: number;
   branchName: string;
   branchCode: string | null;
+  serviceFormat: string | null;
   role: BranchStaffRole;
   isOwner: boolean;
+  isTenantOwner: boolean;
   retailTenantId: number | null;
   retailTenantName: string | null;
   workspaceStatus:
@@ -70,11 +76,51 @@ export interface PosWorkspaceActivationCandidate {
   trialStartedAt: string | null;
   trialEndsAt: string | null;
   trialDaysRemaining: number | null;
+  activationBlockers: string[];
   pricing: {
     amount: number;
     currency: string;
     billingInterval: TenantBillingInterval;
     paymentMethod: string;
+  };
+}
+
+export interface PosBranchRosterPersonSummary {
+  userId: number | null;
+  email: string | null;
+  displayName: string | null;
+  isOwner: boolean;
+}
+
+export interface PosBranchRosterSummary {
+  branchId: number;
+  managerCount: number;
+  operatorCount: number;
+  assignedManagers: PosBranchRosterPersonSummary[];
+  assignedOperators: PosBranchRosterPersonSummary[];
+}
+
+export interface PosPortalSupportDiagnostic {
+  searchedEmail: string;
+  user: {
+    id: number;
+    email: string;
+    roles: string[];
+    displayName: string | null;
+  } | null;
+  branchAssignments: PosBranchSummary[];
+  workspaceActivationCandidates: PosWorkspaceActivationCandidate[];
+  summary: {
+    status:
+      | 'USER_NOT_FOUND'
+      | 'ACTIVE_BRANCH_ACCESS'
+      | 'ACTIVATION_REQUIRED'
+      | 'NO_BRANCH_ACCESS';
+    branchAssignmentCount: number;
+    activationCandidateCount: number;
+    canOpenNow: boolean;
+    likelyRootCause: string | null;
+    recommendedActions: string[];
   };
 }
 
@@ -93,10 +139,13 @@ export class BranchStaffService {
     private readonly invitesRepository: Repository<BranchStaffInvite>,
     @InjectRepository(Branch)
     private readonly branchesRepository: Repository<Branch>,
+    @InjectRepository(RetailTenant)
+    private readonly retailTenantsRepository: Repository<RetailTenant>,
     @InjectRepository(User)
     private readonly usersRepository: Repository<User>,
     private readonly emailService: EmailService,
     private readonly retailEntitlementsService: RetailEntitlementsService,
+    private readonly auditService: AuditService,
   ) {}
 
   async assertCanManageBranchStaff(
@@ -146,18 +195,41 @@ export class BranchStaffService {
     throw new ForbiddenException('Branch staff management access was denied.');
   }
 
-  async assign(branchId: number, dto: AssignBranchStaffDto) {
-    return this.upsertAssignment(
+  async assign(
+    branchId: number,
+    dto: AssignBranchStaffDto,
+    actor?: { id?: number | null; email?: string | null },
+  ) {
+    const result = await this.upsertAssignment(
       branchId,
       dto.userId,
       dto.role,
       dto.permissions ?? [],
     );
+
+    await this.logManagerChangeIfNeeded({
+      branchId,
+      actor,
+      userId: dto.userId,
+      previousRole: result.previousRole,
+      nextRole: result.assignment.role,
+      changeType:
+        result.previousRole === BranchStaffRole.MANAGER
+          ? 'UPDATED'
+          : 'ASSIGNED',
+    });
+
+    return result.assignment;
   }
 
-  async unassign(branchId: number, userId: number) {
+  async unassign(
+    branchId: number,
+    userId: number,
+    actor?: { id?: number | null; email?: string | null },
+  ) {
     const assignment = await this.assignmentsRepository.findOne({
       where: { branchId, userId, isActive: true },
+      relations: { user: true },
     });
 
     if (!assignment) {
@@ -165,7 +237,19 @@ export class BranchStaffService {
     }
 
     assignment.isActive = false;
-    return this.assignmentsRepository.save(assignment);
+    const savedAssignment = await this.assignmentsRepository.save(assignment);
+
+    await this.logManagerChangeIfNeeded({
+      branchId,
+      actor,
+      userId,
+      email: assignment.user?.email ?? null,
+      previousRole: assignment.role,
+      nextRole: null,
+      changeType: 'REMOVED',
+    });
+
+    return savedAssignment;
   }
 
   async invite(
@@ -204,12 +288,43 @@ export class BranchStaffService {
 
     let assignment: BranchStaffAssignment | null = null;
     if (user) {
-      assignment = await this.upsertAssignment(
+      const assignmentResult = await this.upsertAssignment(
         branchId,
         user.id,
         dto.role,
         permissions,
       );
+      assignment = assignmentResult.assignment;
+
+      await this.logManagerChangeIfNeeded({
+        branchId,
+        actor: {
+          id: invitedByUserId ?? null,
+          email: null,
+        },
+        userId: user.id,
+        email,
+        previousRole: assignmentResult.previousRole,
+        nextRole: assignment.role,
+        changeType:
+          assignmentResult.previousRole === BranchStaffRole.MANAGER
+            ? 'UPDATED'
+            : 'ASSIGNED',
+      });
+    }
+
+    if (!user && dto.role === BranchStaffRole.MANAGER) {
+      await this.logBranchManagerChange({
+        branchId,
+        actor: {
+          id: invitedByUserId ?? null,
+          email: null,
+        },
+        changeType: 'INVITED',
+        email,
+        previousRole: null,
+        nextRole: dto.role,
+      });
     }
 
     await this.sendInvitationEmail({
@@ -357,7 +472,9 @@ export class BranchStaffService {
             summary.branchId,
           );
         const canManageWorkspace =
-          summary.isOwner || summary.role === BranchStaffRole.MANAGER;
+          summary.isOwner ||
+          summary.isTenantOwner ||
+          summary.role === BranchStaffRole.MANAGER;
         const canStartActivation =
           canManageWorkspace &&
           ['PAYMENT_REQUIRED', 'PAST_DUE', 'EXPIRED', 'CANCELLED'].includes(
@@ -376,8 +493,10 @@ export class BranchStaffService {
           branchId: summary.branchId,
           branchName: summary.branchName,
           branchCode: summary.branchCode,
+          serviceFormat: summary.serviceFormat,
           role: summary.role,
           isOwner: summary.isOwner,
+          isTenantOwner: summary.isTenantOwner,
           retailTenantId: workspace.tenant?.id ?? summary.retailTenantId,
           retailTenantName: workspace.tenant?.name ?? summary.retailTenantName,
           workspaceStatus: workspace.workspaceStatus,
@@ -389,6 +508,7 @@ export class BranchStaffService {
           trialStartedAt: workspace.trialStartedAt,
           trialEndsAt: workspace.trialEndsAt,
           trialDaysRemaining: workspace.trialDaysRemaining,
+          activationBlockers: this.describeActivationBlockers(workspace),
           pricing: this.getPosWorkspacePricing(),
         };
       }),
@@ -422,6 +542,189 @@ export class BranchStaffService {
     };
   }
 
+  async getPortalAccessDiagnosticsByEmail(
+    email: string,
+  ): Promise<PosPortalSupportDiagnostic> {
+    const normalizedEmail = this.normalizeEmail(email);
+    const user = await this.usersRepository.findOne({
+      where: { email: normalizedEmail },
+      select: {
+        id: true,
+        email: true,
+        roles: true,
+        displayName: true,
+      },
+    });
+
+    if (!user) {
+      return {
+        searchedEmail: normalizedEmail,
+        user: null,
+        branchAssignments: [],
+        workspaceActivationCandidates: [],
+        summary: {
+          status: 'USER_NOT_FOUND',
+          branchAssignmentCount: 0,
+          activationCandidateCount: 0,
+          canOpenNow: false,
+          likelyRootCause: 'No user record matches this email address.',
+          recommendedActions: [
+            'Confirm the operator signed in with the exact invited or owner email address.',
+            'If the account should exist, ask the user to retry sign-in or create the account first.',
+          ],
+        },
+      };
+    }
+
+    const [branchAssignments, workspaceActivationCandidates] =
+      await Promise.all([
+        this.getPosBranchSummariesForUser({ id: user.id, roles: user.roles }),
+        this.getPosWorkspaceActivationCandidatesForUser({
+          id: user.id,
+          roles: user.roles,
+        }),
+      ]);
+
+    const hasActiveBranchAccess = branchAssignments.length > 0;
+    const hasActivationCandidates = workspaceActivationCandidates.length > 0;
+    const primaryCandidate = workspaceActivationCandidates[0] || null;
+
+    return {
+      searchedEmail: normalizedEmail,
+      user: {
+        id: user.id,
+        email: user.email,
+        roles: Array.isArray(user.roles) ? user.roles : [],
+        displayName: user.displayName ?? null,
+      },
+      branchAssignments,
+      workspaceActivationCandidates,
+      summary: {
+        status: hasActiveBranchAccess
+          ? 'ACTIVE_BRANCH_ACCESS'
+          : hasActivationCandidates
+            ? 'ACTIVATION_REQUIRED'
+            : 'NO_BRANCH_ACCESS',
+        branchAssignmentCount: branchAssignments.length,
+        activationCandidateCount: workspaceActivationCandidates.length,
+        canOpenNow: hasActiveBranchAccess,
+        likelyRootCause: hasActiveBranchAccess
+          ? 'The user already has at least one active POS branch workspace.'
+          : primaryCandidate?.activationBlockers?.[0] ||
+            (hasActivationCandidates
+              ? 'The user is linked to a branch, but activation is still incomplete.'
+              : 'The user has no active branch assignment or openable POS workspace.'),
+        recommendedActions: this.buildPortalDiagnosticActions({
+          hasActiveBranchAccess,
+          hasActivationCandidates,
+          primaryCandidate,
+        }),
+      },
+    };
+  }
+
+  async getBranchRosterSummaries(
+    branchIds: number[],
+  ): Promise<PosBranchRosterSummary[]> {
+    const resolvedBranchIds = Array.from(
+      new Set(
+        (branchIds ?? []).filter((branchId): branchId is number =>
+          Number.isInteger(branchId),
+        ),
+      ),
+    );
+
+    if (!resolvedBranchIds.length) {
+      return [];
+    }
+
+    const [branches, assignments] = await Promise.all([
+      this.branchesRepository.find({
+        where: { id: In(resolvedBranchIds) },
+        relations: { owner: true },
+      }),
+      this.assignmentsRepository.find({
+        where: { branchId: In(resolvedBranchIds), isActive: true },
+        relations: { user: true },
+      }),
+    ]);
+
+    const rosterByBranchId = new Map<number, PosBranchRosterSummary>();
+
+    for (const branch of branches) {
+      const assignedManagers: PosBranchRosterPersonSummary[] = [];
+
+      if (branch.owner) {
+        assignedManagers.push({
+          userId: branch.owner.id,
+          email: branch.owner.email ?? null,
+          displayName:
+            branch.owner.displayName ?? branch.owner.contactName ?? null,
+          isOwner: true,
+        });
+      }
+
+      rosterByBranchId.set(branch.id, {
+        branchId: branch.id,
+        managerCount: assignedManagers.length,
+        operatorCount: 0,
+        assignedManagers,
+        assignedOperators: [],
+      });
+    }
+
+    for (const assignment of assignments) {
+      const current = rosterByBranchId.get(assignment.branchId) || {
+        branchId: assignment.branchId,
+        managerCount: 0,
+        operatorCount: 0,
+        assignedManagers: [],
+        assignedOperators: [],
+      };
+      const person = {
+        userId: assignment.user?.id ?? assignment.userId ?? null,
+        email: assignment.user?.email ?? null,
+        displayName:
+          assignment.user?.displayName ?? assignment.user?.contactName ?? null,
+        isOwner: false,
+      };
+
+      if (assignment.role === BranchStaffRole.MANAGER) {
+        if (
+          !current.assignedManagers.some(
+            (entry) =>
+              entry.userId === person.userId && entry.email === person.email,
+          )
+        ) {
+          current.assignedManagers.push(person);
+        }
+      } else if (
+        !current.assignedOperators.some(
+          (entry) =>
+            entry.userId === person.userId && entry.email === person.email,
+        )
+      ) {
+        current.assignedOperators.push(person);
+      }
+
+      current.managerCount = current.assignedManagers.length;
+      current.operatorCount = current.assignedOperators.length;
+      rosterByBranchId.set(assignment.branchId, current);
+    }
+
+    return resolvedBranchIds.map((branchId) => {
+      return (
+        rosterByBranchId.get(branchId) || {
+          branchId,
+          managerCount: 0,
+          operatorCount: 0,
+          assignedManagers: [],
+          assignedOperators: [],
+        }
+      );
+    });
+  }
+
   getPosWorkspacePricing() {
     return {
       amount: POS_WORKSPACE_MONTHLY_PRICE,
@@ -431,13 +734,127 @@ export class BranchStaffService {
     };
   }
 
+  private describeActivationBlockers(workspace: {
+    workspaceStatus:
+      | 'ACTIVE'
+      | 'TENANT_SETUP_REQUIRED'
+      | 'TENANT_INACTIVE'
+      | 'MODULE_SETUP_REQUIRED'
+      | 'PAYMENT_REQUIRED'
+      | 'TRIAL'
+      | 'PAST_DUE'
+      | 'EXPIRED'
+      | 'CANCELLED';
+    subscription: { status?: TenantSubscriptionStatus | null } | null;
+    branch?: { serviceFormat?: string | null };
+    governance?: { activationReadiness?: { blockers?: string[] } } | null;
+  }) {
+    const blockers: string[] = [];
+
+    if (
+      workspace.workspaceStatus === 'PAYMENT_REQUIRED' &&
+      !workspace.subscription
+    ) {
+      blockers.push(
+        'Start a 15-day trial or complete the first monthly billing activation for this branch workspace.',
+      );
+    }
+
+    if (workspace.workspaceStatus === 'PAST_DUE') {
+      blockers.push(
+        'This branch workspace has a past-due monthly billing balance.',
+      );
+    }
+
+    if (workspace.workspaceStatus === 'EXPIRED') {
+      blockers.push(
+        'This branch workspace subscription expired and must be reactivated.',
+      );
+    }
+
+    if (workspace.workspaceStatus === 'CANCELLED') {
+      blockers.push(
+        'This branch workspace subscription was cancelled and must be reactivated.',
+      );
+    }
+
+    if (workspace.workspaceStatus === 'MODULE_SETUP_REQUIRED') {
+      blockers.push(
+        'POS_CORE entitlement must be enabled before this branch can open in POS-S.',
+      );
+    }
+
+    if (workspace.workspaceStatus === 'TENANT_SETUP_REQUIRED') {
+      blockers.push('This branch is not linked to a retail tenant yet.');
+    }
+
+    if (workspace.workspaceStatus === 'TENANT_INACTIVE') {
+      blockers.push('The linked retail tenant is inactive.');
+    }
+
+    if (!String(workspace.branch?.serviceFormat || '').trim()) {
+      blockers.push(
+        'Set a branch service format such as RETAIL before starting activation.',
+      );
+    }
+
+    const govBlockers =
+      workspace.governance?.activationReadiness?.blockers || [];
+    const hasServiceFormat = Boolean(workspace.branch?.serviceFormat);
+    blockers.push(
+      ...govBlockers.filter(
+        (b) =>
+          !(
+            hasServiceFormat &&
+            (b === 'Choose a primary retail category.' ||
+              b === 'Choose a POS fit category.')
+          ),
+      ),
+    );
+
+    return Array.from(new Set(blockers.filter(Boolean)));
+  }
+
+  private buildPortalDiagnosticActions(params: {
+    hasActiveBranchAccess: boolean;
+    hasActivationCandidates: boolean;
+    primaryCandidate: PosWorkspaceActivationCandidate | null;
+  }) {
+    if (params.hasActiveBranchAccess) {
+      return [
+        'Ask the user to retry sign-in or refresh the POS frontend if they still cannot enter POS-S.',
+        'If sign-in still fails, inspect the browser network response for /api/pos-portal/auth/google or /login.',
+      ];
+    }
+
+    if (params.hasActivationCandidates) {
+      return Array.from(
+        new Set([
+          ...(params.primaryCandidate?.activationBlockers || []),
+          'Finish trial or billing activation for the selected branch workspace.',
+          'If this is a legacy self-serve branch, backfill the missing serviceFormat before retrying activation.',
+        ]),
+      );
+    }
+
+    return [
+      'Confirm the user was invited or assigned to the correct branch workspace.',
+      'If this should be the tenant owner, create the first self-serve POS workspace before retrying sign-in.',
+    ];
+  }
+
   private async collectPosBranchAccessForUser(user: {
     id: number;
     roles?: string[];
   }): Promise<Map<number, PosBranchSummary>> {
-    const [ownedBranches, assignments] = await Promise.all([
+    const [ownedBranches, tenantOwnedTenants, assignments] = await Promise.all([
       this.branchesRepository.find({
         where: { ownerId: user.id, isActive: true },
+        order: { createdAt: 'ASC' },
+      }),
+      this.retailTenantsRepository.find({
+        where: { ownerUserId: user.id },
+        relations: { branches: true },
         order: { createdAt: 'ASC' },
       }),
       this.assignmentsRepository.find({
@@ -454,9 +871,11 @@ export class BranchStaffService {
         branchId: branch.id,
         branchName: branch.name,
         branchCode: branch.code ?? null,
+        serviceFormat: branch.serviceFormat ?? null,
         role: BranchStaffRole.MANAGER,
         permissions: [],
         isOwner: true,
+        isTenantOwner: false,
         retailTenantId: branch.retailTenantId ?? null,
         retailTenantName: null,
         modules: [],
@@ -471,6 +890,38 @@ export class BranchStaffService {
         trialDaysRemaining: null,
         joinedAt: branch.createdAt,
       });
+    }
+
+    for (const tenant of tenantOwnedTenants) {
+      for (const branch of tenant.branches ?? []) {
+        if (!branch?.isActive || byBranchId.has(branch.id)) {
+          continue;
+        }
+
+        byBranchId.set(branch.id, {
+          branchId: branch.id,
+          branchName: branch.name,
+          branchCode: branch.code ?? null,
+          serviceFormat: branch.serviceFormat ?? null,
+          role: BranchStaffRole.MANAGER,
+          permissions: [],
+          isOwner: false,
+          isTenantOwner: true,
+          retailTenantId: branch.retailTenantId ?? tenant.id,
+          retailTenantName: tenant.name,
+          modules: [],
+          workspaceStatus: 'ACTIVE',
+          subscriptionStatus: null,
+          planCode: null,
+          canStartTrial: false,
+          canStartActivation: false,
+          canOpenNow: false,
+          trialStartedAt: null,
+          trialEndsAt: null,
+          trialDaysRemaining: null,
+          joinedAt: branch.createdAt,
+        });
+      }
     }
 
     for (const assignment of assignments) {
@@ -490,9 +941,12 @@ export class BranchStaffService {
         branchId: assignment.branchId,
         branchName: assignment.branch.name,
         branchCode: assignment.branch.code ?? null,
+        serviceFormat:
+          existing?.serviceFormat ?? assignment.branch.serviceFormat ?? null,
         role: assignment.role ?? existing?.role ?? BranchStaffRole.OPERATOR,
         permissions: mergedPermissions,
         isOwner: existing?.isOwner ?? false,
+        isTenantOwner: existing?.isTenantOwner ?? false,
         retailTenantId:
           existing?.retailTenantId ?? assignment.branch.retailTenantId ?? null,
         retailTenantName: existing?.retailTenantName ?? null,
@@ -526,7 +980,10 @@ export class BranchStaffService {
     userId: number,
     role: BranchStaffRole,
     permissions: string[],
-  ): Promise<BranchStaffAssignment> {
+  ): Promise<{
+    assignment: BranchStaffAssignment;
+    previousRole: BranchStaffRole | null;
+  }> {
     const existing = await this.assignmentsRepository.findOne({
       where: { branchId, userId },
     });
@@ -540,7 +997,66 @@ export class BranchStaffService {
       isActive: true,
     });
 
-    return this.assignmentsRepository.save(assignment);
+    return {
+      assignment: await this.assignmentsRepository.save(assignment),
+      previousRole: existing?.role ?? null,
+    };
+  }
+
+  private async logManagerChangeIfNeeded(params: {
+    branchId: number;
+    actor?: { id?: number | null; email?: string | null };
+    userId?: number | null;
+    email?: string | null;
+    previousRole: BranchStaffRole | null;
+    nextRole: BranchStaffRole | null;
+    changeType: 'ASSIGNED' | 'UPDATED' | 'REMOVED' | 'INVITED';
+  }) {
+    const involvesManagerRole =
+      params.previousRole === BranchStaffRole.MANAGER ||
+      params.nextRole === BranchStaffRole.MANAGER;
+
+    if (!involvesManagerRole) {
+      return;
+    }
+
+    await this.logBranchManagerChange(params);
+  }
+
+  private async logBranchManagerChange(params: {
+    branchId: number;
+    actor?: { id?: number | null; email?: string | null };
+    userId?: number | null;
+    email?: string | null;
+    previousRole: BranchStaffRole | null;
+    nextRole: BranchStaffRole | null;
+    changeType: 'ASSIGNED' | 'UPDATED' | 'REMOVED' | 'INVITED';
+  }) {
+    const branch = await this.branchesRepository.findOne({
+      where: { id: params.branchId },
+    });
+
+    if (!branch) {
+      return;
+    }
+
+    await this.auditService.log({
+      action: 'tenant.branchManager.change',
+      targetType: branch.retailTenantId ? 'RETAIL_TENANT' : 'BRANCH',
+      targetId: branch.retailTenantId ?? branch.id,
+      actorId: params.actor?.id ?? null,
+      actorEmail: params.actor?.email ?? null,
+      meta: {
+        branchId: branch.id,
+        branchName: branch.name,
+        retailTenantId: branch.retailTenantId ?? null,
+        userId: params.userId ?? null,
+        email: params.email ?? null,
+        previousRole: params.previousRole ?? null,
+        nextRole: params.nextRole ?? null,
+        changeType: params.changeType,
+      },
+    });
   }
 
   private async sendInvitationEmail(params: {

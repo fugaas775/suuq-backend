@@ -303,11 +303,18 @@ export class AdminController {
   ) {
     await this.usersService.findById(id);
 
-    const assignment = await this.branchStaffService.assign(dto.branchId, {
-      userId: id,
-      role: dto.role,
-      permissions: dto.permissions ?? [],
-    });
+    const assignment = await this.branchStaffService.assign(
+      dto.branchId,
+      {
+        userId: id,
+        role: dto.role,
+        permissions: dto.permissions ?? [],
+      },
+      {
+        id: req?.user?.id ?? null,
+        email: req?.user?.email ?? null,
+      },
+    );
     const posAccess =
       await this.branchStaffService.getAdminPosAccessForUser(id);
     const matchedAssignment = (posAccess.branchAssignments || []).find(
@@ -362,7 +369,10 @@ export class AdminController {
     const matchedAssignment = (existingPosAccess.branchAssignments || []).find(
       (entry) => entry.branchId === branchId,
     );
-    const assignment = await this.branchStaffService.unassign(branchId, id);
+    const assignment = await this.branchStaffService.unassign(branchId, id, {
+      id: req?.user?.id ?? null,
+      email: req?.user?.email ?? null,
+    });
     await this.auditService.log({
       action: 'user.pos.assignment.remove',
       targetType: 'user',

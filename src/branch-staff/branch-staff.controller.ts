@@ -143,6 +143,10 @@ export class BranchStaffController {
     const assignment = await this.branchStaffService.assign(
       resolvedBranchId,
       dto,
+      {
+        id: req.user?.id ?? null,
+        email: req.user?.email ?? null,
+      },
     );
     return this.serializeAssignment(assignment);
   }
@@ -166,6 +170,10 @@ export class BranchStaffController {
     const assignment = await this.branchStaffService.unassign(
       resolvedBranchId,
       Number(userId),
+      {
+        id: req.user?.id ?? null,
+        email: req.user?.email ?? null,
+      },
     );
 
     return this.serializeAssignment(assignment);

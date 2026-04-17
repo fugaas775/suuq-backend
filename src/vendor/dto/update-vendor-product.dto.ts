@@ -214,6 +214,11 @@ export class UpdateVendorProductDto {
   totalPrice?: number;
 
   @IsOptional()
+  @Type(() => Boolean)
+  @IsBoolean()
+  publishToConsumerApp?: boolean;
+
+  @IsOptional()
   @IsObject()
   attributes?: Record<string, any>;
 }

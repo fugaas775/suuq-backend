@@ -27,6 +27,7 @@ import { VendorMeController } from './vendor-me.controller';
 import { VendorPortalAuthController } from './vendor-portal-auth.controller';
 import { EmailModule } from '../email/email.module';
 import { AuditModule } from '../audit/audit.module';
+import { BranchesModule } from '../branches/branches.module';
 
 @Module({
   imports: [
@@ -34,6 +35,7 @@ import { AuditModule } from '../audit/audit.module';
     SettingsModule,
     EmailModule,
     AuditModule,
+    BranchesModule,
     // ✨ 2. PRODUCTIMAGE ENTITY ADDED HERE
     TypeOrmModule.forFeature([
       User,

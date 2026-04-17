@@ -15,6 +15,20 @@ export class PosCheckoutQuotePromoCodeResponseDto {
   minSubtotal!: number;
 }
 
+export class PosCheckoutQuoteCustomerPricingRuleResponseDto {
+  @ApiProperty()
+  code!: string;
+
+  @ApiProperty()
+  label!: string;
+
+  @ApiProperty()
+  description!: string;
+
+  @ApiProperty()
+  discountRate!: number;
+}
+
 export class PosCheckoutQuoteLineResponseDto {
   @ApiPropertyOptional()
   lineId?: string | null;
@@ -45,6 +59,9 @@ export class PosCheckoutQuoteLineResponseDto {
 
   @ApiProperty()
   grossSubtotal!: number;
+
+  @ApiProperty()
+  customerTypeDiscount!: number;
 
   @ApiProperty()
   automaticDiscount!: number;
@@ -82,6 +99,9 @@ export class PosCheckoutQuoteResponseDto {
   subtotal!: number;
 
   @ApiProperty()
+  customerTypeDiscount!: number;
+
+  @ApiProperty()
   automaticDiscount!: number;
 
   @ApiProperty()
@@ -107,6 +127,11 @@ export class PosCheckoutQuoteResponseDto {
     nullable: true,
   })
   promoCode!: PosCheckoutQuotePromoCodeResponseDto | null;
+
+  @ApiProperty({
+    type: PosCheckoutQuoteCustomerPricingRuleResponseDto,
+  })
+  customerPricingRule!: PosCheckoutQuoteCustomerPricingRuleResponseDto;
 
   @ApiProperty()
   promoCodeError!: string;

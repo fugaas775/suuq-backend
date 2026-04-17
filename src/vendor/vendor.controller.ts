@@ -149,7 +149,15 @@ export class VendorController {
     @Body() dto: CreateVendorProductDto,
     @Req() req: AuthenticatedRequest,
   ) {
-    return this.vendorService.createMyProduct(vendor.id, dto, req.user as any);
+    const branchHeader =
+      req.headers['x-branch-id'] || req.headers['x-workspace-id'];
+    const branchId = Number(
+      Array.isArray(branchHeader) ? branchHeader[0] : branchHeader,
+    );
+
+    return this.vendorService.createMyProduct(vendor.id, dto, req.user as any, {
+      branchId: Number.isInteger(branchId) && branchId > 0 ? branchId : null,
+    });
   }
 
   @UseGuards(JwtAuthGuard, VendorPermissionGuard)
@@ -175,10 +183,19 @@ export class VendorController {
     @Body() dto: BulkCreateVendorProductsDto,
     @Req() req: AuthenticatedRequest,
   ) {
+    const branchHeader =
+      req.headers['x-branch-id'] || req.headers['x-workspace-id'];
+    const branchId = Number(
+      Array.isArray(branchHeader) ? branchHeader[0] : branchHeader,
+    );
+
     return this.vendorService.createMyProductsBulk(
       vendor.id,
       dto,
       req.user as any,
+      {
+        branchId: Number.isInteger(branchId) && branchId > 0 ? branchId : null,
+      },
     );
   }
 

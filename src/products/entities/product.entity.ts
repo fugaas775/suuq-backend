@@ -560,9 +560,10 @@ export class Product {
     // 1. Low Stock (Urgency)
     if (
       this.manageStock &&
-      this.stockQuantity &&
-      this.stockQuantity <= 5 &&
-      this.stockQuantity > 0
+      this.stockQuantity !== null &&
+      this.stockQuantity !== undefined &&
+      this.stockQuantity > 0 &&
+      this.stockQuantity <= 5
     ) {
       return `Only ${this.stockQuantity} left!`;
     }
