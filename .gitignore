@@ -83,3 +83,8 @@ bfg-*.jar
 *.backup
 *.new
 *~
+*.orig
+*.rej
+
+# Nested dependency/cache artifacts accidentally created under source
+/src/node_modules/
