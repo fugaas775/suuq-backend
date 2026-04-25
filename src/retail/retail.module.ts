@@ -14,6 +14,7 @@ import { PurchaseOrderReceiptEvent } from '../purchase-orders/entities/purchase-
 import { PurchaseOrdersModule } from '../purchase-orders/purchase-orders.module';
 import { RedisModule } from '../redis/redis.module';
 import { Order } from '../orders/entities/order.entity';
+import { Product } from '../products/entities/product.entity';
 import { User } from '../users/entities/user.entity';
 import { PayoutLog } from '../wallet/entities/payout-log.entity';
 import { RetailAdminController } from './retail.admin.controller';
@@ -48,6 +49,7 @@ import { RetailModulesGuard } from './retail-modules.guard';
       PurchaseOrderReceiptEvent,
       PosSyncJob,
       Order,
+      Product,
       User,
       PayoutLog,
     ]),

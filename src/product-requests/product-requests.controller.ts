@@ -318,17 +318,4 @@ export class ProductRequestsController {
   legacyAnalytics(@Body() _body: any) {
     return { ok: true };
   }
-
-  @Post([
-    'v2/search/log',
-    'v2/searches/log',
-    'v2/zero-search',
-    'v2/analytics/zero-results',
-    'v2/analytics/zero-searches',
-    'v2/analytics/searches/zero',
-    'v2/analytics/searches/zero-results',
-  ])
-  legacyAnalyticsV2(@Body() _body: any) {
-    return { ok: true };
-  }
 }

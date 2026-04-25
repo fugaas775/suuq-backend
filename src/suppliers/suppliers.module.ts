@@ -8,6 +8,7 @@ import { ProcurementWebhooksModule } from '../procurement-webhooks/procurement-w
 import { RealtimeModule } from '../realtime/realtime.module';
 import { User } from '../users/entities/user.entity';
 import { SupplierProfile } from './entities/supplier-profile.entity';
+import { SupplierStaffAssignment } from '../supplier-staff/entities/supplier-staff-assignment.entity';
 import { SuppliersController } from './suppliers.controller';
 import { SuppliersService } from './suppliers.service';
 
@@ -18,6 +19,7 @@ import { SuppliersService } from './suppliers.service';
       User,
       PurchaseOrder,
       PurchaseOrderReceiptEvent,
+      SupplierStaffAssignment,
     ]),
     AuditModule,
     NotificationsModule,

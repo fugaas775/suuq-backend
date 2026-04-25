@@ -1,4 +1,4 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
   IsNumber,
@@ -6,6 +6,7 @@ import {
   IsOptional,
   IsString,
   MaxLength,
+  Min,
 } from 'class-validator';
 
 export class ClosePosRegisterSessionDto {
@@ -13,6 +14,16 @@ export class ClosePosRegisterSessionDto {
   @Type(() => Number)
   @IsNumber()
   branchId!: number;
+
+  @ApiPropertyOptional({
+    example: 1234.5,
+    description: 'Closing cash declared by the operator at end-of-shift.',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  closingFloat?: number;
 
   @IsOptional()
   @IsString()

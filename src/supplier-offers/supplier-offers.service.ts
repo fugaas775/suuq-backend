@@ -11,6 +11,7 @@ import {
   SupplierOnboardingStatus,
 } from '../suppliers/entities/supplier-profile.entity';
 import { CreateSupplierOfferDto } from './dto/create-supplier-offer.dto';
+import { UpdateSupplierOfferDto } from './dto/update-supplier-offer.dto';
 import { UpdateSupplierOfferStatusDto } from './dto/update-supplier-offer-status.dto';
 import {
   SupplierAvailabilityStatus,
@@ -108,7 +109,32 @@ export class SupplierOffersService {
     await this.supplierOffersRepository.save(offer);
     return this.findOneById(id);
   }
-
+  async update(
+    id: number,
+    dto: UpdateSupplierOfferDto,
+  ): Promise<SupplierOffer> {
+    const offer = await this.findOneById(id);
+    if (dto.unitWholesalePrice !== undefined) {
+      offer.unitWholesalePrice = dto.unitWholesalePrice;
+    }
+    if (dto.currency !== undefined) {
+      offer.currency = dto.currency.toUpperCase();
+    }
+    if (dto.availabilityStatus !== undefined) {
+      offer.availabilityStatus = dto.availabilityStatus;
+    }
+    if (dto.moq !== undefined) {
+      offer.moq = dto.moq;
+    }
+    if (dto.leadTimeDays !== undefined) {
+      offer.leadTimeDays = dto.leadTimeDays;
+    }
+    if (dto.fulfillmentRegions !== undefined) {
+      offer.fulfillmentRegions = dto.fulfillmentRegions;
+    }
+    await this.supplierOffersRepository.save(offer);
+    return this.findOneById(offer.id);
+  }
   private async findOneById(id: number): Promise<SupplierOffer> {
     const offer = await this.supplierOffersRepository.findOne({
       where: { id },

@@ -2,6 +2,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
   IsEnum,
+  IsISO8601,
   IsNumber,
   IsOptional,
   IsString,
@@ -40,4 +41,22 @@ export class ListPosRegisterSessionsQueryDto {
   @IsOptional()
   @IsString()
   registerId?: string;
+
+  @ApiPropertyOptional({
+    example: '2026-04-01T00:00:00.000Z',
+    description:
+      'Inclusive lower bound (ISO8601). Returns sessions whose lifespan overlaps the window — i.e. that closed at/after `fromAt` (still-open sessions always overlap the upper bound).',
+  })
+  @IsOptional()
+  @IsISO8601()
+  fromAt?: string;
+
+  @ApiPropertyOptional({
+    example: '2026-04-01T23:59:59.999Z',
+    description:
+      'Inclusive upper bound (ISO8601). Returns sessions opened at/before `toAt`.',
+  })
+  @IsOptional()
+  @IsISO8601()
+  toAt?: string;
 }

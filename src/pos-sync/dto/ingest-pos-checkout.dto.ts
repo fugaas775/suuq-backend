@@ -86,6 +86,18 @@ export class PosCheckoutItemDto {
   @Type(() => Number)
   @IsNumber()
   @Min(0)
+  taxRate?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  taxableBase?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
   taxAmount?: number;
 
   @Type(() => Number)

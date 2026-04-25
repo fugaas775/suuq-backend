@@ -29,6 +29,7 @@ import {
   PurchaseOrderReceiptEvent,
 } from '../purchase-orders/entities/purchase-order-receipt-event.entity';
 import { User } from '../users/entities/user.entity';
+import { SupplierStaffAssignment } from '../supplier-staff/entities/supplier-staff-assignment.entity';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
 import { CreateSupplierProfileDto } from './dto/create-supplier-profile.dto';
 import {
@@ -100,6 +101,7 @@ import {
   SupplierProcurementTrendWindowResponseDto,
 } from './dto/supplier-procurement-trend-response.dto';
 import { UpdateSupplierProfileStatusDto } from './dto/update-supplier-profile-status.dto';
+import { UpdateSupplierProfileActiveDto } from './dto/update-supplier-profile-active.dto';
 import {
   SupplierOnboardingStatus,
   SupplierProfile,
@@ -153,6 +155,8 @@ export class SuppliersService {
     private readonly purchaseOrdersRepository: Repository<PurchaseOrder>,
     @InjectRepository(PurchaseOrderReceiptEvent)
     private readonly purchaseOrderReceiptEventsRepository: Repository<PurchaseOrderReceiptEvent>,
+    @InjectRepository(SupplierStaffAssignment)
+    private readonly supplierStaffAssignmentsRepository: Repository<SupplierStaffAssignment>,
     private readonly auditService: AuditService,
     private readonly notificationsService: NotificationsService,
     private readonly procurementWebhooksService: ProcurementWebhooksService,
@@ -167,10 +171,13 @@ export class SuppliersService {
       throw new NotFoundException(`User with ID ${dto.userId} not found`);
     }
 
+    // Self-serve onboarding: suppliers are auto-approved on profile creation so
+    // they can immediately publish offers visible to POS buyers. Revisit once
+    // an admin review queue exists in the suuq-admin panel.
     const profile = this.supplierProfilesRepository.create({
       ...dto,
       countriesServed: dto.countriesServed ?? [],
-      onboardingStatus: SupplierOnboardingStatus.DRAFT,
+      onboardingStatus: SupplierOnboardingStatus.APPROVED,
     });
     await this.supplierProfilesRepository.save(profile);
     return this.findOneById(profile.id);
@@ -181,6 +188,46 @@ export class SuppliersService {
       order: { createdAt: 'DESC' },
       relations: { user: true },
     });
+  }
+
+  /**
+   * Returns supplier profiles visible to the calling user. Platform admins
+   * see everything; suppliers see only profiles they own OR have an active
+   * staff assignment for.
+   */
+  async findAllForUser(actor: {
+    id: number | null;
+    roles: UserRole[];
+  }): Promise<SupplierProfile[]> {
+    const isAdmin =
+      actor.roles?.includes(UserRole.SUPER_ADMIN) ||
+      actor.roles?.includes(UserRole.ADMIN);
+    if (isAdmin) {
+      return this.findAll();
+    }
+    if (!actor.id) return [];
+    const staffAssignments = await this.supplierStaffAssignmentsRepository.find(
+      {
+        where: { userId: actor.id, isActive: true },
+        select: ['supplierProfileId'],
+      },
+    );
+    const staffedIds = staffAssignments.map((a) => a.supplierProfileId);
+    const ownerProfiles = await this.supplierProfilesRepository.find({
+      where: { userId: actor.id },
+      relations: { user: true },
+    });
+    const staffedProfiles = staffedIds.length
+      ? await this.supplierProfilesRepository.find({
+          where: { id: In(staffedIds) },
+          relations: { user: true },
+        })
+      : [];
+    const dedup = new Map<number, SupplierProfile>();
+    [...ownerProfiles, ...staffedProfiles].forEach((p) => dedup.set(p.id, p));
+    return Array.from(dedup.values()).sort(
+      (a, b) => Number(b.createdAt) - Number(a.createdAt),
+    );
   }
 
   async findReviewQueue(
@@ -2985,6 +3032,54 @@ export class SuppliersService {
       meta: {
         fromStatus: previousStatus,
         toStatus: nextStatus,
+      },
+    });
+
+    return this.findOneById(id);
+  }
+
+  async updateActive(
+    id: number,
+    dto: UpdateSupplierProfileActiveDto,
+    actor: {
+      id?: number | null;
+      email?: string | null;
+      roles?: string[];
+      reason?: string;
+    } = {},
+  ): Promise<SupplierProfile> {
+    const profile = await this.findOneById(id);
+    const previousActive = profile.isActive;
+    const nextActive = Boolean(dto.isActive);
+
+    if (previousActive === nextActive) {
+      return profile;
+    }
+
+    if (
+      !this.hasAnyRole(actor.roles ?? [], [
+        UserRole.SUPER_ADMIN,
+        UserRole.ADMIN,
+      ])
+    ) {
+      throw new ForbiddenException(
+        'Only admins can change supplier active state',
+      );
+    }
+
+    profile.isActive = nextActive;
+    await this.supplierProfilesRepository.save(profile);
+
+    await this.auditService.log({
+      action: 'supplier_profile.active.update',
+      targetType: 'SUPPLIER_PROFILE',
+      targetId: id,
+      actorId: actor.id ?? null,
+      actorEmail: actor.email ?? null,
+      reason: dto.reason ?? actor.reason ?? null,
+      meta: {
+        fromIsActive: previousActive,
+        toIsActive: nextActive,
       },
     });
 

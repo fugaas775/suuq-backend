@@ -22,10 +22,13 @@ import { IngestPosCheckoutDto } from './dto/ingest-pos-checkout.dto';
 import { PosCheckoutQuoteResponseDto } from './dto/pos-checkout-quote-response.dto';
 import { ListPosCheckoutsQueryDto } from './dto/list-pos-checkouts-query.dto';
 import { QuotePosCheckoutDto } from './dto/quote-pos-checkout.dto';
+import { VoidPosCheckoutDto } from './dto/void-pos-checkout.dto';
 import {
   PosCheckoutPageResponseDto,
   PosCheckoutResponseDto,
 } from './dto/pos-checkout-response.dto';
+import { TaxSummaryQueryDto } from './dto/tax-summary-query.dto';
+import { TaxSummaryResponseDto } from './dto/tax-summary-response.dto';
 import { PosCheckoutService } from './pos-checkout.service';
 
 @ApiTags('POS Checkouts')
@@ -63,6 +66,21 @@ export class PosCheckoutController {
     return this.posCheckoutService.findAll(query);
   }
 
+  @Get('reports/tax-summary')
+  @UseGuards(JwtAuthGuard, RolesGuard, RetailModulesGuard)
+  @Roles(
+    UserRole.SUPER_ADMIN,
+    UserRole.ADMIN,
+    UserRole.POS_MANAGER,
+    UserRole.POS_OPERATOR,
+  )
+  @RequireRetailModules(RetailOsModule.POS_CORE)
+  @RetailBranchContext('query.branchId')
+  @ApiOkResponse({ type: TaxSummaryResponseDto })
+  getTaxSummary(@Query() query: TaxSummaryQueryDto) {
+    return this.posCheckoutService.getTaxSummary(query);
+  }
+
   @Get(':id')
   @UseGuards(JwtAuthGuard, RolesGuard, RetailModulesGuard)
   @Roles(
@@ -79,6 +97,22 @@ export class PosCheckoutController {
     @Query('branchId', ParseIntPipe) branchId: number,
   ) {
     return this.posCheckoutService.findOne(id, branchId);
+  }
+
+  @Post(':id/void')
+  @UseGuards(JwtAuthGuard, RolesGuard, RetailModulesGuard)
+  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.POS_MANAGER)
+  @RequireRetailModules(RetailOsModule.POS_CORE)
+  @RetailBranchContext('query.branchId')
+  voidCheckout(
+    @Param('id', ParseIntPipe) id: number,
+    @Query('branchId') branchId: string,
+    @Body() dto: VoidPosCheckoutDto,
+    @Req() req,
+  ) {
+    const actorId: number = req.user?.id ?? req.user?.userId;
+    const branchIdNum = branchId ? Number(branchId) : undefined;
+    return this.posCheckoutService.voidCheckout(id, dto, actorId, branchIdNum);
   }
 
   @Post('ingest')

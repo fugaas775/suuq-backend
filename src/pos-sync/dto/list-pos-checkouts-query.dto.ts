@@ -2,6 +2,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
 import {
   IsEnum,
+  IsISO8601,
   IsNumber,
   IsOptional,
   IsString,
@@ -57,4 +58,22 @@ export class ListPosCheckoutsQueryDto {
   @Type(() => Number)
   @IsNumber()
   registerSessionId?: number;
+
+  @ApiPropertyOptional({
+    example: '2026-04-01T00:00:00.000Z',
+    description:
+      'Inclusive lower bound (ISO8601) on `occurredAt` for the returned checkouts.',
+  })
+  @IsOptional()
+  @IsISO8601()
+  fromAt?: string;
+
+  @ApiPropertyOptional({
+    example: '2026-04-01T23:59:59.999Z',
+    description:
+      'Inclusive upper bound (ISO8601) on `occurredAt` for the returned checkouts.',
+  })
+  @IsOptional()
+  @IsISO8601()
+  toAt?: string;
 }

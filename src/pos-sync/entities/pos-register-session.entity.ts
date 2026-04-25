@@ -10,6 +10,17 @@ import {
 } from 'typeorm';
 import { Branch } from '../../branches/entities/branch.entity';
 
+const decimalTransformer = {
+  to: (value: number | null | undefined) =>
+    value === null || value === undefined ? value : value,
+  from: (value: string | number | null) =>
+    value === null || value === undefined
+      ? null
+      : typeof value === 'string'
+        ? parseFloat(value)
+        : value,
+};
+
 export enum PosRegisterSessionStatus {
   OPEN = 'OPEN',
   CLOSED = 'CLOSED',
@@ -55,6 +66,22 @@ export class PosRegisterSession {
 
   @Column({ type: 'varchar', length: 255, nullable: true })
   closedByName?: string | null;
+
+  @Column('decimal', {
+    precision: 12,
+    scale: 2,
+    nullable: true,
+    transformer: decimalTransformer,
+  })
+  openingFloat?: number | null;
+
+  @Column('decimal', {
+    precision: 12,
+    scale: 2,
+    nullable: true,
+    transformer: decimalTransformer,
+  })
+  closingFloat?: number | null;
 
   @Column({ type: 'text', nullable: true })
   note?: string | null;

@@ -69,6 +69,7 @@ import {
 } from './dto/seller-workspace-response.dto';
 import { UpdateSellerWorkspaceChannelDto } from './dto/update-seller-workspace-channel.dto';
 import { UpdateBranchServiceFormatDto } from './dto/update-branch-service-format.dto';
+import { UpdateBranchWorkspaceDto } from './dto/update-branch-workspace.dto';
 import { UpdateSellerWorkspaceOnboardingDto } from './dto/update-seller-workspace-onboarding.dto';
 import { UpdateSellerWorkspacePlanDto } from './dto/update-seller-workspace-plan.dto';
 import {
@@ -319,6 +320,10 @@ export class SellerWorkspaceService {
           branchName: branch.branchName,
           branchCode: branch.branchCode,
           serviceFormat: branch.serviceFormat ?? null,
+          address: branch.address ?? null,
+          city: branch.city ?? null,
+          country: branch.country ?? null,
+          timezone: branch.timezone ?? null,
           role: branch.role,
           isOwner: branch.isOwner,
           isTenantOwner: branch.isTenantOwner,
@@ -374,6 +379,10 @@ export class SellerWorkspaceService {
           branchName: candidate.branchName,
           branchCode: candidate.branchCode,
           serviceFormat: candidate.serviceFormat ?? null,
+          address: candidate.address ?? null,
+          city: candidate.city ?? null,
+          country: candidate.country ?? null,
+          timezone: candidate.timezone ?? null,
           role: candidate.role,
           isOwner: candidate.isOwner,
           isTenantOwner: candidate.isTenantOwner,
@@ -1802,6 +1811,50 @@ export class SellerWorkspaceService {
       updatedAt: workspace.updatedAt,
     };
   }
+  async updateBranchWorkspace(
+    userId: number,
+    branchId: number,
+    dto: UpdateBranchWorkspaceDto,
+  ): Promise<SellerWorkspaceBranchWorkspaceDto> {
+    const branchRepo =
+      this.sellerWorkspacesRepository.manager.getRepository(Branch);
+    const branch = await branchRepo.findOne({
+      where: { id: branchId },
+      relations: ['retailTenant', 'retailTenant.owner'],
+    });
+    if (!branch) {
+      throw new NotFoundException(
+        `Branch workspace with ID ${branchId} not found.`,
+      );
+    }
+    const isOwner =
+      branch.ownerId === userId || branch.retailTenant?.owner?.id === userId;
+    if (!isOwner) {
+      throw new ForbiddenException(
+        'Only the branch or tenant owner can update branch details.',
+      );
+    }
+    const updates: Partial<Branch> = {};
+    if (dto.name !== undefined) updates.name = dto.name;
+    if (dto.address !== undefined) updates.address = dto.address;
+    if (dto.city !== undefined) updates.city = dto.city;
+    if (dto.country !== undefined) updates.country = dto.country;
+    if (dto.timezone !== undefined) updates.timezone = dto.timezone;
+    if (Object.keys(updates).length > 0) {
+      await branchRepo.update(branchId, updates);
+    }
+    const refreshed = await this.getBranchWorkspaces(userId);
+    const updatedWorkspace = refreshed.items.find(
+      (item) => item.branchId === branchId,
+    );
+    if (!updatedWorkspace) {
+      throw new NotFoundException(
+        'Updated branch workspace could not be resolved.',
+      );
+    }
+    return updatedWorkspace;
+  }
+
   async updateBranchWorkspaceServiceFormat(
     userId: number,
     branchId: number,

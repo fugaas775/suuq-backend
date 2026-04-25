@@ -1083,6 +1083,7 @@ export class VendorService {
     productId: number,
     dto: UpdateVendorProductDto,
     updater?: Partial<User>,
+    options?: { branchId?: number | null },
   ): Promise<Product> {
     const product = await this.productRepository.findOne({
       where: { id: productId, vendor: { id: userId } },
@@ -1455,6 +1456,43 @@ export class VendorService {
     }
 
     await this.productRepository.save(product);
+
+    // Sync stock quantity to branch inventory ledger
+    const effectiveBranchId = options?.branchId;
+    if (
+      effectiveBranchId &&
+      incomingStockQuantity !== undefined &&
+      incomingStockQuantity !== null
+    ) {
+      try {
+        const targetQuantity = Math.max(
+          0,
+          Math.trunc(Number(incomingStockQuantity)),
+        );
+        const currentOnHand = await this.inventoryLedgerService.getOnHand(
+          effectiveBranchId,
+          productId,
+        );
+        const delta = targetQuantity - currentOnHand;
+        if (delta !== 0) {
+          await this.inventoryLedgerService.recordMovement({
+            branchId: effectiveBranchId,
+            productId,
+            movementType: StockMovementType.ADJUSTMENT,
+            quantityDelta: delta,
+            sourceType: 'VENDOR_PRODUCT_UPDATE',
+            sourceReferenceId: productId,
+            actorUserId: Number(updater?.id || userId) || null,
+            note: `Stock quantity updated to ${targetQuantity} via product edit.`,
+          });
+        }
+      } catch (err) {
+        this.logger.warn(
+          `Failed to sync stock quantity to branch inventory for product ${productId}: ${String(err?.message || err)}`,
+        );
+      }
+    }
+
     return this.productRepository.findOneOrFail({
       where: { id: productId },
       relations: ['images', 'vendor', 'category', 'tags'],

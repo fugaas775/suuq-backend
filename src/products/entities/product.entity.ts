@@ -60,6 +60,28 @@ export class Product {
   @Column()
   description!: string;
 
+  @Expose()
+  @Column({ type: 'varchar', length: 64, nullable: true, name: 'barcode' })
+  barcode?: string | null;
+
+  @Expose()
+  @Column('decimal', {
+    precision: 5,
+    scale: 4,
+    nullable: true,
+    name: 'tax_rate',
+    transformer: {
+      to: (value: number | null | undefined) => value,
+      from: (value: string | number | null | undefined) =>
+        value == null
+          ? null
+          : typeof value === 'string'
+            ? parseFloat(value)
+            : value,
+    },
+  })
+  taxRate?: number | null;
+
   @CreateDateColumn()
   createdAt!: Date;
 

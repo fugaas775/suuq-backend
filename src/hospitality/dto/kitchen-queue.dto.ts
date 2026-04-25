@@ -25,6 +25,8 @@ export enum PosKitchenTicketState {
 }
 
 export enum PosHospitalityServiceFormat {
+  RETAIL = 'RETAIL',
+  CAFETERIA = 'CAFETERIA',
   QSR = 'QSR',
   FSR = 'FSR',
 }

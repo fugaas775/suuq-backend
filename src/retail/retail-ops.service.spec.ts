@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import { getRepositoryToken } from '@nestjs/typeorm';
+import { Product } from '../products/entities/product.entity';
 import {
   BranchStaffAssignment,
   BranchStaffRole,
@@ -56,6 +57,7 @@ describe('RetailOpsService', () => {
     count: jest.Mock;
     createQueryBuilder: jest.Mock;
   };
+  let productRepository: { createQueryBuilder: jest.Mock };
   let branchTransfersRepository: { find: jest.Mock; findOne: jest.Mock };
   let stockMovementsRepository: { find: jest.Mock; findOne: jest.Mock };
   let purchaseOrdersRepository: {
@@ -127,6 +129,9 @@ describe('RetailOpsService', () => {
           lastUpdatedAt: '2026-03-18T09:00:00.000Z',
         }),
       })),
+    };
+    productRepository = {
+      createQueryBuilder: jest.fn(),
     };
     branchTransfersRepository = {
       find: jest.fn().mockResolvedValue([]),
@@ -220,6 +225,7 @@ describe('RetailOpsService', () => {
           provide: getRepositoryToken(BranchInventory),
           useValue: branchInventoryRepository,
         },
+        { provide: getRepositoryToken(Product), useValue: productRepository },
         {
           provide: getRepositoryToken(BranchTransfer),
           useValue: branchTransfersRepository,
@@ -1748,6 +1754,138 @@ describe('RetailOpsService', () => {
         productId: 9,
         stockStatus: 'OUT_OF_STOCK',
         shortageToSafetyStock: 5,
+      }),
+    );
+  });
+
+  it('returns unified branch products with vendor business fields', async () => {
+    const pagedQueryBuilder = {
+      leftJoinAndSelect: jest.fn().mockReturnThis(),
+      leftJoinAndMapOne: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      skip: jest.fn().mockReturnThis(),
+      take: jest.fn().mockReturnThis(),
+      getMany: jest.fn().mockResolvedValue([
+        {
+          id: 9,
+          name: 'Whole Milk',
+          description: '1 litre',
+          sku: 'MLK-1L',
+          barcode: '123456789',
+          currency: 'ETB',
+          price: 90,
+          salePrice: 85,
+          imageUrl: 'https://img/milk.png',
+          status: 'publish',
+          createdAt: new Date('2026-03-17T08:00:00.000Z'),
+          stockQuantity: 7,
+          category: { name: 'Dairy' },
+          images: [],
+          vendor: {
+            id: 15,
+            storeName: 'Owner Store',
+            displayName: 'Owner',
+            legalName: 'Owner PLC',
+            businessLicenseNumber: 'BL-44',
+            verificationStatus: 'APPROVED',
+            verified: true,
+            businessLicenseInfo: { status: 'ACTIVE' },
+          },
+          branchInventorySnapshot: {
+            id: 1,
+            branchId: 3,
+            productId: 9,
+            quantityOnHand: 7,
+            reservedQuantity: 1,
+            reservedOnline: 0,
+            reservedStoreOps: 0,
+            inboundOpenPo: 3,
+            outboundTransfers: 0,
+            safetyStock: 5,
+            availableToSell: 6,
+            lastReceivedAt: null,
+            lastPurchaseOrderId: 71,
+            updatedAt: new Date('2026-03-18T09:00:00.000Z'),
+          },
+        },
+      ]),
+    };
+    const summaryQueryBuilder = {
+      leftJoinAndSelect: jest.fn().mockReturnThis(),
+      leftJoinAndMapOne: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      select: jest.fn().mockReturnThis(),
+      addSelect: jest.fn().mockReturnThis(),
+      getRawOne: jest.fn().mockResolvedValue({
+        totalProducts: '1',
+        assignedProductCount: '1',
+        unassignedProductCount: '0',
+        publishedCount: '1',
+        outOfStockCount: '0',
+        replenishmentCandidateCount: '0',
+        lastInventoryUpdatedAt: '2026-03-18T09:00:00.000Z',
+      }),
+    };
+    const countQueryBuilder = {
+      leftJoinAndSelect: jest.fn().mockReturnThis(),
+      leftJoinAndMapOne: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      getCount: jest.fn().mockResolvedValue(1),
+    };
+    const baseQueryBuilder = {
+      leftJoinAndSelect: jest.fn().mockReturnThis(),
+      leftJoinAndMapOne: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      clone: jest
+        .fn()
+        .mockReturnValueOnce(pagedQueryBuilder)
+        .mockReturnValueOnce(countQueryBuilder)
+        .mockReturnValueOnce(summaryQueryBuilder),
+    };
+    pagedQueryBuilder.skip = jest.fn().mockReturnValue(pagedQueryBuilder);
+    pagedQueryBuilder.take = jest.fn().mockReturnValue(pagedQueryBuilder);
+    countQueryBuilder.getCount = jest.fn().mockResolvedValue(1);
+    productRepository.createQueryBuilder.mockReturnValue(
+      baseQueryBuilder as any,
+    );
+
+    const result = await service.getBranchProducts({
+      branchId: 3,
+      page: 1,
+      limit: 20,
+      search: 'milk',
+      status: 'published',
+    });
+
+    expect(result.summary).toEqual(
+      expect.objectContaining({
+        branchId: 3,
+        branchName: 'HQ',
+        totalProducts: 1,
+        assignedProductCount: 1,
+      }),
+    );
+    expect(result.items[0]).toEqual(
+      expect.objectContaining({
+        productId: 9,
+        name: 'Whole Milk',
+        effectivePrice: 85,
+        stockStatus: 'LOW_STOCK',
+        vendor: expect.objectContaining({
+          storeName: 'Owner Store',
+          legalName: 'Owner PLC',
+          businessLicenseNumber: 'BL-44',
+          verificationStatus: 'APPROVED',
+          verified: true,
+        }),
       }),
     );
   });

@@ -247,6 +247,8 @@ export class InventoryLedgerService {
       await inventoryRepository.save(debitInventory);
       await inventoryRepository.save(creditInventory);
 
+      await this.syncProductStockQuantity(params.productId, manager);
+
       await stockMovementRepository.save(
         stockMovementRepository.create({
           branchId: params.fromBranchId,
@@ -392,6 +394,7 @@ export class InventoryLedgerService {
     );
 
     await this.maybeEvaluateReplenishment(savedInventory, params, manager);
+    await this.syncProductStockQuantity(params.productId, manager);
 
     return { inventory: savedInventory, movement };
   }
@@ -472,7 +475,39 @@ export class InventoryLedgerService {
     inventory.version = (inventory.version ?? 0) + 1;
     this.applyAvailabilityProjection(inventory);
 
-    return inventoryRepository.save(inventory);
+    const saved = await inventoryRepository.save(inventory);
+    await this.syncProductStockQuantity(params.productId, manager);
+    return saved;
+  }
+
+  private async syncProductStockQuantity(
+    productId: number,
+    manager?: EntityManager,
+  ): Promise<void> {
+    const inventoryRepo =
+      manager?.getRepository(BranchInventory) ?? this.branchInventoryRepository;
+    const productRepo =
+      manager?.getRepository(Product) ?? this.productsRepository;
+
+    const rows = await inventoryRepo.find({ where: { productId } });
+
+    // Only take ownership of product.stockQuantity once the product has at
+    // least one branch inventory record. Until then, the vendor-entered
+    // catalog quantity remains the source of truth so newly listed products
+    // don't suddenly show as out of stock to consumers.
+    if (rows.length === 0) {
+      return;
+    }
+
+    const totalAvailable = rows.reduce(
+      (sum, row) => sum + Math.max(0, row.availableToSell ?? 0),
+      0,
+    );
+
+    await productRepo.update(
+      { id: productId },
+      { stockQuantity: totalAvailable },
+    );
   }
 
   private applyAvailabilityProjection(inventory: BranchInventory): void {

@@ -457,6 +457,29 @@ export class RetailEntitlementsService {
 
       return true;
     });
+
+    // HR Attendance is bundled with every Retail OS tenant. If no explicit
+    // entitlement row exists (or the existing one is disabled/expired), surface
+    // a virtual always-on entitlement so downstream guards do not block staff
+    // attendance, time clock, or override flows.
+    if (
+      !entitlements.some(
+        (entitlement) => entitlement.module === RetailModule.HR_ATTENDANCE,
+      )
+    ) {
+      const virtualHrAttendance =
+        this.tenantModuleEntitlementsRepository.create({
+          tenantId: tenant.id,
+          module: RetailModule.HR_ATTENDANCE,
+          enabled: true,
+          startsAt: null,
+          expiresAt: null,
+          reason: 'Bundled with every Retail OS tenant',
+          metadata: null,
+        });
+      entitlements.push(virtualHrAttendance);
+    }
+
     const hasPosModule = entitlements.some(
       (entitlement) => entitlement.module === RetailModule.POS_CORE,
     );

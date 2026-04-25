@@ -62,6 +62,23 @@ export class PosRegisterService {
       });
     }
 
+    if (query.fromAt) {
+      const fromAt = new Date(query.fromAt);
+      if (!Number.isNaN(fromAt.getTime())) {
+        qb.andWhere(
+          '(session.closedAt IS NULL OR session.closedAt >= :fromAt)',
+          { fromAt },
+        );
+      }
+    }
+
+    if (query.toAt) {
+      const toAt = new Date(query.toAt);
+      if (!Number.isNaN(toAt.getTime())) {
+        qb.andWhere('session.openedAt <= :toAt', { toAt });
+      }
+    }
+
     const [items, total] = await qb.getManyAndCount();
     return {
       items: items.map((item) => this.toSessionResponse(item)),
@@ -97,6 +114,8 @@ export class PosRegisterService {
         openedAt: new Date(),
         openedByUserId: actor.id ?? null,
         openedByName: actor.email ?? null,
+        openingFloat: dto.openingFloat ?? null,
+        closingFloat: null,
         note: dto.note?.trim() || null,
         metadata: dto.metadata ?? null,
       }),
@@ -125,6 +144,9 @@ export class PosRegisterService {
     session.closedAt = new Date();
     session.closedByUserId = actor.id ?? null;
     session.closedByName = actor.email ?? null;
+    if (dto.closingFloat !== undefined) {
+      session.closingFloat = dto.closingFloat;
+    }
     session.note = dto.note?.trim() || session.note || null;
     session.metadata = dto.metadata
       ? { ...(session.metadata || {}), ...dto.metadata }
@@ -302,6 +324,8 @@ export class PosRegisterService {
       openedByName: item.openedByName ?? null,
       closedByUserId: item.closedByUserId ?? null,
       closedByName: item.closedByName ?? null,
+      openingFloat: item.openingFloat ?? null,
+      closingFloat: item.closingFloat ?? null,
       note: item.note ?? null,
       metadata: item.metadata ?? null,
       createdAt: item.createdAt,

@@ -29,6 +29,7 @@ export enum PosCheckoutStatus {
   RECEIVED = 'RECEIVED',
   PROCESSED = 'PROCESSED',
   FAILED = 'FAILED',
+  VOIDED = 'VOIDED',
 }
 
 export type PosCheckoutItem = {
@@ -40,6 +41,8 @@ export type PosCheckoutItem = {
   quantity: number;
   unitPrice: number;
   discountAmount?: number | null;
+  taxRate?: number | null;
+  taxableBase?: number | null;
   taxAmount?: number | null;
   lineTotal: number;
   note?: string | null;
@@ -190,6 +193,15 @@ export class PosCheckout {
 
   @Column({ type: 'jsonb', default: () => "'[]'::jsonb" })
   items!: PosCheckoutItem[];
+
+  @Column({ type: 'timestamp', nullable: true })
+  voidedAt?: Date | null;
+
+  @Column({ type: 'int', nullable: true })
+  voidedByUserId?: number | null;
+
+  @Column({ type: 'text', nullable: true })
+  voidReason?: string | null;
 
   @CreateDateColumn()
   createdAt!: Date;

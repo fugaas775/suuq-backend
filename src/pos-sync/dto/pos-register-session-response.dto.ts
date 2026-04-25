@@ -32,6 +32,18 @@ export class PosRegisterSessionResponseDto {
   @ApiPropertyOptional()
   closedByName?: string | null;
 
+  @ApiPropertyOptional({
+    example: 100.0,
+    description: 'Opening cash float declared at the start of the shift.',
+  })
+  openingFloat?: number | null;
+
+  @ApiPropertyOptional({
+    example: 1234.5,
+    description: 'Closing cash declared by the operator at end-of-shift.',
+  })
+  closingFloat?: number | null;
+
   @ApiPropertyOptional()
   note?: string | null;
 

@@ -19,6 +19,7 @@ export type RetailPlanPreset = {
   amount: number;
   currency: string;
   defaultStatus: TenantSubscriptionStatus;
+  maxProducts: number;
   modules: RetailPlanPresetModuleConfig[];
 };
 
@@ -32,6 +33,7 @@ export const RETAIL_PLAN_PRESETS: RetailPlanPreset[] = [
     amount: 1900,
     currency: 'ETB',
     defaultStatus: TenantSubscriptionStatus.ACTIVE,
+    maxProducts: 50,
     modules: [
       {
         module: RetailModule.POS_CORE,
@@ -59,6 +61,7 @@ export const RETAIL_PLAN_PRESETS: RetailPlanPreset[] = [
     amount: 179,
     currency: 'USD',
     defaultStatus: TenantSubscriptionStatus.ACTIVE,
+    maxProducts: 200,
     modules: [
       {
         module: RetailModule.POS_CORE,
@@ -98,6 +101,7 @@ export const RETAIL_PLAN_PRESETS: RetailPlanPreset[] = [
     amount: 249,
     currency: 'USD',
     defaultStatus: TenantSubscriptionStatus.ACTIVE,
+    maxProducts: 500,
     modules: [
       {
         module: RetailModule.POS_CORE,
@@ -148,6 +152,7 @@ export const RETAIL_PLAN_PRESETS: RetailPlanPreset[] = [
     amount: 349,
     currency: 'USD',
     defaultStatus: TenantSubscriptionStatus.ACTIVE,
+    maxProducts: 10000,
     modules: [
       {
         module: RetailModule.POS_CORE,

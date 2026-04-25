@@ -1,8 +1,9 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { createHash } from 'crypto';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, MoreThanOrEqual, Repository } from 'typeorm';
+import { Brackets, In, MoreThanOrEqual, Repository } from 'typeorm';
 import { UserRole } from '../auth/roles.enum';
+import { Product } from '../products/entities/product.entity';
 import {
   PurchaseOrder,
   PurchaseOrderItem,
@@ -205,6 +206,12 @@ import {
   RetailStockHealthNetworkBranchResponseDto,
   RetailStockHealthNetworkSummaryResponseDto,
 } from './dto/retail-stock-health-network-summary-response.dto';
+import { RetailBranchProductsQueryDto } from './dto/retail-branch-products-query.dto';
+import {
+  RetailBranchProductItemResponseDto,
+  RetailBranchProductsResponseDto,
+  RetailBranchProductsSummaryResponseDto,
+} from './dto/retail-branch-products-response.dto';
 import { RetailStockHealthQueryDto } from './dto/retail-stock-health-query.dto';
 import {
   RetailStockHealthItemResponseDto,
@@ -227,6 +234,8 @@ export class RetailOpsService {
     private readonly branchStaffAssignmentsRepository: Repository<BranchStaffAssignment>,
     @InjectRepository(BranchInventory)
     private readonly branchInventoryRepository: Repository<BranchInventory>,
+    @InjectRepository(Product)
+    private readonly productRepository: Repository<Product>,
     @InjectRepository(BranchTransfer)
     private readonly branchTransfersRepository: Repository<BranchTransfer>,
     @InjectRepository(StockMovement)
@@ -1281,6 +1290,169 @@ export class RetailOpsService {
       page,
       perPage,
       totalPages: Math.ceil(total / perPage),
+    };
+  }
+
+  async getBranchProducts(
+    query: RetailBranchProductsQueryDto,
+  ): Promise<RetailBranchProductsResponseDto> {
+    const branch = await this.assertBranchExists(query.branchId);
+    const page = Math.max(query.page ?? 1, 1);
+    const perPage = Math.min(Math.max(query.limit ?? 20, 1), 200);
+    const targetVendorId =
+      Number.isFinite(Number(query.vendorId)) && Number(query.vendorId) > 0
+        ? Number(query.vendorId)
+        : null;
+
+    const baseQuery = this.productRepository
+      .createQueryBuilder('product')
+      .leftJoinAndSelect('product.images', 'images')
+      .leftJoinAndSelect('product.category', 'category')
+      .leftJoinAndSelect('product.vendor', 'vendor')
+      .leftJoinAndMapOne(
+        'product.branchInventorySnapshot',
+        BranchInventory,
+        'inventory',
+        'inventory.productId = product.id AND inventory.branchId = :branchId',
+        { branchId: query.branchId },
+      )
+      .where('product.deletedAt IS NULL');
+
+    if (targetVendorId) {
+      baseQuery.andWhere('product.vendorId = :targetVendorId', {
+        targetVendorId,
+      });
+    } else if (branch.ownerId) {
+      baseQuery.andWhere(
+        new Brackets((qb) => {
+          qb.where('inventory.id IS NOT NULL').orWhere(
+            'product.vendorId = :branchOwnerId',
+            { branchOwnerId: branch.ownerId },
+          );
+        }),
+      );
+    } else {
+      baseQuery.andWhere('inventory.id IS NOT NULL');
+    }
+
+    const trimmedSearch = String(query.search || '').trim();
+    if (trimmedSearch) {
+      baseQuery.andWhere(
+        new Brackets((qb) => {
+          qb.where('product.name ILIKE :search', {
+            search: `%${trimmedSearch}%`,
+          })
+            .orWhere('product.sku ILIKE :search', {
+              search: `%${trimmedSearch}%`,
+            })
+            .orWhere('product.barcode ILIKE :search', {
+              search: `%${trimmedSearch}%`,
+            });
+        }),
+      );
+    }
+
+    if (query.status === 'published') {
+      baseQuery.andWhere('product.status = :publishedStatus', {
+        publishedStatus: 'publish',
+      });
+    }
+    if (query.status === 'unpublished') {
+      baseQuery.andWhere("product.status <> 'publish'");
+    }
+
+    switch (query.sort) {
+      case 'created_asc':
+        baseQuery.orderBy('product.createdAt', 'ASC');
+        break;
+      case 'views_desc':
+        baseQuery.orderBy('product.view_count', 'DESC', 'NULLS LAST');
+        break;
+      case 'views_asc':
+        baseQuery.orderBy('product.view_count', 'ASC', 'NULLS LAST');
+        break;
+      case 'price_asc':
+        baseQuery.orderBy('COALESCE(product.salePrice, product.price)', 'ASC');
+        break;
+      case 'price_desc':
+        baseQuery.orderBy('COALESCE(product.salePrice, product.price)', 'DESC');
+        break;
+      case 'name_asc':
+        baseQuery.orderBy('product.name', 'ASC');
+        break;
+      case 'name_desc':
+        baseQuery.orderBy('product.name', 'DESC');
+        break;
+      default:
+        baseQuery.orderBy('product.createdAt', 'DESC');
+        break;
+    }
+
+    const [products, total, rawSummary] = await Promise.all([
+      baseQuery
+        .clone()
+        .skip((page - 1) * perPage)
+        .take(perPage)
+        .getMany(),
+      baseQuery.clone().getCount(),
+      baseQuery
+        .clone()
+        .orderBy()
+        .select('COUNT(DISTINCT product.id)', 'totalProducts')
+        .addSelect(
+          'COUNT(DISTINCT CASE WHEN inventory.id IS NOT NULL THEN product.id END)',
+          'assignedProductCount',
+        )
+        .addSelect(
+          'COUNT(DISTINCT CASE WHEN inventory.id IS NULL THEN product.id END)',
+          'unassignedProductCount',
+        )
+        .addSelect(
+          "COUNT(DISTINCT CASE WHEN product.status = 'publish' THEN product.id END)",
+          'publishedCount',
+        )
+        .addSelect(
+          'COUNT(DISTINCT CASE WHEN inventory.id IS NOT NULL AND inventory.availableToSell <= 0 THEN product.id END)',
+          'outOfStockCount',
+        )
+        .addSelect(
+          'COUNT(DISTINCT CASE WHEN inventory.id IS NOT NULL AND inventory.availableToSell <= inventory.safetyStock THEN product.id END)',
+          'replenishmentCandidateCount',
+        )
+        .addSelect(
+          'COUNT(DISTINCT CASE WHEN inventory.id IS NOT NULL AND inventory.availableToSell < 0 THEN product.id END)',
+          'negativeAvailableCount',
+        )
+        .addSelect(
+          'COALESCE(SUM(inventory.inboundOpenPo), 0)',
+          'inboundOpenPoUnits',
+        )
+        .addSelect(
+          'COALESCE(SUM(COALESCE(inventory.reservedQuantity, 0) + COALESCE(inventory.reservedOnline, 0) + COALESCE(inventory.reservedStoreOps, 0) + COALESCE(inventory.outboundTransfers, 0)), 0)',
+          'committedUnits',
+        )
+        .addSelect('MAX(inventory.updatedAt)', 'lastInventoryUpdatedAt')
+        .getRawOne(),
+    ]);
+
+    const items = products.map(
+      (
+        product: Product & { branchInventorySnapshot?: BranchInventory | null },
+      ) =>
+        this.mapBranchProductItem(
+          branch,
+          product,
+          product.branchInventorySnapshot ?? null,
+        ),
+    );
+
+    return {
+      summary: this.mapBranchProductsSummary(branch, rawSummary),
+      items,
+      total,
+      page,
+      perPage,
+      totalPages: Math.ceil(total / perPage) || 1,
     };
   }
 
@@ -3253,6 +3425,8 @@ export class RetailOpsService {
     const qb = this.purchaseOrdersRepository
       .createQueryBuilder('purchaseOrder')
       .leftJoinAndSelect('purchaseOrder.items', 'item')
+      .leftJoinAndSelect('item.product', 'itemProduct')
+      .leftJoinAndSelect('itemProduct.images', 'itemProductImages')
       .where('purchaseOrder.branchId = :branchId', { branchId: query.branchId })
       .andWhere('purchaseOrder.status = :status', {
         status: PurchaseOrderStatus.DRAFT,
@@ -3510,7 +3684,7 @@ export class RetailOpsService {
     return lines.join('\n');
   }
 
-  private async assertBranchExists(branchId: number): Promise<void> {
+  private async assertBranchExists(branchId: number): Promise<Branch> {
     const branch = await this.branchesRepository.findOne({
       where: { id: branchId },
     });
@@ -3518,6 +3692,130 @@ export class RetailOpsService {
     if (!branch) {
       throw new NotFoundException(`Branch with ID ${branchId} not found`);
     }
+
+    return branch;
+  }
+
+  private mapBranchProductsSummary(
+    branch: Branch,
+    rawSummary: any,
+  ): RetailBranchProductsSummaryResponseDto {
+    const totalSkus = Number(rawSummary?.assignedProductCount ?? 0);
+    const replenishmentCandidateCount = Number(
+      rawSummary?.replenishmentCandidateCount ?? 0,
+    );
+    const lastUpdatedAt = rawSummary?.lastInventoryUpdatedAt
+      ? new Date(rawSummary.lastInventoryUpdatedAt)
+      : null;
+
+    return {
+      branchId: branch.id,
+      branchName: branch.name,
+      branchCode: branch.code ?? null,
+      totalProducts: Number(rawSummary?.totalProducts ?? 0),
+      totalSkus,
+      healthyCount: Math.max(totalSkus - replenishmentCandidateCount, 0),
+      assignedProductCount: Number(rawSummary?.assignedProductCount ?? 0),
+      unassignedProductCount: Number(rawSummary?.unassignedProductCount ?? 0),
+      publishedCount: Number(rawSummary?.publishedCount ?? 0),
+      outOfStockCount: Number(rawSummary?.outOfStockCount ?? 0),
+      replenishmentCandidateCount,
+      negativeAvailableCount: Number(rawSummary?.negativeAvailableCount ?? 0),
+      inboundOpenPoUnits: Number(rawSummary?.inboundOpenPoUnits ?? 0),
+      committedUnits: Number(rawSummary?.committedUnits ?? 0),
+      lastInventoryUpdatedAt: lastUpdatedAt,
+      lastUpdatedAt,
+    };
+  }
+
+  private mapBranchProductItem(
+    branch: Branch,
+    product: Product,
+    inventory: BranchInventory | null,
+  ): RetailBranchProductItemResponseDto {
+    const normalizedPrice = Number(product.price ?? 0);
+    const normalizedSalePrice =
+      product.salePrice == null ? null : Number(product.salePrice);
+    const isAssignedToBranch = !!inventory;
+    const quantityOnHand = isAssignedToBranch
+      ? Number(inventory.quantityOnHand ?? 0)
+      : 0;
+    const reservedQuantity = isAssignedToBranch
+      ? Number(inventory.reservedQuantity ?? 0)
+      : 0;
+    const reservedOnline = isAssignedToBranch
+      ? Number(inventory.reservedOnline ?? 0)
+      : 0;
+    const reservedStoreOps = isAssignedToBranch
+      ? Number(inventory.reservedStoreOps ?? 0)
+      : 0;
+    const inboundOpenPo = isAssignedToBranch
+      ? Number(inventory.inboundOpenPo ?? 0)
+      : 0;
+    const outboundTransfers = isAssignedToBranch
+      ? Number(inventory.outboundTransfers ?? 0)
+      : 0;
+    const safetyStock = isAssignedToBranch
+      ? Number(inventory.safetyStock ?? 0)
+      : 0;
+    const availableToSell = isAssignedToBranch
+      ? Number(inventory.availableToSell ?? 0)
+      : 0;
+    const stockStatus = isAssignedToBranch
+      ? this.getStockStatus(inventory)
+      : 'NOT_STOCKED';
+
+    return {
+      inventoryId: inventory?.id ?? null,
+      branchId: branch.id,
+      branchName: branch.name,
+      branchCode: branch.code ?? null,
+      productId: product.id,
+      name: product.name,
+      description: product.description ?? null,
+      sku: product.sku ?? null,
+      barcode: product.barcode ?? null,
+      categoryName: product.category?.name ?? null,
+      currency: product.currency,
+      price: normalizedPrice,
+      salePrice: normalizedSalePrice,
+      effectivePrice:
+        normalizedSalePrice != null ? normalizedSalePrice : normalizedPrice,
+      taxRate: product.taxRate == null ? null : Number(product.taxRate),
+      imageUrl:
+        product.thumbnail ||
+        product.imageUrl ||
+        product.images?.[0]?.thumbnailSrc ||
+        product.images?.[0]?.src ||
+        null,
+      status: product.status ?? null,
+      isAssignedToBranch,
+      quantityOnHand,
+      reservedQuantity,
+      reservedOnline,
+      reservedStoreOps,
+      inboundOpenPo,
+      outboundTransfers,
+      safetyStock,
+      availableToSell,
+      shortageToSafetyStock: Math.max(safetyStock - availableToSell, 0),
+      stockStatus,
+      lastReceivedAt: inventory?.lastReceivedAt ?? null,
+      lastPurchaseOrderId: inventory?.lastPurchaseOrderId ?? null,
+      productCreatedAt: product.createdAt,
+      productUpdatedAt: product.createdAt,
+      inventoryUpdatedAt: inventory?.updatedAt ?? null,
+      vendor: {
+        id: product.vendor?.id ?? 0,
+        storeName: product.vendor?.storeName ?? null,
+        displayName: product.vendor?.displayName ?? null,
+        legalName: product.vendor?.legalName ?? null,
+        businessLicenseNumber: product.vendor?.businessLicenseNumber ?? null,
+        verificationStatus: product.vendor?.verificationStatus ?? null,
+        verified: !!product.vendor?.verified,
+        businessLicenseInfo: product.vendor?.businessLicenseInfo ?? null,
+      },
+    };
   }
 
   private mapStockHealthSummary(
@@ -8123,17 +8421,32 @@ export class RetailOpsService {
       autoReplenishmentStatus: this.mapAutoReplenishmentStatus(
         order.statusMeta,
       ),
-      items: (order.items ?? []).map((item: PurchaseOrderItem) => ({
-        id: item.id,
-        productId: item.productId,
-        supplierOfferId: item.supplierOfferId ?? null,
-        orderedQuantity: item.orderedQuantity,
-        receivedQuantity: item.receivedQuantity,
-        shortageQuantity: item.shortageQuantity,
-        damagedQuantity: item.damagedQuantity,
-        note: item.note ?? null,
-        unitPrice: Number(item.unitPrice),
-      })),
+      items: (order.items ?? []).map((item: PurchaseOrderItem) => {
+        const sortedImages = [...(item.product?.images ?? [])].sort((a, b) => {
+          const sa = a.sortOrder ?? Number.MAX_SAFE_INTEGER;
+          const sb = b.sortOrder ?? Number.MAX_SAFE_INTEGER;
+          if (sa !== sb) return sa - sb;
+          return (a.id ?? 0) - (b.id ?? 0);
+        });
+        const primaryImage = sortedImages[0];
+        return {
+          id: item.id,
+          productId: item.productId,
+          supplierOfferId: item.supplierOfferId ?? null,
+          orderedQuantity: item.orderedQuantity,
+          receivedQuantity: item.receivedQuantity,
+          shortageQuantity: item.shortageQuantity,
+          damagedQuantity: item.damagedQuantity,
+          note: item.note ?? null,
+          unitPrice: Number(item.unitPrice),
+          productName: item.product?.name ?? null,
+          productImageUrl:
+            primaryImage?.thumbnailSrc ??
+            primaryImage?.src ??
+            item.product?.imageUrl ??
+            null,
+        };
+      }),
       createdAt: order.createdAt,
       updatedAt: order.updatedAt,
     };

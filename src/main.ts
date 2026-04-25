@@ -203,6 +203,8 @@ async function bootstrap() {
     'https://admin.suuq.ugasfuad.com',
     'https://pos.ugasfuad.com',
     'https://www.pos.ugasfuad.com',
+    'https://b2b.ugasfuad.com',
+    'https://www.b2b.ugasfuad.com',
     'https://api.suuq.ugasfuad.com',
     'http://localhost:5173',
     'http://localhost:3000',

@@ -6,6 +6,7 @@ import {
   IsOptional,
   IsString,
   MaxLength,
+  Min,
 } from 'class-validator';
 
 export class CreatePosRegisterSessionDto {
@@ -18,6 +19,16 @@ export class CreatePosRegisterSessionDto {
   @IsString()
   @MaxLength(128)
   registerId!: string;
+
+  @ApiPropertyOptional({
+    example: 100.0,
+    description: 'Opening cash float declared at the start of the shift.',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  openingFloat?: number;
 
   @ApiPropertyOptional()
   @IsOptional()

@@ -30,6 +30,10 @@ export interface PosBranchSummary {
   branchName: string;
   branchCode: string | null;
   serviceFormat: string | null;
+  address: string | null;
+  city: string | null;
+  country: string | null;
+  timezone: string | null;
   role: BranchStaffRole;
   permissions: string[];
   isOwner: boolean;
@@ -54,6 +58,10 @@ export interface PosWorkspaceActivationCandidate {
   branchName: string;
   branchCode: string | null;
   serviceFormat: string | null;
+  address: string | null;
+  city: string | null;
+  country: string | null;
+  timezone: string | null;
   role: BranchStaffRole;
   isOwner: boolean;
   isTenantOwner: boolean;
@@ -494,6 +502,10 @@ export class BranchStaffService {
           branchName: summary.branchName,
           branchCode: summary.branchCode,
           serviceFormat: summary.serviceFormat,
+          address: summary.address ?? null,
+          city: summary.city ?? null,
+          country: summary.country ?? null,
+          timezone: summary.timezone ?? null,
           role: summary.role,
           isOwner: summary.isOwner,
           isTenantOwner: summary.isTenantOwner,
@@ -872,6 +884,10 @@ export class BranchStaffService {
         branchName: branch.name,
         branchCode: branch.code ?? null,
         serviceFormat: branch.serviceFormat ?? null,
+        address: branch.address ?? null,
+        city: branch.city ?? null,
+        country: branch.country ?? null,
+        timezone: branch.timezone ?? null,
         role: BranchStaffRole.MANAGER,
         permissions: [],
         isOwner: true,
@@ -903,6 +919,10 @@ export class BranchStaffService {
           branchName: branch.name,
           branchCode: branch.code ?? null,
           serviceFormat: branch.serviceFormat ?? null,
+          address: branch.address ?? null,
+          city: branch.city ?? null,
+          country: branch.country ?? null,
+          timezone: branch.timezone ?? null,
           role: BranchStaffRole.MANAGER,
           permissions: [],
           isOwner: false,
@@ -943,6 +963,10 @@ export class BranchStaffService {
         branchCode: assignment.branch.code ?? null,
         serviceFormat:
           existing?.serviceFormat ?? assignment.branch.serviceFormat ?? null,
+        address: existing?.address ?? assignment.branch.address ?? null,
+        city: existing?.city ?? assignment.branch.city ?? null,
+        country: existing?.country ?? assignment.branch.country ?? null,
+        timezone: existing?.timezone ?? assignment.branch.timezone ?? null,
         role: assignment.role ?? existing?.role ?? BranchStaffRole.OPERATOR,
         permissions: mergedPermissions,
         isOwner: existing?.isOwner ?? false,

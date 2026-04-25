@@ -17,6 +17,7 @@ import { UserRole } from '../auth/roles.enum';
 import { Roles } from '../common/decorators/roles.decorator';
 import { ApprovePurchaseOrderReceiptDiscrepancyDto } from './dto/approve-purchase-order-receipt-discrepancy.dto';
 import { AcknowledgePurchaseOrderReceiptDto } from './dto/acknowledge-purchase-order-receipt.dto';
+import { BrowseAvailableOffersQueryDto } from './dto/browse-available-offers-query.dto';
 import { CreatePurchaseOrderDto } from './dto/create-purchase-order.dto';
 import { PurchaseOrderBranchScopeQueryDto } from './dto/purchase-order-branch-scope-query.dto';
 import { PurchaseOrderReceiptEventResponseDto } from './dto/purchase-order-receipt-event-response.dto';
@@ -42,9 +43,26 @@ export class PurchaseOrdersController {
     UserRole.POS_MANAGER,
     UserRole.B2B_BUYER,
     UserRole.SUPPLIER_ACCOUNT,
+    UserRole.SUPPLIER_MANAGER,
+    UserRole.SUPPLIER_OPERATOR,
   )
   findAll(@Query() query: PurchaseOrderBranchScopeQueryDto) {
     return this.purchaseOrdersService.findAll({ branchId: query.branchId });
+  }
+
+  @Get('available-offers')
+  @ApiOperation({
+    summary:
+      'Browse published supplier offers for a product so a buyer can pick a supplier before drafting a PO.',
+  })
+  @Roles(
+    UserRole.SUPER_ADMIN,
+    UserRole.ADMIN,
+    UserRole.POS_MANAGER,
+    UserRole.B2B_BUYER,
+  )
+  browseAvailableOffers(@Query() query: BrowseAvailableOffersQueryDto) {
+    return this.purchaseOrdersService.findAvailableOffers(query);
   }
 
   @Post()
@@ -100,6 +118,7 @@ export class PurchaseOrdersController {
     UserRole.POS_MANAGER,
     UserRole.B2B_BUYER,
     UserRole.SUPPLIER_ACCOUNT,
+    UserRole.SUPPLIER_MANAGER,
   )
   updateStatus(
     @Param('id', ParseIntPipe) id: number,
@@ -126,6 +145,8 @@ export class PurchaseOrdersController {
     UserRole.POS_MANAGER,
     UserRole.B2B_BUYER,
     UserRole.SUPPLIER_ACCOUNT,
+    UserRole.SUPPLIER_MANAGER,
+    UserRole.SUPPLIER_OPERATOR,
   )
   listReceiptEvents(
     @Param('id', ParseIntPipe) id: number,
@@ -171,6 +192,8 @@ export class PurchaseOrdersController {
     UserRole.SUPER_ADMIN,
     UserRole.ADMIN,
     UserRole.SUPPLIER_ACCOUNT,
+    UserRole.SUPPLIER_MANAGER,
+    UserRole.SUPPLIER_OPERATOR,
     UserRole.POS_MANAGER,
     UserRole.B2B_BUYER,
   )
@@ -204,6 +227,7 @@ export class PurchaseOrdersController {
     UserRole.SUPER_ADMIN,
     UserRole.ADMIN,
     UserRole.SUPPLIER_ACCOUNT,
+    UserRole.SUPPLIER_MANAGER,
     UserRole.POS_MANAGER,
     UserRole.B2B_BUYER,
   )

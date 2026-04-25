@@ -33,6 +33,7 @@ import { UpdateSellerWorkspaceChannelDto } from './dto/update-seller-workspace-c
 import { UpdateSellerWorkspaceOnboardingDto } from './dto/update-seller-workspace-onboarding.dto';
 import { UpdateSellerWorkspacePlanDto } from './dto/update-seller-workspace-plan.dto';
 import { UpdateBranchServiceFormatDto } from './dto/update-branch-service-format.dto';
+import { UpdateBranchWorkspaceDto } from './dto/update-branch-workspace.dto';
 import { SellerWorkspaceService } from './seller-workspace.service';
 
 @ApiTags('Seller Workspace')
@@ -130,6 +131,20 @@ export class SellerWorkspaceController {
     return this.sellerWorkspaceService.updateChannelState(
       req.user.id,
       channelKey,
+      dto,
+    );
+  }
+
+  @Patch('branch-workspaces/:branchId')
+  @ApiOkResponse({ type: SellerWorkspaceBranchWorkspaceDto })
+  updateBranchWorkspace(
+    @Req() req: AuthenticatedRequest,
+    @Param('branchId') branchId: number,
+    @Body() dto: UpdateBranchWorkspaceDto,
+  ) {
+    return this.sellerWorkspaceService.updateBranchWorkspace(
+      req.user.id,
+      branchId,
       dto,
     );
   }

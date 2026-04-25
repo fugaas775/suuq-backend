@@ -250,6 +250,18 @@ export class SellerWorkspaceBranchWorkspaceDto {
   @ApiPropertyOptional({ nullable: true, example: 'CAFETERIA' })
   serviceFormat!: string | null;
 
+  @ApiPropertyOptional({ nullable: true })
+  address!: string | null;
+
+  @ApiPropertyOptional({ nullable: true })
+  city!: string | null;
+
+  @ApiPropertyOptional({ nullable: true })
+  country!: string | null;
+
+  @ApiPropertyOptional({ nullable: true })
+  timezone!: string | null;
+
   @ApiProperty()
   role!: string;
 

@@ -136,6 +136,8 @@ import {
   RetailStockHealthNetworkSummaryQueryDto,
 } from './dto/retail-stock-health-network-summary-query.dto';
 import { RetailStockHealthNetworkSummaryResponseDto } from './dto/retail-stock-health-network-summary-response.dto';
+import { RetailBranchProductsQueryDto } from './dto/retail-branch-products-query.dto';
+import { RetailBranchProductsResponseDto } from './dto/retail-branch-products-response.dto';
 import { RetailStockHealthQueryDto } from './dto/retail-stock-health-query.dto';
 import { RetailStockHealthResponseDto } from './dto/retail-stock-health-response.dto';
 import { ReplenishmentPolicySubmissionMode } from './dto/upsert-tenant-module-entitlement.dto';
@@ -1012,6 +1014,25 @@ export class RetailOpsController {
   @ApiOkResponse({ type: RetailStockHealthResponseDto })
   stockHealth(@Query() query: RetailStockHealthQueryDto) {
     return this.retailOpsService.getStockHealth(query);
+  }
+
+  @Get('branch-products')
+  @UseGuards(RetailModulesGuard)
+  @Roles(
+    UserRole.SUPER_ADMIN,
+    UserRole.ADMIN,
+    UserRole.POS_MANAGER,
+    UserRole.B2B_BUYER,
+  )
+  @RequireRetailModules(RetailOsModule.INVENTORY_CORE)
+  @RetailBranchContext('query.branchId')
+  @ApiOperation({
+    summary:
+      'Get a unified branch product view that merges branch inventory state with vendor product identity and business profile fields',
+  })
+  @ApiOkResponse({ type: RetailBranchProductsResponseDto })
+  branchProducts(@Query() query: RetailBranchProductsQueryDto) {
+    return this.retailOpsService.getBranchProducts(query);
   }
 
   @Get('stock-health/export')

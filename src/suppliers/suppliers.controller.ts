@@ -38,9 +38,18 @@ export class SuppliersController {
   constructor(private readonly suppliersService: SuppliersService) {}
 
   @Get()
-  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.SUPPLIER_ACCOUNT)
-  findAll() {
-    return this.suppliersService.findAll();
+  @Roles(
+    UserRole.SUPER_ADMIN,
+    UserRole.ADMIN,
+    UserRole.SUPPLIER_ACCOUNT,
+    UserRole.SUPPLIER_MANAGER,
+    UserRole.SUPPLIER_OPERATOR,
+  )
+  findAll(@Req() req) {
+    return this.suppliersService.findAllForUser({
+      id: req.user?.id ?? null,
+      roles: req.user?.roles ?? [],
+    });
   }
 
   @Get(':id/procurement-summary')
@@ -51,7 +60,13 @@ export class SuppliersController {
   @ApiQuery({ name: 'windowDays', type: Number, required: false })
   @ApiQuery({ name: 'limit', type: Number, required: false })
   @ApiOkResponse({ type: SupplierProcurementSummaryResponseDto })
-  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.SUPPLIER_ACCOUNT)
+  @Roles(
+    UserRole.SUPER_ADMIN,
+    UserRole.ADMIN,
+    UserRole.SUPPLIER_ACCOUNT,
+    UserRole.SUPPLIER_MANAGER,
+    UserRole.SUPPLIER_OPERATOR,
+  )
   procurementSummary(
     @Param('id', ParseIntPipe) id: number,
     @Query() query: SupplierProcurementSummaryQueryDto,
@@ -73,7 +88,13 @@ export class SuppliersController {
   @ApiQuery({ name: 'statuses', type: String, required: false })
   @ApiQuery({ name: 'asOf', type: String, required: false })
   @ApiOkResponse({ type: SupplierProcurementTrendResponseDto })
-  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.SUPPLIER_ACCOUNT)
+  @Roles(
+    UserRole.SUPER_ADMIN,
+    UserRole.ADMIN,
+    UserRole.SUPPLIER_ACCOUNT,
+    UserRole.SUPPLIER_MANAGER,
+    UserRole.SUPPLIER_OPERATOR,
+  )
   procurementTrend(
     @Param('id', ParseIntPipe) id: number,
     @Query() query: SupplierProcurementTrendQueryDto,

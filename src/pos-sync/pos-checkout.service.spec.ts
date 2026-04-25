@@ -523,6 +523,13 @@ describe('PosCheckoutService', () => {
     posCheckoutsRepository.findOne
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce({
+        id: 70,
+        branchId: 3,
+        receiptNumber: 'POS-3-1001',
+        transactionType: PosCheckoutTransactionType.SALE,
+        status: PosCheckoutStatus.PROCESSED,
+      })
+      .mockResolvedValueOnce({
         id: 71,
         branchId: 3,
         transactionType: PosCheckoutTransactionType.RETURN,
@@ -581,6 +588,87 @@ describe('PosCheckoutService', () => {
       }),
       expect.any(Object),
     );
+  });
+
+  it('rejects returns when source sale is not processed and persists the failure', async () => {
+    posCheckoutsRepository.findOne
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        id: 88,
+        branchId: 3,
+        receiptNumber: 'POS-3-1001',
+        transactionType: PosCheckoutTransactionType.SALE,
+        status: PosCheckoutStatus.FAILED,
+      })
+      .mockResolvedValueOnce({
+        id: 71,
+        branchId: 3,
+        receiptNumber: 'RET-3-1002',
+        transactionType: PosCheckoutTransactionType.RETURN,
+        status: PosCheckoutStatus.FAILED,
+        failureReason:
+          'Return source sale POS-3-1001 is FAILED and cannot be returned until it is PROCESSED',
+        currency: 'USD',
+        subtotal: 15,
+        discountAmount: 0,
+        taxAmount: 0,
+        total: 15,
+        paidAmount: 15,
+        changeDue: 0,
+        itemCount: 1,
+        occurredAt: new Date('2026-04-01T10:00:00.000Z'),
+        processedAt: new Date('2026-04-01T10:01:00.000Z'),
+        tenders: [{ method: 'CARD', amount: 15 }],
+        items: [
+          {
+            productId: 55,
+            quantity: 1,
+            unitPrice: 15,
+            discountAmount: 0,
+            taxAmount: 0,
+            lineTotal: 15,
+          },
+        ],
+        createdAt: new Date('2026-04-01T10:00:00.000Z'),
+        updatedAt: new Date('2026-04-01T10:01:00.000Z'),
+      });
+
+    const result = await service.ingest({
+      branchId: 3,
+      transactionType: PosCheckoutTransactionType.RETURN,
+      externalCheckoutId: 'return-guard-001',
+      sourceReceiptNumber: 'POS-3-1001',
+      refundMethod: 'CARD',
+      currency: 'USD',
+      subtotal: 15,
+      total: 15,
+      paidAmount: 15,
+      occurredAt: '2026-04-01T10:00:00.000Z',
+      items: [
+        {
+          productId: 55,
+          quantity: 1,
+          unitPrice: 15,
+          lineTotal: 15,
+        },
+      ],
+      tenders: [{ method: 'CARD', amount: 15 }],
+    });
+
+    expect(posCheckoutsRepository.save).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        status: PosCheckoutStatus.FAILED,
+        failureReason: expect.stringContaining(
+          'cannot be returned until it is PROCESSED',
+        ),
+      }),
+    );
+    expect(result.status).toBe(PosCheckoutStatus.FAILED);
+    expect(result.failureReason).toContain(
+      'cannot be returned until it is PROCESSED',
+    );
+    expect(inventoryLedgerService.recordMovement).not.toHaveBeenCalled();
   });
 
   it('returns existing checkouts for idempotent retries', async () => {
@@ -827,6 +915,13 @@ describe('PosCheckoutService', () => {
   it('persists return linkage and pricing summary metadata for return ingests', async () => {
     posCheckoutsRepository.findOne
       .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        id: 70,
+        branchId: 3,
+        receiptNumber: 'POS-3-1001',
+        transactionType: PosCheckoutTransactionType.SALE,
+        status: PosCheckoutStatus.PROCESSED,
+      })
       .mockResolvedValueOnce({
         id: 71,
         branchId: 3,

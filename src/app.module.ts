@@ -65,6 +65,7 @@ import { StarpayModule } from './starpay/starpay.module';
 import { BranchesModule } from './branches/branches.module';
 import { BranchStaffModule } from './branch-staff/branch-staff.module';
 import { SuppliersModule } from './suppliers/suppliers.module';
+import { SupplierStaffModule } from './supplier-staff/supplier-staff.module';
 import { SupplierOffersModule } from './supplier-offers/supplier-offers.module';
 import { PurchaseOrdersModule } from './purchase-orders/purchase-orders.module';
 import { ProcurementWebhooksModule } from './procurement-webhooks/procurement-webhooks.module';
@@ -251,6 +252,7 @@ import { HospitalityModule } from './hospitality/hospitality.module';
     BranchesModule,
     BranchStaffModule,
     SuppliersModule,
+    SupplierStaffModule,
     SupplierOffersModule,
     PurchaseOrdersModule,
     ProcurementWebhooksModule,

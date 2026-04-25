@@ -19,11 +19,16 @@ import { Product } from '../products/entities/product.entity';
 import { ProcurementWebhookEventType } from '../procurement-webhooks/entities/procurement-webhook-subscription.entity';
 import { ProcurementWebhooksService } from '../procurement-webhooks/procurement-webhooks.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
-import { SupplierOffer } from '../supplier-offers/entities/supplier-offer.entity';
+import {
+  SupplierOffer,
+  SupplierOfferStatus,
+  SupplierAvailabilityStatus,
+} from '../supplier-offers/entities/supplier-offer.entity';
 import {
   SupplierOnboardingStatus,
   SupplierProfile,
 } from '../suppliers/entities/supplier-profile.entity';
+import { BrowseAvailableOffersQueryDto } from './dto/browse-available-offers-query.dto';
 import { CreatePurchaseOrderDto } from './dto/create-purchase-order.dto';
 import { ApprovePurchaseOrderReceiptDiscrepancyDto } from './dto/approve-purchase-order-receipt-discrepancy.dto';
 import { AcknowledgePurchaseOrderReceiptDto } from './dto/acknowledge-purchase-order-receipt.dto';
@@ -216,8 +221,73 @@ export class PurchaseOrdersService {
       relations: {
         branch: true,
         supplierProfile: true,
-        items: { product: true, supplierOffer: true },
+        items: { product: { images: true }, supplierOffer: true },
       },
+    });
+  }
+
+  async findAvailableOffers(query: BrowseAvailableOffersQueryDto) {
+    const limit = Math.max(1, Math.min(50, Number(query.limit ?? 10)));
+    const orderColumn =
+      query.sortBy === 'leadtime_asc'
+        ? 'offer.leadTimeDays'
+        : 'offer.unitWholesalePrice';
+
+    const offers = await this.supplierOffersRepository
+      .createQueryBuilder('offer')
+      .leftJoinAndSelect('offer.supplierProfile', 'supplierProfile')
+      .leftJoinAndSelect('offer.product', 'product')
+      .leftJoinAndSelect('product.images', 'productImages')
+      .where('offer.productId = :productId', { productId: query.productId })
+      .andWhere('offer.status = :status', {
+        status: SupplierOfferStatus.PUBLISHED,
+      })
+      .andWhere('offer.availabilityStatus != :outOfStock', {
+        outOfStock: SupplierAvailabilityStatus.OUT_OF_STOCK,
+      })
+      .andWhere('supplierProfile.onboardingStatus = :supplierStatus', {
+        supplierStatus: SupplierOnboardingStatus.APPROVED,
+      })
+      .andWhere('supplierProfile.isActive = true')
+      .orderBy(orderColumn, 'ASC')
+      .addOrderBy('offer.leadTimeDays', 'ASC')
+      .addOrderBy('offer.id', 'ASC')
+      .take(limit)
+      .getMany();
+
+    return offers.map((offer) => {
+      const product = offer.product as any;
+      const sortedImages = Array.isArray(product?.images)
+        ? [...product.images].sort(
+            (a: any, b: any) =>
+              (a?.sortOrder ?? 0) - (b?.sortOrder ?? 0) ||
+              (a?.id ?? 0) - (b?.id ?? 0),
+          )
+        : [];
+      const primaryImage = sortedImages[0];
+      const thumbnailUrl =
+        primaryImage?.thumbnailSrc ||
+        primaryImage?.src ||
+        product?.imageUrl ||
+        null;
+
+      return {
+        id: offer.id,
+        supplierProfileId: offer.supplierProfileId,
+        supplierName:
+          offer.supplierProfile?.companyName ||
+          offer.supplierProfile?.legalName ||
+          `Supplier #${offer.supplierProfileId}`,
+        productId: offer.productId,
+        productName: product?.name || `Product #${offer.productId}`,
+        productImageUrl: thumbnailUrl,
+        unitWholesalePrice: Number(offer.unitWholesalePrice),
+        currency: offer.currency,
+        moq: offer.moq ?? 1,
+        leadTimeDays: offer.leadTimeDays ?? 0,
+        availabilityStatus: offer.availabilityStatus,
+        fulfillmentRegions: offer.fulfillmentRegions ?? [],
+      };
     });
   }
 

@@ -28,6 +28,12 @@ export class PurchaseOrderItemResponseDto {
 
   @ApiProperty()
   unitPrice!: number;
+
+  @ApiProperty({ nullable: true })
+  productName?: string | null;
+
+  @ApiProperty({ nullable: true })
+  productImageUrl?: string | null;
 }
 
 export class PurchaseOrderAutoReplenishmentStatusResponseDto {

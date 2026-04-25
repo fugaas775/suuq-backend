@@ -25,6 +25,7 @@ describe('RetailOpsController', () => {
     exportPosExceptionNetworkSummaryCsv: jest.Mock;
     getPosOrderDetail: jest.Mock;
     getStockHealth: jest.Mock;
+    getBranchProducts: jest.Mock;
     exportStockHealthCsv: jest.Mock;
     getStockHealthNetworkSummary: jest.Mock;
     exportStockHealthNetworkSummaryCsv: jest.Mock;
@@ -116,6 +117,14 @@ describe('RetailOpsController', () => {
         .fn()
         .mockResolvedValue({ summary: {}, actions: [], items: [] }),
       getStockHealth: jest.fn().mockResolvedValue({ summary: {}, items: [] }),
+      getBranchProducts: jest.fn().mockResolvedValue({
+        summary: {},
+        items: [],
+        total: 0,
+        page: 1,
+        perPage: 20,
+        totalPages: 1,
+      }),
       exportStockHealthCsv: jest
         .fn()
         .mockResolvedValue('branchId,inventoryId\n3,11'),
@@ -819,6 +828,26 @@ describe('RetailOpsController', () => {
       branchId: 3,
       page: 1,
       limit: 20,
+    });
+  });
+
+  it('delegates branch-products queries to the retail ops service', async () => {
+    await controller.branchProducts({
+      branchId: 3,
+      page: 1,
+      limit: 20,
+      search: 'milk',
+      status: 'published',
+      vendorId: 9,
+    });
+
+    expect(retailOpsService.getBranchProducts).toHaveBeenCalledWith({
+      branchId: 3,
+      page: 1,
+      limit: 20,
+      search: 'milk',
+      status: 'published',
+      vendorId: 9,
     });
   });
 

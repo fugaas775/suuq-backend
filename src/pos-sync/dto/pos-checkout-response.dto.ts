@@ -47,6 +47,12 @@ export class PosCheckoutItemResponseDto {
   @ApiProperty()
   discountAmount!: number;
 
+  @ApiPropertyOptional()
+  taxRate?: number | null;
+
+  @ApiPropertyOptional()
+  taxableBase?: number | null;
+
   @ApiProperty()
   taxAmount!: number;
 
@@ -162,17 +168,17 @@ export class PosCheckoutListItemResponseDto {
 
   @ApiProperty()
   updatedAt!: Date;
-}
-
-export class PosCheckoutResponseDto extends PosCheckoutListItemResponseDto {
-  @ApiPropertyOptional({ type: Object })
-  metadata?: Record<string, any> | null;
 
   @ApiProperty({ type: [PosCheckoutTenderResponseDto] })
   tenders!: PosCheckoutTenderResponseDto[];
 
   @ApiProperty({ type: [PosCheckoutItemResponseDto] })
   items!: PosCheckoutItemResponseDto[];
+}
+
+export class PosCheckoutResponseDto extends PosCheckoutListItemResponseDto {
+  @ApiPropertyOptional({ type: Object })
+  metadata?: Record<string, any> | null;
 }
 
 export class PosCheckoutPageResponseDto {

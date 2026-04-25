@@ -80,6 +80,11 @@ export class CreateVendorProductDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(64)
+  barcode?: string;
+
+  @IsOptional()
+  @IsString()
   @MaxLength(1000)
   privateNote?: string;
 

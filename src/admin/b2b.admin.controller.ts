@@ -6,6 +6,7 @@ import {
   Param,
   ParseIntPipe,
   Patch,
+  Post,
   Query,
   Req,
   Res,
@@ -50,6 +51,8 @@ import { SupplierProcurementScorecardResponseDto } from '../suppliers/dto/suppli
 import { SupplierProcurementTrendQueryDto } from '../suppliers/dto/supplier-procurement-trend-query.dto';
 import { SupplierProcurementTrendResponseDto } from '../suppliers/dto/supplier-procurement-trend-response.dto';
 import { AdminSupplierReviewDto } from './dto/admin-supplier-review.dto';
+import { UpdateSupplierProfileActiveDto } from '../suppliers/dto/update-supplier-profile-active.dto';
+import { CreateSupplierProfileDto } from '../suppliers/dto/create-supplier-profile.dto';
 import { BranchTransferPageResponseDto } from './dto/branch-transfer-page-response.dto';
 import { BranchTransferQueryDto } from './dto/branch-transfer-query.dto';
 import { BranchTransferResponseDto } from './dto/branch-transfer-response.dto';
@@ -100,6 +103,15 @@ export class AdminB2bController {
     return this.suppliersService.findReviewQueue(
       query.status ?? SupplierOnboardingStatus.PENDING_REVIEW,
     );
+  }
+
+  @Post('supplier-profiles')
+  @ApiOperation({
+    summary:
+      'Onboard a new supplier profile in DRAFT state for an existing user. Admin operators use this to create supplier records before approval.',
+  })
+  createSupplierProfile(@Body() dto: CreateSupplierProfileDto) {
+    return this.suppliersService.create(dto);
   }
 
   @Get('supplier-profiles/procurement-scorecard')
@@ -756,6 +768,45 @@ export class AdminB2bController {
         reason: dto.reason,
       },
     );
+  }
+
+  @Patch('supplier-profiles/:id/submit-for-review')
+  @ApiOperation({
+    summary:
+      'Move a DRAFT supplier profile into PENDING_REVIEW so it appears in the admin approval queue.',
+  })
+  submitSupplierForReview(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: AdminSupplierReviewDto,
+    @Req() req: any,
+  ) {
+    return this.suppliersService.updateStatus(
+      id,
+      { status: SupplierOnboardingStatus.PENDING_REVIEW },
+      {
+        id: req.user?.id ?? null,
+        email: req.user?.email ?? null,
+        roles: req.user?.roles ?? [],
+        reason: dto.reason,
+      },
+    );
+  }
+
+  @Patch('supplier-profiles/:id/active')
+  @ApiOperation({
+    summary:
+      'Toggle the supplier profile active flag. Inactive suppliers are excluded from automated draft creation.',
+  })
+  toggleSupplierActive(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateSupplierProfileActiveDto,
+    @Req() req: any,
+  ) {
+    return this.suppliersService.updateActive(id, dto, {
+      id: req.user?.id ?? null,
+      email: req.user?.email ?? null,
+      roles: req.user?.roles ?? [],
+    });
   }
 
   @Patch('partner-credentials/:id/revoke')

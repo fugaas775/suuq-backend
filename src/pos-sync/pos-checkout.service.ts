@@ -1,10 +1,11 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, EntityManager, Repository } from 'typeorm';
 import { InventoryLedgerService } from '../branches/inventory-ledger.service';
 import { Branch } from '../branches/entities/branch.entity';
 import { StockMovementType } from '../branches/entities/stock-movement.entity';
@@ -21,10 +22,17 @@ import {
   PosCheckoutPageResponseDto,
   PosCheckoutResponseDto,
 } from './dto/pos-checkout-response.dto';
+import { TaxSummaryQueryDto } from './dto/tax-summary-query.dto';
+import {
+  TaxSummaryResponseDto,
+  TaxSummaryRateBucketDto,
+  TaxSummaryShiftDto,
+} from './dto/tax-summary-response.dto';
 import {
   QuotePosCheckoutDto,
   QuotePosCheckoutItemDto,
 } from './dto/quote-pos-checkout.dto';
+import { VoidPosCheckoutDto } from './dto/void-pos-checkout.dto';
 import {
   PosRegisterSession,
   PosRegisterSessionStatus,
@@ -185,6 +193,11 @@ export class PosCheckoutService {
     const qb = this.posCheckoutsRepository
       .createQueryBuilder('checkout')
       .where('checkout.branchId = :branchId', { branchId: query.branchId })
+      // Never surface VOIDED records in normal list/report queries.
+      // Callers can still fetch a specific voided checkout by id.
+      .andWhere('checkout.status != :voided', {
+        voided: PosCheckoutStatus.VOIDED,
+      })
       .orderBy('checkout.occurredAt', 'DESC')
       .addOrderBy('checkout.id', 'DESC')
       .skip((page - 1) * perPage)
@@ -210,6 +223,20 @@ export class PosCheckoutService {
       qb.andWhere('checkout.registerSessionId = :registerSessionId', {
         registerSessionId: query.registerSessionId,
       });
+    }
+
+    if (query.fromAt) {
+      const fromAt = new Date(query.fromAt);
+      if (!Number.isNaN(fromAt.getTime())) {
+        qb.andWhere('checkout.occurredAt >= :fromAt', { fromAt });
+      }
+    }
+
+    if (query.toAt) {
+      const toAt = new Date(query.toAt);
+      if (!Number.isNaN(toAt.getTime())) {
+        qb.andWhere('checkout.occurredAt <= :toAt', { toAt });
+      }
     }
 
     const [items, total] = await qb.getManyAndCount();
@@ -304,6 +331,8 @@ export class PosCheckoutService {
           note: this.normalizeOptionalString(item.note),
           reasonCode: this.normalizeOptionalString(item.reasonCode),
           discountAmount: item.discountAmount ?? 0,
+          taxRate: item.taxRate ?? null,
+          taxableBase: item.taxableBase ?? null,
           taxAmount: item.taxAmount ?? 0,
           metadata: this.normalizeCheckoutItemMetadata(item.metadata),
         })),
@@ -318,6 +347,8 @@ export class PosCheckoutService {
           registerSession,
           manager,
         );
+
+        await this.assertReturnSourceSaleProcessed(dto, manager);
 
         if (registerSession && !checkout.registerId) {
           checkout.registerId = registerSession.registerId;
@@ -931,6 +962,56 @@ export class PosCheckoutService {
     return Object.keys(baseMetadata).length ? baseMetadata : null;
   }
 
+  private async assertReturnSourceSaleProcessed(
+    dto: IngestPosCheckoutDto,
+    manager: EntityManager,
+  ): Promise<void> {
+    if (dto.transactionType !== PosCheckoutTransactionType.RETURN) {
+      return;
+    }
+
+    const sourceReceiptNumber = this.normalizeOptionalString(
+      dto.sourceReceiptNumber,
+    );
+
+    if (!sourceReceiptNumber) {
+      return;
+    }
+
+    const checkoutRepository = manager.getRepository(PosCheckout);
+
+    const processedSourceSale = await checkoutRepository.findOne({
+      where: {
+        branchId: dto.branchId,
+        receiptNumber: sourceReceiptNumber,
+        transactionType: PosCheckoutTransactionType.SALE,
+        status: PosCheckoutStatus.PROCESSED,
+      },
+    });
+
+    if (processedSourceSale) {
+      return;
+    }
+
+    const sourceSale = await checkoutRepository.findOne({
+      where: {
+        branchId: dto.branchId,
+        receiptNumber: sourceReceiptNumber,
+        transactionType: PosCheckoutTransactionType.SALE,
+      },
+    });
+
+    if (!sourceSale) {
+      throw new BadRequestException(
+        `Return source sale ${sourceReceiptNumber} was not found in checkout history`,
+      );
+    }
+
+    throw new BadRequestException(
+      `Return source sale ${sourceReceiptNumber} is ${sourceSale.status} and cannot be returned until it is PROCESSED`,
+    );
+  }
+
   private normalizeCheckoutItemMetadata(
     metadata?: Record<string, any> | null,
   ): Record<string, any> | null {
@@ -1058,6 +1139,210 @@ export class PosCheckoutService {
     return checkout.metadata?.loyaltySummary ?? null;
   }
 
+  async getTaxSummary(
+    query: TaxSummaryQueryDto,
+  ): Promise<TaxSummaryResponseDto> {
+    const qb = this.posCheckoutsRepository
+      .createQueryBuilder('checkout')
+      .where('checkout.branchId = :branchId', { branchId: query.branchId })
+      .andWhere('checkout.status = :status', {
+        status: PosCheckoutStatus.PROCESSED,
+      });
+
+    if (query.fromAt) {
+      const fromAt = new Date(query.fromAt);
+      if (!Number.isNaN(fromAt.getTime())) {
+        qb.andWhere('checkout.occurredAt >= :fromAt', { fromAt });
+      }
+    }
+    if (query.toAt) {
+      const toAt = new Date(query.toAt);
+      if (!Number.isNaN(toAt.getTime())) {
+        qb.andWhere('checkout.occurredAt <= :toAt', { toAt });
+      }
+    }
+    if (query.registerSessionId) {
+      qb.andWhere('checkout.registerSessionId = :registerSessionId', {
+        registerSessionId: query.registerSessionId,
+      });
+    }
+
+    const checkouts = await qb.getMany();
+
+    type RateBucket = {
+      rate: number;
+      taxableBase: number;
+      taxAmount: number;
+      lineCount: number;
+    };
+    type ShiftBucket = {
+      registerSessionId: number | null;
+      registerId: string | null;
+      taxableBase: number;
+      zeroRatedBase: number;
+      taxAmount: number;
+    };
+
+    const rateMap = new Map<number, RateBucket>();
+    const shiftMap = new Map<string, ShiftBucket>();
+    let currency = 'ETB';
+    let taxableBase = 0;
+    let zeroRatedBase = 0;
+    let taxAmount = 0;
+    let settledCount = 0;
+    let returnCount = 0;
+
+    for (const checkout of checkouts) {
+      currency = checkout.currency || currency;
+      const sign =
+        checkout.transactionType === PosCheckoutTransactionType.RETURN ? -1 : 1;
+
+      if (checkout.transactionType === PosCheckoutTransactionType.RETURN) {
+        returnCount += 1;
+      } else {
+        settledCount += 1;
+      }
+
+      const shiftKey =
+        checkout.registerSessionId !== null &&
+        checkout.registerSessionId !== undefined
+          ? `session-${checkout.registerSessionId}`
+          : checkout.registerId
+            ? `register-${checkout.registerId}`
+            : 'unassigned';
+
+      if (!shiftMap.has(shiftKey)) {
+        shiftMap.set(shiftKey, {
+          registerSessionId: checkout.registerSessionId ?? null,
+          registerId: checkout.registerId ?? null,
+          taxableBase: 0,
+          zeroRatedBase: 0,
+          taxAmount: 0,
+        });
+      }
+      const shift = shiftMap.get(shiftKey);
+
+      const lines = Array.isArray(checkout.items) ? checkout.items : [];
+      let lineLevelTax = false;
+
+      for (const line of lines) {
+        const lineTaxAmount = Number(line.taxAmount ?? 0) || 0;
+        const lineTaxableBase =
+          Number(
+            line.taxableBase ?? Number(line.lineTotal ?? 0) - lineTaxAmount,
+          ) || 0;
+        const rawRate = line.taxRate;
+        const rate = Number.isFinite(Number(rawRate))
+          ? Number(rawRate)
+          : lineTaxableBase > 0
+            ? lineTaxAmount / lineTaxableBase
+            : 0;
+        const rateKey = Math.round(rate * 10000) / 10000;
+
+        if (!rateMap.has(rateKey)) {
+          rateMap.set(rateKey, {
+            rate: rateKey,
+            taxableBase: 0,
+            taxAmount: 0,
+            lineCount: 0,
+          });
+        }
+        const bucket = rateMap.get(rateKey);
+        bucket.taxableBase += sign * lineTaxableBase;
+        bucket.taxAmount += sign * lineTaxAmount;
+        bucket.lineCount += 1;
+
+        taxAmount += sign * lineTaxAmount;
+        if (rateKey === 0) {
+          zeroRatedBase += sign * lineTaxableBase;
+          shift.zeroRatedBase += sign * lineTaxableBase;
+        } else {
+          taxableBase += sign * lineTaxableBase;
+          shift.taxableBase += sign * lineTaxableBase;
+        }
+        shift.taxAmount += sign * lineTaxAmount;
+        lineLevelTax = true;
+      }
+
+      // Fall back to checkout-level totals when lines were not recorded
+      // (e.g. legacy ingests).
+      if (!lineLevelTax) {
+        const checkoutTax = Number(checkout.taxAmount ?? 0) || 0;
+        if (checkoutTax !== 0) {
+          const checkoutTotal = Number(checkout.total ?? 0) || 0;
+          const checkoutTaxable = Math.max(0, checkoutTotal - checkoutTax);
+          const rate = checkoutTaxable > 0 ? checkoutTax / checkoutTaxable : 0;
+          const rateKey = Math.round(rate * 10000) / 10000;
+          if (!rateMap.has(rateKey)) {
+            rateMap.set(rateKey, {
+              rate: rateKey,
+              taxableBase: 0,
+              taxAmount: 0,
+              lineCount: 0,
+            });
+          }
+          const bucket = rateMap.get(rateKey);
+          bucket.taxableBase += sign * checkoutTaxable;
+          bucket.taxAmount += sign * checkoutTax;
+          bucket.lineCount += 1;
+          taxAmount += sign * checkoutTax;
+          if (rateKey === 0) {
+            zeroRatedBase += sign * checkoutTaxable;
+            shift.zeroRatedBase += sign * checkoutTaxable;
+          } else {
+            taxableBase += sign * checkoutTaxable;
+            shift.taxableBase += sign * checkoutTaxable;
+          }
+          shift.taxAmount += sign * checkoutTax;
+        }
+      }
+    }
+
+    const round2 = (value: number) => Math.round(value * 100) / 100;
+    const breakdown: TaxSummaryRateBucketDto[] = Array.from(rateMap.values())
+      .map((bucket) => {
+        const label =
+          bucket.rate === 0
+            ? 'Zero-rated'
+            : `${(bucket.rate * 100).toFixed(2).replace(/\.?0+$/, '')}%`;
+        return {
+          rate: bucket.rate,
+          label,
+          taxableBase: round2(bucket.taxableBase),
+          taxAmount: round2(bucket.taxAmount),
+          lineCount: bucket.lineCount,
+        };
+      })
+      .sort((left, right) => right.rate - left.rate);
+
+    const shifts: TaxSummaryShiftDto[] = Array.from(shiftMap.values())
+      .map((shift) => ({
+        registerSessionId: shift.registerSessionId,
+        registerId: shift.registerId,
+        taxableBase: round2(shift.taxableBase),
+        zeroRatedBase: round2(shift.zeroRatedBase),
+        taxAmount: round2(shift.taxAmount),
+        effectiveRate:
+          shift.taxableBase > 0 ? shift.taxAmount / shift.taxableBase : 0,
+      }))
+      .sort((left, right) => right.taxAmount - left.taxAmount);
+
+    return {
+      branchId: query.branchId,
+      currency,
+      fromAt: query.fromAt ?? null,
+      toAt: query.toAt ?? null,
+      taxableBase: round2(taxableBase),
+      zeroRatedBase: round2(zeroRatedBase),
+      taxAmount: round2(taxAmount),
+      effectiveRate: taxableBase > 0 ? taxAmount / taxableBase : 0,
+      settledCount,
+      returnCount,
+      breakdown,
+      shifts,
+    };
+  }
+
   private toListItem(checkout: PosCheckout) {
     const returnContext = this.extractReturnContext(checkout);
     return {
@@ -1094,13 +1379,6 @@ export class PosCheckoutService {
       loyaltySummary: this.extractLoyaltySummary(checkout),
       createdAt: checkout.createdAt,
       updatedAt: checkout.updatedAt,
-    };
-  }
-
-  private toResponse(checkout: PosCheckout): PosCheckoutResponseDto {
-    return {
-      ...this.toListItem(checkout),
-      metadata: checkout.metadata ?? null,
       tenders: (checkout.tenders ?? []).map((tender) => ({
         method: tender.method,
         amount: tender.amount,
@@ -1117,12 +1395,83 @@ export class PosCheckoutService {
         quantity: item.quantity,
         unitPrice: item.unitPrice,
         discountAmount: item.discountAmount ?? 0,
+        taxRate: item.taxRate ?? null,
+        taxableBase: item.taxableBase ?? null,
         taxAmount: item.taxAmount ?? 0,
         lineTotal: item.lineTotal,
         note: item.note ?? null,
         reasonCode: item.reasonCode ?? null,
         metadata: item.metadata ?? null,
       })),
+    };
+  }
+
+  async voidCheckout(
+    checkoutId: number,
+    dto: VoidPosCheckoutDto,
+    actorId: number,
+    actorBranchId?: number,
+  ): Promise<{
+    id: number;
+    status: string;
+    voidedAt: string;
+    voidedByUserId: number;
+  }> {
+    const checkout = await this.posCheckoutsRepository.findOne({
+      where: { id: checkoutId },
+    });
+
+    if (!checkout) {
+      throw new NotFoundException(`Checkout #${checkoutId} not found`);
+    }
+
+    // Branch-scope guard: non-global callers must match the checkout's branch.
+    if (
+      actorBranchId !== undefined &&
+      actorBranchId !== null &&
+      checkout.branchId !== actorBranchId
+    ) {
+      throw new ForbiddenException(
+        'You do not have permission to void checkouts on this branch',
+      );
+    }
+
+    if (checkout.status === PosCheckoutStatus.VOIDED) {
+      throw new BadRequestException('Checkout is already voided');
+    }
+
+    const voidableStatuses: string[] = [
+      PosCheckoutStatus.PROCESSED,
+      PosCheckoutStatus.RECEIVED,
+    ];
+    if (!voidableStatuses.includes(checkout.status)) {
+      throw new BadRequestException(
+        `Only settled checkouts can be voided (current status: ${checkout.status})`,
+      );
+    }
+
+    const voidedAt = new Date();
+    const voidedByUserId = dto.authorisedByUserId ?? actorId;
+
+    await this.posCheckoutsRepository.update(checkoutId, {
+      status: PosCheckoutStatus.VOIDED,
+      voidedAt,
+      voidedByUserId,
+      voidReason: dto.reason ?? null,
+    });
+
+    return {
+      id: checkoutId,
+      status: 'VOIDED',
+      voidedAt: voidedAt.toISOString(),
+      voidedByUserId,
+    };
+  }
+
+  private toResponse(checkout: PosCheckout): PosCheckoutResponseDto {
+    return {
+      ...this.toListItem(checkout),
+      metadata: checkout.metadata ?? null,
     };
   }
 }

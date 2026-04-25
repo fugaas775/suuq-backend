@@ -241,11 +241,19 @@ export class VendorController {
     @Body() dto: UpdateVendorProductDto,
     @Req() req: AuthenticatedRequest,
   ) {
+    const branchHeader =
+      req.headers['x-branch-id'] || req.headers['x-workspace-id'];
+    const branchId = Number(
+      Array.isArray(branchHeader) ? branchHeader[0] : branchHeader,
+    );
     return this.vendorService.updateMyProduct(
       vendor.id,
       productId,
       dto,
       req.user as any,
+      {
+        branchId: Number.isInteger(branchId) && branchId > 0 ? branchId : null,
+      },
     );
   }
 
