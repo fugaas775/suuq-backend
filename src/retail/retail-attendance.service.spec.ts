@@ -417,6 +417,9 @@ describe('RetailAttendanceService', () => {
   });
 
   it('returns a tenant-level HR attendance network summary', async () => {
+    const nowSpy = jest
+      .spyOn(Date, 'now')
+      .mockReturnValue(new Date('2026-04-29T11:30:00.000Z').getTime());
     retailEntitlementsService.assertBranchHasModules.mockResolvedValue({
       branch: { id: 3, timezone: 'UTC', retailTenantId: 9 },
       tenant: { id: 9 },
@@ -470,31 +473,35 @@ describe('RetailAttendanceService', () => {
       isActive: true,
     });
 
-    const result = await service.getAttendanceNetworkSummary(
-      {
-        branchId: 3,
-        limit: 10,
-        windowHours: 24,
-      },
-      { id: 11, roles: ['B2B_BUYER'] },
-    );
-
-    expect(result).toEqual(
-      expect.objectContaining({
-        anchorBranchId: 3,
-        retailTenantId: 9,
-        branchCount: 2,
-        criticalBranchCount: 1,
-        highBranchCount: 1,
-        permissions: {
-          canOverrideAttendance: true,
+    try {
+      const result = await service.getAttendanceNetworkSummary(
+        {
+          branchId: 3,
+          limit: 10,
+          windowHours: 24,
         },
-        branches: expect.arrayContaining([
-          expect.objectContaining({ branchId: 4, highestRisk: 'CRITICAL' }),
-          expect.objectContaining({ branchId: 3, highestRisk: 'HIGH' }),
-        ]),
-      }),
-    );
+        { id: 11, roles: ['B2B_BUYER'] },
+      );
+
+      expect(result).toEqual(
+        expect.objectContaining({
+          anchorBranchId: 3,
+          retailTenantId: 9,
+          branchCount: 2,
+          criticalBranchCount: 1,
+          highBranchCount: 1,
+          permissions: {
+            canOverrideAttendance: true,
+          },
+          branches: expect.arrayContaining([
+            expect.objectContaining({ branchId: 4, highestRisk: 'CRITICAL' }),
+            expect.objectContaining({ branchId: 3, highestRisk: 'HIGH' }),
+          ]),
+        }),
+      );
+    } finally {
+      nowSpy.mockRestore();
+    }
   });
 
   it('exports a tenant-level HR attendance network summary as CSV', async () => {
@@ -526,6 +533,9 @@ describe('RetailAttendanceService', () => {
   });
 
   it('returns HR attendance exceptions for absent and late staff', async () => {
+    const nowSpy = jest
+      .spyOn(Date, 'now')
+      .mockReturnValue(new Date('2026-04-29T11:30:00.000Z').getTime());
     retailEntitlementsService.assertBranchHasModules.mockResolvedValue({
       branch: { id: 3, timezone: 'UTC', retailTenantId: null },
       tenant: { id: 9 },
@@ -575,42 +585,48 @@ describe('RetailAttendanceService', () => {
       isActive: true,
     });
 
-    const result = await service.getAttendanceExceptions(
-      {
-        branchId: 3,
-        queueType: RetailHrAttendanceExceptionQueueFilter.LATE,
-        priority: RetailHrAttendanceExceptionPriorityFilter.CRITICAL,
-        windowHours: 24,
-      },
-      { id: 22, roles: ['B2B_BUYER'] },
-    );
-
-    expect(result.summary).toEqual(
-      expect.objectContaining({
-        branchId: 3,
-        totalExceptionCount: 2,
-        filteredExceptionCount: 1,
-        absentCount: 1,
-        lateCount: 1,
-        permissions: {
-          canOverrideAttendance: false,
+    try {
+      const result = await service.getAttendanceExceptions(
+        {
+          branchId: 3,
+          queueType: RetailHrAttendanceExceptionQueueFilter.LATE,
+          priority: RetailHrAttendanceExceptionPriorityFilter.CRITICAL,
+          windowHours: 24,
         },
-      }),
-    );
-    expect(result.items).toEqual([
-      expect.objectContaining({
-        userId: 11,
-        queueType: RetailHrAttendanceExceptionQueueFilter.LATE,
-        priority: RetailHrAttendanceExceptionPriorityFilter.CRITICAL,
-        actions: expect.arrayContaining([
-          expect.objectContaining({ type: 'VIEW_HR_ATTENDANCE_STAFF_DETAIL' }),
-          expect.objectContaining({
-            type: 'OVERRIDE_HR_ATTENDANCE',
-            enabled: false,
-          }),
-        ]),
-      }),
-    ]);
+        { id: 22, roles: ['B2B_BUYER'] },
+      );
+
+      expect(result.summary).toEqual(
+        expect.objectContaining({
+          branchId: 3,
+          totalExceptionCount: 2,
+          filteredExceptionCount: 1,
+          absentCount: 1,
+          lateCount: 1,
+          permissions: {
+            canOverrideAttendance: false,
+          },
+        }),
+      );
+      expect(result.items).toEqual([
+        expect.objectContaining({
+          userId: 11,
+          queueType: RetailHrAttendanceExceptionQueueFilter.LATE,
+          priority: RetailHrAttendanceExceptionPriorityFilter.CRITICAL,
+          actions: expect.arrayContaining([
+            expect.objectContaining({
+              type: 'VIEW_HR_ATTENDANCE_STAFF_DETAIL',
+            }),
+            expect.objectContaining({
+              type: 'OVERRIDE_HR_ATTENDANCE',
+              enabled: false,
+            }),
+          ]),
+        }),
+      ]);
+    } finally {
+      nowSpy.mockRestore();
+    }
   });
 
   it('exports HR attendance exceptions as CSV', async () => {

@@ -1,3 +1,6 @@
+import { PosPortalOnboardingService } from '../branch-staff/pos-portal-onboarding.service';
+import { SellerWorkspace } from '../seller-workspace/entities/seller-workspace.entity';
+import { InventoryLedgerService } from '../branches/inventory-ledger.service';
 import { describe, it, expect, beforeEach, jest } from '@jest/globals';
 import { Test, TestingModule } from '@nestjs/testing';
 import { ForbiddenException } from '@nestjs/common';
@@ -137,6 +140,9 @@ describe('VendorService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         VendorService,
+        { provide: InventoryLedgerService, useValue: {} },
+        { provide: PosPortalOnboardingService, useValue: {} },
+        { provide: getRepositoryToken(SellerWorkspace), useValue: {} },
         { provide: getRepositoryToken(User), useValue: userRepoMock },
         { provide: getRepositoryToken(Product), useValue: productRepoMock },
         { provide: getRepositoryToken(Order), useValue: orderRepoMock },

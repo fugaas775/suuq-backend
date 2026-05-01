@@ -15,8 +15,9 @@ import { InventoryLedgerService } from './inventory-ledger.service';
 describe('InventoryLedgerService', () => {
   let service: InventoryLedgerService;
   let branchesRepository: { findOne: jest.Mock };
-  let productsRepository: { findOne: jest.Mock };
+  let productsRepository: { findOne: jest.Mock; update: jest.Mock };
   let branchInventoryRepository: {
+    find: jest.Mock;
     findOne: jest.Mock;
     create: jest.Mock;
     save: jest.Mock;
@@ -30,8 +31,10 @@ describe('InventoryLedgerService', () => {
     };
     productsRepository = {
       findOne: jest.fn().mockResolvedValue({ id: 9 }),
+      update: jest.fn().mockResolvedValue(undefined),
     };
     branchInventoryRepository = {
+      find: jest.fn().mockResolvedValue([]),
       findOne: jest.fn(),
       create: jest.fn((value: any) => value),
       save: jest.fn(async (value: any) => value),

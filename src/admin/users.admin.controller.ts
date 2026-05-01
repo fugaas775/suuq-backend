@@ -82,6 +82,16 @@ export class AdminUsersController {
   @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
   async list(@Query() filters: AdminUserListQueryDto) {
     const pageSize = filters.pageSize || filters.limit || 20;
+
+    // Resolve seller billing filter to user IDs before paginating
+    let billingUserIds: number[] | undefined;
+    if (filters.sellerBilling) {
+      billingUserIds =
+        await this.sellerWorkspaceService.findUserIdsByBillingStatus(
+          filters.sellerBilling,
+        );
+    }
+
     const {
       users,
       total,
@@ -91,6 +101,7 @@ export class AdminUsersController {
       ...filters,
       page: filters.page || 1,
       pageSize,
+      ...(billingUserIds !== undefined ? { userIds: billingUserIds } : {}),
     });
 
     const enrichedUsers = await Promise.all(
@@ -107,10 +118,11 @@ export class AdminUsersController {
             posAccess.workspaceActivationCandidates;
         }
 
-        if (roles.some((role) => SELLER_ROLES.has(role))) {
-          enrichedUser.sellerWorkspaceSummary =
-            await this.safeGetSellerWorkspaceSummary(user.id);
-        }
+        // Fetch sellerWorkspaceSummary unconditionally: POS-only users registered
+        // via self-serve onboarding may lack VENDOR/POS_MANAGER in their roles
+        // but still have active POS subscriptions we need to surface in the admin UI.
+        enrichedUser.sellerWorkspaceSummary =
+          await this.safeGetSellerWorkspaceSummary(user.id);
 
         return enrichedUser;
       }),

@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
+  IsIn,
   IsInt,
   IsNotEmpty,
   IsOptional,
@@ -21,21 +22,25 @@ export class StartPosWorkspaceActivationDto {
     message: 'Phone number must be a valid Ethiopian mobile number.',
   })
   phoneNumber!: string;
-}
 
-export class StartPosWorkspaceTrialDto {
-  @ApiProperty({ example: 21 })
-  @IsInt()
-  @Min(1)
-  branchId!: number;
-
-  @ApiPropertyOptional({ example: 'QSR' })
+  @ApiPropertyOptional({
+    description:
+      'POS branch subscription period to activate. Defaults to SIX_MONTHS for backward compatibility.',
+    enum: ['SIX_MONTHS', 'ONE_YEAR'],
+    example: 'SIX_MONTHS',
+  })
   @IsOptional()
   @IsString()
-  @Matches(/^(RETAIL|CAFETERIA|QSR|FSR)$/iu, {
-    message: 'serviceFormat must be one of RETAIL, CAFETERIA, QSR, or FSR.',
+  @IsIn(['SIX_MONTHS', 'ONE_YEAR'])
+  subscriptionPeriod?: 'SIX_MONTHS' | 'ONE_YEAR';
+
+  @ApiPropertyOptional({
+    description: 'Optional referral code from an active equity partner.',
+    example: 'PART-XK7Q',
   })
-  serviceFormat?: string;
+  @IsOptional()
+  @IsString()
+  referralCode?: string;
 }
 
 export class PosWorkspaceActivationPaymentResponseDto {
@@ -52,6 +57,18 @@ export class PosWorkspaceActivationPaymentResponseDto {
   status!: 'PENDING_CONFIRMATION' | 'ACTIVE';
 
   @ApiPropertyOptional({
+    enum: ['SIX_MONTHS', 'ONE_YEAR'],
+    example: 'SIX_MONTHS',
+  })
+  subscriptionPeriod?: 'SIX_MONTHS' | 'ONE_YEAR';
+
+  @ApiPropertyOptional({ example: 11400 })
+  amount?: number;
+
+  @ApiPropertyOptional({ example: 'ETB' })
+  currency?: string;
+
+  @ApiPropertyOptional({
     nullable: true,
     example: 'https://checkout.example.com',
   })
@@ -63,36 +80,6 @@ export class PosWorkspaceActivationPaymentResponseDto {
   @ApiPropertyOptional({
     nullable: true,
     example: 'Confirm the payment prompt in Ebirr, then return to POS-S.',
-  })
-  providerMessage!: string | null;
-}
-
-export class PosWorkspaceTrialActivationResponseDto {
-  @ApiProperty({ example: 21 })
-  branchId!: number;
-
-  @ApiProperty({ example: 'Bole Flagship' })
-  branchName!: string;
-
-  @ApiProperty({ example: 'TRIAL' })
-  status!: 'TRIAL';
-
-  @ApiPropertyOptional({ nullable: true, example: '2026-04-03T00:00:00.000Z' })
-  trialStartedAt!: string | null;
-
-  @ApiPropertyOptional({ nullable: true, example: '2026-04-18T00:00:00.000Z' })
-  trialEndsAt!: string | null;
-
-  @ApiPropertyOptional({ nullable: true, example: 15 })
-  trialDaysRemaining!: number | null;
-
-  @ApiPropertyOptional({ nullable: true, example: 'QSR' })
-  serviceFormat!: string | null;
-
-  @ApiPropertyOptional({
-    nullable: true,
-    example:
-      'The 15-day trial is active. The first monthly charge should begin on Apr 18, 2026.',
   })
   providerMessage!: string | null;
 }

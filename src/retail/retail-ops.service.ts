@@ -3800,6 +3800,7 @@ export class RetailOpsService {
       availableToSell,
       shortageToSafetyStock: Math.max(safetyStock - availableToSell, 0),
       stockStatus,
+      manageStock: product.manageStock ?? false,
       lastReceivedAt: inventory?.lastReceivedAt ?? null,
       lastPurchaseOrderId: inventory?.lastPurchaseOrderId ?? null,
       productCreatedAt: product.createdAt,

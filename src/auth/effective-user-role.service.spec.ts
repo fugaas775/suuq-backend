@@ -96,7 +96,11 @@ describe('EffectiveUserRoleService', () => {
       roles: [UserRole.VENDOR],
     });
 
-    expect(roles).toEqual([UserRole.VENDOR, UserRole.POS_MANAGER]);
+    expect(roles).toEqual([
+      UserRole.VENDOR,
+      UserRole.POS_MANAGER,
+      UserRole.ADMIN,
+    ]);
   });
 
   it('derives POS_OPERATOR for active POS operators without manager access', async () => {
@@ -120,6 +124,11 @@ describe('EffectiveUserRoleService', () => {
       roles: [UserRole.VENDOR],
     });
 
-    expect(roles).toEqual([UserRole.VENDOR, UserRole.POS_OPERATOR]);
+    expect(roles).toEqual([
+      UserRole.VENDOR,
+      UserRole.POS_MANAGER,
+      UserRole.ADMIN,
+      UserRole.POS_OPERATOR,
+    ]);
   });
 });

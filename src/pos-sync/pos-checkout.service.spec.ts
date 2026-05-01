@@ -5,6 +5,7 @@ import { InventoryLedgerService } from '../branches/inventory-ledger.service';
 import { Branch } from '../branches/entities/branch.entity';
 import { StockMovementType } from '../branches/entities/stock-movement.entity';
 import { PartnerCredential } from '../partner-credentials/entities/partner-credential.entity';
+import { EmailService } from '../email/email.service';
 import { ProductAliasesService } from '../product-aliases/product-aliases.service';
 import { ProductAliasType } from '../product-aliases/entities/product-alias.entity';
 import { Product } from '../products/entities/product.entity';
@@ -45,7 +46,7 @@ describe('PosCheckoutService', () => {
     posCheckoutsRepository = {
       create: jest.fn((value) => ({ id: value.id ?? 71, ...value })),
       save: jest.fn(async (value) => value),
-      findOne: jest.fn(),
+      findOne: jest.fn().mockResolvedValue({ id: 71, status: 'PROCESSED' }),
       createQueryBuilder: jest.fn(),
     };
 
@@ -62,6 +63,7 @@ describe('PosCheckoutService', () => {
         price: 15,
         salePrice: 15,
         category: { name: 'SNACK' },
+        manageStock: true,
       }),
     };
 
@@ -100,6 +102,12 @@ describe('PosCheckoutService', () => {
             if (entity === PosSuspendedCart) {
               return suspendedCartsRepository;
             }
+            if (entity === Branch) {
+              return branchesRepository;
+            }
+            if (entity === Product) {
+              return productsRepository;
+            }
 
             return null;
           }),
@@ -134,6 +142,7 @@ describe('PosCheckoutService', () => {
           useValue: inventoryLedgerService,
         },
         { provide: ProductAliasesService, useValue: productAliasesService },
+        { provide: EmailService, useValue: {} },
       ],
     }).compile();
 

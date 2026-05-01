@@ -7,6 +7,7 @@ import { UserRole } from '../auth/roles.enum';
 import { InventoryLedgerService } from '../branches/inventory-ledger.service';
 import { ReplenishmentService } from '../branches/replenishment.service';
 import { Branch } from '../branches/entities/branch.entity';
+import { EmailService } from '../email/email.service';
 import { Product } from '../products/entities/product.entity';
 import { ProcurementWebhooksService } from '../procurement-webhooks/procurement-webhooks.service';
 import { ProcurementWebhookEventType } from '../procurement-webhooks/entities/procurement-webhook-subscription.entity';
@@ -49,6 +50,9 @@ describe('PurchaseOrdersService', () => {
   };
   let procurementWebhooksService: {
     dispatchProcurementEvent: jest.Mock;
+  };
+  let emailService: {
+    sendPurchaseOrderStatusEmail: jest.Mock;
   };
 
   beforeEach(async () => {
@@ -103,6 +107,9 @@ describe('PurchaseOrdersService', () => {
     procurementWebhooksService = {
       dispatchProcurementEvent: jest.fn().mockResolvedValue(undefined),
     };
+    emailService = {
+      sendPurchaseOrderStatusEmail: jest.fn().mockResolvedValue(undefined),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -128,6 +135,7 @@ describe('PurchaseOrdersService', () => {
           useValue: procurementWebhooksService,
         },
         { provide: RealtimeGateway, useValue: realtimeGateway },
+        { provide: EmailService, useValue: emailService },
       ],
     }).compile();
 

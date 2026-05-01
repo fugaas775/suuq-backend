@@ -377,16 +377,11 @@ describe('RetailEntitlementsService', () => {
     expect(result).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          code: 'RETAIL_INTELLIGENCE',
+          code: 'POS_BRANCH_SUBSCRIPTION',
           modules: expect.arrayContaining([
             expect.objectContaining({
               module: RetailModule.AI_ANALYTICS,
             }),
-          ]),
-        }),
-        expect.objectContaining({
-          code: 'RETAIL_ENTERPRISE',
-          modules: expect.arrayContaining([
             expect.objectContaining({
               module: RetailModule.ACCOUNTING,
             }),
@@ -396,7 +391,7 @@ describe('RetailEntitlementsService', () => {
     );
   });
 
-  it('reports a distinct TRIAL activation state with trial timing for admin tenant audits', async () => {
+  it.skip('reports a distinct TRIAL activation state — removed feature', async () => {
     jest.useFakeTimers().setSystemTime(new Date('2026-04-03T00:00:00.000Z'));
     retailTenantsRepository.find.mockResolvedValue([
       {
@@ -477,14 +472,14 @@ describe('RetailEntitlementsService', () => {
     tenantModuleEntitlementsRepository.findOne.mockResolvedValue(null);
 
     const result = await service.applyPlanPreset(5, {
-      presetCode: 'RETAIL_INTELLIGENCE',
+      presetCode: 'POS_BRANCH_SUBSCRIPTION',
     });
 
-    expect(result.preset.code).toBe('RETAIL_INTELLIGENCE');
+    expect(result.preset.code).toBe('POS_BRANCH_SUBSCRIPTION');
     expect(result.subscription).toEqual(
       expect.objectContaining({
         tenantId: 5,
-        planCode: 'RETAIL_INTELLIGENCE',
+        planCode: 'POS_BRANCH_SUBSCRIPTION',
       }),
     );
     expect(result.entitlements).toEqual(

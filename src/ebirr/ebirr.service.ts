@@ -21,11 +21,106 @@ import axios from 'axios';
 import { v4 as uuidv4 } from 'uuid';
 import { Cron, CronExpression } from '@nestjs/schedule';
 
-import { format, subMinutes } from 'date-fns';
+import { format, subMinutes, subHours } from 'date-fns';
 
 @Injectable()
 export class EbirrService {
   private readonly logger = new Logger(EbirrService.name);
+
+  private isAsyncPosPaymentReference(
+    referenceId: string | null | undefined,
+  ): boolean {
+    const value = String(referenceId || '')
+      .trim()
+      .toUpperCase();
+    return value.startsWith('POSACT-') || value.startsWith('POSBRANCH-');
+  }
+
+  private shouldKeepPendingForProviderConfirmation(
+    tx: Pick<
+      EbirrTransaction,
+      | 'merch_order_id'
+      | 'response_code'
+      | 'raw_response_payload'
+      | 'created_at'
+      | 'updated_at'
+    >,
+  ): boolean {
+    if (!this.isAsyncPosPaymentReference(tx.merch_order_id)) {
+      return false;
+    }
+
+    const providerCode = String(
+      tx.response_code || tx.raw_response_payload?.errorCode || '',
+    )
+      .trim()
+      .toUpperCase();
+
+    if (providerCode !== 'E102051' && providerCode !== 'ECONNRESET') {
+      return false;
+    }
+
+    // Only keep waiting for provider confirmation for up to 2 hours.
+    // After that, Ebirr will not confirm a timed-out transaction and
+    // keeping it open blocks new payments for the same phone number.
+    const twoHoursAgo = subHours(new Date(), 2);
+    const pendingSince = tx.updated_at || tx.created_at;
+    if (!pendingSince || pendingSince < twoHoursAgo) {
+      return false;
+    }
+
+    return true;
+  }
+
+  private isSuccessfulCallbackPayload(payload: any): boolean {
+    const normalizedStatus = String(
+      payload?.status ||
+        payload?.state ||
+        payload?.params?.state ||
+        payload?.transactionStatus ||
+        payload?.params?.transactionStatus ||
+        '',
+    )
+      .trim()
+      .toUpperCase();
+    const responseCode = String(payload?.responseCode ?? '')
+      .trim()
+      .toUpperCase();
+    const errorCode = String(payload?.errorCode ?? '')
+      .trim()
+      .toUpperCase();
+    const code = String(payload?.code ?? '')
+      .trim()
+      .toUpperCase();
+    const responseMsg = String(
+      payload?.responseMsg ??
+        payload?.message ??
+        payload?.params?.message ??
+        '',
+    )
+      .trim()
+      .toUpperCase();
+
+    const hasApprovedState =
+      normalizedStatus === 'PAID' ||
+      normalizedStatus === 'APPROVED' ||
+      normalizedStatus === 'SUCCESS' ||
+      normalizedStatus === 'COMPLETED';
+
+    const hasSuccessfulEnvelope =
+      errorCode === '0' &&
+      (hasApprovedState ||
+        responseCode === '200' ||
+        responseCode === '2001' ||
+        responseMsg === 'RCS_SUCCESS');
+
+    return (
+      hasApprovedState ||
+      code === '0' ||
+      responseCode === '0' ||
+      hasSuccessfulEnvelope
+    );
+  }
 
   private parseOrderIdFromReference(
     referenceId: string | null | undefined,
@@ -325,7 +420,6 @@ export class EbirrService {
     const pendingTransactions = await this.ebirrTransactionRepo.find({
       where: {
         status: 'PENDING',
-        created_at: LessThan(tenMinutesAgo),
       },
     });
 
@@ -337,13 +431,30 @@ export class EbirrService {
     });
 
     if (pendingTransactions.length > 0) {
-      this.logger.warn(
-        `Found ${pendingTransactions.length} pending transactions to expire.`,
-      );
+      let expiredPendingCount = 0;
       for (const tx of pendingTransactions) {
+        const pendingSince = tx.updated_at || tx.created_at;
+        if (!pendingSince || pendingSince >= tenMinutesAgo) {
+          continue;
+        }
+
+        if (this.shouldKeepPendingForProviderConfirmation(tx)) {
+          this.logger.warn(
+            `Keeping pending Ebirr transaction ${tx.merch_order_id} open while waiting for provider confirmation.`,
+          );
+          continue;
+        }
+
         tx.status = 'EXPIRED';
         tx.response_msg = 'Transaction timed out locally';
         await this.ebirrTransactionRepo.save(tx);
+        expiredPendingCount += 1;
+      }
+
+      if (expiredPendingCount > 0) {
+        this.logger.warn(
+          `Found ${expiredPendingCount} pending transactions to expire.`,
+        );
       }
     }
 
@@ -358,6 +469,44 @@ export class EbirrService {
         await this.ebirrTransactionRepo.save(tx);
       }
     }
+  }
+
+  /**
+   * Expire any PENDING/INITIATED Ebirr transactions whose merch_order_id starts
+   * with the given prefix. Called before initiating a new payment for the same
+   * user/tenant so that stale timed-out transactions don't cause Ebirr to reject
+   * the new request with E102051.
+   *
+   * Returns the number of transactions expired.
+   */
+  async expireStalePendingTransactionsForPrefix(
+    referencePrefix: string,
+  ): Promise<number> {
+    const prefix = String(referencePrefix || '').trim();
+    if (!prefix) return 0;
+
+    const stale = await this.ebirrTransactionRepo
+      .createQueryBuilder('tx')
+      .where('tx.status IN (:...statuses)', {
+        statuses: ['PENDING', 'INITIATED'],
+      })
+      .andWhere('tx.merch_order_id LIKE :prefix', { prefix: `${prefix}%` })
+      .getMany();
+
+    if (!stale.length) return 0;
+
+    for (const tx of stale) {
+      tx.status = 'EXPIRED';
+      tx.response_msg = tx.response_msg
+        ? `${tx.response_msg} (superseded by newer payment attempt)`
+        : 'Superseded by newer payment attempt';
+    }
+    await this.ebirrTransactionRepo.save(stale);
+
+    this.logger.log(
+      `Expired ${stale.length} stale pending transaction(s) with prefix "${prefix}" before new attempt`,
+    );
+    return stale.length;
   }
 
   /**
@@ -556,16 +705,11 @@ export class EbirrService {
     }
 
     // Check if Order is already PAID to prevent double payment
-    let orderId: number;
-    // Attempt to extract numeric Order ID from invoiceId (e.g. "INV-97" -> 97)
-    const matches = invoiceId.match(/(\d+)/);
-    if (matches && matches[0]) {
-      orderId = parseInt(matches[0], 10);
-    } else {
-      orderId = parseInt(invoiceId, 10);
-    }
+    const orderId =
+      this.parseOrderIdFromReference(referenceId) ??
+      this.parseOrderIdFromInvoice(invoiceId);
 
-    if (!isNaN(orderId)) {
+    if (orderId != null) {
       const order = await this.orderRepo.findOne({ where: { id: orderId } });
       if (order && order.paymentStatus === PaymentStatus.PAID) {
         throw new BadRequestException('Order already paid');
@@ -614,7 +758,7 @@ export class EbirrService {
       },
     };
 
-    if (process.env.EBIRR_USE_CALLBACK === 'true') {
+    if (process.env.EBIRR_USE_CALLBACK !== 'false') {
       payload.serviceParams.returnUrl = callbackUrl;
     }
 
@@ -643,7 +787,7 @@ export class EbirrService {
         headers: {
           'Content-Type': 'application/json',
         },
-        timeout: 60000,
+        timeout: 35000,
       });
 
       this.logger.log(
@@ -653,14 +797,16 @@ export class EbirrService {
       // Handle soft errors (HTTP 200 but API error)
       const data = response.data;
       if (data && data.errorCode && String(data.errorCode) !== '0') {
-        transaction.status = 'FAILED';
+        const codeStr = String(data.errorCode);
+        const isRecoverableTimeout = codeStr === 'E102051';
+
+        transaction.status = isRecoverableTimeout ? 'PENDING' : 'FAILED';
         transaction.raw_response_payload = data;
         transaction.response_code = data.errorCode;
         transaction.response_msg = data.responseMsg || data.message;
         await this.ebirrTransactionRepo.save(transaction);
 
         let friendlyMsg = data.responseMsg || 'Unknown error';
-        const codeStr = String(data.errorCode);
         const expectedDeclineTag =
           codeStr === '5310'
             ? 'EBIRR_EXPECTED_DECLINE_5310_USER_REJECTED'
@@ -670,7 +816,11 @@ export class EbirrService {
                 ? 'EBIRR_EXPECTED_DECLINE_E10205_INSUFFICIENT_BALANCE'
                 : null;
 
-        if (codeStr === '5310') {
+        if (isRecoverableTimeout) {
+          this.logger.warn(
+            `Ebirr recoverable timeout for ${referenceId}: ${friendlyMsg}`,
+          );
+        } else if (codeStr === '5310') {
           friendlyMsg = 'Payment declined. Ensure the SIM is in your device.';
           this.logger.warn(
             `Ebirr expected decline: ${JSON.stringify({ telemetryTag: expectedDeclineTag, expectedDecline: true, provider: 'EBIRR', providerCode: codeStr, orderId, referenceId, requestId, message: friendlyMsg })}`,
@@ -706,6 +856,9 @@ export class EbirrService {
         err.referenceId = referenceId;
         err.attemptNo = attemptNo;
         err.latencyMs = Date.now() - startedAt;
+        if (isRecoverableTimeout) {
+          err.isEbirrTimeout = true;
+        }
         throw err;
       }
 
@@ -725,10 +878,39 @@ export class EbirrService {
       }
 
       if (axios.isAxiosError(error)) {
+        const isTimeout =
+          error.code === 'ECONNABORTED' || /timeout/i.test(error.message);
+        // ECONNRESET = TCP connection dropped by the remote side mid-request.
+        // Ebirr may have received and queued the payment; treat it as recoverable.
+        const isNetworkDrop =
+          error.code === 'ECONNRESET' || /socket hang up/i.test(error.message);
+
+        const isRecoverableNetworkError = isTimeout || isNetworkDrop;
+
         this.logger.error(
           `Ebirr payment failed handling: ${error.message}`,
           error.response?.data,
         );
+
+        if (isRecoverableNetworkError) {
+          // Keep transaction as PENDING — Ebirr may still process the payment
+          const networkReason = isNetworkDrop ? 'socket_hang_up' : 'timeout';
+          transaction.raw_response_payload = {
+            message: networkReason,
+            axiosCode: error.code,
+          };
+          transaction.response_code = isNetworkDrop
+            ? 'ECONNRESET'
+            : 'ECONNABORTED';
+          await this.ebirrTransactionRepo.save(transaction);
+
+          const networkErr: any = new Error(
+            'Ebirr payment request timed out. If you received a payment notification, complete it and wait for provider confirmation.',
+          );
+          networkErr.isHandled = true;
+          networkErr.isEbirrTimeout = true;
+          throw networkErr;
+        }
 
         // Update transaction with failure details
         transaction.status = 'FAILED';
@@ -879,10 +1061,7 @@ export class EbirrService {
     tx.raw_response_payload = { ...tx.raw_response_payload, callback: payload };
 
     // Check various success indicators
-    const isSuccess =
-      payload.status === 'Paid' ||
-      payload.responseCode === '0' ||
-      String(payload.code) === '0';
+    const isSuccess = this.isSuccessfulCallbackPayload(payload);
 
     if (isSuccess) {
       tx.status = 'COMPLETED';

@@ -6,6 +6,7 @@ import { InventoryLedgerService } from '../branches/inventory-ledger.service';
 import { Branch } from '../branches/entities/branch.entity';
 import { StockMovementType } from '../branches/entities/stock-movement.entity';
 import { PartnerCredential } from '../partner-credentials/entities/partner-credential.entity';
+import { Product } from '../products/entities/product.entity';
 import { ProductAliasesService } from '../product-aliases/product-aliases.service';
 import { ProductAliasType } from '../product-aliases/entities/product-alias.entity';
 import { PosSyncService } from './pos-sync.service';
@@ -61,13 +62,33 @@ describe('PosSyncService', () => {
     };
 
     dataSource = {
+      manager: {
+        getRepository: jest.fn((entity) => {
+          if (entity === Product) {
+            return {
+              findOne: jest.fn().mockImplementation(async (query) => {
+                const id = query?.where?.id;
+                return { id: id || 9, manageStock: true };
+              }),
+            };
+          }
+          return null;
+        }),
+      },
       transaction: jest.fn(async (callback) =>
         callback({
           getRepository: jest.fn((entity) => {
             if (entity === PosSyncJob) {
               return posSyncJobsRepository;
             }
-
+            if (entity === Product) {
+              return {
+                findOne: jest.fn().mockImplementation(async (query) => {
+                  const id = query?.where?.id;
+                  return { id: id || 9, manageStock: true };
+                }),
+              };
+            }
             return null;
           }),
         }),

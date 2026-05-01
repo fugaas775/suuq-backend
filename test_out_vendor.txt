@@ -1,0 +1,733 @@
+yarn run v1.22.22
+$ jest src/vendor
+FAIL src/vendor/vendor.service.spec.ts
+  ● VendorService › should be defined
+
+    Nest can't resolve dependencies of the VendorService (UserRepository, ProductRepository, OrderRepository, DisputeRepository, OrderItemRepository, ProductImageRepository, TagRepository, UserReportRepository, ProductImpressionRepository, NotificationsService, DoSpacesService, CurrencyService, ShippingService, SettingsService, EmailService, InventoryLedgerService, ?, SellerWorkspaceRepository). Please make sure that the argument PosPortalOnboardingService at index [16] is available in the RootTestModule context.
+
+    Potential solutions:
+    - Is RootTestModule a valid NestJS module?
+    - If PosPortalOnboardingService is a provider, is it part of the current RootTestModule?
+    - If PosPortalOnboardingService is exported from a separate @Module, is that module imported within RootTestModule?
+      @Module({
+        imports: [ /* the Module containing PosPortalOnboardingService */ ]
+      })
+
+      135 |     Object.assign(inventoryLedgerMock, { recordMovement: j.fn() });
+      136 |
+    > 137 |     const module: TestingModule = await Test.createTestingModule({
+          |                                   ^
+      138 |       providers: [
+      139 |         VendorService,
+      140 |         { provide: getRepositoryToken(User), useValue: userRepoMock },
+
+      at TestingInjector.lookupComponentInParentModules (../node_modules/@nestjs/core/injector/injector.js:286:19)
+      at TestingInjector.resolveComponentWrapper (../node_modules/@nestjs/testing/testing-injector.js:19:45)
+      at resolveParam (../node_modules/@nestjs/core/injector/injector.js:141:38)
+          at async Promise.all (index 16)
+      at TestingInjector.resolveConstructorParams (../node_modules/@nestjs/core/injector/injector.js:169:27)
+      at TestingInjector.loadInstance (../node_modules/@nestjs/core/injector/injector.js:75:13)
+      at TestingInjector.loadProvider (../node_modules/@nestjs/core/injector/injector.js:103:9)
+      at ../node_modules/@nestjs/core/injector/instance-loader.js:56:13
+          at async Promise.all (index 3)
+      at TestingInstanceLoader.createInstancesOfProviders (../node_modules/@nestjs/core/injector/instance-loader.js:55:9)
+      at ../node_modules/@nestjs/core/injector/instance-loader.js:40:13
+          at async Promise.all (index 1)
+      at TestingInstanceLoader.createInstances (../node_modules/@nestjs/core/injector/instance-loader.js:39:9)
+      at TestingInstanceLoader.createInstancesOfDependencies (../node_modules/@nestjs/core/injector/instance-loader.js:22:13)
+      at TestingInstanceLoader.createInstancesOfDependencies (../node_modules/@nestjs/testing/testing-instance-loader.js:9:9)
+      at TestingModuleBuilder.createInstancesOfDependencies (../node_modules/@nestjs/testing/testing-module.builder.js:118:9)
+      at TestingModuleBuilder.compile (../node_modules/@nestjs/testing/testing-module.builder.js:74:9)
+      at Object.<anonymous> (vendor/vendor.service.spec.ts:137:35)
+
+  ● VendorService › getMyProduct backfills digital alias fields for edit prefill
+
+    Nest can't resolve dependencies of the VendorService (UserRepository, ProductRepository, OrderRepository, DisputeRepository, OrderItemRepository, ProductImageRepository, TagRepository, UserReportRepository, ProductImpressionRepository, NotificationsService, DoSpacesService, CurrencyService, ShippingService, SettingsService, EmailService, InventoryLedgerService, ?, SellerWorkspaceRepository). Please make sure that the argument PosPortalOnboardingService at index [16] is available in the RootTestModule context.
+
+    Potential solutions:
+    - Is RootTestModule a valid NestJS module?
+    - If PosPortalOnboardingService is a provider, is it part of the current RootTestModule?
+    - If PosPortalOnboardingService is exported from a separate @Module, is that module imported within RootTestModule?
+      @Module({
+        imports: [ /* the Module containing PosPortalOnboardingService */ ]
+      })
+
+      135 |     Object.assign(inventoryLedgerMock, { recordMovement: j.fn() });
+      136 |
+    > 137 |     const module: TestingModule = await Test.createTestingModule({
+          |                                   ^
+      138 |       providers: [
+      139 |         VendorService,
+      140 |         { provide: getRepositoryToken(User), useValue: userRepoMock },
+
+      at TestingInjector.lookupComponentInParentModules (../node_modules/@nestjs/core/injector/injector.js:286:19)
+      at TestingInjector.resolveComponentWrapper (../node_modules/@nestjs/testing/testing-injector.js:19:45)
+      at resolveParam (../node_modules/@nestjs/core/injector/injector.js:141:38)
+          at async Promise.all (index 16)
+      at TestingInjector.resolveConstructorParams (../node_modules/@nestjs/core/injector/injector.js:169:27)
+      at TestingInjector.loadInstance (../node_modules/@nestjs/core/injector/injector.js:75:13)
+      at TestingInjector.loadProvider (../node_modules/@nestjs/core/injector/injector.js:103:9)
+      at ../node_modules/@nestjs/core/injector/instance-loader.js:56:13
+          at async Promise.all (index 3)
+      at TestingInstanceLoader.createInstancesOfProviders (../node_modules/@nestjs/core/injector/instance-loader.js:55:9)
+      at ../node_modules/@nestjs/core/injector/instance-loader.js:40:13
+          at async Promise.all (index 1)
+      at TestingInstanceLoader.createInstances (../node_modules/@nestjs/core/injector/instance-loader.js:39:9)
+      at TestingInstanceLoader.createInstancesOfDependencies (../node_modules/@nestjs/core/injector/instance-loader.js:22:13)
+      at TestingInstanceLoader.createInstancesOfDependencies (../node_modules/@nestjs/testing/testing-instance-loader.js:9:9)
+      at TestingModuleBuilder.createInstancesOfDependencies (../node_modules/@nestjs/testing/testing-module.builder.js:118:9)
+      at TestingModuleBuilder.compile (../node_modules/@nestjs/testing/testing-module.builder.js:74:9)
+      at Object.<anonymous> (vendor/vendor.service.spec.ts:137:35)
+
+  ● VendorService › getMyProduct correctly handles and backfills read-time file/files aliases for digital products
+
+    Nest can't resolve dependencies of the VendorService (UserRepository, ProductRepository, OrderRepository, DisputeRepository, OrderItemRepository, ProductImageRepository, TagRepository, UserReportRepository, ProductImpressionRepository, NotificationsService, DoSpacesService, CurrencyService, ShippingService, SettingsService, EmailService, InventoryLedgerService, ?, SellerWorkspaceRepository). Please make sure that the argument PosPortalOnboardingService at index [16] is available in the RootTestModule context.
+
+    Potential solutions:
+    - Is RootTestModule a valid NestJS module?
+    - If PosPortalOnboardingService is a provider, is it part of the current RootTestModule?
+    - If PosPortalOnboardingService is exported from a separate @Module, is that module imported within RootTestModule?
+      @Module({
+        imports: [ /* the Module containing PosPortalOnboardingService */ ]
+      })
+
+      135 |     Object.assign(inventoryLedgerMock, { recordMovement: j.fn() });
+      136 |
+    > 137 |     const module: TestingModule = await Test.createTestingModule({
+          |                                   ^
+      138 |       providers: [
+      139 |         VendorService,
+      140 |         { provide: getRepositoryToken(User), useValue: userRepoMock },
+
+      at TestingInjector.lookupComponentInParentModules (../node_modules/@nestjs/core/injector/injector.js:286:19)
+      at TestingInjector.resolveComponentWrapper (../node_modules/@nestjs/testing/testing-injector.js:19:45)
+      at resolveParam (../node_modules/@nestjs/core/injector/injector.js:141:38)
+          at async Promise.all (index 16)
+      at TestingInjector.resolveConstructorParams (../node_modules/@nestjs/core/injector/injector.js:169:27)
+      at TestingInjector.loadInstance (../node_modules/@nestjs/core/injector/injector.js:75:13)
+      at TestingInjector.loadProvider (../node_modules/@nestjs/core/injector/injector.js:103:9)
+      at ../node_modules/@nestjs/core/injector/instance-loader.js:56:13
+          at async Promise.all (index 3)
+      at TestingInstanceLoader.createInstancesOfProviders (../node_modules/@nestjs/core/injector/instance-loader.js:55:9)
+      at ../node_modules/@nestjs/core/injector/instance-loader.js:40:13
+          at async Promise.all (index 1)
+      at TestingInstanceLoader.createInstances (../node_modules/@nestjs/core/injector/instance-loader.js:39:9)
+      at TestingInstanceLoader.createInstancesOfDependencies (../node_modules/@nestjs/core/injector/instance-loader.js:22:13)
+      at TestingInstanceLoader.createInstancesOfDependencies (../node_modules/@nestjs/testing/testing-instance-loader.js:9:9)
+      at TestingModuleBuilder.createInstancesOfDependencies (../node_modules/@nestjs/testing/testing-module.builder.js:118:9)
+      at TestingModuleBuilder.compile (../node_modules/@nestjs/testing/testing-module.builder.js:74:9)
+      at Object.<anonymous> (vendor/vendor.service.spec.ts:137:35)
+
+  ● VendorService › createMyProduct saves images
+
+    Nest can't resolve dependencies of the VendorService (UserRepository, ProductRepository, OrderRepository, DisputeRepository, OrderItemRepository, ProductImageRepository, TagRepository, UserReportRepository, ProductImpressionRepository, NotificationsService, DoSpacesService, CurrencyService, ShippingService, SettingsService, EmailService, InventoryLedgerService, ?, SellerWorkspaceRepository). Please make sure that the argument PosPortalOnboardingService at index [16] is available in the RootTestModule context.
+
+    Potential solutions:
+    - Is RootTestModule a valid NestJS module?
+    - If PosPortalOnboardingService is a provider, is it part of the current RootTestModule?
+    - If PosPortalOnboardingService is exported from a separate @Module, is that module imported within RootTestModule?
+      @Module({
+        imports: [ /* the Module containing PosPortalOnboardingService */ ]
+      })
+
+      135 |     Object.assign(inventoryLedgerMock, { recordMovement: j.fn() });
+      136 |
+    > 137 |     const module: TestingModule = await Test.createTestingModule({
+          |                                   ^
+      138 |       providers: [
+      139 |         VendorService,
+      140 |         { provide: getRepositoryToken(User), useValue: userRepoMock },
+
+      at TestingInjector.lookupComponentInParentModules (../node_modules/@nestjs/core/injector/injector.js:286:19)
+      at TestingInjector.resolveComponentWrapper (../node_modules/@nestjs/testing/testing-injector.js:19:45)
+      at resolveParam (../node_modules/@nestjs/core/injector/injector.js:141:38)
+          at async Promise.all (index 16)
+      at TestingInjector.resolveConstructorParams (../node_modules/@nestjs/core/injector/injector.js:169:27)
+      at TestingInjector.loadInstance (../node_modules/@nestjs/core/injector/injector.js:75:13)
+      at TestingInjector.loadProvider (../node_modules/@nestjs/core/injector/injector.js:103:9)
+      at ../node_modules/@nestjs/core/injector/instance-loader.js:56:13
+          at async Promise.all (index 3)
+      at TestingInstanceLoader.createInstancesOfProviders (../node_modules/@nestjs/core/injector/instance-loader.js:55:9)
+      at ../node_modules/@nestjs/core/injector/instance-loader.js:40:13
+          at async Promise.all (index 1)
+      at TestingInstanceLoader.createInstances (../node_modules/@nestjs/core/injector/instance-loader.js:39:9)
+      at TestingInstanceLoader.createInstancesOfDependencies (../node_modules/@nestjs/core/injector/instance-loader.js:22:13)
+      at TestingInstanceLoader.createInstancesOfDependencies (../node_modules/@nestjs/testing/testing-instance-loader.js:9:9)
+      at TestingModuleBuilder.createInstancesOfDependencies (../node_modules/@nestjs/testing/testing-module.builder.js:118:9)
+      at TestingModuleBuilder.compile (../node_modules/@nestjs/testing/testing-module.builder.js:74:9)
+      at Object.<anonymous> (vendor/vendor.service.spec.ts:137:35)
+
+  ● VendorService › createMyProduct persists staff lister attribution when staff creates for vendor
+
+    Nest can't resolve dependencies of the VendorService (UserRepository, ProductRepository, OrderRepository, DisputeRepository, OrderItemRepository, ProductImageRepository, TagRepository, UserReportRepository, ProductImpressionRepository, NotificationsService, DoSpacesService, CurrencyService, ShippingService, SettingsService, EmailService, InventoryLedgerService, ?, SellerWorkspaceRepository). Please make sure that the argument PosPortalOnboardingService at index [16] is available in the RootTestModule context.
+
+    Potential solutions:
+    - Is RootTestModule a valid NestJS module?
+    - If PosPortalOnboardingService is a provider, is it part of the current RootTestModule?
+    - If PosPortalOnboardingService is exported from a separate @Module, is that module imported within RootTestModule?
+      @Module({
+        imports: [ /* the Module containing PosPortalOnboardingService */ ]
+      })
+
+      135 |     Object.assign(inventoryLedgerMock, { recordMovement: j.fn() });
+      136 |
+    > 137 |     const module: TestingModule = await Test.createTestingModule({
+          |                                   ^
+      138 |       providers: [
+      139 |         VendorService,
+      140 |         { provide: getRepositoryToken(User), useValue: userRepoMock },
+
+      at TestingInjector.lookupComponentInParentModules (../node_modules/@nestjs/core/injector/injector.js:286:19)
+      at TestingInjector.resolveComponentWrapper (../node_modules/@nestjs/testing/testing-injector.js:19:45)
+      at resolveParam (../node_modules/@nestjs/core/injector/injector.js:141:38)
+          at async Promise.all (index 16)
+      at TestingInjector.resolveConstructorParams (../node_modules/@nestjs/core/injector/injector.js:169:27)
+      at TestingInjector.loadInstance (../node_modules/@nestjs/core/injector/injector.js:75:13)
+      at TestingInjector.loadProvider (../node_modules/@nestjs/core/injector/injector.js:103:9)
+      at ../node_modules/@nestjs/core/injector/instance-loader.js:56:13
+          at async Promise.all (index 3)
+      at TestingInstanceLoader.createInstancesOfProviders (../node_modules/@nestjs/core/injector/instance-loader.js:55:9)
+      at ../node_modules/@nestjs/core/injector/instance-loader.js:40:13
+          at async Promise.all (index 1)
+      at TestingInstanceLoader.createInstances (../node_modules/@nestjs/core/injector/instance-loader.js:39:9)
+      at TestingInstanceLoader.createInstancesOfDependencies (../node_modules/@nestjs/core/injector/instance-loader.js:22:13)
+      at TestingInstanceLoader.createInstancesOfDependencies (../node_modules/@nestjs/testing/testing-instance-loader.js:9:9)
+      at TestingModuleBuilder.createInstancesOfDependencies (../node_modules/@nestjs/testing/testing-module.builder.js:118:9)
+      at TestingModuleBuilder.compile (../node_modules/@nestjs/testing/testing-module.builder.js:74:9)
+      at Object.<anonymous> (vendor/vendor.service.spec.ts:137:35)
+
+  ● VendorService › createMyProduct seeds inventory for the active branch import context
+
+    Nest can't resolve dependencies of the VendorService (UserRepository, ProductRepository, OrderRepository, DisputeRepository, OrderItemRepository, ProductImageRepository, TagRepository, UserReportRepository, ProductImpressionRepository, NotificationsService, DoSpacesService, CurrencyService, ShippingService, SettingsService, EmailService, InventoryLedgerService, ?, SellerWorkspaceRepository). Please make sure that the argument PosPortalOnboardingService at index [16] is available in the RootTestModule context.
+
+    Potential solutions:
+    - Is RootTestModule a valid NestJS module?
+    - If PosPortalOnboardingService is a provider, is it part of the current RootTestModule?
+    - If PosPortalOnboardingService is exported from a separate @Module, is that module imported within RootTestModule?
+      @Module({
+        imports: [ /* the Module containing PosPortalOnboardingService */ ]
+      })
+
+      135 |     Object.assign(inventoryLedgerMock, { recordMovement: j.fn() });
+      136 |
+    > 137 |     const module: TestingModule = await Test.createTestingModule({
+          |                                   ^
+      138 |       providers: [
+      139 |         VendorService,
+      140 |         { provide: getRepositoryToken(User), useValue: userRepoMock },
+
+      at TestingInjector.lookupComponentInParentModules (../node_modules/@nestjs/core/injector/injector.js:286:19)
+      at TestingInjector.resolveComponentWrapper (../node_modules/@nestjs/testing/testing-injector.js:19:45)
+      at resolveParam (../node_modules/@nestjs/core/injector/injector.js:141:38)
+          at async Promise.all (index 16)
+      at TestingInjector.resolveConstructorParams (../node_modules/@nestjs/core/injector/injector.js:169:27)
+      at TestingInjector.loadInstance (../node_modules/@nestjs/core/injector/injector.js:75:13)
+      at TestingInjector.loadProvider (../node_modules/@nestjs/core/injector/injector.js:103:9)
+      at ../node_modules/@nestjs/core/injector/instance-loader.js:56:13
+          at async Promise.all (index 3)
+      at TestingInstanceLoader.createInstancesOfProviders (../node_modules/@nestjs/core/injector/instance-loader.js:55:9)
+      at ../node_modules/@nestjs/core/injector/instance-loader.js:40:13
+          at async Promise.all (index 1)
+      at TestingInstanceLoader.createInstances (../node_modules/@nestjs/core/injector/instance-loader.js:39:9)
+      at TestingInstanceLoader.createInstancesOfDependencies (../node_modules/@nestjs/core/injector/instance-loader.js:22:13)
+      at TestingInstanceLoader.createInstancesOfDependencies (../node_modules/@nestjs/testing/testing-instance-loader.js:9:9)
+      at TestingModuleBuilder.createInstancesOfDependencies (../node_modules/@nestjs/testing/testing-module.builder.js:118:9)
+      at TestingModuleBuilder.compile (../node_modules/@nestjs/testing/testing-module.builder.js:74:9)
+      at Object.<anonymous> (vendor/vendor.service.spec.ts:137:35)
+
+  ● VendorService › createMyProductsBulk returns per-row results and continues after failures by default
+
+    Nest can't resolve dependencies of the VendorService (UserRepository, ProductRepository, OrderRepository, DisputeRepository, OrderItemRepository, ProductImageRepository, TagRepository, UserReportRepository, ProductImpressionRepository, NotificationsService, DoSpacesService, CurrencyService, ShippingService, SettingsService, EmailService, InventoryLedgerService, ?, SellerWorkspaceRepository). Please make sure that the argument PosPortalOnboardingService at index [16] is available in the RootTestModule context.
+
+    Potential solutions:
+    - Is RootTestModule a valid NestJS module?
+    - If PosPortalOnboardingService is a provider, is it part of the current RootTestModule?
+    - If PosPortalOnboardingService is exported from a separate @Module, is that module imported within RootTestModule?
+      @Module({
+        imports: [ /* the Module containing PosPortalOnboardingService */ ]
+      })
+
+      135 |     Object.assign(inventoryLedgerMock, { recordMovement: j.fn() });
+      136 |
+    > 137 |     const module: TestingModule = await Test.createTestingModule({
+          |                                   ^
+      138 |       providers: [
+      139 |         VendorService,
+      140 |         { provide: getRepositoryToken(User), useValue: userRepoMock },
+
+      at TestingInjector.lookupComponentInParentModules (../node_modules/@nestjs/core/injector/injector.js:286:19)
+      at TestingInjector.resolveComponentWrapper (../node_modules/@nestjs/testing/testing-injector.js:19:45)
+      at resolveParam (../node_modules/@nestjs/core/injector/injector.js:141:38)
+          at async Promise.all (index 16)
+      at TestingInjector.resolveConstructorParams (../node_modules/@nestjs/core/injector/injector.js:169:27)
+      at TestingInjector.loadInstance (../node_modules/@nestjs/core/injector/injector.js:75:13)
+      at TestingInjector.loadProvider (../node_modules/@nestjs/core/injector/injector.js:103:9)
+      at ../node_modules/@nestjs/core/injector/instance-loader.js:56:13
+          at async Promise.all (index 3)
+      at TestingInstanceLoader.createInstancesOfProviders (../node_modules/@nestjs/core/injector/instance-loader.js:55:9)
+      at ../node_modules/@nestjs/core/injector/instance-loader.js:40:13
+          at async Promise.all (index 1)
+      at TestingInstanceLoader.createInstances (../node_modules/@nestjs/core/injector/instance-loader.js:39:9)
+      at TestingInstanceLoader.createInstancesOfDependencies (../node_modules/@nestjs/core/injector/instance-loader.js:22:13)
+      at TestingInstanceLoader.createInstancesOfDependencies (../node_modules/@nestjs/testing/testing-instance-loader.js:9:9)
+      at TestingModuleBuilder.createInstancesOfDependencies (../node_modules/@nestjs/testing/testing-module.builder.js:118:9)
+      at TestingModuleBuilder.compile (../node_modules/@nestjs/testing/testing-module.builder.js:74:9)
+      at Object.<anonymous> (vendor/vendor.service.spec.ts:137:35)
+
+  ● VendorService › createMyProductsBulk stops on first failure when continueOnError is false
+
+    Nest can't resolve dependencies of the VendorService (UserRepository, ProductRepository, OrderRepository, DisputeRepository, OrderItemRepository, ProductImageRepository, TagRepository, UserReportRepository, ProductImpressionRepository, NotificationsService, DoSpacesService, CurrencyService, ShippingService, SettingsService, EmailService, InventoryLedgerService, ?, SellerWorkspaceRepository). Please make sure that the argument PosPortalOnboardingService at index [16] is available in the RootTestModule context.
+
+    Potential solutions:
+    - Is RootTestModule a valid NestJS module?
+    - If PosPortalOnboardingService is a provider, is it part of the current RootTestModule?
+    - If PosPortalOnboardingService is exported from a separate @Module, is that module imported within RootTestModule?
+      @Module({
+        imports: [ /* the Module containing PosPortalOnboardingService */ ]
+      })
+
+      135 |     Object.assign(inventoryLedgerMock, { recordMovement: j.fn() });
+      136 |
+    > 137 |     const module: TestingModule = await Test.createTestingModule({
+          |                                   ^
+      138 |       providers: [
+      139 |         VendorService,
+      140 |         { provide: getRepositoryToken(User), useValue: userRepoMock },
+
+      at TestingInjector.lookupComponentInParentModules (../node_modules/@nestjs/core/injector/injector.js:286:19)
+      at TestingInjector.resolveComponentWrapper (../node_modules/@nestjs/testing/testing-injector.js:19:45)
+      at resolveParam (../node_modules/@nestjs/core/injector/injector.js:141:38)
+          at async Promise.all (index 16)
+      at TestingInjector.resolveConstructorParams (../node_modules/@nestjs/core/injector/injector.js:169:27)
+      at TestingInjector.loadInstance (../node_modules/@nestjs/core/injector/injector.js:75:13)
+      at TestingInjector.loadProvider (../node_modules/@nestjs/core/injector/injector.js:103:9)
+      at ../node_modules/@nestjs/core/injector/instance-loader.js:56:13
+          at async Promise.all (index 3)
+      at TestingInstanceLoader.createInstancesOfProviders (../node_modules/@nestjs/core/injector/instance-loader.js:55:9)
+      at ../node_modules/@nestjs/core/injector/instance-loader.js:40:13
+          at async Promise.all (index 1)
+      at TestingInstanceLoader.createInstances (../node_modules/@nestjs/core/injector/instance-loader.js:39:9)
+      at TestingInstanceLoader.createInstancesOfDependencies (../node_modules/@nestjs/core/injector/instance-loader.js:22:13)
+      at TestingInstanceLoader.createInstancesOfDependencies (../node_modules/@nestjs/testing/testing-instance-loader.js:9:9)
+      at TestingModuleBuilder.createInstancesOfDependencies (../node_modules/@nestjs/testing/testing-module.builder.js:118:9)
+      at TestingModuleBuilder.compile (../node_modules/@nestjs/testing/testing-module.builder.js:74:9)
+      at Object.<anonymous> (vendor/vendor.service.spec.ts:137:35)
+
+  ● VendorService › getVendorProducts returns explicit listedBy staff classification
+
+    Nest can't resolve dependencies of the VendorService (UserRepository, ProductRepository, OrderRepository, DisputeRepository, OrderItemRepository, ProductImageRepository, TagRepository, UserReportRepository, ProductImpressionRepository, NotificationsService, DoSpacesService, CurrencyService, ShippingService, SettingsService, EmailService, InventoryLedgerService, ?, SellerWorkspaceRepository). Please make sure that the argument PosPortalOnboardingService at index [16] is available in the RootTestModule context.
+
+    Potential solutions:
+    - Is RootTestModule a valid NestJS module?
+    - If PosPortalOnboardingService is a provider, is it part of the current RootTestModule?
+    - If PosPortalOnboardingService is exported from a separate @Module, is that module imported within RootTestModule?
+      @Module({
+        imports: [ /* the Module containing PosPortalOnboardingService */ ]
+      })
+
+      135 |     Object.assign(inventoryLedgerMock, { recordMovement: j.fn() });
+      136 |
+    > 137 |     const module: TestingModule = await Test.createTestingModule({
+          |                                   ^
+      138 |       providers: [
+      139 |         VendorService,
+      140 |         { provide: getRepositoryToken(User), useValue: userRepoMock },
+
+      at TestingInjector.lookupComponentInParentModules (../node_modules/@nestjs/core/injector/injector.js:286:19)
+      at TestingInjector.resolveComponentWrapper (../node_modules/@nestjs/testing/testing-injector.js:19:45)
+      at resolveParam (../node_modules/@nestjs/core/injector/injector.js:141:38)
+          at async Promise.all (index 16)
+      at TestingInjector.resolveConstructorParams (../node_modules/@nestjs/core/injector/injector.js:169:27)
+      at TestingInjector.loadInstance (../node_modules/@nestjs/core/injector/injector.js:75:13)
+      at TestingInjector.loadProvider (../node_modules/@nestjs/core/injector/injector.js:103:9)
+      at ../node_modules/@nestjs/core/injector/instance-loader.js:56:13
+          at async Promise.all (index 3)
+      at TestingInstanceLoader.createInstancesOfProviders (../node_modules/@nestjs/core/injector/instance-loader.js:55:9)
+      at ../node_modules/@nestjs/core/injector/instance-loader.js:40:13
+          at async Promise.all (index 1)
+      at TestingInstanceLoader.createInstances (../node_modules/@nestjs/core/injector/instance-loader.js:39:9)
+      at TestingInstanceLoader.createInstancesOfDependencies (../node_modules/@nestjs/core/injector/instance-loader.js:22:13)
+      at TestingInstanceLoader.createInstancesOfDependencies (../node_modules/@nestjs/testing/testing-instance-loader.js:9:9)
+      at TestingModuleBuilder.createInstancesOfDependencies (../node_modules/@nestjs/testing/testing-module.builder.js:118:9)
+      at TestingModuleBuilder.compile (../node_modules/@nestjs/testing/testing-module.builder.js:74:9)
+      at Object.<anonymous> (vendor/vendor.service.spec.ts:137:35)
+
+  ● VendorService › updateMyProduct avoids wiping images when only primaryImageId is sent
+
+    Nest can't resolve dependencies of the VendorService (UserRepository, ProductRepository, OrderRepository, DisputeRepository, OrderItemRepository, ProductImageRepository, TagRepository, UserReportRepository, ProductImpressionRepository, NotificationsService, DoSpacesService, CurrencyService, ShippingService, SettingsService, EmailService, InventoryLedgerService, ?, SellerWorkspaceRepository). Please make sure that the argument PosPortalOnboardingService at index [16] is available in the RootTestModule context.
+
+    Potential solutions:
+    - Is RootTestModule a valid NestJS module?
+    - If PosPortalOnboardingService is a provider, is it part of the current RootTestModule?
+    - If PosPortalOnboardingService is exported from a separate @Module, is that module imported within RootTestModule?
+      @Module({
+        imports: [ /* the Module containing PosPortalOnboardingService */ ]
+      })
+
+      135 |     Object.assign(inventoryLedgerMock, { recordMovement: j.fn() });
+      136 |
+    > 137 |     const module: TestingModule = await Test.createTestingModule({
+          |                                   ^
+      138 |       providers: [
+      139 |         VendorService,
+      140 |         { provide: getRepositoryToken(User), useValue: userRepoMock },
+
+      at TestingInjector.lookupComponentInParentModules (../node_modules/@nestjs/core/injector/injector.js:286:19)
+      at TestingInjector.resolveComponentWrapper (../node_modules/@nestjs/testing/testing-injector.js:19:45)
+      at resolveParam (../node_modules/@nestjs/core/injector/injector.js:141:38)
+          at async Promise.all (index 16)
+      at TestingInjector.resolveConstructorParams (../node_modules/@nestjs/core/injector/injector.js:169:27)
+      at TestingInjector.loadInstance (../node_modules/@nestjs/core/injector/injector.js:75:13)
+      at TestingInjector.loadProvider (../node_modules/@nestjs/core/injector/injector.js:103:9)
+      at ../node_modules/@nestjs/core/injector/instance-loader.js:56:13
+          at async Promise.all (index 3)
+      at TestingInstanceLoader.createInstancesOfProviders (../node_modules/@nestjs/core/injector/instance-loader.js:55:9)
+      at ../node_modules/@nestjs/core/injector/instance-loader.js:40:13
+          at async Promise.all (index 1)
+      at TestingInstanceLoader.createInstances (../node_modules/@nestjs/core/injector/instance-loader.js:39:9)
+      at TestingInstanceLoader.createInstancesOfDependencies (../node_modules/@nestjs/core/injector/instance-loader.js:22:13)
+      at TestingInstanceLoader.createInstancesOfDependencies (../node_modules/@nestjs/testing/testing-instance-loader.js:9:9)
+      at TestingModuleBuilder.createInstancesOfDependencies (../node_modules/@nestjs/testing/testing-module.builder.js:118:9)
+      at TestingModuleBuilder.compile (../node_modules/@nestjs/testing/testing-module.builder.js:74:9)
+      at Object.<anonymous> (vendor/vendor.service.spec.ts:137:35)
+
+  ● VendorService › updateMyProduct preserves custom variant attributes
+
+    Nest can't resolve dependencies of the VendorService (UserRepository, ProductRepository, OrderRepository, DisputeRepository, OrderItemRepository, ProductImageRepository, TagRepository, UserReportRepository, ProductImpressionRepository, NotificationsService, DoSpacesService, CurrencyService, ShippingService, SettingsService, EmailService, InventoryLedgerService, ?, SellerWorkspaceRepository). Please make sure that the argument PosPortalOnboardingService at index [16] is available in the RootTestModule context.
+
+    Potential solutions:
+    - Is RootTestModule a valid NestJS module?
+    - If PosPortalOnboardingService is a provider, is it part of the current RootTestModule?
+    - If PosPortalOnboardingService is exported from a separate @Module, is that module imported within RootTestModule?
+      @Module({
+        imports: [ /* the Module containing PosPortalOnboardingService */ ]
+      })
+
+      135 |     Object.assign(inventoryLedgerMock, { recordMovement: j.fn() });
+      136 |
+    > 137 |     const module: TestingModule = await Test.createTestingModule({
+          |                                   ^
+      138 |       providers: [
+      139 |         VendorService,
+      140 |         { provide: getRepositoryToken(User), useValue: userRepoMock },
+
+      at TestingInjector.lookupComponentInParentModules (../node_modules/@nestjs/core/injector/injector.js:286:19)
+      at TestingInjector.resolveComponentWrapper (../node_modules/@nestjs/testing/testing-injector.js:19:45)
+      at resolveParam (../node_modules/@nestjs/core/injector/injector.js:141:38)
+          at async Promise.all (index 16)
+      at TestingInjector.resolveConstructorParams (../node_modules/@nestjs/core/injector/injector.js:169:27)
+      at TestingInjector.loadInstance (../node_modules/@nestjs/core/injector/injector.js:75:13)
+      at TestingInjector.loadProvider (../node_modules/@nestjs/core/injector/injector.js:103:9)
+      at ../node_modules/@nestjs/core/injector/instance-loader.js:56:13
+          at async Promise.all (index 3)
+      at TestingInstanceLoader.createInstancesOfProviders (../node_modules/@nestjs/core/injector/instance-loader.js:55:9)
+      at ../node_modules/@nestjs/core/injector/instance-loader.js:40:13
+          at async Promise.all (index 1)
+      at TestingInstanceLoader.createInstances (../node_modules/@nestjs/core/injector/instance-loader.js:39:9)
+      at TestingInstanceLoader.createInstancesOfDependencies (../node_modules/@nestjs/core/injector/instance-loader.js:22:13)
+      at TestingInstanceLoader.createInstancesOfDependencies (../node_modules/@nestjs/testing/testing-instance-loader.js:9:9)
+      at TestingModuleBuilder.createInstancesOfDependencies (../node_modules/@nestjs/testing/testing-module.builder.js:118:9)
+      at TestingModuleBuilder.compile (../node_modules/@nestjs/testing/testing-module.builder.js:74:9)
+      at Object.<anonymous> (vendor/vendor.service.spec.ts:137:35)
+
+  ● VendorService › createShipment updates order and items
+
+    Nest can't resolve dependencies of the VendorService (UserRepository, ProductRepository, OrderRepository, DisputeRepository, OrderItemRepository, ProductImageRepository, TagRepository, UserReportRepository, ProductImpressionRepository, NotificationsService, DoSpacesService, CurrencyService, ShippingService, SettingsService, EmailService, InventoryLedgerService, ?, SellerWorkspaceRepository). Please make sure that the argument PosPortalOnboardingService at index [16] is available in the RootTestModule context.
+
+    Potential solutions:
+    - Is RootTestModule a valid NestJS module?
+    - If PosPortalOnboardingService is a provider, is it part of the current RootTestModule?
+    - If PosPortalOnboardingService is exported from a separate @Module, is that module imported within RootTestModule?
+      @Module({
+        imports: [ /* the Module containing PosPortalOnboardingService */ ]
+      })
+
+      135 |     Object.assign(inventoryLedgerMock, { recordMovement: j.fn() });
+      136 |
+    > 137 |     const module: TestingModule = await Test.createTestingModule({
+          |                                   ^
+      138 |       providers: [
+      139 |         VendorService,
+      140 |         { provide: getRepositoryToken(User), useValue: userRepoMock },
+
+      at TestingInjector.lookupComponentInParentModules (../node_modules/@nestjs/core/injector/injector.js:286:19)
+      at TestingInjector.resolveComponentWrapper (../node_modules/@nestjs/testing/testing-injector.js:19:45)
+      at resolveParam (../node_modules/@nestjs/core/injector/injector.js:141:38)
+          at async Promise.all (index 16)
+      at TestingInjector.resolveConstructorParams (../node_modules/@nestjs/core/injector/injector.js:169:27)
+      at TestingInjector.loadInstance (../node_modules/@nestjs/core/injector/injector.js:75:13)
+      at TestingInjector.loadProvider (../node_modules/@nestjs/core/injector/injector.js:103:9)
+      at ../node_modules/@nestjs/core/injector/instance-loader.js:56:13
+          at async Promise.all (index 3)
+      at TestingInstanceLoader.createInstancesOfProviders (../node_modules/@nestjs/core/injector/instance-loader.js:55:9)
+      at ../node_modules/@nestjs/core/injector/instance-loader.js:40:13
+          at async Promise.all (index 1)
+      at TestingInstanceLoader.createInstances (../node_modules/@nestjs/core/injector/instance-loader.js:39:9)
+      at TestingInstanceLoader.createInstancesOfDependencies (../node_modules/@nestjs/core/injector/instance-loader.js:22:13)
+      at TestingInstanceLoader.createInstancesOfDependencies (../node_modules/@nestjs/testing/testing-instance-loader.js:9:9)
+      at TestingModuleBuilder.createInstancesOfDependencies (../node_modules/@nestjs/testing/testing-module.builder.js:118:9)
+      at TestingModuleBuilder.compile (../node_modules/@nestjs/testing/testing-module.builder.js:74:9)
+      at Object.<anonymous> (vendor/vendor.service.spec.ts:137:35)
+
+FAIL src/vendor/vendor-private-note.access.spec.ts
+  ● Vendor private note access rules › owner can write private note on update
+
+    Nest can't resolve dependencies of the VendorService (UserRepository, ProductRepository, OrderRepository, DisputeRepository, OrderItemRepository, ProductImageRepository, TagRepository, UserReportRepository, ProductImpressionRepository, NotificationsService, DoSpacesService, CurrencyService, ShippingService, SettingsService, EmailService, ?, PosPortalOnboardingService, SellerWorkspaceRepository). Please make sure that the argument InventoryLedgerService at index [15] is available in the RootTestModule context.
+
+    Potential solutions:
+    - Is RootTestModule a valid NestJS module?
+    - If InventoryLedgerService is a provider, is it part of the current RootTestModule?
+    - If InventoryLedgerService is exported from a separate @Module, is that module imported within RootTestModule?
+      @Module({
+        imports: [ /* the Module containing InventoryLedgerService */ ]
+      })
+
+      76 |     Object.assign(impressionRepoMock, { find: jest.fn(async () => []) });
+      77 |
+    > 78 |     const module: TestingModule = await Test.createTestingModule({
+         |                                   ^
+      79 |       providers: [
+      80 |         VendorService,
+      81 |         { provide: getRepositoryToken(User), useValue: userRepoMock },
+
+      at TestingInjector.lookupComponentInParentModules (../node_modules/@nestjs/core/injector/injector.js:286:19)
+      at TestingInjector.resolveComponentWrapper (../node_modules/@nestjs/testing/testing-injector.js:19:45)
+      at resolveParam (../node_modules/@nestjs/core/injector/injector.js:141:38)
+          at async Promise.all (index 15)
+      at TestingInjector.resolveConstructorParams (../node_modules/@nestjs/core/injector/injector.js:169:27)
+      at TestingInjector.loadInstance (../node_modules/@nestjs/core/injector/injector.js:75:13)
+      at TestingInjector.loadProvider (../node_modules/@nestjs/core/injector/injector.js:103:9)
+      at ../node_modules/@nestjs/core/injector/instance-loader.js:56:13
+          at async Promise.all (index 3)
+      at TestingInstanceLoader.createInstancesOfProviders (../node_modules/@nestjs/core/injector/instance-loader.js:55:9)
+      at ../node_modules/@nestjs/core/injector/instance-loader.js:40:13
+          at async Promise.all (index 1)
+      at TestingInstanceLoader.createInstances (../node_modules/@nestjs/core/injector/instance-loader.js:39:9)
+      at TestingInstanceLoader.createInstancesOfDependencies (../node_modules/@nestjs/core/injector/instance-loader.js:22:13)
+      at TestingInstanceLoader.createInstancesOfDependencies (../node_modules/@nestjs/testing/testing-instance-loader.js:9:9)
+      at TestingModuleBuilder.createInstancesOfDependencies (../node_modules/@nestjs/testing/testing-module.builder.js:118:9)
+      at TestingModuleBuilder.compile (../node_modules/@nestjs/testing/testing-module.builder.js:74:9)
+      at Object.<anonymous> (vendor/vendor-private-note.access.spec.ts:78:35)
+
+  ● Vendor private note access rules › owner can read private note from getMyProduct
+
+    Nest can't resolve dependencies of the VendorService (UserRepository, ProductRepository, OrderRepository, DisputeRepository, OrderItemRepository, ProductImageRepository, TagRepository, UserReportRepository, ProductImpressionRepository, NotificationsService, DoSpacesService, CurrencyService, ShippingService, SettingsService, EmailService, ?, PosPortalOnboardingService, SellerWorkspaceRepository). Please make sure that the argument InventoryLedgerService at index [15] is available in the RootTestModule context.
+
+    Potential solutions:
+    - Is RootTestModule a valid NestJS module?
+    - If InventoryLedgerService is a provider, is it part of the current RootTestModule?
+    - If InventoryLedgerService is exported from a separate @Module, is that module imported within RootTestModule?
+      @Module({
+        imports: [ /* the Module containing InventoryLedgerService */ ]
+      })
+
+      76 |     Object.assign(impressionRepoMock, { find: jest.fn(async () => []) });
+      77 |
+    > 78 |     const module: TestingModule = await Test.createTestingModule({
+         |                                   ^
+      79 |       providers: [
+      80 |         VendorService,
+      81 |         { provide: getRepositoryToken(User), useValue: userRepoMock },
+
+      at TestingInjector.lookupComponentInParentModules (../node_modules/@nestjs/core/injector/injector.js:286:19)
+      at TestingInjector.resolveComponentWrapper (../node_modules/@nestjs/testing/testing-injector.js:19:45)
+      at resolveParam (../node_modules/@nestjs/core/injector/injector.js:141:38)
+          at async Promise.all (index 15)
+      at TestingInjector.resolveConstructorParams (../node_modules/@nestjs/core/injector/injector.js:169:27)
+      at TestingInjector.loadInstance (../node_modules/@nestjs/core/injector/injector.js:75:13)
+      at TestingInjector.loadProvider (../node_modules/@nestjs/core/injector/injector.js:103:9)
+      at ../node_modules/@nestjs/core/injector/instance-loader.js:56:13
+          at async Promise.all (index 3)
+      at TestingInstanceLoader.createInstancesOfProviders (../node_modules/@nestjs/core/injector/instance-loader.js:55:9)
+      at ../node_modules/@nestjs/core/injector/instance-loader.js:40:13
+          at async Promise.all (index 1)
+      at TestingInstanceLoader.createInstances (../node_modules/@nestjs/core/injector/instance-loader.js:39:9)
+      at TestingInstanceLoader.createInstancesOfDependencies (../node_modules/@nestjs/core/injector/instance-loader.js:22:13)
+      at TestingInstanceLoader.createInstancesOfDependencies (../node_modules/@nestjs/testing/testing-instance-loader.js:9:9)
+      at TestingModuleBuilder.createInstancesOfDependencies (../node_modules/@nestjs/testing/testing-module.builder.js:118:9)
+      at TestingModuleBuilder.compile (../node_modules/@nestjs/testing/testing-module.builder.js:74:9)
+      at Object.<anonymous> (vendor/vendor-private-note.access.spec.ts:78:35)
+
+  ● Vendor private note access rules › public product card payload never includes private note fields
+
+    Nest can't resolve dependencies of the VendorService (UserRepository, ProductRepository, OrderRepository, DisputeRepository, OrderItemRepository, ProductImageRepository, TagRepository, UserReportRepository, ProductImpressionRepository, NotificationsService, DoSpacesService, CurrencyService, ShippingService, SettingsService, EmailService, ?, PosPortalOnboardingService, SellerWorkspaceRepository). Please make sure that the argument InventoryLedgerService at index [15] is available in the RootTestModule context.
+
+    Potential solutions:
+    - Is RootTestModule a valid NestJS module?
+    - If InventoryLedgerService is a provider, is it part of the current RootTestModule?
+    - If InventoryLedgerService is exported from a separate @Module, is that module imported within RootTestModule?
+      @Module({
+        imports: [ /* the Module containing InventoryLedgerService */ ]
+      })
+
+      76 |     Object.assign(impressionRepoMock, { find: jest.fn(async () => []) });
+      77 |
+    > 78 |     const module: TestingModule = await Test.createTestingModule({
+         |                                   ^
+      79 |       providers: [
+      80 |         VendorService,
+      81 |         { provide: getRepositoryToken(User), useValue: userRepoMock },
+
+      at TestingInjector.lookupComponentInParentModules (../node_modules/@nestjs/core/injector/injector.js:286:19)
+      at TestingInjector.resolveComponentWrapper (../node_modules/@nestjs/testing/testing-injector.js:19:45)
+      at resolveParam (../node_modules/@nestjs/core/injector/injector.js:141:38)
+          at async Promise.all (index 15)
+      at TestingInjector.resolveConstructorParams (../node_modules/@nestjs/core/injector/injector.js:169:27)
+      at TestingInjector.loadInstance (../node_modules/@nestjs/core/injector/injector.js:75:13)
+      at TestingInjector.loadProvider (../node_modules/@nestjs/core/injector/injector.js:103:9)
+      at ../node_modules/@nestjs/core/injector/instance-loader.js:56:13
+          at async Promise.all (index 3)
+      at TestingInstanceLoader.createInstancesOfProviders (../node_modules/@nestjs/core/injector/instance-loader.js:55:9)
+      at ../node_modules/@nestjs/core/injector/instance-loader.js:40:13
+          at async Promise.all (index 1)
+      at TestingInstanceLoader.createInstances (../node_modules/@nestjs/core/injector/instance-loader.js:39:9)
+      at TestingInstanceLoader.createInstancesOfDependencies (../node_modules/@nestjs/core/injector/instance-loader.js:22:13)
+      at TestingInstanceLoader.createInstancesOfDependencies (../node_modules/@nestjs/testing/testing-instance-loader.js:9:9)
+      at TestingModuleBuilder.createInstancesOfDependencies (../node_modules/@nestjs/testing/testing-module.builder.js:118:9)
+      at TestingModuleBuilder.compile (../node_modules/@nestjs/testing/testing-module.builder.js:74:9)
+      at Object.<anonymous> (vendor/vendor-private-note.access.spec.ts:78:35)
+
+FAIL src/vendor/vendor.controller.spec.ts
+  ● VendorController › passes bulk product creation through to the service
+
+    TypeError: Cannot read properties of undefined (reading 'x-branch-id')
+
+      185 |   ) {
+      186 |     const branchHeader =
+    > 187 |       req.headers['x-branch-id'] || req.headers['x-workspace-id'];
+          |                  ^
+      188 |     const branchId = Number(
+      189 |       Array.isArray(branchHeader) ? branchHeader[0] : branchHeader,
+      190 |     );
+
+      at VendorController.createMyProductsBulk (vendor/vendor.controller.ts:187:18)
+      at Object.<anonymous> (vendor/vendor.controller.spec.ts:151:34)
+
+FAIL src/vendor/vendor-deliverers.geo.spec.ts
+  ● VendorService.searchDeliverers (geo) › falls back when no origin (recent)
+
+    Nest can't resolve dependencies of the VendorService (UserRepository, ProductRepository, OrderRepository, DisputeRepository, OrderItemRepository, ProductImageRepository, TagRepository, UserReportRepository, ProductImpressionRepository, NotificationsService, DoSpacesService, CurrencyService, ShippingService, SettingsService, EmailService, ?, PosPortalOnboardingService, SellerWorkspaceRepository). Please make sure that the argument InventoryLedgerService at index [15] is available in the RootTestModule context.
+
+    Potential solutions:
+    - Is RootTestModule a valid NestJS module?
+    - If InventoryLedgerService is a provider, is it part of the current RootTestModule?
+    - If InventoryLedgerService is exported from a separate @Module, is that module imported within RootTestModule?
+      @Module({
+        imports: [ /* the Module containing InventoryLedgerService */ ]
+      })
+
+      66 |
+      67 |   beforeAll(async () => {
+    > 68 |     const module = await Test.createTestingModule({
+         |                    ^
+      69 |       providers: [
+      70 |         VendorService,
+      71 |         { provide: getRepositoryToken(User), useClass: Repository },
+
+      at TestingInjector.lookupComponentInParentModules (../node_modules/@nestjs/core/injector/injector.js:286:19)
+      at TestingInjector.resolveComponentWrapper (../node_modules/@nestjs/testing/testing-injector.js:19:45)
+      at resolveParam (../node_modules/@nestjs/core/injector/injector.js:141:38)
+          at async Promise.all (index 15)
+      at TestingInjector.resolveConstructorParams (../node_modules/@nestjs/core/injector/injector.js:169:27)
+      at TestingInjector.loadInstance (../node_modules/@nestjs/core/injector/injector.js:75:13)
+      at TestingInjector.loadProvider (../node_modules/@nestjs/core/injector/injector.js:103:9)
+      at ../node_modules/@nestjs/core/injector/instance-loader.js:56:13
+          at async Promise.all (index 3)
+      at TestingInstanceLoader.createInstancesOfProviders (../node_modules/@nestjs/core/injector/instance-loader.js:55:9)
+      at ../node_modules/@nestjs/core/injector/instance-loader.js:40:13
+          at async Promise.all (index 1)
+      at TestingInstanceLoader.createInstances (../node_modules/@nestjs/core/injector/instance-loader.js:39:9)
+      at TestingInstanceLoader.createInstancesOfDependencies (../node_modules/@nestjs/core/injector/instance-loader.js:22:13)
+      at TestingInstanceLoader.createInstancesOfDependencies (../node_modules/@nestjs/testing/testing-instance-loader.js:9:9)
+      at TestingModuleBuilder.createInstancesOfDependencies (../node_modules/@nestjs/testing/testing-module.builder.js:118:9)
+      at TestingModuleBuilder.compile (../node_modules/@nestjs/testing/testing-module.builder.js:74:9)
+      at Object.<anonymous> (vendor/vendor-deliverers.geo.spec.ts:68:20)
+
+  ● VendorService.searchDeliverers (geo) › sorts by distance when origin provided and includes distanceKm
+
+    Nest can't resolve dependencies of the VendorService (UserRepository, ProductRepository, OrderRepository, DisputeRepository, OrderItemRepository, ProductImageRepository, TagRepository, UserReportRepository, ProductImpressionRepository, NotificationsService, DoSpacesService, CurrencyService, ShippingService, SettingsService, EmailService, ?, PosPortalOnboardingService, SellerWorkspaceRepository). Please make sure that the argument InventoryLedgerService at index [15] is available in the RootTestModule context.
+
+    Potential solutions:
+    - Is RootTestModule a valid NestJS module?
+    - If InventoryLedgerService is a provider, is it part of the current RootTestModule?
+    - If InventoryLedgerService is exported from a separate @Module, is that module imported within RootTestModule?
+      @Module({
+        imports: [ /* the Module containing InventoryLedgerService */ ]
+      })
+
+      66 |
+      67 |   beforeAll(async () => {
+    > 68 |     const module = await Test.createTestingModule({
+         |                    ^
+      69 |       providers: [
+      70 |         VendorService,
+      71 |         { provide: getRepositoryToken(User), useClass: Repository },
+
+      at TestingInjector.lookupComponentInParentModules (../node_modules/@nestjs/core/injector/injector.js:286:19)
+      at TestingInjector.resolveComponentWrapper (../node_modules/@nestjs/testing/testing-injector.js:19:45)
+      at resolveParam (../node_modules/@nestjs/core/injector/injector.js:141:38)
+          at async Promise.all (index 15)
+      at TestingInjector.resolveConstructorParams (../node_modules/@nestjs/core/injector/injector.js:169:27)
+      at TestingInjector.loadInstance (../node_modules/@nestjs/core/injector/injector.js:75:13)
+      at TestingInjector.loadProvider (../node_modules/@nestjs/core/injector/injector.js:103:9)
+      at ../node_modules/@nestjs/core/injector/instance-loader.js:56:13
+          at async Promise.all (index 3)
+      at TestingInstanceLoader.createInstancesOfProviders (../node_modules/@nestjs/core/injector/instance-loader.js:55:9)
+      at ../node_modules/@nestjs/core/injector/instance-loader.js:40:13
+          at async Promise.all (index 1)
+      at TestingInstanceLoader.createInstances (../node_modules/@nestjs/core/injector/instance-loader.js:39:9)
+      at TestingInstanceLoader.createInstancesOfDependencies (../node_modules/@nestjs/core/injector/instance-loader.js:22:13)
+      at TestingInstanceLoader.createInstancesOfDependencies (../node_modules/@nestjs/testing/testing-instance-loader.js:9:9)
+      at TestingModuleBuilder.createInstancesOfDependencies (../node_modules/@nestjs/testing/testing-module.builder.js:118:9)
+      at TestingModuleBuilder.compile (../node_modules/@nestjs/testing/testing-module.builder.js:74:9)
+      at Object.<anonymous> (vendor/vendor-deliverers.geo.spec.ts:68:20)
+
+  ● VendorService.searchDeliverers (geo) › applies radiusKm filtering
+
+    Nest can't resolve dependencies of the VendorService (UserRepository, ProductRepository, OrderRepository, DisputeRepository, OrderItemRepository, ProductImageRepository, TagRepository, UserReportRepository, ProductImpressionRepository, NotificationsService, DoSpacesService, CurrencyService, ShippingService, SettingsService, EmailService, ?, PosPortalOnboardingService, SellerWorkspaceRepository). Please make sure that the argument InventoryLedgerService at index [15] is available in the RootTestModule context.
+
+    Potential solutions:
+    - Is RootTestModule a valid NestJS module?
+    - If InventoryLedgerService is a provider, is it part of the current RootTestModule?
+    - If InventoryLedgerService is exported from a separate @Module, is that module imported within RootTestModule?
+      @Module({
+        imports: [ /* the Module containing InventoryLedgerService */ ]
+      })
+
+      66 |
+      67 |   beforeAll(async () => {
+    > 68 |     const module = await Test.createTestingModule({
+         |                    ^
+      69 |       providers: [
+      70 |         VendorService,
+      71 |         { provide: getRepositoryToken(User), useClass: Repository },
+
+      at TestingInjector.lookupComponentInParentModules (../node_modules/@nestjs/core/injector/injector.js:286:19)
+      at TestingInjector.resolveComponentWrapper (../node_modules/@nestjs/testing/testing-injector.js:19:45)
+      at resolveParam (../node_modules/@nestjs/core/injector/injector.js:141:38)
+          at async Promise.all (index 15)
+      at TestingInjector.resolveConstructorParams (../node_modules/@nestjs/core/injector/injector.js:169:27)
+      at TestingInjector.loadInstance (../node_modules/@nestjs/core/injector/injector.js:75:13)
+      at TestingInjector.loadProvider (../node_modules/@nestjs/core/injector/injector.js:103:9)
+      at ../node_modules/@nestjs/core/injector/instance-loader.js:56:13
+          at async Promise.all (index 3)
+      at TestingInstanceLoader.createInstancesOfProviders (../node_modules/@nestjs/core/injector/instance-loader.js:55:9)
+      at ../node_modules/@nestjs/core/injector/instance-loader.js:40:13
+          at async Promise.all (index 1)
+      at TestingInstanceLoader.createInstances (../node_modules/@nestjs/core/injector/instance-loader.js:39:9)
+      at TestingInstanceLoader.createInstancesOfDependencies (../node_modules/@nestjs/core/injector/instance-loader.js:22:13)
+      at TestingInstanceLoader.createInstancesOfDependencies (../node_modules/@nestjs/testing/testing-instance-loader.js:9:9)
+      at TestingModuleBuilder.createInstancesOfDependencies (../node_modules/@nestjs/testing/testing-module.builder.js:118:9)
+      at TestingModuleBuilder.compile (../node_modules/@nestjs/testing/testing-module.builder.js:74:9)
+      at Object.<anonymous> (vendor/vendor-deliverers.geo.spec.ts:68:20)
+
+PASS src/vendor/guards/vendor-permission.guard.spec.ts
+PASS src/vendor/vendor-portal-auth.controller.spec.ts
+
+Test Suites: 4 failed, 2 passed, 6 total
+Tests:       19 failed, 9 passed, 28 total
+Snapshots:   0 total
+Time:        4.56 s
+Ran all test suites matching /src\/vendor/i.
+error Command failed with exit code 1.
+info Visit https://yarnpkg.com/en/docs/cli/run for documentation about this command.

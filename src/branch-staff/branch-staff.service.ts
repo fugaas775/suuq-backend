@@ -1,19 +1,20 @@
 import {
+  ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import * as bcrypt from 'bcrypt';
 import { AuditService } from '../audit/audit.service';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import { AssignBranchStaffDto } from './dto/assign-branch-staff.dto';
-import { InviteBranchStaffDto } from './dto/invite-branch-staff.dto';
+import { CreateBranchStaffManualAccountDto } from './dto/create-branch-staff-manual-account.dto';
 import {
   BranchStaffAssignment,
   BranchStaffRole,
 } from './entities/branch-staff-assignment.entity';
-import { BranchStaffInvite } from './entities/branch-staff-invite.entity';
 import { Branch } from '../branches/entities/branch.entity';
 import { EmailService } from '../email/email.service';
 import { RetailEntitlementsService } from '../retail/retail-entitlements.service';
@@ -21,9 +22,11 @@ import { RetailTenant } from '../retail/entities/retail-tenant.entity';
 import { RetailModule } from '../retail/entities/tenant-module-entitlement.entity';
 import {
   TenantBillingInterval,
+  TenantSubscription,
   TenantSubscriptionStatus,
 } from '../retail/entities/tenant-subscription.entity';
 import { User } from '../users/entities/user.entity';
+import { POS_BRANCH_SUBSCRIPTION_OPTIONS } from './pos-workspace-pricing';
 
 export interface PosBranchSummary {
   branchId: number;
@@ -41,16 +44,14 @@ export interface PosBranchSummary {
   retailTenantId: number | null;
   retailTenantName: string | null;
   modules: RetailModule[];
-  workspaceStatus: 'ACTIVE' | 'TRIAL';
+  workspaceStatus: 'ACTIVE';
   subscriptionStatus: TenantSubscriptionStatus | null;
   planCode: string | null;
-  canStartTrial: boolean;
   canStartActivation: boolean;
   canOpenNow: boolean;
-  trialStartedAt: string | null;
-  trialEndsAt: string | null;
-  trialDaysRemaining: number | null;
   joinedAt: Date;
+  phone: string | null;
+  tinNumber: string | null;
 }
 
 export interface PosWorkspaceActivationCandidate {
@@ -62,6 +63,8 @@ export interface PosWorkspaceActivationCandidate {
   city: string | null;
   country: string | null;
   timezone: string | null;
+  phone: string | null;
+  tinNumber: string | null;
   role: BranchStaffRole;
   isOwner: boolean;
   isTenantOwner: boolean;
@@ -72,24 +75,27 @@ export interface PosWorkspaceActivationCandidate {
     | 'TENANT_INACTIVE'
     | 'MODULE_SETUP_REQUIRED'
     | 'PAYMENT_REQUIRED'
-    | 'TRIAL'
     | 'PAST_DUE'
     | 'EXPIRED'
     | 'CANCELLED';
   subscriptionStatus: TenantSubscriptionStatus | null;
   planCode: string | null;
-  canStartTrial: boolean;
   canStartActivation: boolean;
   canOpenNow: boolean;
-  trialStartedAt: string | null;
-  trialEndsAt: string | null;
-  trialDaysRemaining: number | null;
   activationBlockers: string[];
   pricing: {
     amount: number;
     currency: string;
     billingInterval: TenantBillingInterval;
     paymentMethod: string;
+    subscriptionOptions: Array<{
+      period: 'SIX_MONTHS' | 'ONE_YEAR';
+      months: number;
+      amount: number;
+      currency: string;
+      label: string;
+      planCode: string;
+    }>;
   };
 }
 
@@ -135,7 +141,6 @@ export interface PosPortalSupportDiagnostic {
 const POS_WORKSPACE_MONTHLY_PRICE = 1900;
 const POS_WORKSPACE_CURRENCY = 'ETB';
 const POS_WORKSPACE_PAYMENT_METHOD = 'EBIRR';
-
 @Injectable()
 export class BranchStaffService {
   private readonly logger = new Logger(BranchStaffService.name);
@@ -143,14 +148,14 @@ export class BranchStaffService {
   constructor(
     @InjectRepository(BranchStaffAssignment)
     private readonly assignmentsRepository: Repository<BranchStaffAssignment>,
-    @InjectRepository(BranchStaffInvite)
-    private readonly invitesRepository: Repository<BranchStaffInvite>,
     @InjectRepository(Branch)
     private readonly branchesRepository: Repository<Branch>,
     @InjectRepository(RetailTenant)
     private readonly retailTenantsRepository: Repository<RetailTenant>,
     @InjectRepository(User)
     private readonly usersRepository: Repository<User>,
+    @InjectRepository(TenantSubscription)
+    private readonly tenantSubscriptionsRepository: Repository<TenantSubscription>,
     private readonly emailService: EmailService,
     private readonly retailEntitlementsService: RetailEntitlementsService,
     private readonly auditService: AuditService,
@@ -213,6 +218,7 @@ export class BranchStaffService {
       dto.userId,
       dto.role,
       dto.permissions ?? [],
+      dto.assignedSurfaces ?? null,
     );
 
     await this.logManagerChangeIfNeeded({
@@ -228,6 +234,14 @@ export class BranchStaffService {
     });
 
     return result.assignment;
+  }
+
+  async findByBranch(branchId: number) {
+    return this.assignmentsRepository.find({
+      where: { branchId, isActive: true },
+      order: { createdAt: 'DESC' },
+      relations: { user: true, branch: true },
+    });
   }
 
   async unassign(
@@ -260,151 +274,6 @@ export class BranchStaffService {
     return savedAssignment;
   }
 
-  async invite(
-    branchId: number,
-    dto: InviteBranchStaffDto,
-    invitedByUserId?: number | null,
-  ) {
-    const branch = await this.branchesRepository.findOne({
-      where: { id: branchId },
-    });
-
-    if (!branch || !branch.isActive) {
-      throw new NotFoundException(`Active branch ${branchId} was not found`);
-    }
-
-    const email = this.normalizeEmail(dto.email);
-    const permissions = this.normalizePermissions(dto.permissions);
-    const user = await this.usersRepository.findOne({ where: { email } });
-    const existingInvite = await this.invitesRepository.findOne({
-      where: { branchId, email },
-    });
-
-    const invite = this.invitesRepository.create({
-      ...(existingInvite ?? {}),
-      branchId,
-      email,
-      role: dto.role,
-      permissions,
-      invitedByUserId:
-        invitedByUserId ?? existingInvite?.invitedByUserId ?? null,
-      acceptedByUserId: user?.id ?? null,
-      acceptedAt: user ? new Date() : null,
-      isActive: !user,
-    });
-    const savedInvite = await this.invitesRepository.save(invite);
-
-    let assignment: BranchStaffAssignment | null = null;
-    if (user) {
-      const assignmentResult = await this.upsertAssignment(
-        branchId,
-        user.id,
-        dto.role,
-        permissions,
-      );
-      assignment = assignmentResult.assignment;
-
-      await this.logManagerChangeIfNeeded({
-        branchId,
-        actor: {
-          id: invitedByUserId ?? null,
-          email: null,
-        },
-        userId: user.id,
-        email,
-        previousRole: assignmentResult.previousRole,
-        nextRole: assignment.role,
-        changeType:
-          assignmentResult.previousRole === BranchStaffRole.MANAGER
-            ? 'UPDATED'
-            : 'ASSIGNED',
-      });
-    }
-
-    if (!user && dto.role === BranchStaffRole.MANAGER) {
-      await this.logBranchManagerChange({
-        branchId,
-        actor: {
-          id: invitedByUserId ?? null,
-          email: null,
-        },
-        changeType: 'INVITED',
-        email,
-        previousRole: null,
-        nextRole: dto.role,
-      });
-    }
-
-    await this.sendInvitationEmail({
-      email,
-      branchName: branch.name,
-      isExistingUser: !!user,
-    });
-
-    return {
-      status: user ? 'LINKED_EXISTING_USER' : 'PENDING_SIGNUP',
-      invite: savedInvite,
-      assignment,
-    };
-  }
-
-  async findPendingInvitesByBranch(branchId: number) {
-    return this.invitesRepository.find({
-      where: { branchId, isActive: true },
-      order: { createdAt: 'DESC' },
-    });
-  }
-
-  async resendInvite(branchId: number, inviteId: number) {
-    const invite = await this.invitesRepository.findOne({
-      where: { id: inviteId, branchId, isActive: true },
-      relations: { branch: true },
-    });
-
-    if (!invite || !invite.branch?.isActive) {
-      throw new NotFoundException('Pending branch invite not found.');
-    }
-
-    await this.sendInvitationEmail({
-      email: invite.email,
-      branchName: invite.branch.name,
-      isExistingUser: false,
-    });
-
-    await this.invitesRepository.save(invite);
-
-    return {
-      status: 'RESENT',
-      invite,
-    };
-  }
-
-  async revokeInvite(branchId: number, inviteId: number) {
-    const invite = await this.invitesRepository.findOne({
-      where: { id: inviteId, branchId, isActive: true },
-    });
-
-    if (!invite) {
-      throw new NotFoundException('Pending branch invite not found.');
-    }
-
-    invite.isActive = false;
-    const savedInvite = await this.invitesRepository.save(invite);
-
-    return {
-      status: 'REVOKED',
-      invite: savedInvite,
-    };
-  }
-
-  async findByBranch(branchId: number) {
-    return this.assignmentsRepository.find({
-      where: { branchId, isActive: true },
-      order: { createdAt: 'DESC' },
-      relations: { user: true, branch: true },
-    });
-  }
-
   async getPosBranchSummariesForUser(user: {
     id: number;
     roles?: string[];
@@ -419,10 +288,7 @@ export class BranchStaffService {
               summary.branchId,
             );
 
-          if (
-            workspace.workspaceStatus !== 'ACTIVE' &&
-            workspace.workspaceStatus !== 'TRIAL'
-          ) {
+          if (workspace.workspaceStatus !== 'ACTIVE') {
             return null;
           }
 
@@ -443,12 +309,8 @@ export class BranchStaffService {
             workspaceStatus: workspace.workspaceStatus,
             subscriptionStatus: workspace.subscription?.status ?? null,
             planCode: workspace.subscription?.planCode ?? null,
-            canStartTrial: false,
             canStartActivation: false,
             canOpenNow: true,
-            trialStartedAt: workspace.trialStartedAt,
-            trialEndsAt: workspace.trialEndsAt,
-            trialDaysRemaining: workspace.trialDaysRemaining,
           };
         } catch (error) {
           if (
@@ -488,10 +350,6 @@ export class BranchStaffService {
           ['PAYMENT_REQUIRED', 'PAST_DUE', 'EXPIRED', 'CANCELLED'].includes(
             workspace.workspaceStatus,
           );
-        const canStartTrial =
-          canManageWorkspace &&
-          workspace.workspaceStatus === 'PAYMENT_REQUIRED' &&
-          !workspace.subscription;
 
         if (workspace.workspaceStatus === 'ACTIVE') {
           return null;
@@ -506,6 +364,8 @@ export class BranchStaffService {
           city: summary.city ?? null,
           country: summary.country ?? null,
           timezone: summary.timezone ?? null,
+          phone: summary.phone ?? null,
+          tinNumber: summary.tinNumber ?? null,
           role: summary.role,
           isOwner: summary.isOwner,
           isTenantOwner: summary.isTenantOwner,
@@ -514,12 +374,8 @@ export class BranchStaffService {
           workspaceStatus: workspace.workspaceStatus,
           subscriptionStatus: workspace.subscription?.status ?? null,
           planCode: workspace.subscription?.planCode ?? null,
-          canStartTrial,
           canStartActivation,
-          canOpenNow: workspace.workspaceStatus === 'TRIAL',
-          trialStartedAt: workspace.trialStartedAt,
-          trialEndsAt: workspace.trialEndsAt,
-          trialDaysRemaining: workspace.trialDaysRemaining,
+          canOpenNow: false,
           activationBlockers: this.describeActivationBlockers(workspace),
           pricing: this.getPosWorkspacePricing(),
         };
@@ -737,12 +593,24 @@ export class BranchStaffService {
     });
   }
 
-  getPosWorkspacePricing() {
+  getPosWorkspacePricing(): PosWorkspaceActivationCandidate['pricing'] {
+    // Effective monthly price is preserved (1,900 ETB) so derived metrics
+    // such as equity-partner payouts keep working unchanged. The activation
+    // surface should additionally show the per-period totals from
+    // `subscriptionOptions` and let the user pick 6 months or 1 year.
     return {
       amount: POS_WORKSPACE_MONTHLY_PRICE,
       currency: POS_WORKSPACE_CURRENCY,
       billingInterval: TenantBillingInterval.MONTHLY,
       paymentMethod: POS_WORKSPACE_PAYMENT_METHOD,
+      subscriptionOptions: POS_BRANCH_SUBSCRIPTION_OPTIONS.map((option) => ({
+        period: option.period,
+        months: option.months,
+        amount: option.amount,
+        currency: option.currency as string,
+        label: option.label,
+        planCode: option.planCode,
+      })),
     };
   }
 
@@ -753,7 +621,6 @@ export class BranchStaffService {
       | 'TENANT_INACTIVE'
       | 'MODULE_SETUP_REQUIRED'
       | 'PAYMENT_REQUIRED'
-      | 'TRIAL'
       | 'PAST_DUE'
       | 'EXPIRED'
       | 'CANCELLED';
@@ -768,7 +635,7 @@ export class BranchStaffService {
       !workspace.subscription
     ) {
       blockers.push(
-        'Start a 15-day trial or complete the first monthly billing activation for this branch workspace.',
+        'Complete the first monthly billing activation for this branch workspace.',
       );
     }
 
@@ -843,7 +710,7 @@ export class BranchStaffService {
       return Array.from(
         new Set([
           ...(params.primaryCandidate?.activationBlockers || []),
-          'Finish trial or billing activation for the selected branch workspace.',
+          'Finish billing activation for the selected branch workspace.',
           'If this is a legacy self-serve branch, backfill the missing serviceFormat before retrying activation.',
         ]),
       );
@@ -888,6 +755,8 @@ export class BranchStaffService {
         city: branch.city ?? null,
         country: branch.country ?? null,
         timezone: branch.timezone ?? null,
+        phone: branch.phone ?? null,
+        tinNumber: branch.tinNumber ?? null,
         role: BranchStaffRole.MANAGER,
         permissions: [],
         isOwner: true,
@@ -898,12 +767,8 @@ export class BranchStaffService {
         workspaceStatus: 'ACTIVE',
         subscriptionStatus: null,
         planCode: null,
-        canStartTrial: false,
         canStartActivation: false,
         canOpenNow: false,
-        trialStartedAt: null,
-        trialEndsAt: null,
-        trialDaysRemaining: null,
         joinedAt: branch.createdAt,
       });
     }
@@ -911,6 +776,12 @@ export class BranchStaffService {
     for (const tenant of tenantOwnedTenants) {
       for (const branch of tenant.branches ?? []) {
         if (!branch?.isActive || byBranchId.has(branch.id)) {
+          continue;
+        }
+        // Skip branches explicitly transferred to another owner.
+        // If ownerId is set and doesn't match the tenant owner, the branch
+        // has been transferred and should no longer appear via tenant access.
+        if (branch.ownerId != null && branch.ownerId !== user.id) {
           continue;
         }
 
@@ -923,6 +794,8 @@ export class BranchStaffService {
           city: branch.city ?? null,
           country: branch.country ?? null,
           timezone: branch.timezone ?? null,
+          phone: branch.phone ?? null,
+          tinNumber: branch.tinNumber ?? null,
           role: BranchStaffRole.MANAGER,
           permissions: [],
           isOwner: false,
@@ -933,12 +806,8 @@ export class BranchStaffService {
           workspaceStatus: 'ACTIVE',
           subscriptionStatus: null,
           planCode: null,
-          canStartTrial: false,
           canStartActivation: false,
           canOpenNow: false,
-          trialStartedAt: null,
-          trialEndsAt: null,
-          trialDaysRemaining: null,
           joinedAt: branch.createdAt,
         });
       }
@@ -967,6 +836,8 @@ export class BranchStaffService {
         city: existing?.city ?? assignment.branch.city ?? null,
         country: existing?.country ?? assignment.branch.country ?? null,
         timezone: existing?.timezone ?? assignment.branch.timezone ?? null,
+        phone: existing?.phone ?? assignment.branch.phone ?? null,
+        tinNumber: existing?.tinNumber ?? assignment.branch.tinNumber ?? null,
         role: assignment.role ?? existing?.role ?? BranchStaffRole.OPERATOR,
         permissions: mergedPermissions,
         isOwner: existing?.isOwner ?? false,
@@ -978,12 +849,8 @@ export class BranchStaffService {
         workspaceStatus: existing?.workspaceStatus ?? 'ACTIVE',
         subscriptionStatus: existing?.subscriptionStatus ?? null,
         planCode: existing?.planCode ?? null,
-        canStartTrial: existing?.canStartTrial ?? false,
         canStartActivation: existing?.canStartActivation ?? false,
         canOpenNow: existing?.canOpenNow ?? false,
-        trialStartedAt: existing?.trialStartedAt ?? null,
-        trialEndsAt: existing?.trialEndsAt ?? null,
-        trialDaysRemaining: existing?.trialDaysRemaining ?? null,
         joinedAt: existing?.joinedAt ?? assignment.createdAt,
       });
     }
@@ -1004,6 +871,7 @@ export class BranchStaffService {
     userId: number,
     role: BranchStaffRole,
     permissions: string[],
+    assignedSurfaces: string[] | null = null,
   ): Promise<{
     assignment: BranchStaffAssignment;
     previousRole: BranchStaffRole | null;
@@ -1018,6 +886,10 @@ export class BranchStaffService {
       userId,
       role,
       permissions,
+      assignedSurfaces:
+        assignedSurfaces && assignedSurfaces.length > 0
+          ? assignedSurfaces
+          : null,
       isActive: true,
     });
 
@@ -1109,5 +981,266 @@ export class BranchStaffService {
         `Failed to queue POS branch invite email for ${params.email}: ${message}`,
       );
     }
+  }
+
+  async createManualAccount(
+    branchId: number,
+    dto: CreateBranchStaffManualAccountDto,
+    actor: { id?: number | null; roles?: string[] },
+  ) {
+    await this.assertCanManageBranchStaff(actor, branchId);
+
+    const branch = await this.branchesRepository.findOne({
+      where: { id: branchId, isActive: true },
+      select: { id: true, name: true },
+    });
+    if (!branch) {
+      throw new NotFoundException('Branch not found.');
+    }
+
+    const normalizedUsername = String(dto.username || '')
+      .trim()
+      .toLowerCase();
+
+    const existing = await this.usersRepository.findOne({
+      where: { posUsername: normalizedUsername },
+      select: { id: true },
+    });
+    if (existing) {
+      throw new ConflictException({
+        error: {
+          code: 'POS_BRANCH_STAFF_USERNAME_CONFLICT',
+          message: 'This username is already in use.',
+          details: { field: 'username' },
+        },
+      });
+    }
+
+    const hashedPassword = await bcrypt.hash(dto.password, 10);
+    const internalEmail = `pos.m.${normalizedUsername}@sys.internal`;
+
+    const user = this.usersRepository.create({
+      email: internalEmail,
+      posUsername: normalizedUsername,
+      authMode: 'MANUAL',
+      displayName: dto.displayName?.trim() || null,
+      password: hashedPassword,
+      roles: [],
+      isActive: true,
+    });
+    await this.usersRepository.save(user);
+
+    const assignment = this.assignmentsRepository.create({
+      branchId: branch.id,
+      userId: user.id,
+      role: dto.role,
+      permissions: dto.permissions ?? [],
+      assignedSurfaces:
+        dto.assignedSurfaces && dto.assignedSurfaces.length > 0
+          ? dto.assignedSurfaces
+          : null,
+      isActive: true,
+    });
+    await this.assignmentsRepository.save(assignment);
+
+    return {
+      status: 'CREATED',
+      branchId: branch.id,
+      username: normalizedUsername,
+      user: {
+        id: user.id,
+        username: normalizedUsername,
+        email: null,
+        displayName: user.displayName ?? null,
+        authMode: 'MANUAL',
+      },
+      assignment: {
+        id: assignment.id,
+        branchId: assignment.branchId,
+        userId: assignment.userId,
+        role: assignment.role,
+        permissions: assignment.permissions,
+        assignedSurfaces: assignment.assignedSurfaces ?? null,
+        createdAt: assignment.createdAt,
+        username: normalizedUsername,
+        authMode: 'MANUAL',
+      },
+    };
+  }
+
+  async updateAssignment(
+    branchId: number,
+    userId: number,
+    dto: {
+      role?: BranchStaffRole;
+      permissions?: string[];
+      assignedSurfaces?: string[] | null;
+    },
+    actor: { id?: number | null; email?: string | null; roles?: string[] },
+  ) {
+    await this.assertCanManageBranchStaff(actor, branchId);
+
+    const assignment = await this.assignmentsRepository.findOne({
+      where: { branchId, userId, isActive: true },
+      relations: { user: true },
+    });
+    if (!assignment) {
+      throw new NotFoundException('Active branch staff assignment not found.');
+    }
+
+    const previousRole = assignment.role;
+
+    if (dto.role) {
+      assignment.role = dto.role;
+    }
+    if (Array.isArray(dto.permissions)) {
+      assignment.permissions = dto.permissions;
+    }
+    if (dto.assignedSurfaces !== undefined) {
+      assignment.assignedSurfaces =
+        dto.assignedSurfaces && dto.assignedSurfaces.length > 0
+          ? dto.assignedSurfaces
+          : null;
+    }
+
+    const saved = await this.assignmentsRepository.save(assignment);
+
+    if (dto.role && dto.role !== previousRole) {
+      await this.logManagerChangeIfNeeded({
+        branchId,
+        actor,
+        userId,
+        previousRole,
+        nextRole: saved.role,
+        changeType: 'UPDATED',
+      });
+    }
+
+    return saved;
+  }
+
+  async deleteStaffAccount(
+    branchId: number,
+    userId: number,
+    actor: { id?: number | null; email?: string | null; roles?: string[] },
+  ) {
+    await this.assertCanManageBranchStaff(actor, branchId);
+
+    const assignment = await this.assignmentsRepository.findOne({
+      where: { branchId, userId },
+      relations: { user: true },
+    });
+    if (!assignment) {
+      throw new NotFoundException('Branch staff assignment not found.');
+    }
+
+    const targetUser = assignment.user;
+    if (targetUser && targetUser.authMode !== 'MANUAL') {
+      throw new ForbiddenException({
+        error: {
+          code: 'POS_BRANCH_STAFF_DELETE_NOT_ALLOWED',
+          message:
+            'Only manually-created POS staff accounts can be deleted from this surface.',
+        },
+      });
+    }
+
+    const previousRole = assignment.role;
+    assignment.isActive = false;
+    assignment.assignedSurfaces = null;
+    await this.assignmentsRepository.save(assignment);
+
+    if (targetUser) {
+      targetUser.isActive = false;
+      targetUser.posUsername = null;
+      await this.usersRepository.save(targetUser);
+    }
+
+    await this.logManagerChangeIfNeeded({
+      branchId,
+      actor,
+      userId,
+      email: targetUser?.email ?? null,
+      previousRole,
+      nextRole: null,
+      changeType: 'REMOVED',
+    });
+
+    return {
+      status: 'DELETED',
+      branchId,
+      userId,
+      assignment: {
+        id: assignment.id,
+        branchId: assignment.branchId,
+        userId: assignment.userId,
+        role: assignment.role,
+        isActive: assignment.isActive,
+      },
+    };
+  }
+
+  async linkGoogleAccount(
+    actor: { id?: number | null },
+    googleUid: string,
+    googleEmail: string,
+  ) {
+    if (!actor?.id) {
+      throw new ForbiddenException('Authentication required.');
+    }
+    if (!googleUid || !googleEmail) {
+      throw new ConflictException({
+        error: {
+          code: 'POS_PORTAL_GOOGLE_LINK_INVALID',
+          message: 'Google account details are missing.',
+        },
+      });
+    }
+
+    const user = await this.usersRepository.findOne({
+      where: { id: actor.id },
+    });
+    if (!user) {
+      throw new NotFoundException('User not found.');
+    }
+
+    if (
+      user.email &&
+      user.email.toLowerCase() !== googleEmail.toLowerCase() &&
+      !user.email.endsWith('@sys.internal')
+    ) {
+      throw new ConflictException({
+        error: {
+          code: 'POS_PORTAL_GOOGLE_LINK_EMAIL_MISMATCH',
+          message:
+            'The Google account email must match the email on file for this user.',
+        },
+      });
+    }
+
+    const existing = await this.usersRepository.findOne({
+      where: { firebaseUid: googleUid },
+    });
+    if (existing && existing.id !== user.id) {
+      throw new ConflictException({
+        error: {
+          code: 'POS_PORTAL_GOOGLE_LINK_ALREADY_LINKED',
+          message: 'This Google account is already linked to a different user.',
+        },
+      });
+    }
+
+    user.firebaseUid = googleUid;
+    if (!user.email || user.email.endsWith('@sys.internal')) {
+      user.email = googleEmail;
+    }
+    await this.usersRepository.save(user);
+
+    return {
+      status: 'LINKED',
+      userId: user.id,
+      email: user.email,
+      googleLinked: true,
+    };
   }
 }

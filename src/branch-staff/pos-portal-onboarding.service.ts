@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Branch } from '../branches/entities/branch.entity';
@@ -11,6 +11,7 @@ import {
   getDefaultAllowedSelfServeServiceFormats,
 } from '../retail/self-serve-service-format.policy';
 import { User } from '../users/entities/user.entity';
+import { UserRole } from '../auth/roles.enum';
 import { BranchStaffService } from './branch-staff.service';
 import {
   BranchStaffAssignment,
@@ -20,14 +21,21 @@ import {
   CreatePosWorkspaceDto,
   CreatePosWorkspaceResponseDto,
 } from './dto/create-pos-workspace.dto';
+import { SellerWorkspace } from '../seller-workspace/entities/seller-workspace.entity';
 
 @Injectable()
 export class PosPortalOnboardingService {
+  private readonly logger = new Logger(PosPortalOnboardingService.name);
+
   constructor(
     @InjectRepository(Branch)
     private readonly branchesRepository: Repository<Branch>,
     @InjectRepository(BranchStaffAssignment)
     private readonly assignmentsRepository: Repository<BranchStaffAssignment>,
+    @InjectRepository(SellerWorkspace)
+    private readonly sellerWorkspacesRepository: Repository<SellerWorkspace>,
+    @InjectRepository(User)
+    private readonly usersRepository: Repository<User>,
     private readonly retailEntitlementsService: RetailEntitlementsService,
     private readonly branchStaffService: BranchStaffService,
   ) {}
@@ -92,6 +100,14 @@ export class PosPortalOnboardingService {
       }),
     );
 
+    // Ensure user.roles includes POS_MANAGER so admin dashboards can detect
+    // their POS trial/subscription status via sellerWorkspaceSummary.
+    if (!user.roles.includes(UserRole.POS_MANAGER)) {
+      await this.usersRepository.update(user.id, {
+        roles: [...user.roles, UserRole.POS_MANAGER],
+      });
+    }
+
     await Promise.all([
       this.retailEntitlementsService.upsertModuleEntitlement(
         tenant.id,
@@ -138,10 +154,14 @@ export class PosPortalOnboardingService {
       (candidate) => candidate.branchId === branch.id,
     );
 
+    // Link SellerWorkspace.primaryRetailTenantId so the vendor and POS tenant
+    // are unified from the moment the workspace is created.
+    void this.linkSellerWorkspaceTenant(user.id, tenant.id);
+
     return {
       onboardingState: 'BRANCH_WORKSPACE_ACTIVATION_REQUIRED',
       message:
-        'Your POS-S workspace was created. Start your 15-day free trial to open it.',
+        'Your POS-S workspace was created. Complete billing activation to open it.',
       workspace: {
         tenantId: tenant.id,
         tenantName: tenant.name,
@@ -155,5 +175,30 @@ export class PosPortalOnboardingService {
       activationCandidates: createdCandidates,
       onboardingProfile: updatedTenant?.onboardingProfile ?? null,
     };
+  }
+
+  private async linkSellerWorkspaceTenant(
+    ownerUserId: number,
+    retailTenantId: number,
+  ): Promise<void> {
+    try {
+      let workspace = await this.sellerWorkspacesRepository.findOne({
+        where: { ownerUserId },
+      });
+      if (!workspace) {
+        workspace = this.sellerWorkspacesRepository.create({ ownerUserId });
+      }
+      if (workspace.primaryRetailTenantId == null) {
+        workspace.primaryRetailTenantId = retailTenantId;
+        await this.sellerWorkspacesRepository.save(workspace);
+        this.logger.log(
+          `Linked SellerWorkspace for user #${ownerUserId} to tenant #${retailTenantId}`,
+        );
+      }
+    } catch (err: any) {
+      this.logger.warn(
+        `Failed to link SellerWorkspace for user #${ownerUserId}: ${err?.message}`,
+      );
+    }
   }
 }

@@ -354,6 +354,14 @@ export class User {
   @Column({ type: 'varchar', length: 32, nullable: true })
   mobileMoneyProvider?: string | null;
 
+  // --- Manual / POS Auth ---
+  @Column({ type: 'varchar', length: 64, nullable: true, unique: true })
+  @Index()
+  posUsername?: string | null;
+
+  @Column({ type: 'varchar', length: 16, nullable: true })
+  authMode?: string | null; // 'STANDARD' | 'MANUAL'
+
   // --- Password Reset ---
   @Exclude()
   @Column({ nullable: true })

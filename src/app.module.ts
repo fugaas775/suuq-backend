@@ -75,6 +75,7 @@ import { ProductAliasesModule } from './product-aliases/product-aliases.module';
 import { RetailModule } from './retail/retail.module';
 import { MarketingLeadsModule } from './marketing-leads/marketing-leads.module';
 import { SellerWorkspaceModule } from './seller-workspace/seller-workspace.module';
+import { BillingModule } from './billing/billing.module';
 import { HospitalityModule } from './hospitality/hospitality.module';
 
 @Module({
@@ -263,6 +264,7 @@ import { HospitalityModule } from './hospitality/hospitality.module';
     MarketingLeadsModule,
     HospitalityModule,
     SellerWorkspaceModule,
+    BillingModule,
   ],
   controllers: [AppController],
   // Apply rate limiting globally

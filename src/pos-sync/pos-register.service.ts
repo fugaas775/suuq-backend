@@ -6,6 +6,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Branch } from '../branches/entities/branch.entity';
+import { EmailService } from '../email/email.service';
 import { ClosePosRegisterSessionDto } from './dto/close-pos-register-session.dto';
 import { CreatePosRegisterSessionDto } from './dto/create-pos-register-session.dto';
 import { CreatePosSuspendedCartDto } from './dto/create-pos-suspended-cart.dto';
@@ -38,6 +39,7 @@ export class PosRegisterService {
     private readonly suspendedCartsRepository: Repository<PosSuspendedCart>,
     @InjectRepository(Branch)
     private readonly branchesRepository: Repository<Branch>,
+    private readonly emailService: EmailService,
   ) {}
 
   async findSessions(
@@ -152,9 +154,33 @@ export class PosRegisterService {
       ? { ...(session.metadata || {}), ...dto.metadata }
       : session.metadata || null;
 
-    return this.toSessionResponse(
-      await this.registerSessionsRepository.save(session),
-    );
+    const saved = await this.registerSessionsRepository.save(session);
+
+    // Non-fatal register close summary email to actor
+    if (actor.email) {
+      void (async () => {
+        try {
+          const branch = await this.branchesRepository.findOne({
+            where: { id: saved.branchId },
+          });
+          await this.emailService.sendRegisterCloseSummary(actor.email, {
+            branchName: branch?.name || `Branch #${saved.branchId}`,
+            registerId: saved.registerId,
+            openedAt: saved.openedAt,
+            closedAt: saved.closedAt ?? new Date(),
+            openingFloat: saved.openingFloat ?? null,
+            closingFloat: saved.closingFloat ?? null,
+            note: saved.note ?? null,
+          });
+        } catch (err: any) {
+          console.warn(
+            `[PosRegister] Close summary email failed for session ${saved.id}: ${err?.message}`,
+          );
+        }
+      })();
+    }
+
+    return this.toSessionResponse(saved);
   }
 
   async findSuspendedCarts(

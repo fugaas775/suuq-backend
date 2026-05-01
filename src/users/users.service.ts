@@ -180,6 +180,16 @@ export class UsersService {
     });
   }
 
+  async findByPosUsername(
+    posUsername: string,
+    relations: string[] = [],
+  ): Promise<User | null> {
+    return this.userRepository.findOne({
+      where: { posUsername: posUsername.trim().toLowerCase() },
+      relations,
+    });
+  }
+
   /**
    * Find user by ID (partial, nullable).
    */
@@ -378,6 +388,15 @@ export class UsersService {
     }
     if (filters?.createdTo) {
       qb.andWhere('u."createdAt" <= :to', { to: filters.createdTo });
+    }
+
+    // Internal: restrict to a pre-resolved set of user IDs (e.g. billing-status filter)
+    if (Array.isArray(filters?.userIds)) {
+      if (filters.userIds.length === 0) {
+        // No matches possible — short-circuit
+        return { users: [], total: 0, page: 1, pageSize: 0 };
+      }
+      qb.andWhere('u.id IN (:...userIds)', { userIds: filters.userIds });
     }
 
     // Sorting

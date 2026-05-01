@@ -11,6 +11,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, Repository } from 'typeorm';
 import { AuditService } from '../audit/audit.service';
 import { UserRole } from '../auth/roles.enum';
+import { EmailService } from '../email/email.service';
 import { InventoryLedgerService } from '../branches/inventory-ledger.service';
 import { ReplenishmentService } from '../branches/replenishment.service';
 import { Branch } from '../branches/entities/branch.entity';
@@ -126,6 +127,7 @@ export class PurchaseOrdersService {
     private readonly replenishmentService: ReplenishmentService,
     private readonly procurementWebhooksService: ProcurementWebhooksService,
     private readonly realtimeGateway: RealtimeGateway,
+    private readonly emailService: EmailService,
   ) {}
 
   async create(dto: CreatePurchaseOrderDto): Promise<PurchaseOrder> {
@@ -653,6 +655,41 @@ export class PurchaseOrdersService {
               | undefined) ?? null)
           : null,
     });
+
+    // Non-fatal PO status notification email to actor
+    if (actor.email) {
+      const poItems =
+        dto.status === PurchaseOrderStatus.RECEIVED
+          ? (updatedPurchaseOrder.items ?? []).map(
+              (item: PurchaseOrderItem) => ({
+                name:
+                  (item as any).product?.name ||
+                  (item as any).productName ||
+                  `Product #${item.productId}`,
+                qty: item.orderedQuantity,
+                unitCost: item.unitPrice,
+              }),
+            )
+          : undefined;
+
+      void this.emailService
+        .sendPurchaseOrderStatusEmail({
+          to: actor.email,
+          poNumber: updatedPurchaseOrder.orderNumber,
+          status: updatedPurchaseOrder.status,
+          branchName: (updatedPurchaseOrder as any).branch?.name,
+          supplierName: updatedPurchaseOrder.supplierProfile?.companyName,
+          total: updatedPurchaseOrder.total,
+          currency: updatedPurchaseOrder.currency,
+          reason: dto.reason ?? null,
+          items: poItems,
+        })
+        .catch((err: any) => {
+          this.logger.warn(
+            `PO status email failed for PO ${updatedPurchaseOrder.id}: ${err?.message}`,
+          );
+        });
+    }
 
     return updatedPurchaseOrder;
   }

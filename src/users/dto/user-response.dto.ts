@@ -48,6 +48,24 @@ export class UserPosBranchAssignmentDto {
 
   @Expose()
   joinedAt!: Date;
+
+  @Expose()
+  workspaceStatus!: string | null;
+
+  @Expose()
+  subscriptionStatus!: TenantSubscriptionStatus | null;
+
+  @Expose()
+  planCode!: string | null;
+
+  @Expose()
+  trialDaysRemaining!: number | null;
+
+  @Expose()
+  trialEndsAt!: string | null;
+
+  @Expose()
+  serviceFormat!: string | null;
 }
 
 @Exclude()

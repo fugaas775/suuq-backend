@@ -160,9 +160,9 @@ export class AdminController {
     const posAccess =
       await this.branchStaffService.getAdminPosAccessForUser(id);
     const roles = Array.isArray(user.roles) ? user.roles : [];
-    const sellerWorkspaceSummary = roles.some((role) => SELLER_ROLES.has(role))
-      ? await this.safeGetSellerWorkspaceSummary(id)
-      : null;
+    // Fetch regardless of roles: POS-only users may lack VENDOR/POS_MANAGER
+    // in their user.roles but still have an active POS workspace.
+    const sellerWorkspaceSummary = await this.safeGetSellerWorkspaceSummary(id);
     const dto = plainToInstance(AdminUserResponseDto, user, {
       excludeExtraneousValues: true,
     });

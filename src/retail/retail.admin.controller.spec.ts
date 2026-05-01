@@ -59,11 +59,11 @@ describe('RetailAdminController', () => {
 
   it('delegates preset application to the entitlements service', async () => {
     await controller.applyPlanPreset(5, {
-      presetCode: 'RETAIL_INTELLIGENCE',
+      presetCode: 'POS_BRANCH_SUBSCRIPTION',
     });
 
     expect(retailEntitlementsService.applyPlanPreset).toHaveBeenCalledWith(5, {
-      presetCode: 'RETAIL_INTELLIGENCE',
+      presetCode: 'POS_BRANCH_SUBSCRIPTION',
     });
   });
 

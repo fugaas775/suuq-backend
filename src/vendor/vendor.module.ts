@@ -28,6 +28,10 @@ import { VendorPortalAuthController } from './vendor-portal-auth.controller';
 import { EmailModule } from '../email/email.module';
 import { AuditModule } from '../audit/audit.module';
 import { BranchesModule } from '../branches/branches.module';
+import { BranchStaffModule } from '../branch-staff/branch-staff.module';
+import { BranchStaffAssignment } from '../branch-staff/entities/branch-staff-assignment.entity';
+import { Branch } from '../branches/entities/branch.entity';
+import { SellerWorkspace } from '../seller-workspace/entities/seller-workspace.entity';
 
 @Module({
   imports: [
@@ -36,6 +40,7 @@ import { BranchesModule } from '../branches/branches.module';
     EmailModule,
     AuditModule,
     BranchesModule,
+    BranchStaffModule,
     // ✨ 2. PRODUCTIMAGE ENTITY ADDED HERE
     TypeOrmModule.forFeature([
       User,
@@ -49,6 +54,9 @@ import { BranchesModule } from '../branches/branches.module';
       SearchKeyword,
       UserReport,
       VendorStaff,
+      BranchStaffAssignment,
+      Branch,
+      SellerWorkspace,
     ]),
     forwardRef(() => UsersModule),
     forwardRef(() => ProductsModule),

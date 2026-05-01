@@ -10,6 +10,7 @@ import { RetailModule } from '../retail/entities/tenant-module-entitlement.entit
 import {
   TenantBillingInterval,
   TenantSubscriptionStatus,
+  TenantSubscription,
 } from '../retail/entities/tenant-subscription.entity';
 import { InviteBranchStaffDto } from './dto/invite-branch-staff.dto';
 import { BranchStaffService } from './branch-staff.service';
@@ -17,7 +18,6 @@ import {
   BranchStaffAssignment,
   BranchStaffRole,
 } from './entities/branch-staff-assignment.entity';
-import { BranchStaffInvite } from './entities/branch-staff-invite.entity';
 import { ForbiddenException } from '@nestjs/common';
 
 describe('BranchStaffService', () => {
@@ -40,6 +40,7 @@ describe('BranchStaffService', () => {
   };
   let usersRepository: { findOne: jest.Mock };
   let retailTenantsRepository: { find: jest.Mock };
+  let tenantSubscriptionsRepository: any;
   let emailService: { send: jest.Mock };
   let auditService: { log: jest.Mock };
   let retailEntitlementsService: {
@@ -70,6 +71,7 @@ describe('BranchStaffService', () => {
     retailTenantsRepository = {
       find: jest.fn().mockResolvedValue([]),
     };
+    tenantSubscriptionsRepository = { findOne: jest.fn(), find: jest.fn() };
     emailService = {
       send: jest.fn(),
     };
@@ -88,10 +90,7 @@ describe('BranchStaffService', () => {
           provide: getRepositoryToken(BranchStaffAssignment),
           useValue: assignmentsRepository,
         },
-        {
-          provide: getRepositoryToken(BranchStaffInvite),
-          useValue: invitesRepository,
-        },
+
         {
           provide: getRepositoryToken(Branch),
           useValue: branchesRepository,
@@ -104,6 +103,11 @@ describe('BranchStaffService', () => {
           provide: getRepositoryToken(RetailTenant),
           useValue: retailTenantsRepository,
         },
+
+        {
+          provide: getRepositoryToken(TenantSubscription),
+          useValue: tenantSubscriptionsRepository,
+        },
         { provide: EmailService, useValue: emailService },
         { provide: AuditService, useValue: auditService },
         {
@@ -114,37 +118,6 @@ describe('BranchStaffService', () => {
     }).compile();
 
     service = module.get(BranchStaffService);
-  });
-
-  it('creates a pending invite for a non-existent user', async () => {
-    branchesRepository.findOne.mockResolvedValue({
-      id: 7,
-      name: 'Main Branch',
-      isActive: true,
-    });
-    usersRepository.findOne.mockResolvedValue(null);
-    invitesRepository.findOne.mockResolvedValue(null);
-
-    const result = await service.invite(
-      7,
-      {
-        email: 'New.Pos@Example.com',
-        role: BranchStaffRole.OPERATOR,
-        permissions: ['OPEN_REGISTER'],
-      } satisfies InviteBranchStaffDto,
-      91,
-    );
-
-    expect(result.status).toBe('PENDING_SIGNUP');
-    expect(invitesRepository.save).toHaveBeenCalledWith(
-      expect.objectContaining({
-        branchId: 7,
-        email: 'new.pos@example.com',
-        isActive: true,
-        invitedByUserId: 91,
-      }),
-    );
-    expect(emailService.send).toHaveBeenCalled();
   });
 
   it('allows a branch manager assignment to manage branch staff without a global role', async () => {
@@ -182,47 +155,6 @@ describe('BranchStaffService', () => {
     await expect(
       service.assertCanManageBranchStaff({ id: 52, roles: ['POS_MANAGER'] }, 7),
     ).rejects.toBeInstanceOf(ForbiddenException);
-  });
-
-  it('links an existing user immediately when invited by email', async () => {
-    branchesRepository.findOne.mockResolvedValue({
-      id: 7,
-      name: 'Main Branch',
-      isActive: true,
-    });
-    usersRepository.findOne.mockResolvedValue({
-      id: 51,
-      email: 'existing@example.com',
-    });
-    invitesRepository.findOne.mockResolvedValue(null);
-    assignmentsRepository.findOne.mockResolvedValue(null);
-
-    const result = await service.invite(
-      7,
-      {
-        email: 'existing@example.com',
-        role: BranchStaffRole.MANAGER,
-        permissions: ['OPEN_REGISTER', 'VIEW_REPORTS'],
-      } satisfies InviteBranchStaffDto,
-      91,
-    );
-
-    expect(result.status).toBe('LINKED_EXISTING_USER');
-    expect(assignmentsRepository.save).toHaveBeenCalledWith(
-      expect.objectContaining({
-        branchId: 7,
-        userId: 51,
-        role: BranchStaffRole.MANAGER,
-        isActive: true,
-      }),
-    );
-    expect(invitesRepository.save).toHaveBeenCalledWith(
-      expect.objectContaining({
-        email: 'existing@example.com',
-        isActive: false,
-        acceptedByUserId: 51,
-      }),
-    );
   });
 
   it('upserts an existing branch assignment instead of creating a duplicate', async () => {
@@ -362,6 +294,24 @@ describe('BranchStaffService', () => {
             currency: 'ETB',
             billingInterval: TenantBillingInterval.MONTHLY,
             paymentMethod: 'EBIRR',
+            subscriptionOptions: [
+              {
+                period: 'SIX_MONTHS',
+                months: 6,
+                amount: 11400,
+                currency: 'ETB',
+                label: '6 months',
+                planCode: 'POS_BRANCH_6M',
+              },
+              {
+                period: 'ONE_YEAR',
+                months: 12,
+                amount: 22800,
+                currency: 'ETB',
+                label: '1 year',
+                planCode: 'POS_BRANCH_1Y',
+              },
+            ],
           },
         },
       ] as any);
@@ -403,68 +353,6 @@ describe('BranchStaffService', () => {
         summary: expect.objectContaining({
           status: 'USER_NOT_FOUND',
         }),
-      }),
-    );
-  });
-
-  it('lists only active pending invites for a branch', async () => {
-    invitesRepository.find.mockResolvedValue([
-      { id: 11, branchId: 7, email: 'pending@example.com', isActive: true },
-    ]);
-
-    const result = await service.findPendingInvitesByBranch(7);
-
-    expect(invitesRepository.find).toHaveBeenCalledWith({
-      where: { branchId: 7, isActive: true },
-      order: { createdAt: 'DESC' },
-    });
-    expect(result).toEqual([
-      { id: 11, branchId: 7, email: 'pending@example.com', isActive: true },
-    ]);
-  });
-
-  it('resends an active pending invite', async () => {
-    invitesRepository.findOne.mockResolvedValue({
-      id: 12,
-      branchId: 7,
-      email: 'pending@example.com',
-      isActive: true,
-      branch: { id: 7, name: 'Main Branch', isActive: true },
-    });
-
-    const result = await service.resendInvite(7, 12);
-
-    expect(emailService.send).toHaveBeenCalled();
-    expect(invitesRepository.save).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 12, email: 'pending@example.com' }),
-    );
-    expect(result).toEqual(
-      expect.objectContaining({
-        status: 'RESENT',
-      }),
-    );
-  });
-
-  it('revokes an active pending invite', async () => {
-    invitesRepository.findOne.mockResolvedValue({
-      id: 13,
-      branchId: 7,
-      email: 'pending@example.com',
-      isActive: true,
-    });
-
-    const result = await service.revokeInvite(7, 13);
-
-    expect(invitesRepository.save).toHaveBeenCalledWith(
-      expect.objectContaining({
-        id: 13,
-        isActive: false,
-      }),
-    );
-    expect(result).toEqual(
-      expect.objectContaining({
-        status: 'REVOKED',
-        invite: expect.objectContaining({ id: 13, isActive: false }),
       }),
     );
   });
@@ -601,57 +489,32 @@ describe('BranchStaffService', () => {
         workspaceStatus: 'PAST_DUE',
         subscriptionStatus: TenantSubscriptionStatus.PAST_DUE,
         planCode: 'POS_BRANCH',
-        canStartTrial: false,
         canStartActivation: true,
         canOpenNow: false,
-        trialStartedAt: null,
-        trialEndsAt: null,
-        trialDaysRemaining: null,
         pricing: {
           amount: 1900,
           currency: 'ETB',
           billingInterval: TenantBillingInterval.MONTHLY,
           paymentMethod: 'EBIRR',
+          subscriptionOptions: [
+            {
+              period: 'SIX_MONTHS',
+              months: 6,
+              amount: 11400,
+              currency: 'ETB',
+              label: '6 months',
+              planCode: 'POS_BRANCH_6M',
+            },
+            {
+              period: 'ONE_YEAR',
+              months: 12,
+              amount: 22800,
+              currency: 'ETB',
+              label: '1 year',
+              planCode: 'POS_BRANCH_1Y',
+            },
+          ],
         },
-      }),
-    ]);
-  });
-
-  it('treats trial workspaces as POS-ready branch summaries', async () => {
-    branchesRepository.find.mockResolvedValue([
-      {
-        id: 5,
-        name: 'HQ Branch',
-        code: 'HQ-5',
-        retailTenantId: 21,
-        createdAt: new Date('2026-03-01T00:00:00.000Z'),
-      },
-    ]);
-    assignmentsRepository.find.mockResolvedValue([]);
-    retailEntitlementsService.getBranchWorkspaceStatus.mockResolvedValue({
-      tenant: { id: 21, name: 'HQ Retail' },
-      subscription: {
-        status: TenantSubscriptionStatus.TRIAL,
-        planCode: 'POS_BRANCH',
-      },
-      entitlements: [{ module: RetailModule.POS_CORE }],
-      hasPosModule: true,
-      workspaceStatus: 'TRIAL',
-      trialStartedAt: '2026-04-03T00:00:00.000Z',
-      trialEndsAt: '2026-04-18T00:00:00.000Z',
-      trialDaysRemaining: 15,
-    });
-
-    const result = await service.getPosBranchSummariesForUser({ id: 7 });
-
-    expect(result).toEqual([
-      expect.objectContaining({
-        branchId: 5,
-        workspaceStatus: 'TRIAL',
-        subscriptionStatus: TenantSubscriptionStatus.TRIAL,
-        canOpenNow: true,
-        trialEndsAt: '2026-04-18T00:00:00.000Z',
-        trialDaysRemaining: 15,
       }),
     ]);
   });

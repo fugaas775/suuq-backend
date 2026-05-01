@@ -1,0 +1,67 @@
+yarn run v1.22.22
+$ jest src/branch-staff/pos-portal-auth.controller.spec.ts
+  console.log
+    [dotenv@17.2.1] injecting env (79) from .env -- tip: ⚙️  override existing env vars with { override: true }
+
+      at _log (../node_modules/dotenv/lib/main.js:139:11)
+
+FAIL src/branch-staff/pos-portal-auth.controller.spec.ts
+  PosPortalAuthController
+    ✓ returns a portal-ready payload for Google sign-in (17 ms)
+    ✓ rejects accounts without POS branch access (4 ms)
+    ✓ returns activation-required denial with the current bearer token on the session endpoint (2 ms)
+    ✓ returns onboarding-aware denial when Google creates a new account without POS access (2 ms)
+    ✕ returns activation-required denial when a linked branch workspace still needs POS billing activation (28 ms)
+    ✓ starts an Ebirr activation payment for an authenticated workspace activation request (2 ms)
+    ✓ starts a trial for an authenticated workspace activation request (9 ms)
+    ✓ creates a first workspace for an authenticated user without POS access (3 ms)
+
+  ● PosPortalAuthController › returns activation-required denial when a linked branch workspace still needs POS billing activation
+
+    expect(received).rejects.toMatchObject(expected)
+
+    - Expected  - 22
+    + Received  +  1
+
+    - Object {
+    -   "response": ObjectContaining {
+    -     "activationAccessToken": "access-token",
+    -     "activationCandidates": Array [
+    -       ObjectContaining {
+    -         "activationBlockers": ArrayContaining [
+    -           "Start a 15-day trial or complete the first monthly billing activation for this branch workspace.",
+    -         ],
+    -         "branchId": 9,
+    -         "canStartTrial": true,
+    -         "workspaceStatus": "PAYMENT_REQUIRED",
+    -       },
+    -     ],
+    -     "code": "POS_PORTAL_ACTIVATION_REQUIRED",
+    -     "onboardingState": "BRANCH_WORKSPACE_ACTIVATION_REQUIRED",
+    -     "pricing": ObjectContaining {
+    -       "amount": 1900,
+    -       "currency": "ETB",
+    -       "paymentMethod": "EBIRR",
+    -     },
+    -   },
+    - }
+    + [TypeError: dto.resolveIdentifier is not a function]
+
+      306 |         route: { path: '/pos-portal/auth/login' },
+      307 |       } as any),
+    > 308 |     ).rejects.toMatchObject({
+          |               ^
+      309 |       response: expect.objectContaining({
+      310 |         code: 'POS_PORTAL_ACTIVATION_REQUIRED',
+      311 |         onboardingState: 'BRANCH_WORKSPACE_ACTIVATION_REQUIRED',
+
+      at Object.toMatchObject (../node_modules/expect/build/index.js:218:22)
+      at Object.<anonymous> (branch-staff/pos-portal-auth.controller.spec.ts:308:15)
+
+Test Suites: 1 failed, 1 total
+Tests:       1 failed, 7 passed, 8 total
+Snapshots:   0 total
+Time:        2.312 s, estimated 3 s
+Ran all test suites matching /src\/branch-staff\/pos-portal-auth.controller.spec.ts/i.
+error Command failed with exit code 1.
+info Visit https://yarnpkg.com/en/docs/cli/run for documentation about this command.

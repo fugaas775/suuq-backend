@@ -5,6 +5,11 @@ import { BranchStaffService } from './branch-staff.service';
 import { PosWorkspaceActivationService } from './pos-workspace-activation.service';
 import { RetailEntitlementsService } from '../retail/retail-entitlements.service';
 import { EbirrService } from '../ebirr/ebirr.service';
+import { Branch } from '../branches/entities/branch.entity';
+import { BranchStaffAssignment } from './entities/branch-staff-assignment.entity';
+import { User } from '../users/entities/user.entity';
+import { EquityPartnerService } from '../retail/equity-partner.service';
+import { EmailService } from '../email/email.service';
 import {
   TenantSubscription,
   TenantSubscriptionStatus,
@@ -21,12 +26,23 @@ describe('PosWorkspaceActivationService', () => {
     getPosWorkspaceActivationCandidatesForUser: jest.fn(),
   };
 
+  const branchesRepository = {
+    find: jest.fn(),
+  };
+
+  const branchStaffAssignmentsRepository = {
+    find: jest.fn(),
+  };
+
   const retailEntitlementsServiceMock = {
     getBranchWorkspaceStatus: jest.fn(),
   };
 
   const ebirrServiceMock = {
     initiatePayment: jest.fn(),
+    expireStalePendingTransactionsForPrefix: jest
+      .fn()
+      .mockResolvedValue(undefined),
   };
 
   const tenantSubscriptionsRepository = {
@@ -45,6 +61,11 @@ describe('PosWorkspaceActivationService', () => {
     tenantSubscriptionsRepository.save.mockImplementation(
       async (value) => value,
     );
+    ebirrServiceMock.expireStalePendingTransactionsForPrefix.mockResolvedValue(
+      undefined,
+    );
+    branchesRepository.find.mockReset();
+    branchStaffAssignmentsRepository.find.mockReset();
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -62,6 +83,36 @@ describe('PosWorkspaceActivationService', () => {
         {
           provide: getRepositoryToken(TenantModuleEntitlement),
           useValue: tenantModuleEntitlementsRepository,
+        },
+        {
+          provide: getRepositoryToken(Branch),
+          useValue: branchesRepository,
+        },
+        {
+          provide: getRepositoryToken(BranchStaffAssignment),
+          useValue: branchStaffAssignmentsRepository,
+        },
+        {
+          provide: EquityPartnerService,
+          useValue: {
+            createMonthlyPayoutsForBranch: jest
+              .fn()
+              .mockResolvedValue(undefined),
+            findActivePartnerByReferralCode: jest.fn().mockResolvedValue(null),
+          },
+        },
+        {
+          provide: EmailService,
+          useValue: {
+            sendPosBranchCreatedEmail: jest.fn().mockResolvedValue(undefined),
+            sendBranchActivationPaymentEmail: jest
+              .fn()
+              .mockResolvedValue(undefined),
+          },
+        },
+        {
+          provide: getRepositoryToken(User),
+          useValue: { findOne: jest.fn().mockResolvedValue(null) },
         },
       ],
     }).compile();
@@ -119,7 +170,7 @@ describe('PosWorkspaceActivationService', () => {
     expect(ebirrServiceMock.initiatePayment).toHaveBeenCalledWith(
       expect.objectContaining({
         phoneNumber: '0911223344',
-        amount: '1900.00',
+        amount: '11400.00',
         invoiceId: 'POSACTINV-21',
       }),
     );
@@ -186,8 +237,11 @@ describe('PosWorkspaceActivationService', () => {
       expect.objectContaining({
         id: 8,
         tenantId: 31,
+        branchId: 21,
         status: TenantSubscriptionStatus.ACTIVE,
         amount: 1900,
+        amountTotal: 11400,
+        periodMonths: 6,
         currency: 'ETB',
         autoRenew: true,
         metadata: expect.objectContaining({
@@ -248,7 +302,7 @@ describe('PosWorkspaceActivationService', () => {
     ).resolves.toBeNull();
   });
 
-  it('starts a 15-day trial for an eligible manager-owned workspace', async () => {
+  it.skip('starts a 15-day trial — removed feature', async () => {
     branchStaffServiceMock.getPosWorkspaceActivationCandidatesForUser.mockResolvedValue(
       [
         {
@@ -310,7 +364,7 @@ describe('PosWorkspaceActivationService', () => {
     });
   });
 
-  it('starts a trial when service format is present even if primary retail category is the only blocker', async () => {
+  it.skip('starts a trial when service format — removed feature', async () => {
     branchStaffServiceMock.getPosWorkspaceActivationCandidatesForUser.mockResolvedValue(
       [
         {
@@ -357,5 +411,74 @@ describe('PosWorkspaceActivationService', () => {
       serviceFormat: 'RETAIL',
     });
     expect(tenantSubscriptionsRepository.save).toHaveBeenCalled();
+  });
+
+  it('returns pending additional branch creation when Ebirr responds with gateway-timeout code E102051', async () => {
+    branchStaffAssignmentsRepository.find.mockResolvedValue([
+      { branchId: 21, userId: 9, isActive: true },
+    ]);
+    branchesRepository.find.mockResolvedValue([{ id: 21, retailTenantId: 31 }]);
+    tenantSubscriptionsRepository.findOne.mockResolvedValue({
+      id: 8,
+      tenantId: 31,
+      status: TenantSubscriptionStatus.ACTIVE,
+      metadata: null,
+    });
+    const gatewayTimeoutError: any = new Error(
+      'Transaction TIMEOUT (Gateway Timeout Error) (Code: E102051)',
+    );
+    gatewayTimeoutError.providerCode = 'E102051';
+    ebirrServiceMock.initiatePayment.mockRejectedValue(gatewayTimeoutError);
+
+    const result = await service.startAdditionalBranchCreationPayment(
+      { id: 9, roles: ['POS_MANAGER'], email: 'seller@suuq.test' },
+      {
+        branchName: 'Smart Barber',
+        serviceFormat: 'BARBER',
+        city: 'Addis Ababa',
+        country: 'Ethiopia',
+        address: 'Bole',
+        defaultCurrency: 'ETB',
+        phoneNumber: '0911223344',
+        phone: '0911223344',
+        tinNumber: '1234567890',
+      },
+    );
+
+    expect(result).toMatchObject({
+      status: 'PENDING',
+      branchId: null,
+      checkoutUrl: null,
+      receiveCode: null,
+    });
+    expect(result.referenceId).toMatch(/^POSBRANCH-31-9-/);
+    expect(result.providerMessage).toMatch(
+      /wait for provider confirmation to create the branch automatically/i,
+    );
+    expect(tenantSubscriptionsRepository.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          pendingBranchCreation: expect.objectContaining({
+            branchName: 'Smart Barber',
+            serviceFormat: 'BARBER',
+          }),
+        }),
+      }),
+    );
+  });
+
+  it('does not import or depend on Product / BranchInventory entities (no product copy on equity-partner activation)', () => {
+    // Regression guard for issue #4 (Phase 5): when an equity partner referral
+    // creates a branch, no product/inventory rows must be seeded from anywhere.
+    // The service should never have product/inventory repositories injected.
+
+    const fs = require('fs');
+    const source: string = fs.readFileSync(
+      require.resolve('./pos-workspace-activation.service'),
+      'utf-8',
+    );
+    expect(source).not.toMatch(/from\s+['"][^'"]*product[^'"]*['"]/i);
+    expect(source).not.toMatch(/BranchInventory/);
+    expect(source).not.toMatch(/Product\b/);
   });
 });

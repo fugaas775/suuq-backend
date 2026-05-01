@@ -7,6 +7,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Branch } from '../branches/entities/branch.entity';
+import { BranchStaffAssignment } from '../branch-staff/entities/branch-staff-assignment.entity';
 import {
   Category,
   PosUserFitCategory,
@@ -48,7 +49,6 @@ type PosWorkspaceStatus =
   | 'TENANT_INACTIVE'
   | 'MODULE_SETUP_REQUIRED'
   | 'PAYMENT_REQUIRED'
-  | 'TRIAL'
   | 'PAST_DUE'
   | 'EXPIRED'
   | 'CANCELLED';
@@ -67,7 +67,6 @@ type RetailTenantWithPosWorkspaceAudit = RetailTenant & {
       | 'NO_BRANCH_WORKSPACE';
     activationStatus:
       | 'ACTIVATED'
-      | 'TRIAL'
       | 'PENDING_MONTHLY_BILLING'
       | 'PAST_DUE'
       | 'EXPIRED'
@@ -91,9 +90,6 @@ type RetailTenantWithPosWorkspaceAudit = RetailTenant & {
       subscriptionStatus: TenantSubscriptionStatus | null;
       planCode: string | null;
       isSelfServeProvisioned: boolean;
-      trialStartedAt: string | null;
-      trialEndsAt: string | null;
-      trialDaysRemaining: number | null;
     }>;
   };
 };
@@ -113,7 +109,31 @@ export class RetailEntitlementsService {
     private readonly branchesRepository: Repository<Branch>,
     @InjectRepository(User)
     private readonly usersRepository: Repository<User>,
+    @InjectRepository(BranchStaffAssignment)
+    private readonly branchStaffAssignmentRepository: Repository<BranchStaffAssignment>,
   ) {}
+
+  /**
+   * Returns true when the given user is authorised to operate on a branch:
+   * either they own the branch or they have an active staff assignment for it.
+   */
+  async isUserActiveBranchMember(
+    userId: number,
+    branchId: number,
+  ): Promise<boolean> {
+    const branch = await this.branchesRepository.findOne({
+      where: { id: branchId },
+      select: ['id', 'ownerId'],
+    });
+    if (!branch) return false;
+    if (branch.ownerId === userId) return true;
+
+    const assignment = await this.branchStaffAssignmentRepository.findOne({
+      where: { branchId, userId, isActive: true },
+      select: ['id'],
+    });
+    return assignment != null;
+  }
 
   async createTenant(dto: CreateRetailTenantDto): Promise<RetailTenant> {
     if (dto.ownerUserId != null) {
@@ -325,10 +345,7 @@ export class RetailEntitlementsService {
       );
     }
 
-    if (
-      workspace.workspaceStatus !== 'ACTIVE' &&
-      workspace.workspaceStatus !== 'TRIAL'
-    ) {
+    if (workspace.workspaceStatus !== 'ACTIVE') {
       throw new ForbiddenException(
         `Retail tenant ${workspace.tenant.id} does not have an active POS workspace for branch ${branchId}`,
       );
@@ -384,10 +401,7 @@ export class RetailEntitlementsService {
       );
     }
 
-    if (
-      workspace.workspaceStatus !== 'ACTIVE' &&
-      workspace.workspaceStatus !== 'TRIAL'
-    ) {
+    if (workspace.workspaceStatus !== 'ACTIVE') {
       throw new ForbiddenException(
         `Retail tenant ${workspace.tenant.id} does not have an active subscription for branch ${branchId}`,
       );
@@ -407,9 +421,6 @@ export class RetailEntitlementsService {
     entitlements: TenantModuleEntitlement[];
     hasPosModule: boolean;
     workspaceStatus: PosWorkspaceStatus;
-    trialStartedAt: string | null;
-    trialEndsAt: string | null;
-    trialDaysRemaining: number | null;
   }> {
     const branch = await this.findBranchOrThrow(branchId);
 
@@ -421,9 +432,6 @@ export class RetailEntitlementsService {
         entitlements: [],
         hasPosModule: false,
         workspaceStatus: 'TENANT_SETUP_REQUIRED',
-        trialStartedAt: null,
-        trialEndsAt: null,
-        trialDaysRemaining: null,
       };
     }
 
@@ -437,7 +445,6 @@ export class RetailEntitlementsService {
       subscription,
       now,
     );
-    const trialMetadata = this.getTrialMetadata(subscription, now);
     const entitlements = (
       await this.tenantModuleEntitlementsRepository.find({
         where: { tenantId: tenant.id },
@@ -492,7 +499,6 @@ export class RetailEntitlementsService {
         entitlements,
         hasPosModule,
         workspaceStatus: 'TENANT_INACTIVE',
-        ...trialMetadata,
       };
     }
 
@@ -504,7 +510,6 @@ export class RetailEntitlementsService {
         entitlements,
         hasPosModule,
         workspaceStatus: 'MODULE_SETUP_REQUIRED',
-        ...trialMetadata,
       };
     }
 
@@ -516,18 +521,15 @@ export class RetailEntitlementsService {
         entitlements,
         hasPosModule,
         workspaceStatus: 'PAYMENT_REQUIRED',
-        trialStartedAt: null,
-        trialEndsAt: null,
-        trialDaysRemaining: null,
       };
     }
 
     const subscriptionStatusMap: Record<
       TenantSubscriptionStatus,
-      'ACTIVE' | 'TRIAL' | 'PAST_DUE' | 'EXPIRED' | 'CANCELLED'
+      PosWorkspaceStatus
     > = {
       [TenantSubscriptionStatus.ACTIVE]: 'ACTIVE',
-      [TenantSubscriptionStatus.TRIAL]: 'TRIAL',
+      [TenantSubscriptionStatus.TRIAL]: 'PAYMENT_REQUIRED',
       [TenantSubscriptionStatus.PAST_DUE]: 'PAST_DUE',
       [TenantSubscriptionStatus.EXPIRED]: 'EXPIRED',
       [TenantSubscriptionStatus.CANCELLED]: 'CANCELLED',
@@ -546,7 +548,6 @@ export class RetailEntitlementsService {
       entitlements,
       hasPosModule,
       workspaceStatus: subscriptionStatusMap[effectiveSubscriptionStatus],
-      ...trialMetadata,
     };
   }
 
@@ -689,8 +690,7 @@ export class RetailEntitlementsService {
     if (
       endsAt != null &&
       endsAt < now &&
-      (subscription.status === TenantSubscriptionStatus.ACTIVE ||
-        subscription.status === TenantSubscriptionStatus.TRIAL)
+      subscription.status === TenantSubscriptionStatus.ACTIVE
     ) {
       return TenantSubscriptionStatus.EXPIRED;
     }
@@ -698,61 +698,10 @@ export class RetailEntitlementsService {
     return subscription.status;
   }
 
-  private getTrialMetadata(
-    subscription: TenantSubscription | null,
-    now: number,
-  ): {
-    trialStartedAt: string | null;
-    trialEndsAt: string | null;
-    trialDaysRemaining: number | null;
-  } {
-    if (!subscription) {
-      return {
-        trialStartedAt: null,
-        trialEndsAt: null,
-        trialDaysRemaining: null,
-      };
-    }
-
-    const trialStartedAt = subscription.startsAt
-      ? subscription.startsAt.toISOString()
-      : null;
-    const trialEndsAt = subscription.endsAt
-      ? subscription.endsAt.toISOString()
-      : null;
-    const isTrialSubscription =
-      subscription.status === TenantSubscriptionStatus.TRIAL ||
-      String(
-        subscription.metadata?.lastActivationPaymentMethod || '',
-      ).toUpperCase() === 'TRIAL';
-
-    if (!isTrialSubscription) {
-      return {
-        trialStartedAt: null,
-        trialEndsAt: null,
-        trialDaysRemaining: null,
-      };
-    }
-
-    const trialDaysRemaining = trialEndsAt
-      ? Math.max(
-          0,
-          Math.ceil((Date.parse(trialEndsAt) - now) / MILLISECONDS_PER_DAY),
-        )
-      : null;
-
-    return {
-      trialStartedAt,
-      trialEndsAt,
-      trialDaysRemaining,
-    };
-  }
-
   private decorateTenantWithPosWorkspaceAudit(
     tenant: RetailTenant,
   ): RetailTenantWithPosWorkspaceAudit {
     const latestSubscription = this.getLatestTenantSubscription(tenant);
-    const trialMetadata = this.getTrialMetadata(latestSubscription, Date.now());
     const provisioningSource: 'POS_SELF_SERVE' | 'ADMIN_OR_BACKOFFICE' =
       this.isSelfServeProvisioned(tenant)
         ? 'POS_SELF_SERVE'
@@ -770,16 +719,13 @@ export class RetailEntitlementsService {
         subscriptionStatus: latestSubscription?.status ?? null,
         planCode: latestSubscription?.planCode ?? null,
         isSelfServeProvisioned: provisioningSource === 'POS_SELF_SERVE',
-        trialStartedAt: trialMetadata.trialStartedAt,
-        trialEndsAt: trialMetadata.trialEndsAt,
-        trialDaysRemaining: trialMetadata.trialDaysRemaining,
       };
     });
     const activationRequiredCount = branchWorkspaces.filter(
       (workspace) => workspace.workspaceStatus === 'PAYMENT_REQUIRED',
     ).length;
-    const activeWorkspaceCount = branchWorkspaces.filter((workspace) =>
-      ['ACTIVE', 'TRIAL'].includes(workspace.workspaceStatus),
+    const activeWorkspaceCount = branchWorkspaces.filter(
+      (workspace) => workspace.workspaceStatus === 'ACTIVE',
     ).length;
     const primaryWorkspaceStatus =
       branchWorkspaces[0]?.workspaceStatus ?? 'TENANT_SETUP_REQUIRED';
@@ -878,7 +824,7 @@ export class RetailEntitlementsService {
       case TenantSubscriptionStatus.ACTIVE:
         return 'ACTIVE';
       case TenantSubscriptionStatus.TRIAL:
-        return 'TRIAL';
+        return 'PAYMENT_REQUIRED';
       case TenantSubscriptionStatus.PAST_DUE:
         return 'PAST_DUE';
       case TenantSubscriptionStatus.EXPIRED:
@@ -899,11 +845,6 @@ export class RetailEntitlementsService {
         return {
           onboardingStatus: 'ACTIVE',
           activationStatus: 'ACTIVATED',
-        };
-      case 'TRIAL':
-        return {
-          onboardingStatus: 'ACTIVE',
-          activationStatus: 'TRIAL',
         };
       case 'PAYMENT_REQUIRED':
         return {
@@ -950,10 +891,6 @@ export class RetailEntitlementsService {
     switch (workspaceStatus) {
       case 'ACTIVE':
         return 'No immediate billing action is required.';
-      case 'TRIAL':
-        return latestSubscription?.endsAt
-          ? `Trial access is open now. Collect the first monthly POS payment before ${this.formatAuditDate(latestSubscription.endsAt)}.`
-          : 'Trial access is open now. Collect the first monthly POS payment before the trial ends.';
       case 'PAYMENT_REQUIRED':
         return 'Collect the first monthly POS workspace activation payment before branch access can open in POS-S.';
       case 'PAST_DUE':

@@ -15,7 +15,7 @@ import {
 } from '../entities/tenant-subscription.entity';
 
 export class ApplyRetailPlanPresetDto {
-  @ApiProperty({ example: 'RETAIL_INTELLIGENCE' })
+  @ApiProperty({ example: 'POS_BRANCH_SUBSCRIPTION' })
   @IsString()
   @MaxLength(64)
   presetCode!: string;

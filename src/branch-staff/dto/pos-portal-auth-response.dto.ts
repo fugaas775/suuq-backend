@@ -68,22 +68,10 @@ export class PosPortalBranchSummaryDto {
   planCode!: string | null;
 
   @ApiProperty()
-  canStartTrial!: boolean;
-
-  @ApiProperty()
   canStartActivation!: boolean;
 
   @ApiProperty()
   canOpenNow!: boolean;
-
-  @ApiPropertyOptional({ nullable: true })
-  trialStartedAt!: string | null;
-
-  @ApiPropertyOptional({ nullable: true })
-  trialEndsAt!: string | null;
-
-  @ApiPropertyOptional({ nullable: true })
-  trialDaysRemaining!: number | null;
 
   @ApiProperty()
   joinedAt!: Date;
@@ -114,6 +102,26 @@ export class PosPortalAuthResponseDto extends PosPortalSessionResponseDto {
   refreshToken!: string;
 }
 
+export class PosPortalSubscriptionOptionDto {
+  @ApiProperty({ enum: ['SIX_MONTHS', 'ONE_YEAR'], example: 'SIX_MONTHS' })
+  period!: 'SIX_MONTHS' | 'ONE_YEAR';
+
+  @ApiProperty({ example: 6 })
+  months!: number;
+
+  @ApiProperty({ example: 11400 })
+  amount!: number;
+
+  @ApiProperty({ example: 'ETB' })
+  currency!: string;
+
+  @ApiProperty({ example: '6 months' })
+  label!: string;
+
+  @ApiProperty({ example: 'POS_BRANCH_6M' })
+  planCode!: string;
+}
+
 export class PosPortalWorkspacePricingDto {
   @ApiProperty({ example: 1900 })
   amount!: number;
@@ -129,6 +137,9 @@ export class PosPortalWorkspacePricingDto {
 
   @ApiProperty({ example: 'EBIRR' })
   paymentMethod!: string;
+
+  @ApiProperty({ type: PosPortalSubscriptionOptionDto, isArray: true })
+  subscriptionOptions!: PosPortalSubscriptionOptionDto[];
 }
 
 export class PosPortalActivationCandidateDto {
@@ -169,22 +180,10 @@ export class PosPortalActivationCandidateDto {
   planCode!: string | null;
 
   @ApiProperty()
-  canStartTrial!: boolean;
-
-  @ApiProperty()
   canStartActivation!: boolean;
 
   @ApiProperty()
   canOpenNow!: boolean;
-
-  @ApiPropertyOptional({ nullable: true })
-  trialStartedAt!: string | null;
-
-  @ApiPropertyOptional({ nullable: true })
-  trialEndsAt!: string | null;
-
-  @ApiPropertyOptional({ nullable: true })
-  trialDaysRemaining!: number | null;
 
   @ApiProperty({ type: [String] })
   activationBlockers!: string[];

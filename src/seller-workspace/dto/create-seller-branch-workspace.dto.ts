@@ -1,5 +1,12 @@
 import { Transform } from 'class-transformer';
-import { IsEnum, IsOptional, IsString, MinLength } from 'class-validator';
+import {
+  IsEmail,
+  IsEnum,
+  IsOptional,
+  IsString,
+  MaxLength,
+  MinLength,
+} from 'class-validator';
 
 function trimString(value: unknown) {
   return typeof value === 'string' ? value.trim() : value;
@@ -7,8 +14,18 @@ function trimString(value: unknown) {
 
 export enum SellerBranchServiceFormat {
   RETAIL = 'RETAIL',
+  BARBER = 'BARBER',
   QSR = 'QSR',
   FSR = 'FSR',
+  HOTEL = 'HOTEL',
+  PHARMACY = 'PHARMACY',
+  GROCERY = 'GROCERY',
+  BAKERY = 'BAKERY',
+  LAUNDRY = 'LAUNDRY',
+  SALON_SPA = 'SALON_SPA',
+  BUTCHERY = 'BUTCHERY',
+  GAS_STATION = 'GAS_STATION',
+  ELECTRONICS = 'ELECTRONICS',
 }
 
 export class CreateSellerBranchWorkspaceDto {
@@ -48,4 +65,33 @@ export class CreateSellerBranchWorkspaceDto {
   @IsString()
   @MinLength(3)
   defaultCurrency!: string;
+
+  @Transform(({ value }) => trimString(value))
+  @IsOptional()
+  @IsString()
+  @MaxLength(32)
+  phone?: string;
+
+  @Transform(({ value }) => trimString(value))
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  tinNumber?: string;
+
+  /** Optional equity partner referral code (e.g. PART-X7K2). */
+  @Transform(({ value }) =>
+    typeof value === 'string' ? value.trim().toUpperCase() : value,
+  )
+  @IsOptional()
+  @IsString()
+  @MaxLength(16)
+  referralCode?: string;
+
+  /** Optional email of the branch owner (defaults to the creator's email). */
+  @Transform(({ value }) =>
+    typeof value === 'string' ? value.trim().toLowerCase() : value,
+  )
+  @IsOptional()
+  @IsEmail()
+  ownerEmail?: string;
 }

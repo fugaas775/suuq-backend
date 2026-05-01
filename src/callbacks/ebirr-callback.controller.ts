@@ -216,6 +216,17 @@ export class EbirrCallbackController {
       );
     }
 
+    if (
+      result?.status === 'COMPLETED' &&
+      this.posWorkspaceActivationService.isBranchCreationPaymentReference(
+        result.referenceId,
+      )
+    ) {
+      await this.posWorkspaceActivationService.completeBranchCreationPayment(
+        result.referenceId,
+      );
+    }
+
     return { status: 'OK' };
   }
 
@@ -262,6 +273,22 @@ export class EbirrCallbackController {
         )
       ) {
         await this.posWorkspaceActivationService.completeEbirrActivationPayment(
+          verifiedReturn.referenceId,
+        );
+        return res.redirect(
+          this.buildPosActivationRedirect({
+            status: 'success',
+            referenceId: verifiedReturn.referenceId,
+          }),
+        );
+      }
+
+      if (
+        this.posWorkspaceActivationService.isBranchCreationPaymentReference(
+          verifiedReturn.referenceId,
+        )
+      ) {
+        await this.posWorkspaceActivationService.completeBranchCreationPayment(
           verifiedReturn.referenceId,
         );
         return res.redirect(

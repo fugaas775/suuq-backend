@@ -28,6 +28,9 @@ export class BranchStaffAssignmentResponseDto {
   @ApiProperty({ isArray: true })
   permissions!: string[];
 
+  @ApiPropertyOptional({ isArray: true, nullable: true })
+  assignedSurfaces!: string[] | null;
+
   @ApiProperty()
   isActive!: boolean;
 

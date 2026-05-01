@@ -12,6 +12,7 @@ import { StockMovementType } from '../branches/entities/stock-movement.entity';
 import { PartnerCredential } from '../partner-credentials/entities/partner-credential.entity';
 import { ProductAliasesService } from '../product-aliases/product-aliases.service';
 import { Product } from '../products/entities/product.entity';
+import { EmailService } from '../email/email.service';
 import {
   IngestPosCheckoutDto,
   PosCheckoutItemDto,
@@ -167,6 +168,7 @@ export class PosCheckoutService {
     private readonly suspendedCartsRepository: Repository<PosSuspendedCart>,
     private readonly inventoryLedgerService: InventoryLedgerService,
     private readonly productAliasesService: ProductAliasesService,
+    private readonly emailService: EmailService,
   ) {}
 
   async quote(dto: QuotePosCheckoutDto): Promise<PosCheckoutQuoteResponseDto> {
@@ -368,6 +370,20 @@ export class PosCheckoutService {
           );
           const quantity = Math.abs(item.quantity);
 
+          // Only deduct inventory for products that explicitly opt in to stock
+          // management. Products with manageStock = false (the default) are
+          // treated as always-available (e.g. made-to-order food items) and
+          // must not be deducted — doing so would immediately fail because they
+          // have no inventory record (onHand starts at 0).
+          const product = await manager.getRepository(Product).findOne({
+            where: { id: productId },
+            select: ['id', 'manageStock'],
+          });
+
+          if (!product?.manageStock) {
+            continue;
+          }
+
           await this.inventoryLedgerService.recordMovement(
             {
               branchId: dto.branchId,
@@ -429,7 +445,50 @@ export class PosCheckoutService {
       throw error;
     }
 
-    return this.toResponse(await this.findOneById(checkout.id));
+    const processed = await this.findOneById(checkout.id);
+
+    // Fire receipt email to customer if email is available
+    const customerEmail =
+      (checkout.metadata as any)?.customerProfile?.email ||
+      (checkout.metadata as any)?.customer?.email;
+    if (customerEmail) {
+      void (async () => {
+        try {
+          const branch = await this.branchesRepository.findOne({
+            where: { id: checkout.branchId },
+          });
+          const items = (checkout.items ?? []).map((item) => ({
+            name: item.title || `Product #${item.productId ?? '?'}`,
+            qty: item.quantity,
+            price: item.unitPrice,
+            total: item.lineTotal,
+          }));
+          const tenders = (checkout.tenders ?? []).map((t) => ({
+            method: t.method,
+            amount: t.amount,
+          }));
+          await this.emailService.sendPosReceiptEmail(customerEmail, {
+            receiptNumber: checkout.receiptNumber || String(checkout.id),
+            branchName: branch?.name || 'SUUQ POS',
+            branchAddress: branch?.address ?? null,
+            branchPhone: (branch as any)?.phone ?? null,
+            items,
+            subtotal: checkout.subtotal,
+            total: checkout.total,
+            currency: checkout.currency,
+            date: checkout.processedAt ?? new Date(),
+            tenders,
+          });
+        } catch (err: any) {
+          // Non-fatal — log and continue
+          console.warn(
+            `[PosCheckout] Receipt email failed for checkout ${checkout.id}: ${err?.message}`,
+          );
+        }
+      })();
+    }
+
+    return this.toResponse(processed);
   }
 
   private async resolveProductId(

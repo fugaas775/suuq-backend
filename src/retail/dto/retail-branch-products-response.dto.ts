@@ -129,6 +129,12 @@ export class RetailBranchProductItemResponseDto {
     | 'OUT_OF_STOCK'
     | 'NOT_STOCKED';
 
+  @ApiProperty({
+    description:
+      'When true, stock is deducted on sale and inventory is tracked. When false, the item is always available (made-to-order / unlimited).',
+  })
+  manageStock!: boolean;
+
   @ApiPropertyOptional({ nullable: true })
   lastReceivedAt!: Date | null;
 

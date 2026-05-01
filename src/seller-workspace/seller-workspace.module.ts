@@ -13,8 +13,12 @@ import { PosCheckout } from '../pos-sync/entities/pos-checkout.entity';
 import { PosRegisterSession } from '../pos-sync/entities/pos-register-session.entity';
 import { PosSyncJob } from '../pos-sync/entities/pos-sync-job.entity';
 import { SellerWorkspace } from './entities/seller-workspace.entity';
+import { Branch } from '../branches/entities/branch.entity';
+import { BranchStaffAssignment } from '../branch-staff/entities/branch-staff-assignment.entity';
 import { SellerWorkspaceController } from './seller-workspace.controller';
 import { SellerWorkspaceService } from './seller-workspace.service';
+import { RetailModule } from '../retail/retail.module';
+import { EmailModule } from '../email/email.module';
 
 @Module({
   imports: [
@@ -30,9 +34,13 @@ import { SellerWorkspaceService } from './seller-workspace.service';
       TenantModuleEntitlement,
       TenantSubscription,
       Product,
+      Branch,
+      BranchStaffAssignment,
     ]),
     VendorModule,
     BranchStaffModule,
+    RetailModule,
+    EmailModule,
   ],
   controllers: [SellerWorkspaceController],
   providers: [SellerWorkspaceService],

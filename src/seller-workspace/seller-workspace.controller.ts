@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Patch,
@@ -35,6 +36,9 @@ import { UpdateSellerWorkspacePlanDto } from './dto/update-seller-workspace-plan
 import { UpdateBranchServiceFormatDto } from './dto/update-branch-service-format.dto';
 import { UpdateBranchWorkspaceDto } from './dto/update-branch-workspace.dto';
 import { SellerWorkspaceService } from './seller-workspace.service';
+import { InitiateAdditionalBranchCreationDto } from './dto/initiate-additional-branch-creation.dto';
+import { TransferBranchOwnershipDto } from './dto/transfer-branch-ownership.dto';
+import { PosWorkspaceActivationService } from '../branch-staff/pos-workspace-activation.service';
 
 @ApiTags('Seller Workspace')
 @Controller('seller/v1/workspace')
@@ -44,6 +48,7 @@ import { SellerWorkspaceService } from './seller-workspace.service';
 export class SellerWorkspaceController {
   constructor(
     private readonly sellerWorkspaceService: SellerWorkspaceService,
+    private readonly posWorkspaceActivationService: PosWorkspaceActivationService,
   ) {}
 
   @Post('bootstrap')
@@ -161,5 +166,59 @@ export class SellerWorkspaceController {
       branchId,
       dto,
     );
+  }
+
+  @Delete('branch-workspaces/:branchId')
+  deleteBranchWorkspace(
+    @Req() req: AuthenticatedRequest,
+    @Param('branchId') branchId: number,
+  ) {
+    return this.sellerWorkspaceService.deleteBranchWorkspace(
+      req.user.id,
+      branchId,
+    );
+  }
+
+  @Post('branch-workspaces/:branchId/transfer-ownership')
+  transferBranchOwnership(
+    @Req() req: AuthenticatedRequest,
+    @Param('branchId') branchId: number,
+    @Body() dto: TransferBranchOwnershipDto,
+  ) {
+    return this.sellerWorkspaceService.transferBranchOwnership(
+      req.user.id,
+      branchId,
+      dto.newOwnerEmail,
+    );
+  }
+
+  @Post('branch-workspaces/initiate-payment')
+  initiateAdditionalBranchCreationPayment(
+    @Req() req: AuthenticatedRequest,
+    @Body() dto: InitiateAdditionalBranchCreationDto,
+  ) {
+    return this.posWorkspaceActivationService.startAdditionalBranchCreationPayment(
+      { id: req.user.id, roles: req.user.roles, email: req.user.email },
+      dto,
+    );
+  }
+
+  @Post('branch-workspaces/confirm-payment')
+  async confirmAdditionalBranchCreationPayment(
+    @Req() req: AuthenticatedRequest,
+    @Body() body: { referenceId: string },
+  ) {
+    const result =
+      await this.posWorkspaceActivationService.completeBranchCreationPayment(
+        body.referenceId,
+      );
+    if (!result.branchId) {
+      return { status: 'PENDING', branchId: null };
+    }
+    return {
+      status: 'CREATED',
+      branchId: result.branchId,
+      created: result.created,
+    };
   }
 }

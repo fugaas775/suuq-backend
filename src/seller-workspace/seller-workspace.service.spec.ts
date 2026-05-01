@@ -6,6 +6,7 @@ import {
   BranchStaffAssignment,
   BranchStaffRole,
 } from '../branch-staff/entities/branch-staff-assignment.entity';
+import { BranchInventory } from '../branches/entities/branch-inventory.entity';
 import { Branch } from '../branches/entities/branch.entity';
 import {
   Order,
@@ -42,8 +43,10 @@ import {
   TenantSubscription,
   TenantSubscriptionStatus,
 } from '../retail/entities/tenant-subscription.entity';
+import { EquityPartnerService } from '../retail/equity-partner.service';
 import { User, SubscriptionTier } from '../users/entities/user.entity';
 import { VendorStaffService } from '../vendor/vendor-staff.service';
+import { EmailService } from '../email/email.service';
 import { SellerWorkspaceBillingStatus } from './entities/seller-workspace.entity';
 import { SellerPlanCode } from './dto/seller-workspace-response.dto';
 import { SellerWorkspaceService } from './seller-workspace.service';
@@ -76,6 +79,21 @@ describe('SellerWorkspaceService', () => {
     getBranchRosterSummaries: jest.Mock;
     getPosWorkspacePricing: jest.Mock;
   };
+  let equityPartnerService: {
+    findActivePartnerByReferralCode: jest.Mock;
+    createAssignment: jest.Mock;
+    getSellerProfile: jest.Mock;
+  };
+  let emailService: {
+    sendBranchOwnershipTransferEmail: jest.Mock;
+    sendBranchActivationPaymentEmail: jest.Mock;
+  };
+  let branchesRepository: { findOne: jest.Mock; update: jest.Mock };
+  let branchStaffAssignmentsRepository: {
+    findOne: jest.Mock;
+    create: jest.Mock;
+    save: jest.Mock;
+  };
 
   beforeEach(async () => {
     delete process.env.POS_HOSPITALITY_SERVICE_FORMATS_ENABLED;
@@ -101,6 +119,21 @@ describe('SellerWorkspaceService', () => {
         ...value,
       })),
       manager: {
+        getRepository: jest.fn((entity) => {
+          if (entity === BranchInventory) {
+            return {
+              createQueryBuilder: jest.fn(() => ({
+                select: jest.fn().mockReturnThis(),
+                addSelect: jest.fn().mockReturnThis(),
+                where: jest.fn().mockReturnThis(),
+                groupBy: jest.fn().mockReturnThis(),
+                getRawMany: jest.fn().mockResolvedValue([]),
+              })),
+            };
+          }
+
+          return {};
+        }),
         transaction: jest.fn(),
       },
     };
@@ -115,6 +148,24 @@ describe('SellerWorkspaceService', () => {
         billingInterval: TenantBillingInterval.MONTHLY,
         paymentMethod: 'EBIRR',
       })),
+    };
+    equityPartnerService = {
+      findActivePartnerByReferralCode: jest.fn().mockResolvedValue(null),
+      createAssignment: jest.fn().mockResolvedValue(undefined),
+      getSellerProfile: jest.fn().mockResolvedValue(null),
+    };
+    emailService = {
+      sendBranchOwnershipTransferEmail: jest.fn().mockResolvedValue(undefined),
+      sendBranchActivationPaymentEmail: jest.fn().mockResolvedValue(undefined),
+    };
+    branchesRepository = {
+      findOne: jest.fn().mockResolvedValue(null),
+      update: jest.fn().mockResolvedValue(undefined),
+    };
+    branchStaffAssignmentsRepository = {
+      findOne: jest.fn().mockResolvedValue(null),
+      create: jest.fn((v) => v),
+      save: jest.fn().mockResolvedValue(undefined),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -157,6 +208,13 @@ describe('SellerWorkspaceService', () => {
         },
         { provide: VendorStaffService, useValue: vendorStaffService },
         { provide: BranchStaffService, useValue: branchStaffService },
+        { provide: EquityPartnerService, useValue: equityPartnerService },
+        { provide: EmailService, useValue: emailService },
+        { provide: getRepositoryToken(Branch), useValue: branchesRepository },
+        {
+          provide: getRepositoryToken(BranchStaffAssignment),
+          useValue: branchStaffAssignmentsRepository,
+        },
       ],
     }).compile();
 
@@ -563,7 +621,6 @@ describe('SellerWorkspaceService', () => {
     expect(result.items[1]).toMatchObject({
       branchId: 8,
       workspaceStatus: 'PAYMENT_REQUIRED',
-      canStartTrial: true,
       canStartActivation: true,
       pricing: expect.objectContaining({
         amount: 1900,
@@ -603,6 +660,11 @@ describe('SellerWorkspaceService', () => {
       findOne: jest.fn().mockResolvedValue(existingTenant),
       save: jest.fn(async (value) => value),
     };
+    const subscriptionsRepository = {
+      findOne: jest.fn().mockResolvedValue(null),
+      create: jest.fn((value) => value),
+      save: jest.fn(async (value) => value),
+    };
 
     usersRepository.findOne.mockResolvedValue(user);
     sellerWorkspacesRepository.findOne.mockResolvedValue({
@@ -622,6 +684,9 @@ describe('SellerWorkspaceService', () => {
             }
             if (entity === RetailTenant) {
               return tenantsRepository;
+            }
+            if (entity === TenantSubscription) {
+              return subscriptionsRepository;
             }
             throw new Error(`Unexpected repository request: ${entity?.name}`);
           },
@@ -784,6 +849,224 @@ describe('SellerWorkspaceService', () => {
     });
   });
 
+  it('allows barber branch creation for tenants that were previously seeded with retail only', async () => {
+    const user = {
+      id: 41,
+      email: 'seller@suuq.test',
+      roles: ['POS_MANAGER'],
+      subscriptionTier: SubscriptionTier.PRO,
+    } as User;
+    const branchesRepository = {
+      create: jest.fn((value) => value),
+      find: jest.fn().mockResolvedValue([
+        {
+          id: 7,
+          name: 'HQ',
+          code: 'HQ-7',
+          retailTenantId: 13,
+        },
+      ]),
+      findOne: jest.fn().mockResolvedValue(null),
+      save: jest.fn(async (value) => ({ id: 8, code: 'BB-8', ...value })),
+    };
+    const assignmentsRepository = {
+      create: jest.fn((value) => value),
+      save: jest.fn(async (value) => value),
+    };
+    const tenantsRepository = {
+      findOne: jest.fn(async () => ({ id: 13, defaultCurrency: 'ETB' })),
+      save: jest.fn(async (value) => value),
+    };
+    const subscriptionsRepository = {
+      findOne: jest.fn(async () => ({
+        tenantId: 13,
+        metadata: { hasUsedTrial: true },
+      })),
+      create: jest.fn((value) => value),
+      save: jest.fn(async (value) => value),
+    };
+
+    usersRepository.findOne.mockResolvedValue(user);
+    sellerWorkspacesRepository.findOne.mockResolvedValue({
+      id: 901,
+      ownerUserId: 41,
+      primaryRetailTenantId: 13,
+    });
+    sellerWorkspacesRepository.manager.transaction.mockImplementation(
+      async (callback) =>
+        callback({
+          getRepository: (entity) => {
+            if (entity === Branch) {
+              return branchesRepository;
+            }
+            if (entity === BranchStaffAssignment) {
+              return assignmentsRepository;
+            }
+            if (entity === RetailTenant) {
+              return tenantsRepository;
+            }
+            if (entity === TenantSubscription) {
+              return subscriptionsRepository;
+            }
+            throw new Error(`Unexpected repository request: ${entity?.name}`);
+          },
+        }),
+    );
+    branchStaffService.getPosWorkspaceActivationCandidatesForUser
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+    branchStaffService.getPosBranchSummariesForUser
+      .mockResolvedValueOnce([
+        {
+          branchId: 7,
+          branchName: 'HQ',
+          branchCode: 'HQ-7',
+          serviceFormat: 'RETAIL',
+          role: 'MANAGER',
+          permissions: ['OPEN_REGISTER'],
+          isOwner: true,
+          isTenantOwner: false,
+          retailTenantId: 13,
+          retailTenantName: 'Seller Tenant',
+          modules: ['POS_CORE'],
+          workspaceStatus: 'ACTIVE',
+          subscriptionStatus: TenantSubscriptionStatus.ACTIVE,
+          planCode: 'POS_BRANCH',
+          canStartTrial: false,
+          canStartActivation: false,
+          canOpenNow: true,
+          trialStartedAt: null,
+          trialEndsAt: null,
+          trialDaysRemaining: null,
+          joinedAt: new Date('2026-03-01T00:00:00.000Z'),
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          branchId: 7,
+          branchName: 'HQ',
+          branchCode: 'HQ-7',
+          serviceFormat: 'RETAIL',
+          role: 'MANAGER',
+          permissions: ['OPEN_REGISTER'],
+          isOwner: true,
+          isTenantOwner: false,
+          retailTenantId: 13,
+          retailTenantName: 'Seller Tenant',
+          modules: ['POS_CORE'],
+          workspaceStatus: 'ACTIVE',
+          subscriptionStatus: TenantSubscriptionStatus.ACTIVE,
+          planCode: 'POS_BRANCH',
+          canStartTrial: false,
+          canStartActivation: false,
+          canOpenNow: true,
+          trialStartedAt: null,
+          trialEndsAt: null,
+          trialDaysRemaining: null,
+          joinedAt: new Date('2026-03-01T00:00:00.000Z'),
+        },
+        {
+          branchId: 8,
+          branchName: 'Bole Barber',
+          branchCode: 'BB-8',
+          serviceFormat: 'BARBER',
+          role: 'MANAGER',
+          permissions: [],
+          isOwner: true,
+          isTenantOwner: false,
+          retailTenantId: 13,
+          retailTenantName: 'Seller Tenant',
+          modules: ['POS_CORE'],
+          workspaceStatus: 'ACTIVE',
+          subscriptionStatus: TenantSubscriptionStatus.ACTIVE,
+          planCode: 'POS_BRANCH',
+          canStartTrial: false,
+          canStartActivation: false,
+          canOpenNow: true,
+          trialStartedAt: null,
+          trialEndsAt: null,
+          trialDaysRemaining: null,
+          joinedAt: new Date('2026-03-08T00:00:00.000Z'),
+        },
+      ]);
+    branchStaffService.getBranchRosterSummaries.mockResolvedValue([
+      {
+        branchId: 7,
+        managerCount: 1,
+        operatorCount: 0,
+        assignedManagers: [],
+        assignedOperators: [],
+      },
+      {
+        branchId: 8,
+        managerCount: 1,
+        operatorCount: 0,
+        assignedManagers: [
+          {
+            userId: 41,
+            email: 'seller@suuq.test',
+            displayName: 'Seller User',
+            isOwner: true,
+          },
+        ],
+        assignedOperators: [],
+      },
+    ]);
+    retailTenantsRepository.find.mockResolvedValue([
+      {
+        id: 13,
+        name: 'Seller Tenant',
+        defaultCurrency: 'ETB',
+      },
+    ]);
+    tenantSubscriptionsRepository.find.mockResolvedValue([
+      {
+        tenantId: 13,
+        planCode: 'POS_BRANCH',
+        status: TenantSubscriptionStatus.ACTIVE,
+        billingInterval: TenantBillingInterval.MONTHLY,
+        amount: 1900,
+        currency: 'ETB',
+        startsAt: new Date('2026-03-01T00:00:00.000Z'),
+        endsAt: null,
+        autoRenew: true,
+      },
+    ]);
+    tenantModuleEntitlementsRepository.findOne.mockResolvedValue({
+      tenantId: 13,
+      module: RetailModule.POS_CORE,
+      enabled: true,
+      metadata: {
+        allowedSelfServeServiceFormats: ['RETAIL'],
+      },
+    });
+
+    const result = await service.createBranchWorkspace(41, {
+      branchName: 'Bole Barber',
+      city: 'Addis Ababa',
+      country: 'Ethiopia',
+      address: 'Bole Atlas',
+      serviceFormat: 'BARBER' as any,
+      defaultCurrency: 'ETB',
+    });
+
+    expect(branchesRepository.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'Bole Barber',
+        serviceFormat: 'BARBER',
+        ownerId: 41,
+        retailTenantId: 13,
+      }),
+    );
+    expect(result).toMatchObject({
+      branchId: 8,
+      branchName: 'Bole Barber',
+      serviceFormat: 'BARBER',
+      retailTenantId: 13,
+      canOpenNow: true,
+    });
+  });
+
   it('rejects hospitality branch creation until rollout is enabled', async () => {
     const user = {
       id: 41,
@@ -852,7 +1135,7 @@ describe('SellerWorkspaceService', () => {
         defaultCurrency: 'ETB',
       }),
     ).rejects.toThrow(
-      'Seller HQ branch creation only supports RETAIL until hospitality rollout is enabled for this tenant.',
+      'Seller HQ branch creation only supports RETAIL, BARBER until hospitality rollout is enabled for this tenant.',
     );
   });
 });

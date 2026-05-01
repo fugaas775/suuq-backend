@@ -918,4 +918,388 @@ export class EmailService {
 
     await this.send(mail);
   }
+
+  async sendPosReceiptEmail(
+    to: string,
+    params: {
+      receiptNumber: string;
+      branchName: string;
+      branchAddress?: string | null;
+      branchPhone?: string | null;
+      items: Array<{ name: string; qty: number; price: number; total: number }>;
+      subtotal: number;
+      total: number;
+      currency: string;
+      date: Date | string;
+      tenders?: Array<{ method: string; amount: number }>;
+    },
+  ) {
+    if (!to) return;
+
+    const dateStr = new Date(params.date).toLocaleString('en-ET', {
+      timeZone: 'Africa/Addis_Ababa',
+    });
+    const itemsHtml = params.items
+      .map(
+        (item) =>
+          `<tr><td>${item.name}</td><td style="text-align:center">${item.qty}</td><td style="text-align:right">${item.price.toFixed(2)}</td><td style="text-align:right">${item.total.toFixed(2)}</td></tr>`,
+      )
+      .join('');
+    const itemsText = params.items
+      .map(
+        (item) =>
+          `  ${item.qty}x ${item.name}: ${item.total.toFixed(2)} ${params.currency}`,
+      )
+      .join('\n');
+    const tendersText = (params.tenders ?? [])
+      .map((t) => `${t.method}: ${t.amount.toFixed(2)} ${params.currency}`)
+      .join(', ');
+
+    const mail = {
+      to,
+      subject: `Your receipt - ${params.branchName} #${params.receiptNumber}`,
+      text: [
+        params.branchName,
+        params.branchAddress ?? '',
+        params.branchPhone ?? '',
+        '',
+        `Receipt: ${params.receiptNumber}`,
+        `Date: ${dateStr}`,
+        '',
+        itemsText,
+        '',
+        `Total: ${params.total.toFixed(2)} ${params.currency}`,
+        tendersText ? `Paid: ${tendersText}` : '',
+        '',
+        'Thank you for your business!',
+        'Powered by Suuq S',
+      ]
+        .filter((l) => l !== '')
+        .join('\n'),
+      html: `
+        <div style="font-family:sans-serif;max-width:480px;margin:auto;padding:24px;border:1px solid #eee;border-radius:8px">
+          <h2 style="margin:0 0 4px">${params.branchName}</h2>
+          ${params.branchAddress ? `<p style="margin:0;font-size:0.9em;color:#555">${params.branchAddress}</p>` : ''}
+          ${params.branchPhone ? `<p style="margin:0;font-size:0.9em;color:#555">${params.branchPhone}</p>` : ''}
+          <hr style="margin:16px 0"/>
+          <p style="margin:0 0 4px"><strong>Receipt #${params.receiptNumber}</strong></p>
+          <p style="margin:0 0 16px;font-size:0.85em;color:#777">${dateStr}</p>
+          <table width="100%" style="border-collapse:collapse;font-size:0.9em">
+            <thead><tr style="border-bottom:1px solid #ccc"><th style="text-align:left">Item</th><th>Qty</th><th style="text-align:right">Price</th><th style="text-align:right">Total</th></tr></thead>
+            <tbody>${itemsHtml}</tbody>
+          </table>
+          <hr style="margin:16px 0"/>
+          <p style="text-align:right;font-size:1.1em;font-weight:bold">Total: ${params.total.toFixed(2)} ${params.currency}</p>
+          ${tendersText ? `<p style="text-align:right;font-size:0.9em;color:#555">Paid: ${tendersText}</p>` : ''}
+          <hr style="margin:16px 0"/>
+          <p style="text-align:center;font-size:0.8em;color:#999">Thank you for your business!<br/>Powered by Suuq S</p>
+        </div>
+      `,
+    };
+
+    await this.send(mail);
+  }
+
+  async sendRegisterCloseSummary(
+    to: string,
+    params: {
+      branchName: string;
+      registerId: string;
+      openedAt: Date | string;
+      closedAt: Date | string;
+      openingFloat?: number | null;
+      closingFloat?: number | null;
+      currency?: string;
+      note?: string | null;
+    },
+  ) {
+    if (!to) return;
+
+    const opts: Intl.DateTimeFormatOptions = {
+      timeZone: 'Africa/Addis_Ababa',
+      dateStyle: 'medium',
+      timeStyle: 'short',
+    } as any;
+    const openedStr = new Date(params.openedAt).toLocaleString('en-ET', opts);
+    const closedStr = new Date(params.closedAt).toLocaleString('en-ET', opts);
+    const currency = params.currency || 'ETB';
+    const openFloat =
+      params.openingFloat != null
+        ? `${params.openingFloat.toFixed(2)} ${currency}`
+        : 'N/A';
+    const closeFloat =
+      params.closingFloat != null
+        ? `${params.closingFloat.toFixed(2)} ${currency}`
+        : 'N/A';
+
+    const mail = {
+      to,
+      subject: `Register closed — ${params.branchName} (${params.registerId})`,
+      text: [
+        `Register session closed for ${params.branchName}`,
+        '',
+        `Register ID : ${params.registerId}`,
+        `Opened     : ${openedStr}`,
+        `Closed     : ${closedStr}`,
+        `Opening Float: ${openFloat}`,
+        `Closing Float: ${closeFloat}`,
+        params.note ? `Note: ${params.note}` : '',
+      ]
+        .filter((l) => l !== '')
+        .join('\n'),
+      html: `
+        <div style="font-family:sans-serif;max-width:480px;margin:auto;padding:24px;border:1px solid #eee;border-radius:8px">
+          <h2 style="margin:0 0 16px">Register Closed — ${params.branchName}</h2>
+          <table style="width:100%;font-size:0.95em;border-collapse:collapse">
+            <tr><td style="padding:6px 0;color:#555">Register ID</td><td style="padding:6px 0;font-weight:bold">${params.registerId}</td></tr>
+            <tr><td style="padding:6px 0;color:#555">Opened</td><td style="padding:6px 0">${openedStr}</td></tr>
+            <tr><td style="padding:6px 0;color:#555">Closed</td><td style="padding:6px 0">${closedStr}</td></tr>
+            <tr><td style="padding:6px 0;color:#555">Opening Float</td><td style="padding:6px 0">${openFloat}</td></tr>
+            <tr><td style="padding:6px 0;color:#555">Closing Float</td><td style="padding:6px 0">${closeFloat}</td></tr>
+            ${params.note ? `<tr><td style="padding:6px 0;color:#555">Note</td><td style="padding:6px 0">${params.note}</td></tr>` : ''}
+          </table>
+          <hr style="margin:16px 0"/>
+          <p style="font-size:0.8em;color:#999;text-align:center">Powered by Suuq S</p>
+        </div>
+      `,
+    };
+
+    await this.send(mail);
+  }
+
+  async sendPosBranchCreatedEmail(params: {
+    to: string;
+    isAdmin?: boolean;
+    tenantEmail: string;
+    branchName: string;
+    amount: number;
+    currency: string;
+    referenceId: string;
+    branchId: number;
+    paidAt?: Date | string | null;
+  }) {
+    if (!params.to) return;
+
+    const currency = params.currency || 'ETB';
+    const dateStr = new Date(params.paidAt ?? new Date()).toLocaleString(
+      'en-ET',
+      { timeZone: 'Africa/Addis_Ababa' },
+    );
+    const recipientLabel = params.isAdmin
+      ? `Tenant: ${params.tenantEmail}`
+      : null;
+
+    const mail = {
+      to: params.to,
+      subject: `New POS Branch Created — "${params.branchName}" (Ebirr Payment Confirmed)`,
+      text: [
+        `A new POS branch has been successfully created via Ebirr payment.`,
+        '',
+        `Branch     : ${params.branchName}`,
+        `Branch ID  : ${params.branchId}`,
+        recipientLabel ?? `Tenant     : ${params.tenantEmail}`,
+        `Amount Paid: ${params.amount.toFixed(2)} ${currency}`,
+        `Reference  : ${params.referenceId}`,
+        `Date       : ${dateStr}`,
+        '',
+        'Powered by Suuq S',
+      ]
+        .filter((l) => l !== '')
+        .join('\n'),
+      html: `
+        <div style="font-family:sans-serif;max-width:520px;margin:auto;padding:24px;border:1px solid #eee;border-radius:8px">
+          <h2 style="margin:0 0 16px">New POS Branch Created</h2>
+          <p style="color:#555;margin:0 0 16px">An Ebirr payment was confirmed and a new branch has been provisioned.</p>
+          <table style="width:100%;font-size:0.95em;border-collapse:collapse">
+            <tr><td style="padding:6px 0;color:#555;width:140px">Branch Name</td><td style="padding:6px 0;font-weight:bold">${params.branchName}</td></tr>
+            <tr><td style="padding:6px 0;color:#555">Branch ID</td><td style="padding:6px 0">${params.branchId}</td></tr>
+            ${recipientLabel ? `<tr><td style="padding:6px 0;color:#555">Tenant</td><td style="padding:6px 0">${params.tenantEmail}</td></tr>` : ''}
+            <tr><td style="padding:6px 0;color:#555">Amount Paid</td><td style="padding:6px 0;font-weight:bold">${params.amount.toFixed(2)} ${currency}</td></tr>
+            <tr><td style="padding:6px 0;color:#555">Reference</td><td style="padding:6px 0;font-size:0.85em;color:#888">${params.referenceId}</td></tr>
+            <tr><td style="padding:6px 0;color:#555">Date</td><td style="padding:6px 0">${dateStr}</td></tr>
+          </table>
+          <hr style="margin:16px 0"/>
+          <p style="font-size:0.8em;color:#999;text-align:center">Powered by Suuq S</p>
+        </div>
+      `,
+    };
+
+    await this.send(mail);
+  }
+
+  async sendPurchaseOrderStatusEmail(params: {
+    to: string;
+    poNumber: string;
+    status: string;
+    branchName?: string;
+    supplierName?: string;
+    total?: number;
+    currency?: string;
+    reason?: string | null;
+    items?: Array<{ name: string; qty: number; unitCost: number }>;
+  }) {
+    if (!params.to) return;
+
+    const currency = params.currency || 'ETB';
+    const statusLabel = params.status.replace(/_/g, ' ');
+    const itemsHtml = (params.items ?? [])
+      .map(
+        (item) =>
+          `<li>${item.qty}x <strong>${item.name}</strong> — ${(item.qty * item.unitCost).toFixed(2)} ${currency}</li>`,
+      )
+      .join('');
+    const itemsText = (params.items ?? [])
+      .map(
+        (item) =>
+          `  ${item.qty}x ${item.name}: ${(item.qty * item.unitCost).toFixed(2)} ${currency}`,
+      )
+      .join('\n');
+
+    const mail = {
+      to: params.to,
+      subject: `Purchase Order #${params.poNumber} — ${statusLabel}`,
+      text: [
+        `Purchase Order #${params.poNumber} has been updated.`,
+        '',
+        `Status  : ${statusLabel}`,
+        params.branchName ? `Branch  : ${params.branchName}` : '',
+        params.supplierName ? `Supplier: ${params.supplierName}` : '',
+        params.total != null
+          ? `Total   : ${params.total.toFixed(2)} ${currency}`
+          : '',
+        params.reason ? `Reason  : ${params.reason}` : '',
+        itemsText ? `\nItems:\n${itemsText}` : '',
+      ]
+        .filter((l) => l !== '')
+        .join('\n'),
+      html: `
+        <div style="font-family:sans-serif;max-width:480px;margin:auto;padding:24px;border:1px solid #eee;border-radius:8px">
+          <h2 style="margin:0 0 16px">Purchase Order #${params.poNumber}</h2>
+          <p style="font-size:1.05em">Status: <strong>${statusLabel}</strong></p>
+          <table style="width:100%;font-size:0.95em;border-collapse:collapse">
+            ${params.branchName ? `<tr><td style="padding:4px 0;color:#555">Branch</td><td style="padding:4px 0">${params.branchName}</td></tr>` : ''}
+            ${params.supplierName ? `<tr><td style="padding:4px 0;color:#555">Supplier</td><td style="padding:4px 0">${params.supplierName}</td></tr>` : ''}
+            ${params.total != null ? `<tr><td style="padding:4px 0;color:#555">Total</td><td style="padding:4px 0"><strong>${params.total.toFixed(2)} ${currency}</strong></td></tr>` : ''}
+            ${params.reason ? `<tr><td style="padding:4px 0;color:#555">Reason</td><td style="padding:4px 0">${params.reason}</td></tr>` : ''}
+          </table>
+          ${itemsHtml ? `<hr style="margin:16px 0"/><ul style="padding-left:20px">${itemsHtml}</ul>` : ''}
+          <hr style="margin:16px 0"/>
+          <p style="font-size:0.8em;color:#999;text-align:center">Powered by Suuq S</p>
+        </div>
+      `,
+    };
+
+    await this.send(mail);
+  }
+
+  async sendBranchOwnershipTransferEmail(params: {
+    to: string;
+    role: 'previous' | 'new';
+    branchName: string;
+    branchId: number;
+    previousOwnerEmail: string;
+    newOwnerEmail: string;
+    transferredBy: string;
+  }) {
+    if (!params.to) return;
+
+    const roleLabel = params.role === 'new' ? 'new owner' : 'previous owner';
+    const action =
+      params.role === 'new'
+        ? `You have been assigned as the new owner of branch "${params.branchName}".`
+        : `Branch "${params.branchName}" has been transferred to a new owner.`;
+
+    const mail = {
+      to: params.to,
+      subject: `Branch Ownership Transferred — "${params.branchName}"`,
+      text: [
+        action,
+        '',
+        `Branch     : ${params.branchName}`,
+        `Branch ID  : ${params.branchId}`,
+        `Previous Owner: ${params.previousOwnerEmail}`,
+        `New Owner  : ${params.newOwnerEmail}`,
+        `Transferred By: ${params.transferredBy}`,
+        '',
+        'Powered by Suuq S',
+      ].join('\n'),
+      html: `
+        <div style="font-family:sans-serif;max-width:520px;margin:auto;padding:24px;border:1px solid #eee;border-radius:8px">
+          <h2 style="margin:0 0 16px">Branch Ownership Transferred</h2>
+          <p style="color:#555;margin:0 0 16px">You are the <strong>${roleLabel}</strong> for this branch transfer.</p>
+          <p style="margin:0 0 16px">${action}</p>
+          <table style="width:100%;font-size:0.95em;border-collapse:collapse">
+            <tr><td style="padding:6px 0;color:#555;width:160px">Branch Name</td><td style="padding:6px 0;font-weight:bold">${params.branchName}</td></tr>
+            <tr><td style="padding:6px 0;color:#555">Branch ID</td><td style="padding:6px 0">${params.branchId}</td></tr>
+            <tr><td style="padding:6px 0;color:#555">Previous Owner</td><td style="padding:6px 0">${params.previousOwnerEmail}</td></tr>
+            <tr><td style="padding:6px 0;color:#555">New Owner</td><td style="padding:6px 0;font-weight:bold">${params.newOwnerEmail}</td></tr>
+            <tr><td style="padding:6px 0;color:#555">Transferred By</td><td style="padding:6px 0">${params.transferredBy}</td></tr>
+          </table>
+          <hr style="margin:16px 0"/>
+          <p style="font-size:0.8em;color:#999;text-align:center">Powered by Suuq S</p>
+        </div>
+      `,
+    };
+
+    await this.send(mail);
+  }
+
+  async sendBranchActivationPaymentEmail(params: {
+    to: string;
+    isAdmin?: boolean;
+    ownerEmail: string;
+    branchName: string;
+    branchId: number;
+    amount: number;
+    currency: string;
+    referenceId: string;
+    paidAt?: Date | string | null;
+  }) {
+    if (!params.to) return;
+    const currency = params.currency || 'ETB';
+    const dateStr = new Date(params.paidAt ?? new Date()).toLocaleString(
+      'en-ET',
+      { timeZone: 'Africa/Addis_Ababa' },
+    );
+    const recipientLabel = params.isAdmin
+      ? `Admin: ${params.ownerEmail}`
+      : null;
+
+    const mail = {
+      to: params.to,
+      subject: `Branch Activation Payment Confirmed — "${params.branchName}"`,
+      text: [
+        `Payment confirmed for branch activation.`,
+        '',
+        `Branch     : ${params.branchName}`,
+        `Branch ID  : ${params.branchId}`,
+        recipientLabel ?? `Owner      : ${params.ownerEmail}`,
+        `Amount Paid: ${params.amount.toFixed(2)} ${currency}`,
+        `Reference  : ${params.referenceId}`,
+        `Date       : ${dateStr}`,
+        '',
+        'Powered by Suuq S',
+      ]
+        .filter((l) => l !== '')
+        .join('\n'),
+      html: `
+        <div style="font-family:sans-serif;max-width:520px;margin:auto;padding:24px;border:1px solid #eee;border-radius:8px">
+          <h2 style="margin:0 0 16px">Branch Activation Payment Confirmed</h2>
+          <p style="color:#555;margin:0 0 16px">An Ebirr payment was confirmed for branch activation.</p>
+          <table style="width:100%;font-size:0.95em;border-collapse:collapse">
+            <tr><td style="padding:6px 0;color:#555;width:140px">Branch Name</td><td style="padding:6px 0;font-weight:bold">${params.branchName}</td></tr>
+            <tr><td style="padding:6px 0;color:#555">Branch ID</td><td style="padding:6px 0">${params.branchId}</td></tr>
+            <tr><td style="padding:6px 0;color:#555">Owner</td><td style="padding:6px 0">${params.ownerEmail}</td></tr>
+            <tr><td style="padding:6px 0;color:#555">Amount Paid</td><td style="padding:6px 0;font-weight:bold">${params.amount.toFixed(2)} ${currency}</td></tr>
+            <tr><td style="padding:6px 0;color:#555">Reference</td><td style="padding:6px 0;font-size:0.85em;color:#888">${params.referenceId}</td></tr>
+            <tr><td style="padding:6px 0;color:#555">Date</td><td style="padding:6px 0">${dateStr}</td></tr>
+          </table>
+          <hr style="margin:16px 0"/>
+          <p style="font-size:0.8em;color:#999;text-align:center">Powered by Suuq S</p>
+        </div>
+      `,
+    };
+
+    await this.send(mail);
+  }
 }

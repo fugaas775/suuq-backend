@@ -42,6 +42,15 @@ export class BranchStaffAssignment {
   @Column({ type: 'simple-array', default: '' })
   permissions!: string[];
 
+  /**
+   * Optional whitelist of surface IDs (e.g. 'pos-s', 'reports') the
+   * assignee may access. NULL means "no extra restriction beyond role
+   * default" — managers see everything by default, operators see only
+   * `/ops/pos-s` unless surfaces are explicitly assigned.
+   */
+  @Column({ type: 'simple-array', nullable: true })
+  assignedSurfaces!: string[] | null;
+
   @Column({ default: true })
   isActive!: boolean;
 

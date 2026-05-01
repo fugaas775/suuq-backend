@@ -16,7 +16,6 @@ export enum SellerPlanCode {
 export enum SellerWorkspaceBillingStatusDto {
   NOT_STARTED = 'NOT_STARTED',
   PLAN_SELECTED = 'PLAN_SELECTED',
-  TRIAL = 'TRIAL',
   ACTIVE = 'ACTIVE',
   PAST_DUE = 'PAST_DUE',
   CANCELLED = 'CANCELLED',
@@ -271,6 +270,9 @@ export class SellerWorkspaceBranchWorkspaceDto {
   @ApiProperty()
   isTenantOwner!: boolean;
 
+  @ApiProperty()
+  isEquityPartner!: boolean;
+
   @ApiPropertyOptional({ nullable: true })
   retailTenantId!: number | null;
 
@@ -314,22 +316,19 @@ export class SellerWorkspaceBranchWorkspaceDto {
   canStartActivation!: boolean;
 
   @ApiProperty()
-  canStartTrial!: boolean;
-
-  @ApiProperty()
   canOpenNow!: boolean;
-
-  @ApiPropertyOptional({ nullable: true })
-  trialStartedAt!: string | null;
-
-  @ApiPropertyOptional({ nullable: true })
-  trialEndsAt!: string | null;
-
-  @ApiPropertyOptional({ nullable: true })
-  trialDaysRemaining!: number | null;
 
   @ApiProperty()
   joinedAt!: Date;
+
+  @ApiProperty()
+  productCount!: number;
+
+  @ApiPropertyOptional({ nullable: true })
+  phone!: string | null;
+
+  @ApiPropertyOptional({ nullable: true })
+  tinNumber!: string | null;
 }
 
 export class SellerWorkspaceBranchWorkspacesResponseDto {

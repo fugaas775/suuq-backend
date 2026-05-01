@@ -150,12 +150,14 @@ describe('VendorController', () => {
 
     const out = await controller.createMyProductsBulk({ id: 12 } as any, dto, {
       user: { id: 55 },
+      headers: {},
     } as any);
 
     expect(vendorServiceMock.createMyProductsBulk).toHaveBeenCalledWith(
       12,
       dto,
       { id: 55 },
+      { branchId: null },
     );
     expect(out).toEqual(response);
   });

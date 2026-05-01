@@ -51,6 +51,7 @@ describe('AdminB2bService', () => {
 
   it('applies auto-replenishment submission mode and blocked reason filters', async () => {
     const summaryQb = {
+      orderBy: jest.fn().mockReturnThis(),
       select: jest.fn().mockReturnThis(),
       addSelect: jest.fn().mockReturnThis(),
       getRawOne: jest.fn().mockResolvedValue({
@@ -104,6 +105,7 @@ describe('AdminB2bService', () => {
 
   it('maps explicit auto-replenishment status in purchase order responses', async () => {
     const summaryQb = {
+      orderBy: jest.fn().mockReturnThis(),
       select: jest.fn().mockReturnThis(),
       addSelect: jest.fn().mockReturnThis(),
       getRawOne: jest.fn().mockResolvedValue({
@@ -197,6 +199,7 @@ describe('AdminB2bService', () => {
 
   it('includes automation-not-entitled counts in the purchase-order summary breakdown', async () => {
     const summaryQb = {
+      orderBy: jest.fn().mockReturnThis(),
       select: jest.fn().mockReturnThis(),
       addSelect: jest.fn().mockReturnThis(),
       getRawOne: jest.fn().mockResolvedValue({
@@ -236,6 +239,7 @@ describe('AdminB2bService', () => {
 
   it('omits admin purchase-order actions for non-draft or manual orders', async () => {
     const summaryQb = {
+      orderBy: jest.fn().mockReturnThis(),
       select: jest.fn().mockReturnThis(),
       addSelect: jest.fn().mockReturnThis(),
       getRawOne: jest.fn().mockResolvedValue({

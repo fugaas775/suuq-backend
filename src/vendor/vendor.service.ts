@@ -55,6 +55,8 @@ import { EmailService } from '../email/email.service';
 import { InventoryLedgerService } from '../branches/inventory-ledger.service';
 import { Branch } from '../branches/entities/branch.entity';
 import { StockMovementType } from '../branches/entities/stock-movement.entity';
+import { PosPortalOnboardingService } from '../branch-staff/pos-portal-onboarding.service';
+import { SellerWorkspace } from '../seller-workspace/entities/seller-workspace.entity';
 
 @Injectable()
 export class VendorService {
@@ -86,6 +88,9 @@ export class VendorService {
     private readonly settingsService: SettingsService,
     private readonly emailService: EmailService,
     private readonly inventoryLedgerService: InventoryLedgerService,
+    private readonly posPortalOnboardingService: PosPortalOnboardingService,
+    @InjectRepository(SellerWorkspace)
+    private readonly sellerWorkspacesRepository: Repository<SellerWorkspace>,
   ) {}
 
   private readonly logger = new Logger(VendorService.name);
@@ -2676,6 +2681,17 @@ export class VendorService {
     // Note: reason is currently not persisted; could be logged or stored if schema adds a field.
     const savedUser = await this.userRepository.save(user);
 
+    // Auto-provision a POS workspace (tenant + branch) whenever a vendor is
+    // approved so they can immediately use pos.ugasfuad.com without a separate
+    // sign-up flow.  Errors are non-fatal — the approval still completes.
+    if (status === VerificationStatus.APPROVED) {
+      void this.provisionPosWorkspaceForVendor(savedUser).catch((err: any) =>
+        this.logger.warn(
+          `POS auto-provision failed for vendor #${userId}: ${err?.message}`,
+        ),
+      );
+    }
+
     // Send notifications if status changed
     if (oldStatus !== status) {
       try {
@@ -2747,6 +2763,71 @@ export class VendorService {
     }
     user.isActive = !!isActive;
     return await this.userRepository.save(user);
+  }
+
+  /**
+   * Creates a POS tenant + branch for a newly approved vendor and links the
+   * resulting RetailTenant to their SellerWorkspace.  Idempotent: if the user
+   * already has a workspace (e.g. they self-registered on POS first) the
+   * workspace creation is skipped and the SellerWorkspace link is patched.
+   */
+  private async provisionPosWorkspaceForVendor(user: User): Promise<void> {
+    const businessName =
+      user.storeName?.trim() ||
+      user.displayName?.trim() ||
+      user.legalName?.trim() ||
+      `Vendor #${user.id}`;
+
+    let tenantId: number | null = null;
+
+    try {
+      const result =
+        await this.posPortalOnboardingService.createWorkspaceForUser(user, {
+          businessName,
+          branchName: businessName,
+          serviceFormat: undefined, // defaults to RETAIL inside the service
+        });
+      tenantId = result.workspace.tenantId;
+      this.logger.log(
+        `POS workspace auto-provisioned for vendor #${user.id}, tenant #${tenantId}`,
+      );
+    } catch (err: any) {
+      // 400 = workspace already exists — not an error
+      if (
+        err?.status === 400 ||
+        String(err?.message ?? '').includes('already has a POS workspace')
+      ) {
+        this.logger.log(
+          `POS workspace already exists for vendor #${user.id} — skipping provision`,
+        );
+      } else {
+        throw err;
+      }
+    }
+
+    // Patch SellerWorkspace.primaryRetailTenantId when we know the tenant
+    if (tenantId == null) return;
+    try {
+      let workspace = await this.sellerWorkspacesRepository.findOne({
+        where: { ownerUserId: user.id },
+      });
+      if (!workspace) {
+        workspace = this.sellerWorkspacesRepository.create({
+          ownerUserId: user.id,
+        });
+      }
+      if (workspace.primaryRetailTenantId == null) {
+        workspace.primaryRetailTenantId = tenantId;
+        await this.sellerWorkspacesRepository.save(workspace);
+        this.logger.log(
+          `SellerWorkspace for vendor #${user.id} linked to tenant #${tenantId}`,
+        );
+      }
+    } catch (err: any) {
+      this.logger.warn(
+        `Failed to link SellerWorkspace for vendor #${user.id}: ${err?.message}`,
+      );
+    }
   }
 
   /**

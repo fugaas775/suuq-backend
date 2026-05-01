@@ -11,12 +11,12 @@ import { TenantSubscription } from '../retail/entities/tenant-subscription.entit
 import { TenantModuleEntitlement } from '../retail/entities/tenant-module-entitlement.entity';
 import { BranchStaffController } from './branch-staff.controller';
 import { BranchStaffService } from './branch-staff.service';
-import { BranchStaffInvite } from './entities/branch-staff-invite.entity';
 import { BranchStaffAssignment } from './entities/branch-staff-assignment.entity';
 import { PosPortalAuthController } from './pos-portal-auth.controller';
 import { PosPortalOnboardingService } from './pos-portal-onboarding.service';
 import { PosSupportController } from './pos-support.controller';
 import { PosWorkspaceActivationService } from './pos-workspace-activation.service';
+import { SellerWorkspace } from '../seller-workspace/entities/seller-workspace.entity';
 
 @Module({
   imports: [
@@ -26,12 +26,12 @@ import { PosWorkspaceActivationService } from './pos-workspace-activation.servic
     EbirrModule,
     TypeOrmModule.forFeature([
       BranchStaffAssignment,
-      BranchStaffInvite,
       Branch,
       User,
       RetailTenant,
       TenantSubscription,
       TenantModuleEntitlement,
+      SellerWorkspace,
     ]),
   ],
   controllers: [

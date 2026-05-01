@@ -25,98 +25,35 @@ export type RetailPlanPreset = {
 
 export const RETAIL_PLAN_PRESETS: RetailPlanPreset[] = [
   {
-    code: 'RETAIL_STARTER',
-    name: 'Retail Starter',
+    code: 'POS_BRANCH_SUBSCRIPTION',
+    name: 'POS branch subscription',
     description:
-      'Core branch POS and inventory visibility for single-store operators.',
-    billingInterval: TenantBillingInterval.MONTHLY,
-    amount: 1900,
+      'Single per-branch POS subscription. Owners pay 11,400 ETB for 6 months or 22,800 ETB for 1 year. No tier upgrades — every branch ships with POS Core, Inventory Core, replenishment automation, and analytics.',
+    billingInterval: TenantBillingInterval.SIX_MONTHS,
+    amount: 11400,
     currency: 'ETB',
     defaultStatus: TenantSubscriptionStatus.ACTIVE,
-    maxProducts: 50,
+    maxProducts: 10000,
     modules: [
       {
         module: RetailModule.POS_CORE,
         enabled: true,
-        reason: 'Included in Retail Starter preset',
+        reason: 'Included in POS branch subscription',
         metadata: {
           includedBranches: 1,
-          additionalBranchFee: 1300,
+          additionalBranchFee: 11400,
           additionalBranchCurrency: 'ETB',
         },
       },
       {
         module: RetailModule.INVENTORY_CORE,
         enabled: true,
-        reason: 'Included in Retail Starter preset',
-      },
-    ],
-  },
-  {
-    code: 'RETAIL_AUTOMATION',
-    name: 'Retail Automation',
-    description:
-      'Adds replenishment automation to the core branch operating stack.',
-    billingInterval: TenantBillingInterval.MONTHLY,
-    amount: 179,
-    currency: 'USD',
-    defaultStatus: TenantSubscriptionStatus.ACTIVE,
-    maxProducts: 200,
-    modules: [
-      {
-        module: RetailModule.POS_CORE,
-        enabled: true,
-        reason: 'Included in Retail Automation preset',
-      },
-      {
-        module: RetailModule.INVENTORY_CORE,
-        enabled: true,
-        reason: 'Included in Retail Automation preset',
+        reason: 'Included in POS branch subscription',
       },
       {
         module: RetailModule.INVENTORY_AUTOMATION,
         enabled: true,
-        reason: 'Included in Retail Automation preset',
-        metadata: {
-          replenishmentPolicy: {
-            submissionMode: 'AUTO_SUBMIT',
-            minimumOrderTotal: 250,
-            orderWindow: {
-              daysOfWeek: [1, 3, 5],
-              startHour: 8,
-              endHour: 17,
-              timeZone: 'Africa/Addis_Ababa',
-            },
-          },
-        },
-      },
-    ],
-  },
-  {
-    code: 'RETAIL_INTELLIGENCE',
-    name: 'Retail Intelligence',
-    description:
-      'Automation plus AI analytics for operators that want prioritized decision support.',
-    billingInterval: TenantBillingInterval.MONTHLY,
-    amount: 249,
-    currency: 'USD',
-    defaultStatus: TenantSubscriptionStatus.ACTIVE,
-    maxProducts: 500,
-    modules: [
-      {
-        module: RetailModule.POS_CORE,
-        enabled: true,
-        reason: 'Included in Retail Intelligence preset',
-      },
-      {
-        module: RetailModule.INVENTORY_CORE,
-        enabled: true,
-        reason: 'Included in Retail Intelligence preset',
-      },
-      {
-        module: RetailModule.INVENTORY_AUTOMATION,
-        enabled: true,
-        reason: 'Included in Retail Intelligence preset',
+        reason: 'Included in POS branch subscription',
         metadata: {
           replenishmentPolicy: {
             submissionMode: 'AUTO_SUBMIT',
@@ -133,7 +70,7 @@ export const RETAIL_PLAN_PRESETS: RetailPlanPreset[] = [
       {
         module: RetailModule.AI_ANALYTICS,
         enabled: true,
-        reason: 'Included in Retail Intelligence preset',
+        reason: 'Included in POS branch subscription',
         metadata: {
           aiAnalyticsPolicy: {
             stalePurchaseOrderHours: 72,
@@ -141,61 +78,10 @@ export const RETAIL_PLAN_PRESETS: RetailPlanPreset[] = [
           },
         },
       },
-    ],
-  },
-  {
-    code: 'RETAIL_ENTERPRISE',
-    name: 'Retail Enterprise',
-    description:
-      'Intelligence plus branch accounting workflows for larger multi-branch operators.',
-    billingInterval: TenantBillingInterval.MONTHLY,
-    amount: 349,
-    currency: 'USD',
-    defaultStatus: TenantSubscriptionStatus.ACTIVE,
-    maxProducts: 10000,
-    modules: [
-      {
-        module: RetailModule.POS_CORE,
-        enabled: true,
-        reason: 'Included in Retail Enterprise preset',
-      },
-      {
-        module: RetailModule.INVENTORY_CORE,
-        enabled: true,
-        reason: 'Included in Retail Enterprise preset',
-      },
-      {
-        module: RetailModule.INVENTORY_AUTOMATION,
-        enabled: true,
-        reason: 'Included in Retail Enterprise preset',
-        metadata: {
-          replenishmentPolicy: {
-            submissionMode: 'AUTO_SUBMIT',
-            minimumOrderTotal: 250,
-            orderWindow: {
-              daysOfWeek: [1, 3, 5],
-              startHour: 8,
-              endHour: 17,
-              timeZone: 'Africa/Addis_Ababa',
-            },
-          },
-        },
-      },
-      {
-        module: RetailModule.AI_ANALYTICS,
-        enabled: true,
-        reason: 'Included in Retail Enterprise preset',
-        metadata: {
-          aiAnalyticsPolicy: {
-            stalePurchaseOrderHours: 48,
-            targetHealthScore: 90,
-          },
-        },
-      },
       {
         module: RetailModule.ACCOUNTING,
         enabled: true,
-        reason: 'Included in Retail Enterprise preset',
+        reason: 'Included in POS branch subscription',
       },
     ],
   },

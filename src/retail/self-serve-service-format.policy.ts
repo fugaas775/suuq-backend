@@ -5,8 +5,40 @@ import {
 } from './entities/tenant-module-entitlement.entity';
 
 const DEFAULT_SELF_SERVE_SERVICE_FORMAT = 'RETAIL';
-const HOSPITALITY_SELF_SERVE_SERVICE_FORMATS = new Set(['QSR', 'FSR']);
-const HOSPITALITY_ENABLED_SELF_SERVE_SERVICE_FORMATS = ['RETAIL', 'QSR', 'FSR'];
+const RETAIL_SELF_SERVE_SERVICE_FORMATS = ['RETAIL', 'BARBER'];
+const EXTENDED_RETAIL_SELF_SERVE_SERVICE_FORMATS = [
+  'PHARMACY',
+  'GROCERY',
+  'BAKERY',
+  'LAUNDRY',
+  'SALON_SPA',
+  'BUTCHERY',
+  'GAS_STATION',
+  'ELECTRONICS',
+];
+const HOSPITALITY_SELF_SERVE_SERVICE_FORMATS = new Set(['QSR', 'FSR', 'HOTEL']);
+const HOSPITALITY_ENABLED_SELF_SERVE_SERVICE_FORMATS = [
+  ...RETAIL_SELF_SERVE_SERVICE_FORMATS,
+  ...EXTENDED_RETAIL_SELF_SERVE_SERVICE_FORMATS,
+  'QSR',
+  'FSR',
+  'HOTEL',
+];
+
+function expandRetailLinkedSelfServeServiceFormats(formats: string[]) {
+  const normalizedFormats = Array.from(new Set(formats.filter(Boolean)));
+  const hasRetailLinkedFormat = normalizedFormats.some(
+    (format) => format === 'RETAIL' || format === 'BARBER',
+  );
+
+  if (!hasRetailLinkedFormat) {
+    return normalizedFormats;
+  }
+
+  return Array.from(
+    new Set([...normalizedFormats, ...RETAIL_SELF_SERVE_SERVICE_FORMATS]),
+  );
+}
 
 function isTruthyFlagValue(value: unknown) {
   return ['1', 'true', 'yes', 'on'].includes(
@@ -17,13 +49,13 @@ function isTruthyFlagValue(value: unknown) {
 }
 
 export function areHospitalityServiceFormatsEnabled() {
-  return true; // isTruthyFlagValue(process.env.POS_HOSPITALITY_SERVICE_FORMATS_ENABLED);
+  return isTruthyFlagValue(process.env.POS_HOSPITALITY_SERVICE_FORMATS_ENABLED);
 }
 
 export function getDefaultAllowedSelfServeServiceFormats() {
   return areHospitalityServiceFormatsEnabled()
     ? [...HOSPITALITY_ENABLED_SELF_SERVE_SERVICE_FORMATS]
-    : [DEFAULT_SELF_SERVE_SERVICE_FORMAT];
+    : [...RETAIL_SELF_SERVE_SERVICE_FORMATS];
 }
 
 export function resolveAllowedSelfServeServiceFormats(
@@ -42,7 +74,7 @@ export function resolveAllowedSelfServeServiceFormats(
     : [];
 
   return configuredFormats.length
-    ? Array.from(new Set(configuredFormats))
+    ? expandRetailLinkedSelfServeServiceFormats(configuredFormats)
     : getDefaultAllowedSelfServeServiceFormats();
 }
 
@@ -50,16 +82,14 @@ export function buildSelfServeServiceFormatMetadata(
   allowedFormats = getDefaultAllowedSelfServeServiceFormats(),
 ) {
   return {
-    allowedSelfServeServiceFormats: Array.from(
-      new Set(
-        allowedFormats
-          .map((format) =>
-            String(format || '')
-              .trim()
-              .toUpperCase(),
-          )
-          .filter(Boolean),
-      ),
+    allowedSelfServeServiceFormats: expandRetailLinkedSelfServeServiceFormats(
+      allowedFormats
+        .map((format) =>
+          String(format || '')
+            .trim()
+            .toUpperCase(),
+        )
+        .filter(Boolean),
     ),
   };
 }

@@ -18,6 +18,7 @@ import {
 } from '../purchase-orders/entities/purchase-order.entity';
 import { ProcurementWebhooksService } from '../procurement-webhooks/procurement-webhooks.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
+import { SupplierStaffAssignment } from '../supplier-staff/entities/supplier-staff-assignment.entity';
 import { User } from '../users/entities/user.entity';
 import { SuppliersService } from './suppliers.service';
 import {
@@ -44,6 +45,7 @@ describe('SuppliersService', () => {
   let usersRepository: { findOne: jest.Mock };
   let purchaseOrdersRepository: { find: jest.Mock };
   let purchaseOrderReceiptEventsRepository: { find: jest.Mock };
+  let supplierStaffAssignmentsRepository: { find: jest.Mock };
   let auditService: {
     log: jest.Mock;
     listForTarget: jest.Mock;
@@ -67,6 +69,9 @@ describe('SuppliersService', () => {
     };
     purchaseOrderReceiptEventsRepository = {
       find: jest.fn(),
+    };
+    supplierStaffAssignmentsRepository = {
+      find: jest.fn().mockResolvedValue([]),
     };
 
     auditService = {
@@ -103,6 +108,10 @@ describe('SuppliersService', () => {
         {
           provide: getRepositoryToken(PurchaseOrderReceiptEvent),
           useValue: purchaseOrderReceiptEventsRepository,
+        },
+        {
+          provide: getRepositoryToken(SupplierStaffAssignment),
+          useValue: supplierStaffAssignmentsRepository,
         },
         { provide: AuditService, useValue: auditService },
         { provide: NotificationsService, useValue: notificationsService },
@@ -2797,19 +2806,19 @@ describe('SuppliersService', () => {
             damagedQuantity: 2,
           },
         ],
-        submittedAt: new Date('2026-03-18T08:00:00.000Z'),
+        submittedAt: new Date('2026-04-18T08:00:00.000Z'),
         acknowledgedAt: null,
         shippedAt: null,
         receivedAt: null,
-        createdAt: new Date('2026-03-18T08:00:00.000Z'),
-        updatedAt: new Date('2026-03-18T08:00:00.000Z'),
+        createdAt: new Date('2026-04-18T08:00:00.000Z'),
+        updatedAt: new Date('2026-04-18T08:00:00.000Z'),
       },
     ] as PurchaseOrder[]);
     purchaseOrderReceiptEventsRepository.find.mockResolvedValue([
       {
         id: 6,
         purchaseOrderId: 42,
-        createdAt: new Date('2026-03-18T10:00:00.000Z'),
+        createdAt: new Date('2026-04-18T10:00:00.000Z'),
         supplierAcknowledgedAt: null,
         discrepancyStatus: PurchaseOrderReceiptDiscrepancyStatus.OPEN,
       },
@@ -2931,19 +2940,19 @@ describe('SuppliersService', () => {
             damagedQuantity: 2,
           },
         ],
-        submittedAt: new Date('2026-03-18T08:00:00.000Z'),
+        submittedAt: new Date('2026-04-18T08:00:00.000Z'),
         acknowledgedAt: null,
         shippedAt: null,
         receivedAt: null,
-        createdAt: new Date('2026-03-18T08:00:00.000Z'),
-        updatedAt: new Date('2026-03-18T08:00:00.000Z'),
+        createdAt: new Date('2026-04-18T08:00:00.000Z'),
+        updatedAt: new Date('2026-04-18T08:00:00.000Z'),
       },
     ] as PurchaseOrder[]);
     purchaseOrderReceiptEventsRepository.find.mockResolvedValue([
       {
         id: 6,
         purchaseOrderId: 42,
-        createdAt: new Date('2026-03-18T10:00:00.000Z'),
+        createdAt: new Date('2026-04-18T10:00:00.000Z'),
         supplierAcknowledgedAt: null,
         discrepancyStatus: PurchaseOrderReceiptDiscrepancyStatus.OPEN,
       },

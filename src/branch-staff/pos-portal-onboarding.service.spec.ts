@@ -4,6 +4,7 @@ import { Branch } from '../branches/entities/branch.entity';
 import { RetailEntitlementsService } from '../retail/retail-entitlements.service';
 import { RetailModule } from '../retail/entities/tenant-module-entitlement.entity';
 import { User } from '../users/entities/user.entity';
+import { SellerWorkspace } from '../seller-workspace/entities/seller-workspace.entity';
 import { BranchStaffService } from './branch-staff.service';
 import { PosPortalOnboardingService } from './pos-portal-onboarding.service';
 import {
@@ -48,6 +49,24 @@ describe('PosPortalOnboardingService', () => {
       currency: 'ETB',
       billingInterval: 'MONTHLY',
       paymentMethod: 'EBIRR',
+      subscriptionOptions: [
+        {
+          period: 'SIX_MONTHS',
+          months: 6,
+          amount: 11400,
+          currency: 'ETB',
+          label: '6 months',
+          planCode: 'POS_BRANCH_6M',
+        },
+        {
+          period: 'ONE_YEAR',
+          months: 12,
+          amount: 22800,
+          currency: 'ETB',
+          label: '1 year',
+          planCode: 'POS_BRANCH_1Y',
+        },
+      ],
     })),
   };
 
@@ -95,6 +114,11 @@ describe('PosPortalOnboardingService', () => {
           useValue: retailEntitlementsService,
         },
         { provide: BranchStaffService, useValue: branchStaffService },
+        { provide: getRepositoryToken(User), useValue: { update: jest.fn() } },
+        {
+          provide: getRepositoryToken(SellerWorkspace),
+          useValue: { create: jest.fn(), findOne: jest.fn(), save: jest.fn() },
+        },
       ],
     }).compile();
 
@@ -146,7 +170,7 @@ describe('PosPortalOnboardingService', () => {
       expect.objectContaining({
         enabled: true,
         metadata: {
-          allowedSelfServeServiceFormats: ['RETAIL'],
+          allowedSelfServeServiceFormats: ['RETAIL', 'BARBER'],
         },
       }),
     );
@@ -169,6 +193,8 @@ describe('PosPortalOnboardingService', () => {
   });
 
   it('rejects hospitality-first onboarding until rollout is enabled', async () => {
+    const oldVal = process.env.POS_HOSPITALITY_SERVICE_FORMATS_ENABLED;
+    process.env.POS_HOSPITALITY_SERVICE_FORMATS_ENABLED = 'false';
     branchStaffService.getPosBranchSummariesForUser.mockResolvedValue([]);
     branchStaffService.getPosWorkspaceActivationCandidatesForUser.mockResolvedValue(
       [],
@@ -186,7 +212,53 @@ describe('PosPortalOnboardingService', () => {
         },
       ),
     ).rejects.toThrow(
-      'POS self-serve onboarding only supports RETAIL until hospitality rollout is enabled for this tenant.',
+      'POS self-serve onboarding only supports RETAIL, BARBER until hospitality rollout is enabled for this tenant.',
+    );
+    process.env.POS_HOSPITALITY_SERVICE_FORMATS_ENABLED = oldVal;
+  });
+
+  it('allows barber-first onboarding even when hospitality rollout is disabled', async () => {
+    process.env.POS_HOSPITALITY_SERVICE_FORMATS_ENABLED = 'false';
+    branchStaffService.getPosBranchSummariesForUser.mockResolvedValue([]);
+    branchStaffService.getPosWorkspaceActivationCandidatesForUser
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        {
+          branchId: 21,
+          branchName: 'Main Branch',
+          branchCode: 'BL-21',
+          workspaceStatus: 'PAYMENT_REQUIRED',
+        },
+      ]);
+
+    await service.createWorkspaceForUser(
+      { id: 9, email: 'seller@suuq.test', roles: ['VENDOR'] } as User,
+      {
+        businessName: 'Bole Bites',
+        branchName: 'Main Branch',
+        serviceFormat: 'BARBER',
+        categoryId: 14,
+        defaultCurrency: 'ETB',
+      },
+    );
+
+    expect(branchesRepository.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'Main Branch',
+        serviceFormat: 'BARBER',
+      }),
+    );
+    expect(
+      retailEntitlementsService.upsertModuleEntitlement,
+    ).toHaveBeenCalledWith(
+      31,
+      RetailModule.POS_CORE,
+      expect.objectContaining({
+        enabled: true,
+        metadata: {
+          allowedSelfServeServiceFormats: ['RETAIL', 'BARBER'],
+        },
+      }),
     );
   });
 
@@ -229,7 +301,21 @@ describe('PosPortalOnboardingService', () => {
       expect.objectContaining({
         enabled: true,
         metadata: {
-          allowedSelfServeServiceFormats: ['RETAIL', 'QSR', 'FSR'],
+          allowedSelfServeServiceFormats: [
+            'RETAIL',
+            'BARBER',
+            'PHARMACY',
+            'GROCERY',
+            'BAKERY',
+            'LAUNDRY',
+            'SALON_SPA',
+            'BUTCHERY',
+            'GAS_STATION',
+            'ELECTRONICS',
+            'QSR',
+            'FSR',
+            'HOTEL',
+          ],
         },
       }),
     );

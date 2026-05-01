@@ -24,6 +24,7 @@ import { Throttle } from '@nestjs/throttler';
 import { AuthService } from '../auth/auth.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { LoginDto } from '../auth/dto/login.dto';
+import { PosPortalLoginDto } from './dto/pos-portal-login.dto';
 import { GoogleAuthDto } from '../auth/dto/google-auth.dto';
 import { AppleAuthDto } from '../auth/dto/apple-auth.dto';
 import { UserResponseDto } from '../users/dto/user-response.dto';
@@ -44,8 +45,6 @@ import {
 } from './dto/pos-portal-auth-response.dto';
 import {
   PosWorkspaceActivationPaymentResponseDto,
-  PosWorkspaceTrialActivationResponseDto,
-  StartPosWorkspaceTrialDto,
   StartPosWorkspaceActivationDto,
 } from './dto/start-pos-workspace-activation.dto';
 
@@ -79,15 +78,22 @@ export class PosPortalAuthController {
   @Throttle(PORTAL_AUTH_WRITE_THROTTLE)
   @ApiOperation({
     summary:
-      'Authenticate the POS portal with email/password and resolve branch workspaces',
+      'Authenticate the POS portal with email/password or username/password and resolve branch workspaces',
   })
-  @ApiBody({ type: LoginDto })
+  @ApiBody({ type: PosPortalLoginDto })
   @ApiOkResponse({ type: PosPortalAuthResponseDto })
   @ApiForbiddenResponse({ type: PosPortalAccessDeniedResponseDto })
   @ApiUnauthorizedResponse({ description: 'Invalid credentials or token data' })
   @ApiTooManyRequestsResponse({ description: 'Too many auth attempts' })
-  async login(@Body() dto: LoginDto, @Req() req: AuthenticatedRequest) {
-    const result = await this.authService.login(dto);
+  async login(
+    @Body() dto: PosPortalLoginDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const identifier = dto.resolveIdentifier();
+    const result = await this.authService.loginWithIdentifier(
+      identifier,
+      dto.password,
+    );
     return this.buildAuthResponse(result, req, 'login');
   }
 
@@ -180,29 +186,6 @@ export class PosPortalAuthController {
     );
   }
 
-  @Post('activation/trial')
-  @UseGuards(JwtAuthGuard)
-  @HttpCode(HttpStatus.OK)
-  @Throttle(PORTAL_AUTH_WRITE_THROTTLE)
-  @ApiOperation({
-    summary: 'Start a 15-day trial for an eligible POS branch workspace',
-  })
-  @ApiBody({ type: StartPosWorkspaceTrialDto })
-  @ApiOkResponse({ type: PosWorkspaceTrialActivationResponseDto })
-  @ApiUnauthorizedResponse({ description: 'Missing or invalid access token' })
-  async activateWorkspaceTrial(
-    @Body() dto: StartPosWorkspaceTrialDto,
-    @Req() req: AuthenticatedRequest,
-  ) {
-    return this.posWorkspaceActivationService.startTrialActivation(
-      {
-        id: req.user.id,
-        roles: req.user.roles,
-      },
-      dto,
-    );
-  }
-
   @Post('workspace')
   @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.CREATED)
@@ -221,6 +204,29 @@ export class PosPortalAuthController {
     const user = await this.authService.getUsersService().findById(req.user.id);
 
     return this.posPortalOnboardingService.createWorkspaceForUser(user, dto);
+  }
+
+  @Post('link-google')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.OK)
+  @Throttle(PORTAL_AUTH_WRITE_THROTTLE)
+  @ApiOperation({
+    summary:
+      'Link a verified Google account to the currently authenticated POS portal user',
+  })
+  @ApiBody({ type: GoogleAuthDto })
+  @ApiOkResponse({ description: 'Google account linked successfully.' })
+  @ApiUnauthorizedResponse({ description: 'Missing or invalid access token' })
+  async linkGoogle(
+    @Body() dto: GoogleAuthDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const verified = await this.authService.verifyGoogleIdToken(dto.idToken);
+    return this.branchStaffService.linkGoogleAccount(
+      { id: req.user.id },
+      verified.sub,
+      verified.email,
+    );
   }
 
   private async buildAuthResponse(

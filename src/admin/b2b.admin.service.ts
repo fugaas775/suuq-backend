@@ -142,6 +142,7 @@ export class AdminB2bService {
 
     const summaryRaw = await qb
       .clone()
+      .orderBy() // clear ORDER BY — not valid in aggregate-only queries
       .select('COUNT(*)', 'totalPurchaseOrders')
       .addSelect(
         `SUM(CASE WHEN COALESCE(purchaseOrder.statusMeta ->> 'autoReplenishment', 'false') = 'true' THEN 1 ELSE 0 END)`,

@@ -2,6 +2,7 @@ import { forwardRef, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuditModule } from '../audit/audit.module';
 import { BranchesModule } from '../branches/branches.module';
+import { EmailModule } from '../email/email.module';
 import { Branch } from '../branches/entities/branch.entity';
 import { Product } from '../products/entities/product.entity';
 import { ProcurementWebhooksModule } from '../procurement-webhooks/procurement-webhooks.module';
@@ -19,6 +20,7 @@ import { PurchaseOrdersService } from './purchase-orders.service';
 @Module({
   imports: [
     AuditModule,
+    EmailModule,
     forwardRef(() => BranchesModule),
     ProcurementWebhooksModule,
     RealtimeModule,

@@ -15,6 +15,7 @@ import {
   BranchStaffRole,
 } from '../branch-staff/entities/branch-staff-assignment.entity';
 import { Branch } from '../branches/entities/branch.entity';
+import { BranchInventory } from '../branches/entities/branch-inventory.entity';
 import { Order, PaymentStatus } from '../orders/entities/order.entity';
 import {
   PurchaseOrder,
@@ -39,6 +40,7 @@ import {
   resolveAllowedSelfServeServiceFormats,
 } from '../retail/self-serve-service-format.policy';
 import {
+  TenantBillingInterval,
   TenantSubscription,
   TenantSubscriptionStatus,
 } from '../retail/entities/tenant-subscription.entity';
@@ -78,6 +80,9 @@ import {
   SellerWorkspaceProgressState,
   SellerWorkspaceStatus,
 } from './entities/seller-workspace.entity';
+import { EquityPartnerService } from '../retail/equity-partner.service';
+import { EmailService } from '../email/email.service';
+import { EquityPartnerStatus } from '../retail/entities/equity-partner.entity';
 
 const SELLER_PLAN_DEFINITIONS: Record<
   SellerPlanCode,
@@ -179,7 +184,22 @@ export class SellerWorkspaceService {
     private readonly sellerWorkspacesRepository: Repository<SellerWorkspace>,
     private readonly vendorStaffService: VendorStaffService,
     private readonly branchStaffService: BranchStaffService,
+    private readonly equityPartnerService: EquityPartnerService,
+    private readonly emailService: EmailService,
+    @InjectRepository(Branch)
+    private readonly branchesRepository: Repository<Branch>,
+    @InjectRepository(BranchStaffAssignment)
+    private readonly branchStaffAssignmentsRepository: Repository<BranchStaffAssignment>,
   ) {}
+
+  /** Return ownerUserIds for all workspaces with the given billingStatus. */
+  async findUserIdsByBillingStatus(billingStatus: string): Promise<number[]> {
+    const rows = await this.sellerWorkspacesRepository.find({
+      where: { billingStatus: billingStatus as any },
+      select: ['ownerUserId'],
+    });
+    return rows.map((r) => r.ownerUserId);
+  }
 
   async bootstrapWorkspace(
     userId: number,
@@ -257,16 +277,21 @@ export class SellerWorkspaceService {
       throw new NotFoundException(`User with ID ${userId} not found`);
     }
 
-    const [activeBranches, activationCandidates] = await Promise.all([
-      this.branchStaffService.getPosBranchSummariesForUser({
-        id: user.id,
-        roles: user.roles,
-      }),
-      this.branchStaffService.getPosWorkspaceActivationCandidatesForUser({
-        id: user.id,
-        roles: user.roles,
-      }),
-    ]);
+    const [activeBranches, activationCandidates, callerEquityPartner] =
+      await Promise.all([
+        this.branchStaffService.getPosBranchSummariesForUser({
+          id: user.id,
+          roles: user.roles,
+        }),
+        this.branchStaffService.getPosWorkspaceActivationCandidatesForUser({
+          id: user.id,
+          roles: user.roles,
+        }),
+        this.equityPartnerService.getSellerProfile(userId),
+      ]);
+
+    const isCallerEquityPartner =
+      callerEquityPartner?.status === EquityPartnerStatus.ACTIVE;
 
     if (!activeBranches.length && !activationCandidates.length) {
       throw new ForbiddenException({
@@ -285,19 +310,33 @@ export class SellerWorkspaceService {
           .filter((tenantId): tenantId is number => Number.isInteger(tenantId)),
       ),
     );
-    const [subscriptions, tenants, rosterSummaries] = await Promise.all([
-      this.findRelevantSubscriptions(tenantIds),
-      this.findTenantsByIds(tenantIds),
-      this.branchStaffService.getBranchRosterSummaries(
-        [...activeBranches, ...activationCandidates].map(
-          (branch) => branch.branchId,
-        ),
-      ),
-    ]);
+    const allBranchIds = [...activeBranches, ...activationCandidates].map(
+      (branch) => branch.branchId,
+    );
+    const [subscriptions, tenants, rosterSummaries, branchInventoryCounts] =
+      await Promise.all([
+        this.findRelevantSubscriptions(tenantIds),
+        this.findTenantsByIds(tenantIds),
+        this.branchStaffService.getBranchRosterSummaries(allBranchIds),
+        this.sellerWorkspacesRepository.manager
+          .getRepository(BranchInventory)
+          .createQueryBuilder('inv')
+          .select('inv.branchId', 'branchId')
+          .addSelect('COUNT(*)', 'cnt')
+          .where('inv.branchId IN (:...branchIds)', { branchIds: allBranchIds })
+          .groupBy('inv.branchId')
+          .getRawMany<{ branchId: number; cnt: string }>(),
+      ]);
     const latestSubscriptionByTenantId = new Map<number, TenantSubscription>();
     const tenantById = new Map(tenants.map((tenant) => [tenant.id, tenant]));
     const rosterByBranchId = new Map(
       rosterSummaries.map((summary) => [summary.branchId, summary]),
+    );
+    const productCountByBranchId = new Map(
+      branchInventoryCounts.map(({ branchId, cnt }) => [
+        branchId,
+        parseInt(cnt, 10),
+      ]),
     );
     for (const subscription of subscriptions) {
       if (!latestSubscriptionByTenantId.has(subscription.tenantId)) {
@@ -327,6 +366,7 @@ export class SellerWorkspaceService {
           role: branch.role,
           isOwner: branch.isOwner,
           isTenantOwner: branch.isTenantOwner,
+          isEquityPartner: isCallerEquityPartner,
           retailTenantId: branch.retailTenantId,
           retailTenantName: branch.retailTenantName,
           workspaceStatus: branch.workspaceStatus,
@@ -360,12 +400,11 @@ export class SellerWorkspaceService {
           modules: branch.modules,
           pricing,
           canStartActivation: false,
-          canStartTrial: false,
           canOpenNow: branch.canOpenNow,
-          trialStartedAt: branch.trialStartedAt,
-          trialEndsAt: branch.trialEndsAt,
-          trialDaysRemaining: branch.trialDaysRemaining,
           joinedAt: branch.joinedAt,
+          productCount: productCountByBranchId.get(branch.branchId) ?? 0,
+          phone: branch.phone ?? null,
+          tinNumber: branch.tinNumber ?? null,
         };
       }),
       ...activationCandidates.map((candidate) => {
@@ -386,6 +425,7 @@ export class SellerWorkspaceService {
           role: candidate.role,
           isOwner: candidate.isOwner,
           isTenantOwner: candidate.isTenantOwner,
+          isEquityPartner: isCallerEquityPartner,
           retailTenantId: candidate.retailTenantId,
           retailTenantName: candidate.retailTenantName,
           workspaceStatus: candidate.workspaceStatus,
@@ -416,12 +456,11 @@ export class SellerWorkspaceService {
           modules: [],
           pricing: candidate.pricing as SellerWorkspacePricingDto,
           canStartActivation: candidate.canStartActivation,
-          canStartTrial: candidate.canStartTrial,
           canOpenNow: candidate.canOpenNow,
-          trialStartedAt: candidate.trialStartedAt,
-          trialEndsAt: candidate.trialEndsAt,
-          trialDaysRemaining: candidate.trialDaysRemaining,
           joinedAt: new Date(0),
+          productCount: productCountByBranchId.get(candidate.branchId) ?? 0,
+          phone: candidate.phone ?? null,
+          tinNumber: candidate.tinNumber ?? null,
         };
       }),
     ].sort((left, right) => {
@@ -464,7 +503,46 @@ export class SellerWorkspaceService {
       ],
     );
 
-    const accessItems = [...activeBranches, ...activationCandidates];
+    let accessItems = [...activeBranches, ...activationCandidates];
+
+    // When all branches have been deleted the user still owns the RetailTenant.
+    // Allow them to recreate a branch by synthesising a tenant-owner access entry
+    // directly from their owned tenant record.
+    if (!accessItems.length) {
+      const ownedTenant = await this.retailTenantsRepository.findOne({
+        where: { ownerUserId: user.id },
+      });
+
+      if (ownedTenant) {
+        accessItems = [
+          {
+            branchId: -1,
+            branchName: '',
+            branchCode: null,
+            serviceFormat: null,
+            address: null,
+            city: null,
+            country: null,
+            timezone: null,
+            phone: null,
+            tinNumber: null,
+            role: 'MANAGER' as any,
+            permissions: [],
+            isOwner: false,
+            isTenantOwner: true,
+            retailTenantId: ownedTenant.id,
+            retailTenantName: ownedTenant.name ?? null,
+            modules: [],
+            workspaceStatus: 'PAYMENT_REQUIRED' as any,
+            subscriptionStatus: null,
+            planCode: null,
+            canStartActivation: false,
+            canOpenNow: false,
+          } as any,
+        ];
+      }
+    }
+
     if (!accessItems.length) {
       throw new ForbiddenException({
         code: 'SELLER_WORKSPACE_ACCESS_DENIED',
@@ -583,19 +661,57 @@ export class SellerWorkspaceService {
           address: normalizedAddress,
           city: normalizedCity,
           country: normalizedCountry,
+          phone: dto.phone?.trim() || null,
+          tinNumber: dto.tinNumber?.trim() || null,
           isActive: true,
         });
+
+        // If a different owner email is specified, resolve that user and assign ownership
+        const normalizedOwnerEmail = dto.ownerEmail?.trim().toLowerCase();
+        let ownerUserId = user.id;
+        if (
+          normalizedOwnerEmail &&
+          normalizedOwnerEmail !== user.email?.toLowerCase()
+        ) {
+          const usersRepo = manager.getRepository(User);
+          const targetOwner = await usersRepo.findOne({
+            where: { email: normalizedOwnerEmail },
+            select: ['id', 'email'],
+          });
+          if (!targetOwner) {
+            throw new NotFoundException(
+              `No user found with email "${normalizedOwnerEmail}" to assign as branch owner.`,
+            );
+          }
+          ownerUserId = targetOwner.id;
+          branch.ownerId = ownerUserId;
+        }
+
         const savedBranch = await branchesRepository.save(branch);
 
+        // Assign MANAGER role to the designated owner
         await assignmentsRepository.save(
           assignmentsRepository.create({
             branchId: savedBranch.id,
-            userId: user.id,
+            userId: ownerUserId,
             role: BranchStaffRole.MANAGER,
             permissions: [],
             isActive: true,
           }),
         );
+
+        // If creator is different from owner, also add them as MANAGER
+        if (ownerUserId !== user.id) {
+          await assignmentsRepository.save(
+            assignmentsRepository.create({
+              branchId: savedBranch.id,
+              userId: user.id,
+              role: BranchStaffRole.MANAGER,
+              permissions: [],
+              isActive: true,
+            }),
+          );
+        }
 
         if (!tenant.defaultCurrency && normalizedCurrency) {
           tenant.defaultCurrency = normalizedCurrency;
@@ -605,6 +721,21 @@ export class SellerWorkspaceService {
         createdBranchId = savedBranch.id;
       },
     );
+
+    // Link equity partner if a referral code was supplied
+    if (dto.referralCode && createdBranchId) {
+      const partner =
+        await this.equityPartnerService.findActivePartnerByReferralCode(
+          dto.referralCode,
+        );
+      if (partner) {
+        await this.equityPartnerService.createAssignment(
+          partner.id,
+          createdBranchId,
+          targetTenantId,
+        );
+      }
+    }
 
     const refreshed = await this.getBranchWorkspaces(userId);
     const createdWorkspace = refreshed.items.find(
@@ -618,6 +749,126 @@ export class SellerWorkspaceService {
     }
 
     return createdWorkspace;
+  }
+
+  async transferBranchOwnership(
+    callerId: number,
+    branchId: number,
+    newOwnerEmail: string,
+  ): Promise<{ success: boolean }> {
+    // Verify caller is an active equity partner
+    const callerPartner =
+      await this.equityPartnerService.getSellerProfile(callerId);
+    if (!callerPartner || callerPartner.status !== EquityPartnerStatus.ACTIVE) {
+      throw new ForbiddenException(
+        'Only active equity partners can transfer branch ownership.',
+      );
+    }
+
+    // Fetch the branch and verify caller owns it
+    const branch = await this.branchesRepository.findOne({
+      where: { id: branchId },
+      select: ['id', 'name', 'ownerId', 'retailTenantId'],
+    });
+    if (!branch) {
+      throw new NotFoundException(`Branch #${branchId} not found.`);
+    }
+    if (branch.ownerId !== callerId) {
+      throw new ForbiddenException(
+        'You can only transfer ownership of branches you own.',
+      );
+    }
+
+    // Find the new owner
+    const normalizedEmail = newOwnerEmail.trim().toLowerCase();
+    const newOwner = await this.usersRepository.findOne({
+      where: { email: normalizedEmail },
+      select: ['id', 'email'],
+    });
+    if (!newOwner) {
+      throw new NotFoundException(
+        `No user found with email "${normalizedEmail}".`,
+      );
+    }
+    if (newOwner.id === callerId) {
+      throw new ForbiddenException('Cannot transfer ownership to yourself.');
+    }
+
+    // Get previous owner email for notification
+    const prevOwner = await this.usersRepository.findOne({
+      where: { id: callerId },
+      select: ['id', 'email'],
+    });
+    const prevOwnerEmail = prevOwner?.email ?? `User #${callerId}`;
+
+    // Transfer ownership: update branch.ownerId
+    await this.branchesRepository.update(
+      { id: branchId },
+      { ownerId: newOwner.id },
+    );
+
+    // Revoke previous owner's staff assignment on this branch
+    const prevOwnerAssignment =
+      await this.branchStaffAssignmentsRepository.findOne({
+        where: { branchId, userId: callerId },
+      });
+    if (prevOwnerAssignment) {
+      prevOwnerAssignment.isActive = false;
+      await this.branchStaffAssignmentsRepository.save(prevOwnerAssignment);
+    }
+
+    // Ensure new owner has a MANAGER assignment
+    const existingAssignment =
+      await this.branchStaffAssignmentsRepository.findOne({
+        where: { branchId, userId: newOwner.id },
+      });
+    if (existingAssignment) {
+      existingAssignment.isActive = true;
+      existingAssignment.role = BranchStaffRole.MANAGER;
+      await this.branchStaffAssignmentsRepository.save(existingAssignment);
+    } else {
+      await this.branchStaffAssignmentsRepository.save(
+        this.branchStaffAssignmentsRepository.create({
+          branchId,
+          userId: newOwner.id,
+          role: BranchStaffRole.MANAGER,
+          permissions: [],
+          isActive: true,
+        }),
+      );
+    }
+
+    // Send email notifications (non-fatal)
+    const notifyParams = {
+      branchName: branch.name,
+      branchId: branch.id,
+      previousOwnerEmail: prevOwnerEmail,
+      newOwnerEmail: normalizedEmail,
+      transferredBy: prevOwnerEmail,
+    };
+    void this.emailService
+      .sendBranchOwnershipTransferEmail({
+        ...notifyParams,
+        to: prevOwnerEmail,
+        role: 'previous',
+      })
+      .catch(() => {});
+    void this.emailService
+      .sendBranchOwnershipTransferEmail({
+        ...notifyParams,
+        to: normalizedEmail,
+        role: 'new',
+      })
+      .catch(() => {});
+    void this.emailService
+      .sendBranchOwnershipTransferEmail({
+        ...notifyParams,
+        to: 'admin@suuqsapp.com',
+        role: 'previous',
+      })
+      .catch(() => {});
+
+    return { success: true };
   }
 
   async updatePlanSelection(
@@ -1298,11 +1549,8 @@ export class SellerWorkspaceService {
     subscriptions: TenantSubscription[],
     persistedState?: SellerWorkspaceProgressState | null,
   ): SellerWorkspaceOnboardingStepDto[] {
-    const hasActiveSubscription = subscriptions.some((subscription) =>
-      [
-        TenantSubscriptionStatus.ACTIVE,
-        TenantSubscriptionStatus.TRIAL,
-      ].includes(subscription.status),
+    const hasActiveSubscription = subscriptions.some(
+      (subscription) => subscription.status === TenantSubscriptionStatus.ACTIVE,
     );
 
     return [
@@ -1324,7 +1572,7 @@ export class SellerWorkspaceService {
         detail:
           persistedState?.plan?.detail ??
           (hasActiveSubscription
-            ? 'At least one active or trial retail subscription is present'
+            ? 'At least one active retail subscription is present'
             : 'No active retail subscription is attached to the linked POS tenant yet'),
       },
       {
@@ -1389,8 +1637,6 @@ export class SellerWorkspaceService {
     switch (status) {
       case TenantSubscriptionStatus.ACTIVE:
         return 5;
-      case TenantSubscriptionStatus.TRIAL:
-        return 4;
       case TenantSubscriptionStatus.PAST_DUE:
         return 3;
       case TenantSubscriptionStatus.EXPIRED:
@@ -1713,8 +1959,6 @@ export class SellerWorkspaceService {
     switch (current?.status) {
       case TenantSubscriptionStatus.ACTIVE:
         return SellerWorkspaceBillingStatus.ACTIVE;
-      case TenantSubscriptionStatus.TRIAL:
-        return SellerWorkspaceBillingStatus.TRIAL;
       case TenantSubscriptionStatus.PAST_DUE:
         return SellerWorkspaceBillingStatus.PAST_DUE;
       case TenantSubscriptionStatus.CANCELLED:
@@ -1840,6 +2084,8 @@ export class SellerWorkspaceService {
     if (dto.city !== undefined) updates.city = dto.city;
     if (dto.country !== undefined) updates.country = dto.country;
     if (dto.timezone !== undefined) updates.timezone = dto.timezone;
+    if (dto.phone !== undefined) updates.phone = dto.phone;
+    if (dto.tinNumber !== undefined) updates.tinNumber = dto.tinNumber;
     if (Object.keys(updates).length > 0) {
       await branchRepo.update(branchId, updates);
     }
@@ -1900,5 +2146,31 @@ export class SellerWorkspaceService {
       );
     }
     return updatedWorkspace;
+  }
+
+  async deleteBranchWorkspace(
+    userId: number,
+    branchId: number,
+  ): Promise<{ deleted: true; branchId: number }> {
+    const branchRepo =
+      this.sellerWorkspacesRepository.manager.getRepository(Branch);
+    const branch = await branchRepo.findOne({
+      where: { id: branchId },
+      relations: ['retailTenant', 'retailTenant.owner'],
+    });
+    if (!branch) {
+      throw new NotFoundException(
+        `Branch workspace with ID ${branchId} not found.`,
+      );
+    }
+    const isOwner =
+      branch.ownerId === userId || branch.retailTenant?.owner?.id === userId;
+    if (!isOwner) {
+      throw new ForbiddenException(
+        'Only the branch or tenant owner can delete a branch workspace.',
+      );
+    }
+    await branchRepo.delete(branchId);
+    return { deleted: true, branchId };
   }
 }

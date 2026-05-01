@@ -20,4 +20,9 @@ export class AssignBranchStaffDto {
   @IsArray()
   @IsString({ each: true })
   permissions?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  assignedSurfaces?: string[];
 }

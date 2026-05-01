@@ -1,3 +1,6 @@
+import { PosPortalOnboardingService } from '../branch-staff/pos-portal-onboarding.service';
+import { SellerWorkspace } from '../seller-workspace/entities/seller-workspace.entity';
+import { InventoryLedgerService } from '../branches/inventory-ledger.service';
 import { Test } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -68,6 +71,9 @@ describe('VendorService.searchDeliverers (geo)', () => {
     const module = await Test.createTestingModule({
       providers: [
         VendorService,
+        { provide: InventoryLedgerService, useValue: {} },
+        { provide: PosPortalOnboardingService, useValue: {} },
+        { provide: getRepositoryToken(SellerWorkspace), useValue: {} },
         { provide: getRepositoryToken(User), useClass: Repository },
         { provide: getRepositoryToken(Product), useClass: Repository },
         { provide: getRepositoryToken(Order), useClass: Repository },

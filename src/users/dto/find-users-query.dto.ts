@@ -1,4 +1,11 @@
-import { IsOptional, IsString, IsEnum, IsInt, IsIn } from 'class-validator';
+import {
+  IsOptional,
+  IsString,
+  IsEnum,
+  IsInt,
+  IsIn,
+  IsArray,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 import { UserRole } from '../../auth/roles.enum';
 import { VerificationStatus } from '../entities/user.entity';
@@ -96,6 +103,10 @@ export class FindUsersQueryDto {
   @IsOptional()
   @IsString()
   createdTo?: string; // ISO date
+
+  // Internal: restrict results to a specific set of user IDs (used by admin billing filter)
+  // Not a validated query param — set programmatically by the controller
+  userIds?: number[];
 
   @IsOptional()
   @IsString()

@@ -2,6 +2,7 @@ import {
   BadRequestException,
   CanActivate,
   ExecutionContext,
+  ForbiddenException,
   Injectable,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
@@ -48,6 +49,29 @@ export class RetailModulesGuard implements CanActivate {
 
     req.retailTenant = resolved.tenant;
     req.retailEntitlements = resolved.entitlements;
+
+    // Verify the requesting user is an active staff member of this specific
+    // branch. Skip this check for super-admins, admins, and B2B buyers who
+    // access branches without a staff assignment.
+    const user = req.user as { id?: number; roles?: string[] } | undefined;
+    const bypassRoles = new Set(['SUPER_ADMIN', 'ADMIN', 'B2B_BUYER']);
+    const isBypassed =
+      !user?.id ||
+      (Array.isArray(user.roles) && user.roles.some((r) => bypassRoles.has(r)));
+
+    if (!isBypassed) {
+      const hasAccess =
+        await this.retailEntitlementsService.isUserActiveBranchMember(
+          user.id,
+          branchId,
+        );
+      if (!hasAccess) {
+        throw new ForbiddenException(
+          'You do not have an active staff assignment for this branch.',
+        );
+      }
+    }
+
     return true;
   }
 

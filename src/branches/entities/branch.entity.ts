@@ -54,6 +54,12 @@ export class Branch {
   @Column({ type: 'varchar', length: 128, nullable: true })
   externalRef?: string | null;
 
+  @Column({ type: 'varchar', length: 32, nullable: true })
+  phone?: string | null;
+
+  @Column({ type: 'varchar', length: 64, nullable: true })
+  tinNumber?: string | null;
+
   @Column({ type: 'int', nullable: true })
   retailTenantId?: number | null;
 

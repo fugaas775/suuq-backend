@@ -1,3 +1,6 @@
+import { PosPortalOnboardingService } from '../branch-staff/pos-portal-onboarding.service';
+import { SellerWorkspace } from '../seller-workspace/entities/seller-workspace.entity';
+import { InventoryLedgerService } from '../branches/inventory-ledger.service';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
@@ -78,6 +81,9 @@ describe('Vendor private note access rules', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         VendorService,
+        { provide: InventoryLedgerService, useValue: {} },
+        { provide: PosPortalOnboardingService, useValue: {} },
+        { provide: getRepositoryToken(SellerWorkspace), useValue: {} },
         { provide: getRepositoryToken(User), useValue: userRepoMock },
         { provide: getRepositoryToken(Product), useValue: productRepoMock },
         { provide: getRepositoryToken(Order), useValue: orderRepoMock },

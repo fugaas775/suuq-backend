@@ -5,7 +5,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { VendorStaff } from './entities/vendor-staff.entity';
 import { User } from '../users/entities/user.entity';
 import { VendorPermission } from './vendor-permissions.enum';
@@ -14,6 +14,12 @@ import { InviteStaffDto } from './dto/invite-staff.dto';
 import { UpdateStaffPermissionsDto } from './dto/update-staff-permissions.dto';
 import { EmailService } from '../email/email.service';
 import { UserRole } from '../auth/roles.enum';
+import {
+  BranchStaffAssignment,
+  BranchStaffRole,
+} from '../branch-staff/entities/branch-staff-assignment.entity';
+import { Branch } from '../branches/entities/branch.entity';
+import { SellerWorkspace } from '../seller-workspace/entities/seller-workspace.entity';
 
 export interface VendorStoreSummary {
   vendorId: number;
@@ -32,6 +38,12 @@ export class VendorStaffService {
     private readonly vendorStaffRepo: Repository<VendorStaff>,
     private readonly usersService: UsersService,
     private readonly emailService: EmailService,
+    @InjectRepository(BranchStaffAssignment)
+    private readonly branchStaffAssignmentsRepo: Repository<BranchStaffAssignment>,
+    @InjectRepository(Branch)
+    private readonly branchesRepo: Repository<Branch>,
+    @InjectRepository(SellerWorkspace)
+    private readonly sellerWorkspacesRepo: Repository<SellerWorkspace>,
   ) {}
 
   /**
@@ -262,6 +274,7 @@ export class VendorStaffService {
 
     const saved = await this.vendorStaffRepo.save(link);
     await this.emailService.sendStaffInvitation(dto.email, vendorName, true);
+    void this.syncVendorStaffToBranches(vendor.id, user.id);
     return saved;
   }
 
@@ -308,5 +321,98 @@ export class VendorStaffService {
     }
 
     await this.vendorStaffRepo.delete(staffId);
+    void this.deactivateVendorStaffFromBranches(vendorId, staff.member.id);
+  }
+
+  /**
+   * When a vendor invites a staff member, mirror that assignment across all POS
+   * branches linked to the vendor's SellerWorkspace.
+   */
+  private async syncVendorStaffToBranches(
+    vendorId: number,
+    memberId: number,
+  ): Promise<void> {
+    try {
+      const sellerWorkspace = await this.sellerWorkspacesRepo.findOne({
+        where: { ownerUserId: vendorId },
+        select: ['primaryRetailTenantId'],
+      });
+      if (!sellerWorkspace?.primaryRetailTenantId) return;
+
+      const branches = await this.branchesRepo.find({
+        where: {
+          retailTenantId: sellerWorkspace.primaryRetailTenantId,
+          isActive: true,
+        },
+        select: ['id'],
+      });
+
+      await Promise.all(
+        branches.map(async (branch) => {
+          const existing = await this.branchStaffAssignmentsRepo.findOne({
+            where: { branchId: branch.id, userId: memberId },
+          });
+          if (existing) {
+            if (!existing.isActive) {
+              existing.isActive = true;
+              await this.branchStaffAssignmentsRepo.save(existing);
+            }
+          } else {
+            await this.branchStaffAssignmentsRepo.save(
+              this.branchStaffAssignmentsRepo.create({
+                branchId: branch.id,
+                userId: memberId,
+                role: BranchStaffRole.OPERATOR,
+                permissions: [],
+                isActive: true,
+              }),
+            );
+          }
+        }),
+      );
+      this.logger.log(
+        `Synced vendor staff member #${memberId} to ${branches.length} POS branch(es) for vendor #${vendorId}`,
+      );
+    } catch (err: any) {
+      this.logger.warn(
+        `Failed to sync vendor staff #${memberId} to branches for vendor #${vendorId}: ${err?.message}`,
+      );
+    }
+  }
+
+  /**
+   * When a vendor staff member is removed, deactivate their POS branch
+   * assignments across all branches under the same tenant.
+   */
+  private async deactivateVendorStaffFromBranches(
+    vendorId: number,
+    memberId: number,
+  ): Promise<void> {
+    try {
+      const sellerWorkspace = await this.sellerWorkspacesRepo.findOne({
+        where: { ownerUserId: vendorId },
+        select: ['primaryRetailTenantId'],
+      });
+      if (!sellerWorkspace?.primaryRetailTenantId) return;
+
+      const branches = await this.branchesRepo.find({
+        where: { retailTenantId: sellerWorkspace.primaryRetailTenantId },
+        select: ['id'],
+      });
+      const branchIds = branches.map((b) => b.id);
+      if (!branchIds.length) return;
+
+      await this.branchStaffAssignmentsRepo.update(
+        { userId: memberId, branchId: In(branchIds) },
+        { isActive: false },
+      );
+      this.logger.log(
+        `Deactivated POS branch assignments for vendor staff #${memberId} under vendor #${vendorId}`,
+      );
+    } catch (err: any) {
+      this.logger.warn(
+        `Failed to deactivate branch assignments for vendor staff #${memberId}: ${err?.message}`,
+      );
+    }
   }
 }

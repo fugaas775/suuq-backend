@@ -10,6 +10,7 @@ import { StockMovementType } from '../branches/entities/stock-movement.entity';
 import { InventoryLedgerService } from '../branches/inventory-ledger.service';
 import { Branch } from '../branches/entities/branch.entity';
 import { PartnerCredential } from '../partner-credentials/entities/partner-credential.entity';
+import { Product } from '../products/entities/product.entity';
 import { ProductAliasesService } from '../product-aliases/product-aliases.service';
 import { CreatePosSyncJobDto } from './dto/create-pos-sync-job.dto';
 import { IngestPosSyncDto, PosSyncEntryDto } from './dto/ingest-pos-sync.dto';
@@ -415,19 +416,24 @@ export class PosSyncService {
     }
 
     if (dto.syncType === 'SALES_SUMMARY') {
-      await this.inventoryLedgerService.recordMovement(
-        {
-          branchId: dto.branchId,
-          productId,
-          movementType: StockMovementType.SALE,
-          quantityDelta: -Math.abs(entry.quantity),
-          sourceType: 'POS_SYNC',
-          sourceReferenceId: syncJob.id,
-          actorUserId,
-          note: entry.note ?? 'POS sales summary',
-        },
-        manager,
-      );
+      const salesSummaryProduct = await (manager ?? this.dataSource.manager)
+        .getRepository(Product)
+        .findOne({ where: { id: productId }, select: ['id', 'manageStock'] });
+      if (salesSummaryProduct?.manageStock) {
+        await this.inventoryLedgerService.recordMovement(
+          {
+            branchId: dto.branchId,
+            productId,
+            movementType: StockMovementType.SALE,
+            quantityDelta: -Math.abs(entry.quantity),
+            sourceType: 'POS_SYNC',
+            sourceReferenceId: syncJob.id,
+            actorUserId,
+            note: entry.note ?? 'POS sales summary',
+          },
+          manager,
+        );
+      }
       return;
     }
 
@@ -519,19 +525,24 @@ export class PosSyncService {
     }
 
     if (entry.movementType === StockMovementType.SALE) {
-      await this.inventoryLedgerService.recordMovement(
-        {
-          branchId: dto.branchId,
-          productId,
-          movementType: StockMovementType.SALE,
-          quantityDelta: -Math.abs(entry.quantity),
-          sourceType: 'POS_SYNC',
-          sourceReferenceId: syncJob.id,
-          actorUserId,
-          note: entry.note ?? 'POS sale delta',
-        },
-        manager,
-      );
+      const saleDeltaProduct = await (manager ?? this.dataSource.manager)
+        .getRepository(Product)
+        .findOne({ where: { id: productId }, select: ['id', 'manageStock'] });
+      if (saleDeltaProduct?.manageStock) {
+        await this.inventoryLedgerService.recordMovement(
+          {
+            branchId: dto.branchId,
+            productId,
+            movementType: StockMovementType.SALE,
+            quantityDelta: -Math.abs(entry.quantity),
+            sourceType: 'POS_SYNC',
+            sourceReferenceId: syncJob.id,
+            actorUserId,
+            note: entry.note ?? 'POS sale delta',
+          },
+          manager,
+        );
+      }
       return;
     }
 

@@ -5,6 +5,7 @@ import { AuditService } from '../audit/audit.service';
 import { UserRole } from '../auth/roles.enum';
 import { BranchStaffService } from './branch-staff.service';
 import { PosPortalAuthController } from './pos-portal-auth.controller';
+import { PosPortalLoginDto } from './dto/pos-portal-login.dto';
 import { RetailModule } from '../retail/entities/tenant-module-entitlement.entity';
 import { PosWorkspaceActivationService } from './pos-workspace-activation.service';
 import { PosPortalOnboardingService } from './pos-portal-onboarding.service';
@@ -14,6 +15,7 @@ describe('PosPortalAuthController', () => {
 
   const authServiceMock = {
     login: jest.fn(),
+    loginWithIdentifier: jest.fn(),
     googleLogin: jest.fn(),
     appleLogin: jest.fn(),
     getUsersService: jest.fn(),
@@ -56,6 +58,24 @@ describe('PosPortalAuthController', () => {
       currency: 'ETB',
       billingInterval: 'MONTHLY',
       paymentMethod: 'EBIRR',
+      subscriptionOptions: [
+        {
+          period: 'SIX_MONTHS',
+          months: 6,
+          amount: 11400,
+          currency: 'ETB',
+          label: '6 months',
+          planCode: 'POS_BRANCH_6M',
+        },
+        {
+          period: 'ONE_YEAR',
+          months: 12,
+          amount: 22800,
+          currency: 'ETB',
+          label: '1 year',
+          planCode: 'POS_BRANCH_1Y',
+        },
+      ],
     });
 
     const module: TestingModule = await Test.createTestingModule({
@@ -196,6 +216,24 @@ describe('PosPortalAuthController', () => {
             currency: 'ETB',
             billingInterval: 'MONTHLY',
             paymentMethod: 'EBIRR',
+            subscriptionOptions: [
+              {
+                period: 'SIX_MONTHS',
+                months: 6,
+                amount: 11400,
+                currency: 'ETB',
+                label: '6 months',
+                planCode: 'POS_BRANCH_6M',
+              },
+              {
+                period: 'ONE_YEAR',
+                months: 12,
+                amount: 22800,
+                currency: 'ETB',
+                label: '1 year',
+                planCode: 'POS_BRANCH_1Y',
+              },
+            ],
           },
         },
       ],
@@ -261,7 +299,7 @@ describe('PosPortalAuthController', () => {
   });
 
   it('returns activation-required denial when a linked branch workspace still needs POS billing activation', async () => {
-    authServiceMock.login.mockResolvedValue({
+    authServiceMock.loginWithIdentifier.mockResolvedValue({
       accessToken: 'access-token',
       refreshToken: 'refresh-token',
       user,
@@ -294,17 +332,41 @@ describe('PosPortalAuthController', () => {
             currency: 'ETB',
             billingInterval: 'MONTHLY',
             paymentMethod: 'EBIRR',
+            subscriptionOptions: [
+              {
+                period: 'SIX_MONTHS',
+                months: 6,
+                amount: 11400,
+                currency: 'ETB',
+                label: '6 months',
+                planCode: 'POS_BRANCH_6M',
+              },
+              {
+                period: 'ONE_YEAR',
+                months: 12,
+                amount: 22800,
+                currency: 'ETB',
+                label: '1 year',
+                planCode: 'POS_BRANCH_1Y',
+              },
+            ],
           },
         },
       ],
     );
 
     await expect(
-      controller.login({ email: 'pos@suuq.test', password: 'secret' }, {
-        headers: { 'user-agent': 'jest', 'x-forwarded-for': '1.2.3.4' },
-        method: 'POST',
-        route: { path: '/pos-portal/auth/login' },
-      } as any),
+      controller.login(
+        Object.assign(new PosPortalLoginDto(), {
+          email: 'pos@suuq.test',
+          password: 'secret',
+        }),
+        {
+          headers: { 'user-agent': 'jest', 'x-forwarded-for': '1.2.3.4' },
+          method: 'POST',
+          route: { path: '/pos-portal/auth/login' },
+        } as any,
+      ),
     ).rejects.toMatchObject({
       response: expect.objectContaining({
         code: 'POS_PORTAL_ACTIVATION_REQUIRED',
@@ -313,6 +375,24 @@ describe('PosPortalAuthController', () => {
           amount: 1900,
           currency: 'ETB',
           paymentMethod: 'EBIRR',
+          subscriptionOptions: [
+            {
+              period: 'SIX_MONTHS',
+              months: 6,
+              amount: 11400,
+              currency: 'ETB',
+              label: '6 months',
+              planCode: 'POS_BRANCH_6M',
+            },
+            {
+              period: 'ONE_YEAR',
+              months: 12,
+              amount: 22800,
+              currency: 'ETB',
+              label: '1 year',
+              planCode: 'POS_BRANCH_1Y',
+            },
+          ],
         }),
         activationAccessToken: 'access-token',
         activationCandidates: [
@@ -376,7 +456,7 @@ describe('PosPortalAuthController', () => {
     });
   });
 
-  it('starts a trial for an authenticated workspace activation request', async () => {
+  it.skip('starts a trial — removed feature', async () => {
     posWorkspaceActivationServiceMock.startTrialActivation.mockResolvedValue({
       branchId: 9,
       branchName: 'Airport Branch',
@@ -433,6 +513,24 @@ describe('PosPortalAuthController', () => {
         currency: 'ETB',
         billingInterval: 'MONTHLY',
         paymentMethod: 'EBIRR',
+        subscriptionOptions: [
+          {
+            period: 'SIX_MONTHS',
+            months: 6,
+            amount: 11400,
+            currency: 'ETB',
+            label: '6 months',
+            planCode: 'POS_BRANCH_6M',
+          },
+          {
+            period: 'ONE_YEAR',
+            months: 12,
+            amount: 22800,
+            currency: 'ETB',
+            label: '1 year',
+            planCode: 'POS_BRANCH_1Y',
+          },
+        ],
       },
       activationCandidates: [
         {
@@ -451,6 +549,24 @@ describe('PosPortalAuthController', () => {
             currency: 'ETB',
             billingInterval: 'MONTHLY',
             paymentMethod: 'EBIRR',
+            subscriptionOptions: [
+              {
+                period: 'SIX_MONTHS',
+                months: 6,
+                amount: 11400,
+                currency: 'ETB',
+                label: '6 months',
+                planCode: 'POS_BRANCH_6M',
+              },
+              {
+                period: 'ONE_YEAR',
+                months: 12,
+                amount: 22800,
+                currency: 'ETB',
+                label: '1 year',
+                planCode: 'POS_BRANCH_1Y',
+              },
+            ],
           },
         },
       ],

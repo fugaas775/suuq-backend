@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { EmailModule } from '../email/email.module';
 import { BranchesModule } from '../branches/branches.module';
 import { BranchInventory } from '../branches/entities/branch-inventory.entity';
 import { Branch } from '../branches/entities/branch.entity';
@@ -28,6 +29,7 @@ import { PosSyncJob } from './entities/pos-sync-job.entity';
 
 @Module({
   imports: [
+    EmailModule,
     BranchesModule,
     PartnerCredentialsModule,
     ProductAliasesModule,

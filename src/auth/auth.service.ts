@@ -63,6 +63,42 @@ export class AuthService {
     }
   }
 
+  /**
+   * Verifies a Google ID token and returns the basic identity claims so
+   * other services (e.g. POS portal staff link-google) can attach a
+   * Google account to an authenticated user.
+   */
+  async verifyGoogleIdToken(
+    idToken: string,
+  ): Promise<{ sub: string; email: string }> {
+    if (!this.oauthClient) {
+      throw new InternalServerErrorException({
+        code: 'GOOGLE_NOT_CONFIGURED',
+        message: 'Google Sign-In is not configured on the server.',
+      });
+    }
+    let payload: TokenPayload | undefined;
+    try {
+      const ticket = await this.oauthClient.verifyIdToken({
+        idToken,
+        audience: this.getGoogleAudienceIds(),
+      });
+      payload = ticket.getPayload();
+    } catch {
+      throw new UnauthorizedException({
+        code: 'INVALID_GOOGLE_TOKEN',
+        message: 'Invalid Google token',
+      });
+    }
+    if (!payload?.sub || !payload?.email) {
+      throw new UnauthorizedException({
+        code: 'GOOGLE_EMAIL_MISSING',
+        message: 'Google account email not found in token',
+      });
+    }
+    return { sub: payload.sub, email: payload.email };
+  }
+
   /** Change password for current user, validating current password if set */
   async changePassword(
     userId: number,
@@ -207,6 +243,46 @@ export class AuthService {
     }
 
     const isPasswordValid = await bcrypt.compare(dto.password, user.password);
+    if (!isPasswordValid) {
+      throw new UnauthorizedException({
+        code: 'INVALID_CREDENTIALS',
+        message: 'Invalid credentials',
+      });
+    }
+
+    await this.claimPendingPosBranchInvites(user);
+    return this.generateTokens(user);
+  }
+
+  async loginWithIdentifier(
+    identifier: string,
+    password: string,
+  ): Promise<{ accessToken: string; refreshToken: string; user: User }> {
+    const normalized = (identifier || '').trim().toLowerCase();
+    let user: User | null = null;
+
+    if (normalized.includes('@')) {
+      user = await this.usersService.findByEmail(normalized, ['employments']);
+    } else {
+      user = await this.usersService.findByPosUsername(normalized, [
+        'employments',
+      ]);
+    }
+
+    if (!user || !user.password) {
+      throw new UnauthorizedException({
+        code: 'INVALID_CREDENTIALS',
+        message: 'Invalid credentials',
+      });
+    }
+    if (!user.isActive) {
+      throw new UnauthorizedException({
+        code: 'USER_DEACTIVATED',
+        message: 'User account is deactivated.',
+      });
+    }
+
+    const isPasswordValid = await bcrypt.compare(password, user.password);
     if (!isPasswordValid) {
       throw new UnauthorizedException({
         code: 'INVALID_CREDENTIALS',
