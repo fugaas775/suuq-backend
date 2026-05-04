@@ -1,6 +1,9 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { UserRole } from '../../auth/roles.enum';
-import { BranchStaffRole } from '../entities/branch-staff-assignment.entity';
+import {
+  BranchStaffCapability,
+  BranchStaffRole,
+} from '../entities/branch-staff-assignment.entity';
 import { RetailModule } from '../../retail/entities/tenant-module-entitlement.entity';
 import {
   TenantBillingInterval,
@@ -42,6 +45,12 @@ export class PosPortalBranchSummaryDto {
 
   @ApiProperty({ isArray: true })
   permissions!: string[];
+
+  @ApiPropertyOptional({ isArray: true, nullable: true })
+  assignedSurfaces!: string[] | null;
+
+  @ApiProperty({ enum: BranchStaffCapability, isArray: true })
+  capabilities!: BranchStaffCapability[];
 
   @ApiProperty()
   isOwner!: boolean;
@@ -157,6 +166,15 @@ export class PosPortalActivationCandidateDto {
 
   @ApiProperty({ enum: BranchStaffRole })
   role!: BranchStaffRole;
+
+  @ApiProperty({ isArray: true })
+  permissions!: string[];
+
+  @ApiPropertyOptional({ isArray: true, nullable: true })
+  assignedSurfaces!: string[] | null;
+
+  @ApiProperty({ enum: BranchStaffCapability, isArray: true })
+  capabilities!: BranchStaffCapability[];
 
   @ApiProperty()
   isOwner!: boolean;

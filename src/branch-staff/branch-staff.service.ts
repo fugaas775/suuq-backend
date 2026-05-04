@@ -13,6 +13,7 @@ import { AssignBranchStaffDto } from './dto/assign-branch-staff.dto';
 import { CreateBranchStaffManualAccountDto } from './dto/create-branch-staff-manual-account.dto';
 import {
   BranchStaffAssignment,
+  BranchStaffCapability,
   BranchStaffRole,
 } from './entities/branch-staff-assignment.entity';
 import { Branch } from '../branches/entities/branch.entity';
@@ -39,6 +40,8 @@ export interface PosBranchSummary {
   timezone: string | null;
   role: BranchStaffRole;
   permissions: string[];
+  assignedSurfaces: string[] | null;
+  capabilities: BranchStaffCapability[];
   isOwner: boolean;
   isTenantOwner: boolean;
   retailTenantId: number | null;
@@ -66,6 +69,9 @@ export interface PosWorkspaceActivationCandidate {
   phone: string | null;
   tinNumber: string | null;
   role: BranchStaffRole;
+  permissions: string[];
+  assignedSurfaces: string[] | null;
+  capabilities: BranchStaffCapability[];
   isOwner: boolean;
   isTenantOwner: boolean;
   retailTenantId: number | null;
@@ -197,11 +203,18 @@ export class BranchStaffService {
           isActive: true,
           role: BranchStaffRole.MANAGER,
         },
-        select: { id: true },
+        select: { id: true, capabilities: true },
       }),
     ]);
 
-    if (ownedBranch || managerAssignment) {
+    const managerCapabilities = Array.isArray(managerAssignment?.capabilities)
+      ? managerAssignment.capabilities
+      : [];
+
+    if (
+      ownedBranch ||
+      managerCapabilities.includes(BranchStaffCapability.MANAGE_BRANCH_STAFF)
+    ) {
       return;
     }
 
@@ -219,6 +232,7 @@ export class BranchStaffService {
       dto.role,
       dto.permissions ?? [],
       dto.assignedSurfaces ?? null,
+      dto.capabilities ?? [],
     );
 
     await this.logManagerChangeIfNeeded({
@@ -759,6 +773,8 @@ export class BranchStaffService {
         tinNumber: branch.tinNumber ?? null,
         role: BranchStaffRole.MANAGER,
         permissions: [],
+        assignedSurfaces: null,
+        capabilities: [],
         isOwner: true,
         isTenantOwner: false,
         retailTenantId: branch.retailTenantId ?? null,
@@ -798,6 +814,8 @@ export class BranchStaffService {
           tinNumber: branch.tinNumber ?? null,
           role: BranchStaffRole.MANAGER,
           permissions: [],
+          assignedSurfaces: null,
+          capabilities: [],
           isOwner: false,
           isTenantOwner: true,
           retailTenantId: branch.retailTenantId ?? tenant.id,
@@ -840,6 +858,16 @@ export class BranchStaffService {
         tinNumber: existing?.tinNumber ?? assignment.branch.tinNumber ?? null,
         role: assignment.role ?? existing?.role ?? BranchStaffRole.OPERATOR,
         permissions: mergedPermissions,
+        assignedSurfaces:
+          assignment.assignedSurfaces && assignment.assignedSurfaces.length > 0
+            ? assignment.assignedSurfaces
+            : (existing?.assignedSurfaces ?? null),
+        capabilities: Array.from(
+          new Set([
+            ...(existing?.capabilities ?? []),
+            ...(assignment.capabilities ?? []),
+          ]),
+        ).sort() as BranchStaffCapability[],
         isOwner: existing?.isOwner ?? false,
         isTenantOwner: existing?.isTenantOwner ?? false,
         retailTenantId:
@@ -866,12 +894,19 @@ export class BranchStaffService {
     return Array.from(new Set((permissions ?? []).filter(Boolean))).sort();
   }
 
+  private normalizeCapabilities(
+    capabilities?: BranchStaffCapability[],
+  ): BranchStaffCapability[] {
+    return Array.from(new Set((capabilities ?? []).filter(Boolean))).sort();
+  }
+
   private async upsertAssignment(
     branchId: number,
     userId: number,
     role: BranchStaffRole,
     permissions: string[],
     assignedSurfaces: string[] | null = null,
+    capabilities: BranchStaffCapability[] = [],
   ): Promise<{
     assignment: BranchStaffAssignment;
     previousRole: BranchStaffRole | null;
@@ -890,6 +925,7 @@ export class BranchStaffService {
         assignedSurfaces && assignedSurfaces.length > 0
           ? assignedSurfaces
           : null,
+      capabilities: this.normalizeCapabilities(capabilities),
       isActive: true,
     });
 
@@ -1039,6 +1075,7 @@ export class BranchStaffService {
         dto.assignedSurfaces && dto.assignedSurfaces.length > 0
           ? dto.assignedSurfaces
           : null,
+      capabilities: this.normalizeCapabilities(dto.capabilities),
       isActive: true,
     });
     await this.assignmentsRepository.save(assignment);
@@ -1061,6 +1098,7 @@ export class BranchStaffService {
         role: assignment.role,
         permissions: assignment.permissions,
         assignedSurfaces: assignment.assignedSurfaces ?? null,
+        capabilities: assignment.capabilities ?? [],
         createdAt: assignment.createdAt,
         username: normalizedUsername,
         authMode: 'MANUAL',
@@ -1075,6 +1113,7 @@ export class BranchStaffService {
       role?: BranchStaffRole;
       permissions?: string[];
       assignedSurfaces?: string[] | null;
+      capabilities?: BranchStaffCapability[];
     },
     actor: { id?: number | null; email?: string | null; roles?: string[] },
   ) {
@@ -1101,6 +1140,9 @@ export class BranchStaffService {
         dto.assignedSurfaces && dto.assignedSurfaces.length > 0
           ? dto.assignedSurfaces
           : null;
+    }
+    if (dto.capabilities !== undefined) {
+      assignment.capabilities = this.normalizeCapabilities(dto.capabilities);
     }
 
     const saved = await this.assignmentsRepository.save(assignment);
@@ -1148,6 +1190,7 @@ export class BranchStaffService {
     const previousRole = assignment.role;
     assignment.isActive = false;
     assignment.assignedSurfaces = null;
+    assignment.capabilities = [];
     await this.assignmentsRepository.save(assignment);
 
     if (targetUser) {

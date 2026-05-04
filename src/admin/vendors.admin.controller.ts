@@ -66,6 +66,7 @@ export class AdminVendorsController {
   }
 
   @Get()
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.LICENSE_REVIEWER)
   async list(@Query() query: AdminVendorListQueryDto) {
     const p = query.page ?? 1;
     const l = query.limit ?? 20;
@@ -104,6 +105,7 @@ export class AdminVendorsController {
 
   // Lightweight search endpoint for admin autocomplete use-cases
   @Get('search')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.LICENSE_REVIEWER)
   async search(@Query() query: AdminVendorSearchQueryDto) {
     const l = query.limit ?? 20;
     const result = await this.vendorService.findPublicVendors({
@@ -130,12 +132,105 @@ export class AdminVendorsController {
       : payload;
   }
 
+  @Get('review-queue/summary')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.LICENSE_REVIEWER)
+  async reviewQueueSummary(@Query() query: AdminVendorListQueryDto) {
+    const buildArgs = (
+      verificationStatus: 'PENDING' | 'APPROVED' | 'REJECTED',
+    ) => ({
+      page: 1,
+      limit: 1,
+      search:
+        query.vendorId != null
+          ? String(query.vendorId)
+          : query.search || query.q,
+      sort: query.sort || 'recent',
+      verificationStatus,
+      certificationStatus: query.certificationStatus,
+      role: 'VENDOR',
+      country: query.country,
+      region: query.region,
+      city: query.city,
+      subscriptionTier: query.subscriptionTier,
+      minSales: query.minSales,
+      minRating: query.minRating,
+      skipRoleFilter: true,
+      withProductsOnly: false,
+    });
+
+    const [pending, approved, rejected] = await Promise.all([
+      this.vendorService.findPublicVendors(buildArgs('PENDING') as any),
+      this.vendorService.findPublicVendors(buildArgs('APPROVED') as any),
+      this.vendorService.findPublicVendors(buildArgs('REJECTED') as any),
+    ]);
+
+    return {
+      pending: pending.total,
+      approved: approved.total,
+      rejected: rejected.total,
+    };
+  }
+
+  @Get('review-queue')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.LICENSE_REVIEWER)
+  async reviewQueue(@Query() query: AdminVendorListQueryDto) {
+    const p = query.page ?? 1;
+    const l = query.limit ?? 20;
+    const effectiveSearch =
+      query.vendorId != null ? String(query.vendorId) : query.search || query.q;
+
+    const result = await this.vendorService.findPublicVendors({
+      page: p,
+      limit: l,
+      search: effectiveSearch,
+      sort: query.sort || 'recent',
+      verificationStatus: 'PENDING',
+      certificationStatus: query.certificationStatus,
+      role: 'VENDOR',
+      country: query.country,
+      region: query.region,
+      city: query.city,
+      subscriptionTier: query.subscriptionTier,
+      minSales: query.minSales,
+      minRating: query.minRating,
+      skipRoleFilter: true,
+      withProductsOnly: false,
+    } as any);
+
+    const payload = {
+      items: result.items,
+      total: result.total,
+      page: result.currentPage,
+      perPage: l,
+      totalPages: result.totalPages,
+    };
+    return query.meta === '1'
+      ? { data: payload.items, meta: payload }
+      : payload;
+  }
+
   @Get(':id')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.LICENSE_REVIEWER)
   async getOne(@Param('id', ParseIntPipe) id: number) {
-    return await this.vendorService.getAdminVendorDetail(id);
+    const detail = await this.vendorService.getAdminVendorDetail(id);
+    const user = await this.usersService.findById(id);
+    const verificationDocuments =
+      this.usersService.normalizeVerificationDocuments(
+        (user as any).verificationDocuments,
+      );
+
+    return {
+      ...detail,
+      profile: {
+        ...detail.profile,
+        verificationDocuments,
+        businessLicenseInfo: (user as any).businessLicenseInfo ?? null,
+      },
+    };
   }
 
   @Get(':id/audit')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.LICENSE_REVIEWER)
   async getAudit(
     @Param('id', ParseIntPipe) id: number,
     @Query() query: AuditQueryDto,
@@ -197,6 +292,7 @@ export class AdminVendorsController {
   }
 
   @Patch(':id/verification')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.LICENSE_REVIEWER)
   async updateVerification(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateVendorVerificationDto,

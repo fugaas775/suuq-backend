@@ -352,15 +352,28 @@ export class AuthService {
         `[googleLogin] User ${googlePayload.email} not found. Creating new user.`,
       );
       const userCreateStartedAt = Date.now();
-      user = await this.usersService.createWithGoogle({
-        email: googlePayload.email,
-        name: googlePayload.name,
-        picture: googlePayload.picture,
-        sub: googlePayload.sub,
-        roles: [UserRole.CUSTOMER],
-      });
+      user = await this.usersService.restoreDeletedUserByEmail(
+        googlePayload.email,
+        {
+          email: googlePayload.email,
+          displayName: googlePayload.name,
+          avatarUrl: googlePayload.picture,
+          googleId: googlePayload.sub,
+          roles: [UserRole.CUSTOMER],
+          isActive: true,
+        },
+      );
+      if (!user) {
+        user = await this.usersService.createWithGoogle({
+          email: googlePayload.email,
+          name: googlePayload.name,
+          picture: googlePayload.picture,
+          sub: googlePayload.sub,
+          roles: [UserRole.CUSTOMER],
+        });
+        createdUser = true;
+      }
       userCreateMs = Date.now() - userCreateStartedAt;
-      createdUser = true;
     } else if (!user.isActive) {
       throw new UnauthorizedException({
         code: 'USER_DEACTIVATED',
@@ -635,6 +648,17 @@ export class AuthService {
     ]);
 
     return { accessToken, refreshToken, user: authenticatedUser };
+  }
+
+  async generateScopedAccessToken(
+    payload: Record<string, unknown>,
+    expiresIn?: string,
+  ): Promise<string> {
+    return this.jwtService.signAsync(payload, {
+      secret: this.configService.get<string>('JWT_SECRET'),
+      expiresIn:
+        expiresIn || this.configService.get<string>('JWT_EXPIRES_IN') || '8h',
+    });
   }
 
   /**

@@ -26,6 +26,8 @@ describe('RetailOpsController', () => {
     getPosOrderDetail: jest.Mock;
     getStockHealth: jest.Mock;
     getBranchProducts: jest.Mock;
+    linkBranchCatalogVendor: jest.Mock;
+    unlinkBranchCatalogVendor: jest.Mock;
     exportStockHealthCsv: jest.Mock;
     getStockHealthNetworkSummary: jest.Mock;
     exportStockHealthNetworkSummaryCsv: jest.Mock;
@@ -125,6 +127,10 @@ describe('RetailOpsController', () => {
         perPage: 20,
         totalPages: 1,
       }),
+      linkBranchCatalogVendor: jest.fn().mockResolvedValue({ id: 1 }),
+      unlinkBranchCatalogVendor: jest
+        .fn()
+        .mockResolvedValue({ branchId: 3, vendorId: 9, removed: true }),
       exportStockHealthCsv: jest
         .fn()
         .mockResolvedValue('branchId,inventoryId\n3,11'),
@@ -849,6 +855,27 @@ describe('RetailOpsController', () => {
       status: 'published',
       vendorId: 9,
     });
+  });
+
+  it('delegates branch catalog vendor linking to the retail ops service', async () => {
+    await controller.linkBranchProduct({
+      branchId: 3,
+      vendorId: 9,
+    });
+
+    expect(retailOpsService.linkBranchCatalogVendor).toHaveBeenCalledWith(3, 9);
+  });
+
+  it('delegates branch catalog vendor unlinking to the retail ops service', async () => {
+    await controller.unlinkBranchProduct({
+      branchId: 3,
+      vendorId: 9,
+    });
+
+    expect(retailOpsService.unlinkBranchCatalogVendor).toHaveBeenCalledWith(
+      3,
+      9,
+    );
   });
 
   it('streams stock-health exports from the retail ops service', async () => {

@@ -711,8 +711,9 @@ export class VendorService {
     // Certification gate: Certified (verified) vendors get unlimited slots; others are limited.
     const isCertified = isCertifiedVendor(vendor);
     const isVendor = vendor.roles.includes(UserRole.VENDOR);
+    const bypassPostingLimitsForBranchImport = !!importBranch;
 
-    if (!isCertified) {
+    if (!isCertified && !bypassPostingLimitsForBranchImport) {
       if (isVendor) {
         const freeLimitRaw = await this.settingsService.getSystemSetting(
           'limit.free_vendor_products',
@@ -766,6 +767,9 @@ export class VendorService {
     const normalizedProductData: Record<string, any> = {
       ...productData,
     };
+    if (normalizedProductData.description == null) {
+      normalizedProductData.description = '';
+    }
     const incomingType =
       typeof (dto as any)?.productType === 'string'
         ? (dto as any).productType

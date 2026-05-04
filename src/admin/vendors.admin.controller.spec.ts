@@ -1,6 +1,8 @@
 import { BadRequestException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
+import { UserRole } from '../auth/roles.enum';
 import { AuditService } from '../audit/audit.service';
+import { ROLES_KEY } from '../common/decorators/roles.decorator';
 import { UsersService } from '../users/users.service';
 import { VendorService } from '../vendor/vendor.service';
 import { AdminVendorsController } from './vendors.admin.controller';
@@ -9,11 +11,14 @@ describe('AdminVendorsController', () => {
   let controller: AdminVendorsController;
   let vendorService: {
     findPublicVendors: jest.Mock;
+    getAdminVendorDetail: jest.Mock;
     setVendorVerificationStatus: jest.Mock;
     setVendorActiveState: jest.Mock;
   };
   let usersService: {
     confirmTelebirrAccount: jest.Mock;
+    findById: jest.Mock;
+    normalizeVerificationDocuments: jest.Mock;
   };
   let auditService: {
     listForTargetCursor: jest.Mock;
@@ -29,6 +34,16 @@ describe('AdminVendorsController', () => {
         currentPage: 2,
         totalPages: 1,
       }),
+      getAdminVendorDetail: jest.fn().mockResolvedValue({
+        profile: { id: 7, verificationStatus: 'PENDING' },
+        stats: {
+          productCount: 0,
+          orderCount: 0,
+          salesLast30Total: 0,
+          salesGraphLast30: [],
+        },
+        recentOrders: [],
+      }),
       setVendorVerificationStatus: jest.fn().mockResolvedValue({
         verificationStatus: 'APPROVED',
       }),
@@ -42,6 +57,18 @@ describe('AdminVendorsController', () => {
         telebirrVerified: true,
         telebirrAccount: '24800123',
       }),
+      findById: jest.fn().mockResolvedValue({
+        id: 7,
+        verificationDocuments: [
+          { url: 'https://cdn.suuq.test/license.pdf', name: 'license.pdf' },
+        ],
+        businessLicenseInfo: { licenseNumber: 'BL-77' },
+      }),
+      normalizeVerificationDocuments: jest
+        .fn()
+        .mockReturnValue([
+          { url: 'https://cdn.suuq.test/license.pdf', name: 'license.pdf' },
+        ]),
     };
 
     auditService = {
@@ -141,6 +168,130 @@ describe('AdminVendorsController', () => {
         certificationStatus: 'certified',
         subscriptionTier: 'pro',
         sort: 'recent',
+      }),
+    );
+  });
+
+  it('allows LICENSE_REVIEWER on vendor review endpoints only', () => {
+    const listRoles = Reflect.getMetadata(ROLES_KEY, controller.list);
+    const searchRoles = Reflect.getMetadata(ROLES_KEY, controller.search);
+    const reviewQueueSummaryRoles = Reflect.getMetadata(
+      ROLES_KEY,
+      controller.reviewQueueSummary,
+    );
+    const reviewQueueRoles = Reflect.getMetadata(
+      ROLES_KEY,
+      controller.reviewQueue,
+    );
+    const getOneRoles = Reflect.getMetadata(ROLES_KEY, controller.getOne);
+    const getAuditRoles = Reflect.getMetadata(ROLES_KEY, controller.getAudit);
+    const verificationRoles = Reflect.getMetadata(
+      ROLES_KEY,
+      controller.updateVerification,
+    );
+    const activeRoles = Reflect.getMetadata(ROLES_KEY, controller.updateActive);
+
+    expect(listRoles).toContain(UserRole.LICENSE_REVIEWER);
+    expect(searchRoles).toContain(UserRole.LICENSE_REVIEWER);
+    expect(reviewQueueSummaryRoles).toContain(UserRole.LICENSE_REVIEWER);
+    expect(reviewQueueRoles).toContain(UserRole.LICENSE_REVIEWER);
+    expect(getOneRoles).toContain(UserRole.LICENSE_REVIEWER);
+    expect(getAuditRoles).toContain(UserRole.LICENSE_REVIEWER);
+    expect(verificationRoles).toContain(UserRole.LICENSE_REVIEWER);
+    expect(activeRoles).toBeUndefined();
+  });
+
+  it('returns queue counts for pending, approved, and rejected vendor verification', async () => {
+    vendorService.findPublicVendors
+      .mockResolvedValueOnce({
+        items: [],
+        total: 9,
+        currentPage: 1,
+        totalPages: 9,
+      })
+      .mockResolvedValueOnce({
+        items: [],
+        total: 17,
+        currentPage: 1,
+        totalPages: 17,
+      })
+      .mockResolvedValueOnce({
+        items: [],
+        total: 4,
+        currentPage: 1,
+        totalPages: 4,
+      });
+
+    const result = await controller.reviewQueueSummary({
+      q: 'coffee',
+      country: 'ET',
+      meta: '1',
+    });
+
+    expect(vendorService.findPublicVendors).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        page: 1,
+        limit: 1,
+        search: 'coffee',
+        verificationStatus: 'PENDING',
+        country: 'ET',
+      }),
+    );
+    expect(vendorService.findPublicVendors).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        verificationStatus: 'APPROVED',
+      }),
+    );
+    expect(vendorService.findPublicVendors).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({
+        verificationStatus: 'REJECTED',
+      }),
+    );
+    expect(result).toEqual({ pending: 9, approved: 17, rejected: 4 });
+  });
+
+  it('returns a dedicated pending review queue for license reviewers', async () => {
+    await controller.reviewQueue({
+      page: 1,
+      limit: 25,
+      q: 'pending',
+      verificationStatus: 'APPROVED',
+      meta: '1',
+    });
+
+    expect(vendorService.findPublicVendors).toHaveBeenCalledWith(
+      expect.objectContaining({
+        page: 1,
+        limit: 25,
+        search: 'pending',
+        verificationStatus: 'PENDING',
+      }),
+    );
+  });
+
+  it('returns vendor detail with verification documents for review work', async () => {
+    const result = await controller.getOne(7);
+
+    expect(vendorService.getAdminVendorDetail).toHaveBeenCalledWith(7);
+    expect(usersService.findById).toHaveBeenCalledWith(7);
+    expect(usersService.normalizeVerificationDocuments).toHaveBeenCalledWith([
+      { url: 'https://cdn.suuq.test/license.pdf', name: 'license.pdf' },
+    ]);
+    expect(result).toEqual(
+      expect.objectContaining({
+        profile: expect.objectContaining({
+          id: 7,
+          verificationDocuments: [
+            {
+              url: 'https://cdn.suuq.test/license.pdf',
+              name: 'license.pdf',
+            },
+          ],
+          businessLicenseInfo: { licenseNumber: 'BL-77' },
+        }),
       }),
     );
   });

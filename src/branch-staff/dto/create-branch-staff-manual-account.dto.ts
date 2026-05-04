@@ -8,7 +8,10 @@ import {
   MaxLength,
   MinLength,
 } from 'class-validator';
-import { BranchStaffRole } from '../entities/branch-staff-assignment.entity';
+import {
+  BranchStaffCapability,
+  BranchStaffRole,
+} from '../entities/branch-staff-assignment.entity';
 
 export enum PosRegisterPermission {
   OPEN_REGISTER = 'OPEN_REGISTER',
@@ -67,4 +70,11 @@ export class CreateBranchStaffManualAccountDto {
   @IsString({ each: true })
   @Transform(({ value }) => normalizeStringArray(value))
   assignedSurfaces?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @ArrayUnique()
+  @IsEnum(BranchStaffCapability, { each: true })
+  @Transform(({ value }) => normalizeStringArray(value))
+  capabilities?: BranchStaffCapability[];
 }

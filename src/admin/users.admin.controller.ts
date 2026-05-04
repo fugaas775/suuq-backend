@@ -79,7 +79,7 @@ export class AdminUsersController {
   }
 
   @Get()
-  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.LICENSE_REVIEWER)
   async list(@Query() filters: AdminUserListQueryDto) {
     const pageSize = filters.pageSize || filters.limit || 20;
 

@@ -1,3 +1,4 @@
+import { resolveProductCatalogMetadata } from '../../common/utils/media-url.util';
 import { Product } from '../entities/product.entity';
 
 // Minimum offline POS safety buffer (prevent overselling by keeping a physical margin)
@@ -27,6 +28,8 @@ export type ProductCard = {
   name: string;
   price: number;
   currency: string;
+  browseCategory?: string | null;
+  serviceFormat?: string | null;
   primaryImage?: PrimaryImage;
   ratingSummary?: RatingSummary;
   similarImageStrip?: SimilarImageStripItem[];
@@ -119,6 +122,7 @@ function pruneNullish<T extends Record<string, any>>(obj: T): T {
 }
 
 export function toProductCard(p: Product): ProductCard {
+  const catalogMetadata = resolveProductCatalogMetadata(p as any);
   const isPropertyLikeContext = (() => {
     const slug = String((p as any)?.category?.slug || '').toLowerCase();
     const name = String((p as any)?.category?.name || '').toLowerCase();
@@ -212,6 +216,8 @@ export function toProductCard(p: Product): ProductCard {
     name: p.name,
     price: p.price,
     currency: p.currency,
+    browseCategory: catalogMetadata.browseCategory ?? null,
+    serviceFormat: catalogMetadata.serviceFormat ?? null,
     primaryImage: primary,
     ratingSummary:
       typeof (p as any).average_rating === 'number' ||

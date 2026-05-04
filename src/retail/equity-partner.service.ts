@@ -106,7 +106,7 @@ export class EquityPartnerService {
       assignedAt: Date;
       monthlyEarning: number;
     }[];
-    payouts: EquityPayout[];
+    payouts: Array<EquityPayout & { branchName: string }>;
   }> {
     const partner = await this.partnersRepo.findOne({
       where: { userId },
@@ -118,6 +118,7 @@ export class EquityPartnerService {
 
     const payouts = await this.payoutsRepo.find({
       where: { equityPartnerId: partner.id },
+      relations: ['branch'],
       order: { createdAt: 'DESC' },
     });
 
@@ -142,7 +143,10 @@ export class EquityPartnerService {
           (BRANCH_MONTHLY_PRICE * a.splitNumerator) / a.splitDenominator,
         ),
       })),
-      payouts,
+      payouts: payouts.map((payout) => ({
+        ...payout,
+        branchName: payout.branch?.name ?? `Branch #${payout.branchId}`,
+      })),
     };
   }
 

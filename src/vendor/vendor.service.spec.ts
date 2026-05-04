@@ -425,6 +425,63 @@ describe('VendorService', () => {
     );
   });
 
+  it('createMyProduct bypasses uncertified vendor cap for owned branch imports', async () => {
+    const vendor = {
+      id: 1,
+      verified: false,
+      verificationStatus: VerificationStatus.PENDING,
+      roles: ['VENDOR'],
+    } as any;
+
+    userRepoMock.findOneBy.mockResolvedValue(vendor);
+    productRepoMock.count.mockResolvedValue(5);
+    productRepoMock.manager.getRepository = j.fn((entity: any) => {
+      if (entity === Category) {
+        return categoryRepoMock;
+      }
+
+      return {
+        findOne: j
+          .fn()
+          .mockResolvedValue({ id: 22, ownerId: 1, isActive: true }),
+      };
+    });
+    productRepoMock.save = j.fn(async (value: any) => ({ ...value, id: 778 }));
+    productRepoMock.create = (value: any) => value;
+    productRepoMock.findOneOrFail.mockResolvedValue({
+      id: 778,
+      images: [],
+      vendor,
+      category: null,
+      tags: [],
+    });
+    tagRepoMock.find = j.fn().mockResolvedValue([]);
+    tagRepoMock.create = (value: any) => value;
+    tagRepoMock.save = j.fn().mockResolvedValue([]);
+
+    const getSysSetting = (service as any).settingsService.getSystemSetting;
+    getSysSetting.mockResolvedValue('5');
+
+    await expect(
+      service.createMyProduct(
+        1,
+        {
+          name: 'POS-S imported product',
+          price: 10,
+          currency: 'USD',
+        } as any,
+        { id: 1 } as any,
+        { branchId: 22 },
+      ),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        id: 778,
+      }),
+    );
+
+    expect(productRepoMock.save).toHaveBeenCalled();
+  });
+
   it('createMyProductsBulk returns per-row results and continues after failures by default', async () => {
     const createSpy = jest
       .spyOn(service, 'createMyProduct')

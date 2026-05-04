@@ -20,6 +20,7 @@ type PosCatalogMetadata = {
   aliases: string[];
   localizedNames: Record<string, string> | null;
   browseCategory: string | null;
+  serviceFormat: string | null;
   unitOfMeasure: string | null;
   packagingChargeAmount: number | null;
 };
@@ -157,6 +158,7 @@ export class PosCatalogService {
           aliases: posCatalog.aliases,
           localizedNames: posCatalog.localizedNames,
           browseCategory: posCatalog.browseCategory,
+          serviceFormat: posCatalog.serviceFormat,
           unitOfMeasure: posCatalog.unitOfMeasure,
           packagingChargeAmount: posCatalog.packagingChargeAmount,
         });
@@ -208,6 +210,11 @@ export class PosCatalogService {
       attributes.browseCategory.trim()
         ? attributes.browseCategory.trim()
         : null;
+    const serviceFormat =
+      typeof attributes.serviceFormat === 'string' &&
+      attributes.serviceFormat.trim()
+        ? attributes.serviceFormat.trim().toUpperCase()
+        : null;
     const unitOfMeasure =
       typeof attributes.unitOfMeasure === 'string' &&
       attributes.unitOfMeasure.trim()
@@ -222,6 +229,7 @@ export class PosCatalogService {
           ? localizedNames
           : null,
       browseCategory,
+      serviceFormat,
       unitOfMeasure,
       packagingChargeAmount: Number.isFinite(packagingChargeAmount)
         ? packagingChargeAmount

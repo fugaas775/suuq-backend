@@ -1,6 +1,7 @@
 import { ForbiddenException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
+import { In } from 'typeorm';
 import { BranchStaffService } from '../branch-staff/branch-staff.service';
 import {
   BranchStaffAssignment,
@@ -47,6 +48,9 @@ import { EquityPartnerService } from '../retail/equity-partner.service';
 import { User, SubscriptionTier } from '../users/entities/user.entity';
 import { VendorStaffService } from '../vendor/vendor-staff.service';
 import { EmailService } from '../email/email.service';
+import { BranchCatalogProductLink } from '../retail/entities/branch-catalog-product-link.entity';
+import { BranchCatalogVendorLink } from '../retail/entities/branch-catalog-vendor-link.entity';
+import { EquityPartnerStatus } from '../retail/entities/equity-partner.entity';
 import { SellerWorkspaceBillingStatus } from './entities/seller-workspace.entity';
 import { SellerPlanCode } from './dto/seller-workspace-response.dto';
 import { SellerWorkspaceService } from './seller-workspace.service';
@@ -63,6 +67,9 @@ describe('SellerWorkspaceService', () => {
   let tenantModuleEntitlementsRepository: { findOne: jest.Mock };
   let tenantSubscriptionsRepository: { find: jest.Mock };
   let productsRepository: { createQueryBuilder: jest.Mock };
+  let branchInventoryRepository: { delete: jest.Mock };
+  let branchCatalogProductLinksRepository: { delete: jest.Mock };
+  let branchCatalogVendorLinksRepository: { delete: jest.Mock };
   let posRegisterSessionsRepository: { count: jest.Mock };
   let sellerWorkspacesRepository: {
     findOne: jest.Mock;
@@ -108,6 +115,15 @@ describe('SellerWorkspaceService', () => {
     };
     tenantSubscriptionsRepository = { find: jest.fn() };
     productsRepository = { createQueryBuilder: jest.fn() };
+    branchInventoryRepository = {
+      delete: jest.fn().mockResolvedValue(undefined),
+    };
+    branchCatalogProductLinksRepository = {
+      delete: jest.fn().mockResolvedValue(undefined),
+    };
+    branchCatalogVendorLinksRepository = {
+      delete: jest.fn().mockResolvedValue(undefined),
+    };
     posRegisterSessionsRepository = { count: jest.fn() };
     sellerWorkspacesRepository = {
       findOne: jest.fn(),
@@ -198,6 +214,18 @@ describe('SellerWorkspaceService', () => {
           useValue: tenantSubscriptionsRepository,
         },
         { provide: getRepositoryToken(Product), useValue: productsRepository },
+        {
+          provide: getRepositoryToken(BranchInventory),
+          useValue: branchInventoryRepository,
+        },
+        {
+          provide: getRepositoryToken(BranchCatalogProductLink),
+          useValue: branchCatalogProductLinksRepository,
+        },
+        {
+          provide: getRepositoryToken(BranchCatalogVendorLink),
+          useValue: branchCatalogVendorLinksRepository,
+        },
         {
           provide: getRepositoryToken(PosRegisterSession),
           useValue: posRegisterSessionsRepository,
@@ -846,6 +874,60 @@ describe('SellerWorkspaceService', () => {
       serviceFormat: 'QSR',
       retailTenantId: 13,
       canOpenNow: true,
+    });
+  });
+
+  it('removes previous-owner catalog attachments during branch ownership transfer', async () => {
+    equityPartnerService.getSellerProfile.mockResolvedValue({
+      id: 91,
+      status: EquityPartnerStatus.ACTIVE,
+    });
+    branchesRepository.findOne.mockResolvedValue({
+      id: 11,
+      name: 'Smart Barber',
+      ownerId: 41,
+      retailTenantId: 13,
+    });
+    usersRepository.findOne
+      .mockResolvedValueOnce({ id: 77, email: 'newowner@example.com' })
+      .mockResolvedValueOnce({ id: 41, email: 'owner@example.com' });
+    branchStaffAssignmentsRepository.findOne
+      .mockResolvedValueOnce({ branchId: 11, userId: 41, isActive: true })
+      .mockResolvedValueOnce({
+        branchId: 11,
+        userId: 77,
+        role: BranchStaffRole.CASHIER,
+        isActive: false,
+      });
+    productsRepository.createQueryBuilder.mockReturnValue({
+      select: jest.fn().mockReturnThis(),
+      innerJoin: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      getRawMany: jest.fn().mockResolvedValue([{ id: 401 }, { id: '402' }]),
+    });
+
+    const result = await service.transferBranchOwnership(
+      41,
+      11,
+      'newowner@example.com',
+    );
+
+    expect(result).toEqual({ success: true });
+    expect(branchesRepository.update).toHaveBeenCalledWith(
+      { id: 11 },
+      { ownerId: 77 },
+    );
+    expect(branchInventoryRepository.delete).toHaveBeenCalledWith({
+      branchId: 11,
+      productId: In([401, 402]),
+    });
+    expect(branchCatalogProductLinksRepository.delete).toHaveBeenCalledWith({
+      branchId: 11,
+      productId: In([401, 402]),
+    });
+    expect(branchCatalogVendorLinksRepository.delete).toHaveBeenCalledWith({
+      branchId: 11,
+      vendorId: 41,
     });
   });
 

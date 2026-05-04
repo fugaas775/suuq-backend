@@ -83,6 +83,8 @@ import {
 import { EquityPartnerService } from '../retail/equity-partner.service';
 import { EmailService } from '../email/email.service';
 import { EquityPartnerStatus } from '../retail/entities/equity-partner.entity';
+import { BranchCatalogProductLink } from '../retail/entities/branch-catalog-product-link.entity';
+import { BranchCatalogVendorLink } from '../retail/entities/branch-catalog-vendor-link.entity';
 
 const SELLER_PLAN_DEFINITIONS: Record<
   SellerPlanCode,
@@ -178,6 +180,12 @@ export class SellerWorkspaceService {
     private readonly tenantSubscriptionsRepository: Repository<TenantSubscription>,
     @InjectRepository(Product)
     private readonly productsRepository: Repository<Product>,
+    @InjectRepository(BranchInventory)
+    private readonly branchInventoryRepository: Repository<BranchInventory>,
+    @InjectRepository(BranchCatalogProductLink)
+    private readonly branchCatalogProductLinksRepository: Repository<BranchCatalogProductLink>,
+    @InjectRepository(BranchCatalogVendorLink)
+    private readonly branchCatalogVendorLinksRepository: Repository<BranchCatalogVendorLink>,
     @InjectRepository(PosRegisterSession)
     private readonly posRegisterSessionsRepository: Repository<PosRegisterSession>,
     @InjectRepository(SellerWorkspace)
@@ -838,6 +846,8 @@ export class SellerWorkspaceService {
       );
     }
 
+    await this.detachTransferredCreatorCatalog(branchId, callerId);
+
     // Send email notifications (non-fatal)
     const notifyParams = {
       branchName: branch.name,
@@ -869,6 +879,46 @@ export class SellerWorkspaceService {
       .catch(() => {});
 
     return { success: true };
+  }
+
+  private async detachTransferredCreatorCatalog(
+    branchId: number,
+    creatorId: number,
+  ): Promise<void> {
+    const creatorProductRows = await this.productsRepository
+      .createQueryBuilder('product')
+      .select('product.id', 'id')
+      .innerJoin(
+        BranchInventory,
+        'inventory',
+        'inventory.productId = product.id AND inventory.branchId = :branchId',
+        { branchId },
+      )
+      .where(
+        '(product."vendorId" = :creatorId OR product.created_by_id = :creatorId)',
+        { creatorId },
+      )
+      .getRawMany();
+
+    const creatorProductIds = creatorProductRows
+      .map((row) => Number(row.id))
+      .filter((id) => Number.isFinite(id) && id > 0);
+
+    if (creatorProductIds.length > 0) {
+      await this.branchInventoryRepository.delete({
+        branchId,
+        productId: In(creatorProductIds),
+      });
+      await this.branchCatalogProductLinksRepository.delete({
+        branchId,
+        productId: In(creatorProductIds),
+      });
+    }
+
+    await this.branchCatalogVendorLinksRepository.delete({
+      branchId,
+      vendorId: creatorId,
+    });
   }
 
   async updatePlanSelection(

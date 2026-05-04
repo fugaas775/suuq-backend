@@ -26,7 +26,9 @@ const decimalTransformer = {
 /**
  * Records that an equity partner activated a branch on Buy-Now-Pay-Later
  * terms. The branch and its tenant subscription are created immediately and
- * transferred to the target end-user; the partner owes `amountDue` until
+ * transferred to the target end-user; `amountDue` stores the gross prepaid
+ * branch fee, `equityCreditAmount` stores the partner's earned share for that
+ * period, and `settlementAmountDue` is the net amount still owed until
  * `dueAt` (= subscription endsAt).
  */
 @Entity('equity_partner_bnpl_activations')
@@ -62,6 +64,24 @@ export class EquityPartnerBnplActivation {
     transformer: decimalTransformer,
   })
   amountDue!: number;
+
+  @Column({
+    type: 'decimal',
+    precision: 12,
+    scale: 2,
+    transformer: decimalTransformer,
+    default: 0,
+  })
+  equityCreditAmount!: number;
+
+  @Column({
+    type: 'decimal',
+    precision: 12,
+    scale: 2,
+    transformer: decimalTransformer,
+    default: 0,
+  })
+  settlementAmountDue!: number;
 
   @Column({ type: 'varchar', length: 8, default: 'ETB' })
   currency!: string;

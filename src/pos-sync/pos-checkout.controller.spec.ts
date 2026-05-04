@@ -13,6 +13,7 @@ describe('PosCheckoutController', () => {
     quote: jest.Mock;
     findAll: jest.Mock;
     findOne: jest.Mock;
+    voidCheckout: jest.Mock;
     ingest: jest.Mock;
   };
 
@@ -21,6 +22,7 @@ describe('PosCheckoutController', () => {
       quote: jest.fn(),
       findAll: jest.fn(),
       findOne: jest.fn(),
+      voidCheckout: jest.fn(),
       ingest: jest.fn(),
     };
 
@@ -115,6 +117,25 @@ describe('PosCheckoutController', () => {
     await controller.findOne(71, 3);
 
     expect(posCheckoutService.findOne).toHaveBeenCalledWith(71, 3);
+  });
+
+  it('falls back to dto branchId when void query scope is omitted', async () => {
+    await controller.voidCheckout(
+      71,
+      undefined as unknown as string,
+      { branchId: 3, reason: 'Customer returned item' },
+      { user: { id: 17 } },
+    );
+
+    expect(posCheckoutService.voidCheckout).toHaveBeenCalledWith(
+      71,
+      expect.objectContaining({
+        branchId: 3,
+        reason: 'Customer returned item',
+      }),
+      17,
+      3,
+    );
   });
 
   it('passes the authenticated actor through checkout ingest', async () => {

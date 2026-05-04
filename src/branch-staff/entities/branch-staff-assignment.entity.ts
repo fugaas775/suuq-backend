@@ -16,6 +16,10 @@ export enum BranchStaffRole {
   OPERATOR = 'OPERATOR',
 }
 
+export enum BranchStaffCapability {
+  MANAGE_BRANCH_STAFF = 'MANAGE_BRANCH_STAFF',
+}
+
 @Entity('branch_staff_assignments')
 @Unique(['branchId', 'userId'])
 export class BranchStaffAssignment {
@@ -50,6 +54,9 @@ export class BranchStaffAssignment {
    */
   @Column({ type: 'simple-array', nullable: true })
   assignedSurfaces!: string[] | null;
+
+  @Column({ type: 'simple-array', default: '' })
+  capabilities!: string[];
 
   @Column({ default: true })
   isActive!: boolean;

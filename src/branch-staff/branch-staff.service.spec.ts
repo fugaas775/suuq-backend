@@ -16,6 +16,7 @@ import { InviteBranchStaffDto } from './dto/invite-branch-staff.dto';
 import { BranchStaffService } from './branch-staff.service';
 import {
   BranchStaffAssignment,
+  BranchStaffCapability,
   BranchStaffRole,
 } from './entities/branch-staff-assignment.entity';
 import { ForbiddenException } from '@nestjs/common';
@@ -122,7 +123,10 @@ describe('BranchStaffService', () => {
 
   it('allows a branch manager assignment to manage branch staff without a global role', async () => {
     branchesRepository.findOne.mockResolvedValueOnce(null);
-    assignmentsRepository.findOne.mockResolvedValueOnce({ id: 88 });
+    assignmentsRepository.findOne.mockResolvedValueOnce({
+      id: 88,
+      capabilities: [BranchStaffCapability.MANAGE_BRANCH_STAFF],
+    });
 
     await expect(
       service.assertCanManageBranchStaff({ id: 51, roles: ['USER'] }, 7),
@@ -135,8 +139,20 @@ describe('BranchStaffService', () => {
         isActive: true,
         role: BranchStaffRole.MANAGER,
       },
-      select: { id: true },
+      select: { id: true, capabilities: true },
     });
+  });
+
+  it('denies a manager assignment without the delegated staff-management capability', async () => {
+    branchesRepository.findOne.mockResolvedValueOnce(null);
+    assignmentsRepository.findOne.mockResolvedValueOnce({
+      id: 88,
+      capabilities: [],
+    });
+
+    await expect(
+      service.assertCanManageBranchStaff({ id: 52, roles: ['USER'] }, 7),
+    ).rejects.toBeInstanceOf(ForbiddenException);
   });
 
   it('denies branch staff management when the user is not an owner, manager, or global admin', async () => {
@@ -436,6 +452,7 @@ describe('BranchStaffService', () => {
         isOwner: true,
         retailTenantId: 21,
         modules: [RetailModule.POS_CORE],
+        capabilities: [],
       }),
       expect.objectContaining({
         branchId: 8,
@@ -445,10 +462,47 @@ describe('BranchStaffService', () => {
         isOwner: false,
         retailTenantId: 22,
         modules: [RetailModule.INVENTORY_CORE, RetailModule.POS_CORE],
+        capabilities: [],
       }),
     ]);
     expect(result).toHaveLength(2);
     expect(result.map((entry) => entry.branchId)).toEqual([5, 8]);
+  });
+
+  it('persists delegated capabilities when updating a manager assignment', async () => {
+    assignmentsRepository.findOne
+      .mockResolvedValueOnce({
+        id: 88,
+        capabilities: [BranchStaffCapability.MANAGE_BRANCH_STAFF],
+      })
+      .mockResolvedValueOnce({
+        id: 99,
+        branchId: 7,
+        userId: 51,
+        role: BranchStaffRole.MANAGER,
+        permissions: ['OPEN_REGISTER'],
+        assignedSurfaces: ['reports'],
+        capabilities: [],
+        isActive: true,
+        user: { id: 51, email: 'manager@example.com' },
+      });
+
+    await service.updateAssignment(
+      7,
+      51,
+      {
+        assignedSurfaces: ['reports', 'staff'],
+        capabilities: [BranchStaffCapability.MANAGE_BRANCH_STAFF],
+      },
+      { id: 17, roles: ['USER'] },
+    );
+
+    expect(assignmentsRepository.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        assignedSurfaces: ['reports', 'staff'],
+        capabilities: [BranchStaffCapability.MANAGE_BRANCH_STAFF],
+      }),
+    );
   });
 
   it('returns activation candidates for branches that exist but are not yet activated for POS-S', async () => {

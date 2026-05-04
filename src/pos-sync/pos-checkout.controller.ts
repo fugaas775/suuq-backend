@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  ForbiddenException,
   Get,
   Param,
   ParseIntPipe,
@@ -11,8 +12,10 @@ import {
 } from '@nestjs/common';
 import { ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { PosBranchAccessGuard } from '../auth/pos-branch-access.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { UserRole } from '../auth/roles.enum';
+import { RequirePosPermissions } from '../auth/decorators/require-pos-permissions.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RetailBranchContext } from '../retail/decorators/retail-branch-context.decorator';
 import { RequireRetailModules } from '../retail/decorators/require-retail-modules.decorator';
@@ -36,8 +39,46 @@ import { PosCheckoutService } from './pos-checkout.service';
 export class PosCheckoutController {
   constructor(private readonly posCheckoutService: PosCheckoutService) {}
 
+  private requiresCashTenderOverrideApproval(dto: IngestPosCheckoutDto) {
+    const cashTenderTotal = Array.isArray(dto.tenders)
+      ? dto.tenders.reduce((sum, tender) => {
+          return String(tender?.method || '')
+            .trim()
+            .toUpperCase() === 'CASH'
+            ? sum + Number(tender?.amount || 0)
+            : sum;
+        }, 0)
+      : 0;
+
+    return cashTenderTotal > Number(dto.total || 0) + 0.01;
+  }
+
+  private canApproveCashTenderOverride(user: any) {
+    const roles = Array.isArray(user?.roles)
+      ? user.roles.map((role) =>
+          String(role || '')
+            .trim()
+            .toUpperCase(),
+        )
+      : [];
+
+    return (
+      String(user?.approvalType || '')
+        .trim()
+        .toUpperCase() === 'CASH_TENDER_OVERRIDE' ||
+      String(user?.branchRole || '')
+        .trim()
+        .toUpperCase() === 'MANAGER' ||
+      user?.isOwner === true ||
+      user?.isTenantOwner === true ||
+      roles.some((role) =>
+        ['SUPER_ADMIN', 'ADMIN', 'POS_MANAGER'].includes(role),
+      )
+    );
+  }
+
   @Post('quote')
-  @UseGuards(JwtAuthGuard, RolesGuard, RetailModulesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard, RetailModulesGuard, PosBranchAccessGuard)
   @Roles(
     UserRole.SUPER_ADMIN,
     UserRole.ADMIN,
@@ -52,7 +93,7 @@ export class PosCheckoutController {
   }
 
   @Get()
-  @UseGuards(JwtAuthGuard, RolesGuard, RetailModulesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard, RetailModulesGuard, PosBranchAccessGuard)
   @Roles(
     UserRole.SUPER_ADMIN,
     UserRole.ADMIN,
@@ -67,7 +108,7 @@ export class PosCheckoutController {
   }
 
   @Get('reports/tax-summary')
-  @UseGuards(JwtAuthGuard, RolesGuard, RetailModulesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard, RetailModulesGuard, PosBranchAccessGuard)
   @Roles(
     UserRole.SUPER_ADMIN,
     UserRole.ADMIN,
@@ -82,7 +123,7 @@ export class PosCheckoutController {
   }
 
   @Get(':id')
-  @UseGuards(JwtAuthGuard, RolesGuard, RetailModulesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard, RetailModulesGuard, PosBranchAccessGuard)
   @Roles(
     UserRole.SUPER_ADMIN,
     UserRole.ADMIN,
@@ -100,7 +141,8 @@ export class PosCheckoutController {
   }
 
   @Post(':id/void')
-  @UseGuards(JwtAuthGuard, RolesGuard, RetailModulesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard, RetailModulesGuard, PosBranchAccessGuard)
+  @RequirePosPermissions('VOID_SETTLED_BILL')
   @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.POS_MANAGER)
   @RequireRetailModules(RetailOsModule.POS_CORE)
   @RetailBranchContext('query.branchId')
@@ -111,12 +153,12 @@ export class PosCheckoutController {
     @Req() req,
   ) {
     const actorId: number = req.user?.id ?? req.user?.userId;
-    const branchIdNum = branchId ? Number(branchId) : undefined;
+    const branchIdNum = branchId ? Number(branchId) : dto.branchId;
     return this.posCheckoutService.voidCheckout(id, dto, actorId, branchIdNum);
   }
 
   @Post('ingest')
-  @UseGuards(JwtAuthGuard, RolesGuard, RetailModulesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard, RetailModulesGuard, PosBranchAccessGuard)
   @Roles(
     UserRole.SUPER_ADMIN,
     UserRole.ADMIN,
@@ -127,6 +169,15 @@ export class PosCheckoutController {
   @RetailBranchContext('body.branchId')
   @ApiOkResponse({ type: PosCheckoutResponseDto })
   ingest(@Body() dto: IngestPosCheckoutDto, @Req() req) {
+    if (
+      this.requiresCashTenderOverrideApproval(dto) &&
+      !this.canApproveCashTenderOverride(req.user)
+    ) {
+      throw new ForbiddenException(
+        'Cash tender override requires a manager approval token for this branch.',
+      );
+    }
+
     return this.posCheckoutService.ingest(dto, {
       id: req.user?.id ?? null,
       email: req.user?.email ?? null,

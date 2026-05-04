@@ -9,6 +9,8 @@ import { BranchStaffService } from '../branch-staff/branch-staff.service';
 import { BranchStaffRole } from '../branch-staff/entities/branch-staff-assignment.entity';
 import { AuditService } from '../audit/audit.service';
 import { SellerWorkspaceService } from '../seller-workspace/seller-workspace.service';
+import { UserRole } from '../auth/roles.enum';
+import { ROLES_KEY } from '../common/decorators/roles.decorator';
 
 describe('AdminController', () => {
   let controller: AdminController;
@@ -273,6 +275,22 @@ describe('AdminController', () => {
         posWorkspaceActivationCandidates: [],
       }),
     );
+  });
+
+  it('allows LICENSE_REVIEWER only on read-only user detail within this controller slice', () => {
+    const getUserRoles = Reflect.getMetadata(ROLES_KEY, controller.getUser);
+    const getPosAccessRoles = Reflect.getMetadata(
+      ROLES_KEY,
+      controller.getUserPosAccess,
+    );
+    const assignRoles = Reflect.getMetadata(
+      ROLES_KEY,
+      controller.assignUserPosBranch,
+    );
+
+    expect(getUserRoles).toContain(UserRole.LICENSE_REVIEWER);
+    expect(getPosAccessRoles).toBeUndefined();
+    expect(assignRoles).toBeUndefined();
   });
 
   it('assigns a POS user to a branch through the admin route', async () => {

@@ -48,7 +48,15 @@ class StartEquityBnplActivationDto implements StartBnplActivationInput {
 
   @IsOptional()
   @IsString()
+  address?: string | null;
+
+  @IsOptional()
+  @IsString()
   phone?: string | null;
+
+  @IsOptional()
+  @IsString()
+  tinNumber?: string | null;
 }
 
 class SettleEquityBnplActivationDto {
@@ -73,6 +81,12 @@ export class SellerEquityBnplController {
   @Get('activations')
   list(@Req() req: AuthenticatedRequest) {
     return this.bnplService.listOutstandingForPartner(req.user.id);
+  }
+
+  /** List the partner's BNPL credit ledger entries. */
+  @Get('credit-ledger')
+  listCreditLedger(@Req() req: AuthenticatedRequest) {
+    return this.bnplService.listCreditLedgerForPartner(req.user.id);
   }
 
   /** Create a new BNPL-funded branch on behalf of an end-user. */

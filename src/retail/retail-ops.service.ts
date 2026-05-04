@@ -1,9 +1,10 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { createHash } from 'crypto';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Brackets, In, MoreThanOrEqual, Repository } from 'typeorm';
+import { Brackets, In, IsNull, MoreThanOrEqual, Repository } from 'typeorm';
 import { UserRole } from '../auth/roles.enum';
 import { Product } from '../products/entities/product.entity';
+import { User } from '../users/entities/user.entity';
 import {
   PurchaseOrder,
   PurchaseOrderItem,
@@ -50,6 +51,8 @@ import {
 import { RetailEntitlementsService } from './retail-entitlements.service';
 import { RetailAttendanceService } from './retail-attendance.service';
 import { RetailModule as RetailOsModule } from './entities/tenant-module-entitlement.entity';
+import { BranchCatalogProductLink } from './entities/branch-catalog-product-link.entity';
+import { BranchCatalogVendorLink } from './entities/branch-catalog-vendor-link.entity';
 import {
   PurchaseOrderAutoReplenishmentStatusResponseDto,
   PurchaseOrderResponseDto,
@@ -236,6 +239,12 @@ export class RetailOpsService {
     private readonly branchInventoryRepository: Repository<BranchInventory>,
     @InjectRepository(Product)
     private readonly productRepository: Repository<Product>,
+    @InjectRepository(BranchCatalogProductLink)
+    private readonly branchCatalogProductLinksRepository: Repository<BranchCatalogProductLink>,
+    @InjectRepository(BranchCatalogVendorLink)
+    private readonly branchCatalogVendorLinksRepository: Repository<BranchCatalogVendorLink>,
+    @InjectRepository(User)
+    private readonly usersRepository: Repository<User>,
     @InjectRepository(BranchTransfer)
     private readonly branchTransfersRepository: Repository<BranchTransfer>,
     @InjectRepository(StockMovement)
@@ -1316,23 +1325,34 @@ export class RetailOpsService {
         'inventory.productId = product.id AND inventory.branchId = :branchId',
         { branchId: query.branchId },
       )
+      .leftJoinAndMapOne(
+        'product.branchCatalogLinkSnapshot',
+        BranchCatalogProductLink,
+        'branchCatalogLink',
+        'branchCatalogLink.productId = product.id AND branchCatalogLink.branchId = :branchId',
+        { branchId: query.branchId },
+      )
+      .leftJoinAndMapOne(
+        'product.branchCatalogVendorLinkSnapshot',
+        BranchCatalogVendorLink,
+        'branchCatalogVendorLink',
+        'branchCatalogVendorLink.vendorId = product.vendorId AND branchCatalogVendorLink.branchId = :branchId',
+        { branchId: query.branchId },
+      )
       .where('product.deletedAt IS NULL');
 
     if (targetVendorId) {
       baseQuery.andWhere('product.vendorId = :targetVendorId', {
         targetVendorId,
       });
-    } else if (branch.ownerId) {
+    } else {
       baseQuery.andWhere(
         new Brackets((qb) => {
-          qb.where('inventory.id IS NOT NULL').orWhere(
-            'product.vendorId = :branchOwnerId',
-            { branchOwnerId: branch.ownerId },
-          );
+          qb.where('inventory.id IS NOT NULL')
+            .orWhere('branchCatalogLink.id IS NOT NULL')
+            .orWhere('branchCatalogVendorLink.id IS NOT NULL');
         }),
       );
-    } else {
-      baseQuery.andWhere('inventory.id IS NOT NULL');
     }
 
     const trimmedSearch = String(query.search || '').trim();
@@ -1400,11 +1420,11 @@ export class RetailOpsService {
         .orderBy()
         .select('COUNT(DISTINCT product.id)', 'totalProducts')
         .addSelect(
-          'COUNT(DISTINCT CASE WHEN inventory.id IS NOT NULL THEN product.id END)',
+          'COUNT(DISTINCT CASE WHEN inventory.id IS NOT NULL OR branchCatalogLink.id IS NOT NULL OR branchCatalogVendorLink.id IS NOT NULL THEN product.id END)',
           'assignedProductCount',
         )
         .addSelect(
-          'COUNT(DISTINCT CASE WHEN inventory.id IS NULL THEN product.id END)',
+          'COUNT(DISTINCT CASE WHEN inventory.id IS NULL AND branchCatalogLink.id IS NULL AND branchCatalogVendorLink.id IS NULL THEN product.id END)',
           'unassignedProductCount',
         )
         .addSelect(
@@ -1437,17 +1457,34 @@ export class RetailOpsService {
 
     const items = products.map(
       (
-        product: Product & { branchInventorySnapshot?: BranchInventory | null },
+        product: Product & {
+          branchInventorySnapshot?: BranchInventory | null;
+          branchCatalogLinkSnapshot?: BranchCatalogProductLink | null;
+          branchCatalogVendorLinkSnapshot?: BranchCatalogVendorLink | null;
+        },
       ) =>
         this.mapBranchProductItem(
           branch,
           product,
           product.branchInventorySnapshot ?? null,
+          product.branchCatalogLinkSnapshot ?? null,
+          product.branchCatalogVendorLinkSnapshot ?? null,
         ),
     );
 
+    const vendorLinkedToBranch =
+      targetVendorId == null
+        ? null
+        : !!(await this.branchCatalogVendorLinksRepository.findOne({
+            where: { branchId: branch.id, vendorId: targetVendorId },
+          }));
+
     return {
-      summary: this.mapBranchProductsSummary(branch, rawSummary),
+      summary: this.mapBranchProductsSummary(
+        branch,
+        rawSummary,
+        vendorLinkedToBranch,
+      ),
       items,
       total,
       page,
@@ -3699,6 +3736,7 @@ export class RetailOpsService {
   private mapBranchProductsSummary(
     branch: Branch,
     rawSummary: any,
+    vendorLinkedToBranch: boolean | null,
   ): RetailBranchProductsSummaryResponseDto {
     const totalSkus = Number(rawSummary?.assignedProductCount ?? 0);
     const replenishmentCandidateCount = Number(
@@ -3712,6 +3750,7 @@ export class RetailOpsService {
       branchId: branch.id,
       branchName: branch.name,
       branchCode: branch.code ?? null,
+      vendorLinkedToBranch,
       totalProducts: Number(rawSummary?.totalProducts ?? 0),
       totalSkus,
       healthyCount: Math.max(totalSkus - replenishmentCandidateCount, 0),
@@ -3732,36 +3771,35 @@ export class RetailOpsService {
     branch: Branch,
     product: Product,
     inventory: BranchInventory | null,
+    branchCatalogLink: BranchCatalogProductLink | null,
+    branchCatalogVendorLink: BranchCatalogVendorLink | null,
   ): RetailBranchProductItemResponseDto {
     const normalizedPrice = Number(product.price ?? 0);
     const normalizedSalePrice =
       product.salePrice == null ? null : Number(product.salePrice);
-    const isAssignedToBranch = !!inventory;
-    const quantityOnHand = isAssignedToBranch
+    const isLinkedToBranch = !!branchCatalogLink || !!branchCatalogVendorLink;
+    const isAssignedToBranch = !!inventory || isLinkedToBranch;
+    const quantityOnHand = inventory
       ? Number(inventory.quantityOnHand ?? 0)
       : 0;
-    const reservedQuantity = isAssignedToBranch
+    const reservedQuantity = inventory
       ? Number(inventory.reservedQuantity ?? 0)
       : 0;
-    const reservedOnline = isAssignedToBranch
+    const reservedOnline = inventory
       ? Number(inventory.reservedOnline ?? 0)
       : 0;
-    const reservedStoreOps = isAssignedToBranch
+    const reservedStoreOps = inventory
       ? Number(inventory.reservedStoreOps ?? 0)
       : 0;
-    const inboundOpenPo = isAssignedToBranch
-      ? Number(inventory.inboundOpenPo ?? 0)
-      : 0;
-    const outboundTransfers = isAssignedToBranch
+    const inboundOpenPo = inventory ? Number(inventory.inboundOpenPo ?? 0) : 0;
+    const outboundTransfers = inventory
       ? Number(inventory.outboundTransfers ?? 0)
       : 0;
-    const safetyStock = isAssignedToBranch
-      ? Number(inventory.safetyStock ?? 0)
-      : 0;
-    const availableToSell = isAssignedToBranch
+    const safetyStock = inventory ? Number(inventory.safetyStock ?? 0) : 0;
+    const availableToSell = inventory
       ? Number(inventory.availableToSell ?? 0)
       : 0;
-    const stockStatus = isAssignedToBranch
+    const stockStatus = inventory
       ? this.getStockStatus(inventory)
       : 'NOT_STOCKED';
 
@@ -3790,6 +3828,7 @@ export class RetailOpsService {
         null,
       status: product.status ?? null,
       isAssignedToBranch,
+      isLinkedToBranch,
       quantityOnHand,
       reservedQuantity,
       reservedOnline,
@@ -3817,6 +3856,54 @@ export class RetailOpsService {
         businessLicenseInfo: product.vendor?.businessLicenseInfo ?? null,
       },
     };
+  }
+
+  async linkBranchCatalogVendor(branchId: number, vendorId: number) {
+    await this.assertBranchExists(branchId);
+    const vendor = await this.usersRepository.findOne({
+      where: { id: vendorId },
+    });
+
+    if (!vendor) {
+      throw new NotFoundException(`Vendor with ID ${vendorId} not found`);
+    }
+
+    const existing = await this.branchCatalogVendorLinksRepository.findOne({
+      where: { branchId, vendorId },
+    });
+    if (existing) {
+      return existing;
+    }
+
+    return this.branchCatalogVendorLinksRepository.save(
+      this.branchCatalogVendorLinksRepository.create({ branchId, vendorId }),
+    );
+  }
+
+  async unlinkBranchCatalogVendor(branchId: number, vendorId: number) {
+    await this.assertBranchExists(branchId);
+    await this.branchCatalogVendorLinksRepository.delete({
+      branchId,
+      vendorId,
+    });
+
+    const vendorProductIds = (
+      await this.productRepository
+        .createQueryBuilder('product')
+        .select('product.id', 'id')
+        .where('product.vendorId = :vendorId', { vendorId })
+        .andWhere('product.deletedAt IS NULL')
+        .getRawMany()
+    ).map((product) => Number(product.id));
+
+    if (vendorProductIds.length) {
+      await this.branchCatalogProductLinksRepository.delete({
+        branchId,
+        productId: In(vendorProductIds),
+      });
+    }
+
+    return { branchId, vendorId, removed: true };
   }
 
   private mapStockHealthSummary(

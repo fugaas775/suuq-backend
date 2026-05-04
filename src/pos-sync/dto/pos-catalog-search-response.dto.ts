@@ -44,6 +44,9 @@ export class PosCatalogSearchItemResponseDto {
   browseCategory?: string | null;
 
   @ApiPropertyOptional()
+  serviceFormat?: string | null;
+
+  @ApiPropertyOptional()
   unitOfMeasure?: string | null;
 
   @ApiPropertyOptional()

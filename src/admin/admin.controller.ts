@@ -155,6 +155,7 @@ export class AdminController {
   }
 
   @Get('users/:id')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.LICENSE_REVIEWER)
   async getUser(@Param('id', ParseIntPipe) id: number) {
     const user = await this.usersService.findById(id);
     const posAccess =

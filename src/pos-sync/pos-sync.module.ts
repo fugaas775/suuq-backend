@@ -21,6 +21,7 @@ import { PosRegisterController } from './pos-register.controller';
 import { PosRegisterService } from './pos-register.service';
 import { PosSyncController } from './pos-sync.controller';
 import { PosSyncRequestAuthGuard } from './pos-sync-request-auth.guard';
+import { PosBranchAccessGuard } from '../auth/pos-branch-access.guard';
 import { PosCheckout } from './entities/pos-checkout.entity';
 import { PosRegisterSession } from './entities/pos-register-session.entity';
 import { PosSuspendedCart } from './entities/pos-suspended-cart.entity';
@@ -61,6 +62,7 @@ import { PosSyncJob } from './entities/pos-sync-job.entity';
     PosCatalogService,
     PosRegisterService,
     PosSyncRequestAuthGuard,
+    PosBranchAccessGuard,
   ],
   exports: [
     PosSyncService,

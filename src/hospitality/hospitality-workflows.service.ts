@@ -288,6 +288,10 @@ export class HospitalityWorkflowsService {
       [PosKitchenTicketState.HANDED_OFF]: [],
     };
 
+    if (ticket.state === nextState) {
+      return;
+    }
+
     if (!allowedTransitions[ticket.state].includes(nextState)) {
       throw new UnprocessableEntityException({
         code: 'POS_KITCHEN_STATE_INVALID',
@@ -764,7 +768,27 @@ export class HospitalityWorkflowsService {
         areaCode: dto.areaCode,
       });
       const previousStatus = table.status;
+      const previousOwner = {
+        userId: table.ownerUserId,
+        displayName: table.ownerDisplayName,
+        reference: table.ownerReference,
+      };
       table.status = dto.nextStatus;
+      if (dto.guestCount != null && Number.isFinite(Number(dto.guestCount))) {
+        table.activeGuestCount = Math.max(
+          0,
+          Math.trunc(Number(dto.guestCount)),
+        );
+      }
+      if (dto.ownerReference || dto.ownerLabel) {
+        table.ownerUserId = null;
+        table.ownerReference = dto.ownerReference || dto.ownerLabel || null;
+        table.ownerDisplayName =
+          dto.ownerLabel ||
+          dto.ownerReference ||
+          this.actorDisplay(actor) ||
+          null;
+      }
       table.updatedAt = this.nextTimestamp();
       table.version += 1;
 
@@ -799,6 +823,13 @@ export class HospitalityWorkflowsService {
             tableId: savedTable.tableId,
             previousStatus,
             nextStatus: savedTable.status,
+            previousOwner,
+            nextOwner: {
+              userId: savedTable.ownerUserId,
+              displayName: savedTable.ownerDisplayName,
+              reference: savedTable.ownerReference,
+            },
+            activeGuestCount: savedTable.activeGuestCount,
           },
         },
         manager,

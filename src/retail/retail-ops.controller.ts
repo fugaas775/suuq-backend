@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Header,
   HttpCode,
@@ -65,6 +66,7 @@ import {
 } from './dto/retail-replenishment-review-response.dto';
 import { RetailReplenishmentNetworkSummaryQueryDto } from './dto/retail-replenishment-network-summary-query.dto';
 import { RetailReplenishmentNetworkSummaryResponseDto } from './dto/retail-replenishment-network-summary-response.dto';
+import { MutateRetailBranchCatalogVendorLinkDto } from './dto/mutate-retail-branch-catalog-vendor-link.dto';
 import {
   RetailCommandCenterAlertSeverityFilter,
   RetailCommandCenterStatusFilter,
@@ -1033,6 +1035,48 @@ export class RetailOpsController {
   @ApiOkResponse({ type: RetailBranchProductsResponseDto })
   branchProducts(@Query() query: RetailBranchProductsQueryDto) {
     return this.retailOpsService.getBranchProducts(query);
+  }
+
+  @Post('branch-products/link')
+  @UseGuards(RetailModulesGuard)
+  @Roles(
+    UserRole.SUPER_ADMIN,
+    UserRole.ADMIN,
+    UserRole.POS_MANAGER,
+    UserRole.B2B_BUYER,
+  )
+  @RequireRetailModules(RetailOsModule.INVENTORY_CORE)
+  @RetailBranchContext('body.branchId')
+  @ApiOperation({
+    summary: 'Link an entire vendor catalog into a branch catalog',
+  })
+  @ApiBody({ type: MutateRetailBranchCatalogVendorLinkDto })
+  linkBranchProduct(@Body() body: MutateRetailBranchCatalogVendorLinkDto) {
+    return this.retailOpsService.linkBranchCatalogVendor(
+      body.branchId,
+      body.vendorId,
+    );
+  }
+
+  @Post('branch-products/unlink')
+  @UseGuards(RetailModulesGuard)
+  @Roles(
+    UserRole.SUPER_ADMIN,
+    UserRole.ADMIN,
+    UserRole.POS_MANAGER,
+    UserRole.B2B_BUYER,
+  )
+  @RequireRetailModules(RetailOsModule.INVENTORY_CORE)
+  @RetailBranchContext('body.branchId')
+  @ApiOperation({
+    summary: 'Unlink an entire vendor catalog from a branch catalog',
+  })
+  @ApiBody({ type: MutateRetailBranchCatalogVendorLinkDto })
+  unlinkBranchProduct(@Body() body: MutateRetailBranchCatalogVendorLinkDto) {
+    return this.retailOpsService.unlinkBranchCatalogVendor(
+      body.branchId,
+      body.vendorId,
+    );
   }
 
   @Get('stock-health/export')

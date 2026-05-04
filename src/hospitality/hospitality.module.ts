@@ -7,6 +7,9 @@ import { HospitalityBillIntervention } from './entities/hospitality-bill-interve
 import { HospitalityIdempotencyKey } from './entities/hospitality-idempotency-key.entity';
 import { HospitalityKitchenTicket } from './entities/hospitality-kitchen-ticket.entity';
 import { HospitalityTableBoard } from './entities/hospitality-table-board.entity';
+import { PosBranchAccessGuard } from '../auth/pos-branch-access.guard';
+import { RetailModule } from '../retail/retail.module';
+import { RolesGuard } from '../auth/roles.guard';
 
 @Module({
   imports: [
@@ -17,9 +20,10 @@ import { HospitalityTableBoard } from './entities/hospitality-table-board.entity
       HospitalityIdempotencyKey,
     ]),
     AuditModule,
+    RetailModule,
   ],
   controllers: [HospitalityWorkflowsController],
-  providers: [HospitalityWorkflowsService],
+  providers: [HospitalityWorkflowsService, PosBranchAccessGuard, RolesGuard],
   exports: [HospitalityWorkflowsService],
 })
 export class HospitalityModule {}

@@ -57,6 +57,21 @@ export class UpdateTableStatusDto {
   areaCode?: string;
 
   @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  guestCount?: number;
+
+  @IsOptional()
+  @IsString()
+  @Transform(({ value }) => trimString(value))
+  ownerReference?: string;
+
+  @IsOptional()
+  @IsString()
+  @Transform(({ value }) => trimString(value))
+  ownerLabel?: string;
+
+  @IsOptional()
   @IsString()
   @Transform(({ value }) => trimString(value))
   reason?: string;

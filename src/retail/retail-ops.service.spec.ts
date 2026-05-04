@@ -45,8 +45,11 @@ import {
 import { RetailModule } from './entities/tenant-module-entitlement.entity';
 import { RetailAttendanceService } from './retail-attendance.service';
 import { RetailCommandCenterReportingService } from './retail-command-center-reporting.service';
+import { BranchCatalogProductLink } from './entities/branch-catalog-product-link.entity';
+import { BranchCatalogVendorLink } from './entities/branch-catalog-vendor-link.entity';
 import { RetailEntitlementsService } from './retail-entitlements.service';
 import { RetailOpsService } from './retail-ops.service';
+import { User } from '../users/entities/user.entity';
 
 describe('RetailOpsService', () => {
   let service: RetailOpsService;
@@ -57,7 +60,24 @@ describe('RetailOpsService', () => {
     count: jest.Mock;
     createQueryBuilder: jest.Mock;
   };
-  let productRepository: { createQueryBuilder: jest.Mock };
+  let branchCatalogProductLinksRepository: {
+    findOne: jest.Mock;
+    create: jest.Mock;
+    save: jest.Mock;
+    delete: jest.Mock;
+  };
+  let branchCatalogVendorLinksRepository: {
+    findOne: jest.Mock;
+    create: jest.Mock;
+    save: jest.Mock;
+    delete: jest.Mock;
+  };
+  let productRepository: {
+    createQueryBuilder: jest.Mock;
+    findOne: jest.Mock;
+    find: jest.Mock;
+  };
+  let usersRepository: { findOne: jest.Mock };
   let branchTransfersRepository: { find: jest.Mock; findOne: jest.Mock };
   let stockMovementsRepository: { find: jest.Mock; findOne: jest.Mock };
   let purchaseOrdersRepository: {
@@ -130,8 +150,27 @@ describe('RetailOpsService', () => {
         }),
       })),
     };
+    branchCatalogProductLinksRepository = {
+      findOne: jest.fn().mockResolvedValue(null),
+      create: jest.fn((value) => value),
+      save: jest.fn(async (value) => ({ id: 1, ...value })),
+      delete: jest.fn().mockResolvedValue({ affected: 1 }),
+    };
+    branchCatalogVendorLinksRepository = {
+      findOne: jest.fn().mockResolvedValue(null),
+      create: jest.fn((value) => value),
+      save: jest.fn(async (value) => ({ id: 1, ...value })),
+      delete: jest.fn().mockResolvedValue({ affected: 1 }),
+    };
     productRepository = {
       createQueryBuilder: jest.fn(),
+      findOne: jest.fn(),
+      find: jest.fn().mockResolvedValue([{ id: 9 }, { id: 11 }]),
+    };
+    usersRepository = {
+      findOne: jest
+        .fn()
+        .mockResolvedValue({ id: 9, email: 'vendor@example.com' }),
     };
     branchTransfersRepository = {
       find: jest.fn().mockResolvedValue([]),
@@ -225,7 +264,16 @@ describe('RetailOpsService', () => {
           provide: getRepositoryToken(BranchInventory),
           useValue: branchInventoryRepository,
         },
+        {
+          provide: getRepositoryToken(BranchCatalogProductLink),
+          useValue: branchCatalogProductLinksRepository,
+        },
+        {
+          provide: getRepositoryToken(BranchCatalogVendorLink),
+          useValue: branchCatalogVendorLinksRepository,
+        },
         { provide: getRepositoryToken(Product), useValue: productRepository },
+        { provide: getRepositoryToken(User), useValue: usersRepository },
         {
           provide: getRepositoryToken(BranchTransfer),
           useValue: branchTransfersRepository,
@@ -1888,6 +1936,156 @@ describe('RetailOpsService', () => {
         }),
       }),
     );
+  });
+
+  it('returns explicitly linked vendor products even when the branch owner differs', async () => {
+    branchesRepository.findOne.mockResolvedValue({
+      id: 3,
+      name: 'HQ',
+      code: 'HQ-3',
+      retailTenantId: 21,
+      ownerId: 77,
+      isActive: true,
+    });
+
+    const pagedQueryBuilder = {
+      leftJoinAndSelect: jest.fn().mockReturnThis(),
+      leftJoinAndMapOne: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      skip: jest.fn().mockReturnThis(),
+      take: jest.fn().mockReturnThis(),
+      getMany: jest.fn().mockResolvedValue([
+        {
+          id: 19,
+          name: 'Vendor Tea',
+          description: 'Linked explicitly',
+          sku: 'TEA-19',
+          barcode: '99001122',
+          currency: 'ETB',
+          price: 45,
+          salePrice: null,
+          imageUrl: null,
+          status: 'draft',
+          createdAt: new Date('2026-05-02T08:00:00.000Z'),
+          category: { name: 'Drinks' },
+          images: [],
+          vendor: {
+            id: 88,
+            storeName: 'Main Vendor',
+            displayName: 'Vendor User',
+            legalName: 'Vendor PLC',
+            businessLicenseNumber: 'BL-88',
+            verificationStatus: 'APPROVED',
+            verified: true,
+            businessLicenseInfo: { status: 'ACTIVE' },
+          },
+          branchInventorySnapshot: null,
+          branchCatalogLinkSnapshot: {
+            id: 501,
+            branchId: 3,
+            productId: 19,
+          },
+        },
+      ]),
+    };
+    const summaryQueryBuilder = {
+      leftJoinAndSelect: jest.fn().mockReturnThis(),
+      leftJoinAndMapOne: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      select: jest.fn().mockReturnThis(),
+      addSelect: jest.fn().mockReturnThis(),
+      getRawOne: jest.fn().mockResolvedValue({
+        totalProducts: '1',
+        assignedProductCount: '1',
+        unassignedProductCount: '0',
+        publishedCount: '0',
+        outOfStockCount: '0',
+        replenishmentCandidateCount: '0',
+        negativeAvailableCount: '0',
+        inboundOpenPoUnits: '0',
+        committedUnits: '0',
+        lastInventoryUpdatedAt: null,
+      }),
+    };
+    const countQueryBuilder = {
+      leftJoinAndSelect: jest.fn().mockReturnThis(),
+      leftJoinAndMapOne: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      getCount: jest.fn().mockResolvedValue(1),
+    };
+    const baseQueryBuilder = {
+      leftJoinAndSelect: jest.fn().mockReturnThis(),
+      leftJoinAndMapOne: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      clone: jest
+        .fn()
+        .mockReturnValueOnce(pagedQueryBuilder)
+        .mockReturnValueOnce(countQueryBuilder)
+        .mockReturnValueOnce(summaryQueryBuilder),
+    };
+    productRepository.createQueryBuilder.mockReturnValue(
+      baseQueryBuilder as any,
+    );
+
+    const result = await service.getBranchProducts({
+      branchId: 3,
+      page: 1,
+      limit: 20,
+    });
+
+    expect(result.items[0]).toEqual(
+      expect.objectContaining({
+        productId: 19,
+        isAssignedToBranch: true,
+        isLinkedToBranch: true,
+        stockStatus: 'NOT_STOCKED',
+      }),
+    );
+  });
+
+  it('removes explicit product links for a vendor when unlinking the branch catalog vendor', async () => {
+    branchesRepository.findOne.mockResolvedValue({
+      id: 3,
+      name: 'HQ',
+      code: 'HQ-3',
+      retailTenantId: 21,
+      ownerId: 77,
+      isActive: true,
+    });
+
+    const vendorProductsQueryBuilder = {
+      select: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      getRawMany: jest.fn().mockResolvedValue([{ id: 19 }, { id: 22 }]),
+    };
+    productRepository.createQueryBuilder.mockReturnValue(
+      vendorProductsQueryBuilder as any,
+    );
+
+    const result = await service.unlinkBranchCatalogVendor(3, 9);
+
+    expect(branchCatalogVendorLinksRepository.delete).toHaveBeenCalledWith({
+      branchId: 3,
+      vendorId: 9,
+    });
+    expect(vendorProductsQueryBuilder.where).toHaveBeenCalledWith(
+      'product.vendorId = :vendorId',
+      { vendorId: 9 },
+    );
+    expect(branchCatalogProductLinksRepository.delete).toHaveBeenCalledWith({
+      branchId: 3,
+      productId: expect.any(Object),
+    });
+    expect(result).toEqual({ branchId: 3, vendorId: 9, removed: true });
   });
 
   it('returns stock health network summary across tenant branches', async () => {

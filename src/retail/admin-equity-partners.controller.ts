@@ -111,6 +111,12 @@ export class AdminEquityPartnersController {
     return this.bnplService.listForPartnerAdmin(id);
   }
 
+  /** List BNPL credit-ledger entries for the given partner. */
+  @Get(':id/bnpl-credit-ledger')
+  listBnplCreditLedger(@Param('id', ParseIntPipe) id: number) {
+    return this.bnplService.listCreditLedgerForPartnerAdmin(id);
+  }
+
   /** Update the partner's simultaneous-OUTSTANDING BNPL credit limit. */
   @Patch(':id/bnpl-credit-limit')
   setBnplLimit(

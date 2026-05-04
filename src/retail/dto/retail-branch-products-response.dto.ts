@@ -86,6 +86,12 @@ export class RetailBranchProductItemResponseDto {
   @ApiProperty()
   isAssignedToBranch!: boolean;
 
+  @ApiProperty({
+    description:
+      'When true, the vendor product is explicitly linked into this branch catalog even if it has no inventory row yet.',
+  })
+  isLinkedToBranch!: boolean;
+
   @ApiProperty()
   quantityOnHand!: number;
 
@@ -163,6 +169,9 @@ export class RetailBranchProductsSummaryResponseDto {
 
   @ApiPropertyOptional({ nullable: true })
   branchCode!: string | null;
+
+  @ApiPropertyOptional({ nullable: true })
+  vendorLinkedToBranch!: boolean | null;
 
   @ApiProperty()
   totalProducts!: number;

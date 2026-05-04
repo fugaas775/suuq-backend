@@ -211,6 +211,21 @@ cp .env.example .env   # if you keep one; otherwise create from sample below
 yarn start:dev          # runs on http://localhost:3000 by default
 ```
 
+## Production deploy
+
+Use the repo deploy entrypoint so database migrations always run before the PM2 reload:
+
+```bash
+yarn deploy:prod
+```
+
+That command runs the production sequence in this order:
+
+- install dependencies
+- build the Nest app
+- run `yarn typeorm migration:run`
+- reload `suuq-api` through `ecosystem.production.config.js`
+
 ## Vendor Portal Auth Contract
 
 The vendor portal should use a social-first auth flow and must not rely on manual JWT paste as the primary production path.
@@ -768,6 +783,42 @@ Mutation contract:
 - `PATCH /api/admin/vendors/:id/verification` body shape: `{ status, reason? }` where `status` must be a valid vendor verification enum value
 - `PATCH /api/admin/vendors/:id/active` body shape: `{ isActive }` where `isActive` must be a boolean
 - active-state changes are restricted to `SUPER_ADMIN`; non-super-admin callers receive `403`
+
+### Admin role note: LICENSE_REVIEWER
+
+Use `LICENSE_REVIEWER` for internal staff who should review vendor business licenses without receiving broad admin powers.
+
+Allowed backend access:
+- `GET /api/admin/users`
+- `GET /api/admin/users/:id`
+- `GET /api/admin/vendors`
+- `GET /api/admin/vendors/search`
+- `GET /api/admin/vendors/review-queue`
+- `GET /api/admin/vendors/review-queue/summary`
+- `GET /api/admin/vendors/:id`
+- `GET /api/admin/vendors/:id/audit`
+- `PATCH /api/admin/vendors/:id/verification`
+
+Explicitly not allowed:
+- `PATCH /api/admin/vendors/:id/active`
+- `GET /api/admin/users/subscription/analytics`
+- `GET /api/admin/users/subscription/active`
+- `GET /api/admin/users/subscription/requests`
+- `POST /api/admin/users/subscription/:userId/extend`
+- `/api/admin/roles/*`
+- broader admin product, wallet, analytics, notification, and system routes
+
+Operational guidance:
+- assign this role by itself when the account should only handle license review work
+- do not combine it with `ADMIN` or `SUPER_ADMIN` unless broader access is intentionally required
+- frontend/admin clients should hide all non-review surfaces for this role and treat `403` responses as the backend source of truth
+
+Frontend reviewer flow:
+- load the worklist with `GET /api/admin/vendors/review-queue`
+- load header counters with `GET /api/admin/vendors/review-queue/summary`
+- open vendor license detail with `GET /api/admin/vendors/:id`
+- use `GET /api/admin/users/:id` for non-vendor profiles instead of vendor routes
+- approve or reject with `PATCH /api/admin/vendors/:id/verification`
 ```
 
 ## Running

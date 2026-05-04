@@ -6,7 +6,10 @@ import {
   IsOptional,
   IsString,
 } from 'class-validator';
-import { BranchStaffRole } from '../entities/branch-staff-assignment.entity';
+import {
+  BranchStaffCapability,
+  BranchStaffRole,
+} from '../entities/branch-staff-assignment.entity';
 
 export class AssignBranchStaffDto {
   @Type(() => Number)
@@ -25,4 +28,9 @@ export class AssignBranchStaffDto {
   @IsArray()
   @IsString({ each: true })
   assignedSurfaces?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @IsEnum(BranchStaffCapability, { each: true })
+  capabilities?: BranchStaffCapability[];
 }

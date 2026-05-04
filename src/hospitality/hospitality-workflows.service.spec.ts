@@ -217,6 +217,52 @@ describe('HospitalityWorkflowsService bill interventions', () => {
     expect(auditService.log).not.toHaveBeenCalled();
   });
 
+  it('creates a seated table row with guest count and owner details when the status is updated', async () => {
+    tableBoardRepo.findOne.mockResolvedValue(null);
+
+    const result = await service.updateTableStatus(
+      21,
+      'table-12',
+      {
+        nextStatus: 'SEATED' as never,
+        tableLabel: 'Table 12',
+        areaCode: 'MAIN_ROOM',
+        guestCount: 3,
+        ownerLabel: 'Aster',
+        ownerReference: 'Aster',
+        idempotencyKey: 'seat-table-12',
+        reason: 'Seat guests before opening a check',
+      },
+      { id: 8, email: 'manager@suuq.test' },
+    );
+
+    expect(result).toMatchObject({
+      status: 'UPDATED',
+      branchId: 21,
+      table: expect.objectContaining({
+        tableId: 'TABLE-12',
+        tableLabel: 'Table 12',
+        status: 'SEATED',
+        activeGuestCount: 3,
+        owner: expect.objectContaining({
+          displayName: 'Aster',
+          reference: 'Aster',
+        }),
+      }),
+    });
+    expect(tableBoardRepo.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        branchId: 21,
+        tableId: 'TABLE-12',
+        tableLabel: 'Table 12',
+        status: 'SEATED',
+        activeGuestCount: 3,
+        ownerDisplayName: 'Aster',
+        ownerReference: 'Aster',
+      }),
+    );
+  });
+
   it('reopens a settled bill and returns receipt metadata for the lane', async () => {
     const currentIntervention = {
       id: 72,

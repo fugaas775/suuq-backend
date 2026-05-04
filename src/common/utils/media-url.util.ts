@@ -24,6 +24,40 @@ export function absolutize(
   return `${base.replace(/\/$/, '')}/${url}`;
 }
 
+export function resolveProductCatalogMetadata(source: unknown): {
+  browseCategory?: string;
+  serviceFormat?: string;
+} {
+  const record =
+    source && typeof source === 'object'
+      ? (source as Record<string, unknown>)
+      : {};
+  const attributes =
+    record.attributes && typeof record.attributes === 'object'
+      ? (record.attributes as Record<string, unknown>)
+      : {};
+
+  const browseCategorySource =
+    typeof record.browseCategory === 'string' && record.browseCategory.trim()
+      ? record.browseCategory
+      : typeof attributes.browseCategory === 'string' &&
+          attributes.browseCategory.trim()
+        ? attributes.browseCategory
+        : undefined;
+  const serviceFormatSource =
+    typeof record.serviceFormat === 'string' && record.serviceFormat.trim()
+      ? record.serviceFormat
+      : typeof attributes.serviceFormat === 'string' &&
+          attributes.serviceFormat.trim()
+        ? attributes.serviceFormat
+        : undefined;
+
+  return {
+    browseCategory: browseCategorySource?.trim() || undefined,
+    serviceFormat: serviceFormatSource?.trim().toUpperCase() || undefined,
+  };
+}
+
 export function normalizeProductMedia<T extends Record<string, any>>(p: T): T {
   if (!p || typeof p !== 'object') return p;
   const out: any = { ...p };
@@ -101,6 +135,13 @@ export function normalizeProductMedia<T extends Record<string, any>>(p: T): T {
   ) {
     const f = (out.attributes as Record<string, unknown>).isFree as any;
     if (typeof f === 'boolean') out.isFree = f;
+  }
+  const catalogMetadata = resolveProductCatalogMetadata(out);
+  if (out.browseCategory == null && catalogMetadata.browseCategory) {
+    out.browseCategory = catalogMetadata.browseCategory;
+  }
+  if (out.serviceFormat == null && catalogMetadata.serviceFormat) {
+    out.serviceFormat = catalogMetadata.serviceFormat;
   }
   return out as T;
 }

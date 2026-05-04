@@ -23,6 +23,7 @@ import { BranchStaffAssignmentResponseDto } from './dto/branch-staff-response.dt
 import { CreateBranchStaffManualAccountDto } from './dto/create-branch-staff-manual-account.dto';
 import { UpdateBranchStaffAssignmentDto } from './dto/update-branch-staff-assignment.dto';
 import { BranchStaffAssignment } from './entities/branch-staff-assignment.entity';
+import { BranchStaffCapability } from './entities/branch-staff-assignment.entity';
 import { BranchStaffService } from './branch-staff.service';
 
 @ApiTags('POS Branch Staff')
@@ -47,6 +48,14 @@ export class BranchStaffController {
         ? assignment.permissions
         : [],
       assignedSurfaces: assignment.assignedSurfaces ?? null,
+      capabilities: Array.isArray(assignment.capabilities)
+        ? assignment.capabilities.filter(
+            (capability): capability is BranchStaffCapability =>
+              Object.values(BranchStaffCapability).includes(
+                capability as BranchStaffCapability,
+              ),
+          )
+        : [],
       isActive: assignment.isActive,
       createdAt: assignment.createdAt,
       updatedAt: assignment.updatedAt,

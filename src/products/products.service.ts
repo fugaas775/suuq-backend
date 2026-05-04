@@ -3408,6 +3408,8 @@ export class ProductsService {
         id: p.id,
         name: p.name,
         imageUrl: normalized.imageUrl || null,
+        browseCategory: normalized.browseCategory || null,
+        serviceFormat: normalized.serviceFormat || null,
       };
     });
   }

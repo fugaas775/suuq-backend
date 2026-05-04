@@ -18,6 +18,7 @@ describe('PosPortalAuthController', () => {
     loginWithIdentifier: jest.fn(),
     googleLogin: jest.fn(),
     appleLogin: jest.fn(),
+    generateScopedAccessToken: jest.fn(),
     getUsersService: jest.fn(),
     buildAuthenticatedUser: jest.fn(),
   };
@@ -111,6 +112,8 @@ describe('PosPortalAuthController', () => {
         branchCode: 'AIR-9',
         role: 'MANAGER',
         permissions: ['OPEN_REGISTER'],
+        assignedSurfaces: ['staff', 'reports'],
+        capabilities: ['MANAGE_BRANCH_STAFF'],
         isOwner: false,
         retailTenantId: 31,
         retailTenantName: 'Airport Retail',
@@ -134,6 +137,13 @@ describe('PosPortalAuthController', () => {
       defaultBranchId: 9,
       requiresBranchSelection: false,
       portalKey: 'pos',
+      branches: [
+        expect.objectContaining({
+          branchId: 9,
+          assignedSurfaces: ['staff', 'reports'],
+          capabilities: ['MANAGE_BRANCH_STAFF'],
+        }),
+      ],
     });
     expect(result.branches).toHaveLength(1);
     expect(auditServiceMock.log).toHaveBeenCalledWith(
@@ -143,6 +153,185 @@ describe('PosPortalAuthController', () => {
         targetId: 51,
       }),
     );
+  });
+
+  it('issues a scoped operator token for the requested branch unlock', async () => {
+    authServiceMock.loginWithIdentifier.mockResolvedValue({
+      accessToken: 'access-token',
+      refreshToken: 'refresh-token',
+      user,
+    });
+    authServiceMock.generateScopedAccessToken.mockResolvedValue(
+      'scoped-operator-token',
+    );
+    branchStaffServiceMock.getPosBranchSummariesForUser.mockResolvedValue([
+      {
+        branchId: 9,
+        branchName: 'Airport Branch',
+        branchCode: 'AIR-9',
+        role: 'OPERATOR',
+        permissions: ['OPEN_REGISTER'],
+        assignedSurfaces: ['pos-s'],
+        capabilities: [],
+        isOwner: false,
+        isTenantOwner: false,
+        retailTenantId: 31,
+        retailTenantName: 'Airport Retail',
+        modules: [RetailModule.POS_CORE],
+        joinedAt: new Date('2026-03-28T00:00:00.000Z'),
+      },
+    ]);
+
+    const result = await controller.operatorUnlock(
+      Object.assign(
+        {},
+        {
+          branchId: 9,
+          identifier: 'cashier.one',
+          password: 'Branch#123',
+          resolveIdentifier: () => 'cashier.one',
+        },
+      ),
+      {
+        headers: { 'user-agent': 'jest', 'x-forwarded-for': '1.2.3.4' },
+        method: 'POST',
+        route: { path: '/pos-portal/auth/operator-unlock' },
+      } as any,
+    );
+
+    expect(authServiceMock.loginWithIdentifier).toHaveBeenCalledWith(
+      'cashier.one',
+      'Branch#123',
+    );
+    expect(authServiceMock.generateScopedAccessToken).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tokenType: 'pos_operator',
+        branchId: 9,
+        branchRole: 'OPERATOR',
+        permissions: ['OPEN_REGISTER'],
+        assignedSurfaces: ['pos-s'],
+        capabilities: [],
+      }),
+      '8h',
+    );
+    expect(result).toMatchObject({
+      operatorAccessToken: 'scoped-operator-token',
+      branch: expect.objectContaining({
+        branchId: 9,
+        role: 'OPERATOR',
+      }),
+    });
+  });
+
+  it('issues a short-lived manager approval token for sensitive actions', async () => {
+    authServiceMock.loginWithIdentifier.mockResolvedValue({
+      accessToken: 'access-token',
+      refreshToken: 'refresh-token',
+      user,
+    });
+    authServiceMock.generateScopedAccessToken.mockResolvedValue(
+      'manager-approval-token',
+    );
+    branchStaffServiceMock.getPosBranchSummariesForUser.mockResolvedValue([
+      {
+        branchId: 9,
+        branchName: 'Airport Branch',
+        branchCode: 'AIR-9',
+        role: 'MANAGER',
+        permissions: ['VOID_SETTLED_BILL'],
+        assignedSurfaces: ['pos-s'],
+        capabilities: ['MANAGE_BRANCH_STAFF'],
+        isOwner: false,
+        isTenantOwner: false,
+        retailTenantId: 31,
+        retailTenantName: 'Airport Retail',
+        modules: [RetailModule.POS_CORE],
+        joinedAt: new Date('2026-03-28T00:00:00.000Z'),
+      },
+    ]);
+
+    const result = await controller.managerApproval(
+      Object.assign(
+        {},
+        {
+          branchId: 9,
+          identifier: 'manager.one',
+          password: 'Branch#123',
+          approvalType: 'VOID_SETTLED_BILL',
+          resolveIdentifier: () => 'manager.one',
+        },
+      ),
+      {
+        headers: { 'user-agent': 'jest', 'x-forwarded-for': '1.2.3.4' },
+        method: 'POST',
+        route: { path: '/pos-portal/auth/manager-approval' },
+      } as any,
+    );
+
+    expect(authServiceMock.generateScopedAccessToken).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tokenType: 'pos_manager_approval',
+        branchId: 9,
+        branchRole: 'MANAGER',
+        approvalType: 'VOID_SETTLED_BILL',
+      }),
+      '15m',
+    );
+    expect(result).toMatchObject({
+      approvalAccessToken: 'manager-approval-token',
+      approvalType: 'VOID_SETTLED_BILL',
+    });
+    expect(auditServiceMock.log).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'pos_portal.auth.manager_approval.success',
+        targetType: 'USER',
+        targetId: 51,
+      }),
+    );
+  });
+
+  it('rejects manager approval when the approver is only an operator on the branch', async () => {
+    authServiceMock.loginWithIdentifier.mockResolvedValue({
+      accessToken: 'access-token',
+      refreshToken: 'refresh-token',
+      user,
+    });
+    branchStaffServiceMock.getPosBranchSummariesForUser.mockResolvedValue([
+      {
+        branchId: 9,
+        branchName: 'Airport Branch',
+        branchCode: 'AIR-9',
+        role: 'OPERATOR',
+        permissions: ['VOID_SETTLED_BILL'],
+        assignedSurfaces: ['pos-s'],
+        isOwner: false,
+        isTenantOwner: false,
+        retailTenantId: 31,
+        retailTenantName: 'Airport Retail',
+        modules: [RetailModule.POS_CORE],
+        joinedAt: new Date('2026-03-28T00:00:00.000Z'),
+      },
+    ]);
+
+    await expect(
+      controller.managerApproval(
+        Object.assign(
+          {},
+          {
+            branchId: 9,
+            identifier: 'cashier.one',
+            password: 'Branch#123',
+            approvalType: 'VOID_SETTLED_BILL',
+            resolveIdentifier: () => 'cashier.one',
+          },
+        ),
+        {
+          headers: { 'user-agent': 'jest', 'x-forwarded-for': '1.2.3.4' },
+          method: 'POST',
+          route: { path: '/pos-portal/auth/manager-approval' },
+        } as any,
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
   });
 
   it('rejects accounts without POS branch access', async () => {

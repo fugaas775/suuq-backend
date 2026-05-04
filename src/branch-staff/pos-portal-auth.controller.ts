@@ -25,13 +25,18 @@ import { AuthService } from '../auth/auth.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { LoginDto } from '../auth/dto/login.dto';
 import { PosPortalLoginDto } from './dto/pos-portal-login.dto';
+import {
+  PosManagerApprovalDto,
+  PosManagerApprovalType,
+  PosOperatorUnlockDto,
+} from './dto/pos-operator-unlock.dto';
 import { GoogleAuthDto } from '../auth/dto/google-auth.dto';
 import { AppleAuthDto } from '../auth/dto/apple-auth.dto';
 import { UserResponseDto } from '../users/dto/user-response.dto';
 import { User } from '../users/entities/user.entity';
 import { AuthenticatedRequest } from '../common/interfaces/authenticated-request.interface';
 import { AuditService } from '../audit/audit.service';
-import { BranchStaffService } from './branch-staff.service';
+import { BranchStaffService, PosBranchSummary } from './branch-staff.service';
 import {
   CreatePosWorkspaceDto,
   CreatePosWorkspaceResponseDto,
@@ -47,6 +52,7 @@ import {
   PosWorkspaceActivationPaymentResponseDto,
   StartPosWorkspaceActivationDto,
 } from './dto/start-pos-workspace-activation.dto';
+import { UserRole } from '../auth/roles.enum';
 
 type AuthResult = {
   accessToken: string;
@@ -95,6 +101,106 @@ export class PosPortalAuthController {
       dto.password,
     );
     return this.buildAuthResponse(result, req, 'login');
+  }
+
+  @Post('operator-unlock')
+  @HttpCode(HttpStatus.OK)
+  @Throttle(PORTAL_AUTH_WRITE_THROTTLE)
+  async operatorUnlock(
+    @Body() dto: PosOperatorUnlockDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const result = await this.authService.loginWithIdentifier(
+      dto.resolveIdentifier(),
+      dto.password,
+    );
+    const branchAccess = await this.resolveBranchAccess(
+      result.user,
+      dto.branchId,
+    );
+    const authenticatedUser = await this.authService.buildAuthenticatedUser(
+      result.user,
+    );
+    const operatorAccessToken =
+      await this.authService.generateScopedAccessToken(
+        this.buildScopedPosClaims(
+          authenticatedUser,
+          branchAccess,
+          'pos_operator',
+        ),
+        '8h',
+      );
+
+    return {
+      operatorAccessToken,
+      user: this.serializeUser(authenticatedUser),
+      branch: branchAccess,
+    };
+  }
+
+  @Post('manager-approval')
+  @HttpCode(HttpStatus.OK)
+  @Throttle(PORTAL_AUTH_WRITE_THROTTLE)
+  async managerApproval(
+    @Body() dto: PosManagerApprovalDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const result = await this.authService.loginWithIdentifier(
+      dto.resolveIdentifier(),
+      dto.password,
+    );
+    const branchAccess = await this.resolveBranchAccess(
+      result.user,
+      dto.branchId,
+    );
+
+    if (!this.canIssueManagerApproval(branchAccess)) {
+      throw new ForbiddenException(
+        'Manager approval requires an owner or manager account for this branch.',
+      );
+    }
+
+    const authenticatedUser = await this.authService.buildAuthenticatedUser(
+      result.user,
+    );
+    const approvalAccessToken =
+      await this.authService.generateScopedAccessToken(
+        {
+          ...this.buildScopedPosClaims(
+            authenticatedUser,
+            {
+              ...branchAccess,
+              role: 'MANAGER' as any,
+            },
+            'pos_manager_approval',
+          ),
+          approvalType: String(dto.approvalType || '')
+            .trim()
+            .toUpperCase(),
+        },
+        '15m',
+      );
+
+    await this.recordPortalAuthEvent({
+      action: 'pos_portal.auth.manager_approval.success',
+      event: 'pos_portal_manager_approval_success',
+      level: 'log',
+      req,
+      user: result.user,
+      meta: {
+        approvalType: dto.approvalType,
+        branchId: dto.branchId,
+      },
+    });
+
+    return {
+      approvalAccessToken,
+      approvalType: String(dto.approvalType || '')
+        .trim()
+        .toUpperCase(),
+      user: this.serializeUser(authenticatedUser),
+      branch: branchAccess,
+    };
   }
 
   @Post('google')
@@ -364,6 +470,71 @@ export class PosPortalAuthController {
       requiresBranchSelection: branches.length > 1,
       portalKey: 'pos',
     };
+  }
+
+  private async resolveBranchAccess(user: User, branchId: number) {
+    const branches = await this.branchStaffService.getPosBranchSummariesForUser(
+      {
+        id: user.id,
+        roles: user.roles,
+      },
+    );
+    const branchAccess = branches.find(
+      (branch) => Number(branch.branchId) === Number(branchId),
+    );
+
+    if (!branchAccess) {
+      throw new ForbiddenException(
+        'This account does not have access to the requested POS branch.',
+      );
+    }
+
+    return branchAccess;
+  }
+
+  private buildScopedPosClaims(
+    user: User,
+    branchAccess: PosBranchSummary,
+    tokenType: 'pos_operator' | 'pos_manager_approval',
+  ) {
+    const roleSet = new Set<string>();
+    const managerLike = this.canIssueManagerApproval(branchAccess);
+
+    if (managerLike) {
+      roleSet.add(UserRole.POS_MANAGER);
+    } else {
+      roleSet.add(UserRole.POS_OPERATOR);
+    }
+
+    return {
+      sub: user.id,
+      email: user.email,
+      roles: Array.from(roleSet),
+      tokenType,
+      branchId: branchAccess.branchId,
+      branchRole: branchAccess.role,
+      permissions: Array.isArray(branchAccess.permissions)
+        ? branchAccess.permissions
+        : [],
+      assignedSurfaces: Array.isArray(branchAccess.assignedSurfaces)
+        ? branchAccess.assignedSurfaces
+        : [],
+      capabilities: Array.isArray(branchAccess.capabilities)
+        ? branchAccess.capabilities
+        : [],
+      isOwner: branchAccess.isOwner,
+      isTenantOwner: branchAccess.isTenantOwner,
+    };
+  }
+
+  private canIssueManagerApproval(branchAccess: PosBranchSummary) {
+    return (
+      branchAccess.isOwner ||
+      branchAccess.isTenantOwner ||
+      String(branchAccess.role || '')
+        .trim()
+        .toUpperCase() === 'MANAGER'
+    );
   }
 
   private serializeUser(user: User) {

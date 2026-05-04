@@ -14,11 +14,14 @@ import { PosRegisterSession } from '../pos-sync/entities/pos-register-session.en
 import { PosSyncJob } from '../pos-sync/entities/pos-sync-job.entity';
 import { SellerWorkspace } from './entities/seller-workspace.entity';
 import { Branch } from '../branches/entities/branch.entity';
+import { BranchInventory } from '../branches/entities/branch-inventory.entity';
 import { BranchStaffAssignment } from '../branch-staff/entities/branch-staff-assignment.entity';
 import { SellerWorkspaceController } from './seller-workspace.controller';
 import { SellerWorkspaceService } from './seller-workspace.service';
 import { RetailModule } from '../retail/retail.module';
 import { EmailModule } from '../email/email.module';
+import { BranchCatalogProductLink } from '../retail/entities/branch-catalog-product-link.entity';
+import { BranchCatalogVendorLink } from '../retail/entities/branch-catalog-vendor-link.entity';
 
 @Module({
   imports: [
@@ -34,6 +37,9 @@ import { EmailModule } from '../email/email.module';
       TenantModuleEntitlement,
       TenantSubscription,
       Product,
+      BranchInventory,
+      BranchCatalogProductLink,
+      BranchCatalogVendorLink,
       Branch,
       BranchStaffAssignment,
     ]),

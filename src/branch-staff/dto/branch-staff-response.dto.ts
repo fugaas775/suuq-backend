@@ -1,5 +1,8 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { BranchStaffRole } from '../entities/branch-staff-assignment.entity';
+import {
+  BranchStaffCapability,
+  BranchStaffRole,
+} from '../entities/branch-staff-assignment.entity';
 
 export class BranchStaffUserSummaryDto {
   @ApiProperty()
@@ -30,6 +33,9 @@ export class BranchStaffAssignmentResponseDto {
 
   @ApiPropertyOptional({ isArray: true, nullable: true })
   assignedSurfaces!: string[] | null;
+
+  @ApiProperty({ enum: BranchStaffCapability, isArray: true })
+  capabilities!: BranchStaffCapability[];
 
   @ApiProperty()
   isActive!: boolean;

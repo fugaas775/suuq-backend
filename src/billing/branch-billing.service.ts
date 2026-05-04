@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Between, In, Repository } from 'typeorm';
+import { BranchStaffService } from '../branch-staff/branch-staff.service';
 import { Branch } from '../branches/entities/branch.entity';
 import {
   TenantSubscription,
@@ -12,12 +13,28 @@ import {
 } from '../retail/entities/tenant-subscription.entity';
 import { EbirrTransaction } from '../payments/entities/ebirr-transaction.entity';
 import { POS_WORKSPACE_REFERENCE_PREFIX } from '../branch-staff/pos-workspace-activation.service';
+import {
+  BranchAccruedLiability,
+  BranchAccruedLiabilityStatus,
+} from './entities/branch-accrued-liability.entity';
+import { BranchDepreciationEntry } from './entities/branch-depreciation-entry.entity';
 import { BranchExpense } from './entities/branch-expense.entity';
+import {
+  BranchFixedAsset,
+  BranchFixedAssetStatus,
+} from './entities/branch-fixed-asset.entity';
+import {
+  BranchLongTermDebt,
+  BranchLongTermDebtStatus,
+} from './entities/branch-long-term-debt.entity';
 
 export interface OwnerBranchBilling {
   branchId: number;
   branchName: string;
   serviceFormat: string | null;
+  workspaceStatus: string | null;
+  canStartRenewal: boolean;
+  activationBlockers: string[];
   subscription: {
     period: string | null;
     status: string | null;
@@ -48,10 +65,22 @@ export class BranchBillingService {
     private readonly ebirrRepo: Repository<EbirrTransaction>,
     @InjectRepository(BranchExpense)
     private readonly expensesRepo: Repository<BranchExpense>,
+    @InjectRepository(BranchFixedAsset)
+    private readonly fixedAssetsRepo: Repository<BranchFixedAsset>,
+    @InjectRepository(BranchDepreciationEntry)
+    private readonly depreciationEntriesRepo: Repository<BranchDepreciationEntry>,
+    @InjectRepository(BranchAccruedLiability)
+    private readonly accruedLiabilitiesRepo: Repository<BranchAccruedLiability>,
+    @InjectRepository(BranchLongTermDebt)
+    private readonly longTermDebtRepo: Repository<BranchLongTermDebt>,
+    private readonly branchStaffService: BranchStaffService,
   ) {}
 
   /** Return per-branch billing summary for branches owned by the user. */
-  async listOwnerBranches(userId: number): Promise<OwnerBranchBilling[]> {
+  async listOwnerBranches(
+    userId: number,
+    roles: string[] = [],
+  ): Promise<OwnerBranchBilling[]> {
     const branches = await this.branchesRepo.find({
       where: { ownerId: userId, isActive: true } as any,
       order: { name: 'ASC' },
@@ -71,14 +100,55 @@ export class BranchBillingService {
 
     const lastPaymentByBranch =
       await this.findLastPaymentsForBranches(branchIds);
+    const [activeSummaries, activationCandidates] = await Promise.all([
+      this.branchStaffService.getPosBranchSummariesForUser({
+        id: userId,
+        roles,
+      }),
+      this.branchStaffService.getPosWorkspaceActivationCandidatesForUser({
+        id: userId,
+        roles,
+      }),
+    ]);
+    const workspaceStatusByBranch = new Map<
+      number,
+      Pick<
+        OwnerBranchBilling,
+        'workspaceStatus' | 'canStartRenewal' | 'activationBlockers'
+      >
+    >(
+      activeSummaries.map((summary) => [
+        summary.branchId,
+        {
+          workspaceStatus: summary.workspaceStatus,
+          canStartRenewal: false,
+          activationBlockers: [],
+        },
+      ]),
+    );
+    for (const candidate of activationCandidates) {
+      workspaceStatusByBranch.set(candidate.branchId, {
+        workspaceStatus: candidate.workspaceStatus,
+        canStartRenewal: Boolean(candidate.canStartActivation),
+        activationBlockers: candidate.activationBlockers || [],
+      });
+    }
 
     return branches.map((branch) => {
       const sub = subByBranch.get(branch.id) || null;
       const meta = (sub?.metadata as any) || {};
+      const workspace = workspaceStatusByBranch.get(branch.id) || {
+        workspaceStatus: null,
+        canStartRenewal: false,
+        activationBlockers: [],
+      };
       return {
         branchId: branch.id,
         branchName: branch.name,
         serviceFormat: (branch as any).serviceFormat ?? null,
+        workspaceStatus: workspace.workspaceStatus,
+        canStartRenewal: workspace.canStartRenewal,
+        activationBlockers: workspace.activationBlockers,
         subscription: sub
           ? {
               period:
@@ -193,6 +263,230 @@ export class BranchBillingService {
       );
     }
     await this.expensesRepo.remove(expense);
+  }
+
+  async listBranchFixedAssets(branchId: number) {
+    return this.fixedAssetsRepo.find({
+      where: { branchId },
+      order: { acquiredAt: 'DESC', id: 'DESC' },
+    });
+  }
+
+  async createBranchFixedAsset(
+    branchId: number,
+    dto: {
+      name: string;
+      category: BranchFixedAsset['category'];
+      status?: BranchFixedAsset['status'];
+      acquiredAt: Date;
+      capitalizationAmount: number;
+      salvageValue?: number;
+      usefulLifeMonths?: number;
+      currency?: string;
+      note?: string;
+    },
+  ): Promise<BranchFixedAsset> {
+    const asset = this.fixedAssetsRepo.create({
+      branchId,
+      name: dto.name,
+      category: dto.category,
+      status: dto.status || BranchFixedAssetStatus.ACTIVE,
+      acquiredAt: dto.acquiredAt,
+      capitalizationAmount: dto.capitalizationAmount,
+      salvageValue: dto.salvageValue || 0,
+      usefulLifeMonths: dto.usefulLifeMonths ?? null,
+      currency: dto.currency || 'ETB',
+      note: dto.note ?? null,
+    });
+    return this.fixedAssetsRepo.save(asset);
+  }
+
+  async deleteBranchFixedAsset(
+    branchId: number,
+    assetId: number,
+  ): Promise<void> {
+    const asset = await this.fixedAssetsRepo.findOne({
+      where: { id: assetId, branchId },
+    });
+    if (!asset) {
+      throw new NotFoundException(
+        `Fixed asset #${assetId} not found for branch #${branchId}.`,
+      );
+    }
+    await this.fixedAssetsRepo.remove(asset);
+  }
+
+  async listBranchDepreciationEntries(branchId: number) {
+    return this.depreciationEntriesRepo.find({
+      where: { branchId },
+      order: { occurredAt: 'DESC', id: 'DESC' },
+    });
+  }
+
+  async createBranchDepreciationEntry(
+    branchId: number,
+    userId: number,
+    dto: {
+      fixedAssetId: number;
+      amount: number;
+      occurredAt: Date;
+      note?: string;
+    },
+  ): Promise<BranchDepreciationEntry> {
+    const asset = await this.fixedAssetsRepo.findOne({
+      where: { id: dto.fixedAssetId, branchId },
+    });
+    if (!asset) {
+      throw new NotFoundException(
+        `Fixed asset #${dto.fixedAssetId} not found for branch #${branchId}.`,
+      );
+    }
+
+    const entry = this.depreciationEntriesRepo.create({
+      branchId,
+      fixedAssetId: dto.fixedAssetId,
+      amount: dto.amount,
+      occurredAt: dto.occurredAt,
+      note: dto.note ?? null,
+      recordedByUserId: userId,
+    });
+    return this.depreciationEntriesRepo.save(entry);
+  }
+
+  async deleteBranchDepreciationEntry(
+    branchId: number,
+    entryId: number,
+  ): Promise<void> {
+    const entry = await this.depreciationEntriesRepo.findOne({
+      where: { id: entryId, branchId },
+    });
+    if (!entry) {
+      throw new NotFoundException(
+        `Depreciation entry #${entryId} not found for branch #${branchId}.`,
+      );
+    }
+    await this.depreciationEntriesRepo.remove(entry);
+  }
+
+  async listBranchAccruedLiabilities(branchId: number) {
+    return this.accruedLiabilitiesRepo.find({
+      where: { branchId },
+      order: { accruedAt: 'DESC', id: 'DESC' },
+    });
+  }
+
+  async createBranchAccruedLiability(
+    branchId: number,
+    dto: {
+      label: string;
+      category: BranchAccruedLiability['category'];
+      status?: BranchAccruedLiability['status'];
+      amount: number;
+      accruedAt: Date;
+      dueAt?: Date;
+      currency?: string;
+      note?: string;
+    },
+  ): Promise<BranchAccruedLiability> {
+    const liability = this.accruedLiabilitiesRepo.create({
+      branchId,
+      label: dto.label,
+      category: dto.category,
+      status: dto.status || BranchAccruedLiabilityStatus.OPEN,
+      amount: dto.amount,
+      accruedAt: dto.accruedAt,
+      dueAt: dto.dueAt ?? null,
+      currency: dto.currency || 'ETB',
+      note: dto.note ?? null,
+    });
+    return this.accruedLiabilitiesRepo.save(liability);
+  }
+
+  async deleteBranchAccruedLiability(
+    branchId: number,
+    liabilityId: number,
+  ): Promise<void> {
+    const liability = await this.accruedLiabilitiesRepo.findOne({
+      where: { id: liabilityId, branchId },
+    });
+    if (!liability) {
+      throw new NotFoundException(
+        `Accrued liability #${liabilityId} not found for branch #${branchId}.`,
+      );
+    }
+    await this.accruedLiabilitiesRepo.remove(liability);
+  }
+
+  async settleBranchAccruedLiability(
+    branchId: number,
+    liabilityId: number,
+    settledAt?: Date,
+  ): Promise<BranchAccruedLiability> {
+    const liability = await this.accruedLiabilitiesRepo.findOne({
+      where: { id: liabilityId, branchId },
+    });
+    if (!liability) {
+      throw new NotFoundException(
+        `Accrued liability #${liabilityId} not found for branch #${branchId}.`,
+      );
+    }
+
+    liability.status = BranchAccruedLiabilityStatus.SETTLED;
+    liability.settledAt = settledAt || new Date();
+    return this.accruedLiabilitiesRepo.save(liability);
+  }
+
+  async listBranchLongTermDebts(branchId: number) {
+    return this.longTermDebtRepo.find({
+      where: { branchId },
+      order: { issuedAt: 'DESC', id: 'DESC' },
+    });
+  }
+
+  async createBranchLongTermDebt(
+    branchId: number,
+    dto: {
+      lenderName: string;
+      status?: BranchLongTermDebt['status'];
+      principalAmount: number;
+      outstandingPrincipal: number;
+      currentPortionAmount?: number;
+      interestRate?: number;
+      issuedAt: Date;
+      maturityAt?: Date;
+      currency?: string;
+      note?: string;
+    },
+  ): Promise<BranchLongTermDebt> {
+    const debt = this.longTermDebtRepo.create({
+      branchId,
+      lenderName: dto.lenderName,
+      status: dto.status || BranchLongTermDebtStatus.ACTIVE,
+      principalAmount: dto.principalAmount,
+      outstandingPrincipal: dto.outstandingPrincipal,
+      currentPortionAmount: dto.currentPortionAmount || 0,
+      interestRate: dto.interestRate ?? null,
+      issuedAt: dto.issuedAt,
+      maturityAt: dto.maturityAt ?? null,
+      currency: dto.currency || 'ETB',
+      note: dto.note ?? null,
+    });
+    return this.longTermDebtRepo.save(debt);
+  }
+
+  async deleteBranchLongTermDebt(
+    branchId: number,
+    debtId: number,
+  ): Promise<void> {
+    const debt = await this.longTermDebtRepo.findOne({
+      where: { id: debtId, branchId },
+    });
+    if (!debt) {
+      throw new NotFoundException(
+        `Long-term debt #${debtId} not found for branch #${branchId}.`,
+      );
+    }
+    await this.longTermDebtRepo.remove(debt);
   }
 
   // ---------------------------------------------------------------------------

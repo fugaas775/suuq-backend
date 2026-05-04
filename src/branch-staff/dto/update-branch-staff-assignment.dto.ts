@@ -6,7 +6,10 @@ import {
   IsOptional,
   IsString,
 } from 'class-validator';
-import { BranchStaffRole } from '../entities/branch-staff-assignment.entity';
+import {
+  BranchStaffCapability,
+  BranchStaffRole,
+} from '../entities/branch-staff-assignment.entity';
 
 function normalizeStringArray(value: unknown) {
   if (!Array.isArray(value)) return undefined;
@@ -32,4 +35,11 @@ export class UpdateBranchStaffAssignmentDto {
   @IsString({ each: true })
   @Transform(({ value }) => normalizeStringArray(value))
   assignedSurfaces?: string[] | null;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayUnique()
+  @IsEnum(BranchStaffCapability, { each: true })
+  @Transform(({ value }) => normalizeStringArray(value))
+  capabilities?: BranchStaffCapability[];
 }

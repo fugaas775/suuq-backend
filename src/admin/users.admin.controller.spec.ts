@@ -1,8 +1,10 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { plainToInstance } from 'class-transformer';
+import { UserRole } from '../auth/roles.enum';
 import { SubscriptionAnalyticsService } from '../metrics/subscription-analytics.service';
 import { BranchStaffRole } from '../branch-staff/entities/branch-staff-assignment.entity';
 import { BranchStaffService } from '../branch-staff/branch-staff.service';
+import { ROLES_KEY } from '../common/decorators/roles.decorator';
 import { SellerWorkspaceService } from '../seller-workspace/seller-workspace.service';
 import { UsersService } from '../users/users.service';
 import { AdminUsersController } from './users.admin.controller';
@@ -180,5 +182,31 @@ describe('AdminUsersController', () => {
     expect(sellerWorkspaceService.getOverview).toHaveBeenCalledTimes(2);
     expect(sellerWorkspaceService.getOverview).toHaveBeenNthCalledWith(1, 7);
     expect(sellerWorkspaceService.getOverview).toHaveBeenNthCalledWith(2, 8);
+  });
+
+  it('allows LICENSE_REVIEWER only on the read-only user list', () => {
+    const listRoles = Reflect.getMetadata(ROLES_KEY, controller.list);
+    const analyticsRoles = Reflect.getMetadata(
+      ROLES_KEY,
+      controller.getSubscriptionAnalytics,
+    );
+    const activeSubscriptionRoles = Reflect.getMetadata(
+      ROLES_KEY,
+      controller.getActiveSubscriptions,
+    );
+    const subscriptionRequestRoles = Reflect.getMetadata(
+      ROLES_KEY,
+      controller.listSubscriptionRequests,
+    );
+    const extendSubscriptionRoles = Reflect.getMetadata(
+      ROLES_KEY,
+      controller.extendSubscription,
+    );
+
+    expect(listRoles).toContain(UserRole.LICENSE_REVIEWER);
+    expect(analyticsRoles).not.toContain(UserRole.LICENSE_REVIEWER);
+    expect(activeSubscriptionRoles).not.toContain(UserRole.LICENSE_REVIEWER);
+    expect(subscriptionRequestRoles).not.toContain(UserRole.LICENSE_REVIEWER);
+    expect(extendSubscriptionRoles).not.toContain(UserRole.LICENSE_REVIEWER);
   });
 });

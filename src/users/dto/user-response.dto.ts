@@ -8,8 +8,11 @@ import {
   TenantSubscriptionStatus,
 } from '../../retail/entities/tenant-subscription.entity';
 import {
+  BusinessLicenseInfo,
   CertificationStatus,
   SubscriptionTier,
+  VerificationDocument,
+  VerificationMethod,
   resolveCertificationStatus,
 } from '../entities/user.entity';
 import {
@@ -176,6 +179,9 @@ export class UserResponseDto {
   @Expose()
   verificationStatus?: string;
 
+  @Expose()
+  verificationMethod?: VerificationMethod;
+
   // Helpful alias for UI chips: APPROVED => VERIFIED
   @Expose()
   get verificationStatusDisplay(): string | undefined {
@@ -244,6 +250,12 @@ export class UserResponseDto {
 
   @Expose()
   businessLicenseNumber?: string;
+
+  @Expose()
+  businessLicenseInfo?: BusinessLicenseInfo | null;
+
+  @Expose()
+  verificationDocuments?: VerificationDocument[] | null;
 
   @Expose()
   taxId?: string;

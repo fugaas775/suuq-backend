@@ -10,6 +10,7 @@
   },
   "scripts": {
     "build": "nest build",
+    "deploy:prod": "bash ./scripts/migrate-and-reload.sh",
     "clean": "rm -rf dist",
     "clean:dist": "rm -rf dist",
     "clean:coverage": "rm -rf coverage .nyc_output",

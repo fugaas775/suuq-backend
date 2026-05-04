@@ -33,6 +33,9 @@ import { EquityPartner } from './entities/equity-partner.entity';
 import { EquitySplitAssignment } from './entities/equity-split-assignment.entity';
 import { EquityPayout } from './entities/equity-payout.entity';
 import { EquityPartnerBnplActivation } from './entities/equity-partner-bnpl-activation.entity';
+import { EquityPartnerBnplCreditLedgerEntry } from './entities/equity-partner-bnpl-credit-ledger.entity';
+import { BranchCatalogProductLink } from './entities/branch-catalog-product-link.entity';
+import { BranchCatalogVendorLink } from './entities/branch-catalog-vendor-link.entity';
 import { EquityPartnerService } from './equity-partner.service';
 import { EquityPartnerBnplService } from './equity-partner-bnpl.service';
 import { SellerEquityController } from './seller-equity.controller';
@@ -61,12 +64,15 @@ import { AdminEquityPartnersController } from './admin-equity-partners.controlle
       PosSyncJob,
       Order,
       Product,
+      BranchCatalogProductLink,
+      BranchCatalogVendorLink,
       User,
       PayoutLog,
       EquityPartner,
       EquitySplitAssignment,
       EquityPayout,
       EquityPartnerBnplActivation,
+      EquityPartnerBnplCreditLedgerEntry,
     ]),
   ],
   controllers: [

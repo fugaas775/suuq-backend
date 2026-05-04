@@ -76,6 +76,24 @@ describe('RetailModulesGuard', () => {
     ).toHaveBeenCalledWith(22, [RetailModule.DESKTOP_BACKOFFICE]);
   });
 
+  it('falls back to body.branchId when the configured path is empty', async () => {
+    reflector.getAllAndOverride
+      .mockReturnValueOnce([RetailModule.POS_CORE])
+      .mockReturnValueOnce('query.branchId');
+
+    await guard.canActivate({
+      getHandler: () => undefined,
+      getClass: () => undefined,
+      switchToHttp: () => ({
+        getRequest: () => ({ query: {}, body: { branchId: 14 } }),
+      }),
+    } as any);
+
+    expect(
+      retailEntitlementsService.assertBranchHasModules,
+    ).toHaveBeenCalledWith(14, [RetailModule.POS_CORE]);
+  });
+
   it('fails when no branchId can be resolved', async () => {
     reflector.getAllAndOverride
       .mockReturnValueOnce([RetailModule.INVENTORY_CORE])

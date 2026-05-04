@@ -10,11 +10,21 @@ import { DataSource } from 'typeorm';
 
 describe('AuthService', () => {
   let service: AuthService;
+  let usersService: {
+    findByEmail: jest.Mock;
+    restoreDeletedUserByEmail: jest.Mock;
+    createWithGoogle: jest.Mock;
+  };
   let jwtService: { signAsync: jest.Mock };
   let effectiveUserRoleService: { applyEffectiveRoles: jest.Mock };
   let dataSource: { transaction: jest.Mock };
 
   beforeEach(async () => {
+    usersService = {
+      findByEmail: jest.fn(),
+      restoreDeletedUserByEmail: jest.fn(),
+      createWithGoogle: jest.fn(),
+    };
     jwtService = {
       signAsync: jest
         .fn()
@@ -40,7 +50,7 @@ describe('AuthService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AuthService,
-        { provide: UsersService, useValue: {} },
+        { provide: UsersService, useValue: usersService },
         { provide: JwtService, useValue: jwtService },
         {
           provide: ConfigService,
@@ -106,5 +116,38 @@ describe('AuthService', () => {
         roles: ['VENDOR', 'POS_MANAGER'],
       },
     });
+  });
+
+  it('restores a deleted user on Google login instead of creating a new account', async () => {
+    usersService.findByEmail.mockResolvedValue(null);
+    usersService.restoreDeletedUserByEmail.mockResolvedValue({
+      id: 42,
+      email: 'somopenschool@gmail.com',
+      roles: ['CUSTOMER'],
+      isActive: true,
+    });
+
+    (service as any).oauthClient = {
+      verifyIdToken: jest.fn().mockResolvedValue({
+        getPayload: () => ({
+          email: 'somopenschool@gmail.com',
+          name: 'Som Open School',
+          picture: 'https://example.test/avatar.png',
+          sub: 'google-sub-42',
+        }),
+      }),
+    };
+
+    const result = await service.googleLogin({ idToken: 'google-id-token' });
+
+    expect(usersService.restoreDeletedUserByEmail).toHaveBeenCalledWith(
+      'somopenschool@gmail.com',
+      expect.objectContaining({
+        googleId: 'google-sub-42',
+        isActive: true,
+      }),
+    );
+    expect(usersService.createWithGoogle).not.toHaveBeenCalled();
+    expect(result.isNewUser).toBe(false);
   });
 });

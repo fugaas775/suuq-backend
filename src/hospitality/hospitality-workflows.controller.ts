@@ -11,7 +11,16 @@ import {
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { PosBranchAccessGuard } from '../auth/pos-branch-access.guard';
+import { RequirePosPermissions } from '../auth/decorators/require-pos-permissions.decorator';
+import { RolesGuard } from '../auth/roles.guard';
+import { Roles } from '../common/decorators/roles.decorator';
+import { UserRole } from '../auth/roles.enum';
 import { AuthenticatedRequest } from '../common/interfaces/authenticated-request.interface';
+import { RequireRetailModules } from '../retail/decorators/require-retail-modules.decorator';
+import { RetailBranchContext } from '../retail/decorators/retail-branch-context.decorator';
+import { RetailModule as RetailOsModule } from '../retail/entities/tenant-module-entitlement.entity';
+import { RetailModulesGuard } from '../retail/retail-modules.guard';
 import {
   GetBillInterventionsDto,
   ReopenSettledBillDto,
@@ -31,7 +40,15 @@ import { HospitalityWorkflowsService } from './hospitality-workflows.service';
 
 @ApiTags('POS Hospitality Workflows')
 @Controller('pos/v1/branches/:branchId')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, RetailModulesGuard, PosBranchAccessGuard)
+@Roles(
+  UserRole.SUPER_ADMIN,
+  UserRole.ADMIN,
+  UserRole.POS_MANAGER,
+  UserRole.POS_OPERATOR,
+)
+@RequireRetailModules(RetailOsModule.POS_CORE)
+@RetailBranchContext('params.branchId')
 export class HospitalityWorkflowsController {
   constructor(
     private readonly hospitalityWorkflowsService: HospitalityWorkflowsService,
@@ -145,6 +162,7 @@ export class HospitalityWorkflowsController {
   }
 
   @Post('bills/:billId/reopen')
+  @RequirePosPermissions('REOPEN_SETTLED_BILL')
   async reopenSettledBill(
     @Param('branchId') branchId: string,
     @Param('billId') billId: string,
@@ -163,6 +181,7 @@ export class HospitalityWorkflowsController {
   }
 
   @Post('bills/:billId/void')
+  @RequirePosPermissions('VOID_SETTLED_BILL')
   async voidSettledBill(
     @Param('branchId') branchId: string,
     @Param('billId') billId: string,

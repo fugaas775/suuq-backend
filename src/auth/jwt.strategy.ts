@@ -22,6 +22,15 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       id: payload.sub,
       email: payload.email,
       roles: payload.roles, // Assumes roles is already an array in the JWT
+      tokenType: payload.tokenType,
+      branchId: payload.branchId,
+      branchRole: payload.branchRole,
+      permissions: payload.permissions,
+      assignedSurfaces: payload.assignedSurfaces,
+      capabilities: payload.capabilities,
+      isOwner: payload.isOwner,
+      isTenantOwner: payload.isTenantOwner,
+      approvalType: payload.approvalType,
     };
   }
 }

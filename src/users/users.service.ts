@@ -39,6 +39,7 @@ import { NotificationType } from '../notifications/entities/notification.entity'
 @Injectable()
 export class UsersService {
   private readonly logger = new Logger(UsersService.name);
+  private static readonly DELETED_USER_EMAIL_MARKER = 'original-email:';
   constructor(
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
@@ -156,6 +157,13 @@ export class UsersService {
       if (existing) {
         throw new ConflictException('A user with this email already exists.');
       }
+      const restored = await this.restoreDeletedUserByEmail(normalizedEmail, {
+        ...data,
+        email: normalizedEmail,
+      });
+      if (restored) {
+        return restored;
+      }
       data.email = normalizedEmail;
     }
     if (data.password) {
@@ -221,6 +229,9 @@ export class UsersService {
     if (!user) {
       throw new NotFoundException(`User with ID "${id}" not found`);
     }
+    const originalEmail = String(user.email || '')
+      .trim()
+      .toLowerCase();
     const tombstoneEmail = `deleted+${user.id}+${Date.now()}@deleted.local`;
     // Preserve minimal row for FK integrity (reviews/products) while scrubbing PII.
     user.email = tombstoneEmail;
@@ -237,6 +248,7 @@ export class UsersService {
     user.verificationReviewedBy = null;
     user.verificationReviewedAt = null;
     user.googleId = null as any;
+    user.firebaseUid = null as any;
     user.bankAccountNumber = null as any;
     user.bankName = null as any;
     user.mobileMoneyNumber = null as any;
@@ -245,9 +257,51 @@ export class UsersService {
     user.isActive = false;
     user.roles = [] as any; // no roles
     user.deletedAt = new Date();
-    user.deletedBy = 'system';
+    user.deletedBy = originalEmail
+      ? `system|${UsersService.DELETED_USER_EMAIL_MARKER}${originalEmail}`
+      : 'system';
     await this.userRepository.save(user);
     this.logger.log(`User anonymized instead of deleted id=${id}`);
+  }
+
+  async restoreDeletedUserByEmail(
+    email: string,
+    patch: Partial<User> = {},
+  ): Promise<User | null> {
+    const normalizedEmail = String(email || '')
+      .trim()
+      .toLowerCase();
+    if (!normalizedEmail) {
+      return null;
+    }
+
+    const deletedUser = await this.userRepository
+      .createQueryBuilder('user')
+      .withDeleted()
+      .where('user.deletedAt IS NOT NULL')
+      .andWhere("LOWER(COALESCE(user.deletedBy, '')) LIKE :marker", {
+        marker: `%${UsersService.DELETED_USER_EMAIL_MARKER}${normalizedEmail}`,
+      })
+      .getOne();
+
+    if (!deletedUser) {
+      return null;
+    }
+
+    Object.assign(deletedUser, patch);
+    deletedUser.email = normalizedEmail;
+    deletedUser.isActive = true;
+    deletedUser.deletedAt = null as any;
+    deletedUser.deletedBy = null as any;
+
+    if (!Array.isArray(deletedUser.roles) || deletedUser.roles.length === 0) {
+      deletedUser.roles =
+        Array.isArray(patch.roles) && patch.roles.length
+          ? patch.roles
+          : [UserRole.CUSTOMER];
+    }
+
+    return this.userRepository.save(deletedUser);
   }
 
   /**
@@ -859,6 +913,23 @@ export class UsersService {
     family_name?: string;
     roles?: UserRole[];
   }): Promise<User> {
+    const restored = await this.restoreDeletedUserByEmail(payload.email, {
+      email: payload.email,
+      displayName:
+        payload.name ||
+        `${payload.given_name || ''} ${payload.family_name || ''}`.trim(),
+      avatarUrl: payload.picture,
+      googleId: payload.sub,
+      roles:
+        payload.roles && payload.roles.length > 0
+          ? payload.roles
+          : [UserRole.CUSTOMER],
+      isActive: true,
+    });
+    if (restored) {
+      return restored;
+    }
+
     // Prevent duplicate emails
     const existing = await this.userRepository.findOne({
       where: { email: payload.email },
@@ -890,6 +961,20 @@ export class UsersService {
     name?: string;
     roles?: UserRole[];
   }): Promise<User> {
+    const restored = await this.restoreDeletedUserByEmail(payload.email, {
+      email: payload.email,
+      displayName: payload.name,
+      appleId: payload.sub,
+      roles:
+        payload.roles && payload.roles.length > 0
+          ? payload.roles
+          : [UserRole.CUSTOMER],
+      isActive: true,
+    });
+    if (restored) {
+      return restored;
+    }
+
     const existing = await this.userRepository.findOne({
       where: { email: payload.email },
     });

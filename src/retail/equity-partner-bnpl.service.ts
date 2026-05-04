@@ -28,12 +28,17 @@ import {
   EquityPartnerBnplActivation,
   EquityPartnerBnplStatus,
 } from './entities/equity-partner-bnpl-activation.entity';
-import { EquityPartnerService } from './equity-partner.service';
+import {
+  EquityPartnerBnplCreditLedgerEntry,
+  EquityPartnerBnplCreditLedgerEntryType,
+} from './entities/equity-partner-bnpl-credit-ledger.entity';
+import { EQUITY_PRICING, EquityPartnerService } from './equity-partner.service';
 import {
   TenantBillingInterval,
   TenantSubscription,
   TenantSubscriptionStatus,
 } from './entities/tenant-subscription.entity';
+import { In } from 'typeorm';
 
 const BNPL_REFERENCE_PREFIX = 'BNPLACT';
 
@@ -44,7 +49,9 @@ export interface StartBnplActivationInput {
   period: PosBranchSubscriptionPeriod;
   city?: string | null;
   country?: string | null;
+  address?: string | null;
   phone?: string | null;
+  tinNumber?: string | null;
 }
 
 @Injectable()
@@ -56,6 +63,8 @@ export class EquityPartnerBnplService {
     private readonly partnersRepo: Repository<EquityPartner>,
     @InjectRepository(EquityPartnerBnplActivation)
     private readonly activationsRepo: Repository<EquityPartnerBnplActivation>,
+    @InjectRepository(EquityPartnerBnplCreditLedgerEntry)
+    private readonly creditLedgerRepo: Repository<EquityPartnerBnplCreditLedgerEntry>,
     @InjectRepository(Branch)
     private readonly branchesRepo: Repository<Branch>,
     @InjectRepository(BranchStaffAssignment)
@@ -77,7 +86,8 @@ export class EquityPartnerBnplService {
    *
    * The branch and its tenant subscription are provisioned immediately
    * (status=ACTIVE) and ownership is transferred to the resolved end-user.
-   * The partner owes `option.amount` until `dueAt` (= subscription end).
+   * The partner settles only the prepaid amount net of their earned equity
+   * share for the funded period.
    */
   async startBnplActivation(
     partnerUserId: number,
@@ -87,6 +97,9 @@ export class EquityPartnerBnplService {
     await this.assertCreditCapacity(partner);
 
     const option = requirePosBranchSubscriptionOption(input.period);
+    const grossAmount = option.amount;
+    const equityCreditAmount = this.calculateEquityCreditAmount(grossAmount);
+    const settlementAmountDue = Math.max(0, grossAmount - equityCreditAmount);
     const targetUser = await this.findOrCreateTargetOwner(
       input.targetOwnerEmail,
     );
@@ -119,9 +132,11 @@ export class EquityPartnerBnplService {
         serviceFormat,
         ownerId: targetUser.id,
         retailTenantId: partnerTenantId,
+        address: input.address ?? null,
         city: input.city ?? null,
         country: input.country ?? null,
         phone: input.phone ?? null,
+        tinNumber: input.tinNumber ?? null,
         isActive: true,
       }),
     );
@@ -136,19 +151,6 @@ export class EquityPartnerBnplService {
         isActive: true,
       }),
     );
-
-    // Partner is added as a manager to support onboarding (revocable later).
-    if (partner.userId && partner.userId !== targetUser.id) {
-      await this.assignmentsRepo.save(
-        this.assignmentsRepo.create({
-          branchId: branch.id,
-          userId: partner.userId,
-          role: BranchStaffRole.MANAGER,
-          permissions: [],
-          isActive: true,
-        }),
-      );
-    }
 
     const subscription = await this.subscriptionsRepo.save(
       this.subscriptionsRepo.create({
@@ -194,13 +196,16 @@ export class EquityPartnerBnplService {
         tenantSubscriptionId: subscription.id,
         targetOwnerUserId: targetUser.id,
         period: option.period,
-        amountDue: option.amount,
+        amountDue: grossAmount,
+        equityCreditAmount,
+        settlementAmountDue,
         currency: option.currency,
         status: EquityPartnerBnplStatus.OUTSTANDING,
         dueAt: endsAt,
         metadata: {
           targetOwnerEmail: input.targetOwnerEmail,
           targetOwnerWasCreated: targetUser.requiresGoogleLink === true,
+          settlementModel: 'NET_OF_EQUITY_CREDIT',
         },
       }),
     );
@@ -209,17 +214,50 @@ export class EquityPartnerBnplService {
       `Equity partner ${partner.id} created BNPL branch ${branch.id} for user ${targetUser.id}; due ${endsAt.toISOString()}`,
     );
 
+    await this.ensureCreditLedgerEntry(activation);
+
     return activation;
   }
 
   async listOutstandingForPartner(
     partnerUserId: number,
-  ): Promise<EquityPartnerBnplActivation[]> {
+  ): Promise<Array<EquityPartnerBnplActivation & { branchName: string }>> {
     const partner = await this.requireActivePartnerForUser(partnerUserId);
-    return this.activationsRepo.find({
+    const activations = await this.activationsRepo.find({
       where: { equityPartnerId: partner.id },
       order: { createdAt: 'DESC' },
     });
+    if (!activations.length) {
+      return [];
+    }
+
+    const branches = await this.branchesRepo.find({
+      where: { id: In(activations.map((activation) => activation.branchId)) },
+      select: ['id', 'name'],
+    });
+    const branchNameById = new Map(
+      branches.map((branch) => [branch.id, branch.name]),
+    );
+
+    return activations.map((activation) => ({
+      ...activation,
+      branchName:
+        branchNameById.get(activation.branchId) ||
+        `Branch #${activation.branchId}`,
+    }));
+  }
+
+  async listCreditLedgerForPartner(
+    partnerUserId: number,
+  ): Promise<
+    Array<EquityPartnerBnplCreditLedgerEntry & { branchName: string }>
+  > {
+    const partner = await this.requireActivePartnerForUser(partnerUserId);
+    const entries = await this.creditLedgerRepo.find({
+      where: { equityPartnerId: partner.id },
+      order: { createdAt: 'DESC' },
+    });
+    return this.attachBranchNames(entries);
   }
 
   /**
@@ -251,12 +289,17 @@ export class EquityPartnerBnplService {
     const referenceId = `${BNPL_REFERENCE_PREFIX}-${activation.id}-${Date.now()}`;
     const invoiceId = `${BNPL_REFERENCE_PREFIX}INV-${activation.id}`;
 
+    const settlementAmountDue =
+      Number(activation.settlementAmountDue) > 0
+        ? Number(activation.settlementAmountDue)
+        : Number(activation.amountDue);
+
     const response = await this.ebirrService.initiatePayment({
       phoneNumber,
-      amount: Number(activation.amountDue).toFixed(2),
+      amount: settlementAmountDue.toFixed(2),
       referenceId,
       invoiceId,
-      description: `Equity partner BNPL settlement for branch ${activation.branchId}`,
+      description: `Equity partner BNPL net settlement for branch ${activation.branchId}`,
     });
 
     activation.settlementReferenceId = referenceId;
@@ -264,10 +307,16 @@ export class EquityPartnerBnplService {
       ...(activation.metadata ?? {}),
       lastSettlementAttempt: {
         referenceId,
+        grossAmount: Number(activation.amountDue),
+        equityCreditAmount: Number(activation.equityCreditAmount || 0),
+        settlementAmountDue,
         startedAt: new Date().toISOString(),
       },
     };
     await this.activationsRepo.save(activation);
+    await this.syncCreditLedgerEntry(activation, {
+      settlementReferenceId: referenceId,
+    });
 
     return { referenceId, response };
   }
@@ -283,6 +332,18 @@ export class EquityPartnerBnplService {
       where: { equityPartnerId: partnerId },
       order: { createdAt: 'DESC' },
     });
+  }
+
+  async listCreditLedgerForPartnerAdmin(
+    partnerId: number,
+  ): Promise<
+    Array<EquityPartnerBnplCreditLedgerEntry & { branchName: string }>
+  > {
+    const entries = await this.creditLedgerRepo.find({
+      where: { equityPartnerId: partnerId },
+      order: { createdAt: 'DESC' },
+    });
+    return this.attachBranchNames(entries);
   }
 
   async setCreditLimit(
@@ -325,7 +386,9 @@ export class EquityPartnerBnplService {
       forgiveNote: note ?? null,
       forgivenAt: new Date().toISOString(),
     };
-    return this.activationsRepo.save(activation);
+    const saved = await this.activationsRepo.save(activation);
+    await this.syncCreditLedgerEntry(saved);
+    return saved;
   }
 
   async markSettled(activationId: number, referenceId?: string) {
@@ -345,7 +408,9 @@ export class EquityPartnerBnplService {
     if (referenceId) {
       activation.settlementReferenceId = referenceId;
     }
-    return this.activationsRepo.save(activation);
+    const saved = await this.activationsRepo.save(activation);
+    await this.syncCreditLedgerEntry(saved);
+    return saved;
   }
 
   // ---------------------------------------------------------------------------
@@ -358,6 +423,11 @@ export class EquityPartnerBnplService {
       period: option.period,
       months: option.months,
       amount: option.amount,
+      equityCreditAmount: this.calculateEquityCreditAmount(option.amount),
+      settlementAmountDue: Math.max(
+        0,
+        option.amount - this.calculateEquityCreditAmount(option.amount),
+      ),
       currency: option.currency,
       label: option.label,
     }));
@@ -414,6 +484,87 @@ export class EquityPartnerBnplService {
     return ownedBranch.retailTenantId;
   }
 
+  private calculateEquityCreditAmount(grossAmount: number): number {
+    const splitNumerator = Number(EQUITY_PRICING.splitNumerator) || 0;
+    const splitDenominator = Number(EQUITY_PRICING.splitDenominator) || 0;
+
+    if (splitNumerator <= 0 || splitDenominator <= 0) {
+      return 0;
+    }
+
+    return Math.floor(
+      (Number(grossAmount) * splitNumerator) / splitDenominator,
+    );
+  }
+
+  private async ensureCreditLedgerEntry(
+    activation: EquityPartnerBnplActivation,
+  ): Promise<EquityPartnerBnplCreditLedgerEntry> {
+    const existing = await this.creditLedgerRepo.findOne({
+      where: { bnplActivationId: activation.id },
+    });
+    if (existing) {
+      return this.syncCreditLedgerEntry(activation);
+    }
+
+    const entry = this.creditLedgerRepo.create({
+      equityPartnerId: activation.equityPartnerId,
+      bnplActivationId: activation.id,
+      branchId: activation.branchId,
+      targetOwnerUserId: activation.targetOwnerUserId,
+      period: activation.period,
+      entryType: EquityPartnerBnplCreditLedgerEntryType.CREDIT_APPLIED,
+      grossAmount: Number(activation.amountDue),
+      equityCreditAmount: Number(activation.equityCreditAmount || 0),
+      settlementAmountDue: Number(
+        activation.settlementAmountDue ?? activation.amountDue,
+      ),
+      currency: activation.currency,
+      activationStatus: activation.status,
+      settlementReferenceId: activation.settlementReferenceId ?? null,
+      metadata: {
+        targetOwnerEmail: activation.metadata?.targetOwnerEmail ?? null,
+        settlementModel: activation.metadata?.settlementModel ?? null,
+      },
+    });
+    return this.creditLedgerRepo.save(entry);
+  }
+
+  private async syncCreditLedgerEntry(
+    activation: EquityPartnerBnplActivation,
+    overrides: { settlementReferenceId?: string | null } = {},
+  ): Promise<EquityPartnerBnplCreditLedgerEntry> {
+    const entry = await this.creditLedgerRepo.findOne({
+      where: { bnplActivationId: activation.id },
+    });
+
+    if (!entry) {
+      return this.ensureCreditLedgerEntry({
+        ...activation,
+        settlementReferenceId:
+          overrides.settlementReferenceId ?? activation.settlementReferenceId,
+      } as EquityPartnerBnplActivation);
+    }
+
+    entry.activationStatus = activation.status;
+    entry.settlementReferenceId =
+      overrides.settlementReferenceId ??
+      activation.settlementReferenceId ??
+      null;
+    entry.metadata = {
+      ...(entry.metadata ?? {}),
+      targetOwnerEmail:
+        activation.metadata?.targetOwnerEmail ??
+        entry.metadata?.targetOwnerEmail ??
+        null,
+      settlementModel:
+        activation.metadata?.settlementModel ??
+        entry.metadata?.settlementModel ??
+        null,
+    };
+    return this.creditLedgerRepo.save(entry);
+  }
+
   private async findOrCreateTargetOwner(rawEmail: string): Promise<
     User & {
       requiresGoogleLink?: boolean;
@@ -439,6 +590,27 @@ export class EquityPartnerBnplService {
     );
     (created as any).requiresGoogleLink = true;
     return created as User & { requiresGoogleLink?: boolean };
+  }
+
+  private async attachBranchNames<T extends { branchId: number }>(
+    rows: T[],
+  ): Promise<Array<T & { branchName: string }>> {
+    if (!rows.length) {
+      return [];
+    }
+
+    const branches = await this.branchesRepo.find({
+      where: { id: In(rows.map((row) => row.branchId)) },
+      select: ['id', 'name'],
+    });
+    const branchNameById = new Map(
+      branches.map((branch) => [branch.id, branch.name]),
+    );
+
+    return rows.map((row) => ({
+      ...row,
+      branchName: branchNameById.get(row.branchId) || `Branch #${row.branchId}`,
+    }));
   }
 
   private async generateBranchCode(branchName: string): Promise<string> {

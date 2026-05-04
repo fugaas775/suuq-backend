@@ -18,6 +18,7 @@ describe('UsersService', () => {
     findOne: jest.fn(),
     save: jest.fn(),
     create: jest.fn(),
+    createQueryBuilder: jest.fn(),
   };
 
   const mockEmailService = {
@@ -38,6 +39,7 @@ describe('UsersService', () => {
   };
 
   beforeEach(async () => {
+    jest.clearAllMocks();
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         UsersService,
@@ -60,5 +62,44 @@ describe('UsersService', () => {
 
   it('should be defined', () => {
     expect(service).toBeDefined();
+  });
+
+  it('restores a deleted user row when the same email signs up again', async () => {
+    const deletedUser = {
+      id: 42,
+      email: 'deleted+42@deleted.local',
+      displayName: 'Deleted User',
+      roles: [],
+      isActive: false,
+      deletedAt: new Date('2026-05-01T00:00:00.000Z'),
+      deletedBy: 'system|original-email:somopenschool@gmail.com',
+    };
+    const queryBuilder = {
+      withDeleted: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      getOne: jest.fn().mockResolvedValue(deletedUser),
+    };
+    mockRepo.createQueryBuilder.mockReturnValue(queryBuilder);
+    mockRepo.save.mockImplementation(async (value) => value);
+
+    const restored = await service.restoreDeletedUserByEmail(
+      'somopenschool@gmail.com',
+      {
+        displayName: 'Som Open School',
+        roles: ['CUSTOMER'] as any,
+        isActive: true,
+      },
+    );
+
+    expect(restored).toMatchObject({
+      id: 42,
+      email: 'somopenschool@gmail.com',
+      displayName: 'Som Open School',
+      isActive: true,
+      deletedAt: null,
+      deletedBy: null,
+      roles: ['CUSTOMER'],
+    });
   });
 });

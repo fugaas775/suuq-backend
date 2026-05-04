@@ -11,8 +11,10 @@ import {
 } from '@nestjs/common';
 import { ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { PosBranchAccessGuard } from '../auth/pos-branch-access.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { UserRole } from '../auth/roles.enum';
+import { RequirePosPermissions } from '../auth/decorators/require-pos-permissions.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RetailBranchContext } from '../retail/decorators/retail-branch-context.decorator';
 import { RequireRetailModules } from '../retail/decorators/require-retail-modules.decorator';
@@ -40,7 +42,7 @@ export class PosRegisterController {
   constructor(private readonly posRegisterService: PosRegisterService) {}
 
   @Get('sessions')
-  @UseGuards(JwtAuthGuard, RolesGuard, RetailModulesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard, RetailModulesGuard, PosBranchAccessGuard)
   @Roles(
     UserRole.SUPER_ADMIN,
     UserRole.ADMIN,
@@ -55,7 +57,8 @@ export class PosRegisterController {
   }
 
   @Post('sessions')
-  @UseGuards(JwtAuthGuard, RolesGuard, RetailModulesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard, RetailModulesGuard, PosBranchAccessGuard)
+  @RequirePosPermissions('OPEN_REGISTER')
   @Roles(
     UserRole.SUPER_ADMIN,
     UserRole.ADMIN,
@@ -73,7 +76,8 @@ export class PosRegisterController {
   }
 
   @Post('sessions/:id/close')
-  @UseGuards(JwtAuthGuard, RolesGuard, RetailModulesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard, RetailModulesGuard, PosBranchAccessGuard)
+  @RequirePosPermissions('CLOSE_REGISTER')
   @Roles(
     UserRole.SUPER_ADMIN,
     UserRole.ADMIN,
@@ -95,7 +99,7 @@ export class PosRegisterController {
   }
 
   @Get('suspended-carts')
-  @UseGuards(JwtAuthGuard, RolesGuard, RetailModulesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard, RetailModulesGuard, PosBranchAccessGuard)
   @Roles(
     UserRole.SUPER_ADMIN,
     UserRole.ADMIN,
@@ -110,7 +114,8 @@ export class PosRegisterController {
   }
 
   @Post('suspended-carts')
-  @UseGuards(JwtAuthGuard, RolesGuard, RetailModulesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard, RetailModulesGuard, PosBranchAccessGuard)
+  @RequirePosPermissions('SUSPEND_SALE')
   @Roles(
     UserRole.SUPER_ADMIN,
     UserRole.ADMIN,
@@ -128,7 +133,8 @@ export class PosRegisterController {
   }
 
   @Post('suspended-carts/:id/resume')
-  @UseGuards(JwtAuthGuard, RolesGuard, RetailModulesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard, RetailModulesGuard, PosBranchAccessGuard)
+  @RequirePosPermissions('RESUME_SUSPENDED_SALE')
   @Roles(
     UserRole.SUPER_ADMIN,
     UserRole.ADMIN,
@@ -150,7 +156,8 @@ export class PosRegisterController {
   }
 
   @Post('suspended-carts/:id/discard')
-  @UseGuards(JwtAuthGuard, RolesGuard, RetailModulesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard, RetailModulesGuard, PosBranchAccessGuard)
+  @RequirePosPermissions('DISCARD_SUSPENDED_SALE')
   @Roles(
     UserRole.SUPER_ADMIN,
     UserRole.ADMIN,
