@@ -821,12 +821,7 @@ export class PosCheckoutService {
       .trim()
       .toUpperCase();
 
-    return (
-      category === 'FOOD_SERVICE' ||
-      serviceFormat === 'CAFETERIA' ||
-      serviceFormat === 'QSR' ||
-      serviceFormat === 'FSR'
-    );
+    return category === 'FOOD_SERVICE' || serviceFormat === 'HOTEL';
   }
 
   private resolvePromoCode(code?: string | null, subtotal = 0) {

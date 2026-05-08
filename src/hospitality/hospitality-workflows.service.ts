@@ -328,7 +328,7 @@ export class HospitalityWorkflowsService {
         ticketId: normalizedTicketId,
         branchId,
         serviceFormat: (dto.serviceFormat ||
-          PosHospitalityServiceFormat.QSR) as 'QSR' | 'FSR',
+          PosHospitalityServiceFormat.RETAIL) as 'RETAIL',
         stationCode: String(dto.stationCode || 'EXPO')
           .trim()
           .toUpperCase(),

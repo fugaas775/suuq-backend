@@ -12,6 +12,7 @@ import { TenantModuleEntitlement } from '../retail/entities/tenant-module-entitl
 import { BranchStaffController } from './branch-staff.controller';
 import { BranchStaffService } from './branch-staff.service';
 import { BranchStaffAssignment } from './entities/branch-staff-assignment.entity';
+import { BranchStaffInvite } from './entities/branch-staff-invite.entity';
 import { PosPortalAuthController } from './pos-portal-auth.controller';
 import { PosPortalOnboardingService } from './pos-portal-onboarding.service';
 import { PosSupportController } from './pos-support.controller';
@@ -26,6 +27,7 @@ import { SellerWorkspace } from '../seller-workspace/entities/seller-workspace.e
     EbirrModule,
     TypeOrmModule.forFeature([
       BranchStaffAssignment,
+      BranchStaffInvite,
       Branch,
       User,
       RetailTenant,

@@ -11,11 +11,13 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import { AssignBranchStaffDto } from './dto/assign-branch-staff.dto';
 import { CreateBranchStaffManualAccountDto } from './dto/create-branch-staff-manual-account.dto';
+import { InviteBranchStaffDto } from './dto/invite-branch-staff.dto';
 import {
   BranchStaffAssignment,
   BranchStaffCapability,
   BranchStaffRole,
 } from './entities/branch-staff-assignment.entity';
+import { BranchStaffInvite } from './entities/branch-staff-invite.entity';
 import { Branch } from '../branches/entities/branch.entity';
 import { EmailService } from '../email/email.service';
 import { RetailEntitlementsService } from '../retail/retail-entitlements.service';
@@ -154,6 +156,8 @@ export class BranchStaffService {
   constructor(
     @InjectRepository(BranchStaffAssignment)
     private readonly assignmentsRepository: Repository<BranchStaffAssignment>,
+    @InjectRepository(BranchStaffInvite)
+    private readonly invitesRepository: Repository<BranchStaffInvite>,
     @InjectRepository(Branch)
     private readonly branchesRepository: Repository<Branch>,
     @InjectRepository(RetailTenant)
@@ -256,6 +260,166 @@ export class BranchStaffService {
       order: { createdAt: 'DESC' },
       relations: { user: true, branch: true },
     });
+  }
+
+  async invite(
+    branchId: number,
+    dto: InviteBranchStaffDto,
+    actor?: { id?: number | null; email?: string | null },
+  ) {
+    const branch = await this.branchesRepository.findOne({
+      where: { id: branchId, isActive: true },
+      select: { id: true, name: true },
+    });
+
+    if (!branch) {
+      throw new NotFoundException('Branch not found.');
+    }
+
+    const normalizedEmail = this.normalizeEmail(dto.email);
+    const normalizedPermissions = this.normalizePermissions(dto.permissions);
+    const existingUser = await this.usersRepository.findOne({
+      where: { email: normalizedEmail },
+      select: { id: true, email: true },
+    });
+    const existingInvite = await this.invitesRepository.findOne({
+      where: { branchId, email: normalizedEmail },
+    });
+
+    if (existingUser) {
+      const result = await this.upsertAssignment(
+        branchId,
+        existingUser.id,
+        dto.role,
+        normalizedPermissions,
+      );
+
+      const linkedInvite = this.invitesRepository.create({
+        ...(existingInvite ?? {}),
+        branchId,
+        email: normalizedEmail,
+        role: dto.role,
+        permissions: normalizedPermissions,
+        invitedByUserId: actor?.id ?? null,
+        acceptedByUserId: existingUser.id,
+        acceptedAt: new Date(),
+        isActive: false,
+      });
+      const savedInvite = await this.invitesRepository.save(linkedInvite);
+
+      await this.sendInvitationEmail({
+        email: normalizedEmail,
+        branchName: branch.name,
+        isExistingUser: true,
+      });
+
+      await this.logManagerChangeIfNeeded({
+        branchId,
+        actor,
+        userId: existingUser.id,
+        email: normalizedEmail,
+        previousRole: result.previousRole,
+        nextRole: result.assignment.role,
+        changeType:
+          result.previousRole === BranchStaffRole.MANAGER
+            ? 'UPDATED'
+            : 'INVITED',
+      });
+
+      return {
+        status: 'LINKED_EXISTING_USER' as const,
+        invite: savedInvite,
+        assignment: result.assignment,
+      };
+    }
+
+    const invite = this.invitesRepository.create({
+      ...(existingInvite ?? {}),
+      branchId,
+      email: normalizedEmail,
+      role: dto.role,
+      permissions: normalizedPermissions,
+      invitedByUserId: actor?.id ?? null,
+      acceptedByUserId: null,
+      acceptedAt: null,
+      isActive: true,
+    });
+    const savedInvite = await this.invitesRepository.save(invite);
+
+    await this.sendInvitationEmail({
+      email: normalizedEmail,
+      branchName: branch.name,
+      isExistingUser: false,
+    });
+
+    await this.logManagerChangeIfNeeded({
+      branchId,
+      actor,
+      email: normalizedEmail,
+      previousRole: null,
+      nextRole: dto.role,
+      changeType: 'INVITED',
+    });
+
+    return {
+      status: 'PENDING_SIGNUP' as const,
+      invite: savedInvite,
+      assignment: null,
+    };
+  }
+
+  async findInvitesByBranch(branchId: number) {
+    return this.invitesRepository.find({
+      where: { branchId, isActive: true },
+      order: { createdAt: 'DESC' },
+    });
+  }
+
+  async resendInvite(
+    branchId: number,
+    inviteId: number,
+    actor?: { id?: number | null; email?: string | null },
+  ) {
+    const invite = await this.invitesRepository.findOne({
+      where: { id: inviteId, branchId, isActive: true },
+      relations: { branch: true },
+    });
+
+    if (!invite) {
+      throw new NotFoundException('Active branch invite not found.');
+    }
+
+    invite.invitedByUserId = actor?.id ?? invite.invitedByUserId ?? null;
+    const savedInvite = await this.invitesRepository.save(invite);
+
+    await this.sendInvitationEmail({
+      email: invite.email,
+      branchName: invite.branch?.name || `Branch ${branchId}`,
+      isExistingUser: false,
+    });
+
+    return {
+      status: 'RESENT' as const,
+      invite: savedInvite,
+    };
+  }
+
+  async revokeInvite(branchId: number, inviteId: number) {
+    const invite = await this.invitesRepository.findOne({
+      where: { id: inviteId, branchId, isActive: true },
+    });
+
+    if (!invite) {
+      throw new NotFoundException('Active branch invite not found.');
+    }
+
+    invite.isActive = false;
+    const savedInvite = await this.invitesRepository.save(invite);
+
+    return {
+      status: 'REVOKED' as const,
+      invite: savedInvite,
+    };
   }
 
   async unassign(
@@ -896,8 +1060,15 @@ export class BranchStaffService {
 
   private normalizeCapabilities(
     capabilities?: BranchStaffCapability[],
+    role?: BranchStaffRole,
   ): BranchStaffCapability[] {
-    return Array.from(new Set((capabilities ?? []).filter(Boolean))).sort();
+    const normalized = new Set((capabilities ?? []).filter(Boolean));
+
+    if (role === BranchStaffRole.MANAGER) {
+      normalized.add(BranchStaffCapability.MANAGE_BRANCH_STAFF);
+    }
+
+    return Array.from(normalized).sort();
   }
 
   private async upsertAssignment(
@@ -925,7 +1096,7 @@ export class BranchStaffService {
         assignedSurfaces && assignedSurfaces.length > 0
           ? assignedSurfaces
           : null,
-      capabilities: this.normalizeCapabilities(capabilities),
+      capabilities: this.normalizeCapabilities(capabilities, role),
       isActive: true,
     });
 
@@ -1075,7 +1246,7 @@ export class BranchStaffService {
         dto.assignedSurfaces && dto.assignedSurfaces.length > 0
           ? dto.assignedSurfaces
           : null,
-      capabilities: this.normalizeCapabilities(dto.capabilities),
+      capabilities: this.normalizeCapabilities(dto.capabilities, dto.role),
       isActive: true,
     });
     await this.assignmentsRepository.save(assignment);
@@ -1142,7 +1313,10 @@ export class BranchStaffService {
           : null;
     }
     if (dto.capabilities !== undefined) {
-      assignment.capabilities = this.normalizeCapabilities(dto.capabilities);
+      assignment.capabilities = this.normalizeCapabilities(
+        dto.capabilities,
+        assignment.role,
+      );
     }
 
     const saved = await this.assignmentsRepository.save(assignment);

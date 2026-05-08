@@ -7,6 +7,10 @@ import { HospitalityBillIntervention } from './entities/hospitality-bill-interve
 import { HospitalityIdempotencyKey } from './entities/hospitality-idempotency-key.entity';
 import { HospitalityKitchenTicket } from './entities/hospitality-kitchen-ticket.entity';
 import { HospitalityTableBoard } from './entities/hospitality-table-board.entity';
+import { HotelFolio } from './entities/hotel-folio.entity';
+import { HotelFolioCharge } from './entities/hotel-folio-charge.entity';
+import { HotelFolioController } from './hotel-folio.controller';
+import { HotelFolioService } from './hotel-folio.service';
 import { PosBranchAccessGuard } from '../auth/pos-branch-access.guard';
 import { RetailModule } from '../retail/retail.module';
 import { RolesGuard } from '../auth/roles.guard';
@@ -18,12 +22,19 @@ import { RolesGuard } from '../auth/roles.guard';
       HospitalityTableBoard,
       HospitalityBillIntervention,
       HospitalityIdempotencyKey,
+      HotelFolio,
+      HotelFolioCharge,
     ]),
     AuditModule,
     RetailModule,
   ],
-  controllers: [HospitalityWorkflowsController],
-  providers: [HospitalityWorkflowsService, PosBranchAccessGuard, RolesGuard],
+  controllers: [HospitalityWorkflowsController, HotelFolioController],
+  providers: [
+    HospitalityWorkflowsService,
+    HotelFolioService,
+    PosBranchAccessGuard,
+    RolesGuard,
+  ],
   exports: [HospitalityWorkflowsService],
 })
 export class HospitalityModule {}

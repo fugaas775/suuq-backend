@@ -21,9 +21,11 @@ import {
   PartnerCredentialStatus,
   PartnerType,
 } from '../src/partner-credentials/entities/partner-credential.entity';
+import { closeE2eApp } from './utils/e2e-cleanup';
 
 describe('PartnerCredentialsController (e2e)', () => {
   let app: INestApplication;
+  let moduleFixture: TestingModule;
   let partnerCredentialsService: {
     findAll: jest.Mock;
     create: jest.Mock;
@@ -82,7 +84,7 @@ describe('PartnerCredentialsController (e2e)', () => {
       }),
     };
 
-    const moduleFixture: TestingModule = await Test.createTestingModule({
+    moduleFixture = await Test.createTestingModule({
       controllers: [PartnerCredentialsController],
       providers: [
         {
@@ -115,7 +117,7 @@ describe('PartnerCredentialsController (e2e)', () => {
   });
 
   afterAll(async () => {
-    await app.close();
+    await closeE2eApp({ app, moduleFixture });
   });
 
   it('lists partner credentials using the documented admin response shape', async () => {

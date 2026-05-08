@@ -37,7 +37,7 @@ export class PosPortalBranchSummaryDto {
   @ApiPropertyOptional({ nullable: true })
   branchCode!: string | null;
 
-  @ApiPropertyOptional({ nullable: true, example: 'CAFETERIA' })
+  @ApiPropertyOptional({ nullable: true, example: 'RETAIL' })
   serviceFormat!: string | null;
 
   @ApiProperty({ enum: BranchStaffRole })
@@ -161,7 +161,7 @@ export class PosPortalActivationCandidateDto {
   @ApiPropertyOptional({ nullable: true })
   branchCode!: string | null;
 
-  @ApiPropertyOptional({ nullable: true, example: 'CAFETERIA' })
+  @ApiPropertyOptional({ nullable: true, example: 'RETAIL' })
   serviceFormat!: string | null;
 
   @ApiProperty({ enum: BranchStaffRole })

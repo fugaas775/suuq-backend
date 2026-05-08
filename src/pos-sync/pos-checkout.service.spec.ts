@@ -191,7 +191,7 @@ describe('PosCheckoutService', () => {
           unitPrice: 185,
           taxRate: 0.15,
           metadata: {
-            serviceFormat: 'CAFETERIA',
+            serviceFormat: 'BAKERY',
           },
         },
       ],
@@ -401,7 +401,7 @@ describe('PosCheckoutService', () => {
     );
   });
 
-  it('persists loyalty and normalized FSR checkout item metadata during ingest', async () => {
+  it('persists loyalty and normalized hotel checkout item metadata during ingest', async () => {
     posCheckoutsRepository.findOne
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce({
@@ -436,7 +436,7 @@ describe('PosCheckoutService', () => {
             taxAmount: 51,
             lineTotal: 391,
             metadata: {
-              serviceFormat: 'FSR',
+              serviceFormat: 'HOTEL',
               tableArea: 'PATIO',
               tableLabel: 'Table 12',
               course: 'MAIN',
@@ -475,7 +475,7 @@ describe('PosCheckoutService', () => {
             taxAmount: 51,
             lineTotal: 391,
             metadata: {
-              serviceFormat: 'fsr',
+              serviceFormat: 'hotel',
               tableArea: 'patio',
               tableLabel: 'Table 12',
               course: 'main',
@@ -500,7 +500,7 @@ describe('PosCheckoutService', () => {
         items: [
           expect.objectContaining({
             metadata: expect.objectContaining({
-              serviceFormat: 'FSR',
+              serviceFormat: 'HOTEL',
               tableArea: 'PATIO',
               tableLabel: 'Table 12',
               course: 'MAIN',
@@ -519,7 +519,7 @@ describe('PosCheckoutService', () => {
     );
     expect(result.items[0]?.metadata).toEqual(
       expect.objectContaining({
-        serviceFormat: 'FSR',
+        serviceFormat: 'HOTEL',
         tableArea: 'PATIO',
         tableLabel: 'Table 12',
         course: 'MAIN',

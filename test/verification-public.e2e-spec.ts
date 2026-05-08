@@ -45,6 +45,7 @@ describe('Public verification and profile (e2e-lite)', () => {
 
   const authServiceMock = {
     getUsersService: () => usersServiceMock,
+    buildAuthenticatedUser: jest.fn(async (user) => user),
     // other methods not needed for these tests
   } as unknown as AuthService;
 

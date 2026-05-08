@@ -63,6 +63,13 @@ type AuthResult = {
 
 type PortalAuthSource = 'login' | 'google' | 'apple' | 'session';
 
+type IdentifierLikeDto = {
+  identifier?: string;
+  username?: string;
+  email?: string;
+  resolveIdentifier?: () => string;
+};
+
 const PORTAL_AUTH_WRITE_THROTTLE = { default: { ttl: 60_000, limit: 10 } };
 const PORTAL_AUTH_SESSION_THROTTLE = { default: { ttl: 60_000, limit: 30 } };
 
@@ -78,6 +85,14 @@ export class PosPortalAuthController {
     private readonly posWorkspaceActivationService: PosWorkspaceActivationService,
     private readonly auditService: AuditService,
   ) {}
+
+  private resolveIdentifier(dto: IdentifierLikeDto): string {
+    if (dto && typeof dto.resolveIdentifier === 'function') {
+      return String(dto.resolveIdentifier() || '').trim();
+    }
+
+    return String(dto?.identifier || dto?.username || dto?.email || '').trim();
+  }
 
   @Post('login')
   @HttpCode(HttpStatus.OK)
@@ -95,7 +110,7 @@ export class PosPortalAuthController {
     @Body() dto: PosPortalLoginDto,
     @Req() req: AuthenticatedRequest,
   ) {
-    const identifier = dto.resolveIdentifier();
+    const identifier = this.resolveIdentifier(dto);
     const result = await this.authService.loginWithIdentifier(
       identifier,
       dto.password,
@@ -111,7 +126,7 @@ export class PosPortalAuthController {
     @Req() req: AuthenticatedRequest,
   ) {
     const result = await this.authService.loginWithIdentifier(
-      dto.resolveIdentifier(),
+      this.resolveIdentifier(dto),
       dto.password,
     );
     const branchAccess = await this.resolveBranchAccess(
@@ -146,7 +161,7 @@ export class PosPortalAuthController {
     @Req() req: AuthenticatedRequest,
   ) {
     const result = await this.authService.loginWithIdentifier(
-      dto.resolveIdentifier(),
+      this.resolveIdentifier(dto),
       dto.password,
     );
     const branchAccess = await this.resolveBranchAccess(

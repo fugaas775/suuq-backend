@@ -6,6 +6,9 @@ import { SubscriptionAnalyticsService } from '../src/metrics/subscription-analyt
 import { RolesGuard } from '../src/auth/roles.guard';
 import { UsersService } from '../src/users/users.service';
 import { AdminUsersController } from '../src/admin/users.admin.controller';
+import { BranchStaffService } from '../src/branch-staff/branch-staff.service';
+import { SellerWorkspaceService } from '../src/seller-workspace/seller-workspace.service';
+import { closeE2eApp } from './utils/e2e-cleanup';
 
 describe('AdminUsersController query contract (e2e)', () => {
   let app: INestApplication;
@@ -55,6 +58,37 @@ describe('AdminUsersController query contract (e2e)', () => {
           provide: SubscriptionAnalyticsService,
           useValue: { getAnalytics: jest.fn() },
         },
+        {
+          provide: BranchStaffService,
+          useValue: { getAdminPosAccessForUser: jest.fn() },
+        },
+        {
+          provide: SellerWorkspaceService,
+          useValue: {
+            getOverview: jest.fn().mockResolvedValue({
+              windowHours: 24,
+              storeCount: 1,
+              branchCount: 1,
+              orderCount: 0,
+              grossSales: 0,
+              purchaseOrderCount: 0,
+              openPurchaseOrderCount: 0,
+              checkoutCount: 0,
+              failedCheckoutCount: 0,
+              syncJobCount: 0,
+              failedSyncJobCount: 0,
+              catalogProductCount: 0,
+              registerSessionCount: 0,
+              currentPlanCode: 'POS_BRANCH',
+              recommendedPlanCode: 'POS_BRANCH',
+              workspace: {
+                billingStatus: 'ACTIVE',
+                status: 'ACTIVE',
+              },
+            }),
+            findUserIdsByBillingStatus: jest.fn(),
+          },
+        },
       ],
     })
       .overrideGuard(AuthGuard('jwt'))
@@ -72,7 +106,7 @@ describe('AdminUsersController query contract (e2e)', () => {
   });
 
   afterAll(async () => {
-    await app.close();
+    await closeE2eApp({ app });
   });
 
   it('lists active subscriptions and subscription requests with validated filters', async () => {

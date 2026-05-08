@@ -89,6 +89,7 @@ export class EquityPartnerBnplActivation {
   @Column({
     type: 'enum',
     enum: EquityPartnerBnplStatus,
+    enumName: 'equity_partner_bnpl_status_enum',
     default: EquityPartnerBnplStatus.OUTSTANDING,
   })
   status!: EquityPartnerBnplStatus;

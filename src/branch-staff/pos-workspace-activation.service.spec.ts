@@ -308,7 +308,7 @@ describe('PosWorkspaceActivationService', () => {
         {
           branchId: 21,
           branchName: 'Bole Flagship',
-          serviceFormat: 'QSR',
+          serviceFormat: 'HOTEL',
           role: 'MANAGER',
           isOwner: true,
           retailTenantId: 31,
@@ -323,7 +323,7 @@ describe('PosWorkspaceActivationService', () => {
       ],
     );
     retailEntitlementsServiceMock.getBranchWorkspaceStatus.mockResolvedValue({
-      branch: { id: 21, serviceFormat: 'QSR' },
+      branch: { id: 21, serviceFormat: 'HOTEL' },
       tenant: { id: 31, name: 'Bole Retail' },
       entitlements: [{ module: RetailModule.POS_CORE }],
       governance: {
@@ -360,7 +360,7 @@ describe('PosWorkspaceActivationService', () => {
       branchName: 'Bole Flagship',
       status: 'TRIAL',
       trialDaysRemaining: 15,
-      serviceFormat: 'QSR',
+      serviceFormat: 'HOTEL',
     });
   });
 

@@ -13,6 +13,9 @@ import { UserRole } from '../src/auth/roles.enum';
 import { VerificationStatus } from '../src/users/entities/user.entity';
 import { OrdersService } from '../src/orders/orders.service';
 import { DelivererService } from '../src/deliverer/deliverer.service';
+import { BranchStaffService } from '../src/branch-staff/branch-staff.service';
+import { AuditService } from '../src/audit/audit.service';
+import { SellerWorkspaceService } from '../src/seller-workspace/seller-workspace.service';
 
 class AllowGuard implements CanActivate {
   canActivate(_context: ExecutionContext): boolean {
@@ -82,6 +85,9 @@ describe('GET /admin/users/stream (e2e)', () => {
         { provide: CurrencyService, useValue: {} },
         { provide: ProductsService, useValue: {} },
         { provide: DelivererService, useValue: {} },
+        { provide: BranchStaffService, useValue: {} },
+        { provide: AuditService, useValue: {} },
+        { provide: SellerWorkspaceService, useValue: {} },
       ],
     })
       .overrideGuard(RolesGuard)

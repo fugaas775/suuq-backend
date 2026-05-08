@@ -17,8 +17,6 @@ import { PosUserFitCategory } from '../../categories/entities/category.entity';
 
 export enum SelfServePosWorkspaceServiceFormat {
   RETAIL = 'RETAIL',
-  QSR = 'QSR',
-  FSR = 'FSR',
   HOTEL = 'HOTEL',
   PHARMACY = 'PHARMACY',
   GROCERY = 'GROCERY',

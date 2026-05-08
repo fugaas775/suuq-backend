@@ -728,7 +728,7 @@ describe('SellerWorkspaceService', () => {
       module: RetailModule.POS_CORE,
       enabled: true,
       metadata: {
-        allowedSelfServeServiceFormats: ['RETAIL', 'QSR', 'FSR'],
+        allowedSelfServeServiceFormats: ['RETAIL', 'HOTEL'],
       },
     });
     branchStaffService.getPosBranchSummariesForUser
@@ -785,7 +785,7 @@ describe('SellerWorkspaceService', () => {
           branchId: 8,
           branchName: 'Megenagna Annex',
           branchCode: 'MEG-8',
-          serviceFormat: 'QSR',
+          serviceFormat: 'HOTEL',
           role: 'MANAGER',
           permissions: [],
           isOwner: true,
@@ -848,7 +848,7 @@ describe('SellerWorkspaceService', () => {
       city: 'Addis Ababa',
       country: 'Ethiopia',
       address: 'Megenagna Square',
-      serviceFormat: 'QSR' as any,
+      serviceFormat: 'HOTEL' as any,
       defaultCurrency: 'ETB',
     });
 
@@ -856,7 +856,7 @@ describe('SellerWorkspaceService', () => {
     expect(branchesRepository.save).toHaveBeenCalledWith(
       expect.objectContaining({
         name: 'Megenagna Annex',
-        serviceFormat: 'QSR',
+        serviceFormat: 'HOTEL',
         ownerId: 41,
         retailTenantId: 13,
       }),
@@ -871,7 +871,7 @@ describe('SellerWorkspaceService', () => {
     expect(result).toMatchObject({
       branchId: 8,
       branchName: 'Megenagna Annex',
-      serviceFormat: 'QSR',
+      serviceFormat: 'HOTEL',
       retailTenantId: 13,
       canOpenNow: true,
     });
@@ -1213,7 +1213,7 @@ describe('SellerWorkspaceService', () => {
         city: 'Addis Ababa',
         country: 'Ethiopia',
         address: 'Megenagna Square',
-        serviceFormat: 'FSR' as any,
+        serviceFormat: 'HOTEL' as any,
         defaultCurrency: 'ETB',
       }),
     ).rejects.toThrow(

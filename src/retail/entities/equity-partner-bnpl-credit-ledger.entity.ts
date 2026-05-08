@@ -91,6 +91,7 @@ export class EquityPartnerBnplCreditLedgerEntry {
   @Column({
     type: 'enum',
     enum: EquityPartnerBnplStatus,
+    enumName: 'equity_partner_bnpl_status_enum',
     default: EquityPartnerBnplStatus.OUTSTANDING,
   })
   activationStatus!: EquityPartnerBnplStatus;

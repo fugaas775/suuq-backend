@@ -22,9 +22,11 @@ import { PosPartnerSyncController } from '../src/pos-sync/pos-partner-sync.contr
 import { PosCheckoutService } from '../src/pos-sync/pos-checkout.service';
 import { PosRegisterService } from '../src/pos-sync/pos-register.service';
 import { PosSyncService } from '../src/pos-sync/pos-sync.service';
+import { closeE2eApp } from './utils/e2e-cleanup';
 
 describe('POS partner checkout/register routes (e2e)', () => {
   let app: INestApplication;
+  let moduleFixture: TestingModule;
   let posCheckoutService: {
     findAll: jest.Mock;
     findOne: jest.Mock;
@@ -135,7 +137,7 @@ describe('POS partner checkout/register routes (e2e)', () => {
       ),
     };
 
-    const moduleFixture: TestingModule = await Test.createTestingModule({
+    moduleFixture = await Test.createTestingModule({
       controllers: [
         PosPartnerCheckoutController,
         PosPartnerRegisterController,
@@ -173,7 +175,7 @@ describe('POS partner checkout/register routes (e2e)', () => {
   });
 
   afterAll(async () => {
-    await app.close();
+    await closeE2eApp({ app, moduleFixture });
   });
 
   it('allows partner checkout history reads with checkout-read scope', async () => {

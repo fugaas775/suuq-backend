@@ -2,8 +2,11 @@ import { CanActivate, INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 const request = require('supertest');
 import { JwtAuthGuard } from '../src/auth/jwt-auth.guard';
+import { RolesGuard } from '../src/auth/roles.guard';
+import { PosBranchAccessGuard } from '../src/auth/pos-branch-access.guard';
 import { HospitalityWorkflowsController } from '../src/hospitality/hospitality-workflows.controller';
 import { HospitalityWorkflowsService } from '../src/hospitality/hospitality-workflows.service';
+import { RetailModulesGuard } from '../src/retail/retail-modules.guard';
 import { closeE2eApp } from './utils/e2e-cleanup';
 
 class MockJwtAuthGuard implements CanActivate {
@@ -108,6 +111,12 @@ describe('Hospitality Bill Actions (e2e)', () => {
     })
       .overrideGuard(JwtAuthGuard)
       .useValue(new MockJwtAuthGuard())
+      .overrideGuard(RolesGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(RetailModulesGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(PosBranchAccessGuard)
+      .useValue({ canActivate: () => true })
       .compile();
 
     app = moduleFixture.createNestApplication();

@@ -20,10 +20,17 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { AuthenticatedRequest } from '../common/interfaces/authenticated-request.interface';
 import { AssignBranchStaffDto } from './dto/assign-branch-staff.dto';
 import { BranchStaffAssignmentResponseDto } from './dto/branch-staff-response.dto';
+import {
+  BranchStaffInviteActionResponseDto,
+  BranchStaffInviteResponseDto,
+  InviteBranchStaffResponseDto,
+} from './dto/branch-staff-response.dto';
 import { CreateBranchStaffManualAccountDto } from './dto/create-branch-staff-manual-account.dto';
+import { InviteBranchStaffDto } from './dto/invite-branch-staff.dto';
 import { UpdateBranchStaffAssignmentDto } from './dto/update-branch-staff-assignment.dto';
 import { BranchStaffAssignment } from './entities/branch-staff-assignment.entity';
 import { BranchStaffCapability } from './entities/branch-staff-assignment.entity';
+import { BranchStaffInvite } from './entities/branch-staff-invite.entity';
 import { BranchStaffService } from './branch-staff.service';
 
 @ApiTags('POS Branch Staff')
@@ -66,6 +73,28 @@ export class BranchStaffController {
             displayName: assignment.user.displayName ?? null,
           }
         : null,
+    };
+  }
+
+  private serializeInvite(
+    invite: BranchStaffInvite | null | undefined,
+  ): BranchStaffInviteResponseDto | null {
+    if (!invite) {
+      return null;
+    }
+
+    return {
+      id: invite.id,
+      branchId: invite.branchId,
+      email: invite.email,
+      role: invite.role,
+      permissions: Array.isArray(invite.permissions) ? invite.permissions : [],
+      invitedByUserId: invite.invitedByUserId ?? null,
+      acceptedByUserId: invite.acceptedByUserId ?? null,
+      isActive: invite.isActive,
+      acceptedAt: invite.acceptedAt ?? null,
+      createdAt: invite.createdAt,
+      updatedAt: invite.updatedAt,
     };
   }
 
@@ -116,6 +145,103 @@ export class BranchStaffController {
       },
     );
     return this.serializeAssignment(assignment);
+  }
+
+  @ApiCreatedResponse({ type: InviteBranchStaffResponseDto })
+  @ApiForbiddenResponse({
+    description: 'Branch staff management access was denied.',
+  })
+  @Post('invite')
+  async invite(
+    @Param('branchId', ParseIntPipe) branchId: number,
+    @Body() dto: InviteBranchStaffDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    await this.branchStaffService.assertCanManageBranchStaff(
+      req.user,
+      branchId,
+    );
+    const result = await this.branchStaffService.invite(branchId, dto, {
+      id: req.user?.id ?? null,
+      email: req.user?.email ?? null,
+    });
+
+    return {
+      status: result.status,
+      invite: this.serializeInvite(result.invite),
+      assignment: this.serializeAssignment(result.assignment),
+    };
+  }
+
+  @ApiOkResponse({ type: BranchStaffInviteResponseDto, isArray: true })
+  @ApiForbiddenResponse({
+    description: 'Branch staff management access was denied.',
+  })
+  @Get('invites')
+  async findInvites(
+    @Param('branchId', ParseIntPipe) branchId: number,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    await this.branchStaffService.assertCanManageBranchStaff(
+      req.user,
+      branchId,
+    );
+    const invites = await this.branchStaffService.findInvitesByBranch(branchId);
+    return invites.map((invite) => this.serializeInvite(invite));
+  }
+
+  @ApiCreatedResponse({ type: BranchStaffInviteActionResponseDto })
+  @ApiForbiddenResponse({
+    description: 'Branch staff management access was denied.',
+  })
+  @Post('invites/:inviteId/resend')
+  async resendInvite(
+    @Param('branchId', ParseIntPipe) branchId: number,
+    @Param('inviteId', ParseIntPipe) inviteId: number,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    await this.branchStaffService.assertCanManageBranchStaff(
+      req.user,
+      branchId,
+    );
+    const result = await this.branchStaffService.resendInvite(
+      branchId,
+      inviteId,
+      {
+        id: req.user?.id ?? null,
+        email: req.user?.email ?? null,
+      },
+    );
+
+    return {
+      status: result.status,
+      invite: this.serializeInvite(result.invite),
+    };
+  }
+
+  @ApiCreatedResponse({ type: BranchStaffInviteActionResponseDto })
+  @ApiForbiddenResponse({
+    description: 'Branch staff management access was denied.',
+  })
+  @Post('invites/:inviteId/revoke')
+  async revokeInvite(
+    @Param('branchId', ParseIntPipe) branchId: number,
+    @Param('inviteId', ParseIntPipe) inviteId: number,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    await this.branchStaffService.assertCanManageBranchStaff(
+      req.user,
+      branchId,
+    );
+    const result = await this.branchStaffService.revokeInvite(
+      branchId,
+      inviteId,
+    );
+
+    return {
+      status: result.status,
+      invite: this.serializeInvite(result.invite),
+    };
   }
 
   @ApiOkResponse({ type: BranchStaffAssignmentResponseDto })

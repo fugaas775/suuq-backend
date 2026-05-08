@@ -176,14 +176,14 @@ describe('Seller branch workspace create (e2e)', () => {
         city: 'Addis Ababa',
         country: 'Ethiopia',
         address: 'Megenagna Square',
-        serviceFormat: 'CAFETERIA',
+        serviceFormat: 'HOTEL',
         defaultCurrency: 'ETB',
       })
       .expect(201);
 
     expect(createResponse.body).toMatchObject({
       branchName: 'Megenagna Annex',
-      serviceFormat: 'CAFETERIA',
+      serviceFormat: 'HOTEL',
       retailTenantId: retailTenant.id,
       workspaceStatus: 'ACTIVE',
       canOpenNow: true,
@@ -201,7 +201,7 @@ describe('Seller branch workspace create (e2e)', () => {
             expect.objectContaining({
               branchId: createdBranchId,
               branchName: 'Megenagna Annex',
-              serviceFormat: 'CAFETERIA',
+              serviceFormat: 'HOTEL',
               retailTenantId: retailTenant.id,
               canOpenNow: true,
             }),
@@ -219,7 +219,7 @@ describe('Seller branch workspace create (e2e)', () => {
             expect.objectContaining({
               branchId: createdBranchId,
               branchName: 'Megenagna Annex',
-              serviceFormat: 'CAFETERIA',
+              serviceFormat: 'HOTEL',
               retailTenantId: retailTenant.id,
               canOpenNow: true,
               workspaceStatus: 'ACTIVE',

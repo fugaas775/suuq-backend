@@ -27,7 +27,8 @@ describe('Favorites E2E', () => {
   let app: INestApplication;
   const token = process.env.TEST_JWT || 'dummy';
   const headers = {
-    'X-App-Version': '1.0',
+    'X-App-Version': '999.0.0',
+    'X-App-Build': '999999',
     'X-Platform': 'android',
     Accept: 'application/json',
     'Content-Type': 'application/json',

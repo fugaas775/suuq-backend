@@ -73,7 +73,7 @@ export class SellerWorkspaceBranchSummaryDto {
   @ApiPropertyOptional({ nullable: true })
   branchCode!: string | null;
 
-  @ApiPropertyOptional({ nullable: true, example: 'CAFETERIA' })
+  @ApiPropertyOptional({ nullable: true, example: 'RETAIL' })
   serviceFormat!: string | null;
 
   @ApiProperty()
@@ -246,7 +246,7 @@ export class SellerWorkspaceBranchWorkspaceDto {
   @ApiPropertyOptional({ nullable: true })
   branchCode!: string | null;
 
-  @ApiPropertyOptional({ nullable: true, example: 'CAFETERIA' })
+  @ApiPropertyOptional({ nullable: true, example: 'RETAIL' })
   serviceFormat!: string | null;
 
   @ApiPropertyOptional({ nullable: true })

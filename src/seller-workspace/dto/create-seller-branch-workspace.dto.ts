@@ -15,8 +15,6 @@ function trimString(value: unknown) {
 export enum SellerBranchServiceFormat {
   RETAIL = 'RETAIL',
   BARBER = 'BARBER',
-  QSR = 'QSR',
-  FSR = 'FSR',
   HOTEL = 'HOTEL',
   PHARMACY = 'PHARMACY',
   GROCERY = 'GROCERY',

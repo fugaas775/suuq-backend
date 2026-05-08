@@ -862,7 +862,7 @@ export class PosWorkspaceActivationService {
       return null;
     }
 
-    if (!['RETAIL', 'CAFETERIA', 'QSR', 'FSR'].includes(normalized)) {
+    if (!['RETAIL', 'HOTEL'].includes(normalized)) {
       return null;
     }
 

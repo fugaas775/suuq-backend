@@ -206,7 +206,7 @@ describe('PosPortalOnboardingService', () => {
         {
           businessName: 'Bole Bites',
           branchName: 'Main Branch',
-          serviceFormat: 'QSR',
+          serviceFormat: 'HOTEL',
           categoryId: 14,
           defaultCurrency: 'ETB',
         },
@@ -281,7 +281,7 @@ describe('PosPortalOnboardingService', () => {
       {
         businessName: 'Bole Bites',
         branchName: 'Main Branch',
-        serviceFormat: 'FSR',
+        serviceFormat: 'HOTEL',
         categoryId: 14,
         defaultCurrency: 'ETB',
       },
@@ -290,7 +290,7 @@ describe('PosPortalOnboardingService', () => {
     expect(branchesRepository.save).toHaveBeenCalledWith(
       expect.objectContaining({
         name: 'Main Branch',
-        serviceFormat: 'FSR',
+        serviceFormat: 'HOTEL',
       }),
     );
     expect(
@@ -312,8 +312,6 @@ describe('PosPortalOnboardingService', () => {
             'BUTCHERY',
             'GAS_STATION',
             'ELECTRONICS',
-            'QSR',
-            'FSR',
             'HOTEL',
           ],
         },

@@ -23,6 +23,7 @@ const cacheConfig: any = cacheEnabled
     ? { type: 'ioredis', options: { url: redisUrl }, duration: cacheDuration }
     : { duration: cacheDuration }
   : undefined;
+const isTestEnv = process.env.NODE_ENV === 'test';
 
 export const dataSourceOptions: DataSourceOptions = {
   type: 'postgres',
@@ -33,7 +34,8 @@ export const dataSourceOptions: DataSourceOptions = {
   database: process.env.DB_DATABASE,
   entities: [__dirname + '/**/*.entity.{ts,js}'],
   migrations: [__dirname + '/migrations/*.{ts,js}'],
-  synchronize: process.env.NODE_ENV === 'test' ? true : false, // true in tests, false otherwise
+  synchronize: false,
+  migrationsRun: isTestEnv,
   logging: process.env.NODE_ENV === 'development', // Only log queries in development
   maxQueryExecutionTime: parseInt(process.env.DB_SLOW_MS || '300', 10),
   cache: cacheConfig,
