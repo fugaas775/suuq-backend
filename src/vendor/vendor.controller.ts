@@ -234,6 +234,22 @@ export class VendorController {
 
   @UseGuards(JwtAuthGuard, VendorPermissionGuard)
   @RequireVendorPermission(VendorPermission.MANAGE_PRODUCTS)
+  @Delete('vendor/products')
+  async bulkDeleteMyProducts(
+    @ActiveVendor() vendor: User,
+    @Body() body: { productIds: number[] },
+  ) {
+    const ids = (body?.productIds || []).map(Number).filter((n) => n > 0);
+    if (!ids.length) {
+      throw new BadRequestException(
+        'productIds must be a non-empty array of positive integers',
+      );
+    }
+    return this.vendorService.bulkDeleteMyProducts(vendor.id, ids);
+  }
+
+  @UseGuards(JwtAuthGuard, VendorPermissionGuard)
+  @RequireVendorPermission(VendorPermission.MANAGE_PRODUCTS)
   @Patch('vendor/products/:productId')
   async updateMyProduct(
     @ActiveVendor() vendor: User,

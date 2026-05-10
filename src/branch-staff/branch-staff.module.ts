@@ -10,6 +10,7 @@ import { RetailTenant } from '../retail/entities/retail-tenant.entity';
 import { TenantSubscription } from '../retail/entities/tenant-subscription.entity';
 import { TenantModuleEntitlement } from '../retail/entities/tenant-module-entitlement.entity';
 import { BranchStaffController } from './branch-staff.controller';
+import { BranchSecurityController } from './branch-security.controller';
 import { BranchStaffService } from './branch-staff.service';
 import { BranchStaffAssignment } from './entities/branch-staff-assignment.entity';
 import { BranchStaffInvite } from './entities/branch-staff-invite.entity';
@@ -38,6 +39,7 @@ import { SellerWorkspace } from '../seller-workspace/entities/seller-workspace.e
   ],
   controllers: [
     BranchStaffController,
+    BranchSecurityController,
     PosPortalAuthController,
     PosSupportController,
   ],

@@ -85,6 +85,7 @@ import { EmailService } from '../email/email.service';
 import { EquityPartnerStatus } from '../retail/entities/equity-partner.entity';
 import { BranchCatalogProductLink } from '../retail/entities/branch-catalog-product-link.entity';
 import { BranchCatalogVendorLink } from '../retail/entities/branch-catalog-vendor-link.entity';
+import { VendorStore } from '../vendor/entities/vendor-store.entity';
 
 const SELLER_PLAN_DEFINITIONS: Record<
   SellerPlanCode,
@@ -198,6 +199,8 @@ export class SellerWorkspaceService {
     private readonly branchesRepository: Repository<Branch>,
     @InjectRepository(BranchStaffAssignment)
     private readonly branchStaffAssignmentsRepository: Repository<BranchStaffAssignment>,
+    @InjectRepository(VendorStore)
+    private readonly vendorStoresRepository: Repository<VendorStore>,
   ) {}
 
   /** Return ownerUserIds for all workspaces with the given billingStatus. */
@@ -321,20 +324,28 @@ export class SellerWorkspaceService {
     const allBranchIds = [...activeBranches, ...activationCandidates].map(
       (branch) => branch.branchId,
     );
-    const [subscriptions, tenants, rosterSummaries, branchInventoryCounts] =
-      await Promise.all([
-        this.findRelevantSubscriptions(tenantIds),
-        this.findTenantsByIds(tenantIds),
-        this.branchStaffService.getBranchRosterSummaries(allBranchIds),
-        this.sellerWorkspacesRepository.manager
-          .getRepository(BranchInventory)
-          .createQueryBuilder('inv')
-          .select('inv.branchId', 'branchId')
-          .addSelect('COUNT(*)', 'cnt')
-          .where('inv.branchId IN (:...branchIds)', { branchIds: allBranchIds })
-          .groupBy('inv.branchId')
-          .getRawMany<{ branchId: number; cnt: string }>(),
-      ]);
+    const [
+      subscriptions,
+      tenants,
+      rosterSummaries,
+      branchInventoryCounts,
+      vendorStoresByBranchId,
+    ] = await Promise.all([
+      this.findRelevantSubscriptions(tenantIds),
+      this.findTenantsByIds(tenantIds),
+      this.branchStaffService.getBranchRosterSummaries(allBranchIds),
+      this.sellerWorkspacesRepository.manager
+        .getRepository(BranchInventory)
+        .createQueryBuilder('inv')
+        .select('inv.branchId', 'branchId')
+        .addSelect('COUNT(*)', 'cnt')
+        .where('inv.branchId IN (:...branchIds)', { branchIds: allBranchIds })
+        .groupBy('inv.branchId')
+        .getRawMany<{ branchId: number; cnt: string }>(),
+      this.vendorStoresRepository
+        .find({ where: { branchId: In(allBranchIds) } })
+        .then((stores) => new Map(stores.map((s) => [s.branchId, s]))),
+    ]);
     const latestSubscriptionByTenantId = new Map<number, TenantSubscription>();
     const tenantById = new Map(tenants.map((tenant) => [tenant.id, tenant]));
     const rosterByBranchId = new Map(
@@ -413,6 +424,13 @@ export class SellerWorkspaceService {
           productCount: productCountByBranchId.get(branch.branchId) ?? 0,
           phone: branch.phone ?? null,
           tinNumber: branch.tinNumber ?? null,
+          vendorStoreId:
+            vendorStoresByBranchId.get(branch.branchId)?.id ?? null,
+          consumerStoreName:
+            vendorStoresByBranchId.get(branch.branchId)?.storeName ?? null,
+          isConsumerVisible:
+            vendorStoresByBranchId.get(branch.branchId)?.isConsumerVisible ??
+            false,
         };
       }),
       ...activationCandidates.map((candidate) => {
@@ -469,6 +487,13 @@ export class SellerWorkspaceService {
           productCount: productCountByBranchId.get(candidate.branchId) ?? 0,
           phone: candidate.phone ?? null,
           tinNumber: candidate.tinNumber ?? null,
+          vendorStoreId:
+            vendorStoresByBranchId.get(candidate.branchId)?.id ?? null,
+          consumerStoreName:
+            vendorStoresByBranchId.get(candidate.branchId)?.storeName ?? null,
+          isConsumerVisible:
+            vendorStoresByBranchId.get(candidate.branchId)?.isConsumerVisible ??
+            false,
         };
       }),
     ].sort((left, right) => {
@@ -725,6 +750,19 @@ export class SellerWorkspaceService {
           tenant.defaultCurrency = normalizedCurrency;
           await tenantsRepository.save(tenant);
         }
+
+        // Auto-provision a VendorStore linked to this branch so the branch
+        // has a consumer-facing store profile from day one.
+        const vendorStoresRepo = manager.getRepository(VendorStore);
+        const vendorStore = vendorStoresRepo.create({
+          ownerUserId: ownerUserId,
+          branchId: savedBranch.id,
+          storeName: normalizedBranchName,
+          isConsumerVisible: true,
+        });
+        const savedVendorStore = await vendorStoresRepo.save(vendorStore);
+        savedBranch.vendorStoreId = savedVendorStore.id;
+        await branchesRepository.save(savedBranch);
 
         createdBranchId = savedBranch.id;
       },

@@ -97,6 +97,23 @@ export function normalizeProductMedia<T extends Record<string, any>>(p: T): T {
   else if (typeof out.imageUrl === 'string')
     out.imageUrl = absolutize(out.imageUrl);
 
+  // When images array is empty but a placeholder/imageUrl exists, inject a
+  // synthetic image entry so clients that read images[0] also get the image.
+  if (
+    Array.isArray(out.images) &&
+    out.images.length === 0 &&
+    typeof out.imageUrl === 'string' &&
+    out.imageUrl
+  ) {
+    out.images = [
+      {
+        src: out.imageUrl,
+        thumbnailSrc: out.imageUrl,
+        lowResSrc: out.imageUrl,
+      },
+    ];
+  }
+
   // Ensure videoUrl is available at top-level for edit prefills
   if (
     out.videoUrl == null &&

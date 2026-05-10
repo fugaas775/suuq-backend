@@ -22,7 +22,6 @@ export enum SelfServePosWorkspaceServiceFormat {
   GROCERY = 'GROCERY',
   BAKERY = 'BAKERY',
   LAUNDRY = 'LAUNDRY',
-  SALON_SPA = 'SALON_SPA',
   BUTCHERY = 'BUTCHERY',
   GAS_STATION = 'GAS_STATION',
   ELECTRONICS = 'ELECTRONICS',

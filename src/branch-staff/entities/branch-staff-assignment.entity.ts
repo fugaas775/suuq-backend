@@ -58,8 +58,23 @@ export class BranchStaffAssignment {
   @Column({ type: 'simple-array', default: '' })
   capabilities!: string[];
 
+  /**
+   * Optional lane/experience profile code (e.g. CAFETERIA_KITCHEN) that
+   * restricts this operator to a specific POS UI surface.
+   */
+  @Column({ type: 'varchar', nullable: true, default: null })
+  posExperienceProfileCode!: string | null;
+
   @Column({ default: true })
   isActive!: boolean;
+
+  /**
+   * When set, any pos_manager_approval token for this user on this branch
+   * that was issued before this timestamp is considered revoked.
+   * Populated by DELETE /operator-sessions?userId=<id>.
+   */
+  @Column({ type: 'timestamptz', nullable: true, default: null })
+  sessionRevokedAt!: Date | null;
 
   @CreateDateColumn()
   createdAt!: Date;

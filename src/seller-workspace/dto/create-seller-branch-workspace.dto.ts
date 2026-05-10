@@ -14,13 +14,11 @@ function trimString(value: unknown) {
 
 export enum SellerBranchServiceFormat {
   RETAIL = 'RETAIL',
-  BARBER = 'BARBER',
   HOTEL = 'HOTEL',
   PHARMACY = 'PHARMACY',
   GROCERY = 'GROCERY',
   BAKERY = 'BAKERY',
   LAUNDRY = 'LAUNDRY',
-  SALON_SPA = 'SALON_SPA',
   BUTCHERY = 'BUTCHERY',
   GAS_STATION = 'GAS_STATION',
   ELECTRONICS = 'ELECTRONICS',

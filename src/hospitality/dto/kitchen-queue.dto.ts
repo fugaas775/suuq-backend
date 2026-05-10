@@ -26,6 +26,10 @@ export enum PosKitchenTicketState {
 
 export enum PosHospitalityServiceFormat {
   RETAIL = 'RETAIL',
+  HOTEL = 'HOTEL',
+  CAFETERIA = 'CAFETERIA',
+  BARBER = 'BARBER',
+  SALON_SPA = 'SALON_SPA',
 }
 
 export class GetKitchenQueueDto {

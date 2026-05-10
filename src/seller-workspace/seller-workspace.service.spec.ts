@@ -51,6 +51,7 @@ import { EmailService } from '../email/email.service';
 import { BranchCatalogProductLink } from '../retail/entities/branch-catalog-product-link.entity';
 import { BranchCatalogVendorLink } from '../retail/entities/branch-catalog-vendor-link.entity';
 import { EquityPartnerStatus } from '../retail/entities/equity-partner.entity';
+import { VendorStore } from '../vendor/entities/vendor-store.entity';
 import { SellerWorkspaceBillingStatus } from './entities/seller-workspace.entity';
 import { SellerPlanCode } from './dto/seller-workspace-response.dto';
 import { SellerWorkspaceService } from './seller-workspace.service';
@@ -101,6 +102,7 @@ describe('SellerWorkspaceService', () => {
     create: jest.Mock;
     save: jest.Mock;
   };
+  let vendorStoresRepository: { find: jest.Mock };
 
   beforeEach(async () => {
     delete process.env.POS_HOSPITALITY_SERVICE_FORMATS_ENABLED;
@@ -183,6 +185,7 @@ describe('SellerWorkspaceService', () => {
       create: jest.fn((v) => v),
       save: jest.fn().mockResolvedValue(undefined),
     };
+    vendorStoresRepository = { find: jest.fn().mockResolvedValue([]) };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -242,6 +245,10 @@ describe('SellerWorkspaceService', () => {
         {
           provide: getRepositoryToken(BranchStaffAssignment),
           useValue: branchStaffAssignmentsRepository,
+        },
+        {
+          provide: getRepositoryToken(VendorStore),
+          useValue: vendorStoresRepository,
         },
       ],
     }).compile();
@@ -716,6 +723,12 @@ describe('SellerWorkspaceService', () => {
             if (entity === TenantSubscription) {
               return subscriptionsRepository;
             }
+            if (entity === VendorStore) {
+              return {
+                create: jest.fn((value) => value),
+                save: jest.fn(async (value) => ({ id: 99, ...value })),
+              };
+            }
             throw new Error(`Unexpected repository request: ${entity?.name}`);
           },
         }),
@@ -931,7 +944,7 @@ describe('SellerWorkspaceService', () => {
     });
   });
 
-  it('allows barber branch creation for tenants that were previously seeded with retail only', async () => {
+  it('allows retail branch creation for tenants with retail in allow-list', async () => {
     const user = {
       id: 41,
       email: 'seller@suuq.test',
@@ -989,6 +1002,12 @@ describe('SellerWorkspaceService', () => {
             }
             if (entity === TenantSubscription) {
               return subscriptionsRepository;
+            }
+            if (entity === VendorStore) {
+              return {
+                create: jest.fn((value) => value),
+                save: jest.fn(async (value) => ({ id: 99, ...value })),
+              };
             }
             throw new Error(`Unexpected repository request: ${entity?.name}`);
           },
@@ -1049,9 +1068,9 @@ describe('SellerWorkspaceService', () => {
         },
         {
           branchId: 8,
-          branchName: 'Bole Barber',
-          branchCode: 'BB-8',
-          serviceFormat: 'BARBER',
+          branchName: 'Bole Annex',
+          branchCode: 'BR-8',
+          serviceFormat: 'RETAIL',
           role: 'MANAGER',
           permissions: [],
           isOwner: true,
@@ -1124,26 +1143,26 @@ describe('SellerWorkspaceService', () => {
     });
 
     const result = await service.createBranchWorkspace(41, {
-      branchName: 'Bole Barber',
+      branchName: 'Bole Annex',
       city: 'Addis Ababa',
       country: 'Ethiopia',
       address: 'Bole Atlas',
-      serviceFormat: 'BARBER' as any,
+      serviceFormat: 'RETAIL',
       defaultCurrency: 'ETB',
     });
 
     expect(branchesRepository.save).toHaveBeenCalledWith(
       expect.objectContaining({
-        name: 'Bole Barber',
-        serviceFormat: 'BARBER',
+        name: 'Bole Annex',
+        serviceFormat: 'RETAIL',
         ownerId: 41,
         retailTenantId: 13,
       }),
     );
     expect(result).toMatchObject({
       branchId: 8,
-      branchName: 'Bole Barber',
-      serviceFormat: 'BARBER',
+      branchName: 'Bole Annex',
+      serviceFormat: 'RETAIL',
       retailTenantId: 13,
       canOpenNow: true,
     });
@@ -1217,7 +1236,7 @@ describe('SellerWorkspaceService', () => {
         defaultCurrency: 'ETB',
       }),
     ).rejects.toThrow(
-      'Seller HQ branch creation only supports RETAIL, BARBER until hospitality rollout is enabled for this tenant.',
+      'Seller HQ branch creation only supports RETAIL until hospitality rollout is enabled for this tenant.',
     );
   });
 });

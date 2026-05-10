@@ -249,6 +249,7 @@ export class UsersService {
     user.verificationReviewedAt = null;
     user.googleId = null as any;
     user.firebaseUid = null as any;
+    user.posUsername = null; // free the POS username slot for reuse
     user.bankAccountNumber = null as any;
     user.bankName = null as any;
     user.mobileMoneyNumber = null as any;

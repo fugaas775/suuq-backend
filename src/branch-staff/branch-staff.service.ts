@@ -28,6 +28,7 @@ import {
   TenantSubscription,
   TenantSubscriptionStatus,
 } from '../retail/entities/tenant-subscription.entity';
+import { PosSessionRevocationService } from '../auth/pos-session-revocation.service';
 import { User } from '../users/entities/user.entity';
 import { POS_BRANCH_SUBSCRIPTION_OPTIONS } from './pos-workspace-pricing';
 
@@ -57,6 +58,7 @@ export interface PosBranchSummary {
   joinedAt: Date;
   phone: string | null;
   tinNumber: string | null;
+  posExperienceProfileCode: string | null;
 }
 
 export interface PosWorkspaceActivationCandidate {
@@ -169,6 +171,7 @@ export class BranchStaffService {
     private readonly emailService: EmailService,
     private readonly retailEntitlementsService: RetailEntitlementsService,
     private readonly auditService: AuditService,
+    private readonly revocationService: PosSessionRevocationService,
   ) {}
 
   async assertCanManageBranchStaff(
@@ -950,6 +953,7 @@ export class BranchStaffService {
         canStartActivation: false,
         canOpenNow: false,
         joinedAt: branch.createdAt,
+        posExperienceProfileCode: null,
       });
     }
 
@@ -991,6 +995,7 @@ export class BranchStaffService {
           canStartActivation: false,
           canOpenNow: false,
           joinedAt: branch.createdAt,
+          posExperienceProfileCode: null,
         });
       }
     }
@@ -1044,6 +1049,10 @@ export class BranchStaffService {
         canStartActivation: existing?.canStartActivation ?? false,
         canOpenNow: existing?.canOpenNow ?? false,
         joinedAt: existing?.joinedAt ?? assignment.createdAt,
+        posExperienceProfileCode:
+          assignment.posExperienceProfileCode ??
+          existing?.posExperienceProfileCode ??
+          null,
       });
     }
 
@@ -1209,22 +1218,36 @@ export class BranchStaffService {
       .trim()
       .toLowerCase();
 
-    const existing = await this.usersRepository.findOne({
-      where: { posUsername: normalizedUsername },
-      select: { id: true },
-    });
-    if (existing) {
-      throw new ConflictException({
-        error: {
-          code: 'POS_BRANCH_STAFF_USERNAME_CONFLICT',
-          message: 'This username is already in use.',
-          details: { field: 'username' },
-        },
-      });
-    }
-
     const hashedPassword = await bcrypt.hash(dto.password, 10);
     const internalEmail = `pos.m.${normalizedUsername}@sys.internal`;
+
+    // Purge any inactive MANUAL user that still holds this username or this
+    // internal email (legacy rows from before hard-delete was introduced).
+    const staleByUsername = await this.usersRepository.findOne({
+      where: { posUsername: normalizedUsername },
+    });
+    if (staleByUsername) {
+      if (staleByUsername.authMode === 'MANUAL' && !staleByUsername.isActive) {
+        await this.assignmentsRepository.delete({ userId: staleByUsername.id });
+        await this.usersRepository.remove(staleByUsername);
+      } else {
+        throw new ConflictException({
+          error: {
+            code: 'POS_BRANCH_STAFF_USERNAME_CONFLICT',
+            message: 'This username is already in use.',
+            details: { field: 'username' },
+          },
+        });
+      }
+    }
+
+    const staleByEmail = await this.usersRepository.findOne({
+      where: { email: internalEmail },
+    });
+    if (staleByEmail) {
+      await this.assignmentsRepository.delete({ userId: staleByEmail.id });
+      await this.usersRepository.remove(staleByEmail);
+    }
 
     const user = this.usersRepository.create({
       email: internalEmail,
@@ -1285,6 +1308,7 @@ export class BranchStaffService {
       permissions?: string[];
       assignedSurfaces?: string[] | null;
       capabilities?: BranchStaffCapability[];
+      posExperienceProfileCode?: string | null;
     },
     actor: { id?: number | null; email?: string | null; roles?: string[] },
   ) {
@@ -1317,6 +1341,11 @@ export class BranchStaffService {
         dto.capabilities,
         assignment.role,
       );
+    }
+    if (dto.posExperienceProfileCode !== undefined) {
+      assignment.posExperienceProfileCode = dto.posExperienceProfileCode
+        ? dto.posExperienceProfileCode.trim().toUpperCase()
+        : null;
     }
 
     const saved = await this.assignmentsRepository.save(assignment);
@@ -1362,15 +1391,12 @@ export class BranchStaffService {
     }
 
     const previousRole = assignment.role;
-    assignment.isActive = false;
-    assignment.assignedSurfaces = null;
-    assignment.capabilities = [];
-    await this.assignmentsRepository.save(assignment);
 
+    // MANUAL accounts are throwaway POS credentials — hard-delete both the
+    // assignment and the user record so the username can be reused immediately.
+    await this.assignmentsRepository.remove(assignment);
     if (targetUser) {
-      targetUser.isActive = false;
-      targetUser.posUsername = null;
-      await this.usersRepository.save(targetUser);
+      await this.usersRepository.remove(targetUser);
     }
 
     await this.logManagerChangeIfNeeded({
@@ -1459,5 +1485,56 @@ export class BranchStaffService {
       email: user.email,
       googleLinked: true,
     };
+  }
+
+  /**
+   * Revokes all active operator sessions branch-wide by delegating to
+   * PosSessionRevocationService, which stamps operatorSessionsRevokedAt = NOW().
+   * Any pos_operator token issued before that timestamp will be rejected by
+   * PosBranchAccessGuard on the next API call, forcing re-authentication.
+   */
+  async revokeAllOperatorSessions(
+    branchId: number,
+    actor: { id?: number | null; email?: string | null },
+  ): Promise<{ status: string; revokedAt: string }> {
+    await this.assertCanManageBranchStaff(actor, branchId);
+    await this.revocationService.revokeAllOperatorSessions(branchId);
+
+    const revokedAt = new Date().toISOString();
+    this.logger.log(
+      `Operator sessions revoked for branch ${branchId} by user ${actor.id ?? 'unknown'}`,
+    );
+    return { status: 'REVOKED', revokedAt };
+  }
+
+  /**
+   * Revokes the session for a specific user (manager) on this branch.
+   * Uses BranchStaffAssignment.sessionRevokedAt so the guard can check
+   * per-user revocation for pos_manager_approval tokens.
+   */
+  async revokeManagerSession(
+    branchId: number,
+    userId: number,
+    actor: { id?: number | null; email?: string | null },
+  ): Promise<{ status: string; userId: number; revokedAt: string }> {
+    await this.assertCanManageBranchStaff(actor, branchId);
+
+    const assignment = await this.assignmentsRepository.findOne({
+      where: { branchId, userId },
+    });
+    if (!assignment) {
+      throw new NotFoundException(
+        `No active assignment found for user ${userId} on branch ${branchId}.`,
+      );
+    }
+
+    assignment.sessionRevokedAt = new Date();
+    await this.assignmentsRepository.save(assignment);
+
+    const revokedAt = assignment.sessionRevokedAt.toISOString();
+    this.logger.log(
+      `Session revoked for user ${userId} on branch ${branchId} by user ${actor.id ?? 'unknown'}`,
+    );
+    return { status: 'REVOKED', userId, revokedAt };
   }
 }

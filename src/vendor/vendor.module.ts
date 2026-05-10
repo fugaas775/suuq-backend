@@ -21,6 +21,7 @@ import { ShippingModule } from '../shipping/shipping.module';
 import { UserReport } from '../moderation/entities/user-report.entity';
 import { SettingsModule } from '../settings/settings.module';
 import { VendorStaff } from './entities/vendor-staff.entity';
+import { VendorStore } from './entities/vendor-store.entity';
 import { VendorStaffService } from './vendor-staff.service';
 import { VendorStaffController } from './vendor-staff.controller';
 import { VendorMeController } from './vendor-me.controller';
@@ -54,6 +55,7 @@ import { SellerWorkspace } from '../seller-workspace/entities/seller-workspace.e
       SearchKeyword,
       UserReport,
       VendorStaff,
+      VendorStore,
       BranchStaffAssignment,
       Branch,
       SellerWorkspace,

@@ -73,6 +73,10 @@ export class Branch {
   @Column({ default: true })
   isActive!: boolean;
 
+  /** FK to vendor_stores.id — set when this branch has a linked consumer store. */
+  @Column({ type: 'int', nullable: true, unique: true })
+  vendorStoreId?: number | null;
+
   @CreateDateColumn()
   createdAt!: Date;
 

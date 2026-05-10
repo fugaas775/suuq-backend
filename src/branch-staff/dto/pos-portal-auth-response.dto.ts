@@ -84,6 +84,9 @@ export class PosPortalBranchSummaryDto {
 
   @ApiProperty()
   joinedAt!: Date;
+
+  @ApiPropertyOptional({ nullable: true })
+  posExperienceProfileCode!: string | null;
 }
 
 export class PosPortalSessionResponseDto {

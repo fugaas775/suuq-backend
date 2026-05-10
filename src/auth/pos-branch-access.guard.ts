@@ -4,10 +4,12 @@ import {
   ExecutionContext,
   ForbiddenException,
   Injectable,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { POS_REQUIRED_PERMISSIONS_KEY } from './decorators/require-pos-permissions.decorator';
 import { RETAIL_BRANCH_CONTEXT_KEY } from '../retail/decorators/retail-branch-context.decorator';
+import { PosSessionRevocationService } from './pos-session-revocation.service';
 
 type PosScopedRequestUser = {
   id?: number;
@@ -19,13 +21,17 @@ type PosScopedRequestUser = {
   isOwner?: boolean;
   isTenantOwner?: boolean;
   approvalType?: string | null;
+  iat?: number; // JWT issued-at (seconds)
 };
 
 @Injectable()
 export class PosBranchAccessGuard implements CanActivate {
-  constructor(private readonly reflector: Reflector) {}
+  constructor(
+    private readonly reflector: Reflector,
+    private readonly revocationService: PosSessionRevocationService,
+  ) {}
 
-  canActivate(context: ExecutionContext): boolean {
+  async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest();
     const user = (request.user ?? null) as PosScopedRequestUser | null;
 
@@ -62,6 +68,21 @@ export class PosBranchAccessGuard implements CanActivate {
         throw new ForbiddenException(
           'This POS token is not valid for the requested branch.',
         );
+      }
+
+      // Check branch-wide operator session revocation.
+      // If a manager called DELETE /operator-sessions after this token was issued,
+      // the token is invalid and the operator must sign in again.
+      if (tokenType === 'pos_operator' && typeof user.iat === 'number') {
+        const isValid = await this.revocationService.isOperatorTokenValid(
+          Number(claimedBranchId),
+          user.iat,
+        );
+        if (!isValid) {
+          throw new UnauthorizedException(
+            'Your operator session has been revoked. Sign in again at the gate screen.',
+          );
+        }
       }
     }
 

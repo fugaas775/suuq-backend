@@ -22,6 +22,7 @@ import { RetailModule } from '../retail/retail.module';
 import { EmailModule } from '../email/email.module';
 import { BranchCatalogProductLink } from '../retail/entities/branch-catalog-product-link.entity';
 import { BranchCatalogVendorLink } from '../retail/entities/branch-catalog-vendor-link.entity';
+import { VendorStore } from '../vendor/entities/vendor-store.entity';
 
 @Module({
   imports: [
@@ -42,6 +43,7 @@ import { BranchCatalogVendorLink } from '../retail/entities/branch-catalog-vendo
       BranchCatalogVendorLink,
       Branch,
       BranchStaffAssignment,
+      VendorStore,
     ]),
     VendorModule,
     BranchStaffModule,

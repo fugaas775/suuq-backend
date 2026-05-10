@@ -60,7 +60,14 @@ import { SellerWorkspace } from '../seller-workspace/entities/seller-workspace.e
 
 @Injectable()
 export class VendorService {
-  private static readonly BULK_CREATE_MAX_ROWS = 100;
+  private static readonly BULK_CREATE_MAX_ROWS = 200;
+
+  private static generateProductPlaceholderImageUrl(name: string): string {
+    const apiBase = (
+      process.env.API_URL || 'https://api.suuq.ugasfuad.com'
+    ).replace(/\/+$/, '');
+    return `${apiBase}/api/img/initials?name=${encodeURIComponent((name || 'PR').trim())}`;
+  }
 
   constructor(
     @InjectRepository(User)
@@ -931,7 +938,12 @@ export class VendorService {
       createdById,
       createdByName,
       category: effectiveCategory ?? undefined,
-      imageUrl: images && images.length > 0 ? images[0].src : null, // Set main display image
+      imageUrl:
+        images && images.length > 0
+          ? images[0].src
+          : VendorService.generateProductPlaceholderImageUrl(
+              normalizedProductData.name || dto.name || '',
+            ), // Set main display image
       listingType: resolvedListingType,
       listingCity,
       bedrooms,
@@ -1425,7 +1437,12 @@ export class VendorService {
 
     // Update images if they were sent (delete old ones, add new ones)
     if (images) {
-      product.imageUrl = images.length > 0 ? images[0].src : null;
+      product.imageUrl =
+        images.length > 0
+          ? images[0].src
+          : VendorService.generateProductPlaceholderImageUrl(
+              product.name || '',
+            );
 
       // Get currently stored images to handle ID preservation and cleanup
       const existingImages = await this.productImageRepository.find({
@@ -1529,6 +1546,25 @@ export class VendorService {
     // Leaving existing logic but replacing hard delete with soft update
 
     return { deleted: true };
+  }
+
+  async bulkDeleteMyProducts(
+    userId: number,
+    productIds: number[],
+  ): Promise<{ deleted: number; skipped: number }> {
+    if (!productIds.length) {
+      return { deleted: 0, skipped: 0 };
+    }
+    const products = await this.productRepository.find({
+      where: productIds.map((id) => ({ id, vendor: { id: userId } })),
+    });
+    if (!products.length) {
+      throw new NotFoundException('No matching products found');
+    }
+    const foundIds = products.map((p) => p.id);
+    const skipped = productIds.length - foundIds.length;
+    await this.productRepository.update(foundIds, { deletedAt: new Date() });
+    return { deleted: foundIds.length, skipped };
   }
 
   // Fetch a single product owned by the vendor (for edit prefill)
@@ -3090,7 +3126,11 @@ export class VendorService {
           : [];
         const firstImage = images[0] || {};
         const productImage =
-          product.imageUrl || firstImage.thumbnailSrc || firstImage.src || null;
+          product.imageUrl ||
+          firstImage.thumbnailSrc ||
+          firstImage.src ||
+          product._placeholderImageUrl ||
+          null;
         const productCurrency = product?.currency || 'ETB';
         const { amount: priceConverted, rate } = this.convertPrice(
           it.price,
@@ -3210,7 +3250,11 @@ export class VendorService {
       const images: any[] = Array.isArray(product.images) ? product.images : [];
       const firstImage = images[0] || {};
       const productImage =
-        product.imageUrl || firstImage.thumbnailSrc || firstImage.src || null;
+        product.imageUrl ||
+        firstImage.thumbnailSrc ||
+        firstImage.src ||
+        product._placeholderImageUrl ||
+        null;
       const productCurrency = product?.currency || 'ETB';
       const { amount: priceConverted, rate } = this.convertPrice(
         it.price,

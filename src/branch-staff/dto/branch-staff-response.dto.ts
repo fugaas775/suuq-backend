@@ -13,6 +13,12 @@ export class BranchStaffUserSummaryDto {
 
   @ApiPropertyOptional({ nullable: true })
   displayName!: string | null;
+
+  @ApiPropertyOptional({ nullable: true })
+  username!: string | null;
+
+  @ApiPropertyOptional({ nullable: true })
+  authMode!: string | null;
 }
 
 export class BranchStaffAssignmentResponseDto {

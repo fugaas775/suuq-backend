@@ -5,6 +5,8 @@ import {
   IsEnum,
   IsOptional,
   IsString,
+  Matches,
+  MaxLength,
 } from 'class-validator';
 import {
   BranchStaffCapability,
@@ -42,4 +44,13 @@ export class UpdateBranchStaffAssignmentDto {
   @IsEnum(BranchStaffCapability, { each: true })
   @Transform(({ value }) => normalizeStringArray(value))
   capabilities?: BranchStaffCapability[];
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  @Matches(/^[A-Z0-9_]+$/, {
+    message:
+      'posExperienceProfileCode must be uppercase alphanumeric with underscores',
+  })
+  posExperienceProfileCode?: string | null;
 }

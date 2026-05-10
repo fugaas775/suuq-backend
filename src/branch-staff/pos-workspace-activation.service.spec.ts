@@ -433,8 +433,8 @@ describe('PosWorkspaceActivationService', () => {
     const result = await service.startAdditionalBranchCreationPayment(
       { id: 9, roles: ['POS_MANAGER'], email: 'seller@suuq.test' },
       {
-        branchName: 'Smart Barber',
-        serviceFormat: 'BARBER',
+        branchName: 'Smart Retail',
+        serviceFormat: 'RETAIL',
         city: 'Addis Ababa',
         country: 'Ethiopia',
         address: 'Bole',
@@ -459,8 +459,8 @@ describe('PosWorkspaceActivationService', () => {
       expect.objectContaining({
         metadata: expect.objectContaining({
           pendingBranchCreation: expect.objectContaining({
-            branchName: 'Smart Barber',
-            serviceFormat: 'BARBER',
+            branchName: 'Smart Retail',
+            serviceFormat: 'RETAIL',
           }),
         }),
       }),

@@ -32,6 +32,24 @@ export class Product {
   @Column({ type: 'text', nullable: true })
   imageUrl: string | null;
 
+  /** Computed at load time — never written to DB */
+  private _placeholderImageUrl?: string;
+
+  @AfterLoad()
+  computePlaceholder() {
+    if (!this.imageUrl && !(this.images && this.images.length > 0)) {
+      const apiBase = (
+        process.env.API_URL || 'https://api.suuq.ugasfuad.com'
+      ).replace(/\/+$/, '');
+      const name = (this.name || 'PR').trim();
+      this._placeholderImageUrl = `${apiBase}/api/img/initials?name=${encodeURIComponent(name)}`;
+      // Populate imageUrl in-memory so ALL serialization paths (any client app) get the placeholder
+      this.imageUrl = this._placeholderImageUrl;
+    } else {
+      this._placeholderImageUrl = undefined;
+    }
+  }
+
   @Expose()
   get thumbnail(): string | null {
     // Optimized: prefer the generated thumbnail from the images relation.
@@ -40,7 +58,7 @@ export class Product {
       const img = this.images[0];
       return img.thumbnailSrc || img.src;
     }
-    return this.imageUrl || null;
+    return this.imageUrl || this._placeholderImageUrl || null;
   }
 
   @Column('decimal', {
@@ -238,6 +256,10 @@ export class Product {
     name: 'private_note_updated_by_name',
   })
   privateNoteUpdatedByName?: string | null;
+
+  /** Scopes this product to a specific VendorStore (branch). Null = account-wide product. */
+  @Column({ type: 'int', nullable: true, name: 'vendor_store_id' })
+  vendorStoreId?: number | null;
 
   @Expose()
   get listedBy(): {

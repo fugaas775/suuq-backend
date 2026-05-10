@@ -1,6 +1,9 @@
 import {
   Controller,
   Post,
+  Get,
+  Query,
+  Res,
   UseGuards,
   UploadedFile,
   UseInterceptors,
@@ -9,6 +12,7 @@ import {
   UseFilters,
   BadRequestException,
 } from '@nestjs/common';
+import { Response } from 'express';
 import { Throttle } from '@nestjs/throttler';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -232,5 +236,74 @@ export class MediaController {
     // Fallback (should be unreachable due to validator)
     void fs.promises.unlink(file.path).catch(() => {});
     return { src: fullUrl, url: fullUrl, urls: [fullUrl] };
+  }
+
+  /** Public endpoint — generates a colored initials tile as PNG (256×256).
+   *  Works with Flutter's CachedNetworkImage / Image.network() out of the box.
+   *  GET /img/initials?name=Extra+Liptop
+   */
+  @Get('img/initials')
+  async serveInitialsImage(
+    @Query('name') name: string = '',
+    @Res() res: Response,
+  ) {
+    const str = (name || 'PR').trim();
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      hash = (hash * 31 + str.charCodeAt(i)) | 0;
+    }
+    const hue = Math.abs(hash) % 360;
+    const initials = str
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((w) => (w[0] ?? '').toUpperCase())
+      .join('');
+
+    // Convert HSL to RGB for sharp (sharp needs CSS color or {r,g,b})
+    const h = hue / 360;
+    const s = 0.45;
+    const l = 0.52;
+    const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+    const p = 2 * l - q;
+    const hue2rgb = (t: number) => {
+      if (t < 0) t += 1;
+      if (t > 1) t -= 1;
+      if (t < 1 / 6) return p + (q - p) * 6 * t;
+      if (t < 1 / 2) return q;
+      if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+      return p;
+    };
+    const r = Math.round(hue2rgb(h + 1 / 3) * 255);
+    const g = Math.round(hue2rgb(h) * 255);
+    const b = Math.round(hue2rgb(h - 1 / 3) * 255);
+
+    const size = 256;
+    const fontSize = Math.round(size * 0.38);
+    // SVG overlay for the text — sharp composites this onto the solid background
+    const textSvg = Buffer.from(
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}">` +
+        `<text x="${size / 2}" y="${Math.round(size * 0.635)}" ` +
+        `font-family="DejaVu Sans,Arial,sans-serif" font-size="${fontSize}" ` +
+        `font-weight="bold" fill="rgba(255,255,255,0.92)" text-anchor="middle">${initials}</text>` +
+        `</svg>`,
+    );
+
+    const png = await sharpExec({
+      create: {
+        width: size,
+        height: size,
+        channels: 3,
+        background: { r, g, b },
+      },
+    })
+      .composite([{ input: textSvg, blend: 'over' }])
+      .png()
+      .toBuffer();
+
+    res
+      .setHeader('Content-Type', 'image/png')
+      .setHeader('Cache-Control', 'public, max-age=31536000, immutable')
+      .end(png);
   }
 }

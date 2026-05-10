@@ -3,6 +3,7 @@ import { Reflector } from '@nestjs/core';
 import { HospitalityWorkflowsController } from '../hospitality/hospitality-workflows.controller';
 import { PosCheckoutController } from '../pos-sync/pos-checkout.controller';
 import { PosBranchAccessGuard } from './pos-branch-access.guard';
+import { PosSessionRevocationService } from './pos-session-revocation.service';
 
 type TestHandler = (...args: never[]) => unknown;
 type TestControllerClass = abstract new (...args: never[]) => object;
@@ -21,10 +22,19 @@ function createExecutionContext(
   } as any;
 }
 
-describe('PosBranchAccessGuard', () => {
-  const guard = new PosBranchAccessGuard(new Reflector());
+// Stub revocation service: always reports tokens as valid (no revocation on record)
+const revocationServiceStub = {
+  isOperatorTokenValid: jest.fn().mockResolvedValue(true),
+  revokeAllOperatorSessions: jest.fn().mockResolvedValue(undefined),
+} as unknown as PosSessionRevocationService;
 
-  it('rejects checkout void for an operator token without VOID_SETTLED_BILL permission', () => {
+describe('PosBranchAccessGuard', () => {
+  const guard = new PosBranchAccessGuard(
+    new Reflector(),
+    revocationServiceStub,
+  );
+
+  it('rejects checkout void for an operator token without VOID_SETTLED_BILL permission', async () => {
     const context = createExecutionContext(
       PosCheckoutController.prototype.voidCheckout,
       PosCheckoutController,
@@ -41,13 +51,15 @@ describe('PosBranchAccessGuard', () => {
       },
     );
 
-    expect(() => guard.canActivate(context)).toThrow(ForbiddenException);
-    expect(() => guard.canActivate(context)).toThrow(
+    await expect(guard.canActivate(context)).rejects.toThrow(
+      ForbiddenException,
+    );
+    await expect(guard.canActivate(context)).rejects.toThrow(
       'Your POS operator token does not include the required branch permission.',
     );
   });
 
-  it('rejects hospitality reopen for an operator token without REOPEN_SETTLED_BILL permission', () => {
+  it('rejects hospitality reopen for an operator token without REOPEN_SETTLED_BILL permission', async () => {
     const context = createExecutionContext(
       HospitalityWorkflowsController.prototype.reopenSettledBill,
       HospitalityWorkflowsController,
@@ -64,8 +76,10 @@ describe('PosBranchAccessGuard', () => {
       },
     );
 
-    expect(() => guard.canActivate(context)).toThrow(ForbiddenException);
-    expect(() => guard.canActivate(context)).toThrow(
+    await expect(guard.canActivate(context)).rejects.toThrow(
+      ForbiddenException,
+    );
+    await expect(guard.canActivate(context)).rejects.toThrow(
       'Your POS operator token does not include the required branch permission.',
     );
   });

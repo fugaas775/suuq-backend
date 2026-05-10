@@ -170,7 +170,7 @@ describe('PosPortalOnboardingService', () => {
       expect.objectContaining({
         enabled: true,
         metadata: {
-          allowedSelfServeServiceFormats: ['RETAIL', 'BARBER'],
+          allowedSelfServeServiceFormats: ['RETAIL'],
         },
       }),
     );
@@ -212,54 +212,9 @@ describe('PosPortalOnboardingService', () => {
         },
       ),
     ).rejects.toThrow(
-      'POS self-serve onboarding only supports RETAIL, BARBER until hospitality rollout is enabled for this tenant.',
+      'POS self-serve onboarding only supports RETAIL until hospitality rollout is enabled for this tenant.',
     );
     process.env.POS_HOSPITALITY_SERVICE_FORMATS_ENABLED = oldVal;
-  });
-
-  it('allows barber-first onboarding even when hospitality rollout is disabled', async () => {
-    process.env.POS_HOSPITALITY_SERVICE_FORMATS_ENABLED = 'false';
-    branchStaffService.getPosBranchSummariesForUser.mockResolvedValue([]);
-    branchStaffService.getPosWorkspaceActivationCandidatesForUser
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([
-        {
-          branchId: 21,
-          branchName: 'Main Branch',
-          branchCode: 'BL-21',
-          workspaceStatus: 'PAYMENT_REQUIRED',
-        },
-      ]);
-
-    await service.createWorkspaceForUser(
-      { id: 9, email: 'seller@suuq.test', roles: ['VENDOR'] } as User,
-      {
-        businessName: 'Bole Bites',
-        branchName: 'Main Branch',
-        serviceFormat: 'BARBER',
-        categoryId: 14,
-        defaultCurrency: 'ETB',
-      },
-    );
-
-    expect(branchesRepository.save).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: 'Main Branch',
-        serviceFormat: 'BARBER',
-      }),
-    );
-    expect(
-      retailEntitlementsService.upsertModuleEntitlement,
-    ).toHaveBeenCalledWith(
-      31,
-      RetailModule.POS_CORE,
-      expect.objectContaining({
-        enabled: true,
-        metadata: {
-          allowedSelfServeServiceFormats: ['RETAIL', 'BARBER'],
-        },
-      }),
-    );
   });
 
   it('allows hospitality-first onboarding when rollout is enabled', async () => {
@@ -303,12 +258,10 @@ describe('PosPortalOnboardingService', () => {
         metadata: {
           allowedSelfServeServiceFormats: [
             'RETAIL',
-            'BARBER',
             'PHARMACY',
             'GROCERY',
             'BAKERY',
             'LAUNDRY',
-            'SALON_SPA',
             'BUTCHERY',
             'GAS_STATION',
             'ELECTRONICS',

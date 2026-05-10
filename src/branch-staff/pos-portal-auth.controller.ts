@@ -539,6 +539,7 @@ export class PosPortalAuthController {
         : [],
       isOwner: branchAccess.isOwner,
       isTenantOwner: branchAccess.isTenantOwner,
+      posExperienceProfileCode: branchAccess.posExperienceProfileCode ?? null,
     };
   }
 

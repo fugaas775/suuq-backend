@@ -65,6 +65,74 @@ export class HospitalityWorkflowsController {
     );
   }
 
+  @Post('kitchen/tickets/:ticketId/actions/fire')
+  @RequirePosPermissions('FIRE_KITCHEN_TICKET')
+  async fireKitchenTicket(
+    @Param('branchId') branchId: string,
+    @Param('ticketId') ticketId: string,
+    @Body() dto: HospitalityTicketActionDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.hospitalityWorkflowsService.mutateKitchenTicket(
+      Number(branchId),
+      ticketId,
+      'fire',
+      dto,
+      { id: req.user?.id ?? null, email: req.user?.email ?? null },
+    );
+  }
+
+  @Post('kitchen/tickets/:ticketId/actions/hold')
+  @RequirePosPermissions('HOLD_KITCHEN_TICKET')
+  async holdKitchenTicket(
+    @Param('branchId') branchId: string,
+    @Param('ticketId') ticketId: string,
+    @Body() dto: HospitalityTicketActionDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.hospitalityWorkflowsService.mutateKitchenTicket(
+      Number(branchId),
+      ticketId,
+      'hold',
+      dto,
+      { id: req.user?.id ?? null, email: req.user?.email ?? null },
+    );
+  }
+
+  @Post('kitchen/tickets/:ticketId/actions/ready')
+  @RequirePosPermissions('MARK_KITCHEN_TICKET_READY')
+  async readyKitchenTicket(
+    @Param('branchId') branchId: string,
+    @Param('ticketId') ticketId: string,
+    @Body() dto: HospitalityTicketActionDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.hospitalityWorkflowsService.mutateKitchenTicket(
+      Number(branchId),
+      ticketId,
+      'ready',
+      dto,
+      { id: req.user?.id ?? null, email: req.user?.email ?? null },
+    );
+  }
+
+  @Post('kitchen/tickets/:ticketId/actions/handoff')
+  @RequirePosPermissions('COMPLETE_KITCHEN_HANDOFF')
+  async handoffKitchenTicket(
+    @Param('branchId') branchId: string,
+    @Param('ticketId') ticketId: string,
+    @Body() dto: HospitalityTicketActionDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.hospitalityWorkflowsService.mutateKitchenTicket(
+      Number(branchId),
+      ticketId,
+      'handoff',
+      dto,
+      { id: req.user?.id ?? null, email: req.user?.email ?? null },
+    );
+  }
+
   @Post('kitchen/tickets/:ticketId/actions/:action')
   async mutateKitchenTicket(
     @Param('branchId') branchId: string,

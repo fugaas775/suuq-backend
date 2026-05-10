@@ -329,6 +329,24 @@ export class SellerWorkspaceBranchWorkspaceDto {
 
   @ApiPropertyOptional({ nullable: true })
   tinNumber!: string | null;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'Consumer store ID linked to this branch, if any.',
+  })
+  vendorStoreId!: number | null;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'Consumer store display name.',
+  })
+  consumerStoreName!: string | null;
+
+  @ApiPropertyOptional({
+    description:
+      'Whether the linked consumer store is visible on the consumer app.',
+  })
+  isConsumerVisible!: boolean;
 }
 
 export class SellerWorkspaceBranchWorkspacesResponseDto {

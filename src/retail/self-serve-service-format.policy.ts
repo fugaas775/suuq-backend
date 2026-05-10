@@ -5,13 +5,12 @@ import {
 } from './entities/tenant-module-entitlement.entity';
 
 const DEFAULT_SELF_SERVE_SERVICE_FORMAT = 'RETAIL';
-const RETAIL_SELF_SERVE_SERVICE_FORMATS = ['RETAIL', 'BARBER'];
+const RETAIL_SELF_SERVE_SERVICE_FORMATS = ['RETAIL'];
 const EXTENDED_RETAIL_SELF_SERVE_SERVICE_FORMATS = [
   'PHARMACY',
   'GROCERY',
   'BAKERY',
   'LAUNDRY',
-  'SALON_SPA',
   'BUTCHERY',
   'GAS_STATION',
   'ELECTRONICS',
@@ -26,7 +25,7 @@ const HOSPITALITY_ENABLED_SELF_SERVE_SERVICE_FORMATS = [
 function expandRetailLinkedSelfServeServiceFormats(formats: string[]) {
   const normalizedFormats = Array.from(new Set(formats.filter(Boolean)));
   const hasRetailLinkedFormat = normalizedFormats.some(
-    (format) => format === 'RETAIL' || format === 'BARBER',
+    (format) => format === 'RETAIL',
   );
 
   if (!hasRetailLinkedFormat) {
