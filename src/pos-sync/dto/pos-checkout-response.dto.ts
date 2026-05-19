@@ -125,6 +125,9 @@ export class PosCheckoutListItemResponseDto {
   changeDue!: number;
 
   @ApiProperty()
+  tipAmount!: number;
+
+  @ApiProperty()
   itemCount!: number;
 
   @ApiProperty()

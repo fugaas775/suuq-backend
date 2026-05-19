@@ -32,6 +32,8 @@ import {
 } from './dto/pos-checkout-response.dto';
 import { TaxSummaryQueryDto } from './dto/tax-summary-query.dto';
 import { TaxSummaryResponseDto } from './dto/tax-summary-response.dto';
+import { StylistSummaryQueryDto } from './dto/stylist-summary-query.dto';
+import { StylistSummaryResponseDto } from './dto/stylist-summary-response.dto';
 import { PosCheckoutService } from './pos-checkout.service';
 
 @ApiTags('POS Checkouts')
@@ -120,6 +122,21 @@ export class PosCheckoutController {
   @ApiOkResponse({ type: TaxSummaryResponseDto })
   getTaxSummary(@Query() query: TaxSummaryQueryDto) {
     return this.posCheckoutService.getTaxSummary(query);
+  }
+
+  @Get('reports/stylist-summary')
+  @UseGuards(JwtAuthGuard, RolesGuard, RetailModulesGuard, PosBranchAccessGuard)
+  @Roles(
+    UserRole.SUPER_ADMIN,
+    UserRole.ADMIN,
+    UserRole.POS_MANAGER,
+    UserRole.POS_OPERATOR,
+  )
+  @RequireRetailModules(RetailOsModule.POS_CORE)
+  @RetailBranchContext('query.branchId')
+  @ApiOkResponse({ type: StylistSummaryResponseDto })
+  getStylistSummary(@Query() query: StylistSummaryQueryDto) {
+    return this.posCheckoutService.getStylistSummary(query);
   }
 
   @Get(':id')

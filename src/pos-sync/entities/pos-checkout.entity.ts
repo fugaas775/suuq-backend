@@ -164,6 +164,15 @@ export class PosCheckout {
   })
   changeDue!: number;
 
+  @Column('decimal', {
+    precision: 12,
+    scale: 2,
+    default: 0,
+    nullable: true,
+    transformer: decimalTransformer,
+  })
+  tipAmount!: number;
+
   @Column({ type: 'int', default: 0 })
   itemCount!: number;
 

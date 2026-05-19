@@ -261,4 +261,10 @@ export class IngestPosCheckoutDto {
   @ValidateNested({ each: true })
   @Type(() => PosCheckoutTenderDto)
   tenders?: PosCheckoutTenderDto[];
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  tipAmount?: number;
 }

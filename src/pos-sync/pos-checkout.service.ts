@@ -29,6 +29,8 @@ import {
   TaxSummaryRateBucketDto,
   TaxSummaryShiftDto,
 } from './dto/tax-summary-response.dto';
+import { StylistSummaryQueryDto } from './dto/stylist-summary-query.dto';
+import { StylistSummaryResponseDto } from './dto/stylist-summary-response.dto';
 import {
   QuotePosCheckoutDto,
   QuotePosCheckoutItemDto,
@@ -148,6 +150,8 @@ const NORMALIZED_CHECKOUT_ITEM_LABEL_KEYS = [
   'courseFiredAt',
   'courseReadyAt',
   'courseServedAt',
+  'stylistUserId',
+  'stylistName',
 ] as const;
 
 @Injectable()
@@ -317,6 +321,7 @@ export class PosCheckoutService {
         total: dto.total,
         paidAmount: dto.paidAmount ?? 0,
         changeDue: dto.changeDue ?? 0,
+        tipAmount: dto.tipAmount ?? 0,
         itemCount: dto.items.length,
         occurredAt: new Date(dto.occurredAt),
         cashierUserId: dto.cashierUserId ?? actor.id ?? null,
@@ -1418,6 +1423,7 @@ export class PosCheckoutService {
       total: checkout.total,
       paidAmount: checkout.paidAmount,
       changeDue: checkout.changeDue,
+      tipAmount: checkout.tipAmount ?? 0,
       itemCount: checkout.itemCount,
       occurredAt: checkout.occurredAt,
       processedAt: checkout.processedAt ?? null,
@@ -1457,6 +1463,95 @@ export class PosCheckoutService {
         reasonCode: item.reasonCode ?? null,
         metadata: item.metadata ?? null,
       })),
+    };
+  }
+
+  async getStylistSummary(
+    query: StylistSummaryQueryDto,
+  ): Promise<StylistSummaryResponseDto> {
+    const qb = this.posCheckoutsRepository
+      .createQueryBuilder('checkout')
+      .where('checkout.branchId = :branchId', { branchId: query.branchId })
+      .andWhere('checkout.status = :status', {
+        status: PosCheckoutStatus.PROCESSED,
+      });
+
+    if (query.fromAt) {
+      const fromAt = new Date(query.fromAt);
+      if (!Number.isNaN(fromAt.getTime())) {
+        qb.andWhere('checkout.occurredAt >= :fromAt', { fromAt });
+      }
+    }
+    if (query.toAt) {
+      const toAt = new Date(query.toAt);
+      if (!Number.isNaN(toAt.getTime())) {
+        qb.andWhere('checkout.occurredAt <= :toAt', { toAt });
+      }
+    }
+
+    const checkouts = await qb.getMany();
+
+    type StylistBucket = {
+      stylistName: string;
+      receiptsCount: number;
+      servicesCount: number;
+      revenue: number;
+    };
+
+    const stylistMap = new Map<string, StylistBucket>();
+    let currency = 'ETB';
+    let totalTips = 0;
+    let tippedReceiptsCount = 0;
+
+    for (const checkout of checkouts) {
+      if (checkout.transactionType !== PosCheckoutTransactionType.SALE) {
+        continue;
+      }
+      currency = checkout.currency || currency;
+
+      const tip = Number(checkout.tipAmount ?? 0);
+      totalTips += tip;
+      if (tip > 0) tippedReceiptsCount += 1;
+
+      const receiptStylists = new Set<string>();
+      for (const item of checkout.items ?? []) {
+        const name = String(item.metadata?.stylistName ?? '').trim();
+        if (!name) continue;
+
+        receiptStylists.add(name);
+        const bucket = stylistMap.get(name) ?? {
+          stylistName: name,
+          receiptsCount: 0,
+          servicesCount: 0,
+          revenue: 0,
+        };
+        bucket.servicesCount += Number(item.quantity ?? 1);
+        bucket.revenue += Number(
+          item.lineTotal ??
+            Number(item.unitPrice ?? 0) * Number(item.quantity ?? 1),
+        );
+        stylistMap.set(name, bucket);
+      }
+
+      for (const name of receiptStylists) {
+        if (stylistMap.has(name)) {
+          stylistMap.get(name).receiptsCount += 1;
+        }
+      }
+    }
+
+    const stylists = [...stylistMap.values()].sort(
+      (a, b) => b.revenue - a.revenue,
+    );
+
+    return {
+      branchId: query.branchId,
+      currency,
+      fromAt: query.fromAt ?? null,
+      toAt: query.toAt ?? null,
+      totalTips,
+      tippedReceiptsCount,
+      stylists,
     };
   }
 
