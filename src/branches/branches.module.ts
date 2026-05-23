@@ -23,6 +23,7 @@ import { StockMovement } from './entities/stock-movement.entity';
 import { BranchesService } from './branches.service';
 import { Branch } from './entities/branch.entity';
 import { RetailModule as RetailAccessModule } from '../retail/retail.module';
+import { VendorStore } from '../vendor/entities/vendor-store.entity';
 
 @Module({
   imports: [
@@ -40,6 +41,7 @@ import { RetailModule as RetailAccessModule } from '../retail/retail.module';
       BranchTransfer,
       BranchTransferItem,
       StockMovement,
+      VendorStore,
     ]),
   ],
   controllers: [BranchesController, BranchTransfersController],

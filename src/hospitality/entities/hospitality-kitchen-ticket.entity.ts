@@ -78,7 +78,12 @@ export class HospitalityKitchenTicket {
   billLabel!: string | null;
 
   @Column({ type: 'jsonb', nullable: true })
-  lines!: Array<Record<string, unknown>> | null;
+  lines!: Array<{
+    lineId?: string;
+    sku?: string;
+    name?: string;
+    quantity?: number;
+  }> | null;
 
   @Column({ type: 'int', nullable: true })
   updatedByUserId!: number | null;

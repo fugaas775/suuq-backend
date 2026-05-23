@@ -31,6 +31,5 @@ export class AssignBranchStaffDto {
 
   @IsOptional()
   @IsArray()
-  @IsEnum(BranchStaffCapability, { each: true })
-  capabilities?: BranchStaffCapability[];
+  capabilities?: string[];
 }

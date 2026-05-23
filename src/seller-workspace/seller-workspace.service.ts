@@ -759,6 +759,7 @@ export class SellerWorkspaceService {
           branchId: savedBranch.id,
           storeName: normalizedBranchName,
           isConsumerVisible: true,
+          serviceFormat: normalizedServiceFormat ?? null,
         });
         const savedVendorStore = await vendorStoresRepo.save(vendorStore);
         savedBranch.vendorStoreId = savedVendorStore.id;
@@ -814,7 +815,7 @@ export class SellerWorkspaceService {
     // Fetch the branch and verify caller owns it
     const branch = await this.branchesRepository.findOne({
       where: { id: branchId },
-      select: ['id', 'name', 'ownerId', 'retailTenantId'],
+      select: ['id', 'name', 'ownerId', 'retailTenantId', 'vendorStoreId'],
     });
     if (!branch) {
       throw new NotFoundException(`Branch #${branchId} not found.`);
@@ -852,6 +853,18 @@ export class SellerWorkspaceService {
       { id: branchId },
       { ownerId: newOwner.id },
     );
+
+    // Transfer the branch's vendor store and its products to the new owner
+    if (branch.vendorStoreId) {
+      await this.vendorStoresRepository.update(
+        { id: branch.vendorStoreId },
+        { ownerUserId: newOwner.id },
+      );
+      await this.productsRepository.query(
+        `UPDATE product SET "vendorId" = $1 WHERE vendor_store_id = $2`,
+        [newOwner.id, branch.vendorStoreId],
+      );
+    }
 
     // Revoke previous owner's staff assignment on this branch
     const prevOwnerAssignment =
@@ -2176,6 +2189,13 @@ export class SellerWorkspaceService {
     if (dto.tinNumber !== undefined) updates.tinNumber = dto.tinNumber;
     if (Object.keys(updates).length > 0) {
       await branchRepo.update(branchId, updates);
+      // Sync storeName to VendorStore whenever the branch name changes.
+      if (dto.name !== undefined) {
+        await this.vendorStoresRepository.update(
+          { branchId },
+          { storeName: dto.name },
+        );
+      }
     }
     const refreshed = await this.getBranchWorkspaces(userId);
     const updatedWorkspace = refreshed.items.find(

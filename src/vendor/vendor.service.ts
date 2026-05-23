@@ -57,6 +57,7 @@ import { Branch } from '../branches/entities/branch.entity';
 import { StockMovementType } from '../branches/entities/stock-movement.entity';
 import { PosPortalOnboardingService } from '../branch-staff/pos-portal-onboarding.service';
 import { SellerWorkspace } from '../seller-workspace/entities/seller-workspace.entity';
+import { VendorStore } from './entities/vendor-store.entity';
 
 @Injectable()
 export class VendorService {
@@ -98,6 +99,8 @@ export class VendorService {
     private readonly posPortalOnboardingService: PosPortalOnboardingService,
     @InjectRepository(SellerWorkspace)
     private readonly sellerWorkspacesRepository: Repository<SellerWorkspace>,
+    @InjectRepository(VendorStore)
+    private readonly vendorStoreRepository: Repository<VendorStore>,
   ) {}
 
   private readonly logger = new Logger(VendorService.name);
@@ -3892,5 +3895,51 @@ export class VendorService {
         dimensions: dto.dimensions || '10x10x10',
       },
     );
+  }
+
+  // ── Storefront (VendorStore) ──────────────────────────────────────────────
+
+  async getMyStores(userId: number): Promise<VendorStore[]> {
+    // A user's stores are those whose branch is owned by the user.
+    // Join through Branch to filter by ownerId.
+    return this.vendorStoreRepository
+      .createQueryBuilder('vs')
+      .innerJoin(Branch, 'b', 'b.id = vs."branchId"')
+      .where('b."ownerId" = :userId', { userId })
+      .orderBy('vs.storeName', 'ASC')
+      .getMany();
+  }
+
+  async updateStorefrontProfile(
+    userId: number,
+    storeId: number,
+    dto: {
+      isConsumerVisible?: boolean;
+      coverImageUrl?: string | null;
+      operatingHours?: Record<string, unknown> | null;
+    },
+  ): Promise<VendorStore> {
+    const store = await this.vendorStoreRepository
+      .createQueryBuilder('vs')
+      .innerJoin(Branch, 'b', 'b.id = vs."branchId"')
+      .where('vs.id = :storeId', { storeId })
+      .andWhere('b."ownerId" = :userId', { userId })
+      .getOne();
+
+    if (!store) {
+      throw new Error(`Store #${storeId} not found or access denied`);
+    }
+
+    const patch: Partial<VendorStore> = {};
+    if (dto.isConsumerVisible !== undefined)
+      patch.isConsumerVisible = dto.isConsumerVisible;
+    if ('coverImageUrl' in dto) patch.coverImageUrl = dto.coverImageUrl ?? null;
+    if ('operatingHours' in dto)
+      patch.operatingHours = dto.operatingHours ?? null;
+
+    if (Object.keys(patch).length > 0) {
+      await this.vendorStoreRepository.update(storeId, patch);
+    }
+    return { ...store, ...patch };
   }
 }

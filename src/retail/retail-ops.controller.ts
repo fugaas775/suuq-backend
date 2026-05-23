@@ -1024,6 +1024,7 @@ export class RetailOpsController {
     UserRole.SUPER_ADMIN,
     UserRole.ADMIN,
     UserRole.POS_MANAGER,
+    UserRole.POS_OPERATOR,
     UserRole.B2B_BUYER,
   )
   @RequireRetailModules(RetailOsModule.INVENTORY_CORE)

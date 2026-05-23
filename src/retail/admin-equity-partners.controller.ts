@@ -1,6 +1,8 @@
 import {
+  BadRequestException,
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   ParseIntPipe,
@@ -142,5 +144,28 @@ export class AdminEquityPartnersController {
     @Body() body: { referenceId?: string },
   ) {
     return this.bnplService.markSettled(activationId, body?.referenceId);
+  }
+
+  /** Cancel an outstanding BNPL activation (admin-initiated). */
+  @Delete('bnpl-activations/:activationId/cancel')
+  cancelBnpl(@Param('activationId', ParseIntPipe) activationId: number) {
+    return this.bnplService.cancelForAdmin(activationId);
+  }
+
+  /** Bulk delete equity partners. Must be declared before :id route. */
+  @Delete('bulk')
+  async bulkDeletePartners(@Body() body: { ids: number[] }) {
+    if (!Array.isArray(body?.ids) || !body.ids.length) {
+      throw new BadRequestException('ids must be a non-empty array');
+    }
+    const deleted = await this.equityService.bulkDeletePartners(body.ids);
+    return { deleted };
+  }
+
+  /** Delete a single equity partner. */
+  @Delete(':id')
+  async deletePartner(@Param('id', ParseIntPipe) id: number) {
+    await this.equityService.deletePartner(id);
+    return { message: `Equity partner #${id} deleted.` };
   }
 }

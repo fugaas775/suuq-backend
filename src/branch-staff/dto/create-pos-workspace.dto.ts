@@ -25,6 +25,7 @@ export enum SelfServePosWorkspaceServiceFormat {
   BUTCHERY = 'BUTCHERY',
   GAS_STATION = 'GAS_STATION',
   ELECTRONICS = 'ELECTRONICS',
+  QSR = 'QSR',
 }
 
 export class CreatePosWorkspaceDto {

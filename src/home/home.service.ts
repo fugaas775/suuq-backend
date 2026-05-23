@@ -10,6 +10,8 @@ import { ProductListingService } from '../products/listing/product-listing.servi
 import { Favorite } from '../favorites/entities/favorite.entity';
 import { Order } from '../orders/entities/order.entity';
 import { ImageSimilarityService } from '../search/image-similarity.service';
+import { VendorStore } from '../vendor/entities/vendor-store.entity';
+import { Branch } from '../branches/entities/branch.entity';
 
 @Injectable()
 export class HomeService {
@@ -68,6 +70,10 @@ export class HomeService {
     private readonly orderRepo: Repository<Order>,
     private readonly listingService: ProductListingService,
     private readonly imageSimilarity: ImageSimilarityService,
+    @InjectRepository(VendorStore)
+    private readonly vendorStoreRepo: Repository<VendorStore>,
+    @InjectRepository(Branch)
+    private readonly branchRepo: Repository<Branch>,
   ) {}
 
   private async hydrateSimilarImageStrips(
@@ -946,14 +952,76 @@ export class HomeService {
 
     const vendorsPromise = Promise.resolve({ items: [] } as any);
 
-    const [config, curated, explore, vendorList, featuredProdList] =
-      await Promise.all([
-        configPromise,
-        curatedPromise,
-        explorePromise,
-        vendorsPromise,
-        featuredProductsPromise,
-      ]);
+    // 4) Stores nearby — consumer-visible VendorStores, city-filtered when available
+    const storesNearbyPromise = withDeadline(
+      'storesNearby',
+      (async () => {
+        const limit = 12;
+        const where: Record<string, unknown> = { isConsumerVisible: true };
+        const stores = await this.vendorStoreRepo.find({
+          where,
+          order: { storeName: 'ASC' },
+          take: limit,
+        });
+        // Enrich with branch city/country
+        const branchIds = stores
+          .map((s) => s.branchId)
+          .filter((id): id is number => id != null);
+        const branches = branchIds.length
+          ? await this.branchRepo.findByIds(branchIds)
+          : [];
+        const branchById = new Map(branches.map((b: Branch) => [b.id, b]));
+
+        // If we have a city, prefer city-matching stores first
+        const cityLower = (opts.userCity || '').trim().toLowerCase();
+        const sorted = cityLower
+          ? [
+              ...stores.filter((s) => {
+                const b =
+                  s.branchId != null ? branchById.get(s.branchId) : null;
+                return b?.city?.toLowerCase().includes(cityLower);
+              }),
+              ...stores.filter((s) => {
+                const b =
+                  s.branchId != null ? branchById.get(s.branchId) : null;
+                return !b?.city?.toLowerCase().includes(cityLower);
+              }),
+            ].slice(0, limit)
+          : stores;
+
+        return {
+          items: sorted.map((s) => {
+            const b = s.branchId != null ? branchById.get(s.branchId) : null;
+            return {
+              storeId: s.id,
+              storeName: s.storeName,
+              serviceFormat: s.serviceFormat ?? null,
+              coverImageUrl: s.coverImageUrl ?? null,
+              city: b?.city ?? null,
+              country: b?.country ?? null,
+            };
+          }),
+        };
+      })(),
+      sectionTimeoutMs,
+      { items: [] } as any,
+    );
+
+    const [
+      config,
+      curated,
+      explore,
+      vendorList,
+      featuredProdList,
+      storesNearby,
+    ] = await Promise.all([
+      configPromise,
+      curatedPromise,
+      explorePromise,
+      vendorsPromise,
+      featuredProductsPromise,
+      storesNearbyPromise,
+    ]);
 
     const [curatedNew, curatedBest] = curated;
     const exploreCards = (explore.items || []).map((p: any) =>
@@ -1033,6 +1101,12 @@ export class HomeService {
         items: exploreCards,
         total: exploreTotal,
         page: explorePage,
+      },
+      storesNearby: {
+        key: 'stores_nearby',
+        title: 'Stores Near You',
+        sectionType: 'stores_nearby',
+        items: storesNearby.items || [],
       },
       // Compatibility aliases for clients that still read legacy keys.
       explore: {

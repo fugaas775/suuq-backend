@@ -158,6 +158,9 @@ export class RetailBranchProductItemResponseDto {
 
   @ApiProperty({ type: RetailBranchProductVendorResponseDto })
   vendor!: RetailBranchProductVendorResponseDto;
+
+  @ApiPropertyOptional({ nullable: true })
+  attributes!: Record<string, unknown> | null;
 }
 
 export class RetailBranchProductsSummaryResponseDto {

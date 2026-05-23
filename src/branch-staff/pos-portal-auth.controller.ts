@@ -37,6 +37,7 @@ import { User } from '../users/entities/user.entity';
 import { AuthenticatedRequest } from '../common/interfaces/authenticated-request.interface';
 import { AuditService } from '../audit/audit.service';
 import { BranchStaffService, PosBranchSummary } from './branch-staff.service';
+import { BranchShiftService } from './branch-shift.service';
 import {
   CreatePosWorkspaceDto,
   CreatePosWorkspaceResponseDto,
@@ -81,6 +82,7 @@ export class PosPortalAuthController {
   constructor(
     private readonly authService: AuthService,
     private readonly branchStaffService: BranchStaffService,
+    private readonly branchShiftService: BranchShiftService,
     private readonly posPortalOnboardingService: PosPortalOnboardingService,
     private readonly posWorkspaceActivationService: PosWorkspaceActivationService,
     private readonly auditService: AuditService,
@@ -133,6 +135,29 @@ export class PosPortalAuthController {
       result.user,
       dto.branchId,
     );
+
+    // Shift-window enforcement: OPERATOR-only users may not unlock outside
+    // their assigned shift window. Managers/owners are always permitted.
+    const isOperatorOnly =
+      !branchAccess.isOwner &&
+      !branchAccess.isTenantOwner &&
+      branchAccess.role === 'OPERATOR';
+    if (isOperatorOnly) {
+      const allowed = await this.branchShiftService.isUserAllowedNow(
+        branchAccess.branchId,
+        result.user.id,
+        new Date(),
+        branchAccess.timezone ?? null,
+      );
+      if (!allowed) {
+        throw new ForbiddenException({
+          code: 'POS_OPERATOR_NO_ACTIVE_SHIFT',
+          message:
+            'Your shift has not started yet or has already ended. Contact your manager.',
+        });
+      }
+    }
+
     const authenticatedUser = await this.authService.buildAuthenticatedUser(
       result.user,
     );
@@ -398,12 +423,42 @@ export class PosPortalAuthController {
     source: PortalAuthSource,
     isNewUser = false,
   ) {
-    const branches = await this.branchStaffService.getPosBranchSummariesForUser(
-      {
+    const allBranches =
+      await this.branchStaffService.getPosBranchSummariesForUser({
         id: user.id,
         roles: user.roles,
-      },
-    );
+      });
+
+    // Shift-window enforcement: operators with shift assignments may only
+    // log in during their active shift window. Managers/owners are exempt.
+    // The operator-unlock (Register Lock Shell) endpoint enforces the same
+    // check independently — see the operatorUnlock() handler above.
+    const nowUtc = new Date();
+    const branches: typeof allBranches = [];
+    for (const branch of allBranches) {
+      const isOperatorOnly =
+        !branch.isOwner && !branch.isTenantOwner && branch.role === 'OPERATOR';
+      if (isOperatorOnly) {
+        const allowed = await this.branchShiftService.isUserAllowedNow(
+          branch.branchId,
+          user.id,
+          nowUtc,
+          branch.timezone ?? null,
+        );
+        if (!allowed) continue; // filter this branch out
+      }
+      branches.push(branch);
+    }
+
+    // If the user had branches before filtering but none remain,
+    // they are outside their shift on every assigned branch.
+    if (allBranches.length > 0 && branches.length === 0) {
+      throw new ForbiddenException({
+        code: 'OUTSIDE_SHIFT_HOURS',
+        message:
+          'Your shift has not started yet. You can only log in during your assigned shift hours.',
+      });
+    }
 
     if (!branches.length) {
       const activationCandidates =

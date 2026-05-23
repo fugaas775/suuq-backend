@@ -365,6 +365,70 @@ export class EquityPartnerBnplService {
     return this.partnersRepo.save(partner);
   }
 
+  async cancelBnplActivation(
+    partnerUserId: number,
+    activationId: number,
+  ): Promise<EquityPartnerBnplActivation> {
+    const partner = await this.requireActivePartnerForUser(partnerUserId);
+
+    const activation = await this.activationsRepo.findOne({
+      where: { id: activationId, equityPartnerId: partner.id },
+    });
+    if (!activation) {
+      throw new NotFoundException(
+        `BNPL activation #${activationId} not found.`,
+      );
+    }
+    if (activation.status !== EquityPartnerBnplStatus.OUTSTANDING) {
+      throw new BadRequestException(
+        `Activation #${activationId} cannot be cancelled — it is already ${activation.status}.`,
+      );
+    }
+
+    activation.status = EquityPartnerBnplStatus.CANCELLED;
+    activation.settledAt = new Date();
+    activation.metadata = {
+      ...(activation.metadata ?? {}),
+      cancelledAt: new Date().toISOString(),
+    };
+    const saved = await this.activationsRepo.save(activation);
+    await this.syncCreditLedgerEntry(saved);
+    this.logger.log(
+      `Partner #${partner.id} cancelled BNPL activation #${activationId}.`,
+    );
+    return saved;
+  }
+
+  /** Admin-initiated cancel — no partner-user ownership check. */
+  async cancelForAdmin(
+    activationId: number,
+  ): Promise<EquityPartnerBnplActivation> {
+    const activation = await this.activationsRepo.findOne({
+      where: { id: activationId },
+    });
+    if (!activation) {
+      throw new NotFoundException(
+        `BNPL activation #${activationId} not found.`,
+      );
+    }
+    if (activation.status !== EquityPartnerBnplStatus.OUTSTANDING) {
+      throw new BadRequestException(
+        `Activation #${activationId} cannot be cancelled — it is already ${activation.status}.`,
+      );
+    }
+    activation.status = EquityPartnerBnplStatus.CANCELLED;
+    activation.settledAt = new Date();
+    activation.metadata = {
+      ...(activation.metadata ?? {}),
+      cancelledAt: new Date().toISOString(),
+      cancelledBy: 'admin',
+    };
+    const saved = await this.activationsRepo.save(activation);
+    await this.syncCreditLedgerEntry(saved);
+    this.logger.log(`Admin cancelled BNPL activation #${activationId}.`);
+    return saved;
+  }
+
   async forgive(activationId: number, note?: string) {
     const activation = await this.activationsRepo.findOne({
       where: { id: activationId },
@@ -472,6 +536,12 @@ export class EquityPartnerBnplService {
         'Partner is not linked to a POS user account; cannot host BNPL branches.',
       );
     }
+
+    // Use a previously cached tenant — this survives branch transfers.
+    if (partner.hostRetailTenantId) {
+      return partner.hostRetailTenantId;
+    }
+
     const ownedBranch = await this.branchesRepo.findOne({
       where: { ownerId: partner.userId, isActive: true },
       select: ['id', 'retailTenantId'],
@@ -481,6 +551,12 @@ export class EquityPartnerBnplService {
         'Partner must have at least one active POS branch with a retail tenant before BNPL activation.',
       );
     }
+
+    // Persist so future activations don't depend on branch ownership.
+    await this.partnersRepo.update(partner.id, {
+      hostRetailTenantId: ownedBranch.retailTenantId,
+    });
+
     return ownedBranch.retailTenantId;
   }
 

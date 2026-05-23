@@ -21,6 +21,7 @@ import {
   PosSuspendedCartResponseDto,
 } from './dto/pos-suspended-cart-response.dto';
 import { TransitionPosSuspendedCartDto } from './dto/transition-pos-suspended-cart.dto';
+import { UpdatePosSuspendedCartDto } from './dto/update-pos-suspended-cart.dto';
 import {
   PosRegisterSession,
   PosRegisterSessionStatus,
@@ -156,30 +157,6 @@ export class PosRegisterService {
 
     const saved = await this.registerSessionsRepository.save(session);
 
-    // Non-fatal register close summary email to actor
-    if (actor.email) {
-      void (async () => {
-        try {
-          const branch = await this.branchesRepository.findOne({
-            where: { id: saved.branchId },
-          });
-          await this.emailService.sendRegisterCloseSummary(actor.email, {
-            branchName: branch?.name || `Branch #${saved.branchId}`,
-            registerId: saved.registerId,
-            openedAt: saved.openedAt,
-            closedAt: saved.closedAt ?? new Date(),
-            openingFloat: saved.openingFloat ?? null,
-            closingFloat: saved.closingFloat ?? null,
-            note: saved.note ?? null,
-          });
-        } catch (err: any) {
-          console.warn(
-            `[PosRegister] Close summary email failed for session ${saved.id}: ${err?.message}`,
-          );
-        }
-      })();
-    }
-
     return this.toSessionResponse(saved);
   }
 
@@ -304,6 +281,64 @@ export class PosRegisterService {
     cart.discardedAt = new Date();
     cart.discardedByUserId = actor.id ?? null;
     cart.discardedByName = actor.email ?? null;
+    return this.toSuspendedCartResponse(
+      await this.suspendedCartsRepository.save(cart),
+    );
+  }
+
+  async updateSuspendedCart(
+    id: number,
+    dto: UpdatePosSuspendedCartDto,
+  ): Promise<PosSuspendedCartResponseDto> {
+    const cart = await this.findSuspendedCart(id);
+    if (cart.branchId !== dto.branchId) {
+      throw new BadRequestException(
+        `Suspended cart ${id} does not belong to branch ${dto.branchId}`,
+      );
+    }
+    if (cart.status !== PosSuspendedCartStatus.SUSPENDED) {
+      throw new BadRequestException(
+        `Suspended cart ${id} is ${cart.status} and cannot be updated`,
+      );
+    }
+
+    if (dto.metadata && typeof dto.metadata === 'object') {
+      cart.metadata = {
+        ...(cart.metadata ?? {}),
+        ...dto.metadata,
+      };
+    }
+
+    return this.toSuspendedCartResponse(
+      await this.suspendedCartsRepository.save(cart),
+    );
+  }
+
+  async ackKitchenCancellations(
+    id: number,
+    dto: TransitionPosSuspendedCartDto,
+  ): Promise<PosSuspendedCartResponseDto> {
+    const cart = await this.findSuspendedCart(id);
+    if (cart.branchId !== dto.branchId) {
+      throw new BadRequestException(
+        `Suspended cart ${id} does not belong to branch ${dto.branchId}`,
+      );
+    }
+    if (cart.status !== PosSuspendedCartStatus.SUSPENDED) {
+      return this.toSuspendedCartResponse(cart);
+    }
+
+    const snap = cart.cartSnapshot;
+    const cartLines: any[] = Array.isArray(snap?.cartLines)
+      ? snap.cartLines
+      : [];
+    const updated = cartLines.map((l: any) =>
+      l?.metadata?.kitchenState === 'CANCELLED'
+        ? { ...l, metadata: { ...l.metadata, kitchenState: 'CANCELLED_ACK' } }
+        : l,
+    );
+    cart.cartSnapshot = { ...(snap ?? {}), cartLines: updated };
+
     return this.toSuspendedCartResponse(
       await this.suspendedCartsRepository.save(cart),
     );

@@ -5,6 +5,7 @@ import {
   IsEnum,
   IsOptional,
   IsString,
+  Matches,
   MaxLength,
   MinLength,
 } from 'class-validator';
@@ -89,7 +90,16 @@ export class CreateBranchStaffManualAccountDto {
   @IsOptional()
   @IsArray()
   @ArrayUnique()
-  @IsEnum(BranchStaffCapability, { each: true })
   @Transform(({ value }) => normalizeStringArray(value))
-  capabilities?: BranchStaffCapability[];
+  capabilities?: string[];
+
+  @IsOptional()
+  @IsString()
+  @Matches(/^[A-Z0-9_]+$/, {
+    message:
+      'posExperienceProfileCode must be uppercase alphanumeric with underscores',
+  })
+  @MaxLength(64)
+  @Transform(({ value }) => trimString(value))
+  posExperienceProfileCode?: string | null;
 }

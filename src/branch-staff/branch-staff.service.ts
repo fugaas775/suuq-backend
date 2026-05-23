@@ -44,7 +44,7 @@ export interface PosBranchSummary {
   role: BranchStaffRole;
   permissions: string[];
   assignedSurfaces: string[] | null;
-  capabilities: BranchStaffCapability[];
+  capabilities: string[];
   isOwner: boolean;
   isTenantOwner: boolean;
   retailTenantId: number | null;
@@ -75,7 +75,7 @@ export interface PosWorkspaceActivationCandidate {
   role: BranchStaffRole;
   permissions: string[];
   assignedSurfaces: string[] | null;
-  capabilities: BranchStaffCapability[];
+  capabilities: string[];
   isOwner: boolean;
   isTenantOwner: boolean;
   retailTenantId: number | null;
@@ -265,6 +265,65 @@ export class BranchStaffService {
     });
   }
 
+  /**
+   * Lightweight roster of stylists/operators visible to any active branch
+   * member. Used by the POS register to populate the stylist attribution
+   * dropdown without requiring staff-management permissions.
+   */
+  async findStylistRoster(
+    branchId: number,
+    laneCodes: string[],
+  ): Promise<{ userId: number; displayName: string }[]> {
+    const normalizedCodes = laneCodes.map((c) => c.trim().toUpperCase());
+    const assignments = await this.assignmentsRepository.find({
+      where: { branchId, isActive: true },
+      relations: { user: true },
+      select: {
+        id: true,
+        userId: true,
+        posExperienceProfileCode: true,
+        user: { id: true, displayName: true, posUsername: true },
+      },
+    });
+    return assignments
+      .filter((a) =>
+        normalizedCodes.includes(
+          String(a.posExperienceProfileCode || '').toUpperCase(),
+        ),
+      )
+      .map((a) => ({
+        userId: a.userId,
+        displayName:
+          a.user?.displayName?.trim() || a.user?.posUsername?.trim() || '',
+      }))
+      .filter((s) => s.displayName);
+  }
+
+  async assertIsBranchMember(
+    user: { id?: number | null; roles?: string[] },
+    branchId: number,
+  ) {
+    const normalizedRoles = Array.isArray(user?.roles)
+      ? user.roles.map((r) => String(r || '').toUpperCase())
+      : [];
+    if (
+      normalizedRoles.includes('SUPER_ADMIN') ||
+      normalizedRoles.includes('ADMIN')
+    ) {
+      return;
+    }
+    if (!user?.id) {
+      throw new ForbiddenException('Branch access denied.');
+    }
+    const assignment = await this.assignmentsRepository.findOne({
+      where: { branchId, userId: user.id, isActive: true },
+      select: { id: true },
+    });
+    if (!assignment) {
+      throw new ForbiddenException('Branch access denied.');
+    }
+  }
+
   async invite(
     branchId: number,
     dto: InviteBranchStaffDto,
@@ -439,8 +498,13 @@ export class BranchStaffService {
       throw new NotFoundException('Active branch staff assignment not found.');
     }
 
+    // Use update() instead of save() to avoid TypeORM nulling the userId FK
+    // column when saving an entity that was loaded with a joined relation.
+    await this.assignmentsRepository.update(
+      { id: assignment.id },
+      { isActive: false },
+    );
     assignment.isActive = false;
-    const savedAssignment = await this.assignmentsRepository.save(assignment);
 
     await this.logManagerChangeIfNeeded({
       branchId,
@@ -452,7 +516,7 @@ export class BranchStaffService {
       changeType: 'REMOVED',
     });
 
-    return savedAssignment;
+    return assignment;
   }
 
   async getPosBranchSummariesForUser(user: {
@@ -1036,7 +1100,7 @@ export class BranchStaffService {
             ...(existing?.capabilities ?? []),
             ...(assignment.capabilities ?? []),
           ]),
-        ).sort() as BranchStaffCapability[],
+        ).sort(),
         isOwner: existing?.isOwner ?? false,
         isTenantOwner: existing?.isTenantOwner ?? false,
         retailTenantId:
@@ -1068,9 +1132,9 @@ export class BranchStaffService {
   }
 
   private normalizeCapabilities(
-    capabilities?: BranchStaffCapability[],
+    capabilities?: string[],
     role?: BranchStaffRole,
-  ): BranchStaffCapability[] {
+  ): string[] {
     const normalized = new Set((capabilities ?? []).filter(Boolean));
 
     if (role === BranchStaffRole.MANAGER) {
@@ -1086,7 +1150,7 @@ export class BranchStaffService {
     role: BranchStaffRole,
     permissions: string[],
     assignedSurfaces: string[] | null = null,
-    capabilities: BranchStaffCapability[] = [],
+    capabilities: string[] = [],
   ): Promise<{
     assignment: BranchStaffAssignment;
     previousRole: BranchStaffRole | null;
@@ -1258,12 +1322,14 @@ export class BranchStaffService {
       roles: [],
       isActive: true,
     });
-    await this.usersRepository.save(user);
+    const savedUser = await this.usersRepository.save(user);
 
     const assignment = this.assignmentsRepository.create({
       branchId: branch.id,
-      userId: user.id,
+      userId: savedUser.id,
       role: dto.role,
+      posExperienceProfileCode:
+        dto.posExperienceProfileCode?.trim().toUpperCase() ?? null,
       permissions: dto.permissions ?? [],
       assignedSurfaces:
         dto.assignedSurfaces && dto.assignedSurfaces.length > 0
@@ -1279,10 +1345,10 @@ export class BranchStaffService {
       branchId: branch.id,
       username: normalizedUsername,
       user: {
-        id: user.id,
+        id: savedUser.id,
         username: normalizedUsername,
         email: null,
-        displayName: user.displayName ?? null,
+        displayName: savedUser.displayName ?? null,
         authMode: 'MANUAL',
       },
       assignment: {
@@ -1307,19 +1373,22 @@ export class BranchStaffService {
       role?: BranchStaffRole;
       permissions?: string[];
       assignedSurfaces?: string[] | null;
-      capabilities?: BranchStaffCapability[];
+      capabilities?: string[];
       posExperienceProfileCode?: string | null;
+      serviceSharePct?: number | null;
+      isActive?: boolean;
     },
     actor: { id?: number | null; email?: string | null; roles?: string[] },
   ) {
     await this.assertCanManageBranchStaff(actor, branchId);
 
+    // When toggling isActive we must look up without the isActive filter
     const assignment = await this.assignmentsRepository.findOne({
-      where: { branchId, userId, isActive: true },
+      where: { branchId, userId },
       relations: { user: true },
     });
     if (!assignment) {
-      throw new NotFoundException('Active branch staff assignment not found.');
+      throw new NotFoundException('Branch staff assignment not found.');
     }
 
     const previousRole = assignment.role;
@@ -1347,8 +1416,31 @@ export class BranchStaffService {
         ? dto.posExperienceProfileCode.trim().toUpperCase()
         : null;
     }
+    if (dto.serviceSharePct !== undefined) {
+      assignment.serviceSharePct =
+        dto.serviceSharePct !== null && Number.isInteger(dto.serviceSharePct)
+          ? Math.min(100, Math.max(0, dto.serviceSharePct))
+          : null;
+    }
+    if (dto.isActive !== undefined) {
+      assignment.isActive = dto.isActive;
+    }
 
-    const saved = await this.assignmentsRepository.save(assignment);
+    // Use update() instead of save() to avoid TypeORM nulling the userId FK
+    // column when saving an entity that was loaded with a joined relation.
+    await this.assignmentsRepository.update(
+      { id: assignment.id },
+      {
+        role: assignment.role,
+        permissions: assignment.permissions,
+        assignedSurfaces: assignment.assignedSurfaces,
+        capabilities: assignment.capabilities,
+        posExperienceProfileCode: assignment.posExperienceProfileCode,
+        serviceSharePct: assignment.serviceSharePct,
+        isActive: assignment.isActive,
+      },
+    );
+    const saved = assignment;
 
     if (dto.role && dto.role !== previousRole) {
       await this.logManagerChangeIfNeeded({

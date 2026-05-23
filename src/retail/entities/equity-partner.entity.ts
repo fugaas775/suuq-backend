@@ -91,6 +91,15 @@ export class EquityPartner {
   @Column({ type: 'text', nullable: true })
   notes?: string | null;
 
+  /**
+   * The retail tenant this partner uses to host BNPL-funded branches.
+   * Populated on first successful BNPL activation (resolved from the
+   * partner's owned branch) and persisted here so branch transfers do
+   * not break subsequent activations.
+   */
+  @Column({ type: 'int', nullable: true })
+  hostRetailTenantId?: number | null;
+
   @OneToMany(() => EquitySplitAssignment, (a) => a.partner)
   assignments!: EquitySplitAssignment[];
 

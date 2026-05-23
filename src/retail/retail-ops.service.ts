@@ -1336,8 +1336,13 @@ export class RetailOpsService {
         'product.branchCatalogVendorLinkSnapshot',
         BranchCatalogVendorLink,
         'branchCatalogVendorLink',
-        'branchCatalogVendorLink.vendorId = product.vendorId AND branchCatalogVendorLink.branchId = :branchId',
-        { branchId: query.branchId },
+        // Scope to only products belonging to this branch's own vendor store.
+        // If the branch has no vendor store, vendor_store_id = NULL never matches → no products.
+        'branchCatalogVendorLink.vendorId = product.vendorId AND branchCatalogVendorLink.branchId = :branchId AND product.vendor_store_id = :branchVendorStoreId',
+        {
+          branchId: query.branchId,
+          branchVendorStoreId: branch.vendorStoreId ?? null,
+        },
       )
       .where('product.deletedAt IS NULL');
 
@@ -3855,6 +3860,12 @@ export class RetailOpsService {
         verified: !!product.vendor?.verified,
         businessLicenseInfo: product.vendor?.businessLicenseInfo ?? null,
       },
+      attributes:
+        product.attributes &&
+        typeof product.attributes === 'object' &&
+        !Array.isArray(product.attributes)
+          ? (product.attributes as Record<string, unknown>)
+          : null,
     };
   }
 

@@ -36,6 +36,7 @@ import {
   GetTableBoardDto,
   UpdateTableStatusDto,
 } from './dto/table-board.dto';
+import { PatchKitchenProductAvailabilityDto } from './dto/kitchen-product-availability.dto';
 import { HospitalityWorkflowsService } from './hospitality-workflows.service';
 
 @ApiTags('POS Hospitality Workflows')
@@ -53,6 +54,24 @@ export class HospitalityWorkflowsController {
   constructor(
     private readonly hospitalityWorkflowsService: HospitalityWorkflowsService,
   ) {}
+
+  @Get('kitchen/product-availability')
+  async getKitchenProductAvailability(@Param('branchId') branchId: string) {
+    return this.hospitalityWorkflowsService.getKitchenProductAvailability(
+      Number(branchId),
+    );
+  }
+
+  @Patch('kitchen/product-availability')
+  async patchKitchenProductAvailability(
+    @Param('branchId') branchId: string,
+    @Body() dto: PatchKitchenProductAvailabilityDto,
+  ) {
+    return this.hospitalityWorkflowsService.patchKitchenProductAvailability(
+      Number(branchId),
+      dto,
+    );
+  }
 
   @Get('kitchen/queue')
   async getKitchenQueue(

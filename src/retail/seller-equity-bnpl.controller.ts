@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   ParseIntPipe,
@@ -110,5 +111,14 @@ export class SellerEquityBnplController {
       id,
       dto.phoneNumber,
     );
+  }
+
+  /** Cancel an outstanding BNPL activation (releases the BNPL slot). */
+  @Delete('activations/:id/cancel')
+  cancel(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.bnplService.cancelBnplActivation(req.user.id, id);
   }
 }

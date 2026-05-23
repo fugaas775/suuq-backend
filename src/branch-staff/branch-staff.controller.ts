@@ -29,7 +29,6 @@ import { CreateBranchStaffManualAccountDto } from './dto/create-branch-staff-man
 import { InviteBranchStaffDto } from './dto/invite-branch-staff.dto';
 import { UpdateBranchStaffAssignmentDto } from './dto/update-branch-staff-assignment.dto';
 import { BranchStaffAssignment } from './entities/branch-staff-assignment.entity';
-import { BranchStaffCapability } from './entities/branch-staff-assignment.entity';
 import { BranchStaffInvite } from './entities/branch-staff-invite.entity';
 import { BranchStaffService } from './branch-staff.service';
 
@@ -56,13 +55,10 @@ export class BranchStaffController {
         : [],
       assignedSurfaces: assignment.assignedSurfaces ?? null,
       capabilities: Array.isArray(assignment.capabilities)
-        ? assignment.capabilities.filter(
-            (capability): capability is BranchStaffCapability =>
-              Object.values(BranchStaffCapability).includes(
-                capability as BranchStaffCapability,
-              ),
-          )
+        ? assignment.capabilities
         : [],
+      posExperienceProfileCode: assignment.posExperienceProfileCode ?? null,
+      serviceSharePct: assignment.serviceSharePct ?? null,
       isActive: assignment.isActive,
       createdAt: assignment.createdAt,
       updatedAt: assignment.updatedAt,
@@ -120,6 +116,23 @@ export class BranchStaffController {
     return assignments.map((assignment) =>
       this.serializeAssignment(assignment),
     );
+  }
+
+  /** Lightweight stylist roster accessible by any active branch member. */
+  @Get('roster')
+  async getStylistRoster(
+    @Param('branchId') branchId: string,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const resolvedBranchId = Number(branchId);
+    await this.branchStaffService.assertIsBranchMember(
+      req.user,
+      resolvedBranchId,
+    );
+    return this.branchStaffService.findStylistRoster(resolvedBranchId, [
+      'BARBER_COUNTER',
+      'SALON_STYLIST',
+    ]);
   }
 
   @ApiCreatedResponse({ type: BranchStaffAssignmentResponseDto })

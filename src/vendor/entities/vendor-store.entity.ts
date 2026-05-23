@@ -37,6 +37,21 @@ export class VendorStore {
   @Column({ type: 'boolean', default: true })
   isConsumerVisible!: boolean;
 
+  /** Mirrors branch.serviceFormat: RETAIL | HOTEL | CAFETERIA | QSR | FSR | BARBER */
+  @Column({ type: 'varchar', length: 32, nullable: true })
+  serviceFormat?: string | null;
+
+  /** Public cover image URL (CDN path). */
+  @Column({ type: 'varchar', length: 512, nullable: true })
+  coverImageUrl?: string | null;
+
+  /**
+   * Operating hours in a day-keyed JSON structure, e.g.:
+   * { "MON": { "open": "08:00", "close": "22:00" }, "SUN": { "closed": true } }
+   */
+  @Column({ type: 'jsonb', nullable: true })
+  operatingHours?: Record<string, unknown> | null;
+
   @CreateDateColumn()
   createdAt!: Date;
 

@@ -11,6 +11,8 @@ import { CurationModule } from '../curation/curation.module';
 import { HomeV2Controller } from './v2.home.controller';
 import { MetricsModule } from '../metrics/metrics.module';
 import { SearchModule } from '../search/search.module';
+import { VendorStore } from '../vendor/entities/vendor-store.entity';
+import { Branch } from '../branches/entities/branch.entity';
 
 @Module({
   imports: [
@@ -18,7 +20,7 @@ import { SearchModule } from '../search/search.module';
     CurationModule,
     MetricsModule,
     SearchModule,
-    TypeOrmModule.forFeature([Category, Favorite, Order]),
+    TypeOrmModule.forFeature([Category, Favorite, Order, VendorStore, Branch]),
   ],
   controllers: [HomeController, HomeV1Controller, HomeV2Controller],
   providers: [HomeService],

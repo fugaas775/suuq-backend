@@ -862,7 +862,20 @@ export class PosWorkspaceActivationService {
       return null;
     }
 
-    if (!['RETAIL', 'HOTEL'].includes(normalized)) {
+    if (
+      ![
+        'RETAIL',
+        'HOTEL',
+        'PHARMACY',
+        'GROCERY',
+        'BAKERY',
+        'LAUNDRY',
+        'BUTCHERY',
+        'GAS_STATION',
+        'ELECTRONICS',
+        'QSR',
+      ].includes(normalized)
+    ) {
       return null;
     }
 

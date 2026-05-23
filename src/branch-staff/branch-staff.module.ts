@@ -14,6 +14,10 @@ import { BranchSecurityController } from './branch-security.controller';
 import { BranchStaffService } from './branch-staff.service';
 import { BranchStaffAssignment } from './entities/branch-staff-assignment.entity';
 import { BranchStaffInvite } from './entities/branch-staff-invite.entity';
+import { BranchShift } from './entities/branch-shift.entity';
+import { BranchShiftStaff } from './entities/branch-shift-staff.entity';
+import { BranchShiftService } from './branch-shift.service';
+import { BranchShiftController } from './branch-shift.controller';
 import { PosPortalAuthController } from './pos-portal-auth.controller';
 import { PosPortalOnboardingService } from './pos-portal-onboarding.service';
 import { PosSupportController } from './pos-support.controller';
@@ -29,6 +33,8 @@ import { SellerWorkspace } from '../seller-workspace/entities/seller-workspace.e
     TypeOrmModule.forFeature([
       BranchStaffAssignment,
       BranchStaffInvite,
+      BranchShift,
+      BranchShiftStaff,
       Branch,
       User,
       RetailTenant,
@@ -40,16 +46,19 @@ import { SellerWorkspace } from '../seller-workspace/entities/seller-workspace.e
   controllers: [
     BranchStaffController,
     BranchSecurityController,
+    BranchShiftController,
     PosPortalAuthController,
     PosSupportController,
   ],
   providers: [
     BranchStaffService,
+    BranchShiftService,
     PosWorkspaceActivationService,
     PosPortalOnboardingService,
   ],
   exports: [
     BranchStaffService,
+    BranchShiftService,
     PosWorkspaceActivationService,
     PosPortalOnboardingService,
   ],

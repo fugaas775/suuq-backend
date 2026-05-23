@@ -35,7 +35,6 @@ describe('PosPortalAuthController', () => {
 
   const posWorkspaceActivationServiceMock = {
     startEbirrActivationPayment: jest.fn(),
-    startTrialActivation: jest.fn(),
   };
 
   const posPortalOnboardingServiceMock = {
@@ -642,42 +641,6 @@ describe('PosPortalAuthController', () => {
       branchId: 9,
       status: 'PENDING_CONFIRMATION',
       checkoutUrl: 'https://checkout.ebirr.test/session/1',
-    });
-  });
-
-  it.skip('starts a trial — removed feature', async () => {
-    posWorkspaceActivationServiceMock.startTrialActivation.mockResolvedValue({
-      branchId: 9,
-      branchName: 'Airport Branch',
-      status: 'TRIAL',
-      trialStartedAt: '2026-04-03T00:00:00.000Z',
-      trialEndsAt: '2026-04-18T00:00:00.000Z',
-      trialDaysRemaining: 15,
-      providerMessage:
-        'The 15-day trial is active. The first monthly charge should begin on Apr 18, 2026.',
-    });
-
-    const result = await controller.activateWorkspaceTrial(
-      {
-        branchId: 9,
-      },
-      {
-        user: { id: 51, roles: [UserRole.POS_MANAGER] },
-      } as any,
-    );
-
-    expect(
-      posWorkspaceActivationServiceMock.startTrialActivation,
-    ).toHaveBeenCalledWith(
-      { id: 51, roles: [UserRole.POS_MANAGER] },
-      {
-        branchId: 9,
-      },
-    );
-    expect(result).toMatchObject({
-      branchId: 9,
-      status: 'TRIAL',
-      trialDaysRemaining: 15,
     });
   });
 

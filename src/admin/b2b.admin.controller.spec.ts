@@ -58,6 +58,7 @@ describe('AdminB2bController', () => {
     listPurchaseOrderReceiptEvents: jest.Mock;
     listPosSyncJobs: jest.Mock;
     getPosSyncJob: jest.Mock;
+    reevaluateAutoReplenishmentDraft: jest.Mock;
   };
 
   beforeEach(async () => {

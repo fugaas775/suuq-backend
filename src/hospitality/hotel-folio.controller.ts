@@ -73,7 +73,10 @@ export class HotelFolioController {
 
   @Post(':folioId/settle')
   @RetailBranchContext('body.branchId')
-  @RequirePosPermissions(PosHospitalityPermission.SETTLE_ROOM_FOLIO)
+  @RequirePosPermissions(
+    PosHospitalityPermission.SETTLE_ROOM_FOLIO,
+    PosHospitalityPermission.SETTLE_TABLE_FOLIO,
+  )
   settleFolio(
     @Param('folioId', ParseIntPipe) folioId: number,
     @Body() dto: SettleFolioDto,

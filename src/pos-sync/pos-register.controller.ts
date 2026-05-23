@@ -4,6 +4,7 @@ import {
   Get,
   Param,
   ParseIntPipe,
+  Patch,
   Post,
   Query,
   Req,
@@ -34,6 +35,7 @@ import {
   PosSuspendedCartResponseDto,
 } from './dto/pos-suspended-cart-response.dto';
 import { TransitionPosSuspendedCartDto } from './dto/transition-pos-suspended-cart.dto';
+import { UpdatePosSuspendedCartDto } from './dto/update-pos-suspended-cart.dto';
 import { PosRegisterService } from './pos-register.service';
 
 @ApiTags('POS Register')
@@ -115,7 +117,7 @@ export class PosRegisterController {
 
   @Post('suspended-carts')
   @UseGuards(JwtAuthGuard, RolesGuard, RetailModulesGuard, PosBranchAccessGuard)
-  @RequirePosPermissions('SUSPEND_SALE')
+  @RequirePosPermissions('SUSPEND_SALE', 'OPEN_ROOM_FOLIO', 'VIEW_FOLIO_BOARD')
   @Roles(
     UserRole.SUPER_ADMIN,
     UserRole.ADMIN,
@@ -132,9 +134,32 @@ export class PosRegisterController {
     });
   }
 
+  @Patch('suspended-carts/:id')
+  @UseGuards(JwtAuthGuard, RolesGuard, RetailModulesGuard, PosBranchAccessGuard)
+  @RequirePosPermissions('SUSPEND_SALE', 'OPEN_ROOM_FOLIO', 'VIEW_FOLIO_BOARD')
+  @Roles(
+    UserRole.SUPER_ADMIN,
+    UserRole.ADMIN,
+    UserRole.POS_MANAGER,
+    UserRole.POS_OPERATOR,
+  )
+  @RequireRetailModules(RetailOsModule.POS_CORE)
+  @RetailBranchContext('body.branchId')
+  @ApiOkResponse({ type: PosSuspendedCartResponseDto })
+  updateSuspendedCart(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdatePosSuspendedCartDto,
+  ) {
+    return this.posRegisterService.updateSuspendedCart(id, dto);
+  }
+
   @Post('suspended-carts/:id/resume')
   @UseGuards(JwtAuthGuard, RolesGuard, RetailModulesGuard, PosBranchAccessGuard)
-  @RequirePosPermissions('RESUME_SUSPENDED_SALE')
+  @RequirePosPermissions(
+    'RESUME_SUSPENDED_SALE',
+    'OPEN_ROOM_FOLIO',
+    'VIEW_FOLIO_BOARD',
+  )
   @Roles(
     UserRole.SUPER_ADMIN,
     UserRole.ADMIN,
@@ -155,9 +180,33 @@ export class PosRegisterController {
     });
   }
 
+  @Post('suspended-carts/:id/ack-kitchen-cancellations')
+  @UseGuards(JwtAuthGuard, RolesGuard, RetailModulesGuard, PosBranchAccessGuard)
+  @RequirePosPermissions('MARK_KITCHEN_TICKET_READY')
+  @Roles(
+    UserRole.SUPER_ADMIN,
+    UserRole.ADMIN,
+    UserRole.POS_MANAGER,
+    UserRole.POS_OPERATOR,
+  )
+  @RequireRetailModules(RetailOsModule.POS_CORE)
+  @RetailBranchContext('body.branchId')
+  @ApiOkResponse({ type: PosSuspendedCartResponseDto })
+  ackKitchenCancellations(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: TransitionPosSuspendedCartDto,
+  ) {
+    return this.posRegisterService.ackKitchenCancellations(id, dto);
+  }
+
   @Post('suspended-carts/:id/discard')
   @UseGuards(JwtAuthGuard, RolesGuard, RetailModulesGuard, PosBranchAccessGuard)
-  @RequirePosPermissions('DISCARD_SUSPENDED_SALE')
+  @RequirePosPermissions(
+    'DISCARD_SUSPENDED_SALE',
+    'SETTLE_TABLE_FOLIO',
+    'SETTLE_ROOM_FOLIO',
+    'SUSPEND_SALE',
+  )
   @Roles(
     UserRole.SUPER_ADMIN,
     UserRole.ADMIN,

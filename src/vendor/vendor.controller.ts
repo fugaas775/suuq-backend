@@ -23,6 +23,7 @@ import {
   Delete,
   ParseIntPipe,
   BadRequestException,
+  NotFoundException,
 } from '@nestjs/common';
 import {
   ApiBody,
@@ -481,5 +482,41 @@ export class VendorController {
     @Body() dto: import('./dto/generate-label.dto').GenerateLabelDto,
   ) {
     return this.vendorService.generateLabel(vendor.id, orderId, dto);
+  }
+
+  // ── Storefront endpoints ──────────────────────────────────────────────────
+
+  @UseGuards(JwtAuthGuard)
+  @Get('vendor/me/stores')
+  async getMyStores(@Req() req: AuthenticatedRequest) {
+    const userId: number = (req.user as any)?.id ?? (req.user as any)?.userId;
+    return this.vendorService.getMyStores(userId);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Patch('vendor/me/stores/:storeId')
+  async updateStorefrontProfile(
+    @Req() req: AuthenticatedRequest,
+    @Param('storeId', ParseIntPipe) storeId: number,
+    @Body()
+    dto: {
+      isConsumerVisible?: boolean;
+      coverImageUrl?: string | null;
+      operatingHours?: Record<string, unknown> | null;
+    },
+  ) {
+    const userId: number = (req.user as any)?.id ?? (req.user as any)?.userId;
+    try {
+      return await this.vendorService.updateStorefrontProfile(
+        userId,
+        storeId,
+        dto,
+      );
+    } catch (e: any) {
+      if (e.message?.includes('not found or access denied')) {
+        throw new NotFoundException(e.message);
+      }
+      throw e;
+    }
   }
 }

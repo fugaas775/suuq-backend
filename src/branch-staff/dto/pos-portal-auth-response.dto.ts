@@ -50,7 +50,7 @@ export class PosPortalBranchSummaryDto {
   assignedSurfaces!: string[] | null;
 
   @ApiProperty({ enum: BranchStaffCapability, isArray: true })
-  capabilities!: BranchStaffCapability[];
+  capabilities!: string[];
 
   @ApiProperty()
   isOwner!: boolean;
@@ -177,7 +177,7 @@ export class PosPortalActivationCandidateDto {
   assignedSurfaces!: string[] | null;
 
   @ApiProperty({ enum: BranchStaffCapability, isArray: true })
-  capabilities!: BranchStaffCapability[];
+  capabilities!: string[];
 
   @ApiProperty()
   isOwner!: boolean;

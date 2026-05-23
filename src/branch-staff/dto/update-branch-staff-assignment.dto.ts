@@ -2,16 +2,17 @@ import { Transform } from 'class-transformer';
 import {
   ArrayUnique,
   IsArray,
+  IsBoolean,
   IsEnum,
+  IsInt,
   IsOptional,
   IsString,
   Matches,
+  Max,
   MaxLength,
+  Min,
 } from 'class-validator';
-import {
-  BranchStaffCapability,
-  BranchStaffRole,
-} from '../entities/branch-staff-assignment.entity';
+import { BranchStaffRole } from '../entities/branch-staff-assignment.entity';
 
 function normalizeStringArray(value: unknown) {
   if (!Array.isArray(value)) return undefined;
@@ -41,9 +42,14 @@ export class UpdateBranchStaffAssignmentDto {
   @IsOptional()
   @IsArray()
   @ArrayUnique()
-  @IsEnum(BranchStaffCapability, { each: true })
+  @IsString({ each: true })
+  @Matches(/^[A-Z][A-Z0-9_]*(?::[A-Z0-9_]+)?$/, {
+    each: true,
+    message:
+      'Each capability must be an uppercase identifier, optionally with a colon-separated qualifier (e.g. MANAGE_BRANCH_STAFF or KITCHEN_STATION:HOT_LINE)',
+  })
   @Transform(({ value }) => normalizeStringArray(value))
-  capabilities?: BranchStaffCapability[];
+  capabilities?: string[];
 
   @IsOptional()
   @IsString()
@@ -53,4 +59,14 @@ export class UpdateBranchStaffAssignmentDto {
       'posExperienceProfileCode must be uppercase alphanumeric with underscores',
   })
   posExperienceProfileCode?: string | null;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(100)
+  serviceSharePct?: number | null;
+
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
 }

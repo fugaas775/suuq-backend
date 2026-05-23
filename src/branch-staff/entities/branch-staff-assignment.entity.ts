@@ -69,6 +69,13 @@ export class BranchStaffAssignment {
   isActive!: boolean;
 
   /**
+   * Percentage of service revenue this stylist receives (0–100).
+   * Relevant for BARBER_COUNTER / SALON_STYLIST lanes only.
+   */
+  @Column({ type: 'smallint', nullable: true, default: null })
+  serviceSharePct!: number | null;
+
+  /**
    * When set, any pos_manager_approval token for this user on this branch
    * that was issued before this timestamp is considered revoked.
    * Populated by DELETE /operator-sessions?userId=<id>.

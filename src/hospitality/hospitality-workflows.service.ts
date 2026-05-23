@@ -30,6 +30,8 @@ import { HospitalityBillIntervention } from './entities/hospitality-bill-interve
 import { HospitalityIdempotencyKey } from './entities/hospitality-idempotency-key.entity';
 import { HospitalityKitchenTicket } from './entities/hospitality-kitchen-ticket.entity';
 import { HospitalityTableBoard } from './entities/hospitality-table-board.entity';
+import { KitchenProductAvailability } from './entities/kitchen-product-availability.entity';
+import { PatchKitchenProductAvailabilityDto } from './dto/kitchen-product-availability.dto';
 
 type ActorSummary = { id?: number | null; email?: string | null };
 
@@ -44,6 +46,8 @@ export class HospitalityWorkflowsService {
     private readonly billInterventionRepo: Repository<HospitalityBillIntervention>,
     @InjectRepository(HospitalityIdempotencyKey)
     private readonly idempotencyRepo: Repository<HospitalityIdempotencyKey>,
+    @InjectRepository(KitchenProductAvailability)
+    private readonly kitchenAvailabilityRepo: Repository<KitchenProductAvailability>,
     private readonly auditService: AuditService,
     private readonly dataSource: DataSource,
   ) {}
@@ -138,7 +142,6 @@ export class HospitalityWorkflowsService {
       billLabel: ticket.billLabel,
       lines: Array.isArray(ticket.lines) ? ticket.lines : [],
       updatedBy: {
-        userId: ticket.updatedByUserId,
         displayName: ticket.updatedByDisplayName,
       },
       updatedAt: this.toIsoString(ticket.updatedAt),
@@ -278,6 +281,7 @@ export class HospitalityWorkflowsService {
       [PosKitchenTicketState.PENDING]: [
         PosKitchenTicketState.HELD,
         PosKitchenTicketState.FIRED,
+        PosKitchenTicketState.READY,
       ],
       [PosKitchenTicketState.HELD]: [PosKitchenTicketState.FIRED],
       [PosKitchenTicketState.FIRED]: [
@@ -621,6 +625,43 @@ export class HospitalityWorkflowsService {
       const savedTicket = await manager
         .getRepository(HospitalityKitchenTicket)
         .save(ticket);
+
+      // When a ticket goes READY, mark matching suspended-cart lines as READY
+      // so waiters/cashiers see the updated kitchen state without needing SUSPEND_SALE.
+      if (nextState === PosKitchenTicketState.READY && savedTicket.tableId) {
+        const rawTableId = String(savedTicket.tableId).trim().toUpperCase();
+        const rawStationCode = String(savedTicket.stationCode || '')
+          .trim()
+          .toUpperCase();
+        await manager.query(
+          `UPDATE pos_suspended_carts
+           SET "cartSnapshot" = jsonb_set(
+             "cartSnapshot",
+             '{cartLines}',
+             (
+               SELECT jsonb_agg(
+                 CASE
+                   WHEN (line -> 'metadata' ->> 'kitchenState') = 'QUEUED'
+                     AND UPPER(COALESCE(
+                       line -> 'metadata' ->> 'resolvedKitchenStation',
+                       line -> 'metadata' ->> 'kitchenStation',
+                       'EXPO'
+                     )) = $3
+                   THEN jsonb_set(line, '{metadata,kitchenState}', '"READY"'::jsonb)
+                   ELSE line
+                 END
+               )
+               FROM jsonb_array_elements("cartSnapshot" -> 'cartLines') AS line
+             )
+           ),
+           "updatedAt" = NOW()
+           WHERE "branchId" = $1
+             AND status = 'SUSPENDED'
+             AND UPPER(COALESCE("cartSnapshot" ->> 'hotelRoomNumber', "cartSnapshot" ->> 'cafeteriaTableNumber', "cartSnapshot" ->> 'barberSeatNumber', label)) = $2`,
+          [branchId, rawTableId, rawStationCode],
+        );
+      }
+
       const mappedTicket = this.mapKitchenTicket(savedTicket);
       const response = {
         status: 'UPDATED',
@@ -1193,5 +1234,85 @@ export class HospitalityWorkflowsService {
 
       return response;
     });
+  }
+
+  async getKitchenProductAvailability(branchId: number) {
+    const rows = await this.kitchenAvailabilityRepo.find({
+      where: { branchId },
+      order: { productId: 'ASC' },
+    });
+    return {
+      branchId,
+      overrides: rows.map((r) => ({
+        productId: r.productId,
+        available: r.available,
+        qtyRemaining: r.qtyRemaining ?? null,
+        updatedAt: r.updatedAt.toISOString(),
+      })),
+    };
+  }
+
+  async patchKitchenProductAvailability(
+    branchId: number,
+    dto: PatchKitchenProductAvailabilityDto,
+  ) {
+    if (!dto.overrides.length) {
+      return this.getKitchenProductAvailability(branchId);
+    }
+
+    const resetIds: string[] = [];
+    const upserts: Array<{
+      productId: string;
+      available: boolean;
+      qtyRemaining: number | null;
+    }> = [];
+
+    for (const o of dto.overrides) {
+      if (o.available === true && o.qtyRemaining == null) {
+        resetIds.push(o.productId);
+      } else {
+        upserts.push({
+          productId: o.productId,
+          available: o.available,
+          qtyRemaining: o.qtyRemaining ?? null,
+        });
+      }
+    }
+
+    await this.dataSource.transaction(async (manager) => {
+      if (resetIds.length) {
+        await manager
+          .createQueryBuilder()
+          .delete()
+          .from(KitchenProductAvailability)
+          .where('"branchId" = :branchId AND "productId" IN (:...productIds)', {
+            branchId,
+            productIds: resetIds,
+          })
+          .execute();
+      }
+      if (upserts.length) {
+        await manager
+          .createQueryBuilder()
+          .insert()
+          .into(KitchenProductAvailability)
+          .values(
+            upserts.map((u) => ({
+              branchId,
+              productId: u.productId,
+              available: u.available,
+              qtyRemaining: u.qtyRemaining,
+            })),
+          )
+          .orUpdate(
+            ['available', 'qtyRemaining', 'updatedAt'],
+            ['branchId', 'productId'],
+          )
+          .setParameter('updatedAt', new Date())
+          .execute();
+      }
+    });
+
+    return this.getKitchenProductAvailability(branchId);
   }
 }

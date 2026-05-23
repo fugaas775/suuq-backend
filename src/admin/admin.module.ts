@@ -66,6 +66,8 @@ import { PurchaseOrderReceiptEvent } from '../purchase-orders/entities/purchase-
 import { PurchaseOrder } from '../purchase-orders/entities/purchase-order.entity';
 import { BranchStaffModule } from '../branch-staff/branch-staff.module';
 import { SellerWorkspaceModule } from '../seller-workspace/seller-workspace.module';
+import { BranchesModule } from '../branches/branches.module';
+import { BranchesAdminController } from './branches.admin.controller';
 
 @Module({
   // 2. Add UsersModule and OrdersModule here
@@ -93,6 +95,7 @@ import { SellerWorkspaceModule } from '../seller-workspace/seller-workspace.modu
     MarketingLeadsModule,
     BranchStaffModule,
     SellerWorkspaceModule,
+    BranchesModule,
     TypeOrmModule.forFeature([
       Product,
       ProductImpression,
@@ -133,6 +136,7 @@ import { SellerWorkspaceModule } from '../seller-workspace/seller-workspace.modu
     AdminAdsController,
     AdminB2bController,
     AdminMarketingLeadsController,
+    BranchesAdminController,
   ],
   // 3. Remove the services from providers. They are now correctly provided by the imported modules.
   providers: [

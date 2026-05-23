@@ -3,9 +3,11 @@ import {
   IsArray,
   IsEnum,
   IsInt,
+  IsNumber,
   IsOptional,
   IsString,
   Min,
+  ValidateNested,
 } from 'class-validator';
 
 function trimString(value: unknown) {
@@ -30,6 +32,7 @@ export enum PosHospitalityServiceFormat {
   CAFETERIA = 'CAFETERIA',
   BARBER = 'BARBER',
   SALON_SPA = 'SALON_SPA',
+  QSR = 'QSR',
 }
 
 export class GetKitchenQueueDto {
@@ -122,5 +125,25 @@ export class HospitalityTicketActionDto {
 
   @IsOptional()
   @IsArray()
-  lines?: Array<Record<string, unknown>>;
+  @ValidateNested({ each: true })
+  @Type(() => KitchenTicketLineDto)
+  lines?: KitchenTicketLineDto[];
+}
+
+export class KitchenTicketLineDto {
+  @IsOptional()
+  @IsString()
+  lineId?: string;
+
+  @IsOptional()
+  @IsString()
+  sku?: string;
+
+  @IsOptional()
+  @IsString()
+  name?: string;
+
+  @IsOptional()
+  @IsNumber()
+  quantity?: number;
 }

@@ -77,6 +77,7 @@ import { MarketingLeadsModule } from './marketing-leads/marketing-leads.module';
 import { SellerWorkspaceModule } from './seller-workspace/seller-workspace.module';
 import { BillingModule } from './billing/billing.module';
 import { HospitalityModule } from './hospitality/hospitality.module';
+import { StorefrontModule } from './storefront/storefront.module';
 
 @Module({
   imports: [
@@ -265,6 +266,7 @@ import { HospitalityModule } from './hospitality/hospitality.module';
     HospitalityModule,
     SellerWorkspaceModule,
     BillingModule,
+    StorefrontModule,
   ],
   controllers: [AppController],
   // Apply rate limiting globally

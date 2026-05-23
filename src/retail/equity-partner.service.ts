@@ -506,4 +506,17 @@ export class EquityPartnerService {
       'Failed to generate a unique referral code after 20 attempts',
     );
   }
+
+  async deletePartner(id: number): Promise<void> {
+    const partner = await this.partnersRepo.findOne({ where: { id } });
+    if (!partner)
+      throw new NotFoundException(`Equity partner #${id} not found`);
+    await this.partnersRepo.remove(partner);
+  }
+
+  async bulkDeletePartners(ids: number[]): Promise<number> {
+    if (!ids.length) return 0;
+    const result = await this.partnersRepo.delete(ids);
+    return typeof result.affected === 'number' ? result.affected : ids.length;
+  }
 }
