@@ -2244,6 +2244,12 @@ export class SellerWorkspaceService {
       .getRepository(Branch)
       .update(branchId, { serviceFormat: normalizedServiceFormat });
     branch.serviceFormat = normalizedServiceFormat;
+    // Keep the consumer-facing VendorStore in sync so storefront listings
+    // (/api/v2/stores) reflect the new service format.
+    await this.vendorStoresRepository.update(
+      { branchId },
+      { serviceFormat: normalizedServiceFormat },
+    );
     const refreshed = await this.getBranchWorkspaces(userId);
     const updatedWorkspace = refreshed.items.find(
       (item) => item.branchId === branchId,

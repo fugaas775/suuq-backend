@@ -125,7 +125,7 @@ export class User {
     type: 'decimal',
     precision: 5,
     scale: 2,
-    default: 0.03, // 3%
+    default: 0, // Platform commission removed: free marketplace
     transformer: {
       to: (value: number) => value,
       from: (value: string | number) =>

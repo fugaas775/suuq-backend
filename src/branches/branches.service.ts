@@ -90,11 +90,12 @@ export class BranchesService {
     if (!branch) throw new NotFoundException(`Branch #${id} not found`);
     if (patch.isActive !== undefined) {
       branch.isActive = patch.isActive;
-      // Mirror deactivation to the linked VendorStore so the store disappears from consumer listings.
-      if (!patch.isActive && branch.vendorStoreId) {
+      // Mirror activation state to the linked VendorStore so the store
+      // appears/disappears from consumer listings accordingly.
+      if (branch.vendorStoreId) {
         await this.vendorStoresRepository.update(
           { id: branch.vendorStoreId },
-          { isConsumerVisible: false },
+          { isConsumerVisible: patch.isActive },
         );
       }
     }

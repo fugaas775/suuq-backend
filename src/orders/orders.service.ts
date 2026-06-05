@@ -1505,12 +1505,13 @@ export class OrdersService {
     const globalCommissionSetting = await this.uiSettingRepo.findOne({
       where: { key: 'vendor_commission_percentage' },
     });
-    // Default to 3% (0.03) if not set. Setting value expected as integer 3 or decimal 0.03?
-    // User said "Vendor Commission Percentage (%)". Usually implies 3 for 3%.
-    // Safely handle both: if > 1, assume percent (e.g. 3) -> divide by 100.
+    // Platform commission is disabled: the marketplace is free for all vendors.
+    // Default to 0% if the setting is missing. The value may still be configured
+    // as an integer percent (e.g. 3) or a decimal (e.g. 0.03); handle both so any
+    // residual configuration is interpreted correctly, but the default is now 0.
     const rawVal = globalCommissionSetting
       ? Number(globalCommissionSetting.value)
-      : 3;
+      : 0;
     const globalRate = rawVal > 1 ? rawVal / 100 : rawVal;
 
     const orderItems = await Promise.all(
@@ -1581,29 +1582,21 @@ export class OrdersService {
         }
         orderItem.price = finalPrice;
 
-        // --- Commission Logic (All Vendors are Commission Based) ---
+        // --- Commission Logic (Platform commission removed: free marketplace) ---
         const vendor = item.product.vendor;
         const lineTotal = orderItem.price * orderItem.quantity;
 
-        // Fetch Global Commission or specific
-        const defaultRate = 0.03;
-
-        // Inline Fetch - ideal to optimize later
-        // Note: We can't await inside synchronous map without Promise.all
-        // Doing this check outside map is better.
-        // logic continues below...
-
-        // Use vendor-specific rate or default
+        // Platform commission is disabled globally. The per-vendor commissionRate
+        // and global setting are retained as levers but default to 0.
+        // Use vendor-specific rate (if explicitly configured) or the global rate.
         const platformRate =
           vendor && vendor.commissionRate
             ? Number(vendor.commissionRate)
-            : globalRate; // Use the fetched global rate
+            : globalRate; // Use the fetched global rate (0 by default)
 
-        // EBIRR Commission Logic: Vendor 96%, Platform 3%, Ebirr 1%
-        // Total deduction = Base Rate (3%) + 1% = 4%
-        // However, Ebirr deducts their 1% AT SOURCE (before settling to us).
-        // So if we deduct 4% from the vendor, we are effectively covering the Ebirr fee from the vendor's share.
-        // This is correct as per business logic: Vendor pays the gateway fee.
+        // Gateway fee: EBIRR deducts 1% at source (real third-party cost), so the
+        // vendor covers the gateway fee. This is a pass-through cost, NOT platform
+        // commission, and is intentionally retained.
         let gatewayRate = 0;
         if (createOrderDto.paymentMethod === 'EBIRR') {
           gatewayRate = 0.01;

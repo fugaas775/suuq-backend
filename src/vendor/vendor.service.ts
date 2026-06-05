@@ -956,6 +956,13 @@ export class VendorService {
     const newProduct = this.productRepository.create({
       ...normalizedProductData,
       status: (dto as any).publishToConsumerApp === false ? 'draft' : 'publish',
+      // Scope the product to the branch's consumer-facing VendorStore when the
+      // product is created under a branch context (e.g. POS bulk import). This
+      // is what makes published products appear in the branch's consumer
+      // catalog (GET /consumer/v1/branches/:id/products).
+      ...(importBranch?.vendorStoreId
+        ? { vendorStoreId: importBranch.vendorStoreId }
+        : {}),
       vendor: vendor,
       createdById,
       createdByName,

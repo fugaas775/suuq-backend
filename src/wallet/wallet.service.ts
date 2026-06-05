@@ -104,7 +104,7 @@ export class WalletService {
       });
       if (!vendor) continue;
 
-      const commissionRate = 0.03;
+      const commissionRate = 0; // Platform commission removed: free marketplace
       const gatewayRate = 0.01;
       const totalRate = commissionRate + gatewayRate;
       const divisor = 1 - totalRate;
