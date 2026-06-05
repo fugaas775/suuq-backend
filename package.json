@@ -6,8 +6,9 @@
   "license": "UNLICENSED",
   "private": true,
   "engines": {
-    "node": ">=20"
+    "node": ">=22 <23"
   },
+  "packageManager": "yarn@1.22.22",
   "scripts": {
     "build": "nest build",
     "deploy:prod": "bash ./scripts/migrate-and-reload.sh",
