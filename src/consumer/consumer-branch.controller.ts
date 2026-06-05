@@ -169,14 +169,23 @@ export class ConsumerBranchController {
       return { items: [], total: 0, page, limit };
     }
 
-    const [products, total] = await this.productRepo
+    // Count without joins for correct pagination totals.
+    const baseQb = this.productRepo
       .createQueryBuilder('p')
       .where('p.vendorStoreId = :sid', { sid: store.id })
-      .andWhere("p.status = 'publish'")
+      .andWhere("p.status = 'publish'");
+
+    const total = await baseQb.clone().getCount();
+
+    // Eager-load tags so consumer clients can classify catalog items
+    // (e.g. HOTEL room charges carry the "room" tag). The take()/skip()
+    // with a to-many join makes TypeORM paginate the root entity correctly.
+    const products = await baseQb
+      .leftJoinAndSelect('p.tags', 'tag')
       .orderBy('p.name', 'ASC')
       .skip(skip)
       .take(limit)
-      .getManyAndCount();
+      .getMany();
 
     const items: ConsumerBranchProductItemDto[] = products.map((p) => ({
       id: p.id,
@@ -184,6 +193,10 @@ export class ConsumerBranchController {
       price: Number(p.price),
       currency: p.currency ?? null,
       imageUrl: p.imageUrl ?? null,
+      productType: p.productType ?? null,
+      tags: (p.tags ?? [])
+        .map((t) => (t?.name ?? '').toLowerCase())
+        .filter((name) => name.length > 0),
     }));
 
     return { items, total, page, limit };

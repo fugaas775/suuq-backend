@@ -68,6 +68,14 @@ export class ConsumerBranchProductItemDto {
   price!: number;
   currency!: string | null;
   imageUrl!: string | null;
+  /** physical | digital | service | property (null when unset). */
+  productType!: string | null;
+  /**
+   * Lower-cased product tag names. Used by consumer clients to classify
+   * catalog items — e.g. HOTEL room charges carry the "room" tag, while
+   * ancillary services carry "fnb", "transport", "spa", etc.
+   */
+  tags!: string[];
 }
 
 /** Paginated branch products response. */
