@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { ILike, Repository } from 'typeorm';
+import { ILike, In, Repository } from 'typeorm';
 import { VendorStore } from '../vendor/entities/vendor-store.entity';
 import { Branch } from '../branches/entities/branch.entity';
 import { Product } from '../products/entities/product.entity';
@@ -47,8 +47,24 @@ export class StorefrontService {
     const limit = Math.min(50, Math.max(1, Number(query.limit) || 20));
     const skip = (page - 1) * limit;
 
+    // If city filter is requested, pre-resolve matching branchIds at DB level
+    // so pagination is applied to the already-filtered set.
+    let branchIdWhitelist: number[] | null = null;
+    if (query.city) {
+      const cityBranches = await this.branchRepo
+        .createQueryBuilder('b')
+        .select('b.id')
+        .where('b.city ILIKE :city', { city: `%${query.city}%` })
+        .getMany();
+      branchIdWhitelist = cityBranches.map((b) => b.id);
+      if (branchIdWhitelist.length === 0) {
+        return { items: [], total: 0, page, limit };
+      }
+    }
+
     const where: Record<string, unknown> = { isConsumerVisible: true };
     if (query.serviceFormat) where.serviceFormat = query.serviceFormat;
+    if (branchIdWhitelist !== null) where.branchId = In(branchIdWhitelist);
 
     const [stores, total] = await this.vendorStoreRepo.findAndCount({
       where,
@@ -63,29 +79,18 @@ export class StorefrontService {
       .filter((id): id is number => id != null);
 
     const branches = branchIds.length
-      ? await this.branchRepo.find({ where: branchIds.map((id) => ({ id })) })
+      ? await this.branchRepo.find({ where: { id: In(branchIds) } })
       : [];
     const branchById = new Map(branches.map((b) => [b.id, b]));
 
-    // Filter by city if provided (branch-side field)
-    const filtered = query.city
-      ? stores.filter((s) => {
-          const b = s.branchId != null ? branchById.get(s.branchId) : null;
-          return (
-            b?.city != null &&
-            b.city.toLowerCase().includes(query.city.toLowerCase())
-          );
-        })
-      : stores;
-
     return {
-      items: filtered.map((s) =>
+      items: stores.map((s) =>
         this.toStoreSummary(
           s,
           s.branchId != null ? branchById.get(s.branchId) : null,
         ),
       ),
-      total: query.city ? filtered.length : total,
+      total,
       page,
       limit,
     };
@@ -289,6 +294,7 @@ export class StorefrontService {
   ) {
     return {
       storeId: store.id,
+      branchId: store.branchId ?? null,
       storeName: store.storeName,
       serviceFormat: store.serviceFormat ?? null,
       coverImageUrl: store.coverImageUrl ?? null,
@@ -303,6 +309,7 @@ export class StorefrontService {
   private toStoreDetail(store: VendorStore, branch: Branch | null | undefined) {
     return {
       storeId: store.id,
+      branchId: store.branchId ?? null,
       storeName: store.storeName,
       serviceFormat: store.serviceFormat ?? null,
       coverImageUrl: store.coverImageUrl ?? null,

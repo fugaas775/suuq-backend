@@ -253,12 +253,19 @@ export class MediaController {
       hash = (hash * 31 + str.charCodeAt(i)) | 0;
     }
     const hue = Math.abs(hash) % 360;
-    const initials = str
+    const initialsRaw = str
       .split(/\s+/)
       .filter(Boolean)
       .slice(0, 2)
       .map((w) => (w[0] ?? '').toUpperCase())
       .join('');
+    // XML-escape so characters like & don't corrupt the SVG buffer passed to sharp
+    const initials = initialsRaw
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&apos;');
 
     // Convert HSL to RGB for sharp (sharp needs CSS color or {r,g,b})
     const h = hue / 360;

@@ -89,6 +89,10 @@ export class PosRegisterSession {
   @Column({ type: 'jsonb', nullable: true })
   metadata?: Record<string, any> | null;
 
+  /** Per-branch sequential counter assigned at session open time. */
+  @Column({ type: 'int', nullable: true })
+  branchSessionNumber?: number | null;
+
   @CreateDateColumn()
   createdAt!: Date;
 

@@ -7,6 +7,7 @@ import {
   ParseIntPipe,
   Patch,
   Post,
+  Query,
   Req,
   UseGuards,
 } from '@nestjs/common';
@@ -25,6 +26,7 @@ import {
   BranchStaffInviteResponseDto,
   InviteBranchStaffResponseDto,
 } from './dto/branch-staff-response.dto';
+import { ChangeStaffPasswordDto } from './dto/change-staff-password.dto';
 import { CreateBranchStaffManualAccountDto } from './dto/create-branch-staff-manual-account.dto';
 import { InviteBranchStaffDto } from './dto/invite-branch-staff.dto';
 import { UpdateBranchStaffAssignmentDto } from './dto/update-branch-staff-assignment.dto';
@@ -118,10 +120,14 @@ export class BranchStaffController {
     );
   }
 
-  /** Lightweight stylist roster accessible by any active branch member. */
+  /** Lightweight staff roster accessible by any active branch member.
+   * Pass ?profiles=QSR_WAITER,BARBER_COUNTER etc. to filter by lane profile.
+   * Defaults to BARBER_COUNTER,SALON_STYLIST when no profiles param is given.
+   */
   @Get('roster')
   async getStylistRoster(
     @Param('branchId') branchId: string,
+    @Query('profiles') profilesParam: string | undefined,
     @Req() req: AuthenticatedRequest,
   ) {
     const resolvedBranchId = Number(branchId);
@@ -129,10 +135,16 @@ export class BranchStaffController {
       req.user,
       resolvedBranchId,
     );
-    return this.branchStaffService.findStylistRoster(resolvedBranchId, [
-      'BARBER_COUNTER',
-      'SALON_STYLIST',
-    ]);
+    const profiles = profilesParam
+      ? profilesParam
+          .split(',')
+          .map((p) => p.trim())
+          .filter(Boolean)
+      : ['BARBER_COUNTER', 'SALON_STYLIST'];
+    return this.branchStaffService.findStylistRoster(
+      resolvedBranchId,
+      profiles,
+    );
   }
 
   @ApiCreatedResponse({ type: BranchStaffAssignmentResponseDto })
@@ -333,6 +345,25 @@ export class BranchStaffController {
     return this.branchStaffService.deleteStaffAccount(
       branchId,
       userId,
+      req.user,
+    );
+  }
+
+  @ApiOkResponse({ description: 'Staff password updated.' })
+  @ApiForbiddenResponse({
+    description: 'Branch staff management access was denied.',
+  })
+  @Post(':userId/change-password')
+  async changePassword(
+    @Param('branchId', ParseIntPipe) branchId: number,
+    @Param('userId', ParseIntPipe) userId: number,
+    @Body() dto: ChangeStaffPasswordDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.branchStaffService.changeStaffPassword(
+      branchId,
+      userId,
+      dto.newPassword,
       req.user,
     );
   }

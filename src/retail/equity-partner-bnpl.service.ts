@@ -38,6 +38,14 @@ import {
   TenantSubscription,
   TenantSubscriptionStatus,
 } from './entities/tenant-subscription.entity';
+import {
+  RetailTenant,
+  RetailTenantStatus,
+} from './entities/retail-tenant.entity';
+import {
+  RetailModule,
+  TenantModuleEntitlement,
+} from './entities/tenant-module-entitlement.entity';
 import { In } from 'typeorm';
 
 const BNPL_REFERENCE_PREFIX = 'BNPLACT';
@@ -73,6 +81,10 @@ export class EquityPartnerBnplService {
     private readonly usersRepo: Repository<User>,
     @InjectRepository(TenantSubscription)
     private readonly subscriptionsRepo: Repository<TenantSubscription>,
+    @InjectRepository(RetailTenant)
+    private readonly retailTenantsRepo: Repository<RetailTenant>,
+    @InjectRepository(TenantModuleEntitlement)
+    private readonly moduleEntitlementsRepo: Repository<TenantModuleEntitlement>,
     private readonly equityPartnerService: EquityPartnerService,
     private readonly ebirrService: EbirrService,
   ) {}
@@ -152,6 +164,20 @@ export class EquityPartnerBnplService {
       }),
     );
 
+    // Also assign the equity partner as a manager so they can see and switch
+    // to branches they create from their own SellerHQ session.
+    if (partner.userId !== targetUser.id) {
+      await this.assignmentsRepo.save(
+        this.assignmentsRepo.create({
+          branchId: branch.id,
+          userId: partner.userId,
+          role: BranchStaffRole.MANAGER,
+          permissions: [],
+          isActive: true,
+        }),
+      );
+    }
+
     const subscription = await this.subscriptionsRepo.save(
       this.subscriptionsRepo.create({
         tenantId: partnerTenantId,
@@ -175,6 +201,35 @@ export class EquityPartnerBnplService {
         },
       }),
     );
+
+    // Provision POS_CORE + INVENTORY_CORE entitlements so the branch is
+    // immediately openable — matching the standard self-serve onboarding set.
+    const existingEntitlements = await this.moduleEntitlementsRepo.find({
+      where: [
+        { tenantId: partnerTenantId, module: RetailModule.POS_CORE },
+        { tenantId: partnerTenantId, module: RetailModule.INVENTORY_CORE },
+      ],
+    });
+    const hasModule = (module: RetailModule) =>
+      existingEntitlements.some((e) => e.module === module);
+    const modulesToProvision = [
+      RetailModule.POS_CORE,
+      RetailModule.INVENTORY_CORE,
+    ].filter((module) => !hasModule(module));
+    if (modulesToProvision.length) {
+      await this.moduleEntitlementsRepo.save(
+        modulesToProvision.map((module) =>
+          this.moduleEntitlementsRepo.create({
+            tenantId: partnerTenantId,
+            module,
+            enabled: true,
+            startsAt: now,
+            expiresAt: endsAt,
+            reason: `BNPL activation by equity partner #${partner.id}`,
+          }),
+        ),
+      );
+    }
 
     // Link partner equity split to the new branch (so they earn from it).
     try {
@@ -546,18 +601,26 @@ export class EquityPartnerBnplService {
       where: { ownerId: partner.userId, isActive: true },
       select: ['id', 'retailTenantId'],
     });
-    if (!ownedBranch?.retailTenantId) {
-      throw new BadRequestException(
-        'Partner must have at least one active POS branch with a retail tenant before BNPL activation.',
-      );
+    if (ownedBranch?.retailTenantId) {
+      // Persist so future activations don't depend on branch ownership.
+      await this.partnersRepo.update(partner.id, {
+        hostRetailTenantId: ownedBranch.retailTenantId,
+      });
+      return ownedBranch.retailTenantId;
     }
 
-    // Persist so future activations don't depend on branch ownership.
+    // Partner has no existing branch — provision a host tenant on first activation.
+    const newTenant = await this.retailTenantsRepo.save(
+      this.retailTenantsRepo.create({
+        name: `${partner.displayName} (Equity)`,
+        ownerUserId: partner.userId,
+        status: RetailTenantStatus.ACTIVE,
+      }),
+    );
     await this.partnersRepo.update(partner.id, {
-      hostRetailTenantId: ownedBranch.retailTenantId,
+      hostRetailTenantId: newTenant.id,
     });
-
-    return ownedBranch.retailTenantId;
+    return newTenant.id;
   }
 
   private calculateEquityCreditAmount(grossAmount: number): number {

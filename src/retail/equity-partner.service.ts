@@ -17,6 +17,7 @@ import {
 } from './entities/equity-payout.entity';
 import {
   ApplyEquityPartnerDto,
+  CreateEquityPartnerAdminDto,
   UpdateEquityPartnerDto,
   UpdateEquitySplitAssignmentDto,
 } from './dto/equity-partner.dto';
@@ -79,6 +80,21 @@ export class EquityPartnerService {
       phone: dto.phone,
       bankAccountInfo: dto.bankAccountInfo ?? null,
       status: EquityPartnerStatus.PENDING,
+    });
+    return this.partnersRepo.save(partner);
+  }
+
+  /** Admin direct create – no userId required (partner may not have a POS account). */
+  async adminCreatePartner(
+    dto: CreateEquityPartnerAdminDto,
+  ): Promise<EquityPartner> {
+    const partner = this.partnersRepo.create({
+      userId: null,
+      displayName: dto.displayName,
+      phone: dto.phone,
+      bankAccountInfo: dto.bankAccountInfo ?? null,
+      notes: dto.notes ?? null,
+      status: dto.status ?? EquityPartnerStatus.PENDING,
     });
     return this.partnersRepo.save(partner);
   }

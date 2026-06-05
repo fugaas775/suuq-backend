@@ -10,7 +10,6 @@ import {
 export enum HotelRoomStatus {
   ACTIVE = 'ACTIVE',
   INACTIVE = 'INACTIVE',
-  MAINTENANCE = 'MAINTENANCE',
 }
 
 @Entity('pos_hotel_rooms')

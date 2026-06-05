@@ -1,9 +1,7 @@
 import {
   BadRequestException,
-  Inject,
   Injectable,
   NotFoundException,
-  forwardRef,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, Repository } from 'typeorm';
@@ -14,7 +12,6 @@ import {
   StockMovementType,
 } from './entities/stock-movement.entity';
 import { Branch } from './entities/branch.entity';
-import { ReplenishmentService } from './replenishment.service';
 
 type RecordMovementParams = {
   branchId: number;
@@ -50,8 +47,6 @@ type AdjustProjectionParams = {
 export class InventoryLedgerService {
   constructor(
     private readonly dataSource: DataSource,
-    @Inject(forwardRef(() => ReplenishmentService))
-    private readonly replenishmentService: ReplenishmentService,
     @InjectRepository(Branch)
     private readonly branchesRepository: Repository<Branch>,
     @InjectRepository(Product)
@@ -393,44 +388,9 @@ export class InventoryLedgerService {
       }),
     );
 
-    await this.maybeEvaluateReplenishment(savedInventory, params, manager);
     await this.syncProductStockQuantity(params.productId, manager);
 
     return { inventory: savedInventory, movement };
-  }
-
-  private async maybeEvaluateReplenishment(
-    inventory: BranchInventory,
-    params: RecordMovementParams,
-    manager: EntityManager,
-  ): Promise<void> {
-    const trigger = this.resolveReplenishmentTrigger(params);
-    if (!trigger) {
-      return;
-    }
-
-    await this.replenishmentService.maybeCreateDraftPurchaseOrder(
-      inventory,
-      {
-        actorUserId: params.actorUserId ?? null,
-        trigger,
-      },
-      manager,
-    );
-  }
-
-  private resolveReplenishmentTrigger(
-    params: RecordMovementParams,
-  ): 'POS_SYNC' | 'INVENTORY_ADJUSTMENT' | null {
-    if (params.sourceType === 'POS_SYNC') {
-      return 'POS_SYNC';
-    }
-
-    if (params.movementType === StockMovementType.ADJUSTMENT) {
-      return 'INVENTORY_ADJUSTMENT';
-    }
-
-    return null;
   }
 
   private async adjustProjectionBucket(

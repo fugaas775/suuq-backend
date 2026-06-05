@@ -64,11 +64,6 @@ import { LinkingModule } from './linking/linking.module';
 import { StarpayModule } from './starpay/starpay.module';
 import { BranchesModule } from './branches/branches.module';
 import { BranchStaffModule } from './branch-staff/branch-staff.module';
-import { SuppliersModule } from './suppliers/suppliers.module';
-import { SupplierStaffModule } from './supplier-staff/supplier-staff.module';
-import { SupplierOffersModule } from './supplier-offers/supplier-offers.module';
-import { PurchaseOrdersModule } from './purchase-orders/purchase-orders.module';
-import { ProcurementWebhooksModule } from './procurement-webhooks/procurement-webhooks.module';
 import { PartnerCredentialsModule } from './partner-credentials/partner-credentials.module';
 import { PosSyncModule } from './pos-sync/pos-sync.module';
 import { ProductAliasesModule } from './product-aliases/product-aliases.module';
@@ -78,6 +73,7 @@ import { SellerWorkspaceModule } from './seller-workspace/seller-workspace.modul
 import { BillingModule } from './billing/billing.module';
 import { HospitalityModule } from './hospitality/hospitality.module';
 import { StorefrontModule } from './storefront/storefront.module';
+import { ConsumerModule } from './consumer/consumer.module';
 
 @Module({
   imports: [
@@ -253,11 +249,6 @@ import { StorefrontModule } from './storefront/storefront.module';
     StarpayModule,
     BranchesModule,
     BranchStaffModule,
-    SuppliersModule,
-    SupplierStaffModule,
-    SupplierOffersModule,
-    PurchaseOrdersModule,
-    ProcurementWebhooksModule,
     PartnerCredentialsModule,
     ProductAliasesModule,
     PosSyncModule,
@@ -267,6 +258,7 @@ import { StorefrontModule } from './storefront/storefront.module';
     SellerWorkspaceModule,
     BillingModule,
     StorefrontModule,
+    ConsumerModule,
   ],
   controllers: [AppController],
   // Apply rate limiting globally

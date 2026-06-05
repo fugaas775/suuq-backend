@@ -23,6 +23,7 @@ import {
   MarkPayoutPaidDto,
   UpdateEquityPartnerDto,
   UpdateEquitySplitAssignmentDto,
+  CreateEquityPartnerAdminDto,
 } from './dto/equity-partner.dto';
 import { EquityPartnerService } from './equity-partner.service';
 import { EquityPartnerBnplService } from './equity-partner-bnpl.service';
@@ -46,6 +47,11 @@ export class AdminEquityPartnersController {
   @Get(':id')
   getById(@Param('id', ParseIntPipe) id: number) {
     return this.equityService.getPartnerById(id);
+  }
+
+  @Post()
+  create(@Body() dto: CreateEquityPartnerAdminDto) {
+    return this.equityService.adminCreatePartner(dto);
   }
 
   @Patch(':id')

@@ -98,6 +98,21 @@ export class PosRegisterService {
   ): Promise<PosRegisterSessionResponseDto> {
     await this.assertBranch(dto.branchId);
 
+    // For shared-session formats (e.g. HOTEL): find any open session for the branch
+    // regardless of registerId, so all front-desk devices share the same session.
+    // If no open session exists, fall through to create a new one.
+    if (dto.sharedSession) {
+      const anyOpen = await this.registerSessionsRepository.findOne({
+        where: {
+          branchId: dto.branchId,
+          status: PosRegisterSessionStatus.OPEN,
+        },
+        order: { openedAt: 'DESC' },
+      });
+      if (anyOpen) return this.toSessionResponse(anyOpen);
+      // No open session — fall through to create a new one.
+    }
+
     const existingOpen = await this.registerSessionsRepository.findOne({
       where: {
         branchId: dto.branchId,
@@ -108,6 +123,13 @@ export class PosRegisterService {
     if (existingOpen) {
       return this.toSessionResponse(existingOpen);
     }
+
+    // Compute the next per-branch sequential number so every device/browser
+    // sees the same human-readable session number instead of a local counter.
+    const existingCount = await this.registerSessionsRepository.count({
+      where: { branchId: dto.branchId },
+    });
+    const branchSessionNumber = existingCount + 1;
 
     const session = await this.registerSessionsRepository.save(
       this.registerSessionsRepository.create({
@@ -121,6 +143,7 @@ export class PosRegisterService {
         closingFloat: null,
         note: dto.note?.trim() || null,
         metadata: dto.metadata ?? null,
+        branchSessionNumber,
       }),
     );
 
@@ -389,6 +412,7 @@ export class PosRegisterService {
       closingFloat: item.closingFloat ?? null,
       note: item.note ?? null,
       metadata: item.metadata ?? null,
+      branchSessionNumber: item.branchSessionNumber ?? null,
       createdAt: item.createdAt,
       updatedAt: item.updatedAt,
     };

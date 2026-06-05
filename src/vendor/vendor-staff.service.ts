@@ -192,7 +192,36 @@ export class VendorStaffService {
       }
     }
 
-    if (!staff) return null;
+    if (!staff) {
+      // Fallback: allow branch-level MANAGER staff to act on the vendor store
+      // that belongs to their assigned branch.  This avoids requiring an
+      // explicit VendorStaff record for every branch manager.
+      const branchAssignment = await this.branchStaffAssignmentsRepo
+        .createQueryBuilder('bsa')
+        .innerJoin(Branch, 'b', 'b.id = bsa."branchId"')
+        .where('bsa."userId" = :userId', { userId })
+        .andWhere('b."ownerId" = :vendorId', { vendorId })
+        .andWhere('bsa."isActive" = true')
+        .getOne();
+
+      if (!branchAssignment) return null;
+
+      const vendorUser = await this.usersService.findById(vendorId);
+      if (!vendorUser) return null;
+
+      // Synthesize a transient VendorStaff granting product-management access.
+      const syntheticStaff = new VendorStaff();
+      syntheticStaff.vendor = vendorUser;
+      syntheticStaff.member = { id: userId } as User;
+      syntheticStaff.permissions = [VendorPermission.MANAGE_PRODUCTS];
+      syntheticStaff.title = 'Branch Manager';
+
+      if (permission && !syntheticStaff.permissions.includes(permission)) {
+        return null;
+      }
+
+      return syntheticStaff;
+    }
 
     if (permission && !staff.permissions.includes(permission)) {
       return null;

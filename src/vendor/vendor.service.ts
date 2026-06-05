@@ -58,10 +58,11 @@ import { StockMovementType } from '../branches/entities/stock-movement.entity';
 import { PosPortalOnboardingService } from '../branch-staff/pos-portal-onboarding.service';
 import { SellerWorkspace } from '../seller-workspace/entities/seller-workspace.entity';
 import { VendorStore } from './entities/vendor-store.entity';
+import { BranchStaffAssignment } from '../branch-staff/entities/branch-staff-assignment.entity';
 
 @Injectable()
 export class VendorService {
-  private static readonly BULK_CREATE_MAX_ROWS = 200;
+  private static readonly BULK_CREATE_MAX_ROWS = 1000;
 
   private static generateProductPlaceholderImageUrl(name: string): string {
     const apiBase = (
@@ -101,6 +102,8 @@ export class VendorService {
     private readonly sellerWorkspacesRepository: Repository<SellerWorkspace>,
     @InjectRepository(VendorStore)
     private readonly vendorStoreRepository: Repository<VendorStore>,
+    @InjectRepository(BranchStaffAssignment)
+    private readonly branchStaffAssignmentsRepository: Repository<BranchStaffAssignment>,
   ) {}
 
   private readonly logger = new Logger(VendorService.name);
@@ -173,11 +176,25 @@ export class VendorService {
       ),
     );
 
-    if (!branch.ownerId || !actorIds.has(branch.ownerId)) {
-      return null;
+    if (branch.ownerId && actorIds.has(branch.ownerId)) {
+      return branch;
     }
 
-    return branch;
+    // Also allow active branch staff (e.g. MANAGER) to seed inventory for
+    // branches they operate even when they are not the registered owner.
+    if (actorIds.size > 0) {
+      const staffMatch = await this.productRepository.manager.query(
+        `SELECT 1 FROM branch_staff_assignments
+         WHERE "branchId" = $1 AND "userId" = ANY($2::int[]) AND "isActive" = true
+         LIMIT 1`,
+        [branch.id, Array.from(actorIds)],
+      );
+      if (Array.isArray(staffMatch) && staffMatch.length > 0) {
+        return branch;
+      }
+    }
+
+    return null;
   }
 
   private async seedImportedProductToBranch(
@@ -685,7 +702,7 @@ export class VendorService {
     userId: number,
     dto: CreateVendorProductDto,
     creator?: Partial<User>,
-    options?: { branchId?: number | null },
+    options?: { branchId?: number | null; bypassPostingLimits?: boolean },
   ): Promise<Product> {
     const vendor = await this.userRepository.findOneBy({ id: userId });
     if (!vendor) {
@@ -722,8 +739,10 @@ export class VendorService {
     const isCertified = isCertifiedVendor(vendor);
     const isVendor = vendor.roles.includes(UserRole.VENDOR);
     const bypassPostingLimitsForBranchImport = !!importBranch;
+    const bypassPostingLimits =
+      bypassPostingLimitsForBranchImport || !!options?.bypassPostingLimits;
 
-    if (!isCertified && !bypassPostingLimitsForBranchImport) {
+    if (!isCertified && !bypassPostingLimits) {
       if (isVendor) {
         const freeLimitRaw = await this.settingsService.getSystemSetting(
           'limit.free_vendor_products',
@@ -1046,6 +1065,7 @@ export class VendorService {
     creator?: Partial<User>,
     options?: { branchId?: number | null },
   ): Promise<BulkCreateVendorProductsResponseDto> {
+    const bulkOptions = { ...(options ?? {}), bypassPostingLimits: true };
     const rows = Array.isArray(dto?.rows) ? dto.rows : [];
     if (!rows.length) {
       throw new BadRequestException(
@@ -1069,7 +1089,7 @@ export class VendorService {
           userId,
           row,
           creator,
-          options,
+          bulkOptions,
         );
         created.push({
           rowIndex,
@@ -3899,15 +3919,49 @@ export class VendorService {
 
   // ── Storefront (VendorStore) ──────────────────────────────────────────────
 
-  async getMyStores(userId: number): Promise<VendorStore[]> {
-    // A user's stores are those whose branch is owned by the user.
-    // Join through Branch to filter by ownerId.
-    return this.vendorStoreRepository
+  async getMyStores(
+    userId: number,
+  ): Promise<(VendorStore & { vendorId: number; permissions: string[] })[]> {
+    // 1. Stores for branches this user owns.
+    const ownedStores = await this.vendorStoreRepository
       .createQueryBuilder('vs')
       .innerJoin(Branch, 'b', 'b.id = vs."branchId"')
       .where('b."ownerId" = :userId', { userId })
       .orderBy('vs.storeName', 'ASC')
       .getMany();
+
+    // 2. Stores for branches where this user is a staff member (e.g. MANAGER).
+    //    The vendor store belongs to the branch owner, not this user, so we
+    //    look up the store by branchId to surface it in the Seller HQ UI.
+    const staffAssignments = await this.branchStaffAssignmentsRepository.find({
+      where: { userId, isActive: true },
+      select: ['branchId'],
+    });
+    const staffBranchIds = staffAssignments.map((a) => a.branchId);
+
+    const staffStores =
+      staffBranchIds.length > 0
+        ? await this.vendorStoreRepository
+            .createQueryBuilder('vs')
+            .where('vs."branchId" IN (:...branchIds)', {
+              branchIds: staffBranchIds,
+            })
+            // Exclude stores already in ownedStores to avoid duplicates.
+            .andWhere(
+              ownedStores.length > 0 ? 'vs.id NOT IN (:...ownedIds)' : '1=1',
+              ownedStores.length > 0
+                ? { ownedIds: ownedStores.map((s) => s.id) }
+                : {},
+            )
+            .orderBy('vs.storeName', 'ASC')
+            .getMany()
+        : [];
+
+    return [...ownedStores, ...staffStores].map((store) => ({
+      ...store,
+      vendorId: store.ownerUserId,
+      permissions: ['MANAGE_PRODUCTS'],
+    }));
   }
 
   async updateStorefrontProfile(

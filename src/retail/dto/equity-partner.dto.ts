@@ -94,3 +94,32 @@ export class MarkPayoutPaidDto {
   @MaxLength(2000)
   notes?: string;
 }
+
+/** POST body used by admin to create a partner record directly (no userId). */
+export class CreateEquityPartnerAdminDto {
+  @Transform(({ value }) => trimStr(value))
+  @IsString()
+  @MinLength(1)
+  @MaxLength(255)
+  displayName!: string;
+
+  @Transform(({ value }) => trimStr(value))
+  @IsString()
+  @MinLength(1)
+  @MaxLength(64)
+  phone!: string;
+
+  @IsOptional()
+  @IsObject()
+  bankAccountInfo?: Record<string, string>;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  notes?: string;
+
+  /** Override the initial status (defaults to PENDING). */
+  @IsOptional()
+  @IsEnum(EquityPartnerStatus)
+  status?: EquityPartnerStatus;
+}

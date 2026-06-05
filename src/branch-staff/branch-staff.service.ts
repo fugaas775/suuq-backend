@@ -295,6 +295,7 @@ export class BranchStaffService {
         userId: a.userId,
         displayName:
           a.user?.displayName?.trim() || a.user?.posUsername?.trim() || '',
+        username: a.user?.posUsername?.trim() || '',
       }))
       .filter((s) => s.displayName);
   }
@@ -1513,6 +1514,40 @@ export class BranchStaffService {
         isActive: assignment.isActive,
       },
     };
+  }
+
+  async changeStaffPassword(
+    branchId: number,
+    userId: number,
+    newPassword: string,
+    actor: { id?: number | null; email?: string | null; roles?: string[] },
+  ) {
+    await this.assertCanManageBranchStaff(actor, branchId);
+
+    const assignment = await this.assignmentsRepository.findOne({
+      where: { branchId, userId },
+      relations: { user: true },
+    });
+    if (!assignment) {
+      throw new NotFoundException('Branch staff assignment not found.');
+    }
+
+    const targetUser = assignment.user;
+    if (!targetUser || targetUser.authMode !== 'MANUAL') {
+      throw new ForbiddenException({
+        error: {
+          code: 'POS_BRANCH_STAFF_PASSWORD_CHANGE_NOT_ALLOWED',
+          message:
+            'Passwords can only be changed for manually-created POS staff accounts.',
+        },
+      });
+    }
+
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    targetUser.password = hashedPassword;
+    await this.usersRepository.save(targetUser);
+
+    return { status: 'PASSWORD_CHANGED', branchId, userId };
   }
 
   async linkGoogleAccount(

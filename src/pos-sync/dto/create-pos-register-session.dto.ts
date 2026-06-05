@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
+  IsBoolean,
   IsNumber,
   IsObject,
   IsOptional,
@@ -40,4 +41,12 @@ export class CreatePosRegisterSessionDto {
   @IsOptional()
   @IsObject()
   metadata?: Record<string, any>;
+
+  @ApiPropertyOptional({
+    description:
+      "When true, the server reuses any open branch session or reopens today's closed session instead of creating a new one. Intended for HOTEL and other shared-register formats.",
+  })
+  @IsOptional()
+  @IsBoolean()
+  sharedSession?: boolean;
 }

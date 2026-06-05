@@ -51,19 +51,14 @@ import { AdminCreditController } from './credit.admin.controller';
 import { AdminAdsController } from './ads.admin.controller';
 import { TelebirrTransaction } from '../payments/entities/telebirr-transaction.entity';
 import { EbirrModule } from '../ebirr/ebirr.module';
-import { SuppliersModule } from '../suppliers/suppliers.module';
 import { PartnerCredentialsModule } from '../partner-credentials/partner-credentials.module';
-import { PurchaseOrdersModule } from '../purchase-orders/purchase-orders.module';
-import { AdminB2bController } from './b2b.admin.controller';
-import { AdminB2bService } from './b2b.admin.service';
 import { MarketingLeadsModule } from '../marketing-leads/marketing-leads.module';
 import { AdminMarketingLeadsController } from './marketing-leads.admin.controller';
 import { BranchTransfer } from '../branches/entities/branch-transfer.entity';
 import { BranchInventory } from '../branches/entities/branch-inventory.entity';
 import { StockMovement } from '../branches/entities/stock-movement.entity';
 import { PosSyncJob } from '../pos-sync/entities/pos-sync-job.entity';
-import { PurchaseOrderReceiptEvent } from '../purchase-orders/entities/purchase-order-receipt-event.entity';
-import { PurchaseOrder } from '../purchase-orders/entities/purchase-order.entity';
+
 import { BranchStaffModule } from '../branch-staff/branch-staff.module';
 import { SellerWorkspaceModule } from '../seller-workspace/seller-workspace.module';
 import { BranchesModule } from '../branches/branches.module';
@@ -89,9 +84,7 @@ import { BranchesAdminController } from './branches.admin.controller';
     EmailModule,
     CreditModule,
     EbirrModule,
-    SuppliersModule,
     PartnerCredentialsModule,
-    PurchaseOrdersModule,
     MarketingLeadsModule,
     BranchStaffModule,
     SellerWorkspaceModule,
@@ -110,8 +103,6 @@ import { BranchesAdminController } from './branches.admin.controller';
       BranchInventory,
       EbirrTransaction,
       PosSyncJob,
-      PurchaseOrder,
-      PurchaseOrderReceiptEvent,
       StockMovement,
       TelebirrTransaction,
     ]),
@@ -134,7 +125,6 @@ import { BranchesAdminController } from './branches.admin.controller';
     AdminEbirrAuditController,
     AdminCreditController,
     AdminAdsController,
-    AdminB2bController,
     AdminMarketingLeadsController,
     BranchesAdminController,
   ],
@@ -142,7 +132,6 @@ import { BranchesAdminController } from './branches.admin.controller';
   providers: [
     RolesGuard,
     GeoResolverService,
-    AdminB2bService,
     AdminOutreachService,
     FeatureFlagGuard,
   ],

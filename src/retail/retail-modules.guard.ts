@@ -54,7 +54,7 @@ export class RetailModulesGuard implements CanActivate {
     // branch. Skip this check for super-admins, admins, and B2B buyers who
     // access branches without a staff assignment.
     const user = req.user as { id?: number; roles?: string[] } | undefined;
-    const bypassRoles = new Set(['SUPER_ADMIN', 'ADMIN', 'B2B_BUYER']);
+    const bypassRoles = new Set(['SUPER_ADMIN', 'ADMIN']);
     const isBypassed =
       !user?.id ||
       (Array.isArray(user.roles) && user.roles.some((r) => bypassRoles.has(r)));

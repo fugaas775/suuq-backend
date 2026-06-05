@@ -50,6 +50,14 @@ export class PosRegisterSessionResponseDto {
   @ApiPropertyOptional({ type: Object })
   metadata?: Record<string, any> | null;
 
+  @ApiPropertyOptional({
+    example: 3,
+    description:
+      'Per-branch sequential session counter assigned when the session is opened. ' +
+      'Null for sessions opened before this field was introduced.',
+  })
+  branchSessionNumber?: number | null;
+
   @ApiProperty()
   createdAt!: Date;
 

@@ -1434,6 +1434,7 @@ export class PosCheckoutService {
       sourceReceiptId: returnContext?.sourceReceiptId ?? null,
       sourceReceiptNumber: returnContext?.sourceReceiptNumber ?? null,
       refundMethod: returnContext?.refundMethod ?? null,
+      metadata: checkout.metadata ?? null,
       pricingSummary: this.extractPricingSummary(checkout),
       customerProfile: this.extractCustomerProfile(checkout),
       loyaltySummary: this.extractLoyaltySummary(checkout),
@@ -1592,6 +1593,10 @@ export class PosCheckoutService {
     const voidableStatuses: string[] = [
       PosCheckoutStatus.PROCESSED,
       PosCheckoutStatus.RECEIVED,
+      // FAILED checkouts (ingest errors) are also voidable: they are orphaned
+      // records that never committed inventory side-effects, so voiding them
+      // is safe and provides a clean audit trail for data-correction purposes.
+      PosCheckoutStatus.FAILED,
     ];
     if (!voidableStatuses.includes(checkout.status)) {
       throw new BadRequestException(
