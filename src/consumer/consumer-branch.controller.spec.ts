@@ -130,6 +130,20 @@ describe('ConsumerBranchController.getBranchProducts', () => {
     expect(baseQb.leftJoinAndSelect).toHaveBeenCalledWith('p.tags', 'tag');
   });
 
+  it('excludes soft-deleted products (deleted_at is a plain column, not auto-filtered)', async () => {
+    const { controller, baseQb } = buildController({
+      store: { id: 5 },
+      count: 0,
+      products: [],
+    });
+
+    await controller.getBranchProducts(49);
+
+    // The base builder must filter out soft-deleted rows so the count and the
+    // fetched rows both exclude them.
+    expect(baseQb.andWhere).toHaveBeenCalledWith('p.deletedAt IS NULL');
+  });
+
   it('returns an empty page when the branch has no consumer-visible store', async () => {
     const { controller, vendorStoreRepo } = buildController({
       store: null,

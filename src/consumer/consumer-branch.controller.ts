@@ -170,10 +170,13 @@ export class ConsumerBranchController {
     }
 
     // Count without joins for correct pagination totals.
+    // deleted_at is a plain column (not a @DeleteDateColumn), so soft-deleted
+    // products are not auto-excluded — filter them explicitly.
     const baseQb = this.productRepo
       .createQueryBuilder('p')
       .where('p.vendorStoreId = :sid', { sid: store.id })
-      .andWhere("p.status = 'publish'");
+      .andWhere("p.status = 'publish'")
+      .andWhere('p.deletedAt IS NULL');
 
     const total = await baseQb.clone().getCount();
 
