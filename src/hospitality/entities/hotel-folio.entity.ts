@@ -37,6 +37,27 @@ export class HotelFolio {
   @Column({ type: 'varchar', length: 255, nullable: true })
   guestName!: string | null;
 
+  @Column({ type: 'varchar', length: 64, nullable: true })
+  guestPhone!: string | null;
+
+  @Column({ type: 'varchar', length: 64, nullable: true })
+  guestNationality!: string | null;
+
+  /** PASSPORT, NATIONAL_ID, DRIVING_LICENSE, etc. */
+  @Column({ type: 'varchar', length: 32, nullable: true })
+  guestIdType!: string | null;
+
+  @Column({ type: 'varchar', length: 128, nullable: true })
+  guestIdNumber!: string | null;
+
+  /** FK to pos_hotel_rate_plans.id — null if no rate plan was selected at check-in. */
+  @Column({ type: 'bigint', nullable: true })
+  rateId!: number | null;
+
+  /** FK to pos_hotel_reservations.id — set when a folio is opened from a reservation. */
+  @Column({ type: 'bigint', nullable: true })
+  reservationId!: number | null;
+
   @Column({ type: 'date', nullable: true })
   checkInAt!: string | null;
 

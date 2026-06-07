@@ -34,6 +34,13 @@ export class HotelNightAuditLog {
   @Column({ type: 'varchar', length: 8, default: 'ETB' })
   currency: string;
 
+  /**
+   * Lifecycle status of the audit run.
+   * PENDING: queued; RUNNING: in progress; COMPLETED: succeeded; FAILED: error.
+   */
+  @Column({ type: 'varchar', length: 16, default: 'COMPLETED' })
+  status: string;
+
   @Column({ type: 'bigint', nullable: true })
   triggeredByUserId: number | null;
 

@@ -48,6 +48,25 @@ export class HotelRatePlan {
   @Column({ type: 'boolean', default: true })
   isActive!: boolean;
 
+  /**
+   * Meal plan included in this rate.
+   * ROOM_ONLY | BED_AND_BREAKFAST | HALF_BOARD | FULL_BOARD
+   */
+  @Column({ type: 'varchar', length: 32, default: 'ROOM_ONLY' })
+  mealPlan!: string;
+
+  /** Minimum nights required to qualify for this rate. Defaults to 1. */
+  @Column({ type: 'int', default: 1 })
+  minimumNights!: number;
+
+  /** Optional start of the validity window (ISO date, inclusive). */
+  @Column({ type: 'date', nullable: true })
+  validFrom!: string | null;
+
+  /** Optional end of the validity window (ISO date, inclusive). */
+  @Column({ type: 'date', nullable: true })
+  validTo!: string | null;
+
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt!: Date;
 

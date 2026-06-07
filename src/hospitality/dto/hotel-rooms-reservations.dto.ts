@@ -156,6 +156,30 @@ export class CreateHotelRatePlanDto {
   @IsBoolean()
   @IsOptional()
   isActive?: boolean;
+
+  /**
+   * Meal plan included in this rate.
+   * ROOM_ONLY | BED_AND_BREAKFAST | HALF_BOARD | FULL_BOARD
+   */
+  @IsIn(['ROOM_ONLY', 'BED_AND_BREAKFAST', 'HALF_BOARD', 'FULL_BOARD'])
+  @IsOptional()
+  mealPlan?: string;
+
+  /** Minimum nights required to qualify for this rate. Defaults to 1. */
+  @IsInt()
+  @Min(1)
+  @IsOptional()
+  minimumNights?: number;
+
+  /** Optional start of validity window (ISO date YYYY-MM-DD, inclusive). */
+  @IsDateString()
+  @IsOptional()
+  validFrom?: string;
+
+  /** Optional end of validity window (ISO date YYYY-MM-DD, inclusive). */
+  @IsDateString()
+  @IsOptional()
+  validTo?: string;
 }
 
 export class ListHotelRatePlansQueryDto {

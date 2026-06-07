@@ -36,6 +36,12 @@ export class HotelFolioService {
       status: folio.status,
       roomNumber: folio.roomNumber,
       guestName: folio.guestName,
+      guestPhone: folio.guestPhone ?? null,
+      guestNationality: folio.guestNationality ?? null,
+      guestIdType: folio.guestIdType ?? null,
+      guestIdNumber: folio.guestIdNumber ?? null,
+      rateId: folio.rateId ?? null,
+      reservationId: folio.reservationId ?? null,
       checkInAt: folio.checkInAt,
       checkOutAt: folio.checkOutAt,
       currency: folio.currency,
@@ -102,6 +108,16 @@ export class HotelFolioService {
       status: HotelFolioStatus.OPEN,
       roomNumber: String(dto.roomNumber || '').trim(),
       guestName: dto.guestName ? String(dto.guestName).trim() : null,
+      guestPhone: dto.guestPhone ? String(dto.guestPhone).trim() : null,
+      guestNationality: dto.guestNationality
+        ? String(dto.guestNationality).trim()
+        : null,
+      guestIdType: dto.guestIdType ? String(dto.guestIdType).trim() : null,
+      guestIdNumber: dto.guestIdNumber
+        ? String(dto.guestIdNumber).trim()
+        : null,
+      rateId: dto.rateId ?? null,
+      reservationId: dto.reservationId ?? null,
       checkInAt: dto.checkInAt ?? null,
       checkOutAt: dto.checkOutAt ?? null,
       currency: dto.currency
@@ -209,7 +225,13 @@ export class HotelFolioService {
 
     folio.status = HotelFolioStatus.SETTLED;
     folio.settledCheckoutId = dto.checkoutId ?? null;
-    folio.paidAmount = dto.paidAmount !== undefined ? dto.paidAmount : null;
+    // If multi-payment array is provided, sum it; otherwise fall back to legacy flat field.
+    folio.paidAmount =
+      dto.payments && dto.payments.length > 0
+        ? dto.payments.reduce((sum, p) => sum + Number(p.amount || 0), 0)
+        : dto.paidAmount !== undefined
+          ? dto.paidAmount
+          : null;
     folio.settledAt = dto.settledAt ? new Date(dto.settledAt) : new Date();
 
     const saved = await this.folioRepo.save(folio);

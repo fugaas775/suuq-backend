@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
+  IsArray,
   IsDateString,
   IsInt,
   IsNumber,
@@ -10,6 +11,7 @@ import {
   MaxLength,
   Min,
   MinLength,
+  ValidateNested,
 } from 'class-validator';
 
 export class ListHotelFoliosQueryDto {
@@ -44,6 +46,48 @@ export class OpenFolioDto {
   @IsString()
   @MaxLength(255)
   guestName?: string;
+
+  @ApiPropertyOptional({ example: '+251911234567' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  guestPhone?: string;
+
+  @ApiPropertyOptional({ example: 'ET' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  guestNationality?: string;
+
+  @ApiPropertyOptional({ example: 'PASSPORT' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(32)
+  guestIdType?: string;
+
+  @ApiPropertyOptional({ example: 'EP1234567' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(128)
+  guestIdNumber?: string;
+
+  @ApiPropertyOptional({
+    example: 3,
+    description: 'FK to pos_hotel_rate_plans.id',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  rateId?: number;
+
+  @ApiPropertyOptional({
+    example: 12,
+    description: 'FK to pos_hotel_reservations.id',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  reservationId?: number;
 
   @ApiPropertyOptional({ example: '2026-06-01' })
   @IsOptional()
@@ -119,6 +163,35 @@ export class PostFolioChargeDto {
   idempotencyKey?: string;
 }
 
+export class FolioPaymentRowDto {
+  @ApiProperty({
+    example: 'CASH',
+    description:
+      'CASH | CARD | MOBILE_MONEY | BANK_TRANSFER | CREDIT_ACCOUNT | VOUCHER | FOREIGN_CURRENCY_CASH',
+  })
+  @IsString()
+  @MaxLength(32)
+  method!: string;
+
+  @ApiProperty({ example: 1200 })
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  amount!: number;
+
+  @ApiPropertyOptional({ example: 'ETB' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(8)
+  currency?: string;
+
+  @ApiPropertyOptional({ example: 'TXN-ABC123' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(128)
+  reference?: string;
+}
+
 export class SettleFolioDto {
   @ApiPropertyOptional({ example: 4 })
   @IsOptional()
@@ -126,18 +199,32 @@ export class SettleFolioDto {
   @IsNumber()
   branchId?: number;
 
+  /**
+   * Preferred: array of payment rows supporting split and multi-currency settlement.
+   * When provided, legacy flat fields (paymentMethod, paidAmount) are ignored.
+   */
+  @ApiPropertyOptional({ type: [FolioPaymentRowDto] })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => FolioPaymentRowDto)
+  payments?: FolioPaymentRowDto[];
+
+  /** @deprecated Use payments[] instead. */
   @ApiPropertyOptional({ example: 'checkout-999' })
   @IsOptional()
   @IsString()
   @MaxLength(128)
   checkoutId?: string;
 
+  /** @deprecated Use payments[].method instead. */
   @ApiPropertyOptional({ example: 'CASH' })
   @IsOptional()
   @IsString()
   @MaxLength(32)
   paymentMethod?: string;
 
+  /** @deprecated Use payments[].amount instead. */
   @ApiPropertyOptional({ example: 1200 })
   @IsOptional()
   @Type(() => Number)
