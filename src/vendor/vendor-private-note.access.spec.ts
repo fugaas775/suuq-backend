@@ -1,5 +1,7 @@
 import { PosPortalOnboardingService } from '../branch-staff/pos-portal-onboarding.service';
 import { SellerWorkspace } from '../seller-workspace/entities/seller-workspace.entity';
+import { VendorStore } from './entities/vendor-store.entity';
+import { BranchStaffAssignment } from '../branch-staff/entities/branch-staff-assignment.entity';
 import { InventoryLedgerService } from '../branches/inventory-ledger.service';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { Test, TestingModule } from '@nestjs/testing';
@@ -84,6 +86,8 @@ describe('Vendor private note access rules', () => {
         { provide: InventoryLedgerService, useValue: {} },
         { provide: PosPortalOnboardingService, useValue: {} },
         { provide: getRepositoryToken(SellerWorkspace), useValue: {} },
+        { provide: getRepositoryToken(VendorStore), useValue: {} },
+        { provide: getRepositoryToken(BranchStaffAssignment), useValue: {} },
         { provide: getRepositoryToken(User), useValue: userRepoMock },
         { provide: getRepositoryToken(Product), useValue: productRepoMock },
         { provide: getRepositoryToken(Order), useValue: orderRepoMock },
@@ -152,8 +156,8 @@ describe('Vendor private note access rules', () => {
     const result: any = await service.updateMyProduct(
       vendorId,
       productId,
-      { privateNote: 'Restock from supplier C this week' } as any,
-      { id: 501, displayName: 'Staff A', email: 'staff.a@suuq.test' } as any,
+      { privateNote: 'Restock from supplier C this week' },
+      { id: 501, displayName: 'Staff A', email: 'staff.a@suuq.test' },
     );
 
     expect(productRepoMock.save).toHaveBeenCalled();

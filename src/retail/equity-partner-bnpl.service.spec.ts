@@ -14,6 +14,8 @@ import {
 } from '../branch-staff/entities/branch-staff-assignment.entity';
 import { User } from '../users/entities/user.entity';
 import { TenantSubscription } from './entities/tenant-subscription.entity';
+import { RetailTenant } from './entities/retail-tenant.entity';
+import { TenantModuleEntitlement } from './entities/tenant-module-entitlement.entity';
 import { EquityPartnerService } from './equity-partner.service';
 import { EbirrService } from '../ebirr/ebirr.service';
 
@@ -22,6 +24,8 @@ describe('EquityPartnerBnplService', () => {
 
   const partnersRepo = {
     findOne: jest.fn(),
+    save: jest.fn(async (value) => value),
+    update: jest.fn(async () => ({ affected: 1 })),
   };
 
   const activationsRepo = {
@@ -63,8 +67,28 @@ describe('EquityPartnerBnplService', () => {
     save: jest.fn(async (value) => value),
   };
 
+  const retailTenantsRepo = {
+    findOne: jest.fn(),
+    create: jest.fn((value) => value),
+    save: jest.fn(async (value) => ({ id: 34, ...value })),
+  };
+
+  const moduleEntitlementsRepo = {
+    find: jest.fn().mockResolvedValue([]),
+    create: jest.fn((value) => value),
+    save: jest.fn(async (value) => value),
+  };
+
   beforeEach(async () => {
     jest.resetAllMocks();
+    retailTenantsRepo.create.mockImplementation((value) => value);
+    retailTenantsRepo.save.mockImplementation(async (value) => ({
+      id: 34,
+      ...value,
+    }));
+    moduleEntitlementsRepo.find.mockResolvedValue([]);
+    moduleEntitlementsRepo.create.mockImplementation((value) => value);
+    moduleEntitlementsRepo.save.mockImplementation(async (value) => value);
     activationsRepo.create.mockImplementation((value) => value);
     activationsRepo.save.mockImplementation(async (value) => ({
       id: 701,
@@ -120,6 +144,14 @@ describe('EquityPartnerBnplService', () => {
           useValue: subscriptionsRepo,
         },
         {
+          provide: getRepositoryToken(RetailTenant),
+          useValue: retailTenantsRepo,
+        },
+        {
+          provide: getRepositoryToken(TenantModuleEntitlement),
+          useValue: moduleEntitlementsRepo,
+        },
+        {
           provide: EquityPartnerService,
           useValue: {},
         },
@@ -133,7 +165,7 @@ describe('EquityPartnerBnplService', () => {
     service = module.get<EquityPartnerBnplService>(EquityPartnerBnplService);
   });
 
-  it('assigns only the target owner when provisioning a BNPL branch for another user', async () => {
+  it('assigns both the target owner and the equity partner when provisioning a BNPL branch for another user', async () => {
     partnersRepo.findOne.mockResolvedValue({
       id: 88,
       userId: 900,
@@ -171,7 +203,9 @@ describe('EquityPartnerBnplService', () => {
       tinNumber: '1234567890',
     });
 
-    expect(assignmentsRepo.save).toHaveBeenCalledTimes(1);
+    // Provisioning for another user assigns BOTH the target owner and the equity
+    // partner (so the partner retains staff access to the branch they funded).
+    expect(assignmentsRepo.save).toHaveBeenCalledTimes(2);
     expect(assignmentsRepo.save).toHaveBeenCalledWith(
       expect.objectContaining({
         branchId: 405,
@@ -180,7 +214,7 @@ describe('EquityPartnerBnplService', () => {
         isActive: true,
       }),
     );
-    expect(assignmentsRepo.create).not.toHaveBeenCalledWith(
+    expect(assignmentsRepo.create).toHaveBeenCalledWith(
       expect.objectContaining({
         userId: 900,
       }),

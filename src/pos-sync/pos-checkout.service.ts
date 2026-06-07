@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -175,6 +176,51 @@ export class PosCheckoutService {
     private readonly emailService: EmailService,
   ) {}
 
+  private readonly logger = new Logger(PosCheckoutService.name);
+
+  /**
+   * Resolve the authoritative occurredAt for a checkout — independent of the POS
+   * device clock.
+   *
+   * The daily reports bucket sales by occurredAt (EAT calendar day), so a device
+   * with a fast/mis-set clock could otherwise misfile a sale into the wrong day.
+   * We therefore decide the time from the capture context, not the device:
+   *
+   *  - ONLINE_CAPTURED: the sale was rung up while connected, so the server clock
+   *    (NTP-synced, single source of truth) is authoritative — we IGNORE the
+   *    device-supplied time entirely and stamp server "now".
+   *  - OFFLINE_CAPTURED / legacy / untagged: there was no server when the sale
+   *    happened, so the device's capture time is the only real record — we trust
+   *    it, but a sale can never be in the future, so a fast clock is clamped to
+   *    "now".
+   */
+  private resolveOccurredAt(
+    rawOccurredAt: string,
+    captureState?: string | null,
+  ): Date {
+    const serverNow = new Date();
+
+    // Online sale → the server clock is authoritative; the device clock is irrelevant.
+    if (captureState === 'ONLINE_CAPTURED') {
+      return serverNow;
+    }
+
+    // Offline / untagged → trust the real capture time, but never accept a future one.
+    const FUTURE_GRACE_MS = 2 * 60_000; // tolerate ~2 min of skew + network latency
+    const parsed = new Date(rawOccurredAt);
+    if (Number.isNaN(parsed.getTime())) {
+      return serverNow;
+    }
+    if (parsed.getTime() > serverNow.getTime() + FUTURE_GRACE_MS) {
+      this.logger.warn(
+        `POS checkout occurredAt ${parsed.toISOString()} is ahead of server time ` +
+          `${serverNow.toISOString()} — clamping to server time (device clock skew).`,
+      );
+      return serverNow;
+    }
+    return parsed;
+  }
+
   async quote(dto: QuotePosCheckoutDto): Promise<PosCheckoutQuoteResponseDto> {
     if (!dto.items.length) {
       throw new BadRequestException(
@@ -300,6 +346,10 @@ export class PosCheckoutService {
 
     await this.assertScope(dto.branchId, dto.partnerCredentialId);
 
+    // Authoritative sale time — independent of the device clock (server time for
+    // online captures; clamped device time for offline captures).
+    const occurredAt = this.resolveOccurredAt(dto.occurredAt, dto.captureState);
+
     const checkout = await this.posCheckoutsRepository.save(
       this.posCheckoutsRepository.create({
         branchId: dto.branchId,
@@ -323,7 +373,7 @@ export class PosCheckoutService {
         changeDue: dto.changeDue ?? 0,
         tipAmount: dto.tipAmount ?? 0,
         itemCount: dto.items.length,
-        occurredAt: new Date(dto.occurredAt),
+        occurredAt,
         cashierUserId: dto.cashierUserId ?? actor.id ?? null,
         cashierName: this.normalizeOptionalString(dto.cashierName),
         note: this.normalizeOptionalString(dto.note),
@@ -405,7 +455,7 @@ export class PosCheckoutService {
               sourceReferenceId: checkout.id,
               actorUserId: actor.id ?? null,
               note: this.buildMovementNote(dto, item),
-              occurredAt: new Date(dto.occurredAt),
+              occurredAt,
             },
             manager,
           );

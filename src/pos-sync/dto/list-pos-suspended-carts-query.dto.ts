@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
+  IsBoolean,
   IsEnum,
   IsNumber,
   IsOptional,
@@ -46,4 +47,13 @@ export class ListPosSuspendedCartsQueryDto {
   @IsOptional()
   @IsString()
   registerId?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Also include consumer orders (registerId IS NULL, consumerSource=SUUQS) alongside register-scoped carts',
+  })
+  @IsOptional()
+  @Transform(({ value }) => value === 'true' || value === true)
+  @IsBoolean()
+  includeConsumerOrders?: boolean;
 }

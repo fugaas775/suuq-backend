@@ -1,5 +1,7 @@
 import { PosPortalOnboardingService } from '../branch-staff/pos-portal-onboarding.service';
 import { SellerWorkspace } from '../seller-workspace/entities/seller-workspace.entity';
+import { VendorStore } from './entities/vendor-store.entity';
+import { BranchStaffAssignment } from '../branch-staff/entities/branch-staff-assignment.entity';
 import { InventoryLedgerService } from '../branches/inventory-ledger.service';
 import { Test } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
@@ -33,11 +35,11 @@ describe('VendorService.searchDeliverers (geo)', () => {
       id: 1,
       email: 'a@suuqsapp.com',
       roles: ['DELIVERER'] as any,
-      isActive: true as any,
+      isActive: true,
       displayName: 'Alpha',
-      locationLat: 9.0101 as any,
-      locationLng: 38.7612 as any,
-      registrationCity: 'Addis Ababa' as any,
+      locationLat: 9.0101,
+      locationLng: 38.7612,
+      registrationCity: 'Addis Ababa',
       createdAt: new Date(),
       updatedAt: new Date(),
     },
@@ -45,11 +47,11 @@ describe('VendorService.searchDeliverers (geo)', () => {
       id: 2,
       email: 'b@suuqsapp.com',
       roles: ['DELIVERER'] as any,
-      isActive: true as any,
+      isActive: true,
       displayName: 'Bravo',
-      locationLat: 8.9806 as any,
-      locationLng: 38.7578 as any,
-      registrationCity: 'Addis Ababa' as any,
+      locationLat: 8.9806,
+      locationLng: 38.7578,
+      registrationCity: 'Addis Ababa',
       createdAt: new Date(),
       updatedAt: new Date(),
     },
@@ -57,11 +59,11 @@ describe('VendorService.searchDeliverers (geo)', () => {
       id: 3,
       email: 'c@suuqsapp.com',
       roles: ['DELIVERER'] as any,
-      isActive: true as any,
+      isActive: true,
       displayName: 'Charlie',
-      locationLat: null as any,
-      locationLng: null as any,
-      registrationCity: 'Dire Dawa' as any,
+      locationLat: null,
+      locationLng: null,
+      registrationCity: 'Dire Dawa',
       createdAt: new Date(),
       updatedAt: new Date(),
     },
@@ -74,6 +76,11 @@ describe('VendorService.searchDeliverers (geo)', () => {
         { provide: InventoryLedgerService, useValue: {} },
         { provide: PosPortalOnboardingService, useValue: {} },
         { provide: getRepositoryToken(SellerWorkspace), useValue: {} },
+        { provide: getRepositoryToken(VendorStore), useClass: Repository },
+        {
+          provide: getRepositoryToken(BranchStaffAssignment),
+          useClass: Repository,
+        },
         { provide: getRepositoryToken(User), useClass: Repository },
         { provide: getRepositoryToken(Product), useClass: Repository },
         { provide: getRepositoryToken(Order), useClass: Repository },

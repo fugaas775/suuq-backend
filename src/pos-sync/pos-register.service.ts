@@ -205,9 +205,17 @@ export class PosRegisterService {
       });
     }
     if (query.registerId) {
-      qb.andWhere('cart.registerId = :registerId', {
-        registerId: query.registerId,
-      });
+      if (query.includeConsumerOrders) {
+        // Include register-scoped carts OR null-registerId consumer orders (SUUQS)
+        qb.andWhere(
+          "(cart.registerId = :registerId OR (cart.registerId IS NULL AND cart.metadata->>'consumerSource' = 'SUUQS'))",
+          { registerId: query.registerId },
+        );
+      } else {
+        qb.andWhere('cart.registerId = :registerId', {
+          registerId: query.registerId,
+        });
+      }
     }
 
     const [items, total] = await qb.getManyAndCount();

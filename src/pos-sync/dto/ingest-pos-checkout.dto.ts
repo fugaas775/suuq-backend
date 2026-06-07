@@ -204,6 +204,17 @@ export class IngestPosCheckoutDto {
   @IsDateString()
   occurredAt!: string;
 
+  /**
+   * How the checkout was captured: 'ONLINE_CAPTURED' (rung up while connected) or
+   * 'OFFLINE_CAPTURED' (queued offline and synced later). For ONLINE captures the
+   * backend stamps occurredAt from the server clock so a mis-set POS device clock
+   * can never misdate the sale (or its report day); offline captures keep their
+   * real device capture time.
+   */
+  @IsOptional()
+  @IsString()
+  captureState?: string;
+
   @IsOptional()
   @Type(() => Number)
   @IsNumber()

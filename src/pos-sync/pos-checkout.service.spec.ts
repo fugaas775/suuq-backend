@@ -303,6 +303,170 @@ describe('PosCheckoutService', () => {
     expect(result.status).toBe(PosCheckoutStatus.PROCESSED);
   });
 
+  it('clamps a future occurredAt (device clock skew) to server time', async () => {
+    // Idempotency lookups (no `where.id`) miss; the post-save reload (`where.id`) hits.
+    posCheckoutsRepository.findOne.mockImplementation((opts) =>
+      Promise.resolve(
+        opts?.where?.id
+          ? {
+              id: 71,
+              branchId: 3,
+              transactionType: PosCheckoutTransactionType.SALE,
+              status: PosCheckoutStatus.PROCESSED,
+              currency: 'USD',
+              subtotal: 15,
+              total: 15,
+              itemCount: 1,
+              occurredAt: new Date('2026-04-01T10:00:00.000Z'),
+              processedAt: new Date('2026-04-01T10:01:00.000Z'),
+              tenders: [{ method: 'CASH', amount: 15 }],
+              items: [
+                { productId: 55, quantity: 1, unitPrice: 15, lineTotal: 15 },
+              ],
+              createdAt: new Date('2026-04-01T10:00:00.000Z'),
+              updatedAt: new Date('2026-04-01T10:01:00.000Z'),
+            }
+          : null,
+      ),
+    );
+
+    const before = Date.now();
+    await service.ingest(
+      {
+        branchId: 3,
+        transactionType: PosCheckoutTransactionType.SALE,
+        receiptNumber: 'R-FUTURE',
+        currency: 'usd',
+        subtotal: 15,
+        total: 15,
+        paidAmount: 15,
+        // Device clock is set far in the future — must never be stored verbatim,
+        // otherwise the sale would be filed under a day that has not happened yet
+        // and would vanish from the "Today" report.
+        occurredAt: '2999-01-01T00:00:00.000Z',
+        items: [{ productId: 55, quantity: 1, unitPrice: 15, lineTotal: 15 }],
+        tenders: [{ method: 'CASH', amount: 15 }],
+      },
+      { id: 17, roles: ['POS_OPERATOR'] },
+    );
+    const after = Date.now();
+
+    // The checkout is stamped with server "now", not the year-2999 client time.
+    const createdWith = posCheckoutsRepository.create.mock.calls[0][0];
+    const storedOccurredAt = createdWith.occurredAt as Date;
+    expect(storedOccurredAt.getTime()).toBeGreaterThanOrEqual(before);
+    expect(storedOccurredAt.getTime()).toBeLessThanOrEqual(after);
+    // The inventory movement is stamped with the same clamped time.
+    expect(inventoryLedgerService.recordMovement).toHaveBeenCalledWith(
+      expect.objectContaining({ occurredAt: storedOccurredAt }),
+      expect.any(Object),
+    );
+  });
+
+  it('preserves a past occurredAt (genuine offline sale synced later)', async () => {
+    posCheckoutsRepository.findOne.mockImplementation((opts) =>
+      Promise.resolve(
+        opts?.where?.id
+          ? {
+              id: 71,
+              branchId: 3,
+              transactionType: PosCheckoutTransactionType.SALE,
+              status: PosCheckoutStatus.PROCESSED,
+              currency: 'USD',
+              subtotal: 15,
+              total: 15,
+              itemCount: 1,
+              occurredAt: new Date('2026-04-01T10:00:00.000Z'),
+              processedAt: new Date('2026-04-01T10:01:00.000Z'),
+              tenders: [{ method: 'CASH', amount: 15 }],
+              items: [
+                { productId: 55, quantity: 1, unitPrice: 15, lineTotal: 15 },
+              ],
+              createdAt: new Date('2026-04-01T10:00:00.000Z'),
+              updatedAt: new Date('2026-04-01T10:01:00.000Z'),
+            }
+          : null,
+      ),
+    );
+
+    // A real sale that happened in the past and is only now syncing — keep its time.
+    const offlineIso = '2026-04-01T10:00:00.000Z';
+    await service.ingest(
+      {
+        branchId: 3,
+        transactionType: PosCheckoutTransactionType.SALE,
+        receiptNumber: 'R-OFFLINE',
+        currency: 'usd',
+        subtotal: 15,
+        total: 15,
+        paidAmount: 15,
+        occurredAt: offlineIso,
+        captureState: 'OFFLINE_CAPTURED',
+        items: [{ productId: 55, quantity: 1, unitPrice: 15, lineTotal: 15 }],
+        tenders: [{ method: 'CASH', amount: 15 }],
+      },
+      { id: 17, roles: ['POS_OPERATOR'] },
+    );
+
+    const storedOccurredAt = posCheckoutsRepository.create.mock.calls[0][0]
+      .occurredAt as Date;
+    expect(storedOccurredAt.toISOString()).toBe(offlineIso);
+  });
+
+  it('stamps server time for online captures, ignoring the device clock', async () => {
+    posCheckoutsRepository.findOne.mockImplementation((opts) =>
+      Promise.resolve(
+        opts?.where?.id
+          ? {
+              id: 71,
+              branchId: 3,
+              transactionType: PosCheckoutTransactionType.SALE,
+              status: PosCheckoutStatus.PROCESSED,
+              currency: 'USD',
+              subtotal: 15,
+              total: 15,
+              itemCount: 1,
+              occurredAt: new Date('2026-04-01T10:00:00.000Z'),
+              processedAt: new Date('2026-04-01T10:01:00.000Z'),
+              tenders: [{ method: 'CASH', amount: 15 }],
+              items: [
+                { productId: 55, quantity: 1, unitPrice: 15, lineTotal: 15 },
+              ],
+              createdAt: new Date('2026-04-01T10:00:00.000Z'),
+              updatedAt: new Date('2026-04-01T10:01:00.000Z'),
+            }
+          : null,
+      ),
+    );
+
+    // The device reports a (past) time, but the sale was rung up online — so the
+    // server clock wins and the device clock is ignored entirely.
+    const before = Date.now();
+    await service.ingest(
+      {
+        branchId: 3,
+        transactionType: PosCheckoutTransactionType.SALE,
+        receiptNumber: 'R-ONLINE',
+        currency: 'usd',
+        subtotal: 15,
+        total: 15,
+        paidAmount: 15,
+        occurredAt: '2026-04-01T10:00:00.000Z',
+        captureState: 'ONLINE_CAPTURED',
+        items: [{ productId: 55, quantity: 1, unitPrice: 15, lineTotal: 15 }],
+        tenders: [{ method: 'CASH', amount: 15 }],
+      },
+      { id: 17, roles: ['POS_OPERATOR'] },
+    );
+    const after = Date.now();
+
+    const stored = posCheckoutsRepository.create.mock.calls[0][0]
+      .occurredAt as Date;
+    // Stored time is server "now", NOT the 2026-04-01 device-supplied time.
+    expect(stored.getTime()).toBeGreaterThanOrEqual(before);
+    expect(stored.getTime()).toBeLessThanOrEqual(after);
+  });
+
   it('persists customer profile metadata during checkout ingest', async () => {
     posCheckoutsRepository.findOne
       .mockResolvedValueOnce(null)
@@ -852,7 +1016,7 @@ describe('PosCheckoutService', () => {
       limit: 20,
       status: PosCheckoutStatus.PROCESSED,
       transactionType: PosCheckoutTransactionType.SALE,
-    } as ListPosCheckoutsQueryDto);
+    });
 
     expect(result.total).toBe(1);
     expect(result.items[0]?.id).toBe(71);

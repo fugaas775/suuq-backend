@@ -72,8 +72,10 @@ import { MarketingLeadsModule } from './marketing-leads/marketing-leads.module';
 import { SellerWorkspaceModule } from './seller-workspace/seller-workspace.module';
 import { BillingModule } from './billing/billing.module';
 import { HospitalityModule } from './hospitality/hospitality.module';
+import { PropertyRentalModule } from './property-rental/property-rental.module';
 import { StorefrontModule } from './storefront/storefront.module';
 import { ConsumerModule } from './consumer/consumer.module';
+import { ParkedOrdersModule } from './parked-orders/parked-orders.module';
 
 @Module({
   imports: [
@@ -255,10 +257,12 @@ import { ConsumerModule } from './consumer/consumer.module';
     RetailModule,
     MarketingLeadsModule,
     HospitalityModule,
+    PropertyRentalModule,
     SellerWorkspaceModule,
     BillingModule,
     StorefrontModule,
     ConsumerModule,
+    ParkedOrdersModule,
   ],
   controllers: [AppController],
   // Apply rate limiting globally

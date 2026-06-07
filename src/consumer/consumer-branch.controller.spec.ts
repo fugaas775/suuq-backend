@@ -39,11 +39,15 @@ describe('ConsumerBranchController.getBranchProducts', () => {
       findOne: jest.fn().mockResolvedValue(opts.store),
     };
     const branchesRepository = { findOne: jest.fn() };
+    const catalogLinkRepo = {
+      count: jest.fn().mockResolvedValue(0),
+    };
 
     const controller = new ConsumerBranchController(
       branchesRepository as never,
       vendorStoreRepo as never,
       productRepo as never,
+      catalogLinkRepo as never,
     );
     return { controller, baseQb, getCount, vendorStoreRepo };
   }

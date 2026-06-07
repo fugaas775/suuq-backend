@@ -4,6 +4,7 @@ import { HospitalityKitchenTicket } from './entities/hospitality-kitchen-ticket.
 import { HospitalityTableBoard } from './entities/hospitality-table-board.entity';
 import { HospitalityBillIntervention } from './entities/hospitality-bill-intervention.entity';
 import { HospitalityIdempotencyKey } from './entities/hospitality-idempotency-key.entity';
+import { KitchenProductAvailability } from './entities/kitchen-product-availability.entity';
 
 describe('HospitalityWorkflowsService bill interventions', () => {
   let service: HospitalityWorkflowsService;
@@ -23,6 +24,12 @@ describe('HospitalityWorkflowsService bill interventions', () => {
     save: jest.Mock;
   };
   let idempotencyRepo: {
+    findOne: jest.Mock;
+    create: jest.Mock;
+    save: jest.Mock;
+  };
+  let kitchenAvailabilityRepo: {
+    find: jest.Mock;
     findOne: jest.Mock;
     create: jest.Mock;
     save: jest.Mock;
@@ -64,6 +71,13 @@ describe('HospitalityWorkflowsService bill interventions', () => {
       save: jest.fn(async (value) => value),
     };
 
+    kitchenAvailabilityRepo = {
+      find: jest.fn().mockResolvedValue([]),
+      findOne: jest.fn(),
+      create: jest.fn((value) => ({ ...value })),
+      save: jest.fn(async (value) => value),
+    };
+
     auditService = {
       log: jest.fn().mockResolvedValue(undefined),
     };
@@ -84,6 +98,9 @@ describe('HospitalityWorkflowsService bill interventions', () => {
             if (entity === HospitalityIdempotencyKey) {
               return idempotencyRepo;
             }
+            if (entity === KitchenProductAvailability) {
+              return kitchenAvailabilityRepo;
+            }
 
             throw new Error(
               `Unexpected repository request: ${entity?.name || entity}`,
@@ -98,6 +115,7 @@ describe('HospitalityWorkflowsService bill interventions', () => {
       tableBoardRepo as never,
       billInterventionRepo as never,
       idempotencyRepo as never,
+      kitchenAvailabilityRepo as never,
       auditService as never,
       dataSource as never,
     );

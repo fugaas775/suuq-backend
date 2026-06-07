@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { Reflector } from '@nestjs/core';
 import { RetailModulesGuard } from '../retail/retail-modules.guard';
 import { RetailEntitlementsService } from '../retail/retail-entitlements.service';
+import { PosSessionRevocationService } from '../auth/pos-session-revocation.service';
 import { PosCheckoutController } from './pos-checkout.controller';
 import { PosCheckoutService } from './pos-checkout.service';
 import { PosCheckoutTransactionType } from './entities/pos-checkout.entity';
@@ -39,6 +40,7 @@ describe('PosCheckoutController', () => {
           provide: RetailModulesGuard,
           useValue: { canActivate: jest.fn().mockReturnValue(true) },
         },
+        { provide: PosSessionRevocationService, useValue: {} },
       ],
     }).compile();
 
@@ -122,7 +124,7 @@ describe('PosCheckoutController', () => {
   it('falls back to dto branchId when void query scope is omitted', async () => {
     await controller.voidCheckout(
       71,
-      undefined as unknown as string,
+      undefined,
       { branchId: 3, reason: 'Customer returned item' },
       { user: { id: 17 } },
     );

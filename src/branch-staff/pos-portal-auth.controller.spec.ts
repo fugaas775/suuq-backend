@@ -4,6 +4,7 @@ import { AuthService } from '../auth/auth.service';
 import { AuditService } from '../audit/audit.service';
 import { UserRole } from '../auth/roles.enum';
 import { BranchStaffService } from './branch-staff.service';
+import { BranchShiftService } from './branch-shift.service';
 import { PosPortalAuthController } from './pos-portal-auth.controller';
 import { PosPortalLoginDto } from './dto/pos-portal-login.dto';
 import { RetailModule } from '../retail/entities/tenant-module-entitlement.entity';
@@ -83,6 +84,10 @@ describe('PosPortalAuthController', () => {
       providers: [
         { provide: AuthService, useValue: authServiceMock },
         { provide: BranchStaffService, useValue: branchStaffServiceMock },
+        {
+          provide: BranchShiftService,
+          useValue: { isUserAllowedNow: jest.fn().mockResolvedValue(true) },
+        },
         {
           provide: PosPortalOnboardingService,
           useValue: posPortalOnboardingServiceMock,

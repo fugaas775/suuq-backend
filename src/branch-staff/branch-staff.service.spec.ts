@@ -19,6 +19,8 @@ import {
   BranchStaffCapability,
   BranchStaffRole,
 } from './entities/branch-staff-assignment.entity';
+import { BranchStaffInvite } from './entities/branch-staff-invite.entity';
+import { PosSessionRevocationService } from '../auth/pos-session-revocation.service';
 import { ForbiddenException } from '@nestjs/common';
 
 describe('BranchStaffService', () => {
@@ -28,6 +30,7 @@ describe('BranchStaffService', () => {
     create: jest.Mock;
     save: jest.Mock;
     find: jest.Mock;
+    update: jest.Mock;
   };
   let invitesRepository: {
     findOne: jest.Mock;
@@ -55,6 +58,7 @@ describe('BranchStaffService', () => {
       create: jest.fn((value) => value),
       save: jest.fn(async (value) => value),
       find: jest.fn(),
+      update: jest.fn(async () => ({ affected: 1 })),
     };
     invitesRepository = {
       findOne: jest.fn(),
@@ -91,6 +95,10 @@ describe('BranchStaffService', () => {
           provide: getRepositoryToken(BranchStaffAssignment),
           useValue: assignmentsRepository,
         },
+        {
+          provide: getRepositoryToken(BranchStaffInvite),
+          useValue: invitesRepository,
+        },
 
         {
           provide: getRepositoryToken(Branch),
@@ -115,6 +123,7 @@ describe('BranchStaffService', () => {
           provide: RetailEntitlementsService,
           useValue: retailEntitlementsService,
         },
+        { provide: PosSessionRevocationService, useValue: {} },
       ],
     }).compile();
 
@@ -224,11 +233,9 @@ describe('BranchStaffService', () => {
       where: { branchId: 7, userId: 51, isActive: true },
       relations: { user: true },
     });
-    expect(assignmentsRepository.save).toHaveBeenCalledWith(
-      expect.objectContaining({
-        id: 99,
-        isActive: false,
-      }),
+    expect(assignmentsRepository.update).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 99 }),
+      expect.objectContaining({ isActive: false }),
     );
     expect(result).toEqual(expect.objectContaining({ isActive: false }));
   });
@@ -277,9 +284,7 @@ describe('BranchStaffService', () => {
       roles: ['VENDOR'],
       displayName: 'Global Me',
     });
-    jest
-      .spyOn(service, 'getPosBranchSummariesForUser')
-      .mockResolvedValue([] as any);
+    jest.spyOn(service, 'getPosBranchSummariesForUser').mockResolvedValue([]);
     jest
       .spyOn(service, 'getPosWorkspaceActivationCandidatesForUser')
       .mockResolvedValue([
@@ -497,7 +502,8 @@ describe('BranchStaffService', () => {
       { id: 17, roles: ['USER'] },
     );
 
-    expect(assignmentsRepository.save).toHaveBeenCalledWith(
+    expect(assignmentsRepository.update).toHaveBeenCalledWith(
+      expect.any(Object),
       expect.objectContaining({
         assignedSurfaces: ['reports', 'staff'],
         capabilities: [BranchStaffCapability.MANAGE_BRANCH_STAFF],

@@ -1,5 +1,7 @@
 import { PosPortalOnboardingService } from '../branch-staff/pos-portal-onboarding.service';
 import { SellerWorkspace } from '../seller-workspace/entities/seller-workspace.entity';
+import { VendorStore } from './entities/vendor-store.entity';
+import { BranchStaffAssignment } from '../branch-staff/entities/branch-staff-assignment.entity';
 import { InventoryLedgerService } from '../branches/inventory-ledger.service';
 import { describe, it, expect, beforeEach, jest } from '@jest/globals';
 import { Test, TestingModule } from '@nestjs/testing';
@@ -143,6 +145,8 @@ describe('VendorService', () => {
         { provide: InventoryLedgerService, useValue: {} },
         { provide: PosPortalOnboardingService, useValue: {} },
         { provide: getRepositoryToken(SellerWorkspace), useValue: {} },
+        { provide: getRepositoryToken(VendorStore), useValue: {} },
+        { provide: getRepositoryToken(BranchStaffAssignment), useValue: {} },
         { provide: getRepositoryToken(User), useValue: userRepoMock },
         { provide: getRepositoryToken(Product), useValue: productRepoMock },
         { provide: getRepositoryToken(Order), useValue: orderRepoMock },
@@ -357,7 +361,7 @@ describe('VendorService', () => {
         name: 'Staff listed product',
         price: 10,
         currency: 'USD',
-      } as any,
+      },
       creator,
     );
 
@@ -410,8 +414,8 @@ describe('VendorService', () => {
         price: 10,
         currency: 'USD',
         stockQuantity: 8,
-      } as any,
-      { id: 1 } as any,
+      },
+      { id: 1 },
       { branchId: 22 },
     );
 
@@ -501,12 +505,12 @@ describe('VendorService', () => {
       1,
       {
         rows: [
-          { name: 'Row 1', price: 10, currency: 'USD' } as any,
-          { name: 'Row 2', price: 11, currency: 'USD' } as any,
-          { name: 'Row 3', price: 12, currency: 'USD' } as any,
+          { name: 'Row 1', price: 10, currency: 'USD' },
+          { name: 'Row 2', price: 11, currency: 'USD' },
+          { name: 'Row 3', price: 12, currency: 'USD' },
         ],
       },
-      { id: 99 } as any,
+      { id: 99 },
       { branchId: 31 },
     );
 
@@ -516,7 +520,7 @@ describe('VendorService', () => {
       1,
       { name: 'Row 1', price: 10, currency: 'USD' },
       { id: 99 },
-      { branchId: 31 },
+      { branchId: 31, bypassPostingLimits: true },
     );
     expect(result).toEqual({
       totalRows: 3,
@@ -552,12 +556,12 @@ describe('VendorService', () => {
       {
         continueOnError: false,
         rows: [
-          { name: 'Row 1', price: 10, currency: 'USD' } as any,
-          { name: 'Row 2', price: 11, currency: 'USD' } as any,
-          { name: 'Row 3', price: 12, currency: 'USD' } as any,
+          { name: 'Row 1', price: 10, currency: 'USD' },
+          { name: 'Row 2', price: 11, currency: 'USD' },
+          { name: 'Row 3', price: 12, currency: 'USD' },
         ],
       },
-      { id: 99 } as any,
+      { id: 99 },
       { branchId: 31 },
     );
 
@@ -695,7 +699,7 @@ describe('VendorService', () => {
         Color: ['Red', 'Blue'],
         Material: ['Cotton'],
       },
-    } as any);
+    });
 
     expect(productRepoMock.save).toHaveBeenCalled();
     expect(updated.attributes.Size).toEqual(['S', 'M', 'L']);

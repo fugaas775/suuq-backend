@@ -517,7 +517,7 @@ export class HomeService {
         )
       : Promise.resolve(configFallback);
 
-    // 2) Curated sections (parallel via tags home-new/home-best)
+    // 2) Curated sections (New Arrivals only; Best Sellers removed)
     const curatedPromise = shouldFetchCurated
       ? Promise.all([
           withDeadline(
@@ -531,17 +531,7 @@ export class HomeService {
             shouldFetchExtended ? sectionTimeoutMs : initialCuratedTimeoutMs,
             { items: [] } as any,
           ),
-          withDeadline(
-            'curatedBest',
-            this.curation.getSection('home-best', {
-              limit: 10,
-              cursor: null,
-              view: 'grid',
-              currency,
-            }),
-            shouldFetchExtended ? sectionTimeoutMs : initialCuratedTimeoutMs,
-            { items: [] } as any,
-          ),
+          Promise.resolve({ items: [] } as any),
         ])
       : Promise.resolve([{ items: [] }, { items: [] }] as any);
 
@@ -1023,7 +1013,7 @@ export class HomeService {
       storesNearbyPromise,
     ]);
 
-    const [curatedNew, curatedBest] = curated;
+    const [curatedNew] = curated;
     const exploreCards = (explore.items || []).map((p: any) =>
       toProductCard(p),
     );
@@ -1074,7 +1064,7 @@ export class HomeService {
 
     const pendingSections: string[] = [];
     if (!shouldFetchExtended) pendingSections.push('featuredCategories');
-    if (!shouldFetchCurated) pendingSections.push('curatedNew', 'curatedBest');
+    if (!shouldFetchCurated) pendingSections.push('curatedNew');
 
     const payload: any = {
       featuredCategories: shouldFetchExtended ? config.featuredCategories : [],
@@ -1088,14 +1078,6 @@ export class HomeService {
           ? (curatedNew.items || []).map((p: any) => toProductCard(p))
           : [],
         seeAllFilters: { tag: 'home-new' },
-      },
-      curatedBest: {
-        key: 'home-best',
-        title: 'Best Sellers',
-        items: shouldFetchCurated
-          ? (curatedBest.items || []).map((p: any) => toProductCard(p))
-          : [],
-        seeAllFilters: { tag: 'home-best' },
       },
       exploreProducts: {
         items: exploreCards,

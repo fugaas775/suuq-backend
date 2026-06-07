@@ -11,11 +11,13 @@ import { Repository } from 'typeorm';
 import { Branch } from '../branches/entities/branch.entity';
 import { VendorStore } from '../vendor/entities/vendor-store.entity';
 import { Product } from '../products/entities/product.entity';
+import { BranchCatalogProductLink } from '../retail/entities/branch-catalog-product-link.entity';
 import {
   ConsumerBranchItemDto,
   ConsumerBranchListDto,
   ConsumerBranchProductItemDto,
   ConsumerBranchProductsDto,
+  ConsumerBranchQrDto,
 } from './dto/consumer-response.dto';
 import { ConsumerBranchQueryDto } from './dto/consumer-branch-query.dto';
 import { SERVICE_FORMAT_LABELS } from './dto/place-consumer-order.dto';
@@ -25,7 +27,14 @@ function toFormatLabel(code: string | null | undefined): string {
   return (SERVICE_FORMAT_LABELS as Record<string, string>)[code] ?? code;
 }
 
+/** Public base URL used to build branch QR universal links. */
+function publicBaseUrl(): string {
+  const raw = process.env.PUBLIC_BASE_URL || 'https://suuq-s.com';
+  return raw.replace(/\/+$/, '');
+}
+
 function toBranchItem(branch: Branch): ConsumerBranchItemDto {
+  const owner = branch.owner ?? null;
   return {
     branchId: branch.id,
     name: branch.name,
@@ -37,6 +46,9 @@ function toBranchItem(branch: Branch): ConsumerBranchItemDto {
     latitude: branch.latitude != null ? Number(branch.latitude) : null,
     longitude: branch.longitude != null ? Number(branch.longitude) : null,
     isActive: branch.isActive,
+    ownerId: owner?.id ?? branch.ownerId ?? null,
+    ownerName: owner ? (owner.storeName ?? owner.displayName ?? null) : null,
+    logoUrl: owner?.avatarUrl ?? null,
   };
 }
 
@@ -49,6 +61,8 @@ export class ConsumerBranchController {
     private readonly vendorStoreRepo: Repository<VendorStore>,
     @InjectRepository(Product)
     private readonly productRepo: Repository<Product>,
+    @InjectRepository(BranchCatalogProductLink)
+    private readonly catalogLinkRepo: Repository<BranchCatalogProductLink>,
   ) {}
 
   /**
@@ -65,6 +79,7 @@ export class ConsumerBranchController {
 
     const qb = this.branchesRepository
       .createQueryBuilder('branch')
+      .leftJoinAndSelect('branch.owner', 'owner')
       .where('branch.isActive = true')
       // Only show branches that have a consumer-visible store profile
       .andWhere(
@@ -140,11 +155,34 @@ export class ConsumerBranchController {
   ): Promise<ConsumerBranchItemDto> {
     const branch = await this.branchesRepository.findOne({
       where: { id: branchId, isActive: true },
+      relations: { owner: true },
     });
     if (!branch) {
       throw new NotFoundException(`Branch ${branchId} not found`);
     }
     return toBranchItem(branch);
+  }
+
+  /**
+   * GET /consumer/v1/branches/:branchId/qr
+   * Returns the universal link a branch should encode in its printed QR code.
+   * Scanning it deep-links into the consumer app's branch ordering screen.
+   */
+  @Get(':branchId/qr')
+  async getBranchQr(
+    @Param('branchId', ParseIntPipe) branchId: number,
+  ): Promise<ConsumerBranchQrDto> {
+    const branch = await this.branchesRepository.findOne({
+      where: { id: branchId, isActive: true },
+    });
+    if (!branch) {
+      throw new NotFoundException(`Branch ${branchId} not found`);
+    }
+    return {
+      branchId: branch.id,
+      name: branch.name,
+      url: `${publicBaseUrl()}/s/b/${branch.id}`,
+    };
   }
 
   /**
@@ -162,6 +200,52 @@ export class ConsumerBranchController {
     const limit = Math.min(parseInt(rawLimit ?? '50', 10) || 50, 100);
     const skip = (page - 1) * limit;
 
+    // Primary source: branch_catalog_product_links (the POS Seller Hub catalog).
+    // These are products explicitly linked to the branch by the merchant.
+    const linkedCount = await this.catalogLinkRepo.count({
+      where: { branchId },
+    });
+
+    if (linkedCount > 0) {
+      // Build query via the catalog links table so we include all linked products
+      // regardless of their vendor_store_id assignment.
+      const baseQb = this.productRepo
+        .createQueryBuilder('p')
+        .innerJoin(
+          'branch_catalog_product_links',
+          'bcl',
+          'bcl."productId" = p.id AND bcl."branchId" = :branchId',
+          { branchId },
+        )
+        .where("p.status = 'publish'")
+        .andWhere('p.deleted_at IS NULL');
+
+      const total = await baseQb.clone().getCount();
+
+      const products = await baseQb
+        .leftJoinAndSelect('p.tags', 'tag')
+        .orderBy('p.name', 'ASC')
+        .skip(skip)
+        .take(limit)
+        .getMany();
+
+      const items: ConsumerBranchProductItemDto[] = products.map((p) => ({
+        id: p.id,
+        name: p.name,
+        price: Number(p.price),
+        currency: p.currency ?? null,
+        imageUrl: p.imageUrl ?? null,
+        productType: p.productType ?? null,
+        tags: (p.tags ?? [])
+          .map((t) => (t?.name ?? '').toLowerCase())
+          .filter((name) => name.length > 0),
+      }));
+
+      return { items, total, page, limit };
+    }
+
+    // Fallback: vendor_store products linked directly by vendor_store_id
+    // (legacy path for branches that haven't set up a POS catalog yet).
     const store = await this.vendorStoreRepo.findOne({
       where: { branchId, isConsumerVisible: true },
     });
@@ -169,9 +253,6 @@ export class ConsumerBranchController {
       return { items: [], total: 0, page, limit };
     }
 
-    // Count without joins for correct pagination totals.
-    // deleted_at is a plain column (not a @DeleteDateColumn), so soft-deleted
-    // products are not auto-excluded — filter them explicitly.
     const baseQb = this.productRepo
       .createQueryBuilder('p')
       .where('p.vendorStoreId = :sid', { sid: store.id })
@@ -180,9 +261,6 @@ export class ConsumerBranchController {
 
     const total = await baseQb.clone().getCount();
 
-    // Eager-load tags so consumer clients can classify catalog items
-    // (e.g. HOTEL room charges carry the "room" tag). The take()/skip()
-    // with a to-many join makes TypeORM paginate the root entity correctly.
     const products = await baseQb
       .leftJoinAndSelect('p.tags', 'tag')
       .orderBy('p.name', 'ASC')

@@ -109,19 +109,11 @@ describe('InventoryLedgerService', () => {
     expect(result.inventory.quantityOnHand).toBe(15);
     expect(result.inventory.availableToSell).toBe(8);
     expect(result.inventory.version).toBe(5);
+    // recordMovement no longer auto-triggers replenishment — that evaluation now
+    // lives in the branch-transfers flow, not in the inventory ledger.
     expect(
       replenishmentService.maybeCreateDraftPurchaseOrder,
-    ).toHaveBeenCalledWith(
-      expect.objectContaining({
-        branchId: 1,
-        productId: 9,
-        availableToSell: 8,
-      }),
-      expect.objectContaining({
-        trigger: 'INVENTORY_ADJUSTMENT',
-      }),
-      expect.any(Object),
-    );
+    ).not.toHaveBeenCalled();
   });
 
   it('prevents negative inventory balances', async () => {
@@ -181,7 +173,7 @@ describe('InventoryLedgerService', () => {
     ).not.toHaveBeenCalled();
   });
 
-  it('triggers replenishment evaluation after POS sync movements', async () => {
+  it('records POS sync movements without auto-triggering replenishment', async () => {
     branchInventoryRepository.findOne.mockResolvedValue({
       id: 10,
       branchId: 1,
@@ -197,7 +189,7 @@ describe('InventoryLedgerService', () => {
       version: 4,
     });
 
-    await service.recordMovement({
+    const result = await service.recordMovement({
       branchId: 1,
       productId: 9,
       movementType: StockMovementType.SALE,
@@ -206,19 +198,13 @@ describe('InventoryLedgerService', () => {
       actorUserId: 21,
     });
 
+    // The POS sync movement is recorded and availableToSell recomputed, but the
+    // inventory ledger does not auto-trigger replenishment — that evaluation now
+    // lives in the branch-transfers flow.
+    expect(result.inventory.availableToSell).toBe(3);
+    expect(result.inventory.version).toBe(5);
     expect(
       replenishmentService.maybeCreateDraftPurchaseOrder,
-    ).toHaveBeenCalledWith(
-      expect.objectContaining({
-        branchId: 1,
-        productId: 9,
-        availableToSell: 3,
-      }),
-      expect.objectContaining({
-        trigger: 'POS_SYNC',
-        actorUserId: 21,
-      }),
-      expect.any(Object),
-    );
+    ).not.toHaveBeenCalled();
   });
 });

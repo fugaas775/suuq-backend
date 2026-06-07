@@ -51,6 +51,10 @@ export class ConsumerBranchItemDto {
   latitude!: number | null;
   longitude!: number | null;
   isActive!: boolean;
+  /** Owning vendor/business — lets clients group branches by parent store. */
+  ownerId!: number | null;
+  ownerName!: string | null;
+  logoUrl!: string | null;
 }
 
 /** Paginated branch list response. */
@@ -84,4 +88,15 @@ export class ConsumerBranchProductsDto {
   total!: number;
   page!: number;
   limit!: number;
+}
+
+/**
+ * Deep-link payload for a branch QR code. Branch owners print/post the QR;
+ * scanning it opens the branch ordering screen in the consumer app.
+ */
+export class ConsumerBranchQrDto {
+  branchId!: number;
+  name!: string;
+  /** Universal link encoded in the QR, e.g. https://suuq-s.com/s/b/123 */
+  url!: string;
 }

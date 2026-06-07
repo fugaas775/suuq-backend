@@ -9,6 +9,8 @@ import { Order } from '../orders/entities/order.entity';
 import { User } from '../users/entities/user.entity';
 import { CurationService } from '../curation/curation.service';
 import { ImageSimilarityService } from '../search/image-similarity.service';
+import { VendorStore } from '../vendor/entities/vendor-store.entity';
+import { Branch } from '../branches/entities/branch.entity';
 
 describe('HomeService (Explore engine flag)', () => {
   let service: HomeService;
@@ -64,6 +66,8 @@ describe('HomeService (Explore engine flag)', () => {
           provide: ImageSimilarityService,
           useValue: imageSimilarity,
         },
+        { provide: getRepositoryToken(VendorStore), useValue: {} },
+        { provide: getRepositoryToken(Branch), useValue: {} },
       ],
     }).compile();
 
