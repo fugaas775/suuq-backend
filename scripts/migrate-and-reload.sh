@@ -11,8 +11,16 @@ cd "$REPO_ROOT"
 echo "[deploy] Installing dependencies..."
 yarn install --frozen-lockfile
 
-echo "[deploy] Building..."
+echo "[deploy] Building (clean — avoids stale incremental output with no dist/main.js)..."
+yarn clean:dist
+rm -f tsconfig.build.tsbuildinfo
 yarn build
+
+echo "[deploy] Verifying build emitted the entrypoint..."
+if [ ! -f dist/main.js ]; then
+  echo "[deploy] ERROR: dist/main.js missing after build — aborting before PM2 reload." >&2
+  exit 1
+fi
 
 echo "[deploy] Running migrations..."
 yarn typeorm migration:run
