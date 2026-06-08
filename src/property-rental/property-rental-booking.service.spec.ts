@@ -205,6 +205,117 @@ describe('PropertyRentalBookingService', () => {
       expect(result.paidAmount).toBe(5000);
       expect(bookingRepo.save).not.toHaveBeenCalled();
     });
+
+    it('accumulates a prior partial payment into the final settlement total', async () => {
+      bookingRepo.findOne.mockResolvedValueOnce({
+        id: 1,
+        branchId: 4,
+        status: PropertyRentalBookingStatus.OPEN,
+        currency: 'ETB',
+        depositAmount: 0,
+        chargesTotal: 84000,
+        paidAmount: 30000,
+        payments: [
+          {
+            amount: 30000,
+            method: 'CASH',
+            currency: 'ETB',
+            reference: null,
+            checkoutId: 'chk-1',
+            idempotencyKey: 'pay-1',
+            paidAt: '2026-06-08T00:00:00.000Z',
+          },
+        ],
+      });
+
+      const result = await service.settleBooking(1, {
+        payments: [{ method: 'CASH', amount: 54000 }],
+      });
+
+      expect(result.paidAmount).toBe(84000);
+      expect(result.outstanding).toBe(0);
+      expect(result.payments).toHaveLength(2);
+    });
+  });
+
+  describe('recordPayment', () => {
+    const openBooking = (over = {}) => ({
+      id: 1,
+      branchId: 4,
+      status: PropertyRentalBookingStatus.OPEN,
+      currency: 'ETB',
+      chargesTotal: 84000,
+      paidAmount: null,
+      payments: null,
+      depositAmount: 0,
+      depositRefund: null,
+      areaSqm: null,
+      tenantType: PropertyTenantType.INDIVIDUAL,
+      billingCycle: PropertyRentalBillingCycle.MONTH,
+      periodsBilled: 6,
+      ...over,
+    });
+
+    it('records a partial instalment, accrues paidAmount and exposes outstanding', async () => {
+      bookingRepo.findOne.mockResolvedValueOnce(openBooking());
+
+      const result = await service.recordPayment(1, {
+        payments: [{ method: 'CASH', amount: 30000 }],
+        checkoutId: 'chk-1',
+        idempotencyKey: 'pay-1',
+      });
+
+      expect(result.status).toBe(PropertyRentalBookingStatus.OPEN);
+      expect(result.paidAmount).toBe(30000);
+      expect(result.outstanding).toBe(54000);
+      expect(result.payments).toHaveLength(1);
+      expect(result.payments[0]).toMatchObject({
+        amount: 30000,
+        method: 'CASH',
+        checkoutId: 'chk-1',
+      });
+    });
+
+    it('is idempotent on a repeated payment idempotencyKey', async () => {
+      bookingRepo.findOne.mockResolvedValueOnce(
+        openBooking({
+          paidAmount: 30000,
+          payments: [
+            {
+              amount: 30000,
+              method: 'CASH',
+              currency: 'ETB',
+              reference: null,
+              checkoutId: 'chk-1',
+              idempotencyKey: 'pay-1',
+              paidAt: '2026-06-08T00:00:00.000Z',
+            },
+          ],
+          createdAt: new Date('2026-06-01T08:00:00.000Z'),
+          updatedAt: new Date('2026-06-01T08:00:00.000Z'),
+          settledAt: null,
+          voidedAt: null,
+        }),
+      );
+
+      const result = await service.recordPayment(1, {
+        payments: [{ method: 'CASH', amount: 30000 }],
+        idempotencyKey: 'pay-1',
+      });
+
+      expect(result.paidAmount).toBe(30000);
+      expect(bookingRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('rejects a payment on a non-open booking', async () => {
+      bookingRepo.findOne.mockResolvedValueOnce({
+        id: 1,
+        status: PropertyRentalBookingStatus.SETTLED,
+      });
+      await expect(
+        service.recordPayment(1, { amount: 1000 }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
   });
 
   describe('voidBooking', () => {
