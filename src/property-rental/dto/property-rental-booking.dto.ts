@@ -345,63 +345,6 @@ export class SettlePropertyBookingDto {
   idempotencyKey?: string;
 }
 
-/**
- * Records a single partial (instalment) payment against an OPEN booking. The
- * cumulative total accrues on `paidAmount`; each call appends to the ledger.
- */
-export class RecordPropertyPaymentDto {
-  @ApiPropertyOptional({ example: 4 })
-  @IsOptional()
-  @Type(() => Number)
-  @IsNumber()
-  branchId?: number;
-
-  /** Tender rows for this instalment (split payments supported). */
-  @ApiPropertyOptional({ type: [PropertyBookingPaymentRowDto] })
-  @IsOptional()
-  @IsArray()
-  @ValidateNested({ each: true })
-  @Type(() => PropertyBookingPaymentRowDto)
-  payments?: PropertyBookingPaymentRowDto[];
-
-  /** Flat amount fallback when no payments[] array is provided. */
-  @ApiPropertyOptional({ example: 30000 })
-  @IsOptional()
-  @Type(() => Number)
-  @IsNumber({ maxDecimalPlaces: 2 })
-  @Min(0)
-  amount?: number;
-
-  @ApiPropertyOptional({ example: 'CASH' })
-  @IsOptional()
-  @IsString()
-  @MaxLength(32)
-  paymentMethod?: string;
-
-  @ApiPropertyOptional({ example: 'ETB' })
-  @IsOptional()
-  @IsString()
-  @MaxLength(8)
-  currency?: string;
-
-  @ApiPropertyOptional({ example: 'checkout-777' })
-  @IsOptional()
-  @IsString()
-  @MaxLength(128)
-  checkoutId?: string;
-
-  @ApiPropertyOptional()
-  @IsOptional()
-  @IsDateString()
-  paidAt?: string;
-
-  @ApiPropertyOptional()
-  @IsOptional()
-  @IsString()
-  @MaxLength(255)
-  idempotencyKey?: string;
-}
-
 export class VoidPropertyBookingDto {
   @ApiPropertyOptional({ example: 4 })
   @IsOptional()

@@ -7,7 +7,6 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import {
-  PropertyBookingPaymentRecord,
   PropertyRentalBillingCycle,
   PropertyRentalBooking,
   PropertyRentalBookingStatus,
@@ -18,7 +17,6 @@ import {
   ListPropertyBookingsQueryDto,
   OpenPropertyBookingDto,
   PostPropertyChargeDto,
-  RecordPropertyPaymentDto,
   SettlePropertyBookingDto,
   TransferPropertyUnitDto,
   VoidPropertyBookingDto,
@@ -92,12 +90,6 @@ export class PropertyRentalBookingService {
       settledCheckoutId: booking.settledCheckoutId,
       paidAmount:
         booking.paidAmount !== null ? Number(booking.paidAmount) : null,
-      // Running instalment ledger + remaining balance for partial payments.
-      payments: Array.isArray(booking.payments) ? booking.payments : [],
-      outstanding: Math.max(
-        0,
-        (Number(booking.chargesTotal) || 0) - (Number(booking.paidAmount) || 0),
-      ),
       voidReason: booking.voidReason,
       transferredToProperty: booking.transferredToProperty,
       createdAt: booking.createdAt.toISOString(),
@@ -301,110 +293,6 @@ export class PropertyRentalBookingService {
     };
   }
 
-  private normalizePaymentRows(
-    rows: {
-      method?: string;
-      amount?: number;
-      currency?: string;
-      reference?: string;
-    }[],
-    fallbackCurrency: string,
-    meta: {
-      checkoutId?: string | null;
-      idempotencyKey?: string | null;
-      paidAt: string;
-    },
-  ): { records: PropertyBookingPaymentRecord[]; total: number } {
-    const records: PropertyBookingPaymentRecord[] = (rows || [])
-      .filter((p) => Number(p.amount || 0) > 0)
-      .map((p) => ({
-        amount:
-          Math.round((Number(p.amount || 0) + Number.EPSILON) * 100) / 100,
-        method: String(p.method || 'CASH')
-          .trim()
-          .toUpperCase(),
-        currency: p.currency
-          ? String(p.currency).trim().toUpperCase()
-          : fallbackCurrency,
-        reference: p.reference ? String(p.reference).trim() : null,
-        checkoutId: meta.checkoutId ?? null,
-        idempotencyKey: meta.idempotencyKey ?? null,
-        paidAt: meta.paidAt,
-      }));
-    const total =
-      Math.round(
-        (records.reduce((s, p) => s + p.amount, 0) + Number.EPSILON) * 100,
-      ) / 100;
-    return { records, total };
-  }
-
-  /**
-   * Records a single partial (instalment) payment against an OPEN booking.
-   * Appends to the `payments` ledger and accrues `paidAmount`; the booking
-   * stays OPEN until the final move-out settlement.
-   */
-  async recordPayment(bookingId: number, dto: RecordPropertyPaymentDto) {
-    const booking = await this.bookingRepo.findOne({
-      where: { id: bookingId },
-    });
-    if (!booking) {
-      throw new NotFoundException(`Property booking ${bookingId} not found.`);
-    }
-    if (booking.status !== PropertyRentalBookingStatus.OPEN) {
-      throw new BadRequestException(
-        `Booking ${bookingId} cannot take a payment from status ${booking.status}.`,
-      );
-    }
-
-    const idempotencyKey = String(dto.idempotencyKey || '').trim() || null;
-    const ledger: PropertyBookingPaymentRecord[] = Array.isArray(
-      booking.payments,
-    )
-      ? booking.payments
-      : [];
-    if (
-      idempotencyKey &&
-      ledger.some((p) => p.idempotencyKey === idempotencyKey)
-    ) {
-      // Idempotent retry — payment already recorded.
-      return this.toBookingResponse(booking);
-    }
-
-    const rows =
-      dto.payments && dto.payments.length > 0
-        ? dto.payments
-        : dto.amount !== undefined
-          ? [
-              {
-                method: dto.paymentMethod,
-                amount: dto.amount,
-                currency: dto.currency,
-              },
-            ]
-          : [];
-    const paidAt = dto.paidAt
-      ? new Date(dto.paidAt).toISOString()
-      : new Date().toISOString();
-    const { records, total } = this.normalizePaymentRows(
-      rows,
-      booking.currency,
-      { checkoutId: dto.checkoutId ?? null, idempotencyKey, paidAt },
-    );
-    if (total <= 0) {
-      throw new BadRequestException(
-        'Payment amount must be greater than zero.',
-      );
-    }
-
-    booking.payments = [...ledger, ...records];
-    booking.paidAmount =
-      Math.round(
-        ((Number(booking.paidAmount) || 0) + total + Number.EPSILON) * 100,
-      ) / 100;
-    const saved = await this.bookingRepo.save(booking);
-    return this.toBookingResponse(saved);
-  }
-
   async settleBooking(bookingId: number, dto: SettlePropertyBookingDto) {
     const booking = await this.bookingRepo.findOne({
       where: { id: bookingId },
@@ -427,49 +315,17 @@ export class PropertyRentalBookingService {
 
     booking.status = PropertyRentalBookingStatus.SETTLED;
     booking.settledCheckoutId = dto.checkoutId ?? null;
-    const settledAt = dto.settledAt ? new Date(dto.settledAt) : new Date();
-    // Final settlement payment(s) — the remaining balance for this transaction.
-    const finalRows =
+    // If multi-payment array is provided, sum it; otherwise fall back to legacy flat field.
+    booking.paidAmount =
       dto.payments && dto.payments.length > 0
-        ? dto.payments
+        ? dto.payments.reduce((sum, p) => sum + Number(p.amount || 0), 0)
         : dto.paidAmount !== undefined
-          ? [
-              {
-                method: dto.paymentMethod,
-                amount: dto.paidAmount,
-                currency: dto.currency,
-              },
-            ]
-          : [];
-    const ledger: PropertyBookingPaymentRecord[] = Array.isArray(
-      booking.payments,
-    )
-      ? booking.payments
-      : [];
-    const { records, total: finalPaid } = this.normalizePaymentRows(
-      finalRows,
-      booking.currency,
-      {
-        checkoutId: dto.checkoutId ?? null,
-        idempotencyKey: dto.idempotencyKey ?? null,
-        paidAt: settledAt.toISOString(),
-      },
-    );
-    // Accumulate onto any prior partial instalments so the total reconciles.
-    if (records.length > 0) {
-      booking.payments = [...ledger, ...records];
-      booking.paidAmount =
-        Math.round(
-          ((Number(booking.paidAmount) || 0) + finalPaid + Number.EPSILON) *
-            100,
-        ) / 100;
-    } else if (booking.paidAmount === null && dto.paidAmount !== undefined) {
-      booking.paidAmount = dto.paidAmount;
-    }
+          ? dto.paidAmount
+          : null;
     if (dto.depositRefund !== undefined && dto.depositRefund !== null) {
       booking.depositRefund = Number(dto.depositRefund);
     }
-    booking.settledAt = settledAt;
+    booking.settledAt = dto.settledAt ? new Date(dto.settledAt) : new Date();
 
     const saved = await this.bookingRepo.save(booking);
     return this.toBookingResponse(saved);

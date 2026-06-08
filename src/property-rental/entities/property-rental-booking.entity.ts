@@ -24,20 +24,6 @@ export enum PropertyTenantType {
 }
 
 /**
- * One instalment recorded against an OPEN booking (partial rent payment).
- * The cumulative sum is kept on `paidAmount`; this array is the audit ledger.
- */
-export interface PropertyBookingPaymentRecord {
-  amount: number;
-  method: string;
-  currency: string;
-  reference: string | null;
-  checkoutId: string | null;
-  idempotencyKey: string | null;
-  paidAt: string;
-}
-
-/**
  * A property rental booking (lease) — the month-based analogue of a hotel
  * folio. One row per renter occupying one property unit. Independent of the
  * HOTEL `pos_hotel_folios` table.
@@ -151,10 +137,6 @@ export class PropertyRentalBooking {
 
   @Column({ type: 'numeric', precision: 14, scale: 2, nullable: true })
   paidAmount!: number | null;
-
-  /** Instalment payment ledger (partial payments collected while OPEN). */
-  @Column({ type: 'jsonb', nullable: true })
-  payments!: PropertyBookingPaymentRecord[] | null;
 
   @Column({ type: 'text', nullable: true })
   voidReason!: string | null;
