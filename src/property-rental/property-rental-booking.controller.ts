@@ -25,6 +25,7 @@ import {
   ListPropertyBookingsQueryDto,
   OpenPropertyBookingDto,
   PostPropertyChargeDto,
+  RecordPropertyPaymentDto,
   SettlePropertyBookingDto,
   TransferPropertyUnitDto,
   VoidPropertyBookingDto,
@@ -76,6 +77,16 @@ export class PropertyRentalBookingController {
     @Body() dto: PostPropertyChargeDto,
   ) {
     return this.bookingService.postCharge(bookingId, dto);
+  }
+
+  @Post(':bookingId/payments')
+  @RetailBranchContext('body.branchId')
+  @RequirePosPermissions(PosPropertyRentalPermission.SETTLE_PROPERTY_BOOKING)
+  recordPayment(
+    @Param('bookingId', ParseIntPipe) bookingId: number,
+    @Body() dto: RecordPropertyPaymentDto,
+  ) {
+    return this.bookingService.recordPayment(bookingId, dto);
   }
 
   @Post(':bookingId/settle')
