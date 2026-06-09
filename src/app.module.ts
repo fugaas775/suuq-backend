@@ -17,6 +17,7 @@ import { AppVersionMiddleware } from './common/middleware/app-version.middleware
 
 // Import all your feature modules
 import { UsersModule } from './users/users.module';
+import { SuperAdminBootstrapService } from './users/super-admin-bootstrap.service';
 import { AuthModule } from './auth/auth.module';
 import { ProductsModule } from './products/products.module';
 import { OrdersModule } from './orders/orders.module';
@@ -268,6 +269,7 @@ import { ParkedOrdersModule } from './parked-orders/parked-orders.module';
   // Apply rate limiting globally
   providers: [
     AppService,
+    SuperAdminBootstrapService,
     {
       provide: APP_GUARD,
       useClass: AdminThrottlerGuard,

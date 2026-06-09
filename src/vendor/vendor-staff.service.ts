@@ -78,6 +78,35 @@ export class VendorStaffService {
   }
 
   /**
+   * Synthesizes a transient, full-permission VendorStaff record that lets a
+   * platform SUPER_ADMIN act as the owner of ANY vendor store. Not persisted.
+   * Returns null if the target vendor user does not exist.
+   */
+  async createSuperAdminStaff(
+    adminUser: User,
+    vendorId: number,
+  ): Promise<VendorStaff | null> {
+    let vendorUser: User | null;
+    try {
+      vendorUser = await this.usersService.findById(vendorId);
+    } catch {
+      vendorUser = null;
+    }
+    if (!vendorUser) {
+      return null;
+    }
+
+    const syntheticStaff = new VendorStaff();
+    syntheticStaff.vendor = vendorUser;
+    syntheticStaff.vendorId = vendorUser.id;
+    syntheticStaff.member = adminUser;
+    syntheticStaff.memberId = adminUser.id;
+    syntheticStaff.permissions = Object.values(VendorPermission);
+    syntheticStaff.title = 'SUPER_ADMIN';
+    return syntheticStaff;
+  }
+
+  /**
    * Validates if a user has a specific permission for a specific vendor.
    * Returns the VendorStaff entity if valid/authorized.
    */

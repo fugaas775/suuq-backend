@@ -11,6 +11,7 @@ describe('VendorPermissionGuard regression', () => {
   } as unknown as Reflector;
   const vendorStaffServiceMock = {
     validateStaffPermission: jest.fn(),
+    createSuperAdminStaff: jest.fn(),
   } as unknown as VendorStaffService;
 
   beforeEach(() => {
@@ -102,6 +103,69 @@ describe('VendorPermissionGuard regression', () => {
       20,
       99,
       undefined,
+    );
+  });
+
+  it('lets a SUPER_ADMIN act as any vendor without a staff record', async () => {
+    (reflectorMock.get as jest.Mock).mockReturnValue(
+      VendorPermission.MANAGE_PRODUCTS,
+    );
+    const syntheticStaff = {
+      vendor: { id: 555 },
+      permissions: Object.values(VendorPermission),
+      title: 'SUPER_ADMIN',
+    };
+    (
+      vendorStaffServiceMock.createSuperAdminStaff as jest.Mock
+    ).mockResolvedValue(syntheticStaff);
+
+    const request: any = {
+      user: { id: 1, roles: ['SUPER_ADMIN'] },
+      headers: { 'x-vendor-id': '555' },
+      body: {},
+      query: {},
+      params: {},
+    };
+
+    const ok = await guard.canActivate(makeContext(request));
+
+    expect(ok).toBe(true);
+    expect(vendorStaffServiceMock.createSuperAdminStaff).toHaveBeenCalledWith(
+      request.user,
+      555,
+    );
+    // Super admin bypasses the staff-membership check entirely.
+    expect(
+      vendorStaffServiceMock.validateStaffPermission,
+    ).not.toHaveBeenCalled();
+    expect(request.activeVendor).toEqual(syntheticStaff.vendor);
+    expect(request.vendorStaff).toBe(syntheticStaff);
+  });
+
+  it('does NOT short-circuit for a non-super-admin user', async () => {
+    (reflectorMock.get as jest.Mock).mockReturnValue(
+      VendorPermission.MANAGE_PRODUCTS,
+    );
+    (
+      vendorStaffServiceMock.validateStaffPermission as jest.Mock
+    ).mockResolvedValue({ vendor: { id: 42 } });
+
+    const request: any = {
+      user: { id: 7, roles: ['VENDOR'] },
+      headers: { 'x-vendor-id': '42' },
+      body: {},
+      query: {},
+      params: {},
+    };
+
+    const ok = await guard.canActivate(makeContext(request));
+
+    expect(ok).toBe(true);
+    expect(vendorStaffServiceMock.createSuperAdminStaff).not.toHaveBeenCalled();
+    expect(vendorStaffServiceMock.validateStaffPermission).toHaveBeenCalledWith(
+      7,
+      42,
+      VendorPermission.MANAGE_PRODUCTS,
     );
   });
 

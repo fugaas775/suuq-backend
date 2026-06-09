@@ -4,14 +4,18 @@ import {
   Injectable,
   ForbiddenException,
   BadRequestException,
+  Logger,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { VendorStaffService } from '../vendor-staff.service';
 import { VendorPermission } from '../vendor-permissions.enum';
 import { User } from '../../users/entities/user.entity';
+import { UserRole } from '../../auth/roles.enum';
 
 @Injectable()
 export class VendorPermissionGuard implements CanActivate {
+  private readonly logger = new Logger(VendorPermissionGuard.name);
+
   constructor(
     private reflector: Reflector,
     private vendorStaffService: VendorStaffService,
@@ -63,6 +67,24 @@ export class VendorPermissionGuard implements CanActivate {
     } else {
       // Fallback: If user is acting as themselves (Owner mode context implicit)
       vendorId = user.id;
+    }
+
+    // 1b. SUPER_ADMIN short-circuit: a platform super admin may act as the
+    // owner of ANY vendor store, with full vendor permissions.
+    const roles = (user as { roles?: unknown }).roles;
+    if (Array.isArray(roles) && roles.includes(UserRole.SUPER_ADMIN)) {
+      const adminStaff = await this.vendorStaffService.createSuperAdminStaff(
+        user,
+        vendorId,
+      );
+      if (adminStaff) {
+        this.logger.log(
+          `SUPER_ADMIN impersonation: admin=${user.id} actingAsVendor=${vendorId} ${request?.method} ${request?.originalUrl ?? request?.url}`,
+        );
+        request.activeVendor = adminStaff.vendor;
+        request.vendorStaff = adminStaff;
+        return true;
+      }
     }
 
     // 2. Validate Membership & Permission
