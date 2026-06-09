@@ -206,10 +206,10 @@ export class IngestPosCheckoutDto {
 
   /**
    * How the checkout was captured: 'ONLINE_CAPTURED' (rung up while connected) or
-   * 'OFFLINE_CAPTURED' (queued offline and synced later). For ONLINE captures the
-   * backend stamps occurredAt from the server clock so a mis-set POS device clock
-   * can never misdate the sale (or its report day); offline captures keep their
-   * real device capture time.
+   * 'OFFLINE_CAPTURED' (queued offline and synced later). Stored for audit
+   * purposes; the backend uses the client-provided `occurredAt` as the
+   * authoritative capture time for both modes (clamped to server "now" if the
+   * device clock is ahead).
    */
   @IsOptional()
   @IsString()

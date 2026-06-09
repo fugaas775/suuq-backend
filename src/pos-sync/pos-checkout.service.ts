@@ -184,15 +184,21 @@ export class PosCheckoutService {
    *
    * The daily reports bucket sales by occurredAt (EAT calendar day), so a device
    * with a fast/mis-set clock could otherwise misfile a sale into the wrong day.
-   * We therefore decide the time from the capture context, not the device:
+   * We therefore trust the client-captured time in all cases, but apply strict
+   * clamping to prevent future-dated entries:
    *
-   *  - ONLINE_CAPTURED: the sale was rung up while connected, so the server clock
-   *    (NTP-synced, single source of truth) is authoritative — we IGNORE the
-   *    device-supplied time entirely and stamp server "now".
-   *  - OFFLINE_CAPTURED / legacy / untagged: there was no server when the sale
-   *    happened, so the device's capture time is the only real record — we trust
-   *    it, but a sale can never be in the future, so a fast clock is clamped to
-   *    "now".
+   *  - Any capture: use the client-supplied occurredAt as the authoritative time
+   *    (it reflects when the operator actually rang up the sale).
+   *  - Future timestamps (> 2 min ahead of server): clamp to server "now" to
+   *    guard against device clocks that are running fast.
+   *
+   * Why we no longer use server receive-time for ONLINE_CAPTURED:
+   * The previous approach stamped server "now" at sync time, not capture time.
+   * Any brief network blip that queued a receipt in the outbox (even for < 1 s)
+   * could delay the sync across an EAT midnight boundary and file the sale into
+   * the wrong report day — exactly the scenario we must prevent.  An NTP-synced
+   * online device's capture timestamp is just as authoritative as the server's
+   * and avoids the race entirely.
    */
   private resolveOccurredAt(
     rawOccurredAt: string,
@@ -200,12 +206,7 @@ export class PosCheckoutService {
   ): Date {
     const serverNow = new Date();
 
-    // Online sale → the server clock is authoritative; the device clock is irrelevant.
-    if (captureState === 'ONLINE_CAPTURED') {
-      return serverNow;
-    }
-
-    // Offline / untagged → trust the real capture time, but never accept a future one.
+    // Trust the real capture time, but never accept a timestamp in the future.
     const FUTURE_GRACE_MS = 2 * 60_000; // tolerate ~2 min of skew + network latency
     const parsed = new Date(rawOccurredAt);
     if (Number.isNaN(parsed.getTime())) {

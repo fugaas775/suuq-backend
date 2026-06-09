@@ -21,6 +21,9 @@ dist
 /node_modules
 /build
 
+# TypeScript incremental build cache — never commit (stale info skips dist/main.js → 502 on deploy)
+*.tsbuildinfo
+
 # Logs
 logs
 *.log

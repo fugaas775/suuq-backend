@@ -413,7 +413,7 @@ describe('PosCheckoutService', () => {
     expect(storedOccurredAt.toISOString()).toBe(offlineIso);
   });
 
-  it('stamps server time for online captures, ignoring the device clock', async () => {
+  it('preserves client capture time for online captures (not server receive time)', async () => {
     posCheckoutsRepository.findOne.mockImplementation((opts) =>
       Promise.resolve(
         opts?.where?.id
@@ -439,9 +439,11 @@ describe('PosCheckoutService', () => {
       ),
     );
 
-    // The device reports a (past) time, but the sale was rung up online — so the
-    // server clock wins and the device clock is ignored entirely.
-    const before = Date.now();
+    // Even for ONLINE_CAPTURED, the client-supplied occurredAt is the capture
+    // time and must be preserved.  Using server receive-time instead would cause
+    // brief sync delays (e.g., a momentary network blip) to mis-file the sale
+    // into the wrong report day if the sync arrived after EAT midnight.
+    const captureIso = '2026-04-01T10:00:00.000Z';
     await service.ingest(
       {
         branchId: 3,
@@ -451,20 +453,18 @@ describe('PosCheckoutService', () => {
         subtotal: 15,
         total: 15,
         paidAmount: 15,
-        occurredAt: '2026-04-01T10:00:00.000Z',
+        occurredAt: captureIso,
         captureState: 'ONLINE_CAPTURED',
         items: [{ productId: 55, quantity: 1, unitPrice: 15, lineTotal: 15 }],
         tenders: [{ method: 'CASH', amount: 15 }],
       },
       { id: 17, roles: ['POS_OPERATOR'] },
     );
-    const after = Date.now();
 
     const stored = posCheckoutsRepository.create.mock.calls[0][0]
       .occurredAt as Date;
-    // Stored time is server "now", NOT the 2026-04-01 device-supplied time.
-    expect(stored.getTime()).toBeGreaterThanOrEqual(before);
-    expect(stored.getTime()).toBeLessThanOrEqual(after);
+    // Stored time is the client capture time, NOT server receive time.
+    expect(stored.toISOString()).toBe(captureIso);
   });
 
   it('persists customer profile metadata during checkout ingest', async () => {
