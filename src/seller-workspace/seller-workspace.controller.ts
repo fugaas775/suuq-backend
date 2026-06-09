@@ -189,6 +189,7 @@ export class SellerWorkspaceController {
       req.user.id,
       branchId,
       dto.newOwnerEmail,
+      (req.user as any).roles,
     );
   }
 

@@ -7,6 +7,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Between, In, Repository } from 'typeorm';
 import { BranchStaffService } from '../branch-staff/branch-staff.service';
 import { Branch } from '../branches/entities/branch.entity';
+import { UserRole } from '../auth/roles.enum';
 import {
   TenantSubscription,
   TenantSubscriptionStatus,
@@ -82,14 +83,14 @@ export class BranchBillingService {
     roles: string[] = [],
   ): Promise<OwnerBranchBilling[]> {
     const branches = await this.branchesRepo.find({
-      where: { ownerId: userId, isActive: true } as any,
+      where: { ownerId: userId, isActive: true },
       order: { name: 'ASC' },
     });
     if (!branches.length) return [];
 
     const branchIds = branches.map((b) => b.id);
     const subs = await this.subscriptionsRepo.find({
-      where: { branchId: In(branchIds) } as any,
+      where: { branchId: In(branchIds) },
       order: { createdAt: 'DESC' },
     });
     const subByBranch = new Map<number, TenantSubscription>();
@@ -170,12 +171,21 @@ export class BranchBillingService {
     });
   }
 
-  async assertBranchOwnedBy(branchId: number, userId: number): Promise<Branch> {
+  async assertBranchOwnedBy(
+    branchId: number,
+    userId: number,
+    roles: string[] = [],
+  ): Promise<Branch> {
     const branch = await this.branchesRepo.findOne({
-      where: { id: branchId } as any,
+      where: { id: branchId },
     });
     if (!branch) throw new NotFoundException(`Branch #${branchId} not found.`);
-    if (branch.ownerId !== userId) {
+    // Platform admins may operate any branch as its owner (SUPER_ADMIN can act
+    // as any vendor; see VendorPermissionGuard). Everyone else must own it.
+    const isPlatformAdmin =
+      Array.isArray(roles) &&
+      (roles.includes(UserRole.SUPER_ADMIN) || roles.includes(UserRole.ADMIN));
+    if (!isPlatformAdmin && branch.ownerId !== userId) {
       throw new ForbiddenException('You do not own this branch.');
     }
     return branch;

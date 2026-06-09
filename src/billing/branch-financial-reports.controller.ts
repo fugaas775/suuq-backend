@@ -30,7 +30,11 @@ export class BranchFinancialReportsController {
     @Query('to') to?: string,
   ) {
     const userId = (req.user as any).id;
-    await this.billing.assertBranchOwnedBy(branchId, userId);
+    await this.billing.assertBranchOwnedBy(
+      branchId,
+      userId,
+      (req.user as any).roles,
+    );
     return this.reports.getProfitAndLoss(branchId, {
       from: from ? new Date(from) : null,
       to: to ? new Date(to) : null,
@@ -44,7 +48,11 @@ export class BranchFinancialReportsController {
     @Query('asOfAt') asOfAt?: string,
   ) {
     const userId = (req.user as any).id;
-    await this.billing.assertBranchOwnedBy(branchId, userId);
+    await this.billing.assertBranchOwnedBy(
+      branchId,
+      userId,
+      (req.user as any).roles,
+    );
     return this.reports.getBalanceSheet(branchId, {
       asOfAt: asOfAt ? new Date(asOfAt) : null,
     });
@@ -57,7 +65,11 @@ export class BranchFinancialReportsController {
     @Query('asOfAt') asOfAt?: string,
   ) {
     const userId = (req.user as any).id;
-    await this.billing.assertBranchOwnedBy(branchId, userId);
+    await this.billing.assertBranchOwnedBy(
+      branchId,
+      userId,
+      (req.user as any).roles,
+    );
     return this.reports.getTrialBalance(branchId, {
       asOfAt: asOfAt ? new Date(asOfAt) : null,
     });

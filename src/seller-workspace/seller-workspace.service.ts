@@ -480,7 +480,7 @@ export class SellerWorkspaceService {
           tenantDefaultUserFit: tenant?.onboardingProfile?.userFit ?? null,
           categoryOverrideUserFit: null,
           modules: [],
-          pricing: candidate.pricing as SellerWorkspacePricingDto,
+          pricing: candidate.pricing,
           canStartActivation: candidate.canStartActivation,
           canOpenNow: candidate.canOpenNow,
           joinedAt: new Date(0),
@@ -802,17 +802,28 @@ export class SellerWorkspaceService {
     callerId: number,
     branchId: number,
     newOwnerEmail: string,
+    roles: string[] = [],
   ): Promise<{ success: boolean }> {
-    // Verify caller is an active equity partner
-    const callerPartner =
-      await this.equityPartnerService.getSellerProfile(callerId);
-    if (!callerPartner || callerPartner.status !== EquityPartnerStatus.ACTIVE) {
-      throw new ForbiddenException(
-        'Only active equity partners can transfer branch ownership.',
-      );
+    // Platform admins (SUPER_ADMIN/ADMIN) may transfer any branch as its owner.
+    const isPlatformAdmin =
+      Array.isArray(roles) &&
+      (roles.includes(UserRole.SUPER_ADMIN) || roles.includes(UserRole.ADMIN));
+
+    // Verify caller is an active equity partner (platform admins bypass).
+    if (!isPlatformAdmin) {
+      const callerPartner =
+        await this.equityPartnerService.getSellerProfile(callerId);
+      if (
+        !callerPartner ||
+        callerPartner.status !== EquityPartnerStatus.ACTIVE
+      ) {
+        throw new ForbiddenException(
+          'Only active equity partners can transfer branch ownership.',
+        );
+      }
     }
 
-    // Fetch the branch and verify caller owns it
+    // Fetch the branch and verify caller owns it (platform admins bypass).
     const branch = await this.branchesRepository.findOne({
       where: { id: branchId },
       select: ['id', 'name', 'ownerId', 'retailTenantId', 'vendorStoreId'],
@@ -820,7 +831,7 @@ export class SellerWorkspaceService {
     if (!branch) {
       throw new NotFoundException(`Branch #${branchId} not found.`);
     }
-    if (branch.ownerId !== callerId) {
+    if (!isPlatformAdmin && branch.ownerId !== callerId) {
       throw new ForbiddenException(
         'You can only transfer ownership of branches you own.',
       );
