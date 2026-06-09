@@ -36,8 +36,8 @@ class StartEquityBnplActivationDto implements StartBnplActivationInput {
   @IsEmail()
   targetOwnerEmail!: string;
 
-  @IsIn(['SIX_MONTHS', 'ONE_YEAR'])
-  period!: 'SIX_MONTHS' | 'ONE_YEAR';
+  @IsIn(['ONE_YEAR'])
+  period!: 'ONE_YEAR';
 
   @IsOptional()
   @IsString()

@@ -40,7 +40,7 @@ export class SellerEquityController {
     return this.equityService.getSellerDashboard(req.user.id);
   }
 
-  /** Pricing constants for the dashboard copy ("Earn 633 ETB / month / branch"). */
+  /** Pricing constants for the dashboard copy ("Earn 950 ETB / month / branch"). */
   @Get('pricing')
   getPricing() {
     return EQUITY_PRICING;

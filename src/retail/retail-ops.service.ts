@@ -49,7 +49,6 @@ import {
   PayoutStatus,
 } from '../wallet/entities/payout-log.entity';
 import { RetailEntitlementsService } from './retail-entitlements.service';
-import { RetailAttendanceService } from './retail-attendance.service';
 import { RetailModule as RetailOsModule } from './entities/tenant-module-entitlement.entity';
 import { BranchCatalogProductLink } from './entities/branch-catalog-product-link.entity';
 import { BranchCatalogVendorLink } from './entities/branch-catalog-vendor-link.entity';
@@ -221,10 +220,6 @@ import {
   RetailStockHealthResponseDto,
   RetailStockHealthSummaryResponseDto,
 } from './dto/retail-stock-health-response.dto';
-import {
-  RetailHrAttendanceNetworkAlertResponseDto,
-  RetailHrAttendanceNetworkSummaryResponseDto,
-} from './dto/retail-hr-attendance-network-summary-response.dto';
 
 @Injectable()
 export class RetailOpsService {
@@ -261,7 +256,6 @@ export class RetailOpsService {
     private readonly payoutLogRepository: Repository<PayoutLog>,
     private readonly purchaseOrdersService: PurchaseOrdersService,
     private readonly retailEntitlementsService: RetailEntitlementsService,
-    private readonly retailAttendanceService: RetailAttendanceService,
     private readonly redisService: RedisService,
   ) {}
 
@@ -279,61 +273,47 @@ export class RetailOpsService {
     const shouldLoadModule = (module: RetailOsModule) =>
       enabledModules.has(module) && (!query.module || query.module === module);
 
-    const [
-      pos,
-      stockHealth,
-      replenishment,
-      ai,
-      accounting,
-      desktop,
-      attendance,
-    ] = await Promise.all([
-      shouldLoadModule(RetailOsModule.POS_CORE)
-        ? this.getPosNetworkSummary({
-            branchId: query.branchId,
-            limit: branchLimit,
-            windowHours: 24,
-          })
-        : Promise.resolve(null),
-      shouldLoadModule(RetailOsModule.INVENTORY_CORE)
-        ? this.getStockHealthNetworkSummary({
-            branchId: query.branchId,
-            limit: branchLimit,
-          })
-        : Promise.resolve(null),
-      shouldLoadModule(RetailOsModule.INVENTORY_AUTOMATION)
-        ? this.getReplenishmentNetworkSummary({
-            branchId: query.branchId,
-            limit: branchLimit,
-          })
-        : Promise.resolve(null),
-      shouldLoadModule(RetailOsModule.AI_ANALYTICS)
-        ? this.getAiNetworkSummary({
-            branchId: query.branchId,
-            limit: branchLimit,
-          })
-        : Promise.resolve(null),
-      shouldLoadModule(RetailOsModule.ACCOUNTING)
-        ? this.getAccountingNetworkSummary({
-            branchId: query.branchId,
-            limit: branchLimit,
-          })
-        : Promise.resolve(null),
-      shouldLoadModule(RetailOsModule.DESKTOP_BACKOFFICE)
-        ? this.getDesktopNetworkSummary({
-            branchId: query.branchId,
-            limit: branchLimit,
-            windowHours: 72,
-          })
-        : Promise.resolve(null),
-      shouldLoadModule(RetailOsModule.HR_ATTENDANCE)
-        ? this.retailAttendanceService.getAttendanceNetworkSummary({
-            branchId: query.branchId,
-            limit: branchLimit,
-            windowHours: 24,
-          })
-        : Promise.resolve(null),
-    ]);
+    const [pos, stockHealth, replenishment, ai, accounting, desktop] =
+      await Promise.all([
+        shouldLoadModule(RetailOsModule.POS_CORE)
+          ? this.getPosNetworkSummary({
+              branchId: query.branchId,
+              limit: branchLimit,
+              windowHours: 24,
+            })
+          : Promise.resolve(null),
+        shouldLoadModule(RetailOsModule.INVENTORY_CORE)
+          ? this.getStockHealthNetworkSummary({
+              branchId: query.branchId,
+              limit: branchLimit,
+            })
+          : Promise.resolve(null),
+        shouldLoadModule(RetailOsModule.INVENTORY_AUTOMATION)
+          ? this.getReplenishmentNetworkSummary({
+              branchId: query.branchId,
+              limit: branchLimit,
+            })
+          : Promise.resolve(null),
+        shouldLoadModule(RetailOsModule.AI_ANALYTICS)
+          ? this.getAiNetworkSummary({
+              branchId: query.branchId,
+              limit: branchLimit,
+            })
+          : Promise.resolve(null),
+        shouldLoadModule(RetailOsModule.ACCOUNTING)
+          ? this.getAccountingNetworkSummary({
+              branchId: query.branchId,
+              limit: branchLimit,
+            })
+          : Promise.resolve(null),
+        shouldLoadModule(RetailOsModule.DESKTOP_BACKOFFICE)
+          ? this.getDesktopNetworkSummary({
+              branchId: query.branchId,
+              limit: branchLimit,
+              windowHours: 72,
+            })
+          : Promise.resolve(null),
+      ]);
 
     const previousSnapshot =
       await this.getStoredNetworkCommandCenterReportSnapshot(query);
@@ -385,15 +365,6 @@ export class RetailOpsService {
               desktop,
             ),
             alerts: desktop.alerts,
-          }
-        : null,
-      attendance
-        ? {
-            module: this.buildAttendanceCommandCenterModule(
-              query.branchId,
-              attendance,
-            ),
-            alerts: attendance.alerts,
           }
         : null,
     ]
@@ -3610,7 +3581,7 @@ export class RetailOpsService {
       },
       relations: {
         items: true,
-      } as any,
+      },
     });
 
     const matchedBranchCards = tenantBranches
@@ -6947,74 +6918,6 @@ export class RetailOpsService {
     };
   }
 
-  private buildAttendanceCommandCenterModule(
-    branchId: number,
-    summary: RetailHrAttendanceNetworkSummaryResponseDto,
-  ): RetailCommandCenterModuleSummaryResponseDto {
-    const status =
-      summary.criticalBranchCount > 0
-        ? 'CRITICAL'
-        : summary.highBranchCount > 0
-          ? 'HIGH'
-          : 'NORMAL';
-
-    return {
-      module: RetailOsModule.HR_ATTENDANCE,
-      title: 'HR attendance',
-      status,
-      statusReason:
-        summary.criticalBranchCount > 0
-          ? `${summary.criticalBranchCount} branches have missing attendance activity that needs immediate intervention.`
-          : summary.highBranchCount > 0
-            ? `${summary.highBranchCount} branches have elevated lateness or overtime risk.`
-            : 'Attendance coverage is currently within expected operating thresholds.',
-      branchCount: summary.branchCount,
-      alertCount: summary.alerts.length,
-      topAlert: this.mapCommandCenterAlert(
-        RetailOsModule.HR_ATTENDANCE,
-        summary.alerts[0] ?? null,
-      ),
-      metrics: [
-        this.createCommandCenterMetric(
-          'absentStaff',
-          'Absent staff',
-          summary.absentCount,
-        ),
-        this.createCommandCenterMetric(
-          'lateCheckIns',
-          'Late check-ins',
-          summary.lateCheckInCount,
-        ),
-        this.createCommandCenterMetric(
-          'overtimeActive',
-          'Active overtime shifts',
-          summary.overtimeActiveCount,
-        ),
-      ],
-      actions: this.buildCommandCenterActions(
-        branchId,
-        'hr-attendance/network-summary',
-        'VIEW_HR_ATTENDANCE_NETWORK_SUMMARY',
-        'hr-attendance/network-summary/export',
-        'EXPORT_HR_ATTENDANCE_NETWORK_SUMMARY',
-      ),
-      branchPreviews: summary.branches.map((branch) => ({
-        branchId: branch.branchId,
-        branchName: branch.branchName,
-        branchCode: branch.branchCode,
-        status: branch.highestRisk,
-        statusReason: branch.highestRiskReason,
-        actionPath:
-          branch.actions.find(
-            (action) => action.type === 'VIEW_HR_ATTENDANCE_EXCEPTIONS',
-          )?.path ??
-          branch.actions[0]?.path ??
-          null,
-      })),
-      trend: this.buildDefaultCommandCenterTrend(),
-    };
-  }
-
   private buildCommandCenterActions(
     branchId: number,
     viewPath: string,
@@ -7047,7 +6950,6 @@ export class RetailOpsService {
       | RetailAccountingAlertResponseDto
       | RetailDesktopWorkbenchAlertResponseDto
       | RetailReplenishmentNetworkAlertResponseDto
-      | RetailHrAttendanceNetworkAlertResponseDto
       | null,
   ): RetailCommandCenterSummaryAlertResponseDto | null {
     if (!alert) {

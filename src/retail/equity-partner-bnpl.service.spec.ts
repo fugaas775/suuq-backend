@@ -195,7 +195,7 @@ describe('EquityPartnerBnplService', () => {
       branchName: 'Bole Salon',
       serviceFormat: 'RETAIL',
       targetOwnerEmail: 'owner@example.com',
-      period: 'SIX_MONTHS',
+      period: 'ONE_YEAR',
       city: 'Addis Ababa',
       country: 'Ethiopia',
       address: 'Bole Road',

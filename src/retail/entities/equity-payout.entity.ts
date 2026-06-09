@@ -44,8 +44,8 @@ export class EquityPayout {
   @Column({ type: 'decimal', precision: 12, scale: 2, default: 1900 })
   grossAmount!: number;
 
-  /** Partner's share: floor(grossAmount * numerator / denominator). Default 633. */
-  @Column({ type: 'decimal', precision: 12, scale: 2, default: 633 })
+  /** Partner's share: floor(grossAmount * numerator / denominator). Default 950 (1/2). */
+  @Column({ type: 'decimal', precision: 12, scale: 2, default: 950 })
   splitAmount!: number;
 
   @Column({ type: 'varchar', length: 8, default: 'ETB' })

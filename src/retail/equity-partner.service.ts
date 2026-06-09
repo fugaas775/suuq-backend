@@ -24,10 +24,10 @@ import {
 
 const BRANCH_MONTHLY_PRICE = 1900;
 const SPLIT_NUMERATOR = 1;
-const SPLIT_DENOMINATOR = 3;
+const SPLIT_DENOMINATOR = 2;
 const PARTNER_SPLIT_AMOUNT = Math.floor(
   (BRANCH_MONTHLY_PRICE * SPLIT_NUMERATOR) / SPLIT_DENOMINATOR,
-); // 633
+); // 950 — partner earns 1/2 (50%) of the monthly branch subscription
 
 /** Public pricing constants exposed for the seller dashboard / referral copy. */
 export const EQUITY_PRICING = {
@@ -199,7 +199,7 @@ export class EquityPartnerService {
     return partners.map((p) => ({
       ...p,
       assignmentCount: countMap.get(p.id) ?? 0,
-    })) as any;
+    }));
   }
 
   async getPartnerById(id: number): Promise<EquityPartner> {

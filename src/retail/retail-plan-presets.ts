@@ -28,9 +28,9 @@ export const RETAIL_PLAN_PRESETS: RetailPlanPreset[] = [
     code: 'POS_BRANCH_SUBSCRIPTION',
     name: 'POS branch subscription',
     description:
-      'Single per-branch POS subscription. Owners pay 11,400 ETB for 6 months or 22,800 ETB for 1 year. No tier upgrades — every branch ships with POS Core, Inventory Core, replenishment automation, and analytics.',
-    billingInterval: TenantBillingInterval.SIX_MONTHS,
-    amount: 11400,
+      'Single per-branch POS subscription. Owners pay 1,900 ETB monthly or 22,800 ETB for 1 year. No tier upgrades — every branch ships with POS Core, Inventory Core, replenishment automation, and analytics.',
+    billingInterval: TenantBillingInterval.MONTHLY,
+    amount: 1900,
     currency: 'ETB',
     defaultStatus: TenantSubscriptionStatus.ACTIVE,
     maxProducts: 10000,
@@ -41,7 +41,7 @@ export const RETAIL_PLAN_PRESETS: RetailPlanPreset[] = [
         reason: 'Included in POS branch subscription',
         metadata: {
           includedBranches: 1,
-          additionalBranchFee: 11400,
+          additionalBranchFee: 1900,
           additionalBranchCurrency: 'ETB',
         },
       },

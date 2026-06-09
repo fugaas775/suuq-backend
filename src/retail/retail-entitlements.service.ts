@@ -465,28 +465,6 @@ export class RetailEntitlementsService {
       return true;
     });
 
-    // HR Attendance is bundled with every Retail OS tenant. If no explicit
-    // entitlement row exists (or the existing one is disabled/expired), surface
-    // a virtual always-on entitlement so downstream guards do not block staff
-    // attendance, time clock, or override flows.
-    if (
-      !entitlements.some(
-        (entitlement) => entitlement.module === RetailModule.HR_ATTENDANCE,
-      )
-    ) {
-      const virtualHrAttendance =
-        this.tenantModuleEntitlementsRepository.create({
-          tenantId: tenant.id,
-          module: RetailModule.HR_ATTENDANCE,
-          enabled: true,
-          startsAt: null,
-          expiresAt: null,
-          reason: 'Bundled with every Retail OS tenant',
-          metadata: null,
-        });
-      entitlements.push(virtualHrAttendance);
-    }
-
     const hasPosModule = entitlements.some(
       (entitlement) => entitlement.module === RetailModule.POS_CORE,
     );
@@ -963,51 +941,6 @@ export class RetailEntitlementsService {
       };
     }
 
-    if (module === RetailModule.HR_ATTENDANCE) {
-      const hrAttendancePolicy = metadata.hrAttendancePolicy;
-      if (hrAttendancePolicy == null) {
-        return metadata;
-      }
-
-      if (
-        typeof hrAttendancePolicy !== 'object' ||
-        Array.isArray(hrAttendancePolicy)
-      ) {
-        throw new BadRequestException(
-          'metadata.hrAttendancePolicy must be an object',
-        );
-      }
-
-      const normalizedPolicy = {
-        ...hrAttendancePolicy,
-        shiftStartHour: this.normalizeHrAttendanceHour(
-          hrAttendancePolicy.shiftStartHour,
-          'shiftStartHour',
-        ),
-        shiftEndHour: this.normalizeHrAttendanceHour(
-          hrAttendancePolicy.shiftEndHour,
-          'shiftEndHour',
-        ),
-        gracePeriodMinutes: this.normalizeHrAttendanceGraceMinutes(
-          hrAttendancePolicy.gracePeriodMinutes,
-        ),
-        overtimeThresholdHours: this.normalizeHrAttendanceOvertimeHours(
-          hrAttendancePolicy.overtimeThresholdHours,
-        ),
-        timeZone:
-          hrAttendancePolicy.timeZone == null
-            ? undefined
-            : this.normalizeTimeZone(hrAttendancePolicy.timeZone),
-      };
-
-      return {
-        ...metadata,
-        hrAttendancePolicy: Object.fromEntries(
-          Object.entries(normalizedPolicy).filter(([, value]) => value != null),
-        ),
-      };
-    }
-
     if (module !== RetailModule.AI_ANALYTICS) {
       return metadata;
     }
@@ -1243,70 +1176,6 @@ export class RetailEntitlementsService {
     }
 
     return normalizedTargetScore;
-  }
-
-  private normalizeHrAttendanceHour(
-    rawHour: unknown,
-    label: string,
-  ): number | undefined {
-    if (rawHour == null) {
-      return undefined;
-    }
-
-    const normalizedHour = Number(rawHour);
-    if (
-      !Number.isInteger(normalizedHour) ||
-      normalizedHour < 0 ||
-      normalizedHour > 23
-    ) {
-      throw new BadRequestException(
-        `metadata.hrAttendancePolicy.${label} must be an integer between 0 and 23`,
-      );
-    }
-
-    return normalizedHour;
-  }
-
-  private normalizeHrAttendanceGraceMinutes(
-    rawGraceMinutes: unknown,
-  ): number | undefined {
-    if (rawGraceMinutes == null) {
-      return undefined;
-    }
-
-    const normalizedGraceMinutes = Number(rawGraceMinutes);
-    if (
-      !Number.isInteger(normalizedGraceMinutes) ||
-      normalizedGraceMinutes < 0 ||
-      normalizedGraceMinutes > 180
-    ) {
-      throw new BadRequestException(
-        'metadata.hrAttendancePolicy.gracePeriodMinutes must be an integer between 0 and 180',
-      );
-    }
-
-    return normalizedGraceMinutes;
-  }
-
-  private normalizeHrAttendanceOvertimeHours(
-    rawOvertimeHours: unknown,
-  ): number | undefined {
-    if (rawOvertimeHours == null) {
-      return undefined;
-    }
-
-    const normalizedOvertimeHours = Number(rawOvertimeHours);
-    if (
-      !Number.isInteger(normalizedOvertimeHours) ||
-      normalizedOvertimeHours < 1 ||
-      normalizedOvertimeHours > 24
-    ) {
-      throw new BadRequestException(
-        'metadata.hrAttendancePolicy.overtimeThresholdHours must be an integer between 1 and 24',
-      );
-    }
-
-    return normalizedOvertimeHours;
   }
 
   async updateTenantOwner(

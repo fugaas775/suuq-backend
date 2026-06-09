@@ -317,12 +317,12 @@ describe('BranchStaffService', () => {
             paymentMethod: 'EBIRR',
             subscriptionOptions: [
               {
-                period: 'SIX_MONTHS',
-                months: 6,
-                amount: 11400,
+                period: 'MONTHLY',
+                months: 1,
+                amount: 1900,
                 currency: 'ETB',
-                label: '6 months',
-                planCode: 'POS_BRANCH_6M',
+                label: '1 month',
+                planCode: 'POS_BRANCH_1M',
               },
               {
                 period: 'ONE_YEAR',
@@ -558,12 +558,12 @@ describe('BranchStaffService', () => {
           paymentMethod: 'EBIRR',
           subscriptionOptions: [
             {
-              period: 'SIX_MONTHS',
-              months: 6,
-              amount: 11400,
+              period: 'MONTHLY',
+              months: 1,
+              amount: 1900,
               currency: 'ETB',
-              label: '6 months',
-              planCode: 'POS_BRANCH_6M',
+              label: '1 month',
+              planCode: 'POS_BRANCH_1M',
             },
             {
               period: 'ONE_YEAR',

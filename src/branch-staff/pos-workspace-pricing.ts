@@ -1,14 +1,15 @@
 /**
  * POS branch subscription pricing.
  *
- * The legacy 1,900 ETB/month single-branch tier is replaced by two
- * branch-scoped subscription periods. Pricing is now strictly per-branch
- * (not per-tenant) and there are no plan tiers — only the period differs.
+ * Branches subscribe per-period: a 1-month plan or a 1-year plan. Pricing is
+ * strictly per-branch (not per-tenant) and there are no plan tiers — only the
+ * period differs. (The legacy 6-month plan has been retired; existing
+ * SIX_MONTHS subscription rows keep being honoured until they expire.)
  *
  * Effective monthly equivalent stays at 1,900 ETB so equity-partner
- * payouts (1/3 of monthly = 633 ETB) keep working unchanged.
+ * payouts (1/2 of monthly = 950 ETB) keep working unchanged.
  */
-export type PosBranchSubscriptionPeriod = 'SIX_MONTHS' | 'ONE_YEAR';
+export type PosBranchSubscriptionPeriod = 'MONTHLY' | 'ONE_YEAR';
 
 export interface PosBranchSubscriptionOption {
   /** Stable identifier used in DTOs and the Ebirr metadata payload. */
@@ -30,12 +31,12 @@ export const POS_BRANCH_SUBSCRIPTION_CURRENCY = 'ETB' as const;
 export const POS_BRANCH_SUBSCRIPTION_OPTIONS: readonly PosBranchSubscriptionOption[] =
   [
     {
-      period: 'SIX_MONTHS',
-      months: 6,
-      amount: 11_400,
+      period: 'MONTHLY',
+      months: 1,
+      amount: 1_900,
       currency: POS_BRANCH_SUBSCRIPTION_CURRENCY,
-      label: '6 months',
-      planCode: 'POS_BRANCH_6M',
+      label: '1 month',
+      planCode: 'POS_BRANCH_1M',
     },
     {
       period: 'ONE_YEAR',

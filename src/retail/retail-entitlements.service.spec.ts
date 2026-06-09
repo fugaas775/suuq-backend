@@ -311,66 +311,6 @@ describe('RetailEntitlementsService', () => {
     );
   });
 
-  it('upserts HR attendance entitlement metadata', async () => {
-    retailTenantsRepository.findOne.mockResolvedValue({
-      id: 5,
-      branches: [],
-      subscriptions: [],
-      entitlements: [],
-    });
-    tenantModuleEntitlementsRepository.findOne.mockResolvedValue(null);
-
-    const result = await service.upsertModuleEntitlement(
-      5,
-      RetailModule.HR_ATTENDANCE,
-      {
-        enabled: true,
-        metadata: {
-          hrAttendancePolicy: {
-            shiftStartHour: 8,
-            shiftEndHour: 17,
-            gracePeriodMinutes: 15,
-            overtimeThresholdHours: 9,
-            timeZone: 'Africa/Addis_Ababa',
-          },
-        },
-      },
-    );
-
-    expect(result.metadata).toEqual(
-      expect.objectContaining({
-        hrAttendancePolicy: {
-          shiftStartHour: 8,
-          shiftEndHour: 17,
-          gracePeriodMinutes: 15,
-          overtimeThresholdHours: 9,
-          timeZone: 'Africa/Addis_Ababa',
-        },
-      }),
-    );
-  });
-
-  it('rejects invalid HR attendance policy payloads on entitlement upsert', async () => {
-    retailTenantsRepository.findOne.mockResolvedValue({
-      id: 5,
-      branches: [],
-      subscriptions: [],
-      entitlements: [],
-    });
-    tenantModuleEntitlementsRepository.findOne.mockResolvedValue(null);
-
-    await expect(
-      service.upsertModuleEntitlement(5, RetailModule.HR_ATTENDANCE, {
-        enabled: true,
-        metadata: {
-          hrAttendancePolicy: {
-            gracePeriodMinutes: 181,
-          },
-        },
-      }),
-    ).rejects.toThrow(BadRequestException);
-  });
-
   it('lists retail plan presets for the admin provisioning flow', () => {
     const result = service.listPlanPresets();
 

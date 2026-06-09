@@ -43,7 +43,6 @@ import {
   PayoutStatus,
 } from '../wallet/entities/payout-log.entity';
 import { RetailModule } from './entities/tenant-module-entitlement.entity';
-import { RetailAttendanceService } from './retail-attendance.service';
 import { RetailCommandCenterReportingService } from './retail-command-center-reporting.service';
 import { BranchCatalogProductLink } from './entities/branch-catalog-product-link.entity';
 import { BranchCatalogVendorLink } from './entities/branch-catalog-vendor-link.entity';
@@ -96,7 +95,6 @@ describe('RetailOpsService', () => {
     getActiveBranchRetailAccess: jest.Mock;
     getActiveBranchModuleEntitlement: jest.Mock;
   };
-  let retailAttendanceService: { getAttendanceNetworkSummary: jest.Mock };
 
   beforeEach(async () => {
     branchesRepository = {
@@ -231,26 +229,6 @@ describe('RetailOpsService', () => {
       }),
       getActiveBranchModuleEntitlement: jest.fn().mockResolvedValue(null),
     };
-    retailAttendanceService = {
-      getAttendanceNetworkSummary: jest.fn().mockResolvedValue({
-        anchorBranchId: 3,
-        retailTenantId: 21,
-        branchCount: 1,
-        windowHours: 24,
-        activeStaffCount: 0,
-        checkedInStaffCount: 0,
-        onDutyCount: 0,
-        absentCount: 0,
-        lateCheckInCount: 0,
-        overtimeActiveCount: 0,
-        averageAttendanceRate: 0,
-        criticalBranchCount: 0,
-        highBranchCount: 0,
-        normalBranchCount: 1,
-        alerts: [],
-        branches: [],
-      }),
-    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -305,7 +283,6 @@ describe('RetailOpsService', () => {
           provide: RetailEntitlementsService,
           useValue: retailEntitlementsService,
         },
-        { provide: RetailAttendanceService, useValue: retailAttendanceService },
       ],
     }).compile();
 
@@ -1101,127 +1078,6 @@ describe('RetailOpsService', () => {
     expect(desktopSpy).not.toHaveBeenCalled();
   });
 
-  it('includes HR attendance in the network command center when the entitlement is active', async () => {
-    retailEntitlementsService.getActiveBranchRetailAccess.mockResolvedValue({
-      branch: {
-        id: 3,
-        name: 'HQ',
-        code: 'HQ-3',
-        retailTenantId: 21,
-        isActive: true,
-      },
-      tenant: {
-        id: 21,
-        branches: [
-          {
-            id: 3,
-            name: 'HQ',
-            code: 'HQ-3',
-            retailTenantId: 21,
-            isActive: true,
-          },
-          {
-            id: 8,
-            name: 'Airport',
-            code: 'BR-8',
-            retailTenantId: 21,
-            isActive: true,
-          },
-        ],
-      },
-      entitlements: [{ module: RetailModule.HR_ATTENDANCE }],
-    });
-    retailAttendanceService.getAttendanceNetworkSummary.mockResolvedValue({
-      anchorBranchId: 3,
-      retailTenantId: 21,
-      branchCount: 2,
-      windowHours: 24,
-      activeStaffCount: 14,
-      checkedInStaffCount: 11,
-      onDutyCount: 9,
-      absentCount: 2,
-      lateCheckInCount: 1,
-      overtimeActiveCount: 1,
-      averageAttendanceRate: 78.57,
-      criticalBranchCount: 1,
-      highBranchCount: 1,
-      normalBranchCount: 0,
-      alerts: [
-        {
-          code: 'HR_ATTENDANCE_ABSENT_STAFF',
-          severity: 'CRITICAL',
-          title: 'Active staff are missing attendance activity',
-          summary:
-            'One branch has active staff without recent attendance activity.',
-          metric: 2,
-          action: 'VIEW_HR_ATTENDANCE',
-        },
-      ],
-      branches: [
-        {
-          branchId: 3,
-          branchName: 'HQ',
-          branchCode: 'HQ-3',
-          highestRisk: 'CRITICAL',
-          highestRiskReason:
-            'At least one active branch staff member has no recent attendance activity.',
-          activeStaffCount: 8,
-          checkedInStaffCount: 6,
-          onDutyCount: 5,
-          absentCount: 2,
-          lateCheckInCount: 0,
-          overtimeActiveCount: 0,
-          attendanceRate: 75,
-          averageWorkedHours: 6,
-          lastActivityAt: new Date('2026-03-19T10:30:00.000Z'),
-          actions: [
-            {
-              type: 'VIEW_HR_ATTENDANCE',
-              method: 'GET',
-              path: '/retail/v1/ops/hr-attendance?branchId=3&windowHours=24',
-              body: null,
-              enabled: true,
-            },
-            {
-              type: 'VIEW_HR_ATTENDANCE_EXCEPTIONS',
-              method: 'GET',
-              path: '/retail/v1/ops/hr-attendance/exceptions?branchId=3&windowHours=24&queueType=ABSENT',
-              body: null,
-              enabled: true,
-            },
-          ],
-        },
-      ],
-    });
-
-    const result = await service.getNetworkCommandCenterSummary({
-      branchId: 3,
-      branchLimit: 2,
-    });
-
-    expect(result.enabledModuleCount).toBe(1);
-    expect(result.modules[0].module).toBe(RetailModule.HR_ATTENDANCE);
-    expect(result.modules[0]).toEqual(
-      expect.objectContaining({
-        status: 'CRITICAL',
-        metrics: expect.arrayContaining([
-          expect.objectContaining({ key: 'absentStaff', value: 2 }),
-          expect.objectContaining({ key: 'lateCheckIns', value: 1 }),
-        ]),
-      }),
-    );
-    expect(result.modules[0].branchPreviews[0].actionPath).toContain(
-      '/hr-attendance/exceptions',
-    );
-    expect(
-      retailAttendanceService.getAttendanceNetworkSummary,
-    ).toHaveBeenCalledWith({
-      branchId: 3,
-      limit: 2,
-      windowHours: 24,
-    });
-  });
-
   it('filters the network command center summary by module and status', async () => {
     retailEntitlementsService.getActiveBranchRetailAccess.mockResolvedValue({
       branch: {
@@ -1299,7 +1155,7 @@ describe('RetailOpsService', () => {
       totalBlockedAutoSubmitDraftCount: 0,
       alerts: [],
       branches: [],
-    } as any);
+    });
 
     const result = await service.getNetworkCommandCenterSummary({
       branchId: 3,
@@ -1701,85 +1557,6 @@ describe('RetailOpsService', () => {
     );
     expect(csv).toContain('"HIGH",1,"WORSENING"');
     expect(csv).toContain('"HQ"');
-  });
-
-  it('exports HR attendance modules in the network command center CSV', async () => {
-    jest.spyOn(service, 'getNetworkCommandCenterSummary').mockResolvedValue({
-      anchorBranchId: 3,
-      retailTenantId: 21,
-      branchCount: 2,
-      enabledModuleCount: 1,
-      criticalModuleCount: 1,
-      highModuleCount: 0,
-      normalModuleCount: 0,
-      alerts: [],
-      modules: [
-        {
-          module: RetailModule.HR_ATTENDANCE,
-          title: 'HR attendance',
-          status: 'CRITICAL',
-          statusReason:
-            '1 branches have missing attendance activity that needs immediate intervention.',
-          branchCount: 2,
-          alertCount: 1,
-          topAlert: {
-            module: RetailModule.HR_ATTENDANCE,
-            code: 'HR_ATTENDANCE_ABSENT_STAFF',
-            severity: 'CRITICAL',
-            title: 'Active staff are missing attendance activity',
-            summary:
-              'One branch has active staff without recent attendance activity.',
-            metric: 2,
-            action: 'VIEW_HR_ATTENDANCE',
-          },
-          metrics: [
-            { key: 'absentStaff', label: 'Absent staff', value: 2 },
-            { key: 'lateCheckIns', label: 'Late check-ins', value: 1 },
-          ],
-          actions: [
-            {
-              type: 'VIEW_HR_ATTENDANCE_NETWORK_SUMMARY',
-              method: 'GET',
-              path: '/retail/v1/ops/hr-attendance/network-summary?branchId=3',
-              enabled: true,
-            },
-          ],
-          trend: {
-            previousStatus: null,
-            statusDelta: null,
-            direction: 'STABLE',
-            previousAlertCount: null,
-            previousHeadlineMetricKey: null,
-            previousHeadlineMetricValue: null,
-            headlineMetricDelta: null,
-          },
-          branchPreviews: [
-            {
-              branchId: 3,
-              branchName: 'HQ',
-              branchCode: 'HQ-3',
-              status: 'CRITICAL',
-              statusReason:
-                'At least one active branch staff member has no recent attendance activity.',
-              actionPath:
-                '/retail/v1/ops/hr-attendance/exceptions?branchId=3&windowHours=24&queueType=ABSENT',
-            },
-          ],
-        },
-      ],
-    });
-
-    const csv = await service.exportNetworkCommandCenterSummaryCsv({
-      branchId: 3,
-      branchLimit: 2,
-      module: RetailModule.HR_ATTENDANCE,
-    });
-
-    expect(csv).toContain('"HR_ATTENDANCE","HR attendance","CRITICAL"');
-    expect(csv).toContain('"absentStaff:2|lateCheckIns:1"');
-    expect(csv).toContain(
-      '/retail/v1/ops/hr-attendance/exceptions?branchId=3&windowHours=24&queueType=ABSENT',
-    );
   });
 
   it('returns branch stock health summary with prioritized items', async () => {

@@ -25,14 +25,14 @@ export class StartPosWorkspaceActivationDto {
 
   @ApiPropertyOptional({
     description:
-      'POS branch subscription period to activate. Defaults to SIX_MONTHS for backward compatibility.',
-    enum: ['SIX_MONTHS', 'ONE_YEAR'],
-    example: 'SIX_MONTHS',
+      'POS branch subscription period to activate. Defaults to MONTHLY.',
+    enum: ['MONTHLY', 'ONE_YEAR'],
+    example: 'MONTHLY',
   })
   @IsOptional()
   @IsString()
-  @IsIn(['SIX_MONTHS', 'ONE_YEAR'])
-  subscriptionPeriod?: 'SIX_MONTHS' | 'ONE_YEAR';
+  @IsIn(['MONTHLY', 'ONE_YEAR'])
+  subscriptionPeriod?: 'MONTHLY' | 'ONE_YEAR';
 
   @ApiPropertyOptional({
     description: 'Optional referral code from an active equity partner.',
@@ -57,12 +57,12 @@ export class PosWorkspaceActivationPaymentResponseDto {
   status!: 'PENDING_CONFIRMATION' | 'ACTIVE';
 
   @ApiPropertyOptional({
-    enum: ['SIX_MONTHS', 'ONE_YEAR'],
-    example: 'SIX_MONTHS',
+    enum: ['MONTHLY', 'ONE_YEAR'],
+    example: 'MONTHLY',
   })
-  subscriptionPeriod?: 'SIX_MONTHS' | 'ONE_YEAR';
+  subscriptionPeriod?: 'MONTHLY' | 'ONE_YEAR';
 
-  @ApiPropertyOptional({ example: 11400 })
+  @ApiPropertyOptional({ example: 1900 })
   amount?: number;
 
   @ApiPropertyOptional({ example: 'ETB' })

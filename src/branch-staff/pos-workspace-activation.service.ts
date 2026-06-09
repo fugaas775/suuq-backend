@@ -41,11 +41,10 @@ export { POS_WORKSPACE_REFERENCE_PREFIX };
 const BRANCH_CREATE_REFERENCE_PREFIX = 'POSBRANCH';
 const POS_WORKSPACE_CURRENCY = POS_BRANCH_SUBSCRIPTION_CURRENCY;
 /**
- * Default subscription period when callers do not specify one. Existing
- * activation flows that have not been updated yet keep working with the
- * shorter 6-month option.
+ * Default subscription period when callers do not specify one. Defaults to the
+ * monthly plan — the lowest-barrier entry option.
  */
-const DEFAULT_POS_BRANCH_PERIOD: PosBranchSubscriptionPeriod = 'SIX_MONTHS';
+const DEFAULT_POS_BRANCH_PERIOD: PosBranchSubscriptionPeriod = 'MONTHLY';
 export const PRIMARY_RETAIL_CATEGORY_BLOCKER =
   'Choose a primary retail category.';
 export const POS_FIT_CATEGORY_BLOCKER = 'Choose a POS fit category.';
@@ -269,7 +268,7 @@ export class PosWorkspaceActivationService {
     const billingInterval =
       option.period === 'ONE_YEAR'
         ? TenantBillingInterval.ONE_YEAR
-        : TenantBillingInterval.SIX_MONTHS;
+        : TenantBillingInterval.MONTHLY;
 
     const now = new Date();
     const nextSubscription =
