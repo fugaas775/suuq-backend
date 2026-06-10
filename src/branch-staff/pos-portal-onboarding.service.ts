@@ -86,6 +86,7 @@ export class PosPortalOnboardingService {
         address: dto.address?.trim() || null,
         city: dto.city?.trim() || null,
         country: dto.country?.trim() || null,
+        phone: dto.phone?.trim() || null,
         isActive: true,
       }),
     );

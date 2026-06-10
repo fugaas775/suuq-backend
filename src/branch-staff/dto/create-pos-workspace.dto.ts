@@ -76,6 +76,13 @@ export class CreatePosWorkspaceDto {
   @MaxLength(255)
   address?: string;
 
+  @ApiPropertyOptional({ example: '0911234567' })
+  @Transform(({ value }) => String(value ?? '').trim())
+  @IsOptional()
+  @IsString()
+  @MaxLength(32)
+  phone?: string;
+
   @ApiPropertyOptional({ example: 14, nullable: true })
   @IsOptional()
   @Type(() => Number)
