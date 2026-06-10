@@ -2725,24 +2725,27 @@ export class ProductsService {
     const antiClump = ((q as any).antiClump ?? true) ? true : false;
 
     type Tier = 'base' | 'sibling' | 'parent' | 'global';
+    type TierEntry = { item: Product; tier: Tier };
     const tierWeight: Record<Tier, number> = {
       base: 1.0,
       sibling: 0.8,
       parent: 0.6,
       global: 0.4,
     };
+    // Explicit return type pins each entry's `tier` to Tier so it cannot widen
+    // to string (avoids per-literal `as Tier` casts the lint hook strips).
+    const mkTierEntry = (item: Product, tier: Tier): TierEntry => ({ item, tier });
 
     // Build candidate list with tier tag
-    const siblingEntries: Array<{ item: Product; tier: Tier }> = [];
+    const siblingEntries: TierEntry[] = [];
     for (const [sid, arr] of Object.entries(siblings || {})) {
-      for (const it of arr)
-        siblingEntries.push({ item: it, tier: 'sibling' as Tier });
+      for (const it of arr) siblingEntries.push(mkTierEntry(it, 'sibling'));
     }
-    const candidates: Array<{ item: Product; tier: Tier }> = [
-      ...base.map((it) => ({ item: it, tier: 'base' as Tier })),
+    const candidates: TierEntry[] = [
+      ...base.map((it) => mkTierEntry(it, 'base')),
       ...siblingEntries,
-      ...parent.map((it) => ({ item: it, tier: 'parent' as Tier })),
-      ...global.map((it) => ({ item: it, tier: 'global' as Tier })),
+      ...parent.map((it) => mkTierEntry(it, 'parent')),
+      ...global.map((it) => mkTierEntry(it, 'global')),
     ];
 
     // De-duplicate by product.id (first occurrence kept)
