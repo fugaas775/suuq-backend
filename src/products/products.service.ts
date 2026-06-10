@@ -362,7 +362,11 @@ export class ProductsService {
     if (!product) return product;
     const from = product.currency || 'ETB';
     const price = this.convertAmount(product.price, from, targetCurrency);
-    const sale = this.convertAmount(product.salePrice, from, targetCurrency);
+    const sale = this.convertAmount(
+      product.salePrice as any,
+      from,
+      targetCurrency,
+    );
     const rate = this.currencyService.getRate(from, targetCurrency);
     const roundedRate =
       typeof rate === 'number'
@@ -446,7 +450,7 @@ export class ProductsService {
     const list = Array.from(
       new Set((ids || []).filter((n) => Number.isInteger(n) && n > 0)),
     );
-    if (!list.length) return [];
+    if (!list.length) return [] as any;
     const qb = this.productRepo
       .createQueryBuilder('product')
       .leftJoinAndSelect('product.vendor', 'vendor')
@@ -1776,7 +1780,7 @@ export class ProductsService {
     await this.productRepo
       .createQueryBuilder()
       .update(Product)
-      .set({ viewCount: () => 'COALESCE(view_count, 0) + 1' })
+      .set({ viewCount: () => 'COALESCE(view_count, 0) + 1' as any })
       .where('id = :id', { id })
       .execute();
   }
@@ -1973,7 +1977,7 @@ export class ProductsService {
         sessionKey,
         productId: In(visibleIds),
         createdAt: MoreThan(cutoff),
-      },
+      } as any,
     });
     const existingSet = new Set(existing.map((e) => e.productId));
     const toInsert = visibleIds.filter((id) => !existingSet.has(id));
@@ -1999,7 +2003,7 @@ export class ProductsService {
       await this.productRepo
         .createQueryBuilder()
         .update(Product)
-        .set({ viewCount: () => 'COALESCE(view_count, 0) + 1' })
+        .set({ viewCount: () => 'COALESCE(view_count, 0) + 1' as any })
         .where('id IN (:...ids)', { ids: toInsert })
         .execute();
       recorded = toInsert.length;
@@ -2088,11 +2092,11 @@ export class ProductsService {
     } = filters as any;
     // categoryId can be an array (DTO transforms comma-separated query into number[])
     const categoryIds: number[] = Array.isArray(rawCategoryId)
-      ? rawCategoryId
+      ? (rawCategoryId as unknown as number[])
       : Array.isArray(categoryAlias)
-        ? categoryAlias
+        ? (categoryAlias as unknown as number[])
         : Array.isArray(categoriesCsv)
-          ? categoriesCsv
+          ? (categoriesCsv as unknown as number[])
           : typeof rawCategoryId === 'number'
             ? [rawCategoryId]
             : typeof categoryAlias === 'number'
@@ -2364,7 +2368,7 @@ export class ProductsService {
           });
       }
 
-      return { qb, addedGeoRank };
+      return { qb, addedGeoRank } as { qb: any; addedGeoRank: boolean };
     };
 
     const applySorting = (qb: any, addedGeoRank: boolean) => {
@@ -2541,7 +2545,7 @@ export class ProductsService {
         perPage,
         currentPage: page,
         totalPages: Math.ceil(total / perPage),
-      };
+      } as any;
     }
 
     // Standard path
@@ -2594,7 +2598,7 @@ export class ProductsService {
       ...q,
       perPage: perBase,
       currency: targetCurrency,
-    };
+    } as any;
     const baseRes = await this.findFiltered(baseFilters);
     const base = baseRes.items;
 
@@ -2610,7 +2614,7 @@ export class ProductsService {
       if (cat?.id) baseCatId = cat.id;
     }
 
-    let parentId: number | undefined = q.siblingParentId;
+    let parentId: number | undefined = q.siblingParentId as any;
     if (!parentId && baseCatId) {
       const cat = await this.categoryRepo
         .findOne({ where: { id: baseCatId }, relations: ['parent'] as any })
@@ -2637,7 +2641,7 @@ export class ProductsService {
           includeDescendants: true,
           perPage: perSibling,
           page,
-        });
+        } as any);
         siblings[String(sib.id)] = res.items;
       }
     }
@@ -2654,7 +2658,7 @@ export class ProductsService {
         includeDescendants: true,
         perPage: parentLimit,
         page,
-      });
+      } as any);
       parentBucket = res.items;
     }
 
@@ -2731,13 +2735,14 @@ export class ProductsService {
     // Build candidate list with tier tag
     const siblingEntries: Array<{ item: Product; tier: Tier }> = [];
     for (const [sid, arr] of Object.entries(siblings || {})) {
-      for (const it of arr) siblingEntries.push({ item: it, tier: 'sibling' });
+      for (const it of arr)
+        siblingEntries.push({ item: it, tier: 'sibling' as Tier });
     }
     const candidates: Array<{ item: Product; tier: Tier }> = [
-      ...base.map((it) => ({ item: it, tier: 'base' })),
+      ...base.map((it) => ({ item: it, tier: 'base' as Tier })),
       ...siblingEntries,
-      ...parent.map((it) => ({ item: it, tier: 'parent' })),
-      ...global.map((it) => ({ item: it, tier: 'global' })),
+      ...parent.map((it) => ({ item: it, tier: 'parent' as Tier })),
+      ...global.map((it) => ({ item: it, tier: 'global' as Tier })),
     ];
 
     // De-duplicate by product.id (first occurrence kept)
@@ -3042,7 +3047,7 @@ export class ProductsService {
     }
 
     if (listingType !== undefined) {
-      product.listingType = listingType;
+      product.listingType = listingType as any;
     }
     if (bedrooms !== undefined) {
       product.bedrooms = (bedrooms as any) ?? null;
@@ -3051,7 +3056,7 @@ export class ProductsService {
       product.listingCity = (listingCity as any) ?? null;
     if (bathrooms !== undefined) product.bathrooms = (bathrooms as any) ?? null;
     if (sizeSqm !== undefined) product.sizeSqm = (sizeSqm as any) ?? null;
-    if (typeof furnished !== 'undefined') product.furnished = furnished;
+    if (typeof furnished !== 'undefined') product.furnished = furnished as any;
     if (rentPeriod !== undefined)
       product.rentPeriod = (rentPeriod as any) ?? null;
     if (
@@ -3292,11 +3297,11 @@ export class ProductsService {
     // Clean up associated rows in other tables before deleting the product
     try {
       // Remove reviews linked to this product
-      await this.reviewRepo.delete({ product: { id } });
+      await this.reviewRepo.delete({ product: { id } } as any);
     } catch {}
     try {
       // Remove lightweight impressions rows
-      await this.impressionRepo.delete({ productId: id });
+      await this.impressionRepo.delete({ productId: id } as any);
     } catch {}
     try {
       // Remove this product ID from all users' favorites (best-effort)
@@ -3311,7 +3316,7 @@ export class ProductsService {
   /** Admin moderation helpers. */
   async listPendingApproval(): Promise<any[]> {
     const rows = await this.productRepo.find({
-      where: { status: 'pending_approval', deletedAt: IsNull() },
+      where: { status: 'pending_approval' as any, deletedAt: IsNull() },
       relations: ['vendor', 'category', 'tags', 'images'],
       order: { createdAt: 'DESC' },
     });
@@ -3528,7 +3533,7 @@ export class ProductsService {
       return this.findOne(productId);
     }
 
-    product.category = nextCategory;
+    product.category = nextCategory as any;
     product.attributes = this.sanitizeAttributesForCategory(
       product.attributes ?? {},
       nextCategory,
@@ -3907,8 +3912,8 @@ export class ProductsService {
     const previousStatus = (product as any).status || null;
     if (!already) {
       product.deletedAt = new Date();
-      product.deletedByAdminId = opts.actorId ?? null;
-      product.deletedReason = opts.reason ?? null;
+      product.deletedByAdminId = (opts.actorId ?? null) as any;
+      product.deletedReason = (opts.reason ?? null) as any;
       // Also ensure it won't show up in public listings
       product.isBlocked = true;
       if (product.status === 'publish') (product as any).status = 'draft';
@@ -3933,9 +3938,9 @@ export class ProductsService {
   ): Promise<{ id: number; restored: boolean }> {
     const product = await this.productRepo.findOne({ where: { id } });
     if (!product) throw new NotFoundException('Product not found');
-    product.deletedAt = null;
-    product.deletedByAdminId = null;
-    product.deletedReason = null;
+    product.deletedAt = null as any;
+    product.deletedByAdminId = null as any;
+    product.deletedReason = null as any;
     // Keep it in draft and unblocked; vendor/admin can republish explicitly
     (product as any).status = 'draft';
     product.isBlocked = false;
@@ -4043,7 +4048,7 @@ export class ProductsService {
       relations: ['vendor', 'category', 'tags', 'images'],
     });
     if (!product) throw new NotFoundException('Product not found');
-    return normalizeProductMedia(product);
+    return normalizeProductMedia(product) as any;
   }
 
   async toggleFeatureStatus(id: number, featured: boolean): Promise<Product> {
@@ -4071,7 +4076,7 @@ export class ProductsService {
       where: { id },
       relations: ['vendor', 'category', 'tags', 'images'],
     });
-    return normalizeProductMedia(updated);
+    return normalizeProductMedia(updated) as any;
   }
 
   async suggestNames(
