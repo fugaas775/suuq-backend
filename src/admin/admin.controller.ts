@@ -572,7 +572,7 @@ export class AdminController {
       order?: 'ASC' | 'DESC' | 'asc' | 'desc';
     },
   ) {
-    const result = await this.ordersService.findAllForAdmin(query as any);
+    const result = await this.ordersService.findAllForAdmin(query);
     return { orders: result.data, total: result.total };
   }
 
@@ -727,7 +727,7 @@ export class AdminController {
       this.usersService.countByRole(UserRole.ADMIN),
       this.ordersService.getTotalRevenue(),
       this.ordersService.countAll(),
-      this.currencyService.getRatesSnapshot(),
+      Promise.resolve(this.currencyService.getRatesSnapshot()),
     ]);
 
     return {
