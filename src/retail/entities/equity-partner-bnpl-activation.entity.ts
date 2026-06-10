@@ -53,7 +53,7 @@ export class EquityPartnerBnplActivation {
   @Column({ type: 'int' })
   targetOwnerUserId!: number;
 
-  /** 'SIX_MONTHS' | 'ONE_YEAR' (mirrors PosBranchSubscriptionPeriod). */
+  /** 'ONE_YEAR' for new BNPL activations (legacy rows may be 'SIX_MONTHS'). */
   @Column({ type: 'varchar', length: 16 })
   period!: string;
 

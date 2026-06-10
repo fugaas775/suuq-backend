@@ -3,6 +3,7 @@ import { AuthGuard } from '@nestjs/passport';
 import { RolesGuard } from '../auth/roles.guard';
 import { RetailAdminController } from './retail.admin.controller';
 import { RetailEntitlementsService } from './retail-entitlements.service';
+import { PosUserFitCategory } from '../categories/entities/category.entity';
 
 describe('RetailAdminController', () => {
   let controller: RetailAdminController;
@@ -72,7 +73,7 @@ describe('RetailAdminController', () => {
       5,
       {
         categoryId: 14,
-        userFit: 'FOOD_SERVICE_PRESET_FIT',
+        userFit: PosUserFitCategory.FOOD_SERVICE_PRESET_FIT,
         notes: 'Counter-service rollout',
       },
       {
@@ -89,7 +90,7 @@ describe('RetailAdminController', () => {
       5,
       {
         categoryId: 14,
-        userFit: 'FOOD_SERVICE_PRESET_FIT',
+        userFit: PosUserFitCategory.FOOD_SERVICE_PRESET_FIT,
         notes: 'Counter-service rollout',
       },
       {

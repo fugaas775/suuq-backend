@@ -99,7 +99,7 @@ export interface PosWorkspaceActivationCandidate {
     billingInterval: TenantBillingInterval;
     paymentMethod: string;
     subscriptionOptions: Array<{
-      period: 'SIX_MONTHS' | 'ONE_YEAR';
+      period: 'MONTHLY' | 'ONE_YEAR';
       months: number;
       amount: number;
       currency: string;
@@ -853,7 +853,7 @@ export class BranchStaffService {
         period: option.period,
         months: option.months,
         amount: option.amount,
-        currency: option.currency as string,
+        currency: option.currency,
         label: option.label,
         planCode: option.planCode,
       })),

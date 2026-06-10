@@ -187,7 +187,7 @@ export class EquityPartnerBnplService {
         billingInterval:
           option.period === 'ONE_YEAR'
             ? TenantBillingInterval.ONE_YEAR
-            : TenantBillingInterval.SIX_MONTHS,
+            : TenantBillingInterval.MONTHLY,
         amount: option.amount,
         currency: option.currency,
         periodMonths: option.months,
@@ -536,9 +536,13 @@ export class EquityPartnerBnplService {
   // Helpers
   // ---------------------------------------------------------------------------
 
-  /** Pricing table exposed to the partner UI. */
+  /** Pricing table exposed to the partner UI. BNPL funds the yearly plan only
+   *  (monthly BNPL is trivial — credit ≈ settlement), so the monthly option is
+   *  filtered out here and rejected by the controller DTO. */
   getSubscriptionOptions() {
-    return POS_BRANCH_SUBSCRIPTION_OPTIONS.map((option) => ({
+    return POS_BRANCH_SUBSCRIPTION_OPTIONS.filter(
+      (option) => option.period === 'ONE_YEAR',
+    ).map((option) => ({
       period: option.period,
       months: option.months,
       amount: option.amount,
@@ -682,7 +686,7 @@ export class EquityPartnerBnplService {
         ...activation,
         settlementReferenceId:
           overrides.settlementReferenceId ?? activation.settlementReferenceId,
-      } as EquityPartnerBnplActivation);
+      });
     }
 
     entry.activationStatus = activation.status;
@@ -728,7 +732,7 @@ export class EquityPartnerBnplService {
       } as Partial<User>),
     );
     (created as any).requiresGoogleLink = true;
-    return created as User & { requiresGoogleLink?: boolean };
+    return created;
   }
 
   private async attachBranchNames<T extends { branchId: number }>(

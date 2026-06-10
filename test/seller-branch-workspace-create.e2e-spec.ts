@@ -4,10 +4,16 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 const request = require('supertest');
 import { AppModule } from '../src/app.module';
-import { BranchStaffAssignment } from '../src/branch-staff/entities/branch-staff-assignment.entity';
+import {
+  BranchStaffAssignment,
+  BranchStaffRole,
+} from '../src/branch-staff/entities/branch-staff-assignment.entity';
 import { Branch } from '../src/branches/entities/branch.entity';
 import { EmailService } from '../src/email/email.service';
-import { RetailTenant } from '../src/retail/entities/retail-tenant.entity';
+import {
+  RetailTenant,
+  RetailTenantStatus,
+} from '../src/retail/entities/retail-tenant.entity';
 import {
   RetailModule,
   TenantModuleEntitlement,
@@ -88,7 +94,7 @@ describe('Seller branch workspace create (e2e)', () => {
         name: `Seller Branch Tenant ${Date.now()}`,
         code: `SBT${Date.now()}`.slice(-12),
         ownerUserId: ownerUser.id,
-        status: 'ACTIVE',
+        status: RetailTenantStatus.ACTIVE,
         defaultCurrency: 'ETB',
       }),
     );
@@ -107,7 +113,7 @@ describe('Seller branch workspace create (e2e)', () => {
       assignmentRepo.create({
         branchId: existingBranch.id,
         userId: ownerUser.id,
-        role: 'MANAGER',
+        role: BranchStaffRole.MANAGER,
         permissions: [],
         isActive: true,
       }),

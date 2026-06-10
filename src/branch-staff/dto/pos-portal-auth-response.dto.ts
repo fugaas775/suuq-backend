@@ -115,13 +115,13 @@ export class PosPortalAuthResponseDto extends PosPortalSessionResponseDto {
 }
 
 export class PosPortalSubscriptionOptionDto {
-  @ApiProperty({ enum: ['SIX_MONTHS', 'ONE_YEAR'], example: 'SIX_MONTHS' })
-  period!: 'SIX_MONTHS' | 'ONE_YEAR';
+  @ApiProperty({ enum: ['MONTHLY', 'ONE_YEAR'], example: 'MONTHLY' })
+  period!: 'MONTHLY' | 'ONE_YEAR';
 
-  @ApiProperty({ example: 6 })
+  @ApiProperty({ example: 1 })
   months!: number;
 
-  @ApiProperty({ example: 11400 })
+  @ApiProperty({ example: 1900 })
   amount!: number;
 
   @ApiProperty({ example: 'ETB' })
@@ -130,7 +130,7 @@ export class PosPortalSubscriptionOptionDto {
   @ApiProperty({ example: '6 months' })
   label!: string;
 
-  @ApiProperty({ example: 'POS_BRANCH_6M' })
+  @ApiProperty({ example: 'POS_BRANCH_1M' })
   planCode!: string;
 }
 

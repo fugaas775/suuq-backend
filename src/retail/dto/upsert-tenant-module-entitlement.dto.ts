@@ -131,73 +131,6 @@ export class AiAnalyticsPolicyDto {
   targetHealthScore?: number;
 }
 
-export class HrAttendancePolicyDto {
-  @ApiPropertyOptional({
-    description:
-      'Expected branch shift start hour in tenant-local time used to calculate late arrivals.',
-    example: 8,
-    minimum: 0,
-    maximum: 23,
-  })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(0)
-  @Max(23)
-  shiftStartHour?: number;
-
-  @ApiPropertyOptional({
-    description:
-      'Expected branch shift end hour in tenant-local time used for operator-facing schedule context.',
-    example: 17,
-    minimum: 0,
-    maximum: 23,
-  })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(0)
-  @Max(23)
-  shiftEndHour?: number;
-
-  @ApiPropertyOptional({
-    description:
-      'Grace period in minutes before a check-in is considered late.',
-    example: 15,
-    minimum: 0,
-    maximum: 180,
-  })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(0)
-  @Max(180)
-  gracePeriodMinutes?: number;
-
-  @ApiPropertyOptional({
-    description:
-      'Worked hours threshold after which an active shift is flagged as overtime.',
-    example: 9,
-    minimum: 1,
-    maximum: 24,
-  })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  @Max(24)
-  overtimeThresholdHours?: number;
-
-  @ApiPropertyOptional({
-    description: 'IANA timezone used to evaluate attendance policy windows.',
-    example: 'Africa/Addis_Ababa',
-  })
-  @IsOptional()
-  @IsString()
-  @MaxLength(100)
-  timeZone?: string;
-}
-
 export class TenantModuleEntitlementMetadataDto {
   @ApiPropertyOptional({
     type: () => ReplenishmentPolicyDto,
@@ -218,16 +151,6 @@ export class TenantModuleEntitlementMetadataDto {
   @ValidateNested()
   @Type(() => AiAnalyticsPolicyDto)
   aiAnalyticsPolicy?: AiAnalyticsPolicyDto;
-
-  @ApiPropertyOptional({
-    type: () => HrAttendancePolicyDto,
-    description:
-      'HR attendance controls. Supported for the HR_ATTENDANCE module and validated at write time.',
-  })
-  @IsOptional()
-  @ValidateNested()
-  @Type(() => HrAttendancePolicyDto)
-  hrAttendancePolicy?: HrAttendancePolicyDto;
 }
 
 export class UpsertTenantModuleEntitlementDto {
@@ -256,7 +179,7 @@ export class UpsertTenantModuleEntitlementDto {
   @ApiPropertyOptional({
     type: () => TenantModuleEntitlementMetadataDto,
     description:
-      'Optional module metadata. INVENTORY_AUTOMATION supports replenishmentPolicy. AI_ANALYTICS supports aiAnalyticsPolicy. HR_ATTENDANCE supports hrAttendancePolicy with shift timing and overtime thresholds.',
+      'Optional module metadata. INVENTORY_AUTOMATION supports replenishmentPolicy. AI_ANALYTICS supports aiAnalyticsPolicy.',
     example: {
       source: 'admin-override',
       replenishmentPolicy: {
@@ -273,13 +196,6 @@ export class UpsertTenantModuleEntitlementDto {
       aiAnalyticsPolicy: {
         stalePurchaseOrderHours: 72,
         targetHealthScore: 85,
-      },
-      hrAttendancePolicy: {
-        shiftStartHour: 8,
-        shiftEndHour: 17,
-        gracePeriodMinutes: 15,
-        overtimeThresholdHours: 9,
-        timeZone: 'Africa/Addis_Ababa',
       },
     },
   })

@@ -8,7 +8,11 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { AuditService } from '../audit/audit.service';
 import { BranchStaffAssignment } from '../branch-staff/entities/branch-staff-assignment.entity';
 import { Branch } from '../branches/entities/branch.entity';
-import { Category } from '../categories/entities/category.entity';
+import {
+  Category,
+  PosUserFitCategory,
+} from '../categories/entities/category.entity';
+import { ReplenishmentPolicySubmissionMode } from './dto/upsert-tenant-module-entitlement.dto';
 import { User } from '../users/entities/user.entity';
 import { RetailEntitlementsService } from './retail-entitlements.service';
 import {
@@ -179,7 +183,7 @@ describe('RetailEntitlementsService', () => {
 
     const result = await service.updateOnboardingProfile(5, {
       categoryId: 14,
-      userFit: 'FOOD_SERVICE_PRESET_FIT',
+      userFit: PosUserFitCategory.FOOD_SERVICE_PRESET_FIT,
       notes: 'Counter-service rollout',
     });
 
@@ -223,7 +227,7 @@ describe('RetailEntitlementsService', () => {
         reason: 'Included in enterprise plan',
         metadata: {
           replenishmentPolicy: {
-            submissionMode: 'AUTO_SUBMIT',
+            submissionMode: ReplenishmentPolicySubmissionMode.AUTO_SUBMIT,
             preferredSupplierProfileId: 14,
             minimumOrderTotal: 150,
             orderWindow: {
@@ -270,7 +274,7 @@ describe('RetailEntitlementsService', () => {
         enabled: true,
         metadata: {
           replenishmentPolicy: {
-            submissionMode: 'AUTO_SUBMIT',
+            submissionMode: ReplenishmentPolicySubmissionMode.AUTO_SUBMIT,
             minimumOrderTotal: 0,
           },
         },
@@ -309,66 +313,6 @@ describe('RetailEntitlementsService', () => {
         },
       }),
     );
-  });
-
-  it('upserts HR attendance entitlement metadata', async () => {
-    retailTenantsRepository.findOne.mockResolvedValue({
-      id: 5,
-      branches: [],
-      subscriptions: [],
-      entitlements: [],
-    });
-    tenantModuleEntitlementsRepository.findOne.mockResolvedValue(null);
-
-    const result = await service.upsertModuleEntitlement(
-      5,
-      RetailModule.HR_ATTENDANCE,
-      {
-        enabled: true,
-        metadata: {
-          hrAttendancePolicy: {
-            shiftStartHour: 8,
-            shiftEndHour: 17,
-            gracePeriodMinutes: 15,
-            overtimeThresholdHours: 9,
-            timeZone: 'Africa/Addis_Ababa',
-          },
-        },
-      },
-    );
-
-    expect(result.metadata).toEqual(
-      expect.objectContaining({
-        hrAttendancePolicy: {
-          shiftStartHour: 8,
-          shiftEndHour: 17,
-          gracePeriodMinutes: 15,
-          overtimeThresholdHours: 9,
-          timeZone: 'Africa/Addis_Ababa',
-        },
-      }),
-    );
-  });
-
-  it('rejects invalid HR attendance policy payloads on entitlement upsert', async () => {
-    retailTenantsRepository.findOne.mockResolvedValue({
-      id: 5,
-      branches: [],
-      subscriptions: [],
-      entitlements: [],
-    });
-    tenantModuleEntitlementsRepository.findOne.mockResolvedValue(null);
-
-    await expect(
-      service.upsertModuleEntitlement(5, RetailModule.HR_ATTENDANCE, {
-        enabled: true,
-        metadata: {
-          hrAttendancePolicy: {
-            gracePeriodMinutes: 181,
-          },
-        },
-      }),
-    ).rejects.toThrow(BadRequestException);
   });
 
   it('lists retail plan presets for the admin provisioning flow', () => {

@@ -112,7 +112,7 @@ const SELLER_PLAN_DEFINITIONS: Record<
       'Multi-branch visibility, stronger replenishment control, and tighter consumer and supplier coordination.',
     capabilities: [
       'Multi-branch workspace switching',
-      'Branch staff and attendance control',
+      'Branch staff control',
       'Replenishment review and exception handling',
       'Consumer demand plus supplier coordination',
     ],

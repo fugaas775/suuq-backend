@@ -24,7 +24,6 @@ import { CurrencyService } from '../common/services/currency.service';
 import { ShippingService } from '../shipping/shipping.service';
 import { SettingsService } from '../settings/settings.service';
 import { EmailService } from '../email/email.service';
-import { InventoryLedgerService } from '../branches/inventory-ledger.service';
 
 const j = jest as any;
 

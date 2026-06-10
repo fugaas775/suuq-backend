@@ -40,8 +40,8 @@ export class EquitySplitAssignment {
   @Column({ type: 'int', default: 1 })
   splitNumerator!: number;
 
-  /** Denominator of the revenue split (default 3 → 1/3). */
-  @Column({ type: 'int', default: 3 })
+  /** Denominator of the revenue split (default 2 → 1/2). */
+  @Column({ type: 'int', default: 2 })
   splitDenominator!: number;
 
   @CreateDateColumn()

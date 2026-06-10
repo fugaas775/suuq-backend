@@ -11,6 +11,7 @@ import {
   BranchStaffAssignment,
   BranchStaffRole,
 } from './entities/branch-staff-assignment.entity';
+import { SelfServePosWorkspaceServiceFormat } from './dto/create-pos-workspace.dto';
 
 describe('PosPortalOnboardingService', () => {
   let service: PosPortalOnboardingService;
@@ -206,7 +207,7 @@ describe('PosPortalOnboardingService', () => {
         {
           businessName: 'Bole Bites',
           branchName: 'Main Branch',
-          serviceFormat: 'HOTEL',
+          serviceFormat: SelfServePosWorkspaceServiceFormat.HOTEL,
           categoryId: 14,
           defaultCurrency: 'ETB',
         },
@@ -236,7 +237,7 @@ describe('PosPortalOnboardingService', () => {
       {
         businessName: 'Bole Bites',
         branchName: 'Main Branch',
-        serviceFormat: 'HOTEL',
+        serviceFormat: SelfServePosWorkspaceServiceFormat.HOTEL,
         categoryId: 14,
         defaultCurrency: 'ETB',
       },
