@@ -39,7 +39,7 @@ describe('AppVersionMiddleware', () => {
         reason: 'min_build',
         min_build: 200,
       }),
-    });
+    } as unknown as HttpException);
   });
 
   it('rejects requests when force update is enabled and build is stale', async () => {
@@ -70,7 +70,7 @@ describe('AppVersionMiddleware', () => {
         latest_build: 230,
         force_update: true,
       }),
-    });
+    } as unknown as HttpException);
   });
 
   it('passes requests that satisfy the current policy', async () => {

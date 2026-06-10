@@ -8,7 +8,11 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { AuditService } from '../audit/audit.service';
 import { BranchStaffAssignment } from '../branch-staff/entities/branch-staff-assignment.entity';
 import { Branch } from '../branches/entities/branch.entity';
-import { Category } from '../categories/entities/category.entity';
+import {
+  Category,
+  PosUserFitCategory,
+} from '../categories/entities/category.entity';
+import { ReplenishmentPolicySubmissionMode } from './dto/upsert-tenant-module-entitlement.dto';
 import { User } from '../users/entities/user.entity';
 import { RetailEntitlementsService } from './retail-entitlements.service';
 import {
@@ -179,7 +183,7 @@ describe('RetailEntitlementsService', () => {
 
     const result = await service.updateOnboardingProfile(5, {
       categoryId: 14,
-      userFit: 'FOOD_SERVICE_PRESET_FIT',
+      userFit: PosUserFitCategory.FOOD_SERVICE_PRESET_FIT,
       notes: 'Counter-service rollout',
     });
 
@@ -223,7 +227,7 @@ describe('RetailEntitlementsService', () => {
         reason: 'Included in enterprise plan',
         metadata: {
           replenishmentPolicy: {
-            submissionMode: 'AUTO_SUBMIT',
+            submissionMode: ReplenishmentPolicySubmissionMode.AUTO_SUBMIT,
             preferredSupplierProfileId: 14,
             minimumOrderTotal: 150,
             orderWindow: {
@@ -270,7 +274,7 @@ describe('RetailEntitlementsService', () => {
         enabled: true,
         metadata: {
           replenishmentPolicy: {
-            submissionMode: 'AUTO_SUBMIT',
+            submissionMode: ReplenishmentPolicySubmissionMode.AUTO_SUBMIT,
             minimumOrderTotal: 0,
           },
         },

@@ -54,6 +54,7 @@ import { EquityPartnerStatus } from '../retail/entities/equity-partner.entity';
 import { VendorStore } from '../vendor/entities/vendor-store.entity';
 import { SellerWorkspaceBillingStatus } from './entities/seller-workspace.entity';
 import { SellerPlanCode } from './dto/seller-workspace-response.dto';
+import { SellerBranchServiceFormat } from './dto/create-seller-branch-workspace.dto';
 import { SellerWorkspaceService } from './seller-workspace.service';
 import { SellerWorkspace } from './entities/seller-workspace.entity';
 
@@ -77,6 +78,7 @@ describe('SellerWorkspaceService', () => {
     create: jest.Mock;
     save: jest.Mock;
     manager: {
+      getRepository: jest.Mock;
       transaction: jest.Mock;
     };
   };
@@ -280,7 +282,7 @@ describe('SellerWorkspaceService', () => {
       avatarUrl: null,
       storeName: 'Seller Store',
       subscriptionTier: SubscriptionTier.PRO,
-    } as User);
+    });
     vendorStaffService.getStoreSummariesForUser.mockResolvedValue([
       {
         vendorId: 41,
@@ -449,7 +451,7 @@ describe('SellerWorkspaceService', () => {
       email: 'seller@suuq.test',
       roles: ['VENDOR', 'POS_MANAGER'],
       subscriptionTier: SubscriptionTier.FREE,
-    } as User);
+    });
     vendorStaffService.getStoreSummariesForUser.mockResolvedValue([
       {
         vendorId: 41,
@@ -512,7 +514,7 @@ describe('SellerWorkspaceService', () => {
       email: 'seller@suuq.test',
       roles: ['VENDOR', 'POS_MANAGER'],
       subscriptionTier: SubscriptionTier.FREE,
-    } as User);
+    });
     vendorStaffService.getStoreSummariesForUser.mockResolvedValue([
       {
         vendorId: 41,
@@ -563,7 +565,7 @@ describe('SellerWorkspaceService', () => {
       email: 'no-access@suuq.test',
       roles: ['CUSTOMER'],
       subscriptionTier: SubscriptionTier.FREE,
-    } as User);
+    });
     sellerWorkspacesRepository.findOne.mockResolvedValue(null);
     vendorStaffService.getStoreSummariesForUser.mockResolvedValue([]);
     branchStaffService.getPosBranchSummariesForUser.mockResolvedValue([]);
@@ -579,7 +581,7 @@ describe('SellerWorkspaceService', () => {
       email: 'seller@suuq.test',
       roles: ['VENDOR', 'POS_MANAGER'],
       subscriptionTier: SubscriptionTier.PRO,
-    } as User);
+    });
     branchStaffService.getPosBranchSummariesForUser.mockResolvedValue([
       {
         branchId: 7,
@@ -909,7 +911,7 @@ describe('SellerWorkspaceService', () => {
       .mockResolvedValueOnce({
         branchId: 11,
         userId: 77,
-        role: BranchStaffRole.CASHIER,
+        role: BranchStaffRole.OPERATOR,
         isActive: false,
       });
     productsRepository.createQueryBuilder.mockReturnValue({
@@ -1147,7 +1149,7 @@ describe('SellerWorkspaceService', () => {
       city: 'Addis Ababa',
       country: 'Ethiopia',
       address: 'Bole Atlas',
-      serviceFormat: 'RETAIL',
+      serviceFormat: SellerBranchServiceFormat.RETAIL,
       defaultCurrency: 'ETB',
     });
 

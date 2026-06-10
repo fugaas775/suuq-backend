@@ -26,7 +26,7 @@ describe('PosSyncService', () => {
   };
   let branchesRepository: { findOne: jest.Mock };
   let partnerCredentialsRepository: { findOne: jest.Mock };
-  let dataSource: { transaction: jest.Mock };
+  let dataSource: { transaction: jest.Mock; manager: any };
   let branchTransfersService: {
     create: jest.Mock;
     dispatch: jest.Mock;

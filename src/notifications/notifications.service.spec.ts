@@ -66,7 +66,7 @@ const makeRepoMock = () => {
         ...payload,
         id: idSeq++,
         createdAt: new Date(),
-      } as DeviceToken);
+      });
       return payload;
     }),
     save: jest.fn(async (payload: Partial<DeviceToken>) => {
@@ -105,7 +105,7 @@ describe('NotificationsService', () => {
       findRecipientsByRole: jest
         .fn<() => Promise<any[]>>()
         .mockResolvedValue([]),
-    } as any;
+    };
     firebaseMock = makeFirebaseMock({ successCount: 0, failureCount: 0 });
     repo = makeRepoMock();
     vendorStaffRepoMock = {
@@ -148,7 +148,7 @@ describe('NotificationsService', () => {
     await repo.query('DELETE FROM device_tokens');
     firebaseMock.__mock.sendEachForMulticast.mockReset();
     vendorStaffRepoMock.find.mockReset();
-    vendorStaffRepoMock.find.mockResolvedValue([]);
+    vendorStaffRepoMock.find.mockResolvedValue([] as never);
     usersService.findOne.mockReset();
     usersService.findOne.mockResolvedValue({ id: 1 });
   });
@@ -210,7 +210,7 @@ describe('NotificationsService', () => {
     await repo.save({ userId: 2, token: 'staff-token', platform: 'android' });
     vendorStaffRepoMock.find.mockResolvedValue([
       { memberId: 2, permissions: ['VIEW_ORDERS'] },
-    ]);
+    ] as never);
 
     const response: FirebaseMessagingResponse = {
       successCount: 1,

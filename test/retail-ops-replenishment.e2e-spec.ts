@@ -3,7 +3,6 @@ import { Test, TestingModule } from '@nestjs/testing';
 import request from 'supertest';
 import { JwtAuthGuard } from '../src/auth/jwt-auth.guard';
 import { RolesGuard } from '../src/auth/roles.guard';
-import { RetailAttendanceService } from '../src/retail/retail-attendance.service';
 import { RetailModulesGuard } from '../src/retail/retail-modules.guard';
 import { RetailOpsController } from '../src/retail/retail-ops.controller';
 import { RetailOpsService } from '../src/retail/retail-ops.service';
@@ -1380,10 +1379,6 @@ describe('RetailOpsController replenishment actions (e2e)', () => {
         {
           provide: RetailOpsService,
           useValue: retailOpsService,
-        },
-        {
-          provide: RetailAttendanceService,
-          useValue: { getAttendanceSummary: jest.fn() },
         },
       ],
     })

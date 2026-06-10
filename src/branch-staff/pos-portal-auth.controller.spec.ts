@@ -8,6 +8,10 @@ import { BranchShiftService } from './branch-shift.service';
 import { PosPortalAuthController } from './pos-portal-auth.controller';
 import { PosPortalLoginDto } from './dto/pos-portal-login.dto';
 import { RetailModule } from '../retail/entities/tenant-module-entitlement.entity';
+import {
+  PosManagerApprovalDto,
+  PosManagerApprovalType,
+} from './dto/pos-operator-unlock.dto';
 import { PosWorkspaceActivationService } from './pos-workspace-activation.service';
 import { PosPortalOnboardingService } from './pos-portal-onboarding.service';
 
@@ -261,7 +265,7 @@ describe('PosPortalAuthController', () => {
           branchId: 9,
           identifier: 'manager.one',
           password: 'Branch#123',
-          approvalType: 'VOID_SETTLED_BILL',
+          approvalType: PosManagerApprovalType.VOID_SETTLED_BILL,
           resolveIdentifier: () => 'manager.one',
         },
       ),
@@ -325,10 +329,10 @@ describe('PosPortalAuthController', () => {
             branchId: 9,
             identifier: 'cashier.one',
             password: 'Branch#123',
-            approvalType: 'VOID_SETTLED_BILL',
+            approvalType: PosManagerApprovalType.VOID_SETTLED_BILL,
             resolveIdentifier: () => 'cashier.one',
           },
-        ),
+        ) as unknown as PosManagerApprovalDto,
         {
           headers: { 'user-agent': 'jest', 'x-forwarded-for': '1.2.3.4' },
           method: 'POST',

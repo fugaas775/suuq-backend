@@ -6,6 +6,7 @@ import { RetailEntitlementsService } from '../retail/retail-entitlements.service
 import { RetailModulesGuard } from '../retail/retail-modules.guard';
 import { PosPartnerCheckoutController } from './pos-partner-checkout.controller';
 import { PosCheckoutService } from './pos-checkout.service';
+import { ListPosCheckoutsQueryDto } from './dto/list-pos-checkouts-query.dto';
 
 describe('PosPartnerCheckoutController', () => {
   let controller: PosPartnerCheckoutController;
@@ -114,7 +115,7 @@ describe('PosPartnerCheckoutController', () => {
 
     expect(() =>
       controller.findAll(
-        { branchId: 4 },
+        { branchId: 4 } as unknown as ListPosCheckoutsQueryDto,
         { partnerCredential: { id: 9, branchId: 3 } },
       ),
     ).toThrow(UnauthorizedException);

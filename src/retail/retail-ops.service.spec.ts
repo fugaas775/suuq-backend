@@ -48,6 +48,8 @@ import { BranchCatalogProductLink } from './entities/branch-catalog-product-link
 import { BranchCatalogVendorLink } from './entities/branch-catalog-vendor-link.entity';
 import { RetailEntitlementsService } from './retail-entitlements.service';
 import { RetailOpsService } from './retail-ops.service';
+import { RetailPosNetworkSummaryResponseDto } from './dto/retail-pos-network-summary-response.dto';
+import { RetailCommandCenterSummaryQueryDto } from './dto/retail-command-center-summary-query.dto';
 import { User } from '../users/entities/user.entity';
 
 describe('RetailOpsService', () => {
@@ -81,6 +83,7 @@ describe('RetailOpsService', () => {
   let stockMovementsRepository: { find: jest.Mock; findOne: jest.Mock };
   let purchaseOrdersRepository: {
     createQueryBuilder: jest.Mock;
+    find: jest.Mock;
     findOne: jest.Mock;
   };
   let ordersRepository: { find: jest.Mock; findOne: jest.Mock };
@@ -819,11 +822,11 @@ describe('RetailOpsService', () => {
           ],
         },
       ],
-    });
+    } as unknown as RetailPosNetworkSummaryResponseDto);
 
     const result = await service.getNetworkCommandCenterSummary({
       branchId: 3,
-    });
+    } as unknown as RetailCommandCenterSummaryQueryDto);
 
     expect(result.enabledModuleCount).toBe(1);
     expect(result.modules[0].module).toBe(RetailModule.POS_CORE);

@@ -6,6 +6,8 @@ import { RetailEntitlementsService } from '../retail/retail-entitlements.service
 import { RetailModulesGuard } from '../retail/retail-modules.guard';
 import { PosPartnerRegisterController } from './pos-partner-register.controller';
 import { PosRegisterService } from './pos-register.service';
+import { ListPosSuspendedCartsQueryDto } from './dto/list-pos-suspended-carts-query.dto';
+import { ListPosRegisterSessionsQueryDto } from './dto/list-pos-register-sessions-query.dto';
 
 describe('PosPartnerRegisterController', () => {
   let controller: PosPartnerRegisterController;
@@ -99,7 +101,7 @@ describe('PosPartnerRegisterController', () => {
 
   it('lists partner-scoped suspended carts', async () => {
     await controller.findSuspendedCarts(
-      { branchId: 3 },
+      { branchId: 3 } as unknown as ListPosSuspendedCartsQueryDto,
       { partnerCredential: { id: 9, branchId: 3 } },
     );
 
@@ -155,7 +157,7 @@ describe('PosPartnerRegisterController', () => {
 
     expect(() =>
       controller.findSessions(
-        { branchId: 4 },
+        { branchId: 4 } as unknown as ListPosRegisterSessionsQueryDto,
         { partnerCredential: { id: 9, branchId: 3 } },
       ),
     ).toThrow(UnauthorizedException);
