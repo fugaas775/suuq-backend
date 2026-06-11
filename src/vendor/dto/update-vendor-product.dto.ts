@@ -12,6 +12,7 @@ import {
   MaxLength,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import { VendorProductVariantInputDto } from './create-vendor-product.dto';
 
 // Re-using the ImageDto definition for consistency
 class ImageDto {
@@ -226,4 +227,11 @@ export class UpdateVendorProductDto {
   @IsOptional()
   @IsObject()
   attributes?: Record<string, any>;
+
+  // RETAIL product variants (Size×Color×Material combos), each with its own qty.
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => VendorProductVariantInputDto)
+  variants?: VendorProductVariantInputDto[];
 }

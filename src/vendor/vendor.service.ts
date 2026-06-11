@@ -53,6 +53,10 @@ import { GenerateLabelDto } from './dto/generate-label.dto';
 import { UserReport } from '../moderation/entities/user-report.entity';
 import { EmailService } from '../email/email.service';
 import { InventoryLedgerService } from '../branches/inventory-ledger.service';
+import { VariantInventoryService } from '../branches/variant-inventory.service';
+import { ProductVariant } from '../products/entities/product-variant.entity';
+import { computeVariantKey } from '../products/variant-key.util';
+import { VendorProductVariantInputDto } from './dto/create-vendor-product.dto';
 import { Branch } from '../branches/entities/branch.entity';
 import { StockMovementType } from '../branches/entities/stock-movement.entity';
 import { PosPortalOnboardingService } from '../branch-staff/pos-portal-onboarding.service';
@@ -104,6 +108,9 @@ export class VendorService {
     private readonly vendorStoreRepository: Repository<VendorStore>,
     @InjectRepository(BranchStaffAssignment)
     private readonly branchStaffAssignmentsRepository: Repository<BranchStaffAssignment>,
+    @InjectRepository(ProductVariant)
+    private readonly productVariantRepository: Repository<ProductVariant>,
+    private readonly variantInventoryService: VariantInventoryService,
   ) {}
 
   private readonly logger = new Logger(VendorService.name);
@@ -221,6 +228,118 @@ export class VendorService {
           ? 'Seeded branch inventory from vendor catalog import.'
           : 'Created branch inventory row from vendor catalog import.',
     });
+  }
+
+  private productHasVariants(
+    variants: VendorProductVariantInputDto[] | undefined,
+  ): boolean {
+    return (
+      Array.isArray(variants) &&
+      variants.some((v) => computeVariantKey(v?.attributes))
+    );
+  }
+
+  /**
+   * Create/update a product's variants and seed their per-branch stock. Variant
+   * stock cascades to the product-level rollup (so a variant product's
+   * stockQuantity = sum of its variants); callers therefore skip the
+   * product-level stockQuantity seed for variant products to avoid
+   * double-counting.
+   */
+  private async syncProductVariants(
+    productId: number,
+    branchId: number | null | undefined,
+    variants: VendorProductVariantInputDto[] | undefined,
+    actorUserId?: number | null,
+  ): Promise<void> {
+    if (!Array.isArray(variants)) {
+      return;
+    }
+
+    const byKey = new Map<
+      string,
+      {
+        attributes: Record<string, string>;
+        quantity: number;
+        priceOverride: number | null;
+      }
+    >();
+    for (const v of variants) {
+      const key = computeVariantKey(v?.attributes);
+      if (!key) {
+        continue;
+      }
+      const quantity = Math.max(0, Math.trunc(Number(v?.quantity) || 0));
+      const priceOverride =
+        v?.priceOverride != null && Number.isFinite(Number(v.priceOverride))
+          ? Number(v.priceOverride)
+          : null;
+      byKey.set(key, {
+        attributes: v.attributes || {},
+        quantity,
+        priceOverride,
+      });
+    }
+
+    const existing = await this.productVariantRepository.find({
+      where: { productId },
+    });
+    const existingByKey = new Map(existing.map((e) => [e.variantKey, e]));
+
+    const seedTargets: Array<{ variantId: number; quantity: number }> = [];
+    for (const [key, desired] of byKey) {
+      let row = existingByKey.get(key);
+      if (row) {
+        row.attributes = desired.attributes;
+        row.priceOverride = desired.priceOverride;
+        row.isActive = true;
+        row = await this.productVariantRepository.save(row);
+      } else {
+        row = await this.productVariantRepository.save(
+          this.productVariantRepository.create({
+            productId,
+            variantKey: key,
+            attributes: desired.attributes,
+            priceOverride: desired.priceOverride,
+            isActive: true,
+          }),
+        );
+      }
+      seedTargets.push({ variantId: row.id, quantity: desired.quantity });
+    }
+
+    // Deactivate + zero out variants no longer present.
+    for (const e of existing) {
+      if (byKey.has(e.variantKey)) {
+        continue;
+      }
+      e.isActive = false;
+      await this.productVariantRepository.save(e);
+      if (branchId) {
+        await this.variantInventoryService.setVariantOnHand({
+          branchId,
+          productId,
+          variantId: e.id,
+          quantity: 0,
+          sourceType: 'VENDOR_PRODUCT_VARIANT',
+          actorUserId: actorUserId ?? null,
+        });
+      }
+    }
+
+    // Seed branch stock for each desired variant (cascades to product level).
+    if (branchId) {
+      for (const target of seedTargets) {
+        await this.variantInventoryService.setVariantOnHand({
+          branchId,
+          productId,
+          variantId: target.variantId,
+          quantity: target.quantity,
+          sourceType: 'VENDOR_PRODUCT_VARIANT',
+          actorUserId: actorUserId ?? null,
+        });
+      }
+    }
   }
 
   private isMissingPrivateNoteColumnError(err: unknown): boolean {
@@ -1022,7 +1141,7 @@ export class VendorService {
         .filter((s: string) => !!s);
       if (tagNames.length) {
         const existing = await this.tagRepository.find({
-          where: { name: In(tagNames) } as any,
+          where: { name: In(tagNames) },
         });
         const existingNames = new Set(existing.map((t: any) => t.name));
         const toCreate = tagNames.filter((n) => !existingNames.has(n));
@@ -1050,12 +1169,22 @@ export class VendorService {
       await this.productImageRepository.save(imageEntities);
     }
 
-    if (importBranch) {
+    const createActorId = Number(creator?.id || vendor.id) || null;
+    if (this.productHasVariants(dto.variants)) {
+      // Variant products seed stock per-variant (which cascades to the
+      // product-level rollup), so skip the single-quantity branch seed.
+      await this.syncProductVariants(
+        savedProduct.id,
+        importBranch?.id ?? null,
+        dto.variants,
+        createActorId,
+      );
+    } else if (importBranch) {
       await this.seedImportedProductToBranch(
         importBranch.id,
         savedProduct.id,
         normalizedProductData.stockQuantity,
-        Number(creator?.id || vendor.id) || null,
+        createActorId,
       );
     }
 
@@ -1417,9 +1546,9 @@ export class VendorService {
             `Normalized digital attributes (update id=${productId}) ${before} -> ${after}`,
           );
         }
-        if (inferredType === 'digital') product.productType = 'digital' as any;
+        if (inferredType === 'digital') product.productType = 'digital';
         else if (!product.productType && product.listingType)
-          product.productType = 'property' as any;
+          product.productType = 'property';
         if (product.productType === 'digital') {
           try {
             validateDigitalStructure(product.attributes as any, {
@@ -1447,7 +1576,7 @@ export class VendorService {
         .filter((s: string) => !!s);
       const existing = tagNames.length
         ? await this.tagRepository.find({
-            where: { name: In(tagNames) } as any,
+            where: { name: In(tagNames) },
           })
         : [];
       const existingNames = new Set(existing.map((t: any) => t.name));
@@ -1515,7 +1644,19 @@ export class VendorService {
 
     // Sync stock quantity to branch inventory ledger
     const effectiveBranchId = options?.branchId;
+    const updateHasVariants = this.productHasVariants(dto.variants);
+    if (updateHasVariants) {
+      // Variant products track stock per-variant (cascades to the product-level
+      // rollup); skip the single-quantity branch sync to avoid double-counting.
+      await this.syncProductVariants(
+        productId,
+        effectiveBranchId ?? null,
+        dto.variants,
+        Number(updater?.id || userId) || null,
+      );
+    }
     if (
+      !updateHasVariants &&
       effectiveBranchId &&
       incomingStockQuantity !== undefined &&
       incomingStockQuantity !== null
@@ -3211,7 +3352,7 @@ export class VendorService {
         {} as Record<OrderStatus, number>,
       );
       const summary = {
-        overallStatus: this.computeAggregateStatus(filteredItems as any),
+        overallStatus: this.computeAggregateStatus(filteredItems),
         counts: statusCounts,
       };
       const customer: any = (o as any).user || {};
@@ -3572,7 +3713,7 @@ export class VendorService {
     const items = await this.orderItemRepository.find({
       where: {
         order: { id: orderId },
-      } as any,
+      },
       relations: ['product', 'product.vendor', 'order'],
     });
     const ownItems = items.filter(
@@ -3607,7 +3748,7 @@ export class VendorService {
     next: OrderStatus,
   ) {
     const item = await this.orderItemRepository.findOne({
-      where: { id: itemId, order: { id: orderId } } as any,
+      where: { id: itemId, order: { id: orderId } },
       relations: [
         'product',
         'product.vendor',
@@ -3674,7 +3815,7 @@ export class VendorService {
 
     // Update aggregate order status based on all items
     const freshItems = await this.orderItemRepository.find({
-      where: { order: { id: orderId } } as any,
+      where: { order: { id: orderId } },
     });
     const aggregate = this.computeAggregateStatus(freshItems);
     if (item.order.status !== aggregate) {
@@ -3697,7 +3838,7 @@ export class VendorService {
     },
   ) {
     const item = await this.orderItemRepository.findOne({
-      where: { id: itemId, order: { id: orderId } } as any,
+      where: { id: itemId, order: { id: orderId } },
       relations: ['product', 'product.vendor'],
     });
     if (!item) throw new NotFoundException('Order item not found');
@@ -3727,7 +3868,7 @@ export class VendorService {
       throw new ForbiddenException('At least one item is required');
     }
     const rows = await this.orderItemRepository.find({
-      where: items.map((id) => ({ id, order: { id: orderId } })) as any,
+      where: items.map((id) => ({ id, order: { id: orderId } })),
       relations: ['product', 'product.vendor', 'order', 'order.items'],
     });
     if (rows.length !== items.length) {
@@ -3768,7 +3909,7 @@ export class VendorService {
     }
     await this.orderItemRepository.save(rows);
     const freshItems = await this.orderItemRepository.find({
-      where: { order: { id: orderId } } as any,
+      where: { order: { id: orderId } },
     });
     const aggregate = this.computeAggregateStatus(freshItems);
     if (order.status !== aggregate) {
@@ -3801,7 +3942,7 @@ export class VendorService {
     try {
       return normalizeProductMedia(full as any);
     } catch {
-      return full as any;
+      return full;
     }
   }
 
