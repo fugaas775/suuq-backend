@@ -4,6 +4,8 @@ import { AuditModule } from '../audit/audit.module';
 import { Branch } from '../branches/entities/branch.entity';
 import { Category } from '../categories/entities/category.entity';
 import { BranchInventory } from '../branches/entities/branch-inventory.entity';
+import { BranchInventoryVariant } from '../branches/entities/branch-inventory-variant.entity';
+import { ProductVariant } from '../products/entities/product-variant.entity';
 import { BranchTransfer } from '../branches/entities/branch-transfer.entity';
 import { StockMovement } from '../branches/entities/stock-movement.entity';
 import { RolesGuard } from '../auth/roles.guard';
@@ -57,6 +59,8 @@ import { AdminEquityPartnersController } from './admin-equity-partners.controlle
       Branch,
       BranchStaffAssignment,
       BranchInventory,
+      BranchInventoryVariant,
+      ProductVariant,
       BranchTransfer,
       StockMovement,
       PurchaseOrder,
