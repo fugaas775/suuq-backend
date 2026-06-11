@@ -9,11 +9,11 @@ describe('CATEGORY_ATTRIBUTE_SCHEMA', () => {
   it('defines at least the core RETAIL departments', () => {
     expect(Object.keys(CATEGORY_ATTRIBUTE_SCHEMA)).toEqual(
       expect.arrayContaining([
-        'electronics',
+        'electronics-appliances',
         'mobile-phones-tablets',
-        'fashion-men',
-        'fashion-women',
-        'furniture',
+        'mens-fashion-clothing-shoes',
+        'womens-fashion-clothing-shoes',
+        'furniture-home-decor',
       ]),
     );
   });
@@ -53,7 +53,10 @@ describe('CATEGORY_ATTRIBUTE_SCHEMA', () => {
   });
 
   it('marks clothing Size + Color as required (drives POS blocking)', () => {
-    for (const slug of ['fashion-men', 'fashion-women']) {
+    for (const slug of [
+      'mens-fashion-clothing-shoes',
+      'womens-fashion-clothing-shoes',
+    ]) {
       const defs = CATEGORY_ATTRIBUTE_SCHEMA[slug];
       const required = defs.filter((d) => d.required).map((d) => d.key);
       expect(required).toEqual(expect.arrayContaining(['size', 'color']));

@@ -8,14 +8,15 @@
  * fields and enforces the required ones, and the Register displays the captured
  * values (product.attributes.specs).
  *
- * This module is the single source of truth for the seeded defaults: the seed
- * runner (seed-category-attributes.ts) writes these onto categories by slug, and
- * the unit test validates the shape. Admins can extend/override per category
- * later via the category admin surface without code changes.
+ * Keys are the LIVE category slugs from the production taxonomy (15 departments,
+ * GET /api/categories/tree), NOT the stale src/database/seeds/seed-categories.ts
+ * file. Base attributes live on a department and are inherited by every
+ * sub-category (the client merges parent → child, child keys win), so leaves only
+ * add what's specific. Department attributes are kept OPTIONAL; "required" is set
+ * at the leaf where it clearly applies (clothing Size/Color, phone Storage, …).
  *
- * Departments inherit down to their sub-categories on the client: a sub-category's
- * schema is MERGED on top of its parent department's (child keys win), so common
- * attributes can live on the department and specifics on the leaf.
+ * This module is the single source of truth for the seeded defaults. Admins can
+ * extend/override per category later without code changes.
  */
 
 export type AttributeType = 'select' | 'text' | 'number';
@@ -61,17 +62,65 @@ const STORAGE_OPTIONS = [
   '1TB',
 ];
 const RAM_OPTIONS = ['2GB', '3GB', '4GB', '6GB', '8GB', '12GB', '16GB', '32GB'];
+const UNIT_OPTIONS = [
+  'Piece',
+  'Kg',
+  'Gram',
+  'Litre',
+  'ml',
+  'Bundle',
+  'Pack',
+  'Crate',
+];
+
+const brand = (required = false): AttributeDef => ({
+  key: 'brand',
+  label: 'Brand',
+  type: 'text',
+  required,
+});
+const color = (required = false): AttributeDef => ({
+  key: 'color',
+  label: 'Color',
+  type: 'select',
+  options: COLOR_OPTIONS,
+  required,
+});
+const material = (required = false): AttributeDef => ({
+  key: 'material',
+  label: 'Material',
+  type: 'text',
+  required,
+});
+const size = (required = false): AttributeDef => ({
+  key: 'size',
+  label: 'Size',
+  type: 'select',
+  options: SIZE_OPTIONS,
+  required,
+});
+const volume = (): AttributeDef => ({
+  key: 'volume',
+  label: 'Volume / Weight',
+  type: 'text',
+});
+const unit = (): AttributeDef => ({
+  key: 'unit',
+  label: 'Sold by (unit)',
+  type: 'select',
+  options: UNIT_OPTIONS,
+});
 
 /**
- * Map of category slug -> attribute definitions. Slugs match
- * src/database/seeds/seed-categories.ts. Only RETAIL-relevant departments and
- * their sub-categories are listed; classifieds-style departments (Vehicles,
- * Property, Jobs, Services, Education, Community) intentionally carry no schema.
+ * Map of LIVE category slug -> attribute definitions. Only RETAIL-relevant
+ * departments and sub-categories are listed; classifieds-style departments
+ * (Vehicles, Property, Jobs, Services, Community, Education, Construction,
+ * Digital Products) intentionally carry no schema.
  */
 export const CATEGORY_ATTRIBUTE_SCHEMA: Record<string, AttributeDef[]> = {
-  // --- Electronics ---------------------------------------------------------
-  electronics: [
-    { key: 'brand', label: 'Brand', type: 'text', required: true },
+  // --- Electronics & Appliances -------------------------------------------
+  'electronics-appliances': [
+    brand(),
     {
       key: 'condition',
       label: 'Condition',
@@ -88,9 +137,9 @@ export const CATEGORY_ATTRIBUTE_SCHEMA: Record<string, AttributeDef[]> = {
       required: true,
     },
     { key: 'ram', label: 'RAM', type: 'select', options: RAM_OPTIONS },
-    { key: 'color', label: 'Color', type: 'select', options: COLOR_OPTIONS },
+    color(),
   ],
-  'laptops-computers': [
+  'computers-laptops': [
     {
       key: 'storage',
       label: 'Storage',
@@ -105,93 +154,57 @@ export const CATEGORY_ATTRIBUTE_SCHEMA: Record<string, AttributeDef[]> = {
       options: RAM_OPTIONS,
       required: true,
     },
-    { key: 'color', label: 'Color', type: 'select', options: COLOR_OPTIONS },
+    color(),
   ],
-  'tvs-video-audio': [
+  'tv-audio-video': [
     { key: 'screenSize', label: 'Screen size (inches)', type: 'number' },
   ],
-  'home-appliances': [
-    { key: 'color', label: 'Color', type: 'select', options: COLOR_OPTIONS },
-  ],
+  'cameras-imaging': [color()],
+  'large-appliances-fridges-washers': [color()],
+  'small-kitchen-appliances-blenders-etc': [color()],
+  'computer-accessories': [color()],
 
-  // --- Fashion & Beauty ----------------------------------------------------
-  'fashion-beauty': [{ key: 'brand', label: 'Brand', type: 'text' }],
-  'fashion-men': [
-    {
-      key: 'size',
-      label: 'Size',
-      type: 'select',
-      options: SIZE_OPTIONS,
-      required: true,
-    },
-    {
-      key: 'color',
-      label: 'Color',
-      type: 'select',
-      options: COLOR_OPTIONS,
-      required: true,
-    },
-    { key: 'material', label: 'Material', type: 'text' },
+  // --- Fashion & Apparel ---------------------------------------------------
+  'fashion-apparel': [brand()],
+  'womens-fashion-clothing-shoes': [size(true), color(true), material()],
+  'mens-fashion-clothing-shoes': [size(true), color(true), material()],
+  'kids-baby-fashion': [
+    { key: 'size', label: 'Size', type: 'text', required: true },
+    color(),
   ],
-  'fashion-women': [
-    {
-      key: 'size',
-      label: 'Size',
-      type: 'select',
-      options: SIZE_OPTIONS,
-      required: true,
-    },
-    {
-      key: 'color',
-      label: 'Color',
-      type: 'select',
-      options: COLOR_OPTIONS,
-      required: true,
-    },
-    { key: 'material', label: 'Material', type: 'text' },
-  ],
-  'fashion-accessories': [
-    {
-      key: 'color',
-      label: 'Color',
-      type: 'select',
-      options: COLOR_OPTIONS,
-      required: true,
-    },
-    { key: 'material', label: 'Material', type: 'text' },
-  ],
-  'health-beauty-products': [
-    { key: 'shade', label: 'Shade', type: 'text' },
-    { key: 'volume', label: 'Volume / Weight', type: 'text' },
-  ],
+  'traditional-cultural-wear': [size(), color(), material()],
+  'watches-jewelry': [color(true), material()],
+  'bags-luggage': [color(), material()],
+  'accessories-belts-scarves-hats': [color(), material()],
 
-  // --- Home & Garden -------------------------------------------------------
-  'home-garden': [
-    { key: 'color', label: 'Color', type: 'select', options: COLOR_OPTIONS },
-    { key: 'material', label: 'Material', type: 'text' },
-  ],
-  furniture: [
-    { key: 'material', label: 'Material', type: 'text', required: true },
-    { key: 'color', label: 'Color', type: 'select', options: COLOR_OPTIONS },
+  // --- Home, Furniture & Garden -------------------------------------------
+  'home-furniture-garden': [color(), material()],
+  'furniture-home-decor': [
+    material(true),
+    color(),
     { key: 'dimensions', label: 'Dimensions (W×D×H)', type: 'text' },
   ],
-  kitchenware: [
-    { key: 'material', label: 'Material', type: 'text' },
-    { key: 'color', label: 'Color', type: 'select', options: COLOR_OPTIONS },
-  ],
-  'home-decor': [
-    { key: 'color', label: 'Color', type: 'select', options: COLOR_OPTIONS },
-    { key: 'material', label: 'Material', type: 'text' },
-  ],
-  'garden-outdoor': [{ key: 'material', label: 'Material', type: 'text' }],
+  'kitchenware-dining': [material(), color()],
+  'bedding-bath': [color(), material()],
+  'garden-outdoor-supplies': [material()],
+  'household-cleaning-supplies': [volume()],
 
-  // --- Agriculture & Food --------------------------------------------------
-  'fresh-produce': [
-    {
-      key: 'unit',
-      label: 'Sold by (unit)',
-      type: 'select',
-      options: ['Piece', 'Kg', 'Gram', 'Litre', 'Bundle', 'Crate'],
-    },
+  // --- Health, Beauty & Personal Care -------------------------------------
+  'health-beauty-personal-care': [brand()],
+  'makeup-cosmetics': [
+    { key: 'shade', label: 'Shade', type: 'text' },
+    volume(),
   ],
+  'skincare-haircare': [volume()],
+  'fragrances-perfumes': [volume()],
+  'personal-care-appliances': [color()],
+
+  // --- Hobbies, Sports & Kids ---------------------------------------------
+  'sports-equipment': [color()],
+
+  // --- Food & Beverages ----------------------------------------------------
+  'groceries-essentials': [unit()],
+  'fresh-produce-fruits-vegetables': [unit()],
+  'meat-dairy': [unit()],
+  'packaged-food-drinks': [volume()],
 };
