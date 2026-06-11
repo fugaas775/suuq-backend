@@ -43,6 +43,7 @@
     "typeorm": "node --env-file=.env -r ts-node/register -r tsconfig-paths/register ./node_modules/typeorm/cli.js -d src/data-source.ts",
     "seed:products": "ts-node src/seeds/create-products.ts",
     "seed:categories": "ts-node src/database/seeds/seed-categories.ts",
+    "seed:category-attributes": "ts-node src/database/seeds/seed-category-attributes.ts",
     "backfill:branch-inventory-imports": "ts-node -r tsconfig-paths/register --transpile-only scripts/backfill-branch-inventory-from-products.ts",
     "backfill:self-serve-branch-service-format": "node --env-file=.env -r ts-node/register -r tsconfig-paths/register scripts/backfill-self-serve-branch-service-format.ts",
     "backfill:self-serve-branch-service-format:execute": "node --env-file=.env -r ts-node/register -r tsconfig-paths/register scripts/backfill-self-serve-branch-service-format.ts --execute",
