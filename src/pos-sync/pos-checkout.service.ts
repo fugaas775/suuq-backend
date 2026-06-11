@@ -8,6 +8,8 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, Repository } from 'typeorm';
 import { InventoryLedgerService } from '../branches/inventory-ledger.service';
+import { VariantInventoryService } from '../branches/variant-inventory.service';
+import { ProductVariant } from '../products/entities/product-variant.entity';
 import { Branch } from '../branches/entities/branch.entity';
 import { StockMovementType } from '../branches/entities/stock-movement.entity';
 import { PartnerCredential } from '../partner-credentials/entities/partner-credential.entity';
@@ -172,6 +174,7 @@ export class PosCheckoutService {
     @InjectRepository(PosSuspendedCart)
     private readonly suspendedCartsRepository: Repository<PosSuspendedCart>,
     private readonly inventoryLedgerService: InventoryLedgerService,
+    private readonly variantInventoryService: VariantInventoryService,
     private readonly productAliasesService: ProductAliasesService,
     private readonly emailService: EmailService,
   ) {}
@@ -425,6 +428,42 @@ export class PosCheckoutService {
             item,
           );
           const quantity = Math.abs(item.quantity);
+          const movementType =
+            dto.transactionType === PosCheckoutTransactionType.SALE
+              ? StockMovementType.SALE
+              : StockMovementType.ADJUSTMENT;
+          const quantityDelta =
+            dto.transactionType === PosCheckoutTransactionType.SALE
+              ? -quantity
+              : quantity;
+
+          // RETAIL variant line: decrement the specific variant's stock, which
+          // cascades to the product-level rollup. Runs BEFORE the manageStock
+          // gate because variant products are stock-tracked at the variant level
+          // even when the product-level manageStock flag is false.
+          const variantId = await this.resolveCheckoutVariantId(
+            productId,
+            item.metadata,
+            manager,
+          );
+          if (variantId) {
+            await this.variantInventoryService.recordVariantMovement(
+              {
+                branchId: dto.branchId,
+                productId,
+                variantId,
+                quantityDelta,
+                movementType,
+                sourceType: 'POS_CHECKOUT',
+                sourceReferenceId: checkout.id,
+                actorUserId: actor.id ?? null,
+                note: this.buildMovementNote(dto, item),
+                occurredAt,
+              },
+              manager,
+            );
+            continue;
+          }
 
           // Only deduct inventory for products that explicitly opt in to stock
           // management. Products with manageStock = false (the default) are
@@ -444,14 +483,8 @@ export class PosCheckoutService {
             {
               branchId: dto.branchId,
               productId,
-              movementType:
-                dto.transactionType === PosCheckoutTransactionType.SALE
-                  ? StockMovementType.SALE
-                  : StockMovementType.ADJUSTMENT,
-              quantityDelta:
-                dto.transactionType === PosCheckoutTransactionType.SALE
-                  ? -quantity
-                  : quantity,
+              movementType,
+              quantityDelta,
               sourceType: 'POS_CHECKOUT',
               sourceReferenceId: checkout.id,
               actorUserId: actor.id ?? null,
@@ -545,6 +578,38 @@ export class PosCheckoutService {
     }
 
     return this.toResponse(processed);
+  }
+
+  /**
+   * Resolve a sale line's product variant from its metadata (variantId or
+   * variantKey), scoped to the line's product. Returns null for non-variant
+   * lines so checkout falls through to the product-level decrement.
+   */
+  private async resolveCheckoutVariantId(
+    productId: number,
+    metadata: Record<string, any> | null | undefined,
+    manager: EntityManager,
+  ): Promise<number | null> {
+    if (!metadata || typeof metadata !== 'object') {
+      return null;
+    }
+    const repo = manager.getRepository(ProductVariant);
+    const rawId = Number(metadata.variantId);
+    if (Number.isFinite(rawId) && rawId > 0) {
+      const byId = await repo.findOne({ where: { id: rawId, productId } });
+      if (byId) {
+        return byId.id;
+      }
+    }
+    const variantKey =
+      typeof metadata.variantKey === 'string' ? metadata.variantKey.trim() : '';
+    if (variantKey) {
+      const byKey = await repo.findOne({ where: { productId, variantKey } });
+      if (byKey) {
+        return byKey.id;
+      }
+    }
+    return null;
   }
 
   private async resolveProductId(
