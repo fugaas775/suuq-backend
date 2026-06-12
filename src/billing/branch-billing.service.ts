@@ -1,10 +1,14 @@
 import {
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Between, In, Repository } from 'typeorm';
+import { GeneralLedgerService } from '../accounting/general-ledger.service';
+import { GlAccountCode } from '../accounting/gl-accounts.constant';
+import { GlJournalSourceType } from '../accounting/entities/gl-journal-entry.entity';
 import { BranchStaffService } from '../branch-staff/branch-staff.service';
 import { Branch } from '../branches/entities/branch.entity';
 import { UserRole } from '../auth/roles.enum';
@@ -75,7 +79,102 @@ export class BranchBillingService {
     @InjectRepository(BranchLongTermDebt)
     private readonly longTermDebtRepo: Repository<BranchLongTermDebt>,
     private readonly branchStaffService: BranchStaffService,
+    private readonly generalLedger: GeneralLedgerService,
   ) {}
+
+  private readonly logger = new Logger(BranchBillingService.name);
+
+  /** Map an expense / accrued-liability category to its GL expense account. */
+  private expenseAccountFor(category: string): GlAccountCode {
+    switch (String(category || '').toUpperCase()) {
+      case 'RENT':
+        return GlAccountCode.EXPENSE_RENT;
+      case 'UTILITIES':
+        return GlAccountCode.EXPENSE_UTILITIES;
+      case 'PAYROLL':
+        return GlAccountCode.EXPENSE_PAYROLL;
+      case 'SUPPLIES':
+        return GlAccountCode.EXPENSE_SUPPLIES;
+      case 'MARKETING':
+        return GlAccountCode.EXPENSE_MARKETING;
+      case 'MAINTENANCE':
+        return GlAccountCode.EXPENSE_MAINTENANCE;
+      case 'TAX':
+      case 'TAXES':
+        return GlAccountCode.EXPENSE_TAXES;
+      case 'INTEREST':
+        return GlAccountCode.EXPENSE_INTEREST;
+      default:
+        return GlAccountCode.EXPENSE_OTHER;
+    }
+  }
+
+  /** Post a simple two-leg entry (best-effort — billing is the source of truth). */
+  private async postLedger(input: {
+    branchId: number;
+    occurredAt: Date;
+    sourceType: GlJournalSourceType;
+    sourceId: string;
+    idempotencyKey: string;
+    currency?: string;
+    memo: string;
+    debit: GlAccountCode;
+    credit: GlAccountCode;
+    amount: number;
+  }): Promise<void> {
+    const amount =
+      Math.round((Number(input.amount || 0) + Number.EPSILON) * 100) / 100;
+    if (amount <= 0) return;
+    await this.generalLedger
+      .post({
+        branchId: input.branchId,
+        occurredAt: input.occurredAt,
+        sourceType: input.sourceType,
+        sourceId: input.sourceId,
+        idempotencyKey: input.idempotencyKey,
+        currency: input.currency || 'ETB',
+        memo: input.memo,
+        lines: [
+          { accountCode: input.debit, debit: amount },
+          { accountCode: input.credit, credit: amount },
+        ],
+      })
+      .catch((error) =>
+        this.logger.warn(
+          `GL posting failed (${input.idempotencyKey}): ${
+            error instanceof Error ? error.message : error
+          }`,
+        ),
+      );
+  }
+
+  /** Reverse a previously-posted entry when its source row is deleted. */
+  private async reverseLedger(
+    branchId: number,
+    idempotencyKey: string,
+    occurredAt?: Date,
+  ): Promise<void> {
+    try {
+      const entry = await this.generalLedger.findEntryByIdempotencyKey(
+        branchId,
+        idempotencyKey,
+      );
+      if (entry) {
+        await this.generalLedger.reverse(entry.id, {
+          sourceType: GlJournalSourceType.MANUAL,
+          idempotencyKey: `reverse-${idempotencyKey}`,
+          occurredAt: occurredAt || new Date(),
+          memo: `Reversal of ${idempotencyKey}`,
+        });
+      }
+    } catch (error) {
+      this.logger.warn(
+        `GL reversal failed (${idempotencyKey}): ${
+          error instanceof Error ? error.message : error
+        }`,
+      );
+    }
+  }
 
   /** Return per-branch billing summary for branches owned by the user. */
   async listOwnerBranches(
@@ -257,7 +356,20 @@ export class BranchBillingService {
       note: dto.note ?? null,
       recordedByUserId: userId,
     });
-    return this.expensesRepo.save(expense);
+    const saved = await this.expensesRepo.save(expense);
+    await this.postLedger({
+      branchId,
+      occurredAt: saved.occurredAt,
+      sourceType: GlJournalSourceType.EXPENSE,
+      sourceId: `expense-${saved.id}`,
+      idempotencyKey: `expense-${saved.id}`,
+      currency: saved.currency,
+      memo: `Expense — ${saved.category}`,
+      debit: this.expenseAccountFor(saved.category),
+      credit: GlAccountCode.CASH,
+      amount: Number(saved.amount),
+    });
+    return saved;
   }
 
   async deleteBranchExpense(
@@ -272,6 +384,11 @@ export class BranchBillingService {
         `Expense #${expenseId} not found for branch #${branchId}.`,
       );
     }
+    await this.reverseLedger(
+      branchId,
+      `expense-${expenseId}`,
+      expense.occurredAt,
+    );
     await this.expensesRepo.remove(expense);
   }
 
@@ -308,7 +425,20 @@ export class BranchBillingService {
       currency: dto.currency || 'ETB',
       note: dto.note ?? null,
     });
-    return this.fixedAssetsRepo.save(asset);
+    const saved = await this.fixedAssetsRepo.save(asset);
+    await this.postLedger({
+      branchId,
+      occurredAt: saved.acquiredAt,
+      sourceType: GlJournalSourceType.FIXED_ASSET,
+      sourceId: `fixed-asset-${saved.id}`,
+      idempotencyKey: `fixed-asset-${saved.id}`,
+      currency: saved.currency,
+      memo: `Fixed asset — ${saved.name}`,
+      debit: GlAccountCode.FIXED_ASSETS,
+      credit: GlAccountCode.CASH,
+      amount: Number(saved.capitalizationAmount),
+    });
+    return saved;
   }
 
   async deleteBranchFixedAsset(
@@ -323,6 +453,11 @@ export class BranchBillingService {
         `Fixed asset #${assetId} not found for branch #${branchId}.`,
       );
     }
+    await this.reverseLedger(
+      branchId,
+      `fixed-asset-${assetId}`,
+      asset.acquiredAt,
+    );
     await this.fixedAssetsRepo.remove(asset);
   }
 
@@ -360,7 +495,20 @@ export class BranchBillingService {
       note: dto.note ?? null,
       recordedByUserId: userId,
     });
-    return this.depreciationEntriesRepo.save(entry);
+    const saved = await this.depreciationEntriesRepo.save(entry);
+    await this.postLedger({
+      branchId,
+      occurredAt: saved.occurredAt,
+      sourceType: GlJournalSourceType.DEPRECIATION,
+      sourceId: `depreciation-${saved.id}`,
+      idempotencyKey: `depreciation-${saved.id}`,
+      currency: asset.currency,
+      memo: `Depreciation — asset ${saved.fixedAssetId}`,
+      debit: GlAccountCode.EXPENSE_DEPRECIATION,
+      credit: GlAccountCode.ACCUMULATED_DEPRECIATION,
+      amount: Number(saved.amount),
+    });
+    return saved;
   }
 
   async deleteBranchDepreciationEntry(
@@ -375,6 +523,11 @@ export class BranchBillingService {
         `Depreciation entry #${entryId} not found for branch #${branchId}.`,
       );
     }
+    await this.reverseLedger(
+      branchId,
+      `depreciation-${entryId}`,
+      entry.occurredAt,
+    );
     await this.depreciationEntriesRepo.remove(entry);
   }
 
@@ -409,7 +562,20 @@ export class BranchBillingService {
       currency: dto.currency || 'ETB',
       note: dto.note ?? null,
     });
-    return this.accruedLiabilitiesRepo.save(liability);
+    const saved = await this.accruedLiabilitiesRepo.save(liability);
+    await this.postLedger({
+      branchId,
+      occurredAt: saved.accruedAt,
+      sourceType: GlJournalSourceType.ACCRUED_LIABILITY,
+      sourceId: `accrued-${saved.id}`,
+      idempotencyKey: `accrued-${saved.id}`,
+      currency: saved.currency,
+      memo: `Accrued liability — ${saved.label}`,
+      debit: this.expenseAccountFor(saved.category),
+      credit: GlAccountCode.ACCRUED_LIABILITIES,
+      amount: Number(saved.amount),
+    });
+    return saved;
   }
 
   async deleteBranchAccruedLiability(
@@ -424,6 +590,11 @@ export class BranchBillingService {
         `Accrued liability #${liabilityId} not found for branch #${branchId}.`,
       );
     }
+    await this.reverseLedger(
+      branchId,
+      `accrued-${liabilityId}`,
+      liability.accruedAt,
+    );
     await this.accruedLiabilitiesRepo.remove(liability);
   }
 
@@ -443,7 +614,20 @@ export class BranchBillingService {
 
     liability.status = BranchAccruedLiabilityStatus.SETTLED;
     liability.settledAt = settledAt || new Date();
-    return this.accruedLiabilitiesRepo.save(liability);
+    const saved = await this.accruedLiabilitiesRepo.save(liability);
+    await this.postLedger({
+      branchId,
+      occurredAt: saved.settledAt || new Date(),
+      sourceType: GlJournalSourceType.ACCRUED_SETTLEMENT,
+      sourceId: `accrued-settle-${liabilityId}`,
+      idempotencyKey: `accrued-settle-${liabilityId}`,
+      currency: saved.currency,
+      memo: `Accrued liability settled — ${saved.label}`,
+      debit: GlAccountCode.ACCRUED_LIABILITIES,
+      credit: GlAccountCode.CASH,
+      amount: Number(saved.amount),
+    });
+    return saved;
   }
 
   async listBranchLongTermDebts(branchId: number) {
@@ -481,7 +665,21 @@ export class BranchBillingService {
       currency: dto.currency || 'ETB',
       note: dto.note ?? null,
     });
-    return this.longTermDebtRepo.save(debt);
+    const saved = await this.longTermDebtRepo.save(debt);
+    // Drawing the loan brings in cash against a long-term liability.
+    await this.postLedger({
+      branchId,
+      occurredAt: saved.issuedAt,
+      sourceType: GlJournalSourceType.LONG_TERM_DEBT,
+      sourceId: `ltdebt-${saved.id}`,
+      idempotencyKey: `ltdebt-${saved.id}`,
+      currency: saved.currency,
+      memo: `Long-term debt — ${saved.lenderName}`,
+      debit: GlAccountCode.CASH,
+      credit: GlAccountCode.LONG_TERM_DEBT,
+      amount: Number(saved.principalAmount),
+    });
+    return saved;
   }
 
   async deleteBranchLongTermDebt(
@@ -496,6 +694,7 @@ export class BranchBillingService {
         `Long-term debt #${debtId} not found for branch #${branchId}.`,
       );
     }
+    await this.reverseLedger(branchId, `ltdebt-${debtId}`, debt.issuedAt);
     await this.longTermDebtRepo.remove(debt);
   }
 

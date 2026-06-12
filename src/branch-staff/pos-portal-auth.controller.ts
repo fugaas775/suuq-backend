@@ -4,12 +4,20 @@ import {
   ForbiddenException,
   Get,
   HttpCode,
+  HttpException,
   HttpStatus,
   Logger,
   Post,
+  Query,
   Req,
+  Res,
+  UnauthorizedException,
   UseGuards,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { Response } from 'express';
+import { OAuth2Client } from 'google-auth-library';
+import { randomBytes } from 'crypto';
 import {
   ApiBody,
   ApiForbiddenResponse,
@@ -31,7 +39,9 @@ import {
   PosOperatorUnlockDto,
 } from './dto/pos-operator-unlock.dto';
 import { GoogleAuthDto } from '../auth/dto/google-auth.dto';
+import { GoogleCompleteDto } from '../auth/dto/google-complete.dto';
 import { AppleAuthDto } from '../auth/dto/apple-auth.dto';
+import { RedisService } from '../redis/redis.service';
 import { UserResponseDto } from '../users/dto/user-response.dto';
 import { User } from '../users/entities/user.entity';
 import { AuthenticatedRequest } from '../common/interfaces/authenticated-request.interface';
@@ -74,6 +84,25 @@ type IdentifierLikeDto = {
 const PORTAL_AUTH_WRITE_THROTTLE = { default: { ttl: 60_000, limit: 10 } };
 const PORTAL_AUTH_SESSION_THROTTLE = { default: { ttl: 60_000, limit: 30 } };
 
+// --- Google OAuth redirect flow (iOS / ITP browsers) ----------------------
+const GOOGLE_OAUTH_STATE_PREFIX = 'pos:goauth:state:';
+const GOOGLE_OAUTH_HANDOFF_PREFIX = 'pos:goauth:handoff:';
+// Time the user has to finish picking an account on accounts.google.com.
+const GOOGLE_OAUTH_STATE_TTL_SECONDS = 600;
+// Time the SPA has to redeem the one-time code after being redirected back.
+const GOOGLE_OAUTH_HANDOFF_TTL_SECONDS = 180;
+const GOOGLE_OAUTH_SCOPE = 'openid email profile';
+// returnUrl origins the redirect flow is allowed to bounce back to. Extend at
+// runtime with POS_GOOGLE_REDIRECT_ALLOWED_ORIGINS (comma-separated).
+const GOOGLE_OAUTH_DEFAULT_RETURN_ORIGINS = [
+  'https://pos.suuq-s.com',
+  'https://www.pos.suuq-s.com',
+  'https://pos.ugasfuad.com',
+  'https://www.pos.ugasfuad.com',
+  'http://localhost:4174',
+  'http://localhost:5173',
+];
+
 @ApiTags('POS Portal Auth')
 @Controller('pos-portal/auth')
 export class PosPortalAuthController {
@@ -86,6 +115,8 @@ export class PosPortalAuthController {
     private readonly posPortalOnboardingService: PosPortalOnboardingService,
     private readonly posWorkspaceActivationService: PosWorkspaceActivationService,
     private readonly auditService: AuditService,
+    private readonly configService: ConfigService,
+    private readonly redisService: RedisService,
   ) {}
 
   private resolveIdentifier(dto: IdentifierLikeDto): string {
@@ -258,6 +289,339 @@ export class PosPortalAuthController {
   async google(@Body() dto: GoogleAuthDto, @Req() req: AuthenticatedRequest) {
     const result = await this.authService.googleLogin(dto);
     return this.buildAuthResponse(result, req, 'google');
+  }
+
+  // ---------------------------------------------------------------------------
+  // Google OAuth redirect flow (iOS / ITP browsers).
+  //
+  // Every browser on iOS — including "Chrome" — runs on WebKit, whose
+  // Intelligent Tracking Prevention blocks the third-party cookies that the
+  // Google Identity Services popup/credential flow relies on. That makes the
+  // GIS button flaky on iOS (works sometimes, fails other times). This is a
+  // top-level OAuth 2.0 authorization-code flow: every hop is first-party
+  // navigation, so ITP does not apply. It reuses googleLogin() +
+  // buildAuthResponse() so the session it produces is identical to
+  // POST /pos-portal/auth/google. The session is handed back to the SPA via a
+  // single-use code in the URL fragment (never tokens in the URL).
+  //
+  //   start  -> 302 to accounts.google.com (state stored in Redis)
+  //   callback -> exchange code, run googleLogin, stash result in Redis,
+  //               302 back to the app with #pos_google=<one-time code>
+  //   complete -> SPA redeems the one-time code for the portal session JSON
+  // ---------------------------------------------------------------------------
+
+  @Get('google/start')
+  @Throttle(PORTAL_AUTH_WRITE_THROTTLE)
+  @ApiOperation({
+    summary:
+      'Begin Google OAuth redirect sign-in (top-level flow for iOS / ITP browsers)',
+  })
+  async googleStart(
+    @Query('returnUrl') returnUrlRaw: string,
+    @Query('portalKey') portalKeyRaw: string,
+    @Req() req: AuthenticatedRequest,
+    @Res() res: Response,
+  ) {
+    const returnUrl = this.resolveSafeReturnUrl(returnUrlRaw);
+    if (!returnUrl) {
+      res.status(HttpStatus.BAD_REQUEST).send('Invalid returnUrl.');
+      return;
+    }
+
+    const { clientId, clientSecret } = this.getGoogleOAuthConfig();
+    if (!clientId || !clientSecret) {
+      this.logger.error(
+        '[googleStart] GOOGLE_WEB_CLIENT_ID / GOOGLE_CLIENT_SECRET not configured; redirect flow unavailable.',
+      );
+      res.redirect(
+        this.appendHashParam(returnUrl, 'pos_google_error', 'not_configured'),
+      );
+      return;
+    }
+
+    if (!this.redisService.getClient()) {
+      this.logger.error(
+        '[googleStart] Redis unavailable; redirect flow needs it for state/handoff.',
+      );
+      res.redirect(
+        this.appendHashParam(
+          returnUrl,
+          'pos_google_error',
+          'redirect_unavailable',
+        ),
+      );
+      return;
+    }
+
+    const portalKey = String(portalKeyRaw || 'pos').trim() || 'pos';
+    const state = randomBytes(24).toString('hex');
+    await this.redisService.set(
+      `${GOOGLE_OAUTH_STATE_PREFIX}${state}`,
+      JSON.stringify({ returnUrl, portalKey }),
+      GOOGLE_OAUTH_STATE_TTL_SECONDS,
+    );
+
+    const authUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
+    authUrl.searchParams.set('client_id', clientId);
+    authUrl.searchParams.set('redirect_uri', this.buildGoogleRedirectUri(req));
+    authUrl.searchParams.set('response_type', 'code');
+    authUrl.searchParams.set('scope', GOOGLE_OAUTH_SCOPE);
+    authUrl.searchParams.set('state', state);
+    authUrl.searchParams.set('prompt', 'select_account');
+    authUrl.searchParams.set('access_type', 'online');
+
+    res.redirect(authUrl.toString());
+  }
+
+  @Get('google/callback')
+  @Throttle(PORTAL_AUTH_SESSION_THROTTLE)
+  @ApiOperation({
+    summary:
+      'Google OAuth redirect callback — exchanges the code and hands a one-time session code back to the SPA',
+  })
+  async googleCallback(
+    @Query('code') code: string,
+    @Query('state') state: string,
+    @Query('error') oauthError: string,
+    @Req() req: AuthenticatedRequest,
+    @Res() res: Response,
+  ) {
+    const stateKey = state ? `${GOOGLE_OAUTH_STATE_PREFIX}${state}` : '';
+    const stateRaw = stateKey ? await this.redisService.get(stateKey) : null;
+    if (stateKey) {
+      await this.redisService.del(stateKey); // single-use, CSRF protection
+    }
+
+    if (!stateRaw) {
+      // Without trusted state we cannot trust any returnUrl, so we must not
+      // redirect anywhere — show a terminal message instead.
+      res
+        .status(HttpStatus.BAD_REQUEST)
+        .send(
+          'Your Google sign-in link has expired. Please return to the app and try again.',
+        );
+      return;
+    }
+
+    let returnUrl = '';
+    let portalKey = 'pos';
+    try {
+      const parsed = JSON.parse(stateRaw);
+      returnUrl = this.resolveSafeReturnUrl(parsed?.returnUrl) || '';
+      portalKey = String(parsed?.portalKey || 'pos').trim() || 'pos';
+    } catch {
+      returnUrl = '';
+    }
+    void portalKey; // carried through state for parity; portalKey is fixed 'pos' server-side
+    if (!returnUrl) {
+      res.status(HttpStatus.BAD_REQUEST).send('Invalid sign-in state.');
+      return;
+    }
+
+    if (oauthError || !code) {
+      res.redirect(
+        this.appendHashParam(
+          returnUrl,
+          'pos_google_error',
+          String(oauthError || 'no_code'),
+        ),
+      );
+      return;
+    }
+
+    let idToken = '';
+    try {
+      const { clientId, clientSecret } = this.getGoogleOAuthConfig();
+      const client = new OAuth2Client({
+        clientId,
+        clientSecret,
+        redirectUri: this.buildGoogleRedirectUri(req),
+      });
+      const { tokens } = await client.getToken(code);
+      idToken = String(tokens?.id_token || '');
+      if (!idToken) {
+        throw new Error('Token response did not include an id_token.');
+      }
+    } catch (error) {
+      this.logger.warn(
+        `[googleCallback] Code exchange failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      res.redirect(
+        this.appendHashParam(returnUrl, 'pos_google_error', 'exchange_failed'),
+      );
+      return;
+    }
+
+    let record:
+      | { ok: true; payload: unknown }
+      | { ok: false; status: number; body: unknown };
+    try {
+      const result = await this.authService.googleLogin({ idToken });
+      const payload = await this.buildAuthResponse(result, req, 'google');
+      record = { ok: true, payload };
+    } catch (error) {
+      if (error instanceof HttpException) {
+        // Preserve the exact onboarding / access-denied body + status so the
+        // SPA replays it identically to the POST /google path.
+        record = {
+          ok: false,
+          status: error.getStatus(),
+          body: error.getResponse(),
+        };
+      } else {
+        this.logger.error(
+          `[googleCallback] Google login failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        record = {
+          ok: false,
+          status: HttpStatus.INTERNAL_SERVER_ERROR,
+          body: {
+            code: 'GOOGLE_LOGIN_FAILED',
+            message: 'Unable to complete Google sign-in.',
+          },
+        };
+      }
+    }
+
+    const handoff = randomBytes(24).toString('hex');
+    await this.redisService.set(
+      `${GOOGLE_OAUTH_HANDOFF_PREFIX}${handoff}`,
+      JSON.stringify(record),
+      GOOGLE_OAUTH_HANDOFF_TTL_SECONDS,
+    );
+
+    res.redirect(this.appendHashParam(returnUrl, 'pos_google', handoff));
+  }
+
+  @Post('google/complete')
+  @HttpCode(HttpStatus.OK)
+  @Throttle(PORTAL_AUTH_WRITE_THROTTLE)
+  @ApiOperation({
+    summary:
+      'Redeem a one-time Google redirect code for the POS portal session',
+  })
+  @ApiBody({ type: GoogleCompleteDto })
+  @ApiOkResponse({ type: PosPortalAuthResponseDto })
+  @ApiForbiddenResponse({ type: PosPortalAccessDeniedResponseDto })
+  @ApiUnauthorizedResponse({
+    description: 'Expired or invalid completion code',
+  })
+  async googleComplete(@Body() dto: GoogleCompleteDto) {
+    const code = String(dto?.code || '').trim();
+    if (!code) {
+      throw new UnauthorizedException({
+        code: 'GOOGLE_HANDOFF_INVALID',
+        message: 'Missing Google sign-in completion code.',
+      });
+    }
+
+    const key = `${GOOGLE_OAUTH_HANDOFF_PREFIX}${code}`;
+    const raw = await this.redisService.get(key);
+    await this.redisService.del(key); // single-use
+
+    if (!raw) {
+      throw new UnauthorizedException({
+        code: 'GOOGLE_HANDOFF_EXPIRED',
+        message: 'This Google sign-in has expired. Please try again.',
+      });
+    }
+
+    let record: {
+      ok?: boolean;
+      payload?: unknown;
+      status?: number;
+      body?: unknown;
+    };
+    try {
+      record = JSON.parse(raw);
+    } catch {
+      throw new UnauthorizedException({
+        code: 'GOOGLE_HANDOFF_INVALID',
+        message: 'Unable to complete Google sign-in. Please try again.',
+      });
+    }
+
+    if (record?.ok) {
+      return record.payload;
+    }
+
+    // Replay the original error (e.g. POS_PORTAL_ACCESS_DENIED /
+    // POS_PORTAL_ACTIVATION_REQUIRED) so onboarding handling is unchanged.
+    throw new HttpException(
+      record?.body ?? { message: 'Unable to complete Google sign-in.' },
+      record?.status || HttpStatus.FORBIDDEN,
+    );
+  }
+
+  // --- Google OAuth redirect helpers -----------------------------------------
+
+  private getGoogleOAuthConfig(): { clientId: string; clientSecret: string } {
+    const clientId =
+      this.configService.get<string>('GOOGLE_WEB_CLIENT_ID') ??
+      this.configService.get<string>('GOOGLE_CLIENT_ID') ??
+      '';
+    const clientSecret =
+      this.configService.get<string>('GOOGLE_CLIENT_SECRET') ?? '';
+    return { clientId, clientSecret };
+  }
+
+  private buildGoogleRedirectUri(req: AuthenticatedRequest): string {
+    const override = String(
+      this.configService.get<string>('GOOGLE_OAUTH_REDIRECT_URI') || '',
+    ).trim();
+    if (override) {
+      return override;
+    }
+    // trust proxy is enabled (main.ts), so req.protocol reflects x-forwarded-proto.
+    const host = req.get('host');
+    return `${req.protocol}://${host}/api/pos-portal/auth/google/callback`;
+  }
+
+  private getAllowedReturnOrigins(): Set<string> {
+    const extra = String(
+      this.configService.get<string>('POS_GOOGLE_REDIRECT_ALLOWED_ORIGINS') ||
+        '',
+    )
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean);
+    return new Set([...GOOGLE_OAUTH_DEFAULT_RETURN_ORIGINS, ...extra]);
+  }
+
+  private resolveSafeReturnUrl(raw: unknown): string | null {
+    const value = String(raw || '').trim();
+    if (!value) {
+      return null;
+    }
+    let url: URL;
+    try {
+      url = new URL(value);
+    } catch {
+      return null;
+    }
+    const isLocalhost =
+      url.hostname === 'localhost' || url.hostname === '127.0.0.1';
+    if (
+      url.protocol !== 'https:' &&
+      !(url.protocol === 'http:' && isLocalhost)
+    ) {
+      return null;
+    }
+    if (!this.getAllowedReturnOrigins().has(url.origin)) {
+      return null;
+    }
+    url.hash = ''; // we set the fragment ourselves on the way back
+    return url.toString();
+  }
+
+  private appendHashParam(
+    returnUrl: string,
+    key: string,
+    value: string,
+  ): string {
+    const url = new URL(returnUrl);
+    url.hash = `${key}=${encodeURIComponent(value)}`;
+    return url.toString();
   }
 
   @Post('apple')

@@ -30,6 +30,11 @@ describe('BranchBillingService', () => {
         .fn()
         .mockResolvedValue([]),
     };
+    const generalLedger = {
+      post: jest.fn().mockResolvedValue({ id: 1 }),
+      reverse: jest.fn().mockResolvedValue(null),
+      findEntryByIdempotencyKey: jest.fn().mockResolvedValue(null),
+    };
 
     const service = new BranchBillingService(
       branchesRepo as any,
@@ -41,6 +46,7 @@ describe('BranchBillingService', () => {
       accruedLiabilitiesRepo as any,
       longTermDebtRepo as any,
       branchStaffService as any,
+      generalLedger as any,
     );
 
     return {
@@ -54,6 +60,7 @@ describe('BranchBillingService', () => {
       accruedLiabilitiesRepo,
       longTermDebtRepo,
       branchStaffService,
+      generalLedger,
     };
   }
 
@@ -185,5 +192,51 @@ describe('BranchBillingService', () => {
         lenderName: 'Dashen Bank',
       }),
     );
+  });
+
+  describe('general-ledger posting', () => {
+    const lineFor = (entry: any, code: string) =>
+      entry.lines.find((l: any) => l.accountCode === code);
+
+    it('posts an expense (Dr Expense / Cr Cash)', async () => {
+      const { service, generalLedger } = createService();
+      await service.createBranchExpense(44, 7, {
+        category: 'RENT',
+        amount: 5000,
+        occurredAt: new Date('2026-06-01T00:00:00.000Z'),
+      });
+      const entry = generalLedger.post.mock.calls[0][0];
+      expect(entry.sourceType).toBe('EXPENSE');
+      expect(lineFor(entry, '6000').debit).toBe(5000); // EXPENSE_RENT
+      expect(lineFor(entry, '1000').credit).toBe(5000); // CASH
+    });
+
+    it('draws a long-term loan (Dr Cash / Cr Long-term debt)', async () => {
+      const { service, generalLedger } = createService();
+      await service.createBranchLongTermDebt(44, {
+        lenderName: 'Dashen Bank',
+        principalAmount: 120000,
+        outstandingPrincipal: 120000,
+        issuedAt: new Date('2026-01-01T00:00:00.000Z'),
+      });
+      const entry = generalLedger.post.mock.calls[0][0];
+      expect(lineFor(entry, '1000').debit).toBe(120000); // CASH
+      expect(lineFor(entry, '2600').credit).toBe(120000); // LONG_TERM_DEBT
+    });
+
+    it('reverses the ledger entry when an expense is deleted', async () => {
+      const { service, expensesRepo, generalLedger } = createService();
+      expensesRepo.findOne.mockResolvedValueOnce({
+        id: 9,
+        branchId: 44,
+        occurredAt: new Date('2026-06-01T00:00:00.000Z'),
+      });
+      generalLedger.findEntryByIdempotencyKey.mockResolvedValueOnce({ id: 55 });
+      await service.deleteBranchExpense(44, 9);
+      expect(generalLedger.reverse).toHaveBeenCalledWith(
+        55,
+        expect.objectContaining({ idempotencyKey: 'reverse-expense-9' }),
+      );
+    });
   });
 });

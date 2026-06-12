@@ -306,6 +306,26 @@ export class SettlePropertyBookingDto {
   @Min(0)
   depositRefund?: number;
 
+  @ApiPropertyOptional({
+    example: 2000,
+    description: 'Total deposit on file at move-out (held = refund + forfeit)',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  depositHeld?: number;
+
+  @ApiPropertyOptional({
+    example: 500,
+    description: 'Amount of the security deposit kept (forfeited) at move-out',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  depositForfeit?: number;
+
   @ApiPropertyOptional({ example: 'checkout-999' })
   @IsOptional()
   @IsString()

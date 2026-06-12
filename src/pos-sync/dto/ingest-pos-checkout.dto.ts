@@ -120,6 +120,70 @@ export class PosCheckoutItemDto {
   metadata?: Record<string, any>;
 }
 
+/**
+ * Format-aware accounting decomposition sent by pos-s alongside the legacy
+ * totals. The general ledger posts from this block; absent components arrive as
+ * null. Inner money objects are kept opaque (`@IsObject`) so the contract can
+ * evolve without DTO churn — the posting service reads the fields it needs.
+ */
+export class FinancialClassificationDto {
+  @IsOptional()
+  @IsNumber()
+  schemaVersion?: number;
+
+  /** 'CASH' | 'ACCRUAL' */
+  @IsOptional()
+  @IsString()
+  recognitionBasis?: string;
+
+  @IsOptional()
+  @IsString()
+  serviceFormat?: string;
+
+  @IsOptional()
+  @IsString()
+  currency?: string;
+
+  /** { amount, account } */
+  @IsOptional()
+  @IsObject()
+  revenue?: Record<string, any>;
+
+  @IsOptional()
+  @IsObject()
+  taxPayable?: Record<string, any> | null;
+
+  @IsOptional()
+  @IsObject()
+  tipsPayable?: Record<string, any> | null;
+
+  @IsOptional()
+  @IsObject()
+  accountsReceivable?: Record<string, any> | null;
+
+  @IsOptional()
+  @IsObject()
+  depositHeld?: Record<string, any> | null;
+
+  @IsOptional()
+  @IsObject()
+  deferredRevenue?: Record<string, any> | null;
+
+  /** 'INVENTORY' | 'SERVICE_COST' | 'NONE' */
+  @IsOptional()
+  @IsString()
+  cogsSource?: string;
+
+  /** Source receipt number for a RETURN, so the backend links the reversal. */
+  @IsOptional()
+  @IsString()
+  reversalOf?: string | null;
+
+  @IsOptional()
+  @IsArray()
+  lines?: Array<Record<string, any>>;
+}
+
 export class IngestPosCheckoutDto {
   @Type(() => Number)
   @IsNumber()
@@ -278,4 +342,9 @@ export class IngestPosCheckoutDto {
   @IsNumber()
   @Min(0)
   tipAmount?: number;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => FinancialClassificationDto)
+  financialClassification?: FinancialClassificationDto;
 }

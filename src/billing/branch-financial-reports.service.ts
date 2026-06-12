@@ -2,6 +2,12 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import {
+  LedgerStatementsService,
+  LedgerBalanceSheet,
+  LedgerProfitAndLoss,
+} from '../accounting/ledger-statements.service';
+import { ProductCostService } from '../purchase-orders/product-cost.service';
+import {
   PosCheckout,
   PosCheckoutStatus,
   PosCheckoutTransactionType,
@@ -60,6 +66,7 @@ export interface BalanceSheetReport {
     current: {
       cash: number;
       tenderClearing: number;
+      accountsReceivable?: number;
       inventoryValue: number;
       total: number;
     };
@@ -71,6 +78,7 @@ export interface BalanceSheetReport {
     };
     cash: number;
     tenderClearing: number;
+    accountsReceivable?: number;
     inventoryValue: number;
     fixedAssetsGross: number;
     accumulatedDepreciation: number;
@@ -81,6 +89,9 @@ export interface BalanceSheetReport {
     current: {
       supplierPayables: number;
       taxPayable: number;
+      tipsPayable?: number;
+      customerDeposits?: number;
+      deferredRevenue?: number;
       accruedLiabilities: number;
       currentPortionLongTermDebt: number;
       total: number;
@@ -92,6 +103,9 @@ export interface BalanceSheetReport {
     };
     supplierPayables: number;
     taxPayable: number;
+    tipsPayable?: number;
+    customerDeposits?: number;
+    deferredRevenue?: number;
     accruedLiabilities: number;
     currentPortionLongTermDebt: number;
     longTermDebt: number;
@@ -134,7 +148,158 @@ export class BranchFinancialReportsService {
     private readonly accruedLiabilitiesRepo: Repository<BranchAccruedLiability>,
     @InjectRepository(BranchLongTermDebt)
     private readonly longTermDebtRepo: Repository<BranchLongTermDebt>,
+    private readonly ledgerStatements: LedgerStatementsService,
+    private readonly productCost: ProductCostService,
   ) {}
+
+  /**
+   * When ACCOUNTING_LEDGER_ENABLED=true the statements are read from the general
+   * ledger instead of being derived on the fly. Off by default until the
+   * reconciliation harness (yarn reconcile:ledger) confirms the ledger matches.
+   */
+  private get ledgerEnabled(): boolean {
+    return (
+      String(process.env.ACCOUNTING_LEDGER_ENABLED || '')
+        .trim()
+        .toLowerCase() === 'true'
+    );
+  }
+
+  private round2(value: number): number {
+    return Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
+  }
+
+  // ── Ledger-backed report builders (used when ACCOUNTING_LEDGER_ENABLED) ─────
+
+  private async profitAndLossFromLedger(
+    branchId: number,
+    range: ReportRange,
+  ): Promise<ProfitAndLossReport> {
+    const from = range.from ?? null;
+    const to = range.to ?? null;
+    const pl: LedgerProfitAndLoss =
+      await this.ledgerStatements.getProfitAndLoss(branchId, { from, to });
+    return {
+      branchId,
+      range: { from, to },
+      revenue: {
+        gross: this.round2(pl.revenueNet + pl.tax),
+        voided: 0,
+        tax: pl.tax,
+        net: pl.revenueNet,
+      },
+      cogs: pl.cogs,
+      grossProfit: pl.grossProfit,
+      expensesByCategory: pl.expensesByCategory,
+      totalExpenses: pl.totalExpenses,
+      netProfit: pl.netProfit,
+      currency: 'ETB',
+      notes: ['Ledger-backed (ACCOUNTING_LEDGER_ENABLED).'],
+    };
+  }
+
+  private async balanceSheetFromLedger(
+    branchId: number,
+    asOfAt: Date,
+  ): Promise<BalanceSheetReport> {
+    const bs: LedgerBalanceSheet = await this.ledgerStatements.getBalanceSheet(
+      branchId,
+      asOfAt,
+    );
+    const a = bs.assets;
+    const l = bs.liabilities;
+    const currentAssetsTotal = this.round2(
+      a.cash + a.tenderClearing + a.accountsReceivable + a.inventoryValue,
+    );
+    const nonCurrentAssetsTotal = a.fixedAssetsNet;
+    const assetsTotal = this.round2(currentAssetsTotal + nonCurrentAssetsTotal);
+    const currentLiabTotal = this.round2(
+      l.supplierPayables +
+        l.taxPayable +
+        l.tipsPayable +
+        l.customerDeposits +
+        l.deferredRevenue +
+        l.accruedLiabilities,
+    );
+    const nonCurrentLiabTotal = l.longTermDebt;
+    const liabilitiesTotal = this.round2(
+      currentLiabTotal + nonCurrentLiabTotal,
+    );
+
+    return {
+      branchId,
+      asOfAt,
+      assets: {
+        current: {
+          cash: a.cash,
+          tenderClearing: a.tenderClearing,
+          accountsReceivable: a.accountsReceivable,
+          inventoryValue: a.inventoryValue,
+          total: currentAssetsTotal,
+        },
+        nonCurrent: {
+          fixedAssetsGross: a.fixedAssetsGross,
+          accumulatedDepreciation: a.accumulatedDepreciation,
+          fixedAssetsNet: a.fixedAssetsNet,
+          total: nonCurrentAssetsTotal,
+        },
+        cash: a.cash,
+        tenderClearing: a.tenderClearing,
+        accountsReceivable: a.accountsReceivable,
+        inventoryValue: a.inventoryValue,
+        fixedAssetsGross: a.fixedAssetsGross,
+        accumulatedDepreciation: a.accumulatedDepreciation,
+        fixedAssetsNet: a.fixedAssetsNet,
+        total: assetsTotal,
+      },
+      liabilities: {
+        current: {
+          supplierPayables: l.supplierPayables,
+          taxPayable: l.taxPayable,
+          tipsPayable: l.tipsPayable,
+          customerDeposits: l.customerDeposits,
+          deferredRevenue: l.deferredRevenue,
+          accruedLiabilities: l.accruedLiabilities,
+          currentPortionLongTermDebt: 0,
+          total: currentLiabTotal,
+        },
+        nonCurrent: {
+          accruedLiabilities: 0,
+          longTermDebt: l.longTermDebt,
+          total: nonCurrentLiabTotal,
+        },
+        supplierPayables: l.supplierPayables,
+        taxPayable: l.taxPayable,
+        tipsPayable: l.tipsPayable,
+        customerDeposits: l.customerDeposits,
+        deferredRevenue: l.deferredRevenue,
+        accruedLiabilities: l.accruedLiabilities,
+        currentPortionLongTermDebt: 0,
+        longTermDebt: l.longTermDebt,
+        total: liabilitiesTotal,
+      },
+      equity: bs.equity,
+      currency: 'ETB',
+      notes: [
+        'Ledger-backed. Accrued liabilities and the current portion of long-term debt are presented as current/non-current at the account level; the precise maturity split is a sub-ledger refinement (the reconciliation compares combined totals).',
+      ],
+    };
+  }
+
+  private async trialBalanceFromLedger(
+    branchId: number,
+    asOfAt: Date,
+  ): Promise<TrialBalanceReport> {
+    const tb = await this.ledgerStatements.getTrialBalance(branchId, asOfAt);
+    return {
+      branchId,
+      asOfAt,
+      lines: tb.lines,
+      totals: tb.totals,
+      balanced: tb.balanced,
+      currency: 'ETB',
+    };
+  }
 
   // ---------------------------------------------------------------------------
   // Profit & Loss
@@ -144,6 +309,9 @@ export class BranchFinancialReportsService {
     branchId: number,
     range: ReportRange = {},
   ): Promise<ProfitAndLossReport> {
+    if (this.ledgerEnabled) {
+      return this.profitAndLossFromLedger(branchId, range);
+    }
     const from = range.from ?? null;
     const to = range.to ?? null;
 
@@ -238,6 +406,9 @@ export class BranchFinancialReportsService {
     branchId: number,
     range: AsOfRange = {},
   ): Promise<BalanceSheetReport> {
+    if (this.ledgerEnabled) {
+      return this.balanceSheetFromLedger(branchId, range.asOfAt ?? new Date());
+    }
     const asOfAt = range.asOfAt ?? new Date();
 
     const checkouts = await this.findCheckouts(branchId, null, asOfAt);
@@ -271,7 +442,7 @@ export class BranchFinancialReportsService {
 
     // Inventory value: sum(quantityOnHand × WAC) for current branch_inventory.
     const inventory = await this.inventoryRepo.find({
-      where: { branchId } as any,
+      where: { branchId },
     });
     const productIds = inventory.map((row) => row.productId);
     const wacByProduct = await this.computeWeightedAverageCosts(
@@ -413,6 +584,9 @@ export class BranchFinancialReportsService {
     branchId: number,
     range: AsOfRange = {},
   ): Promise<TrialBalanceReport> {
+    if (this.ledgerEnabled) {
+      return this.trialBalanceFromLedger(branchId, range.asOfAt ?? new Date());
+    }
     const asOfAt = range.asOfAt ?? new Date();
     const pl = await this.getProfitAndLoss(branchId, {
       from: null,
@@ -839,43 +1013,13 @@ export class BranchFinancialReportsService {
   }
 
   /**
-   * Weighted average cost per product, derived from purchase-order items received
-   * for this branch. Falls back to 0 for products with no PO history.
+   * Weighted average cost per product. Delegates to the shared ProductCostService
+   * so the derived reports and the ledger COGS posting use one cost basis.
    */
-  private async computeWeightedAverageCosts(
+  private computeWeightedAverageCosts(
     branchId: number,
     productIds: number[],
   ): Promise<Map<number, number>> {
-    const result = new Map<number, number>();
-    if (!productIds.length) return result;
-
-    const rows: { productId: number; cost: string }[] =
-      await this.purchaseOrderItemsRepo
-        .createQueryBuilder('item')
-        .innerJoin('item.purchaseOrder', 'po', 'po.branchId = :branchId', {
-          branchId,
-        })
-        .select('item.productId', 'productId')
-        .addSelect(
-          'SUM(item.unitPrice * GREATEST(item.receivedQuantity, item.orderedQuantity))',
-          'totalCost',
-        )
-        .addSelect(
-          'SUM(GREATEST(item.receivedQuantity, item.orderedQuantity))',
-          'totalQty',
-        )
-        .where('item.productId IN (:...productIds)', { productIds })
-        .groupBy('item.productId')
-        .getRawMany();
-
-    for (const row of rows as any[]) {
-      const productId = Number(row.productId);
-      const totalCost = Number(row.totalCost) || 0;
-      const totalQty = Number(row.totalQty) || 0;
-      if (totalQty > 0) {
-        result.set(productId, totalCost / totalQty);
-      }
-    }
-    return result;
+    return this.productCost.weightedAverageCosts(branchId, productIds);
   }
 }

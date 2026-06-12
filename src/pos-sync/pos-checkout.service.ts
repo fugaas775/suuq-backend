@@ -17,9 +17,18 @@ import { ProductAliasesService } from '../product-aliases/product-aliases.servic
 import { Product } from '../products/entities/product.entity';
 import { EmailService } from '../email/email.service';
 import {
+  GeneralLedgerService,
+  JournalLineInput,
+} from '../accounting/general-ledger.service';
+import { GlAccountCode } from '../accounting/gl-accounts.constant';
+import { GlJournalSourceType } from '../accounting/entities/gl-journal-entry.entity';
+import { splitTenders } from '../accounting/tender-split.util';
+import { ProductCostService } from '../purchase-orders/product-cost.service';
+import {
   IngestPosCheckoutDto,
   PosCheckoutItemDto,
 } from './dto/ingest-pos-checkout.dto';
+import { SettleReceivableDto } from './dto/settle-receivable.dto';
 import { PosCheckoutQuoteResponseDto } from './dto/pos-checkout-quote-response.dto';
 import { ListPosCheckoutsQueryDto } from './dto/list-pos-checkouts-query.dto';
 import {
@@ -177,6 +186,8 @@ export class PosCheckoutService {
     private readonly variantInventoryService: VariantInventoryService,
     private readonly productAliasesService: ProductAliasesService,
     private readonly emailService: EmailService,
+    private readonly generalLedger: GeneralLedgerService,
+    private readonly productCost: ProductCostService,
   ) {}
 
   private readonly logger = new Logger(PosCheckoutService.name);
@@ -535,6 +546,17 @@ export class PosCheckoutService {
     }
 
     const processed = await this.findOneById(checkout.id);
+
+    // Post the sale to the general ledger (best-effort — the checkout is the
+    // source of truth; a ledger hiccup must never fail a sale, and the
+    // reconciliation harness in a later phase detects any gaps).
+    await this.postCheckoutToLedger(processed).catch((error) => {
+      this.logger.warn(
+        `GL posting failed for checkout ${checkout.id}: ${
+          error instanceof Error ? error.message : error
+        }`,
+      );
+    });
 
     // Fire receipt email to customer if email is available
     const customerEmail =
@@ -1103,6 +1125,252 @@ export class PosCheckoutService {
     return checkout;
   }
 
+  private round2(value: number): number {
+    return Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
+  }
+
+  /** Deterministic GL idempotency key for a checkout (stable across retries). */
+  private ledgerKeyForCheckout(checkout: PosCheckout): string {
+    return checkout.idempotencyKey
+      ? `pos-checkout-${checkout.idempotencyKey}`
+      : `pos-checkout-${checkout.id}`;
+  }
+
+  private resolveRevenueAccount(account?: string): GlAccountCode {
+    return account === 'RENTAL_REVENUE'
+      ? GlAccountCode.RENTAL_REVENUE
+      : GlAccountCode.SERVICE_REVENUE;
+  }
+
+  /**
+   * Post a cash-basis POS sale/return to the general ledger from the
+   * `financialClassification` block pos-s attaches to the checkout.
+   *
+   * Scope (this phase): cash-basis formats only. ACCRUAL formats
+   * (HOTEL/PROPERTY_RENTAL) and COGS/inventory postings are intentionally
+   * deferred to the hospitality + inventory sub-ledger phase, so we don't
+   * double-count folio/booking revenue or post inventory relief without the
+   * matching purchase-order receipts.
+   *
+   * The entry balances by construction: debits (cash + tender clearing +
+   * receivable) sum to `total`, and credits (revenue net of tax + tax payable)
+   * also sum to `total`. A RETURN posts the mirror of a SALE.
+   */
+  private async postCheckoutToLedger(checkout: PosCheckout): Promise<void> {
+    const fc = (checkout.metadata as any)?.financialClassification;
+    if (!fc) {
+      return; // additive: only post when pos-s sent the classification block
+    }
+    const isAccrual =
+      String(fc.recognitionBasis || '').toUpperCase() === 'ACCRUAL';
+    if (isAccrual) {
+      return; // deferred to the hospitality phase to avoid double-counting
+    }
+
+    const isReturn =
+      checkout.transactionType === PosCheckoutTransactionType.RETURN;
+    const total = this.round2(Number(checkout.total || 0));
+    const paid = this.round2(Number(checkout.paidAmount || 0));
+    const tax = this.round2(Number(checkout.taxAmount || 0));
+    // Net revenue = total minus tax; computed here (not trusted from the block)
+    // so the entry always balances against total.
+    const revenue = this.round2(total - tax);
+    // Cash actually retained excludes any change handed back, so debits reconcile
+    // to `total` even when the tender exceeds the bill (offline/legacy receipts,
+    // non-RETAIL formats, or API clients may still carry a changeDue).
+    const netCash = Math.max(
+      0,
+      this.round2(paid - this.round2(Number(checkout.changeDue || 0))),
+    );
+    const receivable = Math.max(0, this.round2(total - netCash));
+    if (total <= 0) {
+      return;
+    }
+
+    // Split the retained tender between cash on hand and clearing (cards/mobile/
+    // bank), reconciled to netCash, via the shared helper.
+    const { cash, clearing } = splitTenders(
+      Array.isArray(checkout.tenders) ? checkout.tenders : [],
+      netCash,
+    );
+
+    const debits: JournalLineInput[] = [];
+    const credits: JournalLineInput[] = [];
+    if (cash > 0) debits.push({ accountCode: GlAccountCode.CASH, debit: cash });
+    if (clearing > 0)
+      debits.push({
+        accountCode: GlAccountCode.TENDER_CLEARING,
+        debit: clearing,
+      });
+    if (receivable > 0)
+      debits.push({
+        accountCode: GlAccountCode.ACCOUNTS_RECEIVABLE,
+        debit: receivable,
+      });
+    if (revenue > 0)
+      credits.push({
+        accountCode: this.resolveRevenueAccount(fc.revenue?.account),
+        credit: revenue,
+      });
+    if (tax > 0)
+      credits.push({ accountCode: GlAccountCode.TAX_PAYABLE, credit: tax });
+
+    let lines: JournalLineInput[] = [...debits, ...credits];
+    if (isReturn) {
+      // A return reverses the sale: swap every debit and credit.
+      lines = lines.map((line) => ({
+        accountCode: line.accountCode,
+        debit: line.credit ?? 0,
+        credit: line.debit ?? 0,
+      }));
+    }
+    if (lines.length < 2) {
+      return;
+    }
+
+    await this.generalLedger.post({
+      branchId: checkout.branchId,
+      occurredAt: checkout.occurredAt,
+      sourceType: isReturn
+        ? GlJournalSourceType.POS_RETURN
+        : GlJournalSourceType.POS_CHECKOUT,
+      sourceId: checkout.receiptNumber || String(checkout.id),
+      idempotencyKey: this.ledgerKeyForCheckout(checkout),
+      currency: checkout.currency,
+      memo: `${isReturn ? 'POS return' : 'POS sale'} ${
+        checkout.receiptNumber ?? checkout.id
+      }`,
+      createdByUserId: checkout.cashierUserId ?? null,
+      lines,
+    });
+
+    // Relieve inventory at weighted-average cost for inventory-backed formats.
+    if (String(fc.cogsSource || '').toUpperCase() === 'INVENTORY') {
+      await this.postCheckoutCogs(checkout, isReturn);
+    }
+  }
+
+  /**
+   * Post the cost-of-goods-sold relief for an inventory sale:
+   * SALE → Dr COGS / Cr Inventory; RETURN → Dr Inventory / Cr COGS. Costed at
+   * the per-product weighted-average from purchase history. Best-effort and
+   * idempotent; skipped when no costed quantity is present.
+   */
+  private async postCheckoutCogs(
+    checkout: PosCheckout,
+    isReturn: boolean,
+  ): Promise<void> {
+    const items = Array.isArray(checkout.items) ? checkout.items : [];
+    const productIds = items
+      .map((item) => Number((item as any)?.productId))
+      .filter((id) => Number.isFinite(id));
+    if (!productIds.length) return;
+
+    const costs = await this.productCost.weightedAverageCosts(
+      checkout.branchId,
+      productIds,
+    );
+    let totalCost = 0;
+    for (const item of items) {
+      const productId = Number((item as any)?.productId);
+      const unitCost = costs.get(productId);
+      if (!unitCost) continue;
+      totalCost += unitCost * Math.abs(Number((item as any)?.quantity || 0));
+    }
+    totalCost = this.round2(totalCost);
+    if (totalCost <= 0) return;
+
+    // SALE relieves inventory into COGS; a RETURN puts the goods back.
+    const lines: JournalLineInput[] = isReturn
+      ? [
+          { accountCode: GlAccountCode.INVENTORY, debit: totalCost },
+          { accountCode: GlAccountCode.COGS, credit: totalCost },
+        ]
+      : [
+          { accountCode: GlAccountCode.COGS, debit: totalCost },
+          { accountCode: GlAccountCode.INVENTORY, credit: totalCost },
+        ];
+
+    await this.generalLedger.post({
+      branchId: checkout.branchId,
+      occurredAt: checkout.occurredAt,
+      sourceType: isReturn
+        ? GlJournalSourceType.POS_RETURN
+        : GlJournalSourceType.POS_CHECKOUT,
+      sourceId: checkout.receiptNumber || String(checkout.id),
+      idempotencyKey: `pos-cogs-${this.ledgerKeyForCheckout(checkout)}`,
+      currency: checkout.currency,
+      memo: `COGS — ${checkout.receiptNumber ?? checkout.id}`,
+      lines,
+    });
+  }
+
+  /**
+   * Record a customer paying down an OPEN accounts-receivable balance after the
+   * original sale. Posts `Dr Cash/Tender clearing / Cr Accounts receivable`.
+   * Idempotent on the client-supplied key, so a retried pay-down is a no-op.
+   */
+  async settleReceivable(
+    dto: SettleReceivableDto,
+    actor: { id?: number | null } = {},
+  ): Promise<{ posted: boolean; entryId: number; idempotencyKey: string }> {
+    const settled = this.round2(Number(dto.settledAmount || 0));
+    if (settled <= 0) {
+      throw new BadRequestException('settledAmount must be greater than zero.');
+    }
+
+    const tenders = Array.isArray(dto.tenders) ? dto.tenders : [];
+    let cash = 0;
+    let clearing = 0;
+    for (const tender of tenders) {
+      const amount = Number(tender?.amount || 0);
+      if (String(tender?.method || '').toUpperCase() === 'CASH') {
+        cash += amount;
+      } else {
+        clearing += amount;
+      }
+    }
+    if (this.round2(cash + clearing) <= 0) {
+      cash = settled; // no tender detail — treat the whole pay-down as cash
+    }
+    const tenderSum = this.round2(cash + clearing);
+    if (tenderSum !== settled) {
+      const scale = settled / tenderSum;
+      cash = this.round2(cash * scale);
+      clearing = this.round2(settled - cash);
+    }
+
+    const debits: JournalLineInput[] = [];
+    if (cash > 0) debits.push({ accountCode: GlAccountCode.CASH, debit: cash });
+    if (clearing > 0)
+      debits.push({
+        accountCode: GlAccountCode.TENDER_CLEARING,
+        debit: clearing,
+      });
+
+    const occurredAt = dto.settledAt ? new Date(dto.settledAt) : new Date();
+    const entry = await this.generalLedger.post({
+      branchId: dto.branchId,
+      occurredAt,
+      sourceType: GlJournalSourceType.AR_SETTLEMENT,
+      sourceId: dto.originalReceiptNumber || null,
+      idempotencyKey: dto.idempotencyKey,
+      currency: (dto.currency || 'ETB').trim().toUpperCase(),
+      memo: `Receivable settlement for ${dto.originalReceiptNumber ?? ''}`.trim(),
+      createdByUserId: actor.id ?? null,
+      lines: [
+        ...debits,
+        { accountCode: GlAccountCode.ACCOUNTS_RECEIVABLE, credit: settled },
+      ],
+    });
+
+    return {
+      posted: true,
+      entryId: entry.id,
+      idempotencyKey: dto.idempotencyKey,
+    };
+  }
+
   private buildCheckoutMetadata(
     dto: IngestPosCheckoutDto,
   ): Record<string, any> | null {
@@ -1132,6 +1400,13 @@ export class PosCheckoutService {
 
     if (dto.loyaltySummary && Object.keys(dto.loyaltySummary).length > 0) {
       baseMetadata.loyaltySummary = dto.loyaltySummary;
+    }
+
+    if (
+      dto.financialClassification &&
+      Object.keys(dto.financialClassification).length > 0
+    ) {
+      baseMetadata.financialClassification = dto.financialClassification;
     }
 
     return Object.keys(baseMetadata).length ? baseMetadata : null;
@@ -1729,6 +2004,32 @@ export class PosCheckoutService {
       voidedByUserId,
       voidReason: dto.reason ?? null,
     });
+
+    // Best-effort: reverse the checkout's ledger entry so a void backs revenue,
+    // tax and receivable out of the books. No-op if the sale was never posted
+    // (e.g. accrual formats, or pre-ledger checkouts).
+    try {
+      const ledgerKey = this.ledgerKeyForCheckout(checkout);
+      const entry = await this.generalLedger.findEntryByIdempotencyKey(
+        checkout.branchId,
+        ledgerKey,
+      );
+      if (entry) {
+        await this.generalLedger.reverse(entry.id, {
+          sourceType: GlJournalSourceType.POS_VOID_REVERSAL,
+          idempotencyKey: `void-${ledgerKey}`,
+          occurredAt: voidedAt,
+          memo: `Void of checkout ${checkout.receiptNumber ?? checkout.id}`,
+          createdByUserId: voidedByUserId,
+        });
+      }
+    } catch (error) {
+      this.logger.warn(
+        `GL reversal failed for void of checkout ${checkoutId}: ${
+          error instanceof Error ? error.message : error
+        }`,
+      );
+    }
 
     return {
       id: checkoutId,
