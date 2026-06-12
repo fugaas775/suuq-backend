@@ -49,6 +49,7 @@
     "backfill:self-serve-branch-service-format:execute": "node --env-file=.env -r ts-node/register -r tsconfig-paths/register scripts/backfill-self-serve-branch-service-format.ts --execute",
     "backfill:sales": "ts-node -r tsconfig-paths/register --transpile-only scripts/backfill-product-sales.ts",
     "reconcile:ledger": "ts-node -r tsconfig-paths/register --transpile-only scripts/reconcile-ledger.ts",
+    "reconcile:variant-inventory": "ts-node -r tsconfig-paths/register --transpile-only scripts/reconcile-variant-inventory.ts",
     "backfill:phash": "ts-node -r tsconfig-paths/register --transpile-only scripts/backfill-phash.ts",
     "cleanup:nonvehicle-attrs": "node --env-file=.env -r ts-node/register -r tsconfig-paths/register scripts/cleanup-nonvehicle-attributes.ts --dry-run",
     "cleanup:nonvehicle-attrs:execute": "node --env-file=.env -r ts-node/register -r tsconfig-paths/register scripts/cleanup-nonvehicle-attributes.ts --execute",

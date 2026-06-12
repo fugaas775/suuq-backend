@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, In, Repository } from 'typeorm';
+import { BranchInventory } from './entities/branch-inventory.entity';
 import { BranchInventoryVariant } from './entities/branch-inventory-variant.entity';
 import { ProductVariant } from '../products/entities/product-variant.entity';
 import { StockMovementType } from './entities/stock-movement.entity';
@@ -147,6 +148,51 @@ export class VariantInventoryService {
       },
       manager,
     );
+  }
+
+  /**
+   * Force a variant product's product-level on-hand to equal the sum of its
+   * variants — the invariant for variant products. Records a corrective
+   * ADJUSTMENT (preserving the audit + Product.stockQuantity sync) when they
+   * drift, e.g. a product that carried independent base stock before variants
+   * were seeded. A no-op when already consistent. Returns the corrected sum.
+   */
+  async reconcileProductFromVariants(
+    branchId: number,
+    productId: number,
+    manager?: EntityManager,
+  ): Promise<number> {
+    if (!manager) {
+      return this.dataSource.transaction((txManager) =>
+        this.reconcileProductFromVariants(branchId, productId, txManager),
+      );
+    }
+    const variants = await manager.getRepository(BranchInventoryVariant).find({
+      where: { branchId, productId },
+    });
+    const variantSum = variants.reduce(
+      (sum, row) => sum + (Number(row.quantityOnHand) || 0),
+      0,
+    );
+    const inventory = await manager.getRepository(BranchInventory).findOne({
+      where: { branchId, productId },
+    });
+    const current = Number(inventory?.quantityOnHand ?? 0);
+    const delta = variantSum - current;
+    if (delta !== 0) {
+      await this.inventoryLedgerService.recordMovement(
+        {
+          branchId,
+          productId,
+          movementType: StockMovementType.ADJUSTMENT,
+          quantityDelta: delta,
+          sourceType: 'VARIANT_RECONCILE',
+          note: `reconcile product on-hand to variant sum (${variantSum})`,
+        },
+        manager,
+      );
+    }
+    return variantSum;
   }
 
   /**

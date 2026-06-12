@@ -91,6 +91,12 @@ export class CreateVendorProductDto {
   @IsNumber()
   price!: number;
 
+  // Manual unit cost — the COGS basis until purchase-order history exists.
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  costPrice?: number;
+
   @IsOptional()
   @IsString()
   description?: string;

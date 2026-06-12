@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Branch } from '../branches/entities/branch.entity';
 import { BranchInventory } from '../branches/entities/branch-inventory.entity';
+import { Product } from '../products/entities/product.entity';
 import { TenantSubscription } from '../retail/entities/tenant-subscription.entity';
 import { EbirrTransaction } from '../payments/entities/ebirr-transaction.entity';
 import { PosCheckout } from '../pos-sync/entities/pos-checkout.entity';
@@ -42,6 +43,7 @@ import { BranchFinancialReportsController } from './branch-financial-reports.con
       PosRegisterSession,
       PurchaseOrder,
       PurchaseOrderItem,
+      Product,
     ]),
   ],
   controllers: [OwnerBillingController, BranchFinancialReportsController],

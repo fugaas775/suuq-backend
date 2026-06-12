@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
+import { Product } from '../products/entities/product.entity';
 import { PurchaseOrderItem } from './entities/purchase-order.entity';
 
 /**
@@ -8,12 +9,18 @@ import { PurchaseOrderItem } from './entities/purchase-order.entity';
  * history. Shared so both the financial reports and the POS COGS posting use one
  * authoritative cost basis (`SUM(unitPrice * qty) / SUM(qty)` over received —
  * or, when not yet received, ordered — quantities).
+ *
+ * When a product has no purchase-order history yet, it falls back to the
+ * product's manually-entered `costPrice` so gross profit / COGS is meaningful
+ * before any PO or supplier exists.
  */
 @Injectable()
 export class ProductCostService {
   constructor(
     @InjectRepository(PurchaseOrderItem)
     private readonly purchaseOrderItemsRepo: Repository<PurchaseOrderItem>,
+    @InjectRepository(Product)
+    private readonly productsRepo: Repository<Product>,
   ) {}
 
   async weightedAverageCosts(
@@ -51,6 +58,22 @@ export class ProductCostService {
       const totalQty = Number(row.totalQty) || 0;
       if (totalQty > 0) {
         result.set(productId, totalCost / totalQty);
+      }
+    }
+
+    // Fall back to the manually-entered product cost for anything without PO
+    // history (or whose PO history nets to zero quantity).
+    const missing = ids.filter((id) => !result.has(id));
+    if (missing.length) {
+      const products = await this.productsRepo.find({
+        where: { id: In(missing) },
+        select: ['id', 'costPrice'],
+      });
+      for (const product of products) {
+        const cost = Number(product.costPrice);
+        if (Number.isFinite(cost) && cost > 0) {
+          result.set(product.id, cost);
+        }
       }
     }
     return result;

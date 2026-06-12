@@ -339,6 +339,13 @@ export class VendorService {
           actorUserId: actorUserId ?? null,
         });
       }
+      // Enforce the invariant: product-level on-hand == sum of its variants, so
+      // any independent base stock the product carried can't leave it showing
+      // "N left" while every variant is out of stock.
+      await this.variantInventoryService.reconcileProductFromVariants(
+        branchId,
+        productId,
+      );
     }
   }
 
