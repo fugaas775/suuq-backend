@@ -25,6 +25,13 @@ export enum PosSuspendedCartStatus {
 
 @Entity('pos_suspended_carts')
 @Index(['branchId', 'status', 'registerId'])
+// Idempotency for offline-parked baskets: a non-null clientRef is unique per
+// branch so a replay whose response was dropped mid-reconnect can't create a
+// duplicate. Postgres treats NULLs as distinct, so legacy/online carts (which
+// send no clientRef) are unconstrained.
+@Index('IDX_pos_suspended_carts_branch_client_ref', ['branchId', 'clientRef'], {
+  unique: true,
+})
 export class PosSuspendedCart {
   @PrimaryGeneratedColumn()
   id!: number;
@@ -45,6 +52,11 @@ export class PosSuspendedCart {
 
   @Column({ type: 'varchar', length: 128, nullable: true })
   registerId?: string | null;
+
+  // Client-generated idempotency key for offline-parked baskets (see the
+  // unique index above). Null for online/legacy carts.
+  @Column({ type: 'varchar', length: 128, nullable: true })
+  clientRef?: string | null;
 
   @Column({ type: 'varchar', length: 255 })
   label!: string;
