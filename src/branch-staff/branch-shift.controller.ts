@@ -66,6 +66,7 @@ export class BranchShiftController {
     const shift = await this.branchShiftService.create(branchId, dto, {
       id: req.user?.id ?? null,
       email: req.user?.email ?? null,
+      roles: req.user?.roles ?? [],
     });
     return serializeShift(shift);
   }
@@ -80,6 +81,7 @@ export class BranchShiftController {
     const shift = await this.branchShiftService.update(branchId, shiftId, dto, {
       id: req.user?.id ?? null,
       email: req.user?.email ?? null,
+      roles: req.user?.roles ?? [],
     });
     return serializeShift(shift);
   }
@@ -94,6 +96,7 @@ export class BranchShiftController {
     await this.branchShiftService.remove(branchId, shiftId, {
       id: req.user?.id ?? null,
       email: req.user?.email ?? null,
+      roles: req.user?.roles ?? [],
     });
   }
 
@@ -107,6 +110,7 @@ export class BranchShiftController {
     await this.branchShiftService.assignStaff(branchId, shiftId, dto.userId, {
       id: req.user?.id ?? null,
       email: req.user?.email ?? null,
+      roles: req.user?.roles ?? [],
     });
     return { ok: true };
   }
@@ -122,6 +126,7 @@ export class BranchShiftController {
     await this.branchShiftService.removeStaff(branchId, shiftId, userId, {
       id: req.user?.id ?? null,
       email: req.user?.email ?? null,
+      roles: req.user?.roles ?? [],
     });
   }
 
