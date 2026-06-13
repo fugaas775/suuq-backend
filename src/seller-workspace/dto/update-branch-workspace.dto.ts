@@ -1,6 +1,13 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
-import { IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import {
+  IsInt,
+  IsOptional,
+  IsString,
+  MaxLength,
+  Min,
+  MinLength,
+} from 'class-validator';
 
 function trimString(value: unknown) {
   return typeof value === 'string' ? value.trim() : value;
@@ -56,4 +63,14 @@ export class UpdateBranchWorkspaceDto {
   @IsString()
   @MaxLength(64)
   tinNumber?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Default RETAIL marketplace category id pre-selected when adding products. Send null to clear.',
+    nullable: true,
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  defaultCategoryId?: number | null;
 }

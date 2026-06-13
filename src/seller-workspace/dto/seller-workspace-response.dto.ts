@@ -332,6 +332,13 @@ export class SellerWorkspaceBranchWorkspaceDto {
 
   @ApiPropertyOptional({
     nullable: true,
+    description:
+      'Default RETAIL marketplace category id pre-selected when adding products at this branch.',
+  })
+  defaultCategoryId?: number | null;
+
+  @ApiPropertyOptional({
+    nullable: true,
     description: 'Consumer store ID linked to this branch, if any.',
   })
   vendorStoreId!: number | null;

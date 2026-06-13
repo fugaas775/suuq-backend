@@ -77,6 +77,14 @@ export class Branch {
   @Column({ type: 'int', nullable: true, unique: true })
   vendorStoreId?: number | null;
 
+  /**
+   * Default marketplace category id pre-selected when adding RETAIL products at
+   * this branch (e.g. a "Fashion & Apparel → Men's Fashion" branch). Null = none.
+   * References category.id; no FK constraint (kept loose like other branch refs).
+   */
+  @Column({ type: 'int', nullable: true })
+  defaultCategoryId?: number | null;
+
   @CreateDateColumn()
   createdAt!: Date;
 
