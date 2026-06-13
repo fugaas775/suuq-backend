@@ -6,7 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, EntityManager, Repository } from 'typeorm';
+import { Brackets, DataSource, EntityManager, Repository } from 'typeorm';
 import { InventoryLedgerService } from '../branches/inventory-ledger.service';
 import { VariantInventoryService } from '../branches/variant-inventory.service';
 import { ProductVariant } from '../products/entities/product-variant.entity';
@@ -31,6 +31,8 @@ import {
 import { SettleReceivableDto } from './dto/settle-receivable.dto';
 import { PosCheckoutQuoteResponseDto } from './dto/pos-checkout-quote-response.dto';
 import { ListPosCheckoutsQueryDto } from './dto/list-pos-checkouts-query.dto';
+import { SearchPosCustomersQueryDto } from './dto/search-pos-customers-query.dto';
+import { PosCustomerSearchResponseDto } from './dto/pos-customer-search-response.dto';
 import {
   PosCheckoutPageResponseDto,
   PosCheckoutResponseDto,
@@ -327,6 +329,76 @@ export class PosCheckoutService {
     }
 
     return this.toResponse(checkout);
+  }
+
+  /**
+   * Customer directory lookup for the register. There is no dedicated customer
+   * table — distinct customers are derived from the `customerProfile` metadata
+   * stamped onto prior (non-voided) checkouts in the branch. Matches the free
+   * text against the customer name (substring, case-insensitive) and the phone
+   * digits, returning the most-recently-seen customers first.
+   */
+  async searchCustomers(
+    query: SearchPosCustomersQueryDto,
+  ): Promise<PosCustomerSearchResponseDto> {
+    const term = String(query.q || '').trim();
+    if (!term) {
+      return { items: [] };
+    }
+    const limit = Math.min(Math.max(query.limit ?? 12, 1), 50);
+    const digits = term.replace(/\D+/g, '');
+
+    const nameExpr = "checkout.metadata->'customerProfile'->>'name'";
+    const phoneExpr = "checkout.metadata->'customerProfile'->>'phoneNumber'";
+    const refExpr = "checkout.metadata->'customerProfile'->>'reference'";
+    const phoneDigitsExpr = `regexp_replace(COALESCE(${phoneExpr}, ''), '\\D', '', 'g')`;
+
+    const qb = this.posCheckoutsRepository
+      .createQueryBuilder('checkout')
+      .select(nameExpr, 'name')
+      .addSelect(phoneExpr, 'phoneNumber')
+      .addSelect(`MAX(${refExpr})`, 'reference')
+      .addSelect('MAX(checkout.occurredAt)', 'lastSeenAt')
+      .where('checkout.branchId = :branchId', { branchId: query.branchId })
+      .andWhere('checkout.status != :voided', {
+        voided: PosCheckoutStatus.VOIDED,
+      })
+      .andWhere(
+        `(COALESCE(${nameExpr}, '') <> '' OR COALESCE(${phoneExpr}, '') <> '')`,
+      )
+      .andWhere(
+        new Brackets((w) => {
+          w.where(`${nameExpr} ILIKE :like`, { like: `%${term}%` });
+          if (digits) {
+            w.orWhere(`${phoneDigitsExpr} LIKE :digits`, {
+              digits: `%${digits}%`,
+            });
+          }
+        }),
+      )
+      .groupBy(nameExpr)
+      .addGroupBy(phoneExpr)
+      .orderBy('MAX(checkout.occurredAt)', 'DESC')
+      .limit(limit);
+
+    const rows = await qb.getRawMany<{
+      name: string | null;
+      phoneNumber: string | null;
+      reference: string | null;
+      lastSeenAt: Date | string | null;
+    }>();
+
+    return {
+      items: rows.map((row) => ({
+        name: row.name ?? null,
+        phoneNumber: row.phoneNumber ?? null,
+        reference: row.reference ?? null,
+        lastSeenAt:
+          row.lastSeenAt instanceof Date
+            ? row.lastSeenAt.toISOString()
+            : (row.lastSeenAt ?? null),
+      })),
+    };
   }
 
   async ingest(
