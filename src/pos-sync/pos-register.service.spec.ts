@@ -25,13 +25,13 @@ describe('PosRegisterService.suspendCart (clientRef idempotency)', () => {
       findOne: jest.fn().mockResolvedValue({ id: 3 }),
     };
     const registerSessionsRepository = { findOne: jest.fn() };
-    const emailService = {};
+    const reportService = { dispatchCloseReport: jest.fn() };
 
     const service = new PosRegisterService(
       registerSessionsRepository as any,
       suspendedCartsRepository as any,
       branchesRepository as any,
-      emailService as any,
+      reportService as any,
     );
 
     return { service, suspendedCartsRepository };

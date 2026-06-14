@@ -6,7 +6,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Branch } from '../branches/entities/branch.entity';
-import { EmailService } from '../email/email.service';
+import { PosRegisterReportService } from './pos-register-report.service';
 import { ClosePosRegisterSessionDto } from './dto/close-pos-register-session.dto';
 import { CreatePosRegisterSessionDto } from './dto/create-pos-register-session.dto';
 import { CreatePosSuspendedCartDto } from './dto/create-pos-suspended-cart.dto';
@@ -40,7 +40,7 @@ export class PosRegisterService {
     private readonly suspendedCartsRepository: Repository<PosSuspendedCart>,
     @InjectRepository(Branch)
     private readonly branchesRepository: Repository<Branch>,
-    private readonly emailService: EmailService,
+    private readonly reportService: PosRegisterReportService,
   ) {}
 
   async findSessions(
@@ -179,6 +179,11 @@ export class PosRegisterService {
       : session.metadata || null;
 
     const saved = await this.registerSessionsRepository.save(session);
+
+    // Fire-and-forget: email an end-of-shift sales report (with PDF) to the
+    // branch owner. dispatchCloseReport never throws, so a report/email failure
+    // can't break the close. Not awaited so the close response stays snappy.
+    void this.reportService.dispatchCloseReport(saved);
 
     return this.toSessionResponse(saved);
   }

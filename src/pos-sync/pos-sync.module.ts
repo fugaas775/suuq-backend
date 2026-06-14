@@ -21,6 +21,7 @@ import { PosPartnerSyncController } from './pos-partner-sync.controller';
 import { PosCheckoutController } from './pos-checkout.controller';
 import { PosCheckoutService } from './pos-checkout.service';
 import { PosRegisterController } from './pos-register.controller';
+import { PosRegisterReportService } from './pos-register-report.service';
 import { PosRegisterService } from './pos-register.service';
 import { PosSyncController } from './pos-sync.controller';
 import { PosSyncRequestAuthGuard } from './pos-sync-request-auth.guard';
@@ -66,6 +67,7 @@ import { PosSyncJob } from './entities/pos-sync-job.entity';
     PosCheckoutService,
     PosCatalogService,
     PosRegisterService,
+    PosRegisterReportService,
     PosSyncRequestAuthGuard,
     PosBranchAccessGuard,
     ProductCostService,
