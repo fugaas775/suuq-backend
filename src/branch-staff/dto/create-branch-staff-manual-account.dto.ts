@@ -72,6 +72,13 @@ export class CreateBranchStaffManualAccountDto {
   @IsString()
   @MinLength(3)
   @MaxLength(64)
+  // The username doubles as the login identifier. Login treats any identifier
+  // containing "@" as an email, so a username with "@" (or whitespace) can be
+  // created but can never sign in. Restrict to login-safe characters.
+  @Matches(/^[a-z0-9][a-z0-9._-]*$/i, {
+    message:
+      'username can only contain letters, numbers, dots, underscores, and hyphens (no "@" or spaces)',
+  })
   @Transform(({ value }) => trimString(value))
   username!: string;
 
