@@ -2,10 +2,18 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import {
+  GeneralLedgerService,
+  JournalLineInput,
+} from '../accounting/general-ledger.service';
+import { GlAccountCode } from '../accounting/gl-accounts.constant';
+import { GlJournalSourceType } from '../accounting/entities/gl-journal-entry.entity';
+import { splitTenders } from '../accounting/tender-split.util';
 import { HotelFolio, HotelFolioStatus } from './entities/hotel-folio.entity';
 import { HotelFolioCharge } from './entities/hotel-folio-charge.entity';
 import {
@@ -21,11 +29,14 @@ type ActorSummary = { id?: number | null; email?: string | null };
 
 @Injectable()
 export class HotelFolioService {
+  private readonly logger = new Logger(HotelFolioService.name);
+
   constructor(
     @InjectRepository(HotelFolio)
     private readonly folioRepo: Repository<HotelFolio>,
     @InjectRepository(HotelFolioCharge)
     private readonly chargeRepo: Repository<HotelFolioCharge>,
+    private readonly generalLedger: GeneralLedgerService,
   ) {}
 
   private toFolioResponse(folio: HotelFolio, charges: HotelFolioCharge[] = []) {
@@ -235,6 +246,60 @@ export class HotelFolioService {
     folio.settledAt = dto.settledAt ? new Date(dto.settledAt) : new Date();
 
     const saved = await this.folioRepo.save(folio);
+
+    // Recognize hospitality revenue at settlement (the stay is complete).
+    // Revenue is the folio's earned charges; any unpaid remainder becomes an
+    // account receivable so a partially-paid folio isn't under-recognized.
+    // Best-effort — the folio is the source of truth.
+    const round2 = (v: number) =>
+      Math.round((Number(v || 0) + Number.EPSILON) * 100) / 100;
+    const paid = round2(Number(saved.paidAmount || 0));
+    const charges = round2(Number(saved.chargesTotal || 0));
+    const recognised = charges > 0 ? charges : paid;
+    if (recognised > 0) {
+      // Cap the tender debit at recognised so an overpaid folio still balances
+      // (any excess stays on the folio, the source of truth); the shortfall on a
+      // partially-paid folio becomes a receivable.
+      const settledCash = Math.min(paid, recognised);
+      const { cash, clearing } = splitTenders(dto.payments, settledCash);
+      const receivable = Math.max(0, round2(recognised - paid));
+      const lines: JournalLineInput[] = [];
+      if (cash > 0)
+        lines.push({ accountCode: GlAccountCode.CASH, debit: cash });
+      if (clearing > 0)
+        lines.push({
+          accountCode: GlAccountCode.TENDER_CLEARING,
+          debit: clearing,
+        });
+      if (receivable > 0)
+        lines.push({
+          accountCode: GlAccountCode.ACCOUNTS_RECEIVABLE,
+          debit: receivable,
+        });
+      lines.push({
+        accountCode: GlAccountCode.SERVICE_REVENUE,
+        credit: recognised,
+      });
+      await this.generalLedger
+        .post({
+          branchId: saved.branchId,
+          occurredAt: saved.settledAt ?? new Date(),
+          sourceType: GlJournalSourceType.HOSPITALITY_SETTLEMENT,
+          sourceId: String(saved.id),
+          idempotencyKey: `hotel-folio-settle-${saved.id}`,
+          currency: saved.currency,
+          memo: `Hotel folio settlement — folio ${saved.id}`,
+          lines,
+        })
+        .catch((error) =>
+          this.logger.warn(
+            `GL settlement failed for folio ${saved.id}: ${
+              error instanceof Error ? error.message : error
+            }`,
+          ),
+        );
+    }
+
     return this.toFolioResponse(saved);
   }
 

@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuditModule } from '../audit/audit.module';
 import { BranchesModule } from '../branches/branches.module';
 import { EmailModule } from '../email/email.module';
+import { AccountingModule } from '../accounting/accounting.module';
 import { Branch } from '../branches/entities/branch.entity';
 import { Product } from '../products/entities/product.entity';
 import { ProcurementWebhooksModule } from '../procurement-webhooks/procurement-webhooks.module';
@@ -16,6 +17,7 @@ import {
 import { PurchaseOrderReceiptEvent } from './entities/purchase-order-receipt-event.entity';
 import { PurchaseOrdersController } from './purchase-orders.controller';
 import { PurchaseOrdersService } from './purchase-orders.service';
+import { SupplierAnalyticsService } from './supplier-analytics.service';
 
 @Module({
   imports: [
@@ -24,6 +26,7 @@ import { PurchaseOrdersService } from './purchase-orders.service';
     forwardRef(() => BranchesModule),
     ProcurementWebhooksModule,
     RealtimeModule,
+    AccountingModule,
     TypeOrmModule.forFeature([
       PurchaseOrder,
       PurchaseOrderItem,
@@ -35,7 +38,7 @@ import { PurchaseOrdersService } from './purchase-orders.service';
     ]),
   ],
   controllers: [PurchaseOrdersController],
-  providers: [PurchaseOrdersService],
-  exports: [PurchaseOrdersService],
+  providers: [PurchaseOrdersService, SupplierAnalyticsService],
+  exports: [PurchaseOrdersService, SupplierAnalyticsService],
 })
 export class PurchaseOrdersModule {}

@@ -20,6 +20,8 @@ import {
 } from '../purchase-orders/purchase-orders.service';
 import { Branch } from '../branches/entities/branch.entity';
 import { BranchInventory } from '../branches/entities/branch-inventory.entity';
+import { BranchInventoryVariant } from '../branches/entities/branch-inventory-variant.entity';
+import { ProductVariant } from '../products/entities/product-variant.entity';
 import {
   BranchTransfer,
   BranchTransferStatus,
@@ -232,6 +234,10 @@ export class RetailOpsService {
     private readonly branchStaffAssignmentsRepository: Repository<BranchStaffAssignment>,
     @InjectRepository(BranchInventory)
     private readonly branchInventoryRepository: Repository<BranchInventory>,
+    @InjectRepository(BranchInventoryVariant)
+    private readonly branchInventoryVariantRepository: Repository<BranchInventoryVariant>,
+    @InjectRepository(ProductVariant)
+    private readonly productVariantRepository: Repository<ProductVariant>,
     @InjectRepository(Product)
     private readonly productRepository: Repository<Product>,
     @InjectRepository(BranchCatalogProductLink)
@@ -1273,6 +1279,78 @@ export class RetailOpsService {
     };
   }
 
+  /**
+   * Live per-branch variant stock for a set of products, grouped by productId.
+   * Read directly from the variant repos (rather than VariantInventoryService)
+   * because BranchesModule already imports RetailModule — injecting the service
+   * here would create a circular module dependency.
+   */
+  private async loadBranchVariants(
+    branchId: number,
+    productIds: number[],
+  ): Promise<
+    Map<
+      number,
+      Array<{
+        variantId: number;
+        variantKey: string;
+        attributes: Record<string, string> | null;
+        priceOverride: number | null;
+        availableToSell: number;
+        quantityOnHand: number;
+      }>
+    >
+  > {
+    const grouped = new Map<
+      number,
+      Array<{
+        variantId: number;
+        variantKey: string;
+        attributes: Record<string, string> | null;
+        priceOverride: number | null;
+        availableToSell: number;
+        quantityOnHand: number;
+      }>
+    >();
+    const ids = (productIds || []).filter(
+      (id) => Number.isFinite(id) && id > 0,
+    );
+    if (!ids.length) {
+      return grouped;
+    }
+
+    const variants = await this.productVariantRepository.find({
+      where: { productId: In(ids), isActive: true },
+      order: { id: 'ASC' },
+    });
+    if (!variants.length) {
+      return grouped;
+    }
+
+    const stockRows = await this.branchInventoryVariantRepository.find({
+      where: { branchId, productId: In(ids) },
+    });
+    const stockByVariantId = new Map(
+      stockRows.map((row) => [row.variantId, row]),
+    );
+
+    for (const variant of variants) {
+      const stock = stockByVariantId.get(variant.id);
+      const list = grouped.get(variant.productId) ?? [];
+      list.push({
+        variantId: variant.id,
+        variantKey: variant.variantKey,
+        attributes: variant.attributes ?? null,
+        priceOverride: variant.priceOverride ?? null,
+        availableToSell: stock?.availableToSell ?? 0,
+        quantityOnHand: stock?.quantityOnHand ?? 0,
+      });
+      grouped.set(variant.productId, list);
+    }
+
+    return grouped;
+  }
+
   async getBranchProducts(
     query: RetailBranchProductsQueryDto,
   ): Promise<RetailBranchProductsResponseDto> {
@@ -1431,6 +1509,11 @@ export class RetailOpsService {
         .getRawOne(),
     ]);
 
+    const variantsByProductId = await this.loadBranchVariants(
+      branch.id,
+      products.map((product) => product.id),
+    );
+
     const items = products.map(
       (
         product: Product & {
@@ -1438,14 +1521,28 @@ export class RetailOpsService {
           branchCatalogLinkSnapshot?: BranchCatalogProductLink | null;
           branchCatalogVendorLinkSnapshot?: BranchCatalogVendorLink | null;
         },
-      ) =>
-        this.mapBranchProductItem(
+      ) => {
+        const item = this.mapBranchProductItem(
           branch,
           product,
           product.branchInventorySnapshot ?? null,
           product.branchCatalogLinkSnapshot ?? null,
           product.branchCatalogVendorLinkSnapshot ?? null,
-        ),
+        );
+        const variantRows = variantsByProductId.get(product.id);
+        if (variantRows && variantRows.length) {
+          const productPrice = Number(product.price ?? item.price ?? 0);
+          item.variants = variantRows.map((v) => ({
+            variantId: v.variantId,
+            variantKey: v.variantKey,
+            attributes: v.attributes,
+            price: v.priceOverride != null ? v.priceOverride : productPrice,
+            availableToSell: v.availableToSell,
+            quantityOnHand: v.quantityOnHand,
+          }));
+        }
+        return item;
+      },
     );
 
     const vendorLinkedToBranch =

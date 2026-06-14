@@ -13,8 +13,11 @@ import { BranchTransfersController } from './branch-transfers.controller';
 import { BranchTransfersService } from './branch-transfers.service';
 import { BranchesController } from './branches.controller';
 import { InventoryLedgerService } from './inventory-ledger.service';
+import { VariantInventoryService } from './variant-inventory.service';
 import { ReplenishmentService } from './replenishment.service';
 import { BranchInventory } from './entities/branch-inventory.entity';
+import { BranchInventoryVariant } from './entities/branch-inventory-variant.entity';
+import { ProductVariant } from '../products/entities/product-variant.entity';
 import {
   BranchTransfer,
   BranchTransferItem,
@@ -38,6 +41,8 @@ import { VendorStore } from '../vendor/entities/vendor-store.entity';
       SupplierOffer,
       SupplierProfile,
       BranchInventory,
+      BranchInventoryVariant,
+      ProductVariant,
       BranchTransfer,
       BranchTransferItem,
       StockMovement,
@@ -48,12 +53,14 @@ import { VendorStore } from '../vendor/entities/vendor-store.entity';
   providers: [
     BranchesService,
     InventoryLedgerService,
+    VariantInventoryService,
     BranchTransfersService,
     ReplenishmentService,
   ],
   exports: [
     BranchesService,
     InventoryLedgerService,
+    VariantInventoryService,
     BranchTransfersService,
     ReplenishmentService,
   ],

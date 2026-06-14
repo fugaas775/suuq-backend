@@ -23,15 +23,20 @@ import { PurchaseOrderBranchScopeQueryDto } from './dto/purchase-order-branch-sc
 import { PurchaseOrderReceiptEventResponseDto } from './dto/purchase-order-receipt-event-response.dto';
 import { RecordPurchaseOrderReceiptDto } from './dto/record-purchase-order-receipt.dto';
 import { ResolvePurchaseOrderReceiptDiscrepancyDto } from './dto/resolve-purchase-order-receipt-discrepancy.dto';
+import { SupplierStatusUpdateDto } from './dto/supplier-status-update.dto';
 import { UpdatePurchaseOrderStatusDto } from './dto/update-purchase-order-status.dto';
 import { PurchaseOrdersService } from './purchase-orders.service';
+import { SupplierAnalyticsService } from './supplier-analytics.service';
 import { PurchaseOrderReevaluationResponseDto } from '../admin/dto/purchase-order-response.dto';
 
 @ApiTags('B2B Purchase Orders')
 @Controller('hub/v1/purchase-orders')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class PurchaseOrdersController {
-  constructor(private readonly purchaseOrdersService: PurchaseOrdersService) {}
+  constructor(
+    private readonly purchaseOrdersService: PurchaseOrdersService,
+    private readonly supplierAnalyticsService: SupplierAnalyticsService,
+  ) {}
 
   @Get()
   @ApiOperation({
@@ -63,6 +68,44 @@ export class PurchaseOrdersController {
   )
   browseAvailableOffers(@Query() query: BrowseAvailableOffersQueryDto) {
     return this.purchaseOrdersService.findAvailableOffers(query);
+  }
+
+  @Get('incoming')
+  @ApiOperation({
+    summary:
+      'List incoming purchase orders addressed to the signed-in supplier account',
+  })
+  @Roles(
+    UserRole.SUPER_ADMIN,
+    UserRole.ADMIN,
+    UserRole.SUPPLIER_ACCOUNT,
+    UserRole.SUPPLIER_MANAGER,
+    UserRole.SUPPLIER_OPERATOR,
+  )
+  findIncoming(@Query() query: PurchaseOrderBranchScopeQueryDto, @Req() req) {
+    return this.purchaseOrdersService.findIncoming({
+      id: req.user?.id ?? null,
+      email: req.user?.email ?? null,
+      roles: req.user?.roles ?? [],
+      branchId: query.branchId,
+    });
+  }
+
+  @Get('supplier-analytics')
+  @ApiOperation({
+    summary:
+      'Per-supplier procurement analytics: spend, payables aging, and delivery performance',
+  })
+  @Roles(
+    UserRole.SUPER_ADMIN,
+    UserRole.ADMIN,
+    UserRole.POS_MANAGER,
+    UserRole.B2B_BUYER,
+  )
+  getSupplierAnalytics(@Query() query: PurchaseOrderBranchScopeQueryDto) {
+    return this.supplierAnalyticsService.getSupplierAnalytics({
+      branchId: query.branchId,
+    });
   }
 
   @Post()
@@ -127,6 +170,31 @@ export class PurchaseOrdersController {
     @Req() req,
   ) {
     return this.purchaseOrdersService.updateStatus(id, dto, {
+      id: req.user?.id ?? null,
+      email: req.user?.email ?? null,
+      roles: req.user?.roles ?? [],
+      branchId: query.branchId,
+    });
+  }
+
+  @Patch(':id/supplier-status')
+  @ApiOperation({
+    summary:
+      'Supplier acknowledges or ships an incoming purchase order (SUBMITTED → ACKNOWLEDGED → SHIPPED)',
+  })
+  @Roles(
+    UserRole.SUPER_ADMIN,
+    UserRole.ADMIN,
+    UserRole.SUPPLIER_ACCOUNT,
+    UserRole.SUPPLIER_MANAGER,
+  )
+  updateSupplierStatus(
+    @Param('id', ParseIntPipe) id: number,
+    @Query() query: PurchaseOrderBranchScopeQueryDto,
+    @Body() dto: SupplierStatusUpdateDto,
+    @Req() req,
+  ) {
+    return this.purchaseOrdersService.updateSupplierStatus(id, dto, {
       id: req.user?.id ?? null,
       email: req.user?.email ?? null,
       roles: req.user?.roles ?? [],

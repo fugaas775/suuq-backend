@@ -53,6 +53,15 @@ describe('BranchFinancialReportsService', () => {
       createQueryBuilder: jest.fn(),
     };
 
+    const ledgerStatements = {
+      getProfitAndLoss: jest.fn(),
+      getBalanceSheet: jest.fn(),
+      getTrialBalance: jest.fn(),
+    };
+    const productCost = {
+      weightedAverageCosts: jest.fn().mockResolvedValue(new Map()),
+    };
+
     const service = new BranchFinancialReportsService(
       checkoutsRepo as any,
       registerSessionsRepo as any,
@@ -64,6 +73,8 @@ describe('BranchFinancialReportsService', () => {
       depreciationEntriesRepo as any,
       accruedLiabilitiesRepo as any,
       longTermDebtRepo as any,
+      ledgerStatements as any,
+      productCost as any,
     );
 
     return {
@@ -78,6 +89,7 @@ describe('BranchFinancialReportsService', () => {
       depreciationEntriesRepo,
       accruedLiabilitiesRepo,
       longTermDebtRepo,
+      ledgerStatements,
     };
   }
 
@@ -554,5 +566,84 @@ describe('BranchFinancialReportsService', () => {
         }),
       ]),
     );
+  });
+
+  describe('ledger-backed reports (ACCOUNTING_LEDGER_ENABLED)', () => {
+    const prev = process.env.ACCOUNTING_LEDGER_ENABLED;
+    afterEach(() => {
+      if (prev === undefined) delete process.env.ACCOUNTING_LEDGER_ENABLED;
+      else process.env.ACCOUNTING_LEDGER_ENABLED = prev;
+    });
+
+    it('maps a ledger P&L into the report shape and reconstructs gross', async () => {
+      process.env.ACCOUNTING_LEDGER_ENABLED = 'true';
+      const { service, ledgerStatements } = createService();
+      ledgerStatements.getProfitAndLoss.mockResolvedValue({
+        revenueNet: 10000,
+        tax: 150,
+        cogs: 3500,
+        grossProfit: 6500,
+        expensesByCategory: { RENT: 1200 },
+        totalExpenses: 1200,
+        netProfit: 5300,
+      });
+
+      const pl = await service.getProfitAndLoss(7, {});
+      expect(ledgerStatements.getProfitAndLoss).toHaveBeenCalled();
+      expect(pl.revenue.net).toBe(10000);
+      expect(pl.revenue.gross).toBe(10150); // net + tax
+      expect(pl.netProfit).toBe(5300);
+      expect(pl.notes[0]).toMatch(/Ledger-backed/);
+    });
+
+    it('maps a ledger balance sheet with the new accounts populated', async () => {
+      process.env.ACCOUNTING_LEDGER_ENABLED = 'true';
+      const { service, ledgerStatements } = createService();
+      ledgerStatements.getBalanceSheet.mockResolvedValue({
+        assets: {
+          cash: 5000,
+          tenderClearing: 1000,
+          accountsReceivable: 600,
+          inventoryValue: 2400,
+          fixedAssetsGross: 3000,
+          accumulatedDepreciation: 1000,
+          fixedAssetsNet: 2000,
+          total: 11000,
+        },
+        liabilities: {
+          supplierPayables: 800,
+          taxPayable: 150,
+          tipsPayable: 50,
+          customerDeposits: 1200,
+          deferredRevenue: 500,
+          accruedLiabilities: 0,
+          longTermDebt: 2000,
+          total: 4700,
+        },
+        equity: 6300,
+      });
+
+      const bs = await service.getBalanceSheet(7, {});
+      expect(bs.assets.current.accountsReceivable).toBe(600);
+      expect(bs.liabilities.current.customerDeposits).toBe(1200);
+      expect(bs.liabilities.current.deferredRevenue).toBe(500);
+      expect(bs.liabilities.current.tipsPayable).toBe(50);
+      expect(bs.liabilities.nonCurrent.longTermDebt).toBe(2000);
+      expect(bs.equity).toBe(6300);
+    });
+
+    it('reads the trial balance from the ledger', async () => {
+      process.env.ACCOUNTING_LEDGER_ENABLED = 'true';
+      const { service, ledgerStatements } = createService();
+      ledgerStatements.getTrialBalance.mockResolvedValue({
+        lines: [{ account: 'Cash', debit: 100, credit: 0 }],
+        totals: { debit: 100, credit: 100 },
+        balanced: true,
+      });
+
+      const tb = await service.getTrialBalance(7, {});
+      expect(tb.balanced).toBe(true);
+      expect(tb.lines[0].account).toBe('Cash');
+    });
   });
 });

@@ -6,6 +6,7 @@ import { EmailModule } from '../email/email.module';
 import { User } from '../users/entities/user.entity';
 import { RetailModule } from '../retail/retail.module';
 import { EbirrModule } from '../ebirr/ebirr.module';
+import { RedisModule } from '../redis/redis.module';
 import { RetailTenant } from '../retail/entities/retail-tenant.entity';
 import { TenantSubscription } from '../retail/entities/tenant-subscription.entity';
 import { TenantModuleEntitlement } from '../retail/entities/tenant-module-entitlement.entity';
@@ -30,6 +31,7 @@ import { SellerWorkspace } from '../seller-workspace/entities/seller-workspace.e
     EmailModule,
     RetailModule,
     EbirrModule,
+    RedisModule,
     TypeOrmModule.forFeature([
       BranchStaffAssignment,
       BranchStaffInvite,

@@ -2,10 +2,18 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import {
+  GeneralLedgerService,
+  JournalLineInput,
+} from '../accounting/general-ledger.service';
+import { GlAccountCode } from '../accounting/gl-accounts.constant';
+import { GlJournalSourceType } from '../accounting/entities/gl-journal-entry.entity';
+import { splitTenders } from '../accounting/tender-split.util';
 import {
   PropertyBookingPaymentRecord,
   PropertyRentalBillingCycle,
@@ -52,12 +60,160 @@ function normalizeTenantType(value?: string | null): PropertyTenantType {
 
 @Injectable()
 export class PropertyRentalBookingService {
+  private readonly logger = new Logger(PropertyRentalBookingService.name);
+
   constructor(
     @InjectRepository(PropertyRentalBooking)
     private readonly bookingRepo: Repository<PropertyRentalBooking>,
     @InjectRepository(PropertyRentalBookingCharge)
     private readonly chargeRepo: Repository<PropertyRentalBookingCharge>,
+    private readonly generalLedger: GeneralLedgerService,
   ) {}
+
+  private round2(value: number): number {
+    return Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
+  }
+
+  /**
+   * Post a rent payment to the ledger. While the booking is OPEN the cash is
+   * deferred (Cr Deferred revenue); recognition into Rental revenue happens at
+   * settlement. Best-effort — a ledger hiccup never blocks the payment.
+   */
+  private async postRentDeferral(
+    booking: PropertyRentalBooking,
+    total: number,
+    rows: { method?: string; amount?: number }[],
+    idempotencyKey: string,
+    occurredAt: Date,
+  ): Promise<void> {
+    const amount = this.round2(total);
+    if (amount <= 0) return;
+    const { cash, clearing } = splitTenders(rows, amount);
+    const lines: JournalLineInput[] = [];
+    if (cash > 0) lines.push({ accountCode: GlAccountCode.CASH, debit: cash });
+    if (clearing > 0)
+      lines.push({
+        accountCode: GlAccountCode.TENDER_CLEARING,
+        debit: clearing,
+      });
+    lines.push({ accountCode: GlAccountCode.DEFERRED_REVENUE, credit: amount });
+    await this.generalLedger
+      .post({
+        branchId: booking.branchId,
+        // Dated when the cash was actually received, not at lease inception, so
+        // as-of and period balance sheets bucket it correctly.
+        occurredAt,
+        sourceType: GlJournalSourceType.HOSPITALITY_PAYMENT,
+        sourceId: String(booking.id),
+        idempotencyKey,
+        currency: booking.currency,
+        memo: `Property rent instalment — booking ${booking.id}`,
+        lines,
+      })
+      .catch((error) =>
+        this.logger.warn(
+          `GL deferral failed for booking ${booking.id}: ${
+            error instanceof Error ? error.message : error
+          }`,
+        ),
+      );
+  }
+
+  /**
+   * Post the move-out settlement: recognize all collected rent (the final
+   * payment plus any previously-deferred instalments) into Rental revenue, and
+   * clear the held deposit via refund (→ cash) and forfeit (→ income).
+   */
+  private async postBookingSettlement(
+    booking: PropertyRentalBooking,
+    finalPaid: number,
+    priorDeferred: number,
+    finalRows: { method?: string; amount?: number }[],
+    deposit: { refund: number; forfeit: number },
+    settledAt: Date,
+  ): Promise<void> {
+    try {
+      const recognised = this.round2(priorDeferred + finalPaid);
+      if (recognised > 0) {
+        const { cash, clearing } = splitTenders(finalRows, finalPaid);
+        const lines: JournalLineInput[] = [];
+        if (cash > 0)
+          lines.push({ accountCode: GlAccountCode.CASH, debit: cash });
+        if (clearing > 0)
+          lines.push({
+            accountCode: GlAccountCode.TENDER_CLEARING,
+            debit: clearing,
+          });
+        if (priorDeferred > 0)
+          lines.push({
+            accountCode: GlAccountCode.DEFERRED_REVENUE,
+            debit: this.round2(priorDeferred),
+          });
+        lines.push({
+          accountCode: GlAccountCode.RENTAL_REVENUE,
+          credit: recognised,
+        });
+        await this.generalLedger.post({
+          branchId: booking.branchId,
+          occurredAt: settledAt,
+          sourceType: GlJournalSourceType.HOSPITALITY_SETTLEMENT,
+          sourceId: String(booking.id),
+          idempotencyKey: `prop-settle-${booking.id}`,
+          currency: booking.currency,
+          memo: `Property settlement — booking ${booking.id}`,
+          lines,
+        });
+      }
+
+      // The deposit liability for this booking can never be cleared by more than
+      // was actually held (Cr CUSTOMER_DEPOSITS at open). Clamp refund + forfeit
+      // to the held amount so the liability can't be driven negative by an
+      // inconsistent client payload.
+      const held = this.round2(Number(booking.depositAmount) || 0);
+      const refund = Math.min(this.round2(deposit.refund), held);
+      if (refund > 0) {
+        await this.generalLedger.post({
+          branchId: booking.branchId,
+          occurredAt: settledAt,
+          sourceType: GlJournalSourceType.DEPOSIT_REFUND,
+          sourceId: String(booking.id),
+          idempotencyKey: `prop-deposit-refund-${booking.id}`,
+          currency: booking.currency,
+          memo: `Deposit refund — booking ${booking.id}`,
+          lines: [
+            { accountCode: GlAccountCode.CUSTOMER_DEPOSITS, debit: refund },
+            { accountCode: GlAccountCode.CASH, credit: refund },
+          ],
+        });
+      }
+
+      const forfeit = Math.min(
+        this.round2(deposit.forfeit),
+        this.round2(held - refund),
+      );
+      if (forfeit > 0) {
+        await this.generalLedger.post({
+          branchId: booking.branchId,
+          occurredAt: settledAt,
+          sourceType: GlJournalSourceType.DEPOSIT_FORFEIT,
+          sourceId: String(booking.id),
+          idempotencyKey: `prop-deposit-forfeit-${booking.id}`,
+          currency: booking.currency,
+          memo: `Deposit forfeit — booking ${booking.id}`,
+          lines: [
+            { accountCode: GlAccountCode.CUSTOMER_DEPOSITS, debit: forfeit },
+            { accountCode: GlAccountCode.RENTAL_REVENUE, credit: forfeit },
+          ],
+        });
+      }
+    } catch (error) {
+      this.logger.warn(
+        `GL settlement failed for booking ${booking.id}: ${
+          error instanceof Error ? error.message : error
+        }`,
+      );
+    }
+  }
 
   private toBookingResponse(
     booking: PropertyRentalBooking,
@@ -217,6 +373,35 @@ export class PropertyRentalBookingService {
     });
 
     const saved = await this.bookingRepo.save(booking);
+
+    // Post the security deposit held at move-in (Dr Cash / Cr Customer deposits).
+    // Dated when the deposit was collected (booking creation), not lease start —
+    // a future-dated lease would otherwise hide collected cash from today's BS.
+    const deposit = this.round2(Number(saved.depositAmount) || 0);
+    if (deposit > 0) {
+      await this.generalLedger
+        .post({
+          branchId: saved.branchId,
+          occurredAt: saved.createdAt ?? new Date(),
+          sourceType: GlJournalSourceType.DEPOSIT_OPEN,
+          sourceId: String(saved.id),
+          idempotencyKey: `prop-deposit-open-${saved.id}`,
+          currency: saved.currency,
+          memo: `Security deposit held — booking ${saved.id}`,
+          lines: [
+            { accountCode: GlAccountCode.CASH, debit: deposit },
+            { accountCode: GlAccountCode.CUSTOMER_DEPOSITS, credit: deposit },
+          ],
+        })
+        .catch((error) =>
+          this.logger.warn(
+            `GL deposit-open failed for booking ${saved.id}: ${
+              error instanceof Error ? error.message : error
+            }`,
+          ),
+        );
+    }
+
     return this.toBookingResponse(saved);
   }
 
@@ -402,6 +587,17 @@ export class PropertyRentalBookingService {
         ((Number(booking.paidAmount) || 0) + total + Number.EPSILON) * 100,
       ) / 100;
     const saved = await this.bookingRepo.save(booking);
+
+    // While OPEN the rent is deferred; settlement recognizes it as revenue.
+    // Date it when the cash was actually received (paidAt), not at lease start.
+    await this.postRentDeferral(
+      saved,
+      total,
+      records,
+      `prop-pay-${saved.id}-${idempotencyKey || ledger.length}`,
+      new Date(paidAt),
+    );
+
     return this.toBookingResponse(saved);
   }
 
@@ -455,6 +651,14 @@ export class PropertyRentalBookingService {
         paidAt: settledAt.toISOString(),
       },
     );
+    // Rent collected before this settlement that the accrual job has NOT yet
+    // recognized is still deferred; settlement recognizes that remainder so
+    // collected rent is recognized exactly once.
+    const priorDeferred = Math.max(
+      0,
+      (Number(booking.paidAmount) || 0) -
+        (Number(booking.recognizedAmount) || 0),
+    );
     // Accumulate onto any prior partial instalments so the total reconciles.
     if (records.length > 0) {
       booking.payments = [...ledger, ...records];
@@ -469,9 +673,25 @@ export class PropertyRentalBookingService {
     if (dto.depositRefund !== undefined && dto.depositRefund !== null) {
       booking.depositRefund = Number(dto.depositRefund);
     }
+    if (dto.depositForfeit !== undefined && dto.depositForfeit !== null) {
+      booking.depositForfeit = Number(dto.depositForfeit);
+    }
     booking.settledAt = settledAt;
 
     const saved = await this.bookingRepo.save(booking);
+
+    await this.postBookingSettlement(
+      saved,
+      finalPaid,
+      priorDeferred,
+      records,
+      {
+        refund: Number(dto.depositRefund) || 0,
+        forfeit: Number(dto.depositForfeit) || 0,
+      },
+      settledAt,
+    );
+
     return this.toBookingResponse(saved);
   }
 

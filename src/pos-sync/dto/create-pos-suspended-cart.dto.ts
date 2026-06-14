@@ -28,6 +28,17 @@ export class CreatePosSuspendedCartDto {
   @MaxLength(128)
   registerId?: string;
 
+  @ApiPropertyOptional({
+    description:
+      'Client-generated idempotency key. Sent by POS lanes that park a basket ' +
+      'while offline and replay it on reconnect; a retry whose response was lost ' +
+      'mid-reconnect is deduped to the originally-created cart instead of a duplicate.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(128)
+  clientRef?: string;
+
   @ApiProperty({ example: 'Lane 2 basket' })
   @IsString()
   @MaxLength(255)

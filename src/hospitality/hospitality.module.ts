@@ -20,6 +20,7 @@ import { HotelInventoryController } from './hotel-inventory.controller';
 import { HotelInventoryService } from './hotel-inventory.service';
 import { PosBranchAccessGuard } from '../auth/pos-branch-access.guard';
 import { RetailModule } from '../retail/retail.module';
+import { AccountingModule } from '../accounting/accounting.module';
 import { RolesGuard } from '../auth/roles.guard';
 import { ConsumerHotelController } from './consumer-hotel.controller';
 import { HotelPrepaymentService } from './hotel-prepayment.service';
@@ -53,6 +54,7 @@ import { StarpayModule } from '../starpay/starpay.module';
     TelebirrModule,
     MpesaModule,
     StarpayModule,
+    AccountingModule,
   ],
   controllers: [
     HospitalityWorkflowsController,

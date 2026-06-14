@@ -14,7 +14,11 @@ import {
   UpdateBranchShiftDto,
 } from './dto/branch-shift.dto';
 
-type Actor = { id: number | null; email?: string | null };
+type Actor = {
+  id: number | null;
+  email?: string | null;
+  roles?: string[];
+};
 
 /**
  * Parse a UTC-offset string like "+3", "+03:30", "-5" into total offset minutes.

@@ -13,6 +13,7 @@ import {
 } from 'typeorm';
 import { Product } from '../../products/entities/product.entity';
 import { Exclude, Expose } from 'class-transformer'; // <-- Import Exclude
+import { AttributeDef } from '../category-attribute-schema';
 
 export enum PosUserFitCategory {
   DIRECT_RETAIL_FIT = 'DIRECT_RETAIL_FIT',
@@ -38,6 +39,13 @@ export class Category {
   @Expose()
   @Column({ name: 'name_translations', type: 'jsonb', nullable: true })
   nameTranslations?: Record<string, string> | null;
+
+  // RETAIL POS: attributes a product in this category should carry (e.g. Size,
+  // Color, Storage). Seeded via seed-category-attributes.ts; rendered/enforced by
+  // the pos-s Seller Hub. @Expose so it is returned by GET /categories/tree.
+  @Expose()
+  @Column({ name: 'attribute_schema', type: 'jsonb', nullable: true })
+  attributeSchema?: AttributeDef[] | null;
 
   @Column({ nullable: true })
   iconUrl?: string;

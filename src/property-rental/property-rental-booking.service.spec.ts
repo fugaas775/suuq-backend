@@ -18,6 +18,11 @@ describe('PropertyRentalBookingService', () => {
   let service: PropertyRentalBookingService;
   let bookingRepo: RepoMock;
   let chargeRepo: RepoMock;
+  let generalLedger: {
+    post: jest.Mock;
+    reverse: jest.Mock;
+    findEntryByIdempotencyKey: jest.Mock;
+  };
 
   beforeEach(() => {
     bookingRepo = {
@@ -43,9 +48,15 @@ describe('PropertyRentalBookingService', () => {
       })),
       increment: jest.fn(),
     };
+    generalLedger = {
+      post: jest.fn().mockResolvedValue({ id: 1 }),
+      reverse: jest.fn().mockResolvedValue(null),
+      findEntryByIdempotencyKey: jest.fn().mockResolvedValue(null),
+    };
     service = new PropertyRentalBookingService(
       bookingRepo as never,
       chargeRepo as never,
+      generalLedger as never,
     );
   });
 
@@ -348,6 +359,129 @@ describe('PropertyRentalBookingService', () => {
 
       expect(result.propertyCode).toBe('APT-5A');
       expect(result.transferredToProperty).toBe('APT-3B');
+    });
+  });
+
+  describe('general-ledger posting', () => {
+    const findEntry = (sourceType: string) =>
+      generalLedger.post.mock.calls
+        .map((c) => c[0])
+        .find((e) => e.sourceType === sourceType);
+    const findLine = (entry: any, code: string) =>
+      entry.lines.find((l: any) => l.accountCode === code);
+
+    it('posts the security deposit held at move-in (Dr Cash / Cr Customer deposits)', async () => {
+      await service.openBooking({
+        branchId: 4,
+        propertyCode: 'APT-3B',
+        depositAmount: 2000,
+        currency: 'ETB',
+      });
+
+      const entry = findEntry('DEPOSIT_OPEN');
+      expect(entry).toBeTruthy();
+      expect(findLine(entry, '1000').debit).toBe(2000); // CASH
+      expect(findLine(entry, '2300').credit).toBe(2000); // CUSTOMER_DEPOSITS
+    });
+
+    it('defers rent collected on an open booking (Cr Deferred revenue)', async () => {
+      bookingRepo.findOne.mockResolvedValueOnce({
+        id: 501,
+        branchId: 4,
+        status: PropertyRentalBookingStatus.OPEN,
+        currency: 'ETB',
+        paidAmount: 0,
+        payments: [],
+        leaseStartAt: '2026-06-01',
+      });
+
+      await service.recordPayment(501, {
+        payments: [{ method: 'CASH', amount: 1000 }],
+      });
+
+      const entry = findEntry('HOSPITALITY_PAYMENT');
+      expect(entry).toBeTruthy();
+      expect(findLine(entry, '1000').debit).toBe(1000); // CASH
+      expect(findLine(entry, '2400').credit).toBe(1000); // DEFERRED_REVENUE
+    });
+
+    it('recognizes deferred + final rent and clears the deposit at settlement', async () => {
+      bookingRepo.findOne.mockResolvedValueOnce({
+        id: 501,
+        branchId: 4,
+        status: PropertyRentalBookingStatus.OPEN,
+        currency: 'ETB',
+        paidAmount: 1000, // a prior instalment, already deferred
+        payments: [{ method: 'CASH', amount: 1000 }],
+        leaseStartAt: '2026-06-01',
+        depositAmount: 2000,
+      });
+
+      await service.settleBooking(501, {
+        payments: [{ method: 'CASH', amount: 500 }],
+        depositHeld: 2000,
+        depositRefund: 1500,
+        depositForfeit: 500,
+      });
+
+      const settle = findEntry('HOSPITALITY_SETTLEMENT');
+      expect(findLine(settle, '4100').credit).toBe(1500); // RENTAL_REVENUE = 1000 + 500
+      expect(findLine(settle, '2400').debit).toBe(1000); // reclassify prior deferral
+      expect(findLine(settle, '1000').debit).toBe(500); // final cash
+
+      const refund = findEntry('DEPOSIT_REFUND');
+      expect(findLine(refund, '2300').debit).toBe(1500); // CUSTOMER_DEPOSITS
+      expect(findLine(refund, '1000').credit).toBe(1500); // CASH out
+
+      const forfeit = findEntry('DEPOSIT_FORFEIT');
+      expect(findLine(forfeit, '2300').debit).toBe(500);
+      expect(findLine(forfeit, '4100').credit).toBe(500); // forfeit recognized as income
+    });
+
+    it('does not post a deposit refund/forfeit larger than the deposit held', async () => {
+      bookingRepo.findOne.mockResolvedValueOnce({
+        id: 503,
+        branchId: 4,
+        status: PropertyRentalBookingStatus.OPEN,
+        currency: 'ETB',
+        depositAmount: 0, // no deposit was ever held/opened
+        paidAmount: 0,
+        payments: [],
+        leaseStartAt: '2026-06-01',
+      });
+
+      await service.settleBooking(503, {
+        payments: [{ method: 'CASH', amount: 500 }],
+        depositRefund: 400, // a client sends a refund despite no held deposit
+        depositForfeit: 100,
+      });
+
+      // Clamped to the held amount (0) → no CUSTOMER_DEPOSITS debit can occur.
+      expect(findEntry('DEPOSIT_REFUND')).toBeUndefined();
+      expect(findEntry('DEPOSIT_FORFEIT')).toBeUndefined();
+    });
+
+    it('does not re-recognize rent already recognized by the accrual job', async () => {
+      bookingRepo.findOne.mockResolvedValueOnce({
+        id: 502,
+        branchId: 4,
+        status: PropertyRentalBookingStatus.OPEN,
+        currency: 'ETB',
+        paidAmount: 1000, // all collected so far
+        recognizedAmount: 1000, // ...and the accrual job already recognized it
+        payments: [{ method: 'CASH', amount: 1000 }],
+        leaseStartAt: '2026-06-01',
+      });
+
+      await service.settleBooking(502, {
+        payments: [{ method: 'CASH', amount: 500 }], // a final instalment
+      });
+
+      const settle = findEntry('HOSPITALITY_SETTLEMENT');
+      // Only the final 500 is newly recognized; the prior 1000 is not double-counted.
+      expect(findLine(settle, '4100').credit).toBe(500);
+      expect(findLine(settle, '2400')).toBeUndefined(); // no deferred reclassification
+      expect(findLine(settle, '1000').debit).toBe(500);
     });
   });
 });

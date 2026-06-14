@@ -5,6 +5,7 @@ import { VendorController } from './vendor.controller';
 import { VendorPublicController } from './vendor-public.controller';
 import { User } from '../users/entities/user.entity';
 import { Product } from '../products/entities/product.entity';
+import { ProductVariant } from '../products/entities/product-variant.entity';
 import { Order, OrderItem } from '../orders/entities/order.entity';
 import { Dispute } from '../orders/entities/dispute.entity';
 import { ProductImage } from '../products/entities/product-image.entity'; // <-- 1. IMPORT ADDED
@@ -59,6 +60,7 @@ import { SellerWorkspace } from '../seller-workspace/entities/seller-workspace.e
       BranchStaffAssignment,
       Branch,
       SellerWorkspace,
+      ProductVariant,
     ]),
     forwardRef(() => UsersModule),
     forwardRef(() => ProductsModule),

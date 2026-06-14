@@ -22,8 +22,11 @@ import { RequireRetailModules } from '../retail/decorators/require-retail-module
 import { RetailModule as RetailOsModule } from '../retail/entities/tenant-module-entitlement.entity';
 import { RetailModulesGuard } from '../retail/retail-modules.guard';
 import { IngestPosCheckoutDto } from './dto/ingest-pos-checkout.dto';
+import { SettleReceivableDto } from './dto/settle-receivable.dto';
 import { PosCheckoutQuoteResponseDto } from './dto/pos-checkout-quote-response.dto';
 import { ListPosCheckoutsQueryDto } from './dto/list-pos-checkouts-query.dto';
+import { SearchPosCustomersQueryDto } from './dto/search-pos-customers-query.dto';
+import { PosCustomerSearchResponseDto } from './dto/pos-customer-search-response.dto';
 import { QuotePosCheckoutDto } from './dto/quote-pos-checkout.dto';
 import { VoidPosCheckoutDto } from './dto/void-pos-checkout.dto';
 import {
@@ -139,6 +142,21 @@ export class PosCheckoutController {
     return this.posCheckoutService.getStylistSummary(query);
   }
 
+  @Get('customers/search')
+  @UseGuards(JwtAuthGuard, RolesGuard, RetailModulesGuard, PosBranchAccessGuard)
+  @Roles(
+    UserRole.SUPER_ADMIN,
+    UserRole.ADMIN,
+    UserRole.POS_MANAGER,
+    UserRole.POS_OPERATOR,
+  )
+  @RequireRetailModules(RetailOsModule.POS_CORE)
+  @RetailBranchContext('query.branchId')
+  @ApiOkResponse({ type: PosCustomerSearchResponseDto })
+  searchCustomers(@Query() query: SearchPosCustomersQueryDto) {
+    return this.posCheckoutService.searchCustomers(query);
+  }
+
   @Get(':id')
   @UseGuards(JwtAuthGuard, RolesGuard, RetailModulesGuard, PosBranchAccessGuard)
   @Roles(
@@ -199,6 +217,22 @@ export class PosCheckoutController {
       id: req.user?.id ?? null,
       email: req.user?.email ?? null,
       roles: req.user?.roles ?? [],
+    });
+  }
+
+  @Post('receivable-settlement')
+  @UseGuards(JwtAuthGuard, RolesGuard, RetailModulesGuard, PosBranchAccessGuard)
+  @Roles(
+    UserRole.SUPER_ADMIN,
+    UserRole.ADMIN,
+    UserRole.POS_MANAGER,
+    UserRole.POS_OPERATOR,
+  )
+  @RequireRetailModules(RetailOsModule.POS_CORE)
+  @RetailBranchContext('body.branchId')
+  settleReceivable(@Body() dto: SettleReceivableDto, @Req() req) {
+    return this.posCheckoutService.settleReceivable(dto, {
+      id: req.user?.id ?? null,
     });
   }
 }

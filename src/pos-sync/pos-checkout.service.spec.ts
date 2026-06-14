@@ -2,6 +2,9 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { InventoryLedgerService } from '../branches/inventory-ledger.service';
+import { VariantInventoryService } from '../branches/variant-inventory.service';
+import { GeneralLedgerService } from '../accounting/general-ledger.service';
+import { ProductCostService } from '../purchase-orders/product-cost.service';
 import { Branch } from '../branches/entities/branch.entity';
 import { StockMovementType } from '../branches/entities/stock-movement.entity';
 import { PartnerCredential } from '../partner-credentials/entities/partner-credential.entity';
@@ -41,8 +44,22 @@ describe('PosCheckoutService', () => {
   let inventoryLedgerService: { recordMovement: jest.Mock };
   let productAliasesService: { resolveProductIdForBranch: jest.Mock };
   let dataSource: { transaction: jest.Mock };
+  let generalLedgerService: {
+    post: jest.Mock;
+    reverse: jest.Mock;
+    findEntryByIdempotencyKey: jest.Mock;
+  };
+  let productCostService: { weightedAverageCosts: jest.Mock };
 
   beforeEach(async () => {
+    generalLedgerService = {
+      post: jest.fn().mockResolvedValue({ id: 1 }),
+      reverse: jest.fn().mockResolvedValue(null),
+      findEntryByIdempotencyKey: jest.fn().mockResolvedValue(null),
+    };
+    productCostService = {
+      weightedAverageCosts: jest.fn().mockResolvedValue(new Map()),
+    };
     posCheckoutsRepository = {
       create: jest.fn((value) => ({ id: value.id ?? 71, ...value })),
       save: jest.fn(async (value) => value),
@@ -143,6 +160,12 @@ describe('PosCheckoutService', () => {
         },
         { provide: ProductAliasesService, useValue: productAliasesService },
         { provide: EmailService, useValue: {} },
+        {
+          provide: VariantInventoryService,
+          useValue: { recordVariantMovement: jest.fn() },
+        },
+        { provide: GeneralLedgerService, useValue: generalLedgerService },
+        { provide: ProductCostService, useValue: productCostService },
       ],
     }).compile();
 
@@ -1185,5 +1208,186 @@ describe('PosCheckoutService', () => {
     );
     expect(result.sourceReceiptNumber).toBe('POS-3-1001');
     expect(result.refundMethod).toBe('CARD');
+  });
+
+  describe('general-ledger posting', () => {
+    const lineTotals = (lines: any[]) => {
+      const debit = lines.reduce((s, l) => s + Number(l.debit || 0), 0);
+      const credit = lines.reduce((s, l) => s + Number(l.credit || 0), 0);
+      return {
+        debit: Math.round(debit * 100) / 100,
+        credit: Math.round(credit * 100) / 100,
+      };
+    };
+    const findLine = (lines: any[], code: string) =>
+      lines.find((l) => l.accountCode === code);
+
+    const cashSaleCheckout = (overrides: Record<string, any> = {}) => ({
+      id: 71,
+      branchId: 3,
+      transactionType: PosCheckoutTransactionType.SALE,
+      currency: 'ETB',
+      total: 100,
+      paidAmount: 100,
+      taxAmount: 0,
+      occurredAt: new Date('2026-06-12T10:00:00Z'),
+      tenders: [{ method: 'CASH', amount: 100 }],
+      metadata: {
+        financialClassification: {
+          recognitionBasis: 'CASH',
+          revenue: { account: 'SERVICE_REVENUE', amount: 100 },
+          cogsSource: 'INVENTORY',
+        },
+      },
+      ...overrides,
+    });
+
+    it('posts a balanced cash sale (Dr Cash / Cr Service revenue)', async () => {
+      await (service as any).postCheckoutToLedger(cashSaleCheckout());
+
+      expect(generalLedgerService.post).toHaveBeenCalledTimes(1);
+      const entry = generalLedgerService.post.mock.calls[0][0];
+      const { debit, credit } = lineTotals(entry.lines);
+      expect(debit).toBe(100);
+      expect(credit).toBe(100);
+      expect(findLine(entry.lines, '1000').debit).toBe(100); // CASH
+      expect(findLine(entry.lines, '4000').credit).toBe(100); // SERVICE_REVENUE
+      expect(entry.sourceType).toBe('POS_CHECKOUT');
+    });
+
+    it('balances a cash sale where the customer tendered change (paid > total)', async () => {
+      await (service as any).postCheckoutToLedger(
+        cashSaleCheckout({
+          paidAmount: 150, // tendered 150 for a 100 sale
+          changeDue: 50,
+          tenders: [{ method: 'CASH', amount: 150 }],
+        }),
+      );
+
+      expect(generalLedgerService.post).toHaveBeenCalledTimes(1);
+      const entry = generalLedgerService.post.mock.calls[0][0];
+      const { debit, credit } = lineTotals(entry.lines);
+      expect(debit).toBe(100); // net cash retained, not the 150 tendered
+      expect(credit).toBe(100);
+      expect(findLine(entry.lines, '1000').debit).toBe(100); // CASH = paid − change
+      expect(findLine(entry.lines, '1100')).toBeUndefined(); // no spurious receivable
+    });
+
+    it('books the unpaid remainder of an account-credit sale to receivables', async () => {
+      await (service as any).postCheckoutToLedger(
+        cashSaleCheckout({
+          paidAmount: 40,
+          tenders: [{ method: 'CASH', amount: 40 }],
+        }),
+      );
+
+      const entry = generalLedgerService.post.mock.calls[0][0];
+      const { debit, credit } = lineTotals(entry.lines);
+      expect(debit).toBe(100);
+      expect(credit).toBe(100);
+      expect(findLine(entry.lines, '1000').debit).toBe(40); // CASH paid
+      expect(findLine(entry.lines, '1100').debit).toBe(60); // ACCOUNTS_RECEIVABLE
+    });
+
+    it('splits tax out of revenue into the tax-payable account', async () => {
+      await (service as any).postCheckoutToLedger(
+        cashSaleCheckout({ taxAmount: 15 }),
+      );
+      const entry = generalLedgerService.post.mock.calls[0][0];
+      expect(findLine(entry.lines, '4000').credit).toBe(85); // revenue net of tax
+      expect(findLine(entry.lines, '2100').credit).toBe(15); // TAX_PAYABLE
+      const { debit, credit } = lineTotals(entry.lines);
+      expect(debit).toBe(credit);
+    });
+
+    it('mirrors a return (Cr Cash / Dr revenue)', async () => {
+      await (service as any).postCheckoutToLedger(
+        cashSaleCheckout({
+          transactionType: PosCheckoutTransactionType.RETURN,
+        }),
+      );
+      const entry = generalLedgerService.post.mock.calls[0][0];
+      expect(entry.sourceType).toBe('POS_RETURN');
+      expect(findLine(entry.lines, '1000').credit).toBe(100); // cash out
+      expect(findLine(entry.lines, '4000').debit).toBe(100); // revenue reversed
+    });
+
+    it('does not post accrual-format checkouts (deferred to the hospitality phase)', async () => {
+      await (service as any).postCheckoutToLedger(
+        cashSaleCheckout({
+          metadata: {
+            financialClassification: {
+              recognitionBasis: 'ACCRUAL',
+              revenue: { account: 'RENTAL_REVENUE', amount: 100 },
+            },
+          },
+        }),
+      );
+      expect(generalLedgerService.post).not.toHaveBeenCalled();
+    });
+
+    it('does not post when no financialClassification was sent', async () => {
+      await (service as any).postCheckoutToLedger(
+        cashSaleCheckout({ metadata: {} }),
+      );
+      expect(generalLedgerService.post).not.toHaveBeenCalled();
+    });
+
+    it('posts COGS relief at weighted-average cost for inventory sales', async () => {
+      productCostService.weightedAverageCosts.mockResolvedValueOnce(
+        new Map([[55, 10]]),
+      );
+      await (service as any).postCheckoutToLedger(
+        cashSaleCheckout({ items: [{ productId: 55, quantity: 2 }] }),
+      );
+      const cogs = generalLedgerService.post.mock.calls
+        .map((c) => c[0])
+        .find((e) => String(e.idempotencyKey).startsWith('pos-cogs-'));
+      expect(cogs).toBeTruthy();
+      expect(findLine(cogs.lines, '5000').debit).toBe(20); // COGS = 10 × 2
+      expect(findLine(cogs.lines, '1200').credit).toBe(20); // INVENTORY
+    });
+
+    it('does not post COGS for service-cost formats', async () => {
+      await (service as any).postCheckoutToLedger(
+        cashSaleCheckout({
+          items: [{ productId: 55, quantity: 2 }],
+          metadata: {
+            financialClassification: {
+              recognitionBasis: 'CASH',
+              revenue: { account: 'SERVICE_REVENUE', amount: 100 },
+              cogsSource: 'SERVICE_COST',
+            },
+          },
+        }),
+      );
+      const cogs = generalLedgerService.post.mock.calls
+        .map((c) => c[0])
+        .find((e) => String(e.idempotencyKey).startsWith('pos-cogs-'));
+      expect(cogs).toBeUndefined();
+      expect(productCostService.weightedAverageCosts).not.toHaveBeenCalled();
+    });
+
+    it('settleReceivable posts Dr Cash / Cr Accounts receivable', async () => {
+      const result = await service.settleReceivable(
+        {
+          branchId: 3,
+          idempotencyKey: 'ar-settle-POS-3-555-30000',
+          currency: 'ETB',
+          originalReceiptNumber: 'POS-3-555',
+          settledAmount: 300,
+          tenders: [{ method: 'CASH', amount: 300 }],
+        },
+        { id: 9 },
+      );
+
+      expect(result.posted).toBe(true);
+      const entry = generalLedgerService.post.mock.calls[0][0];
+      expect(entry.sourceType).toBe('AR_SETTLEMENT');
+      expect(findLine(entry.lines, '1000').debit).toBe(300); // CASH
+      expect(findLine(entry.lines, '1100').credit).toBe(300); // ACCOUNTS_RECEIVABLE
+      const { debit, credit } = lineTotals(entry.lines);
+      expect(debit).toBe(credit);
+    });
   });
 });

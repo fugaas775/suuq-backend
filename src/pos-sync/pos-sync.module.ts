@@ -10,6 +10,9 @@ import { ProductAliasesModule } from '../product-aliases/product-aliases.module'
 import { ProductAlias } from '../product-aliases/entities/product-alias.entity';
 import { Product } from '../products/entities/product.entity';
 import { RetailModule } from '../retail/retail.module';
+import { AccountingModule } from '../accounting/accounting.module';
+import { PurchaseOrderItem } from '../purchase-orders/entities/purchase-order.entity';
+import { ProductCostService } from '../purchase-orders/product-cost.service';
 import { PosCatalogController } from './pos-catalog.controller';
 import { PosCatalogService } from './pos-catalog.service';
 import { PosPartnerCheckoutController } from './pos-partner-checkout.controller';
@@ -35,6 +38,7 @@ import { PosSyncJob } from './entities/pos-sync-job.entity';
     PartnerCredentialsModule,
     ProductAliasesModule,
     RetailModule,
+    AccountingModule,
     TypeOrmModule.forFeature([
       PosSyncJob,
       PosCheckout,
@@ -45,6 +49,7 @@ import { PosSyncJob } from './entities/pos-sync-job.entity';
       PartnerCredential,
       Product,
       ProductAlias,
+      PurchaseOrderItem,
     ]),
   ],
   controllers: [
@@ -63,6 +68,7 @@ import { PosSyncJob } from './entities/pos-sync-job.entity';
     PosRegisterService,
     PosSyncRequestAuthGuard,
     PosBranchAccessGuard,
+    ProductCostService,
   ],
   exports: [
     PosSyncService,

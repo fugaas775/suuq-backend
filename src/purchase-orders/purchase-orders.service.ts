@@ -8,10 +8,13 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, EntityManager, Repository } from 'typeorm';
+import { DataSource, EntityManager, Not, Repository } from 'typeorm';
 import { AuditService } from '../audit/audit.service';
 import { UserRole } from '../auth/roles.enum';
 import { EmailService } from '../email/email.service';
+import { GeneralLedgerService } from '../accounting/general-ledger.service';
+import { GlAccountCode } from '../accounting/gl-accounts.constant';
+import { GlJournalSourceType } from '../accounting/entities/gl-journal-entry.entity';
 import { InventoryLedgerService } from '../branches/inventory-ledger.service';
 import { ReplenishmentService } from '../branches/replenishment.service';
 import { Branch } from '../branches/entities/branch.entity';
@@ -36,6 +39,7 @@ import { AcknowledgePurchaseOrderReceiptDto } from './dto/acknowledge-purchase-o
 import { RecordPurchaseOrderReceiptDto } from './dto/record-purchase-order-receipt.dto';
 import { ResolvePurchaseOrderReceiptDiscrepancyDto } from './dto/resolve-purchase-order-receipt-discrepancy.dto';
 import { UpdatePurchaseOrderStatusDto } from './dto/update-purchase-order-status.dto';
+import { SupplierStatusUpdateDto } from './dto/supplier-status-update.dto';
 import { ForceClosePurchaseOrderReceiptDiscrepancyDto } from '../admin/dto/force-close-purchase-order-receipt-discrepancy.dto';
 import {
   PurchaseOrder,
@@ -128,7 +132,60 @@ export class PurchaseOrdersService {
     private readonly procurementWebhooksService: ProcurementWebhooksService,
     private readonly realtimeGateway: RealtimeGateway,
     private readonly emailService: EmailService,
+    private readonly generalLedger: GeneralLedgerService,
   ) {}
+
+  /**
+   * Post the goods-received entry for ONE receipt event: Dr Inventory / Cr
+   * Supplier payables at the value of the goods actually received in this event
+   * (Σ receivedQuantity × unitPrice) — so partial/multi-shipment receipts accrue
+   * inventory incrementally, valued on the same unit-cost basis that COGS later
+   * relieves it on. Posted with the caller's transaction `manager` so the ledger
+   * entry commits or rolls back atomically with the receipt (no orphan), and
+   * idempotent per receipt event.
+   */
+  private async postReceiptEventToLedger(
+    purchaseOrder: PurchaseOrder,
+    receiptSummary: ReceiptLineSummary[],
+    idempotencyKey: string,
+    occurredAt: Date,
+    manager?: EntityManager,
+  ): Promise<void> {
+    const priceByItemId = new Map(
+      (purchaseOrder.items ?? []).map((item) => [
+        item.id,
+        Number(item.unitPrice) || 0,
+      ]),
+    );
+    let receivedValue = 0;
+    for (const line of receiptSummary ?? []) {
+      receivedValue +=
+        (priceByItemId.get(line.itemId) ?? 0) *
+        (Number(line.receivedQuantity) || 0);
+    }
+    receivedValue = Math.round((receivedValue + Number.EPSILON) * 100) / 100;
+    if (receivedValue <= 0) return;
+
+    await this.generalLedger.post(
+      {
+        branchId: purchaseOrder.branchId,
+        occurredAt,
+        sourceType: GlJournalSourceType.PURCHASE_ORDER,
+        sourceId: `po-${purchaseOrder.id}`,
+        idempotencyKey,
+        currency: purchaseOrder.currency || 'ETB',
+        memo: `Goods received — PO ${purchaseOrder.id}`,
+        lines: [
+          { accountCode: GlAccountCode.INVENTORY, debit: receivedValue },
+          {
+            accountCode: GlAccountCode.SUPPLIER_PAYABLES,
+            credit: receivedValue,
+          },
+        ],
+      },
+      manager,
+    );
+  }
 
   async create(dto: CreatePurchaseOrderDto): Promise<PurchaseOrder> {
     const branch = await this.branchesRepository.findOne({
@@ -219,6 +276,46 @@ export class PurchaseOrdersService {
   async findAll(scope: PurchaseOrderScope = {}): Promise<PurchaseOrder[]> {
     return this.purchaseOrdersRepository.find({
       where: scope.branchId ? { branchId: scope.branchId } : undefined,
+      order: { createdAt: 'DESC' },
+      relations: {
+        branch: true,
+        supplierProfile: true,
+        items: { product: { images: true }, supplierOffer: true },
+      },
+    });
+  }
+
+  /**
+   * Supplier-side view of the same purchase-order resource: the orders addressed
+   * to the signed-in supplier account. Suppliers are scoped by their resolved
+   * supplierProfileId (NOT by branch — the PO's branch belongs to the buyer).
+   * Draft orders are excluded since they have not yet been submitted to the
+   * supplier. SUPER_ADMIN / ADMIN with no supplier profile get a support view of
+   * every non-draft order.
+   */
+  async findIncoming(
+    actor: PurchaseOrderActorContext = {},
+  ): Promise<PurchaseOrder[]> {
+    const roles = actor.roles ?? [];
+    const supplierProfileId = await this.resolveActorSupplierProfileId(
+      actor.id,
+    );
+
+    if (!supplierProfileId) {
+      const isSupportAdmin = this.hasAnyRole(roles, [
+        UserRole.SUPER_ADMIN,
+        UserRole.ADMIN,
+      ]);
+      if (!isSupportAdmin) {
+        return [];
+      }
+    }
+
+    return this.purchaseOrdersRepository.find({
+      where: {
+        status: Not(PurchaseOrderStatus.DRAFT),
+        ...(supplierProfileId ? { supplierProfileId } : {}),
+      },
       order: { createdAt: 'DESC' },
       relations: {
         branch: true,
@@ -694,6 +791,57 @@ export class PurchaseOrdersService {
     return updatedPurchaseOrder;
   }
 
+  /**
+   * Supplier-authorized status transition for an incoming purchase order. Only
+   * the supplier's two transitions are valid (SUBMITTED → ACKNOWLEDGED and
+   * ACKNOWLEDGED → SHIPPED); ownership is enforced against the caller's resolved
+   * supplierProfileId so a supplier can never touch another supplier's orders.
+   * All the shared side effects (timestamps, webhooks, audit, email) flow through
+   * the same updateStatus pipeline the buyer path uses.
+   */
+  async updateSupplierStatus(
+    id: number,
+    dto: SupplierStatusUpdateDto,
+    actor: PurchaseOrderActorContext = {},
+  ): Promise<PurchaseOrder> {
+    if (
+      dto.status !== PurchaseOrderStatus.ACKNOWLEDGED &&
+      dto.status !== PurchaseOrderStatus.SHIPPED
+    ) {
+      throw new BadRequestException(
+        'Suppliers can only acknowledge or mark purchase orders as shipped',
+      );
+    }
+
+    const roles = actor.roles ?? [];
+    const isSupportAdmin = this.hasAnyRole(roles, [
+      UserRole.SUPER_ADMIN,
+      UserRole.ADMIN,
+    ]);
+
+    // Load without branch scope: suppliers don't own the buyer's branch, so the
+    // ownership boundary is the supplierProfileId, not branchId.
+    const purchaseOrder = await this.findOneById(id);
+
+    if (!isSupportAdmin) {
+      const supplierProfileId = await this.resolveActorSupplierProfileId(
+        actor.id,
+      );
+      if (
+        !supplierProfileId ||
+        purchaseOrder.supplierProfileId !== supplierProfileId
+      ) {
+        throw new ForbiddenException(
+          'You can only update purchase orders addressed to your supplier account',
+        );
+      }
+    }
+
+    // Delegate to the shared status pipeline; clear branchId so the re-load
+    // inside updateStatus is by id only (the supplier's branch ≠ the PO branch).
+    return this.updateStatus(id, dto, { ...actor, branchId: undefined });
+  }
+
   async updateStatusWithManager(
     id: number,
     dto: UpdatePurchaseOrderStatusDto,
@@ -879,16 +1027,23 @@ export class PurchaseOrdersService {
       );
     };
 
+    let result: PurchaseOrder;
     if (manager) {
       await persistStatusUpdate(manager);
-      return this.findOneByIdUsingRepository(
+      result = await this.findOneByIdUsingRepository(
         manager.getRepository(PurchaseOrder),
         id,
       );
+    } else {
+      await this.dataSource.transaction(persistStatusUpdate);
+      result = await this.findOneById(id);
     }
 
-    await this.dataSource.transaction(persistStatusUpdate);
-    return this.findOneById(id);
+    // The goods-received ledger entry is posted inside persistReceiptEvent (the
+    // single chokepoint both receive paths flow through), valued per event and
+    // atomic with the receipt — so nothing to post here.
+
+    return result;
   }
 
   private applyLifecycleSideEffects(
@@ -1125,7 +1280,7 @@ export class PurchaseOrdersService {
       manager?.getRepository(PurchaseOrderReceiptEvent) ??
       this.purchaseOrderReceiptEventsRepository;
 
-    await receiptEventsRepository.save(
+    const savedEvent = await receiptEventsRepository.save(
       receiptEventsRepository.create({
         purchaseOrderId: purchaseOrder.id,
         actorUserId: actorId ?? null,
@@ -1139,6 +1294,33 @@ export class PurchaseOrdersService {
           : null,
       }),
     );
+
+    // Recognize the goods received in this event against supplier payables, in
+    // the same transaction (atomic — no orphan) and idempotent per event.
+    await this.postReceiptEventToLedger(
+      purchaseOrder,
+      receiptSummary,
+      `po-receipt-event-${savedEvent.id}`,
+      savedEvent.createdAt ?? new Date(),
+      manager,
+    );
+  }
+
+  /**
+   * Resolve the supplier profile that the acting user owns, if any. Returns null
+   * for users without a supplier profile (e.g. buyers, admins).
+   */
+  private async resolveActorSupplierProfileId(
+    userId?: number | null,
+  ): Promise<number | null> {
+    if (!userId) {
+      return null;
+    }
+    const profile = await this.supplierProfilesRepository.findOne({
+      where: { userId },
+      select: { id: true },
+    });
+    return profile?.id ?? null;
   }
 
   private async findOneById(

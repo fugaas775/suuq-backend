@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { RetailModule } from '../retail/retail.module';
+import { AccountingModule } from '../accounting/accounting.module';
 import { PosBranchAccessGuard } from '../auth/pos-branch-access.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { PropertyRentalBooking } from './entities/property-rental-booking.entity';
@@ -12,6 +13,7 @@ import { PropertyRentalBookingController } from './property-rental-booking.contr
 import { PropertyRentalBookingService } from './property-rental-booking.service';
 import { PropertyRentalInventoryController } from './property-rental-inventory.controller';
 import { PropertyRentalInventoryService } from './property-rental-inventory.service';
+import { RevenueAccrualService } from './revenue-accrual.service';
 
 /**
  * Property Rental — a month-based POS format, fully independent of the
@@ -29,6 +31,7 @@ import { PropertyRentalInventoryService } from './property-rental-inventory.serv
       PropertyReservation,
     ]),
     RetailModule,
+    AccountingModule,
   ],
   controllers: [
     PropertyRentalBookingController,
@@ -37,6 +40,7 @@ import { PropertyRentalInventoryService } from './property-rental-inventory.serv
   providers: [
     PropertyRentalBookingService,
     PropertyRentalInventoryService,
+    RevenueAccrualService,
     PosBranchAccessGuard,
     RolesGuard,
   ],

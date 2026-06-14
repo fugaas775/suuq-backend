@@ -13,6 +13,28 @@ import { AuthenticatedRequest } from '../common/interfaces/authenticated-request
 import { BranchBillingService } from './branch-billing.service';
 import { BranchFinancialReportsService } from './branch-financial-reports.service';
 
+/** Lower bound — start of the given instant/day. */
+function rangeStart(value?: string): Date | null {
+  if (!value) return null;
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+/**
+ * Upper bound. A date-only value (YYYY-MM-DD) is inclusive of the whole day, so
+ * extend it to end-of-day — otherwise `to`/`asOfAt = today` silently excludes
+ * every transaction that occurred during today (they fall after midnight UTC).
+ */
+function rangeEnd(value?: string): Date | null {
+  if (!value) return null;
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value.trim())) {
+    d.setUTCHours(23, 59, 59, 999);
+  }
+  return d;
+}
+
 @ApiTags('Owner Reports')
 @Controller('seller/v1/reports/branches')
 @UseGuards(JwtAuthGuard)
@@ -36,8 +58,8 @@ export class BranchFinancialReportsController {
       (req.user as any).roles,
     );
     return this.reports.getProfitAndLoss(branchId, {
-      from: from ? new Date(from) : null,
-      to: to ? new Date(to) : null,
+      from: rangeStart(from),
+      to: rangeEnd(to),
     });
   }
 
@@ -54,7 +76,7 @@ export class BranchFinancialReportsController {
       (req.user as any).roles,
     );
     return this.reports.getBalanceSheet(branchId, {
-      asOfAt: asOfAt ? new Date(asOfAt) : null,
+      asOfAt: rangeEnd(asOfAt),
     });
   }
 
@@ -71,7 +93,7 @@ export class BranchFinancialReportsController {
       (req.user as any).roles,
     );
     return this.reports.getTrialBalance(branchId, {
-      asOfAt: asOfAt ? new Date(asOfAt) : null,
+      asOfAt: rangeEnd(asOfAt),
     });
   }
 }

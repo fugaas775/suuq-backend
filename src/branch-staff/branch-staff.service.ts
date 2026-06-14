@@ -58,6 +58,7 @@ export interface PosBranchSummary {
   joinedAt: Date;
   phone: string | null;
   tinNumber: string | null;
+  defaultCategoryId: number | null;
   posExperienceProfileCode: string | null;
 }
 
@@ -72,6 +73,7 @@ export interface PosWorkspaceActivationCandidate {
   timezone: string | null;
   phone: string | null;
   tinNumber: string | null;
+  defaultCategoryId: number | null;
   role: BranchStaffRole;
   permissions: string[];
   assignedSurfaces: string[] | null;
@@ -612,6 +614,7 @@ export class BranchStaffService {
           timezone: summary.timezone ?? null,
           phone: summary.phone ?? null,
           tinNumber: summary.tinNumber ?? null,
+          defaultCategoryId: summary.defaultCategoryId ?? null,
           role: summary.role,
           isOwner: summary.isOwner,
           isTenantOwner: summary.isTenantOwner,
@@ -1003,6 +1006,7 @@ export class BranchStaffService {
         timezone: branch.timezone ?? null,
         phone: branch.phone ?? null,
         tinNumber: branch.tinNumber ?? null,
+        defaultCategoryId: branch.defaultCategoryId ?? null,
         role: BranchStaffRole.MANAGER,
         permissions: [],
         assignedSurfaces: null,
@@ -1045,6 +1049,7 @@ export class BranchStaffService {
           timezone: branch.timezone ?? null,
           phone: branch.phone ?? null,
           tinNumber: branch.tinNumber ?? null,
+          defaultCategoryId: branch.defaultCategoryId ?? null,
           role: BranchStaffRole.MANAGER,
           permissions: [],
           assignedSurfaces: null,
@@ -1090,6 +1095,10 @@ export class BranchStaffService {
         timezone: existing?.timezone ?? assignment.branch.timezone ?? null,
         phone: existing?.phone ?? assignment.branch.phone ?? null,
         tinNumber: existing?.tinNumber ?? assignment.branch.tinNumber ?? null,
+        defaultCategoryId:
+          existing?.defaultCategoryId ??
+          assignment.branch.defaultCategoryId ??
+          null,
         role: assignment.role ?? existing?.role ?? BranchStaffRole.OPERATOR,
         permissions: mergedPermissions,
         assignedSurfaces:

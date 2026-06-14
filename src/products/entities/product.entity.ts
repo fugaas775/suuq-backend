@@ -75,6 +75,42 @@ export class Product {
   @Column({ length: 3 })
   currency!: string;
 
+  /**
+   * Manually-entered unit cost, used as the COGS basis when there is no
+   * purchase-order history for the product yet (so gross profit is meaningful
+   * before any PO/supplier exists). PO weighted-average cost takes precedence.
+   */
+  @Expose()
+  @Column('decimal', {
+    precision: 12,
+    scale: 2,
+    nullable: true,
+    name: 'cost_price',
+    transformer: {
+      to: (value: number | null | undefined) => value ?? null,
+      from: (value: string | number | null | undefined) =>
+        value == null
+          ? null
+          : typeof value === 'string'
+            ? parseFloat(value)
+            : value,
+    },
+  })
+  costPrice?: number | null;
+
+  /**
+   * Buyer's preferred/default supplier for restocking this product (a
+   * SupplierProfile id). Optional sourcing hint set from the purchase-order /
+   * product-edit surfaces; not a hard constraint on PO creation.
+   */
+  @Expose()
+  @Column({
+    type: 'int',
+    nullable: true,
+    name: 'preferred_supplier_profile_id',
+  })
+  preferredSupplierProfileId?: number | null;
+
   @Column()
   description!: string;
 
@@ -732,9 +768,8 @@ export class Product {
         'sale_or_rent',
       );
       const lt = ltRaw ? ltRaw.toLowerCase() : undefined;
-      if (lt === 'sale' || lt === 'sell') this.listingType = 'sale' as any;
-      else if (lt === 'rent' || lt === 'rental')
-        this.listingType = 'rent' as any;
+      if (lt === 'sale' || lt === 'sell') this.listingType = 'sale';
+      else if (lt === 'rent' || lt === 'rental') this.listingType = 'rent';
     }
     // listingCity
     if (this.listingCity == null) {
@@ -784,13 +819,11 @@ export class Product {
       );
       if (raw) {
         const s = raw.toLowerCase();
-        if (['day', 'daily'].includes(s)) this.rentPeriod = 'day' as any;
-        else if (['week', 'weekly'].includes(s))
-          this.rentPeriod = 'week' as any;
-        else if (['month', 'monthly'].includes(s))
-          this.rentPeriod = 'month' as any;
+        if (['day', 'daily'].includes(s)) this.rentPeriod = 'day';
+        else if (['week', 'weekly'].includes(s)) this.rentPeriod = 'week';
+        else if (['month', 'monthly'].includes(s)) this.rentPeriod = 'month';
         else if (['year', 'yearly', 'annually', 'annual'].includes(s))
-          this.rentPeriod = 'year' as any;
+          this.rentPeriod = 'year';
       }
     }
   }

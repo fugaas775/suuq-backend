@@ -69,9 +69,12 @@ import { PartnerCredentialsModule } from './partner-credentials/partner-credenti
 import { PosSyncModule } from './pos-sync/pos-sync.module';
 import { ProductAliasesModule } from './product-aliases/product-aliases.module';
 import { RetailModule } from './retail/retail.module';
+import { SuppliersModule } from './suppliers/suppliers.module';
+import { SupplierOffersModule } from './supplier-offers/supplier-offers.module';
 import { MarketingLeadsModule } from './marketing-leads/marketing-leads.module';
 import { SellerWorkspaceModule } from './seller-workspace/seller-workspace.module';
 import { BillingModule } from './billing/billing.module';
+import { AccountingModule } from './accounting/accounting.module';
 import { HospitalityModule } from './hospitality/hospitality.module';
 import { PropertyRentalModule } from './property-rental/property-rental.module';
 import { StorefrontModule } from './storefront/storefront.module';
@@ -256,11 +259,14 @@ import { ParkedOrdersModule } from './parked-orders/parked-orders.module';
     ProductAliasesModule,
     PosSyncModule,
     RetailModule,
+    SuppliersModule,
+    SupplierOffersModule,
     MarketingLeadsModule,
     HospitalityModule,
     PropertyRentalModule,
     SellerWorkspaceModule,
     BillingModule,
+    AccountingModule,
     StorefrontModule,
     ConsumerModule,
     ParkedOrdersModule,

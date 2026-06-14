@@ -247,11 +247,27 @@ export class PosRegisterService {
       }
     }
 
+    // Idempotency for offline-parked baskets: a lane that holds a basket while
+    // offline replays it on reconnect. If the original POST reached us but its
+    // response was dropped mid-reconnect, the retry carries the same clientRef —
+    // return the already-created cart instead of inserting a duplicate. The
+    // unique (branchId, clientRef) index is the backstop for a concurrent race.
+    const clientRef = dto.clientRef?.trim() || null;
+    if (clientRef) {
+      const existing = await this.suspendedCartsRepository.findOne({
+        where: { branchId: dto.branchId, clientRef },
+      });
+      if (existing) {
+        return this.toSuspendedCartResponse(existing);
+      }
+    }
+
     const cart = await this.suspendedCartsRepository.save(
       this.suspendedCartsRepository.create({
         branchId: dto.branchId,
         registerSessionId: dto.registerSessionId ?? null,
         registerId: dto.registerId?.trim() || null,
+        clientRef,
         label: dto.label.trim(),
         status: PosSuspendedCartStatus.SUSPENDED,
         currency: dto.currency.trim().toUpperCase(),

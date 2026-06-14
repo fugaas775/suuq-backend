@@ -161,6 +161,21 @@ export class RetailBranchProductItemResponseDto {
 
   @ApiPropertyOptional({ nullable: true })
   attributes!: Record<string, unknown> | null;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    isArray: true,
+    description:
+      'RETAIL product variants (Size×Color×Material combos) with live per-branch stock. Absent/empty for non-variant products.',
+  })
+  variants?: Array<{
+    variantId: number;
+    variantKey: string;
+    attributes: Record<string, string> | null;
+    price: number;
+    availableToSell: number;
+    quantityOnHand: number;
+  }> | null;
 }
 
 export class RetailBranchProductsSummaryResponseDto {

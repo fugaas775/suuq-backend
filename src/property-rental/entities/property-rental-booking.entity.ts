@@ -142,6 +142,10 @@ export class PropertyRentalBooking {
   @Column({ type: 'numeric', precision: 14, scale: 2, nullable: true })
   depositRefund!: number | null;
 
+  /** Amount of the deposit kept (forfeited) at settlement — recognized as income. */
+  @Column({ type: 'numeric', precision: 14, scale: 2, nullable: true })
+  depositForfeit!: number | null;
+
   @Column({ type: 'numeric', precision: 14, scale: 2, default: 0 })
   chargesTotal!: number;
 
@@ -151,6 +155,14 @@ export class PropertyRentalBooking {
 
   @Column({ type: 'numeric', precision: 14, scale: 2, nullable: true })
   paidAmount!: number | null;
+
+  /**
+   * Cumulative rent recognized into revenue by the daily accrual job while the
+   * booking is OPEN. Settlement recognizes only the still-deferred remainder, so
+   * collected rent is recognized exactly once.
+   */
+  @Column({ type: 'numeric', precision: 14, scale: 2, default: 0 })
+  recognizedAmount!: number;
 
   /** Instalment payment ledger (partial payments collected while OPEN). */
   @Column({ type: 'jsonb', nullable: true })

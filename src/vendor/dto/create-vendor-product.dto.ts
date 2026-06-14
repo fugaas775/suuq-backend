@@ -64,6 +64,23 @@ class AttributesDto {
   isFree?: boolean;
 }
 
+// One RETAIL product variant (a Size×Color×Material combination) with its
+// per-branch quantity. Stock is seeded to the resolved branch on create/update.
+export class VendorProductVariantInputDto {
+  @IsObject()
+  attributes!: Record<string, string>;
+
+  @Type(() => Number)
+  @IsInt()
+  quantity!: number;
+
+  // Optional per-variant price; omit to use the product price.
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  priceOverride?: number;
+}
+
 export class CreateVendorProductDto {
   @IsNotEmpty()
   @IsString()
@@ -73,6 +90,18 @@ export class CreateVendorProductDto {
   @Type(() => Number)
   @IsNumber()
   price!: number;
+
+  // Manual unit cost — the COGS basis until purchase-order history exists.
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  costPrice?: number;
+
+  // Preferred/default supplier (SupplierProfile id) for restocking this product.
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  preferredSupplierProfileId?: number;
 
   @IsOptional()
   @IsString()
@@ -222,4 +251,11 @@ export class CreateVendorProductDto {
   @IsOptional()
   @IsObject()
   attributes?: Record<string, any>;
+
+  // RETAIL product variants (Size×Color×Material combos), each with its own qty.
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => VendorProductVariantInputDto)
+  variants?: VendorProductVariantInputDto[];
 }

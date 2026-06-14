@@ -12,6 +12,7 @@ import {
   MaxLength,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import { VendorProductVariantInputDto } from './create-vendor-product.dto';
 
 // Re-using the ImageDto definition for consistency
 class ImageDto {
@@ -87,6 +88,18 @@ export class UpdateVendorProductDto {
   @Type(() => Number)
   @IsNumber()
   price?: number;
+
+  // Manual unit cost — the COGS basis until purchase-order history exists.
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  costPrice?: number;
+
+  // Preferred/default supplier (SupplierProfile id) for restocking this product.
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  preferredSupplierProfileId?: number;
 
   @IsOptional()
   @IsString()
@@ -226,4 +239,11 @@ export class UpdateVendorProductDto {
   @IsOptional()
   @IsObject()
   attributes?: Record<string, any>;
+
+  // RETAIL product variants (Size×Color×Material combos), each with its own qty.
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => VendorProductVariantInputDto)
+  variants?: VendorProductVariantInputDto[];
 }
