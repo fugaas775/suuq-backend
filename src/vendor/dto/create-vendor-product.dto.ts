@@ -97,6 +97,12 @@ export class CreateVendorProductDto {
   @IsNumber()
   costPrice?: number;
 
+  // Preferred/default supplier (SupplierProfile id) for restocking this product.
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  preferredSupplierProfileId?: number;
+
   @IsOptional()
   @IsString()
   description?: string;

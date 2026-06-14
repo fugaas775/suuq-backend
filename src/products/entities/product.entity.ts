@@ -98,6 +98,19 @@ export class Product {
   })
   costPrice?: number | null;
 
+  /**
+   * Buyer's preferred/default supplier for restocking this product (a
+   * SupplierProfile id). Optional sourcing hint set from the purchase-order /
+   * product-edit surfaces; not a hard constraint on PO creation.
+   */
+  @Expose()
+  @Column({
+    type: 'int',
+    nullable: true,
+    name: 'preferred_supplier_profile_id',
+  })
+  preferredSupplierProfileId?: number | null;
+
   @Column()
   description!: string;
 
