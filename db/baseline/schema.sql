@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict 10FykfuHmPAYI0j0C48cZgnXXcZa3HOqJeFVR697ybOUa2wh5lIYmhXGQZvOuqr
+\restrict 1iMxfKKofCj9gtHAmOQt8jEftWmUtgbb1jqivsRWTIdO1bmcBVRSxtqq1DMRBqS
 
 -- Dumped from database version 14.23 (Ubuntu 14.23-0ubuntu0.22.04.1)
 -- Dumped by pg_dump version 14.23 (Ubuntu 14.23-0ubuntu0.22.04.1)
@@ -2456,34 +2456,8 @@ ALTER SEQUENCE public.message_id_seq OWNED BY public.message.id;
 
 
 --
--- Name: migrations; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.migrations (
-    id integer NOT NULL,
-    "timestamp" bigint NOT NULL,
-    name character varying NOT NULL
-);
-
-
---
--- Name: migrations_id_seq; Type: SEQUENCE; Schema: public; Owner: -
---
-
-CREATE SEQUENCE public.migrations_id_seq
-    AS integer
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-
---
--- Name: migrations_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
---
-
-ALTER SEQUENCE public.migrations_id_seq OWNED BY public.migrations.id;
 
 
 --
@@ -5834,13 +5808,6 @@ ALTER TABLE ONLY public.message ALTER COLUMN id SET DEFAULT nextval('public.mess
 
 
 --
--- Name: migrations id; Type: DEFAULT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.migrations ALTER COLUMN id SET DEFAULT nextval('public.migrations_id_seq'::regclass);
-
-
---
 -- Name: notification id; Type: DEFAULT; Schema: public; Owner: -
 --
 
@@ -6503,14 +6470,6 @@ ALTER TABLE ONLY public.conversation
 
 ALTER TABLE ONLY public.system_setting
     ADD CONSTRAINT "PK_88dbc9b10c8558420acf7ea642f" PRIMARY KEY (id);
-
-
---
--- Name: migrations PK_8c82d7f526340ab734260ea46be; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.migrations
-    ADD CONSTRAINT "PK_8c82d7f526340ab734260ea46be" PRIMARY KEY (id);
 
 
 --
@@ -9648,5 +9607,5 @@ ALTER TABLE ONLY public.vendor_stores
 -- PostgreSQL database dump complete
 --
 
-\unrestrict 10FykfuHmPAYI0j0C48cZgnXXcZa3HOqJeFVR697ybOUa2wh5lIYmhXGQZvOuqr
+\unrestrict 1iMxfKKofCj9gtHAmOQt8jEftWmUtgbb1jqivsRWTIdO1bmcBVRSxtqq1DMRBqS
 

@@ -24,8 +24,8 @@ import { join } from 'path';
  *   DB_DATABASE=suuq_baseline_test yarn migration:run
  * Re-capture db/baseline/schema.sql from prod immediately before adopting.
  */
-export class BaselineSchema0000000000000 implements MigrationInterface {
-  name = 'BaselineSchema0000000000000';
+export class BaselineSchema20200101000000 implements MigrationInterface {
+  name = 'BaselineSchema20200101000000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
     // Only bootstrap an empty database; never mutate an existing one.
@@ -43,12 +43,16 @@ export class BaselineSchema0000000000000 implements MigrationInterface {
     );
     const raw = readFileSync(schemaPath, 'utf8');
 
-    // Strip psql meta-commands (\restrict, \unrestrict, \connect, …) that the
-    // pg driver cannot execute; everything else is plain SQL the driver runs as
-    // a single multi-statement batch.
+    // Clean the pg_dump output for execution via the pg driver:
+    //  - drop psql meta-commands (\restrict, \unrestrict, \connect, …) it can't run;
+    //  - drop the line that blanks the session search_path — the dump fully
+    //    qualifies every object with `public.`, but leaving search_path empty
+    //    afterwards breaks TypeORM's own unqualified `migrations` bookkeeping (and
+    //    the next migration's unqualified statements) on the same connection.
     const sql = raw
       .split('\n')
       .filter((line) => !line.startsWith('\\'))
+      .filter((line) => !line.includes("set_config('search_path'"))
       .join('\n');
 
     await queryRunner.query(sql);
