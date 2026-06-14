@@ -17,6 +17,7 @@ import {
 import { PurchaseOrderReceiptEvent } from './entities/purchase-order-receipt-event.entity';
 import { PurchaseOrdersController } from './purchase-orders.controller';
 import { PurchaseOrdersService } from './purchase-orders.service';
+import { SupplierAnalyticsService } from './supplier-analytics.service';
 
 @Module({
   imports: [
@@ -37,7 +38,7 @@ import { PurchaseOrdersService } from './purchase-orders.service';
     ]),
   ],
   controllers: [PurchaseOrdersController],
-  providers: [PurchaseOrdersService],
-  exports: [PurchaseOrdersService],
+  providers: [PurchaseOrdersService, SupplierAnalyticsService],
+  exports: [PurchaseOrdersService, SupplierAnalyticsService],
 })
 export class PurchaseOrdersModule {}

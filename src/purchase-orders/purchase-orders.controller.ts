@@ -26,13 +26,17 @@ import { ResolvePurchaseOrderReceiptDiscrepancyDto } from './dto/resolve-purchas
 import { SupplierStatusUpdateDto } from './dto/supplier-status-update.dto';
 import { UpdatePurchaseOrderStatusDto } from './dto/update-purchase-order-status.dto';
 import { PurchaseOrdersService } from './purchase-orders.service';
+import { SupplierAnalyticsService } from './supplier-analytics.service';
 import { PurchaseOrderReevaluationResponseDto } from '../admin/dto/purchase-order-response.dto';
 
 @ApiTags('B2B Purchase Orders')
 @Controller('hub/v1/purchase-orders')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class PurchaseOrdersController {
-  constructor(private readonly purchaseOrdersService: PurchaseOrdersService) {}
+  constructor(
+    private readonly purchaseOrdersService: PurchaseOrdersService,
+    private readonly supplierAnalyticsService: SupplierAnalyticsService,
+  ) {}
 
   @Get()
   @ApiOperation({
@@ -83,6 +87,23 @@ export class PurchaseOrdersController {
       id: req.user?.id ?? null,
       email: req.user?.email ?? null,
       roles: req.user?.roles ?? [],
+      branchId: query.branchId,
+    });
+  }
+
+  @Get('supplier-analytics')
+  @ApiOperation({
+    summary:
+      'Per-supplier procurement analytics: spend, payables aging, and delivery performance',
+  })
+  @Roles(
+    UserRole.SUPER_ADMIN,
+    UserRole.ADMIN,
+    UserRole.POS_MANAGER,
+    UserRole.B2B_BUYER,
+  )
+  getSupplierAnalytics(@Query() query: PurchaseOrderBranchScopeQueryDto) {
+    return this.supplierAnalyticsService.getSupplierAnalytics({
       branchId: query.branchId,
     });
   }
