@@ -8,7 +8,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Product } from '../products/entities/product.entity';
 import {
-  SupplierOnboardingStatus,
+  SupplierActivationStatus,
   SupplierProfile,
 } from '../suppliers/entities/supplier-profile.entity';
 import {
@@ -24,8 +24,8 @@ import { UpdateSupplierOfferDto } from './dto/update-supplier-offer.dto';
  * profile owned by the acting user (resolved from userId), so a supplier can
  * only ever read/mutate their own offers. The buyer-facing browse remains in
  * PurchaseOrdersService.findAvailableOffers, which is the single source of truth
- * for which offers surface to buyers (PUBLISHED + APPROVED + active) — publish
- * here just flips status to PUBLISHED once the supplier is APPROVED.
+ * for which offers surface to buyers (PUBLISHED + ACTIVE supplier) — publish
+ * here just flips status to PUBLISHED once the supplier subscription is ACTIVE.
  */
 @Injectable()
 export class SupplierOffersService {
@@ -104,9 +104,9 @@ export class SupplierOffersService {
     const profile = await this.profilesRepository.findOne({
       where: { id: offer.supplierProfileId },
     });
-    if (profile?.onboardingStatus !== SupplierOnboardingStatus.APPROVED) {
+    if (profile?.activationStatus !== SupplierActivationStatus.ACTIVE) {
       throw new BadRequestException(
-        'Only approved suppliers can publish offers',
+        'Activate your supplier subscription before publishing offers',
       );
     }
     if (!profile.isActive) {

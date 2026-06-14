@@ -24,6 +24,7 @@ import { PosPortalOnboardingService } from './pos-portal-onboarding.service';
 import { PosSupportController } from './pos-support.controller';
 import { PosWorkspaceActivationService } from './pos-workspace-activation.service';
 import { SellerWorkspace } from '../seller-workspace/entities/seller-workspace.entity';
+import { SuppliersModule } from '../suppliers/suppliers.module';
 
 @Module({
   imports: [
@@ -32,6 +33,7 @@ import { SellerWorkspace } from '../seller-workspace/entities/seller-workspace.e
     RetailModule,
     EbirrModule,
     RedisModule,
+    SuppliersModule,
     TypeOrmModule.forFeature([
       BranchStaffAssignment,
       BranchStaffInvite,

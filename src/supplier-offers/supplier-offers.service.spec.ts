@@ -68,7 +68,7 @@ describe('SupplierOffersService', () => {
     ).rejects.toBeInstanceOf(ForbiddenException);
   });
 
-  it('publish refuses a non-approved supplier', async () => {
+  it('publish refuses a supplier without an active subscription', async () => {
     const offers = {
       findOne: jest.fn().mockResolvedValue({ id: 1, supplierProfileId: 55 }),
       save: jest.fn(async (v: any) => v),
@@ -79,12 +79,12 @@ describe('SupplierOffersService', () => {
         // resolveProfileOrThrow (by userId), then the publish profile lookup (by id)
         .mockResolvedValueOnce({
           id: 55,
-          onboardingStatus: 'PENDING_REVIEW',
+          activationStatus: 'PENDING_PAYMENT',
           isActive: true,
         })
         .mockResolvedValueOnce({
           id: 55,
-          onboardingStatus: 'PENDING_REVIEW',
+          activationStatus: 'PENDING_PAYMENT',
           isActive: true,
         }),
     };
@@ -94,7 +94,7 @@ describe('SupplierOffersService', () => {
     );
   });
 
-  it('publish flips an approved supplier’s offer to PUBLISHED', async () => {
+  it('publish flips an active supplier’s offer to PUBLISHED', async () => {
     const offers = {
       findOne: jest.fn().mockResolvedValue({ id: 1, supplierProfileId: 55 }),
       save: jest.fn(async (v: any) => v),
@@ -104,12 +104,12 @@ describe('SupplierOffersService', () => {
         .fn()
         .mockResolvedValueOnce({
           id: 55,
-          onboardingStatus: 'APPROVED',
+          activationStatus: 'ACTIVE',
           isActive: true,
         })
         .mockResolvedValueOnce({
           id: 55,
-          onboardingStatus: 'APPROVED',
+          activationStatus: 'ACTIVE',
           isActive: true,
         }),
     };

@@ -14,6 +14,7 @@ import { OrdersService } from '../orders/orders.service';
 import { ProductsService } from '../products/products.service';
 import { EbirrService } from '../ebirr/ebirr.service';
 import { PosWorkspaceActivationService } from '../branch-staff/pos-workspace-activation.service';
+import { SupplierActivationService } from '../suppliers/supplier-activation.service';
 import { BoostTier } from '../products/boost-pricing.service';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { Response } from 'express';
@@ -193,6 +194,7 @@ export class EbirrCallbackController {
     private readonly productsService: ProductsService,
     private readonly ebirrService: EbirrService,
     private readonly posWorkspaceActivationService: PosWorkspaceActivationService,
+    private readonly supplierActivationService: SupplierActivationService,
   ) {}
 
   @Post('webhook')
@@ -227,6 +229,17 @@ export class EbirrCallbackController {
       );
     }
 
+    if (
+      result?.status === 'COMPLETED' &&
+      this.supplierActivationService.isSupplierActivationReference(
+        result.referenceId,
+      )
+    ) {
+      await this.supplierActivationService.completeEbirrActivationPayment(
+        result.referenceId,
+      );
+    }
+
     return { status: 'OK' };
   }
 
@@ -250,6 +263,9 @@ export class EbirrCallbackController {
         );
         if (
           this.posWorkspaceActivationService.isPosWorkspaceActivationReference(
+            verifiedReturn.referenceId,
+          ) ||
+          this.supplierActivationService.isSupplierActivationReference(
             verifiedReturn.referenceId,
           )
         ) {
@@ -289,6 +305,22 @@ export class EbirrCallbackController {
         )
       ) {
         await this.posWorkspaceActivationService.completeBranchCreationPayment(
+          verifiedReturn.referenceId,
+        );
+        return res.redirect(
+          this.buildPosActivationRedirect({
+            status: 'success',
+            referenceId: verifiedReturn.referenceId,
+          }),
+        );
+      }
+
+      if (
+        this.supplierActivationService.isSupplierActivationReference(
+          verifiedReturn.referenceId,
+        )
+      ) {
+        await this.supplierActivationService.completeEbirrActivationPayment(
           verifiedReturn.referenceId,
         );
         return res.redirect(
@@ -388,6 +420,9 @@ export class EbirrCallbackController {
         null;
       if (
         this.posWorkspaceActivationService.isPosWorkspaceActivationReference(
+          failedRefId,
+        ) ||
+        this.supplierActivationService.isSupplierActivationReference(
           failedRefId,
         )
       ) {

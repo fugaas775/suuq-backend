@@ -29,7 +29,7 @@ import {
   SupplierAvailabilityStatus,
 } from '../supplier-offers/entities/supplier-offer.entity';
 import {
-  SupplierOnboardingStatus,
+  SupplierActivationStatus,
   SupplierProfile,
 } from '../suppliers/entities/supplier-profile.entity';
 import { BrowseAvailableOffersQueryDto } from './dto/browse-available-offers-query.dto';
@@ -203,11 +203,9 @@ export class PurchaseOrdersService {
         `Supplier profile with ID ${dto.supplierProfileId} not found`,
       );
     }
-    if (
-      supplierProfile.onboardingStatus !== SupplierOnboardingStatus.APPROVED
-    ) {
+    if (supplierProfile.activationStatus !== SupplierActivationStatus.ACTIVE) {
       throw new BadRequestException(
-        'Purchase orders can only target approved supplier profiles',
+        'Purchase orders can only target active supplier profiles',
       );
     }
 
@@ -344,8 +342,8 @@ export class PurchaseOrdersService {
       .andWhere('offer.availabilityStatus != :outOfStock', {
         outOfStock: SupplierAvailabilityStatus.OUT_OF_STOCK,
       })
-      .andWhere('supplierProfile.onboardingStatus = :supplierStatus', {
-        supplierStatus: SupplierOnboardingStatus.APPROVED,
+      .andWhere('supplierProfile.activationStatus = :supplierStatus', {
+        supplierStatus: SupplierActivationStatus.ACTIVE,
       })
       .andWhere('supplierProfile.isActive = true')
       .orderBy(orderColumn, 'ASC')
