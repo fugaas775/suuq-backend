@@ -73,4 +73,15 @@ export class UpdateBranchWorkspaceDto {
   @IsInt()
   @Min(1)
   defaultCategoryId?: number | null;
+
+  @ApiPropertyOptional({
+    description: 'Brand logo URL for this branch. Send null to clear.',
+    nullable: true,
+    example: 'https://cdn.example.com/branch-logo.png',
+  })
+  @Transform(({ value }) => trimString(value))
+  @IsOptional()
+  @IsString()
+  @MaxLength(512)
+  logoUrl?: string | null;
 }

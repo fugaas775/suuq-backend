@@ -339,6 +339,13 @@ export class SellerWorkspaceBranchWorkspaceDto {
 
   @ApiPropertyOptional({
     nullable: true,
+    description:
+      'Brand logo URL for this branch, shown in the register and on receipts.',
+  })
+  logoUrl?: string | null;
+
+  @ApiPropertyOptional({
+    nullable: true,
     description: 'Consumer store ID linked to this branch, if any.',
   })
   vendorStoreId!: number | null;

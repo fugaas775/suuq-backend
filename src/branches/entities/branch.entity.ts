@@ -85,6 +85,13 @@ export class Branch {
   @Column({ type: 'int', nullable: true })
   defaultCategoryId?: number | null;
 
+  /**
+   * Brand logo URL for this branch (uploaded via /media). Shown in the register
+   * branch badge across all service formats and on receipts. Null = no logo.
+   */
+  @Column({ type: 'varchar', length: 512, nullable: true })
+  logoUrl?: string | null;
+
   @CreateDateColumn()
   createdAt!: Date;
 

@@ -59,6 +59,7 @@ export interface PosBranchSummary {
   phone: string | null;
   tinNumber: string | null;
   defaultCategoryId: number | null;
+  logoUrl: string | null;
   posExperienceProfileCode: string | null;
 }
 
@@ -74,6 +75,7 @@ export interface PosWorkspaceActivationCandidate {
   phone: string | null;
   tinNumber: string | null;
   defaultCategoryId: number | null;
+  logoUrl: string | null;
   role: BranchStaffRole;
   permissions: string[];
   assignedSurfaces: string[] | null;
@@ -615,6 +617,7 @@ export class BranchStaffService {
           phone: summary.phone ?? null,
           tinNumber: summary.tinNumber ?? null,
           defaultCategoryId: summary.defaultCategoryId ?? null,
+          logoUrl: summary.logoUrl ?? null,
           role: summary.role,
           isOwner: summary.isOwner,
           isTenantOwner: summary.isTenantOwner,
@@ -1007,6 +1010,7 @@ export class BranchStaffService {
         phone: branch.phone ?? null,
         tinNumber: branch.tinNumber ?? null,
         defaultCategoryId: branch.defaultCategoryId ?? null,
+        logoUrl: branch.logoUrl ?? null,
         role: BranchStaffRole.MANAGER,
         permissions: [],
         assignedSurfaces: null,
@@ -1050,6 +1054,7 @@ export class BranchStaffService {
           phone: branch.phone ?? null,
           tinNumber: branch.tinNumber ?? null,
           defaultCategoryId: branch.defaultCategoryId ?? null,
+          logoUrl: branch.logoUrl ?? null,
           role: BranchStaffRole.MANAGER,
           permissions: [],
           assignedSurfaces: null,
@@ -1099,6 +1104,7 @@ export class BranchStaffService {
           existing?.defaultCategoryId ??
           assignment.branch.defaultCategoryId ??
           null,
+        logoUrl: existing?.logoUrl ?? assignment.branch.logoUrl ?? null,
         role: assignment.role ?? existing?.role ?? BranchStaffRole.OPERATOR,
         permissions: mergedPermissions,
         assignedSurfaces:
