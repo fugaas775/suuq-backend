@@ -26,6 +26,7 @@ describe('SupplierStaffService.getSupplierContextForUser', () => {
           companyName: 'Rift Valley',
           activationStatus: 'ACTIVE',
           onboardingStatus: 'DRAFT',
+          isActive: true,
         },
       }),
     };
@@ -51,6 +52,7 @@ describe('SupplierStaffService.getSupplierContextForUser', () => {
           companyName: 'Rift Valley',
           activationStatus: 'ACTIVE',
           onboardingStatus: 'DRAFT',
+          isActive: true,
         },
       }),
     };
@@ -127,6 +129,7 @@ describe('SupplierStaffService.createManualAccount', () => {
     companyName: 'Rift Valley',
     activationStatus: 'ACTIVE',
     onboardingStatus: 'DRAFT',
+    isActive: true,
   };
 
   const managerContext = () => ({
@@ -144,9 +147,19 @@ describe('SupplierStaffService.createManualAccount', () => {
       create: jest.fn((x) => x),
       save: jest.fn(async (x) => ({ ...x, id: 101, createdAt: new Date() })),
       delete: jest.fn(),
+      // syncSupplierRolesForUser reads the user's active assignments.
+      find: jest
+        .fn()
+        .mockResolvedValue([
+          { role: SupplierStaffRole.OPERATOR, isActive: true },
+        ]),
     };
     const users = {
-      findOne: jest.fn().mockResolvedValue(null),
+      // null for the stale username/email lookups; the created user for the
+      // by-id read in syncSupplierRolesForUser.
+      findOne: jest.fn(({ where }: any) =>
+        Promise.resolve(where?.id ? { id: where.id, roles: [] } : null),
+      ),
       create: jest.fn((x) => x),
       save: jest.fn(async (x) => ({ ...x, id: 202 })),
       update: jest.fn(),
@@ -178,7 +191,7 @@ describe('SupplierStaffService.createManualAccount', () => {
     const created = users.create.mock.calls[0][0];
     expect(created).toMatchObject({ posUsername: 'amina', authMode: 'MANUAL' });
     expect(created.password).not.toBe('secret-password');
-    // grantSupplierRole adds the platform supplier role.
+    // syncSupplierRolesForUser sets the platform supplier role.
     expect(users.update).toHaveBeenCalled();
   });
 

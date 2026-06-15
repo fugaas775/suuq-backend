@@ -7,6 +7,7 @@ import { StarpayModule } from '../starpay/starpay.module';
 import { StarpayCallbackController } from './starpay-callback.controller';
 import { BranchStaffModule } from '../branch-staff/branch-staff.module';
 import { SuppliersModule } from '../suppliers/suppliers.module';
+import { RetailModule } from '../retail/retail.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { SuppliersModule } from '../suppliers/suppliers.module';
     StarpayModule,
     BranchStaffModule,
     SuppliersModule,
+    RetailModule,
   ],
   controllers: [EbirrCallbackController, StarpayCallbackController],
 })

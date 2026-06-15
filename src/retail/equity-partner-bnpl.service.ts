@@ -29,7 +29,10 @@ import {
   EquityPartnerBnplActivation,
   EquityPartnerBnplStatus,
 } from './entities/equity-partner-bnpl-activation.entity';
-import { SupplierProfile } from '../suppliers/entities/supplier-profile.entity';
+import {
+  SupplierActivationStatus,
+  SupplierProfile,
+} from '../suppliers/entities/supplier-profile.entity';
 import { SupplierOnboardingService } from '../suppliers/supplier-onboarding.service';
 import { SupplierActivationService } from '../suppliers/supplier-activation.service';
 import {
@@ -154,7 +157,7 @@ export class EquityPartnerBnplService {
     const accountKind: EquityPartnerBnplAccountKind =
       input.accountKind === 'SUPPLIER' ? 'SUPPLIER' : 'BRANCH';
     if (accountKind === 'SUPPLIER') {
-      return this.activateSupplierAccount(partner, input);
+      return this.activateSupplierAccount(partner, input, isSuperAdmin);
     }
 
     const option = requirePosBranchSubscriptionOption(input.period);
@@ -165,6 +168,7 @@ export class EquityPartnerBnplService {
     const settlementAmountDue = Math.max(0, grossAmount - equityCreditAmount);
     const targetUser = await this.findOrCreateTargetOwner(
       input.targetOwnerEmail,
+      { isSuperAdmin },
     );
 
     // Find a tenant the partner can use to host this branch. Re-use the
@@ -346,6 +350,7 @@ export class EquityPartnerBnplService {
   private async activateSupplierAccount(
     partner: EquityPartner,
     input: StartBnplActivationInput,
+    isSuperAdmin: boolean,
   ): Promise<EquityPartnerBnplActivation> {
     const isDirect = input.fundingType === 'DIRECT_EBIRR';
     const option = requireSupplierSubscriptionOption(input.period);
@@ -362,6 +367,7 @@ export class EquityPartnerBnplService {
 
     const targetUser = await this.findOrCreateTargetOwner(
       input.targetOwnerEmail,
+      { isSuperAdmin },
     );
 
     // Find-or-create the supplier profile for the target owner.
@@ -387,6 +393,30 @@ export class EquityPartnerBnplService {
     if (!profile) {
       throw new BadRequestException(
         'Could not resolve a supplier profile for the target owner.',
+      );
+    }
+
+    // Don't double-provision (and double-credit the partner) for a supplier
+    // that is already live — whether it was funded earlier or self-activated
+    // via Ebirr. activateForFundedFlow is idempotent on the subscription, but
+    // this method would still write a second activation + CREDIT_APPLIED entry.
+    if (profile.activationStatus === SupplierActivationStatus.ACTIVE) {
+      throw new BadRequestException(
+        `Supplier #${profile.id} is already active; it cannot be BNPL-funded again.`,
+      );
+    }
+    const existingActivation = await this.activationsRepo.findOne({
+      where: {
+        supplierProfileId: profile.id,
+        status: In([
+          EquityPartnerBnplStatus.OUTSTANDING,
+          EquityPartnerBnplStatus.SETTLED,
+        ]),
+      },
+    });
+    if (existingActivation) {
+      throw new BadRequestException(
+        `Supplier #${profile.id} already has a BNPL activation (#${existingActivation.id}); cannot fund it again.`,
       );
     }
 
@@ -765,6 +795,41 @@ export class EquityPartnerBnplService {
     return saved;
   }
 
+  /**
+   * True when an Ebirr reference belongs to an equity-partner BNPL activation
+   * (a DIRECT_EBIRR activation or a partner-initiated settlement). The Ebirr
+   * callback handler uses this to route confirmed payments to settlement.
+   */
+  isBnplActivationReference(referenceId: string | null | undefined): boolean {
+    return new RegExp(`^${BNPL_REFERENCE_PREFIX}-\\d+-`).test(
+      String(referenceId || '').trim(),
+    );
+  }
+
+  /**
+   * Settle the activation a `BNPLACT-<id>-<ts>` reference points at, on Ebirr
+   * payment confirmation. Idempotent (markSettled no-ops once SETTLED), so the
+   * webhook and the return-redirect can both call it safely.
+   */
+  async completeEbirrSettlement(
+    referenceId: string,
+  ): Promise<EquityPartnerBnplActivation | null> {
+    const match = new RegExp(`^${BNPL_REFERENCE_PREFIX}-(\\d+)-`).exec(
+      String(referenceId || '').trim(),
+    );
+    if (!match) {
+      this.logger.warn(
+        `Ignoring unsupported BNPL settlement reference: ${referenceId}`,
+      );
+      return null;
+    }
+    const activationId = Number(match[1]);
+    if (!Number.isInteger(activationId) || activationId <= 0) {
+      return null;
+    }
+    return this.markSettled(activationId, String(referenceId).trim());
+  }
+
   // ---------------------------------------------------------------------------
   // Helpers
   // ---------------------------------------------------------------------------
@@ -985,7 +1050,10 @@ export class EquityPartnerBnplService {
     return this.creditLedgerRepo.save(entry);
   }
 
-  private async findOrCreateTargetOwner(rawEmail: string): Promise<
+  private async findOrCreateTargetOwner(
+    rawEmail: string,
+    opts: { isSuperAdmin?: boolean } = {},
+  ): Promise<
     User & {
       requiresGoogleLink?: boolean;
     }
@@ -998,6 +1066,19 @@ export class EquityPartnerBnplService {
     }
     const existing = await this.usersRepo.findOne({ where: { email } });
     if (existing) {
+      // A regular partner must not be able to provision/attach an equity-funded
+      // account onto a platform-staff account they don't control. Super-admins
+      // (the admin tooling path) are unrestricted. NOTE: broader consent policy
+      // for arbitrary brand-new emails is a product decision left open here.
+      if (!opts.isSuperAdmin) {
+        const targetRoles = Array.isArray(existing.roles) ? existing.roles : [];
+        const privilegedRoles = [UserRole.SUPER_ADMIN, UserRole.ADMIN];
+        if (targetRoles.some((role) => privilegedRoles.includes(role))) {
+          throw new ForbiddenException(
+            'You are not allowed to provision an account for this email address.',
+          );
+        }
+      }
       return existing;
     }
     const created = await this.usersRepo.save(

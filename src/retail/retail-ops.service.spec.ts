@@ -2,12 +2,14 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { Product } from '../products/entities/product.entity';
+import { ProductVariant } from '../products/entities/product-variant.entity';
 import {
   BranchStaffAssignment,
   BranchStaffRole,
 } from '../branch-staff/entities/branch-staff-assignment.entity';
 import { Branch } from '../branches/entities/branch.entity';
 import { BranchInventory } from '../branches/entities/branch-inventory.entity';
+import { BranchInventoryVariant } from '../branches/entities/branch-inventory-variant.entity';
 import {
   BranchTransfer,
   BranchTransferStatus,
@@ -61,6 +63,8 @@ describe('RetailOpsService', () => {
     count: jest.Mock;
     createQueryBuilder: jest.Mock;
   };
+  let branchInventoryVariantRepository: { find: jest.Mock };
+  let productVariantRepository: { find: jest.Mock };
   let branchCatalogProductLinksRepository: {
     findOne: jest.Mock;
     create: jest.Mock;
@@ -150,6 +154,12 @@ describe('RetailOpsService', () => {
           lastUpdatedAt: '2026-03-18T09:00:00.000Z',
         }),
       })),
+    };
+    branchInventoryVariantRepository = {
+      find: jest.fn().mockResolvedValue([]),
+    };
+    productVariantRepository = {
+      find: jest.fn().mockResolvedValue([]),
     };
     branchCatalogProductLinksRepository = {
       findOne: jest.fn().mockResolvedValue(null),
@@ -244,6 +254,14 @@ describe('RetailOpsService', () => {
         {
           provide: getRepositoryToken(BranchInventory),
           useValue: branchInventoryRepository,
+        },
+        {
+          provide: getRepositoryToken(BranchInventoryVariant),
+          useValue: branchInventoryVariantRepository,
+        },
+        {
+          provide: getRepositoryToken(ProductVariant),
+          useValue: productVariantRepository,
         },
         {
           provide: getRepositoryToken(BranchCatalogProductLink),

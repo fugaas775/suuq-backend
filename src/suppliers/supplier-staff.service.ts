@@ -116,7 +116,8 @@ export class SupplierStaffService {
       permissions,
       canPublishOffers:
         managerLevel &&
-        profile.activationStatus === SupplierActivationStatus.ACTIVE,
+        profile.activationStatus === SupplierActivationStatus.ACTIVE &&
+        profile.isActive,
     };
   }
 
@@ -139,6 +140,9 @@ export class SupplierStaffService {
     });
     if (!profile) {
       throw new NotFoundException('Supplier profile not found');
+    }
+    if (!profile.isActive) {
+      throw new ForbiddenException('This supplier account is deactivated.');
     }
     return profile;
   }
@@ -219,8 +223,21 @@ export class SupplierStaffService {
       where: { email: internalEmail },
     });
     if (staleByEmail) {
-      await this.assignmentsRepository.delete({ userId: staleByEmail.id });
-      await this.usersRepository.remove(staleByEmail);
+      // Same guard as the username branch above: only recycle a deactivated
+      // MANUAL stub. Never delete a live account that happens to collide on the
+      // synthetic internal email.
+      if (staleByEmail.authMode === 'MANUAL' && !staleByEmail.isActive) {
+        await this.assignmentsRepository.delete({ userId: staleByEmail.id });
+        await this.usersRepository.remove(staleByEmail);
+      } else {
+        throw new ConflictException({
+          error: {
+            code: 'SUPPLIER_STAFF_USERNAME_CONFLICT',
+            message: 'This username is already in use.',
+            details: { field: 'username' },
+          },
+        });
+      }
     }
 
     const role = dto.role ?? SupplierStaffRole.OPERATOR;
@@ -246,7 +263,7 @@ export class SupplierStaffService {
         invitedByUserId: Number(actor.id) || null,
       }),
     );
-    await this.grantSupplierRole(savedUser, role);
+    await this.syncSupplierRolesForUser(savedUser.id);
 
     return this.serializeAssignment({ ...assignment, user: savedUser });
   }
@@ -306,9 +323,9 @@ export class SupplierStaffService {
       assignment.permissions = dto.permissions ?? [];
     if (dto.isActive !== undefined) assignment.isActive = dto.isActive;
     const saved = await this.assignmentsRepository.save(assignment);
-    if (assignment.user && dto.role !== undefined) {
-      await this.grantSupplierRole(assignment.user, dto.role);
-    }
+    // Reconcile global roles after any role/active change so a demotion or
+    // deactivation actually revokes the prior supplier role.
+    await this.syncSupplierRolesForUser(assignment.userId);
     return this.serializeAssignment(saved);
   }
 
@@ -330,6 +347,9 @@ export class SupplierStaffService {
     }
     assignment.isActive = false;
     await this.assignmentsRepository.save(assignment);
+    // Strip the global supplier role now that this assignment is inactive
+    // (unless the user still holds another active supplier assignment).
+    await this.syncSupplierRolesForUser(assignment.userId);
   }
 
   // ---- Helpers -------------------------------------------------------------
@@ -380,19 +400,42 @@ export class SupplierStaffService {
     }
   }
 
-  private async grantSupplierRole(
-    user: User,
-    role: SupplierStaffRole,
-  ): Promise<void> {
-    const target =
-      role === SupplierStaffRole.MANAGER
-        ? UserRole.SUPPLIER_MANAGER
-        : UserRole.SUPPLIER_OPERATOR;
-    const roles = Array.isArray(user.roles) ? user.roles : [];
-    if (!roles.includes(target)) {
-      await this.usersRepository.update(user.id, {
-        roles: [...roles, target],
-      });
+  /**
+   * Reconcile a user's global SUPPLIER_MANAGER / SUPPLIER_OPERATOR roles to
+   * match their CURRENT active supplier staff assignments across all suppliers.
+   * Adds the role(s) they hold and strips any supplier role no longer backed by
+   * an active assignment (so demote/remove actually revokes), without disturbing
+   * non-supplier roles. Reflects the exact set held, so a user who is a manager
+   * in one supplier and an operator in another keeps both.
+   */
+  private async syncSupplierRolesForUser(userId: number): Promise<void> {
+    if (!Number.isFinite(userId) || userId <= 0) return;
+
+    const assignments = await this.assignmentsRepository.find({
+      where: { userId, isActive: true },
+    });
+    const isManager = assignments.some(
+      (a) => a.role === SupplierStaffRole.MANAGER,
+    );
+    const isOperator = assignments.some(
+      (a) => a.role === SupplierStaffRole.OPERATOR,
+    );
+
+    const user = await this.usersRepository.findOne({ where: { id: userId } });
+    if (!user) return;
+    const current = Array.isArray(user.roles) ? user.roles : [];
+
+    const next: UserRole[] = current.filter(
+      (r) =>
+        r !== UserRole.SUPPLIER_MANAGER && r !== UserRole.SUPPLIER_OPERATOR,
+    );
+    if (isManager) next.push(UserRole.SUPPLIER_MANAGER);
+    if (isOperator) next.push(UserRole.SUPPLIER_OPERATOR);
+
+    const changed =
+      next.length !== current.length || next.some((r) => !current.includes(r));
+    if (changed) {
+      await this.usersRepository.update(userId, { roles: next });
     }
   }
 }

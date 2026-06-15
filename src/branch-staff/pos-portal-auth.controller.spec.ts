@@ -14,6 +14,11 @@ import {
 } from './dto/pos-operator-unlock.dto';
 import { PosWorkspaceActivationService } from './pos-workspace-activation.service';
 import { PosPortalOnboardingService } from './pos-portal-onboarding.service';
+import { ConfigService } from '@nestjs/config';
+import { RedisService } from '../redis/redis.service';
+import { SupplierStaffService } from '../suppliers/supplier-staff.service';
+import { SupplierOnboardingService } from '../suppliers/supplier-onboarding.service';
+import { SupplierActivationService } from '../suppliers/supplier-activation.service';
 
 describe('PosPortalAuthController', () => {
   let controller: PosPortalAuthController;
@@ -44,6 +49,30 @@ describe('PosPortalAuthController', () => {
 
   const posPortalOnboardingServiceMock = {
     createWorkspaceForUser: jest.fn(),
+  };
+
+  const supplierStaffServiceMock = {
+    getSupplierContextForUser: jest.fn(),
+  };
+
+  const supplierOnboardingServiceMock = {
+    createSupplierAccountForUser: jest.fn(),
+  };
+
+  const supplierActivationServiceMock = {
+    startEbirrActivationPayment: jest.fn(),
+    getActivationState: jest.fn(),
+  };
+
+  const configServiceMock = {
+    get: jest.fn(),
+  };
+
+  const redisServiceMock = {
+    getClient: jest.fn(),
+    get: jest.fn(),
+    set: jest.fn(),
+    del: jest.fn(),
   };
 
   const user = {
@@ -100,7 +129,21 @@ describe('PosPortalAuthController', () => {
           provide: PosWorkspaceActivationService,
           useValue: posWorkspaceActivationServiceMock,
         },
+        {
+          provide: SupplierStaffService,
+          useValue: supplierStaffServiceMock,
+        },
+        {
+          provide: SupplierOnboardingService,
+          useValue: supplierOnboardingServiceMock,
+        },
+        {
+          provide: SupplierActivationService,
+          useValue: supplierActivationServiceMock,
+        },
         { provide: AuditService, useValue: auditServiceMock },
+        { provide: ConfigService, useValue: configServiceMock },
+        { provide: RedisService, useValue: redisServiceMock },
       ],
     }).compile();
 

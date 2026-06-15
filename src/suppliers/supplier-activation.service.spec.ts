@@ -1,12 +1,32 @@
 import { SupplierActivationService } from './supplier-activation.service';
 
-const makeService = ({ profiles = {}, subscriptions = {} }: any) =>
-  new SupplierActivationService(
+const makeService = ({ profiles = {}, subscriptions = {} }: any) => {
+  // completeEbirrActivationPayment now runs inside
+  // subscriptionsRepository.manager.transaction(...). Mock a transactional
+  // manager that routes findOne/save to the per-entity mocks (matching the
+  // production manager.findOne(Entity, …) / manager.save(entity) calls) and
+  // no-ops the advisory-lock query.
+  const txManager = {
+    query: jest.fn().mockResolvedValue(undefined),
+    findOne: jest.fn((entity: any, opts: any) =>
+      entity?.name === 'SupplierProfile'
+        ? profiles.findOne?.(opts)
+        : subscriptions.findOne?.(opts),
+    ),
+    save: jest.fn((v: any) =>
+      v && 'planCode' in v ? subscriptions.save?.(v) : profiles.save?.(v),
+    ),
+  };
+  subscriptions.manager = {
+    transaction: jest.fn(async (cb: any) => cb(txManager)),
+  };
+  return new SupplierActivationService(
     {} as any, // ebirrService
     {} as any, // supplierStaffService
     profiles,
     subscriptions,
   );
+};
 
 describe('SupplierActivationService.isSupplierActivationReference', () => {
   const svc = makeService({});
@@ -56,6 +76,9 @@ describe('SupplierActivationService.completeEbirrActivationPayment', () => {
     expect(profile.activationStatus).toBe('ACTIVE');
     expect(profile.lastActivatedAt).toBeInstanceOf(Date);
     expect(profiles.save).toHaveBeenCalled();
+    // The activation runs inside a transaction (with the advisory lock) so
+    // concurrent webhook + return callbacks can't double-activate.
+    expect((subscriptions as any).manager.transaction).toHaveBeenCalled();
   });
 
   it('is idempotent when the latest subscription is already ACTIVE', async () => {

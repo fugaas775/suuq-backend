@@ -28,6 +28,11 @@ import {
 const SUPPLIER_ACTIVATION_REFERENCE_PREFIX = 'SUPACT';
 export { SUPPLIER_ACTIVATION_REFERENCE_PREFIX };
 const DEFAULT_SUPPLIER_PERIOD: SupplierSubscriptionPeriod = 'MONTHLY';
+// Postgres advisory-lock namespace used to serialize concurrent supplier
+// activation completions (the Ebirr webhook and the return-redirect can both
+// fire for the same reference) so the read-then-write activation guard below
+// can't be raced into a double activation.
+const SUPPLIER_ACTIVATION_LOCK_NAMESPACE = 100;
 
 /**
  * Supplier account billing/activation — the supplier-side mirror of
@@ -141,68 +146,79 @@ export class SupplierActivationService {
       return null;
     }
 
-    const profile = await this.profilesRepository.findOne({
-      where: { id: supplierProfileId },
-    });
-    if (!profile) {
-      throw new NotFoundException(
-        `Supplier profile ${supplierProfileId} not found for activation.`,
+    // Serialize concurrent completions for this supplier. The advisory lock is
+    // held for the transaction and covers the "no subscription row yet" case
+    // too (where a row-level lock wouldn't), so the webhook and the return
+    // redirect can't both pass the ACTIVE guard and double-write.
+    return this.subscriptionsRepository.manager.transaction(async (manager) => {
+      await manager.query('SELECT pg_advisory_xact_lock($1, $2)', [
+        SUPPLIER_ACTIVATION_LOCK_NAMESPACE,
+        supplierProfileId,
+      ]);
+
+      const profile = await manager.findOne(SupplierProfile, {
+        where: { id: supplierProfileId },
+      });
+      if (!profile) {
+        throw new NotFoundException(
+          `Supplier profile ${supplierProfileId} not found for activation.`,
+        );
+      }
+
+      const latest = await manager.findOne(SupplierSubscription, {
+        where: { supplierProfileId },
+        order: { createdAt: 'DESC' },
+      });
+      if (latest?.status === TenantSubscriptionStatus.ACTIVE) {
+        return latest;
+      }
+
+      const pendingMeta = latest?.metadata?.pendingActivation as
+        | { period?: string }
+        | undefined;
+      const resolvedPeriod: SupplierSubscriptionPeriod =
+        explicitPeriod ??
+        (findSupplierSubscriptionOption(pendingMeta?.period)?.period ||
+          DEFAULT_SUPPLIER_PERIOD);
+      const option = requireSupplierSubscriptionOption(resolvedPeriod);
+      const billingInterval =
+        option.period === 'ONE_YEAR'
+          ? TenantBillingInterval.ONE_YEAR
+          : TenantBillingInterval.MONTHLY;
+
+      const now = new Date();
+      const next =
+        latest ?? this.subscriptionsRepository.create({ supplierProfileId });
+      next.supplierProfileId = supplierProfileId;
+      next.planCode = option.planCode;
+      next.status = TenantSubscriptionStatus.ACTIVE;
+      next.billingInterval = billingInterval;
+      next.amount = option.amount;
+      next.amountTotal = option.amount;
+      next.periodMonths = option.months;
+      next.currency = option.currency;
+      next.startsAt = now;
+      next.endsAt = new Date(now.getTime() + option.months * 30 * 86_400_000);
+      next.autoRenew = true;
+      next.metadata = {
+        ...(latest?.metadata || {}),
+        lastActivationReferenceId: referenceId,
+        lastActivationPaymentMethod: 'EBIRR',
+        lastActivatedAt: now.toISOString(),
+        subscriptionPeriod: option.period,
+        pendingActivation: undefined,
+      };
+      const saved = await manager.save(next);
+
+      profile.activationStatus = SupplierActivationStatus.ACTIVE;
+      profile.lastActivatedAt = now;
+      await manager.save(profile);
+
+      this.logger.log(
+        `Activated supplier #${supplierProfileId} (${option.planCode}) via ${referenceId}`,
       );
-    }
-
-    const latest = await this.subscriptionsRepository.findOne({
-      where: { supplierProfileId },
-      order: { createdAt: 'DESC' },
+      return saved;
     });
-    if (latest?.status === TenantSubscriptionStatus.ACTIVE) {
-      return latest;
-    }
-
-    const pendingMeta = latest?.metadata?.pendingActivation as
-      | { period?: string }
-      | undefined;
-    const resolvedPeriod: SupplierSubscriptionPeriod =
-      explicitPeriod ??
-      (findSupplierSubscriptionOption(pendingMeta?.period)?.period ||
-        DEFAULT_SUPPLIER_PERIOD);
-    const option = requireSupplierSubscriptionOption(resolvedPeriod);
-    const billingInterval =
-      option.period === 'ONE_YEAR'
-        ? TenantBillingInterval.ONE_YEAR
-        : TenantBillingInterval.MONTHLY;
-
-    const now = new Date();
-    const next =
-      latest ?? this.subscriptionsRepository.create({ supplierProfileId });
-    next.supplierProfileId = supplierProfileId;
-    next.planCode = option.planCode;
-    next.status = TenantSubscriptionStatus.ACTIVE;
-    next.billingInterval = billingInterval;
-    next.amount = option.amount;
-    next.amountTotal = option.amount;
-    next.periodMonths = option.months;
-    next.currency = option.currency;
-    next.startsAt = now;
-    next.endsAt = new Date(now.getTime() + option.months * 30 * 86_400_000);
-    next.autoRenew = true;
-    next.metadata = {
-      ...(latest?.metadata || {}),
-      lastActivationReferenceId: referenceId,
-      lastActivationPaymentMethod: 'EBIRR',
-      lastActivatedAt: now.toISOString(),
-      subscriptionPeriod: option.period,
-      pendingActivation: undefined,
-    };
-    const saved = await this.subscriptionsRepository.save(next);
-
-    profile.activationStatus = SupplierActivationStatus.ACTIVE;
-    profile.lastActivatedAt = now;
-    await this.profilesRepository.save(profile);
-
-    this.logger.log(
-      `Activated supplier #${supplierProfileId} (${option.planCode}) via ${referenceId}`,
-    );
-    return saved;
   }
 
   /**

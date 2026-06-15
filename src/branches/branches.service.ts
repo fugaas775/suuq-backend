@@ -153,23 +153,26 @@ export class BranchesService {
   }
 
   /**
-   * Manually settle (mark paid) every OUTSTANDING activation + credit-ledger
-   * entry pinned to a branch — the admin override behind "settle & delete".
-   * Must run before the branch row is removed: the FK nulls `branchId` on delete,
-   * after which these WHERE clauses would no longer match.
+   * Write off (FORGIVEN) every OUTSTANDING activation + credit-ledger entry
+   * pinned to a branch — the admin override behind "settle & delete". No money
+   * is collected here, so the obligation is marked FORGIVEN (a write-off), NOT
+   * SETTLED (paid): marking it SETTLED would inflate collected revenue and hide
+   * an uncollected debt in reporting. Must run before the branch row is removed:
+   * the FK nulls `branchId` on delete, after which these WHERE clauses would no
+   * longer match.
    */
-  private async manuallySettleBranchObligations(
+  private async writeOffBranchObligations(
     manager: EntityManager,
     branchId: number,
   ): Promise<void> {
-    const reference = `MANUAL-ADMIN-${branchId}-${Date.now()}`;
+    const reference = `MANUAL-WRITEOFF-${branchId}-${Date.now()}`;
     await manager.query(
       `UPDATE equity_partner_bnpl_activations
-          SET status = 'SETTLED',
+          SET status = 'FORGIVEN',
               "settledAt" = now(),
               "settlementReferenceId" = COALESCE("settlementReferenceId", $2),
               metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object(
-                'manualSettlement',
+                'manualWriteOff',
                 jsonb_build_object('by', 'admin', 'at', now()::text, 'reason', 'branch-delete')
               )
         WHERE "branchId" = $1 AND status = 'OUTSTANDING'`,
@@ -177,7 +180,7 @@ export class BranchesService {
     );
     await manager.query(
       `UPDATE equity_partner_bnpl_credit_ledger
-          SET "activationStatus" = 'SETTLED',
+          SET "activationStatus" = 'FORGIVEN',
               "settlementReferenceId" = COALESCE("settlementReferenceId", $2)
         WHERE "branchId" = $1 AND "activationStatus" = 'OUTSTANDING'`,
       [branchId, reference],
@@ -204,7 +207,7 @@ export class BranchesService {
 
     await this.dataSource.transaction(async (manager) => {
       if (opts.settleOutstanding && total > 0) {
-        await this.manuallySettleBranchObligations(manager, id);
+        await this.writeOffBranchObligations(manager, id);
       }
       // DB-level ON DELETE CASCADE / SET NULL handles all dependents.
       await manager.delete(Branch, id);
@@ -231,7 +234,7 @@ export class BranchesService {
     return this.dataSource.transaction(async (manager) => {
       if (opts.settleOutstanding) {
         for (const o of outstanding) {
-          await this.manuallySettleBranchObligations(manager, o.branchId);
+          await this.writeOffBranchObligations(manager, o.branchId);
         }
       }
       const result = await manager.delete(Branch, ids);

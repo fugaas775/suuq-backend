@@ -33,6 +33,7 @@ describe('EquityPartnerBnplService', () => {
 
   const activationsRepo = {
     count: jest.fn(),
+    findOne: jest.fn(),
     create: jest.fn((value) => value),
     save: jest.fn(async (value) => ({ id: 701, ...value })),
   };
@@ -110,6 +111,7 @@ describe('EquityPartnerBnplService', () => {
       id: 701,
       ...value,
     }));
+    activationsRepo.findOne.mockResolvedValue(null);
     creditLedgerRepo.create.mockImplementation((value) => value);
     creditLedgerRepo.save.mockImplementation(async (value) => value);
     branchesRepo.create.mockImplementation((value) => value);
@@ -352,5 +354,40 @@ describe('EquityPartnerBnplService', () => {
     expect(
       supplierActivationService.activateForFundedFlow,
     ).toHaveBeenCalledWith(77, 'ONE_YEAR', expect.any(Object));
+  });
+
+  it('rejects BNPL-funding a supplier that is already active (no double credit)', async () => {
+    partnersRepo.findOne.mockResolvedValue({
+      id: 88,
+      userId: 900,
+      status: EquityPartnerStatus.ACTIVE,
+      bnplCreditLimit: 2,
+    });
+    activationsRepo.count.mockResolvedValue(0);
+    usersRepo.findOne.mockResolvedValue({
+      id: 2202,
+      email: 'wholesaler@example.com',
+    });
+    supplierProfilesRepo.findOne.mockResolvedValue({
+      id: 77,
+      companyName: 'Already Active Wholesale',
+      activationStatus: 'ACTIVE',
+    });
+    creditLedgerRepo.findOne.mockResolvedValue(null);
+
+    await expect(
+      service.startBnplActivation(900, {
+        accountKind: 'SUPPLIER',
+        supplierCompanyName: 'Already Active Wholesale',
+        targetOwnerEmail: 'wholesaler@example.com',
+        period: 'ONE_YEAR',
+      }),
+    ).rejects.toThrow(/already active/i);
+
+    // No second activation row / credit-ledger entry / subscription is written.
+    expect(activationsRepo.save).not.toHaveBeenCalled();
+    expect(
+      supplierActivationService.activateForFundedFlow,
+    ).not.toHaveBeenCalled();
   });
 });

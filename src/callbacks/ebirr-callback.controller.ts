@@ -15,6 +15,7 @@ import { ProductsService } from '../products/products.service';
 import { EbirrService } from '../ebirr/ebirr.service';
 import { PosWorkspaceActivationService } from '../branch-staff/pos-workspace-activation.service';
 import { SupplierActivationService } from '../suppliers/supplier-activation.service';
+import { EquityPartnerBnplService } from '../retail/equity-partner-bnpl.service';
 import { BoostTier } from '../products/boost-pricing.service';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { Response } from 'express';
@@ -195,6 +196,7 @@ export class EbirrCallbackController {
     private readonly ebirrService: EbirrService,
     private readonly posWorkspaceActivationService: PosWorkspaceActivationService,
     private readonly supplierActivationService: SupplierActivationService,
+    private readonly equityPartnerBnplService: EquityPartnerBnplService,
   ) {}
 
   @Post('webhook')
@@ -240,6 +242,17 @@ export class EbirrCallbackController {
       );
     }
 
+    if (
+      result?.status === 'COMPLETED' &&
+      this.equityPartnerBnplService.isBnplActivationReference(
+        result.referenceId,
+      )
+    ) {
+      await this.equityPartnerBnplService.completeEbirrSettlement(
+        result.referenceId,
+      );
+    }
+
     return { status: 'OK' };
   }
 
@@ -266,6 +279,9 @@ export class EbirrCallbackController {
             verifiedReturn.referenceId,
           ) ||
           this.supplierActivationService.isSupplierActivationReference(
+            verifiedReturn.referenceId,
+          ) ||
+          this.equityPartnerBnplService.isBnplActivationReference(
             verifiedReturn.referenceId,
           )
         ) {
@@ -321,6 +337,22 @@ export class EbirrCallbackController {
         )
       ) {
         await this.supplierActivationService.completeEbirrActivationPayment(
+          verifiedReturn.referenceId,
+        );
+        return res.redirect(
+          this.buildPosActivationRedirect({
+            status: 'success',
+            referenceId: verifiedReturn.referenceId,
+          }),
+        );
+      }
+
+      if (
+        this.equityPartnerBnplService.isBnplActivationReference(
+          verifiedReturn.referenceId,
+        )
+      ) {
+        await this.equityPartnerBnplService.completeEbirrSettlement(
           verifiedReturn.referenceId,
         );
         return res.redirect(
@@ -424,7 +456,8 @@ export class EbirrCallbackController {
         ) ||
         this.supplierActivationService.isSupplierActivationReference(
           failedRefId,
-        )
+        ) ||
+        this.equityPartnerBnplService.isBnplActivationReference(failedRefId)
       ) {
         return res.redirect(
           this.buildPosActivationRedirect({
