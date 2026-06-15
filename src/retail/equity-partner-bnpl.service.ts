@@ -6,7 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Raw, Repository } from 'typeorm';
 import { Branch } from '../branches/entities/branch.entity';
 import {
   BranchStaffAssignment,
@@ -61,6 +61,14 @@ const BNPL_REFERENCE_PREFIX = 'BNPLACT';
 export interface StartBnplActivationInput {
   /** 'BRANCH' (default) funds a POS branch; 'SUPPLIER' funds a supplier account. */
   accountKind?: EquityPartnerBnplAccountKind;
+  /**
+   * 'BNPL' (default) draws the partner's equity credit and leaves a net balance
+   * OUTSTANDING (consumes a BNPL slot). 'DIRECT_EBIRR' charges the full amount
+   * now via Ebirr — no equity credit, no slot consumed.
+   */
+  fundingType?: 'BNPL' | 'DIRECT_EBIRR';
+  /** Ebirr line the partner pays from — required when fundingType='DIRECT_EBIRR'. */
+  paymentPhone?: string;
   targetOwnerEmail: string;
   period: PosBranchSubscriptionPeriod;
   // Branch-only fields (required when accountKind !== 'SUPPLIER').
@@ -124,9 +132,24 @@ export class EquityPartnerBnplService {
   async startBnplActivation(
     partnerUserId: number,
     input: StartBnplActivationInput,
+    roles?: string[],
   ): Promise<EquityPartnerBnplActivation> {
-    const partner = await this.requireActivePartnerForUser(partnerUserId);
-    await this.assertCreditCapacity(partner);
+    const isSuperAdmin =
+      Array.isArray(roles) && roles.includes(UserRole.SUPER_ADMIN);
+    const isDirect = input.fundingType === 'DIRECT_EBIRR';
+    if (isDirect && !String(input.paymentPhone || '').trim()) {
+      throw new BadRequestException(
+        'paymentPhone is required for direct (Ebirr) payment.',
+      );
+    }
+
+    const partner = isSuperAdmin
+      ? await this.resolveSuperAdminPartner(partnerUserId)
+      : await this.requireActivePartnerForUser(partnerUserId);
+    // Super-admins have unlimited slots; direct payment consumes none.
+    if (!isSuperAdmin && !isDirect) {
+      await this.assertCreditCapacity(partner);
+    }
 
     const accountKind: EquityPartnerBnplAccountKind =
       input.accountKind === 'SUPPLIER' ? 'SUPPLIER' : 'BRANCH';
@@ -136,7 +159,9 @@ export class EquityPartnerBnplService {
 
     const option = requirePosBranchSubscriptionOption(input.period);
     const grossAmount = option.amount;
-    const equityCreditAmount = this.calculateEquityCreditAmount(grossAmount);
+    const equityCreditAmount = isDirect
+      ? 0
+      : this.calculateEquityCreditAmount(grossAmount);
     const settlementAmountDue = Math.max(0, grossAmount - equityCreditAmount);
     const targetUser = await this.findOrCreateTargetOwner(
       input.targetOwnerEmail,
@@ -222,7 +247,7 @@ export class EquityPartnerBnplService {
         endsAt,
         autoRenew: false,
         metadata: {
-          fundingMode: 'EQUITY_BNPL',
+          fundingMode: isDirect ? 'DIRECT_EBIRR' : 'EQUITY_BNPL',
           equityPartnerId: partner.id,
         },
       }),
@@ -286,16 +311,27 @@ export class EquityPartnerBnplService {
         metadata: {
           targetOwnerEmail: input.targetOwnerEmail,
           targetOwnerWasCreated: targetUser.requiresGoogleLink === true,
-          settlementModel: 'NET_OF_EQUITY_CREDIT',
+          fundingMode: isDirect ? 'DIRECT_EBIRR' : 'EQUITY_BNPL',
+          settlementModel: isDirect ? 'DIRECT_PAYMENT' : 'NET_OF_EQUITY_CREDIT',
         },
       }),
     );
 
     this.logger.log(
-      `Equity partner ${partner.id} created BNPL branch ${branch.id} for user ${targetUser.id}; due ${endsAt.toISOString()}`,
+      `Equity partner ${partner.id} created ${
+        isDirect ? 'direct-paid' : 'BNPL'
+      } branch ${branch.id} for user ${targetUser.id}; due ${endsAt.toISOString()}`,
     );
 
     await this.ensureCreditLedgerEntry(activation);
+
+    if (isDirect) {
+      const { payment } = await this.chargeActivationViaEbirr(
+        activation,
+        String(input.paymentPhone),
+      );
+      return Object.assign(activation, { payment });
+    }
 
     return activation;
   }
@@ -311,9 +347,12 @@ export class EquityPartnerBnplService {
     partner: EquityPartner,
     input: StartBnplActivationInput,
   ): Promise<EquityPartnerBnplActivation> {
+    const isDirect = input.fundingType === 'DIRECT_EBIRR';
     const option = requireSupplierSubscriptionOption(input.period);
     const grossAmount = option.amount;
-    const equityCreditAmount = this.calculateEquityCreditAmount(grossAmount);
+    const equityCreditAmount = isDirect
+      ? 0
+      : this.calculateEquityCreditAmount(grossAmount);
     const settlementAmountDue = Math.max(0, grossAmount - equityCreditAmount);
 
     const companyName = String(input.supplierCompanyName || '').trim();
@@ -351,12 +390,15 @@ export class EquityPartnerBnplService {
       );
     }
 
-    // Provision the supplier subscription ACTIVE immediately (BNPL-funded).
+    // Provision the supplier subscription ACTIVE immediately.
     const subscription =
       await this.supplierActivationService.activateForFundedFlow(
         profile.id,
         option.period,
-        { fundingMode: 'EQUITY_BNPL', equityPartnerId: partner.id },
+        {
+          fundingMode: isDirect ? 'DIRECT_EBIRR' : 'EQUITY_BNPL',
+          equityPartnerId: partner.id,
+        },
       );
 
     const now = new Date();
@@ -381,7 +423,8 @@ export class EquityPartnerBnplService {
         metadata: {
           targetOwnerEmail: input.targetOwnerEmail,
           targetOwnerWasCreated: targetUser.requiresGoogleLink === true,
-          settlementModel: 'NET_OF_EQUITY_CREDIT',
+          fundingMode: isDirect ? 'DIRECT_EBIRR' : 'EQUITY_BNPL',
+          settlementModel: isDirect ? 'DIRECT_PAYMENT' : 'NET_OF_EQUITY_CREDIT',
           supplierCompanyName: profile.companyName,
           supplierSubscriptionId: subscription?.id ?? null,
         },
@@ -389,10 +432,20 @@ export class EquityPartnerBnplService {
     );
 
     this.logger.log(
-      `Equity partner ${partner.id} BNPL-funded supplier #${profile.id} for user ${targetUser.id}; due ${endsAt.toISOString()}`,
+      `Equity partner ${partner.id} ${
+        isDirect ? 'direct-paid' : 'BNPL-funded'
+      } supplier #${profile.id} for user ${targetUser.id}; due ${endsAt.toISOString()}`,
     );
 
     await this.ensureCreditLedgerEntry(activation);
+
+    if (isDirect) {
+      const { payment } = await this.chargeActivationViaEbirr(
+        activation,
+        String(input.paymentPhone),
+      );
+      return Object.assign(activation, { payment });
+    }
 
     return activation;
   }
@@ -455,20 +508,48 @@ export class EquityPartnerBnplService {
       );
     }
 
+    const { referenceId, response } = await this.chargeActivationViaEbirr(
+      activation,
+      phoneNumber,
+    );
+    return { referenceId, response };
+  }
+
+  /**
+   * Charge an activation's amount due via Ebirr and stamp the attempt onto the
+   * activation + credit-ledger. Shared by the partner-initiated settlement and
+   * the DIRECT_EBIRR activation path. On payment confirmation the existing Ebirr
+   * webhook (keyed on the `BNPLACT-<id>` reference) flips the row to SETTLED.
+   */
+  private async chargeActivationViaEbirr(
+    activation: EquityPartnerBnplActivation,
+    phoneNumber: string,
+  ): Promise<{
+    referenceId: string;
+    payment: {
+      checkoutUrl: string | null;
+      receiveCode: string | null;
+      providerMessage: string;
+    };
+    response: unknown;
+  }> {
     const referenceId = `${BNPL_REFERENCE_PREFIX}-${activation.id}-${Date.now()}`;
     const invoiceId = `${BNPL_REFERENCE_PREFIX}INV-${activation.id}`;
-
-    const settlementAmountDue =
+    const amountDue =
       Number(activation.settlementAmountDue) > 0
         ? Number(activation.settlementAmountDue)
         : Number(activation.amountDue);
+    const target =
+      activation.accountKind === 'SUPPLIER'
+        ? `supplier #${activation.supplierProfileId}`
+        : `branch ${activation.branchId}`;
 
     const response = await this.ebirrService.initiatePayment({
       phoneNumber,
-      amount: settlementAmountDue.toFixed(2),
+      amount: amountDue.toFixed(2),
       referenceId,
       invoiceId,
-      description: `Equity partner BNPL net settlement for branch ${activation.branchId}`,
+      description: `Equity partner activation payment for ${target}`,
     });
 
     activation.settlementReferenceId = referenceId;
@@ -478,7 +559,7 @@ export class EquityPartnerBnplService {
         referenceId,
         grossAmount: Number(activation.amountDue),
         equityCreditAmount: Number(activation.equityCreditAmount || 0),
-        settlementAmountDue,
+        settlementAmountDue: amountDue,
         startedAt: new Date().toISOString(),
       },
     };
@@ -487,7 +568,45 @@ export class EquityPartnerBnplService {
       settlementReferenceId: referenceId,
     });
 
-    return { referenceId, response };
+    return {
+      referenceId,
+      payment: this.normalizeEbirrResponse(response),
+      response,
+    };
+  }
+
+  /** Normalize an Ebirr initiate-payment response to the checkout shape the
+   *  partner UI renders (mirrors SupplierActivationService). */
+  private normalizeEbirrResponse(paymentResponse: any): {
+    checkoutUrl: string | null;
+    receiveCode: string | null;
+    providerMessage: string;
+  } {
+    const rawCheckoutUrl =
+      typeof paymentResponse?.toPayUrl === 'string'
+        ? paymentResponse.toPayUrl.trim()
+        : null;
+    const checkoutUrl =
+      rawCheckoutUrl && /^https?:\/\//i.test(rawCheckoutUrl)
+        ? rawCheckoutUrl
+        : null;
+    const receiveCode =
+      typeof paymentResponse?.receiverCode === 'string' &&
+      paymentResponse.receiverCode.trim()
+        ? paymentResponse.receiverCode.trim()
+        : typeof paymentResponse?.ussd === 'string' &&
+            paymentResponse.ussd.trim()
+          ? paymentResponse.ussd.trim()
+          : null;
+    const providerMessage =
+      typeof paymentResponse?.responseMsg === 'string'
+        ? paymentResponse.responseMsg
+        : typeof paymentResponse?.message === 'string'
+          ? paymentResponse.message
+          : checkoutUrl || receiveCode
+            ? 'Confirm the payment in Ebirr, then return to the portal.'
+            : 'Confirm the payment request in Ebirr on the selected mobile line.';
+    return { checkoutUrl, receiveCode, providerMessage };
   }
 
   // ---------------------------------------------------------------------------
@@ -691,16 +810,54 @@ export class EquityPartnerBnplService {
     return partner;
   }
 
+  /**
+   * SUPER_ADMINs activate with unlimited slots and need no application. Reuse
+   * their existing partner record (activating it if dormant) or auto-provision a
+   * minimal ACTIVE one so activations have a partner to attach to. bnplCreditLimit
+   * is irrelevant — the capacity gate is skipped for super-admins.
+   */
+  private async resolveSuperAdminPartner(
+    userId: number,
+  ): Promise<EquityPartner> {
+    let partner = await this.partnersRepo.findOne({ where: { userId } });
+    if (!partner) {
+      const user = await this.usersRepo.findOne({ where: { id: userId } });
+      partner = await this.partnersRepo.save(
+        this.partnersRepo.create({
+          userId,
+          displayName:
+            user?.displayName || user?.email || `Platform Admin #${userId}`,
+          phone: String((user as any)?.phone || '').trim() || 'N/A',
+          status: EquityPartnerStatus.ACTIVE,
+          bnplCreditLimit: 0,
+        }),
+      );
+      this.logger.log(
+        `Auto-provisioned equity partner #${partner.id} for SUPER_ADMIN user ${userId}.`,
+      );
+    } else if (partner.status !== EquityPartnerStatus.ACTIVE) {
+      partner.status = EquityPartnerStatus.ACTIVE;
+      partner = await this.partnersRepo.save(partner);
+    }
+    return partner;
+  }
+
   private async assertCreditCapacity(partner: EquityPartner) {
+    // Direct (Ebirr-paid) activations don't draw the credit line, so exclude
+    // them from the outstanding-slot count.
     const outstanding = await this.activationsRepo.count({
       where: {
         equityPartnerId: partner.id,
         status: EquityPartnerBnplStatus.OUTSTANDING,
+        metadata: Raw(
+          (alias) =>
+            `COALESCE(${alias}->>'fundingMode', 'EQUITY_BNPL') <> 'DIRECT_EBIRR'`,
+        ),
       },
     });
     if (outstanding >= partner.bnplCreditLimit) {
       throw new BadRequestException(
-        `BNPL credit limit reached (${outstanding}/${partner.bnplCreditLimit}). Settle an existing activation before creating another.`,
+        `BNPL credit limit reached (${outstanding}/${partner.bnplCreditLimit}). Settle an existing activation before creating another, or pay directly via Ebirr.`,
       );
     }
   }

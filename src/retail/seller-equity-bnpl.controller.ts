@@ -34,6 +34,17 @@ class StartEquityBnplActivationDto implements StartBnplActivationInput {
   @IsIn(['BRANCH', 'SUPPLIER'])
   accountKind?: EquityPartnerBnplAccountKind;
 
+  // 'BNPL' (default) draws equity credit + a slot; 'DIRECT_EBIRR' pays now.
+  @IsOptional()
+  @IsIn(['BNPL', 'DIRECT_EBIRR'])
+  fundingType?: 'BNPL' | 'DIRECT_EBIRR';
+
+  // Ebirr line to charge — required for direct payment.
+  @ValidateIf((o) => o.fundingType === 'DIRECT_EBIRR')
+  @IsString()
+  @IsNotEmpty()
+  paymentPhone?: string;
+
   @IsEmail()
   targetOwnerEmail!: string;
 
@@ -124,13 +135,17 @@ export class SellerEquityBnplController {
     return this.bnplService.listCreditLedgerForPartner(req.user.id);
   }
 
-  /** Create a new BNPL-funded branch on behalf of an end-user. */
+  /** Create a new equity-funded branch/supplier on behalf of an end-user. */
   @Post('activate')
   activate(
     @Req() req: AuthenticatedRequest,
     @Body() dto: StartEquityBnplActivationDto,
   ) {
-    return this.bnplService.startBnplActivation(req.user.id, dto);
+    return this.bnplService.startBnplActivation(
+      req.user.id,
+      dto,
+      req.user.roles,
+    );
   }
 
   /** Initiate Ebirr settlement for an outstanding activation. */

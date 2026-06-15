@@ -8,6 +8,7 @@ import {
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
+import { Branch } from '../../branches/entities/branch.entity';
 import { EquityPartner } from './equity-partner.entity';
 
 export enum EquityPartnerBnplStatus {
@@ -60,6 +61,15 @@ export class EquityPartnerBnplActivation {
   /** Set for accountKind='BRANCH'; null for supplier-funded activations. */
   @Column({ type: 'int', nullable: true })
   branchId?: number | null;
+
+  /**
+   * FK to the funded branch. ON DELETE SET NULL so deleting a branch detaches
+   * (not orphans) the activation — its financial history is preserved. Deleting
+   * a branch with OUTSTANDING activations is blocked upstream in BranchesService.
+   */
+  @ManyToOne(() => Branch, { nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'branchId' })
+  branch?: Branch | null;
 
   /** Set for accountKind='SUPPLIER'; null for branch-funded activations. */
   @Column({ type: 'int', nullable: true })

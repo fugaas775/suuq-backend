@@ -91,23 +91,35 @@ export class BranchesAdminController {
    */
   @Delete('bulk')
   @ApiOperation({ summary: 'Bulk delete branches (admin)' })
-  async bulkDeleteBranches(@Body() body: { ids: number[] }) {
+  async bulkDeleteBranches(
+    @Body() body: { ids: number[]; settleOutstanding?: boolean },
+  ) {
     if (!Array.isArray(body?.ids) || !body.ids.length) {
       throw new BadRequestException('ids must be a non-empty array');
     }
     const deleted = await this.branchesService.bulkDeleteAdminBranches(
       body.ids,
+      { settleOutstanding: body.settleOutstanding === true },
     );
     return { deleted };
   }
 
   /**
    * DELETE /api/admin/branches/:id
+   *
+   * `settleOutstanding=true` first manually settles any OUTSTANDING equity BNPL
+   * activations pinned to the branch, then deletes it. Without the flag, a branch
+   * with outstanding obligations is rejected with a clear error.
    */
   @Delete(':id')
   @ApiOperation({ summary: 'Delete a branch (admin)' })
-  async deleteBranch(@Param('id', ParseIntPipe) id: number) {
-    await this.branchesService.deleteAdminBranch(id);
+  async deleteBranch(
+    @Param('id', ParseIntPipe) id: number,
+    @Query('settleOutstanding') settleOutstanding?: string,
+  ) {
+    await this.branchesService.deleteAdminBranch(id, {
+      settleOutstanding: settleOutstanding === 'true',
+    });
     return { message: `Branch #${id} deleted.` };
   }
 }

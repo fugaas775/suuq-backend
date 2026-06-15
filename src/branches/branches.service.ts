@@ -1,6 +1,10 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { ILike, Repository } from 'typeorm';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
+import { DataSource, EntityManager, ILike, Repository } from 'typeorm';
 import { Branch } from './entities/branch.entity';
 import { CreateBranchDto } from './dto/create-branch.dto';
 import { VendorStore } from '../vendor/entities/vendor-store.entity';
@@ -20,6 +24,8 @@ export class BranchesService {
     private readonly branchesRepository: Repository<Branch>,
     @InjectRepository(VendorStore)
     private readonly vendorStoresRepository: Repository<VendorStore>,
+    @InjectDataSource()
+    private readonly dataSource: DataSource,
   ) {}
 
   async create(dto: CreateBranchDto): Promise<Branch> {
@@ -123,15 +129,113 @@ export class BranchesService {
     }
   }
 
-  async deleteAdminBranch(id: number): Promise<void> {
-    const branch = await this.branchesRepository.findOne({ where: { id } });
-    if (!branch) throw new NotFoundException(`Branch #${id} not found`);
-    await this.branchesRepository.remove(branch);
+  /**
+   * Count OUTSTANDING equity BNPL activations pinned to the given branches.
+   * Deleting such a branch would leave the obligation as a ghost row, so it is
+   * blocked unless the caller opts into manual settlement. Returns a per-branch
+   * breakdown so the caller can build a clear error.
+   */
+  private async findOutstandingObligations(
+    ids: number[],
+  ): Promise<Array<{ branchId: number; count: number }>> {
+    if (!ids.length) return [];
+    const rows = await this.dataSource.query(
+      `SELECT "branchId" AS "branchId", COUNT(*)::int AS count
+         FROM equity_partner_bnpl_activations
+        WHERE status = 'OUTSTANDING' AND "branchId" = ANY($1)
+        GROUP BY "branchId"`,
+      [ids],
+    );
+    return rows.map((r: { branchId: number; count: number }) => ({
+      branchId: Number(r.branchId),
+      count: Number(r.count),
+    }));
   }
 
-  async bulkDeleteAdminBranches(ids: number[]): Promise<number> {
+  /**
+   * Manually settle (mark paid) every OUTSTANDING activation + credit-ledger
+   * entry pinned to a branch — the admin override behind "settle & delete".
+   * Must run before the branch row is removed: the FK nulls `branchId` on delete,
+   * after which these WHERE clauses would no longer match.
+   */
+  private async manuallySettleBranchObligations(
+    manager: EntityManager,
+    branchId: number,
+  ): Promise<void> {
+    const reference = `MANUAL-ADMIN-${branchId}-${Date.now()}`;
+    await manager.query(
+      `UPDATE equity_partner_bnpl_activations
+          SET status = 'SETTLED',
+              "settledAt" = now(),
+              "settlementReferenceId" = COALESCE("settlementReferenceId", $2),
+              metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object(
+                'manualSettlement',
+                jsonb_build_object('by', 'admin', 'at', now()::text, 'reason', 'branch-delete')
+              )
+        WHERE "branchId" = $1 AND status = 'OUTSTANDING'`,
+      [branchId, reference],
+    );
+    await manager.query(
+      `UPDATE equity_partner_bnpl_credit_ledger
+          SET "activationStatus" = 'SETTLED',
+              "settlementReferenceId" = COALESCE("settlementReferenceId", $2)
+        WHERE "branchId" = $1 AND "activationStatus" = 'OUTSTANDING'`,
+      [branchId, reference],
+    );
+  }
+
+  async deleteAdminBranch(
+    id: number,
+    opts: { settleOutstanding?: boolean } = {},
+  ): Promise<void> {
+    const branch = await this.branchesRepository.findOne({ where: { id } });
+    if (!branch) throw new NotFoundException(`Branch #${id} not found`);
+
+    const total = (await this.findOutstandingObligations([id])).reduce(
+      (sum, o) => sum + o.count,
+      0,
+    );
+    if (total > 0 && !opts.settleOutstanding) {
+      throw new BadRequestException(
+        `Branch #${id} has ${total} outstanding BNPL activation(s). ` +
+          `Settle or cancel them first, or delete with manual settlement.`,
+      );
+    }
+
+    await this.dataSource.transaction(async (manager) => {
+      if (opts.settleOutstanding && total > 0) {
+        await this.manuallySettleBranchObligations(manager, id);
+      }
+      // DB-level ON DELETE CASCADE / SET NULL handles all dependents.
+      await manager.delete(Branch, id);
+    });
+  }
+
+  async bulkDeleteAdminBranches(
+    ids: number[],
+    opts: { settleOutstanding?: boolean } = {},
+  ): Promise<number> {
     if (!ids.length) return 0;
-    const result = await this.branchesRepository.delete(ids);
-    return typeof result.affected === 'number' ? result.affected : ids.length;
+
+    const outstanding = await this.findOutstandingObligations(ids);
+    if (outstanding.length && !opts.settleOutstanding) {
+      const detail = outstanding
+        .map((o) => `#${o.branchId} (${o.count})`)
+        .join(', ');
+      throw new BadRequestException(
+        `Cannot delete: branch(es) ${detail} have outstanding BNPL activation(s). ` +
+          `Settle or cancel them first, or delete with manual settlement.`,
+      );
+    }
+
+    return this.dataSource.transaction(async (manager) => {
+      if (opts.settleOutstanding) {
+        for (const o of outstanding) {
+          await this.manuallySettleBranchObligations(manager, o.branchId);
+        }
+      }
+      const result = await manager.delete(Branch, ids);
+      return typeof result.affected === 'number' ? result.affected : ids.length;
+    });
   }
 }
