@@ -44,6 +44,7 @@ export class SuppliersController {
     return this.suppliersService.getForUser(
       req.user?.id,
       extractActiveSupplierId(req),
+      req.user?.roles,
     );
   }
 
@@ -57,6 +58,7 @@ export class SuppliersController {
       req.user?.id,
       dto,
       extractActiveSupplierId(req),
+      req.user?.roles,
     );
   }
 
@@ -66,6 +68,7 @@ export class SuppliersController {
     return this.suppliersService.submitForReview(
       req.user?.id,
       extractActiveSupplierId(req),
+      req.user?.roles,
     );
   }
 

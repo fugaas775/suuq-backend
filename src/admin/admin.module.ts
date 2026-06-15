@@ -63,6 +63,8 @@ import { BranchStaffModule } from '../branch-staff/branch-staff.module';
 import { SellerWorkspaceModule } from '../seller-workspace/seller-workspace.module';
 import { BranchesModule } from '../branches/branches.module';
 import { BranchesAdminController } from './branches.admin.controller';
+import { SuppliersModule } from '../suppliers/suppliers.module';
+import { SuppliersAdminController } from './suppliers.admin.controller';
 
 @Module({
   // 2. Add UsersModule and OrdersModule here
@@ -89,6 +91,7 @@ import { BranchesAdminController } from './branches.admin.controller';
     BranchStaffModule,
     SellerWorkspaceModule,
     BranchesModule,
+    SuppliersModule,
     TypeOrmModule.forFeature([
       Product,
       ProductImpression,
@@ -127,6 +130,7 @@ import { BranchesAdminController } from './branches.admin.controller';
     AdminAdsController,
     AdminMarketingLeadsController,
     BranchesAdminController,
+    SuppliersAdminController,
   ],
   // 3. Remove the services from providers. They are now correctly provided by the imported modules.
   providers: [

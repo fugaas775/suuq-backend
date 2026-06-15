@@ -19,6 +19,7 @@ import {
 import { CreateSupplierOfferDto } from './dto/create-supplier-offer.dto';
 import { UpdateSupplierOfferDto } from './dto/update-supplier-offer.dto';
 import {
+  actorIsSuperAdmin,
   listOwnedSupplierProfileIds,
   resolveActiveOwnedProfile,
 } from '../suppliers/active-supplier.util';
@@ -45,8 +46,13 @@ export class SupplierOffersService {
   async listForUser(
     userId: number | null | undefined,
     activeSupplierId?: number | null,
+    actingRoles?: string[] | null,
   ): Promise<SupplierOffer[]> {
-    const profile = await this.resolveProfileOrThrow(userId, activeSupplierId);
+    const profile = await this.resolveProfileOrThrow(
+      userId,
+      activeSupplierId,
+      actingRoles,
+    );
     return this.offersRepository.find({
       where: { supplierProfileId: profile.id },
       order: { createdAt: 'DESC' },
@@ -58,8 +64,13 @@ export class SupplierOffersService {
     userId: number | null | undefined,
     dto: CreateSupplierOfferDto,
     activeSupplierId?: number | null,
+    actingRoles?: string[] | null,
   ): Promise<SupplierOffer> {
-    const profile = await this.resolveProfileOrThrow(userId, activeSupplierId);
+    const profile = await this.resolveProfileOrThrow(
+      userId,
+      activeSupplierId,
+      actingRoles,
+    );
     const product = await this.productsRepository.findOne({
       where: { id: dto.productId },
     });
@@ -85,8 +96,15 @@ export class SupplierOffersService {
     userId: number | null | undefined,
     id: number,
     dto: UpdateSupplierOfferDto,
+    activeSupplierId?: number | null,
+    actingRoles?: string[] | null,
   ): Promise<SupplierOffer> {
-    const offer = await this.findOwnedOfferOrThrow(userId, id);
+    const offer = await this.findOwnedOfferOrThrow(
+      userId,
+      id,
+      activeSupplierId,
+      actingRoles,
+    );
     if (offer.status === SupplierOfferStatus.ARCHIVED) {
       throw new BadRequestException('Archived offers cannot be edited');
     }
@@ -105,8 +123,15 @@ export class SupplierOffersService {
   async publishForUser(
     userId: number | null | undefined,
     id: number,
+    activeSupplierId?: number | null,
+    actingRoles?: string[] | null,
   ): Promise<SupplierOffer> {
-    const offer = await this.findOwnedOfferOrThrow(userId, id);
+    const offer = await this.findOwnedOfferOrThrow(
+      userId,
+      id,
+      activeSupplierId,
+      actingRoles,
+    );
     const profile = await this.profilesRepository.findOne({
       where: { id: offer.supplierProfileId },
     });
@@ -125,8 +150,15 @@ export class SupplierOffersService {
   async archiveForUser(
     userId: number | null | undefined,
     id: number,
+    activeSupplierId?: number | null,
+    actingRoles?: string[] | null,
   ): Promise<SupplierOffer> {
-    const offer = await this.findOwnedOfferOrThrow(userId, id);
+    const offer = await this.findOwnedOfferOrThrow(
+      userId,
+      id,
+      activeSupplierId,
+      actingRoles,
+    );
     offer.status = SupplierOfferStatus.ARCHIVED;
     return this.offersRepository.save(offer);
   }
@@ -136,6 +168,7 @@ export class SupplierOffersService {
   private async resolveProfileOrThrow(
     userId: number | null | undefined,
     activeSupplierId?: number | null,
+    actingRoles?: string[] | null,
   ): Promise<SupplierProfile> {
     if (!userId) {
       throw new ForbiddenException('Authentication required');
@@ -144,6 +177,7 @@ export class SupplierOffersService {
       this.profilesRepository,
       userId,
       activeSupplierId,
+      actingRoles,
     );
     if (!profile) {
       throw new ForbiddenException(
@@ -156,6 +190,8 @@ export class SupplierOffersService {
   private async findOwnedOfferOrThrow(
     userId: number | null | undefined,
     id: number,
+    activeSupplierId?: number | null,
+    actingRoles?: string[] | null,
   ): Promise<SupplierOffer> {
     if (!userId) {
       throw new ForbiddenException('Authentication required');
@@ -163,6 +199,19 @@ export class SupplierOffersService {
     const offer = await this.offersRepository.findOne({ where: { id } });
     if (!offer) {
       throw new NotFoundException(`Supplier offer ${id} not found`);
+    }
+    // SUPER_ADMIN acting as a supplier owner manages that supplier's offers.
+    // Scope to the explicitly-acted supplier (x-supplier-id) when provided.
+    if (actorIsSuperAdmin(actingRoles)) {
+      if (
+        activeSupplierId &&
+        offer.supplierProfileId !== Number(activeSupplierId)
+      ) {
+        throw new ForbiddenException(
+          'This offer belongs to a different supplier',
+        );
+      }
+      return offer;
     }
     // Multi-supplier: the offer may belong to any of the user's supplier
     // profiles (not just the currently-active one), so check membership against

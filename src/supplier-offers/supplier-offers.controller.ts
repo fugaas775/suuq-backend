@@ -35,6 +35,7 @@ export class SupplierOffersController {
     return this.supplierOffersService.listForUser(
       req.user?.id,
       extractActiveSupplierId(req),
+      req.user?.roles,
     );
   }
 
@@ -45,6 +46,7 @@ export class SupplierOffersController {
       req.user?.id,
       dto,
       extractActiveSupplierId(req),
+      req.user?.roles,
     );
   }
 
@@ -55,7 +57,13 @@ export class SupplierOffersController {
     @Body() dto: UpdateSupplierOfferDto,
     @Req() req,
   ) {
-    return this.supplierOffersService.updateForUser(req.user?.id, id, dto);
+    return this.supplierOffersService.updateForUser(
+      req.user?.id,
+      id,
+      dto,
+      extractActiveSupplierId(req),
+      req.user?.roles,
+    );
   }
 
   @Patch('me/:id/publish')
@@ -63,7 +71,12 @@ export class SupplierOffersController {
     summary: 'Publish an offer (requires an approved supplier profile)',
   })
   publishMine(@Param('id', ParseIntPipe) id: number, @Req() req) {
-    return this.supplierOffersService.publishForUser(req.user?.id, id);
+    return this.supplierOffersService.publishForUser(
+      req.user?.id,
+      id,
+      extractActiveSupplierId(req),
+      req.user?.roles,
+    );
   }
 
   @Patch('me/:id/archive')
@@ -71,6 +84,11 @@ export class SupplierOffersController {
     summary: 'Archive an offer so it no longer surfaces to buyers',
   })
   archiveMine(@Param('id', ParseIntPipe) id: number, @Req() req) {
-    return this.supplierOffersService.archiveForUser(req.user?.id, id);
+    return this.supplierOffersService.archiveForUser(
+      req.user?.id,
+      id,
+      extractActiveSupplierId(req),
+      req.user?.roles,
+    );
   }
 }

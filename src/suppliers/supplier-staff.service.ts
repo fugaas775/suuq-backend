@@ -21,6 +21,7 @@ import {
 } from './entities/supplier-staff-assignment.entity';
 import { CreateSupplierStaffManualAccountDto } from './dto/create-supplier-staff-manual-account.dto';
 import { UpdateSupplierStaffDto } from './dto/update-supplier-staff.dto';
+import { actorIsSuperAdmin } from './active-supplier.util';
 
 /**
  * The branch-INDEPENDENT supplier identity surfaced into the portal session and
@@ -119,6 +120,23 @@ export class SupplierStaffService {
     // Explicit selection → resolve from the full set so the chosen profile wins.
     const preferredId = Number(actor?.supplierId);
     if (Number.isFinite(preferredId) && preferredId > 0) {
+      // SUPER_ADMIN acting as a supplier owner: resolve the explicitly-named
+      // supplier directly (not restricted to owned/assigned profiles) and grant
+      // a manager-level context for full support management. Requires BOTH the
+      // role AND an explicit x-supplier-id, mirroring the branch act-as.
+      if (actorIsSuperAdmin(actor?.roles)) {
+        const profile = await this.profilesRepository.findOne({
+          where: { id: preferredId },
+        });
+        if (profile) {
+          return this.buildSupplierContext(
+            profile,
+            SupplierStaffRole.MANAGER,
+            [],
+            userId,
+          );
+        }
+      }
       const contexts = await this.getSupplierContextsForUser(actor);
       return (
         contexts.find((c) => c.supplierProfileId === preferredId) ||

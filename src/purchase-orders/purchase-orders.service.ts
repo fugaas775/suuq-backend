@@ -304,6 +304,7 @@ export class PurchaseOrdersService {
     const supplierProfileId = await this.resolveActorSupplierProfileId(
       actor.id,
       actor.supplierId,
+      roles,
     );
 
     if (!supplierProfileId) {
@@ -1323,6 +1324,7 @@ export class PurchaseOrdersService {
   private async resolveActorSupplierProfileId(
     userId?: number | null,
     preferredSupplierId?: number | null,
+    actingRoles?: string[] | null,
   ): Promise<number | null> {
     if (!userId) {
       return null;
@@ -1331,6 +1333,7 @@ export class PurchaseOrdersService {
       this.supplierProfilesRepository,
       userId,
       preferredSupplierId,
+      actingRoles,
     );
     return profile?.id ?? null;
   }
