@@ -17,6 +17,12 @@ export enum EquityPartnerBnplStatus {
   CANCELLED = 'CANCELLED',
 }
 
+/**
+ * What an equity partner funded. 'BRANCH' (default, legacy) funds a POS branch;
+ * 'SUPPLIER' funds a branch-independent supplier (wholesaler) account.
+ */
+export type EquityPartnerBnplAccountKind = 'BRANCH' | 'SUPPLIER';
+
 const decimalTransformer = {
   to: (value?: number | null) => value,
   from: (value?: string | null) =>
@@ -44,8 +50,20 @@ export class EquityPartnerBnplActivation {
   @JoinColumn({ name: 'equityPartnerId' })
   partner?: EquityPartner;
 
-  @Column({ type: 'int' })
-  branchId!: number;
+  /**
+   * What was funded. 'BRANCH' rows carry a `branchId`; 'SUPPLIER' rows carry a
+   * `supplierProfileId` and leave `branchId` null.
+   */
+  @Column({ type: 'varchar', length: 16, default: 'BRANCH' })
+  accountKind!: EquityPartnerBnplAccountKind;
+
+  /** Set for accountKind='BRANCH'; null for supplier-funded activations. */
+  @Column({ type: 'int', nullable: true })
+  branchId?: number | null;
+
+  /** Set for accountKind='SUPPLIER'; null for branch-funded activations. */
+  @Column({ type: 'int', nullable: true })
+  supplierProfileId?: number | null;
 
   @Column({ type: 'int', nullable: true })
   tenantSubscriptionId?: number | null;

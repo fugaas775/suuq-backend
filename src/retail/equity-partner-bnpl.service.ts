@@ -25,9 +25,17 @@ import {
   EquityPartnerStatus,
 } from './entities/equity-partner.entity';
 import {
+  EquityPartnerBnplAccountKind,
   EquityPartnerBnplActivation,
   EquityPartnerBnplStatus,
 } from './entities/equity-partner-bnpl-activation.entity';
+import { SupplierProfile } from '../suppliers/entities/supplier-profile.entity';
+import { SupplierOnboardingService } from '../suppliers/supplier-onboarding.service';
+import { SupplierActivationService } from '../suppliers/supplier-activation.service';
+import {
+  SUPPLIER_SUBSCRIPTION_OPTIONS,
+  requireSupplierSubscriptionOption,
+} from '../suppliers/supplier-subscription-pricing';
 import {
   EquityPartnerBnplCreditLedgerEntry,
   EquityPartnerBnplCreditLedgerEntryType,
@@ -51,15 +59,23 @@ import { In } from 'typeorm';
 const BNPL_REFERENCE_PREFIX = 'BNPLACT';
 
 export interface StartBnplActivationInput {
-  branchName: string;
-  serviceFormat: string;
+  /** 'BRANCH' (default) funds a POS branch; 'SUPPLIER' funds a supplier account. */
+  accountKind?: EquityPartnerBnplAccountKind;
   targetOwnerEmail: string;
   period: PosBranchSubscriptionPeriod;
+  // Branch-only fields (required when accountKind !== 'SUPPLIER').
+  branchName?: string;
+  serviceFormat?: string;
   city?: string | null;
   country?: string | null;
   address?: string | null;
   phone?: string | null;
   tinNumber?: string | null;
+  // Supplier-only fields (used when accountKind === 'SUPPLIER').
+  supplierCompanyName?: string;
+  legalName?: string | null;
+  taxId?: string | null;
+  countriesServed?: string[];
 }
 
 @Injectable()
@@ -85,8 +101,12 @@ export class EquityPartnerBnplService {
     private readonly retailTenantsRepo: Repository<RetailTenant>,
     @InjectRepository(TenantModuleEntitlement)
     private readonly moduleEntitlementsRepo: Repository<TenantModuleEntitlement>,
+    @InjectRepository(SupplierProfile)
+    private readonly supplierProfilesRepo: Repository<SupplierProfile>,
     private readonly equityPartnerService: EquityPartnerService,
     private readonly ebirrService: EbirrService,
+    private readonly supplierOnboardingService: SupplierOnboardingService,
+    private readonly supplierActivationService: SupplierActivationService,
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -107,6 +127,12 @@ export class EquityPartnerBnplService {
   ): Promise<EquityPartnerBnplActivation> {
     const partner = await this.requireActivePartnerForUser(partnerUserId);
     await this.assertCreditCapacity(partner);
+
+    const accountKind: EquityPartnerBnplAccountKind =
+      input.accountKind === 'SUPPLIER' ? 'SUPPLIER' : 'BRANCH';
+    if (accountKind === 'SUPPLIER') {
+      return this.activateSupplierAccount(partner, input);
+    }
 
     const option = requirePosBranchSubscriptionOption(input.period);
     const grossAmount = option.amount;
@@ -274,9 +300,110 @@ export class EquityPartnerBnplService {
     return activation;
   }
 
+  /**
+   * BNPL-fund a supplier (wholesaler) account for the target owner. Mirrors the
+   * branch flow: the supplier subscription is provisioned ACTIVE immediately and
+   * the partner settles the net (gross − equity credit) via Ebirr. No recurring
+   * equity referral split is created (suppliers have no branch/tenant to attach
+   * one to) — the partner earns the activation equity credit only.
+   */
+  private async activateSupplierAccount(
+    partner: EquityPartner,
+    input: StartBnplActivationInput,
+  ): Promise<EquityPartnerBnplActivation> {
+    const option = requireSupplierSubscriptionOption(input.period);
+    const grossAmount = option.amount;
+    const equityCreditAmount = this.calculateEquityCreditAmount(grossAmount);
+    const settlementAmountDue = Math.max(0, grossAmount - equityCreditAmount);
+
+    const companyName = String(input.supplierCompanyName || '').trim();
+    if (!companyName) {
+      throw new BadRequestException('supplierCompanyName is required.');
+    }
+
+    const targetUser = await this.findOrCreateTargetOwner(
+      input.targetOwnerEmail,
+    );
+
+    // Find-or-create the supplier profile for the target owner.
+    // createSupplierAccountForUser throws if one already exists, so reuse it.
+    let profile = await this.supplierProfilesRepo.findOne({
+      where: { userId: targetUser.id },
+    });
+    if (!profile) {
+      const created =
+        await this.supplierOnboardingService.createSupplierAccountForUser(
+          targetUser,
+          {
+            companyName,
+            legalName: input.legalName ?? undefined,
+            taxId: input.taxId ?? undefined,
+            countriesServed: input.countriesServed ?? undefined,
+          },
+        );
+      profile = await this.supplierProfilesRepo.findOne({
+        where: { id: created.supplier.supplierProfileId },
+      });
+    }
+    if (!profile) {
+      throw new BadRequestException(
+        'Could not resolve a supplier profile for the target owner.',
+      );
+    }
+
+    // Provision the supplier subscription ACTIVE immediately (BNPL-funded).
+    const subscription =
+      await this.supplierActivationService.activateForFundedFlow(
+        profile.id,
+        option.period,
+        { fundingMode: 'EQUITY_BNPL', equityPartnerId: partner.id },
+      );
+
+    const now = new Date();
+    const endsAt = new Date(now);
+    endsAt.setMonth(endsAt.getMonth() + option.months);
+
+    const activation = await this.activationsRepo.save(
+      this.activationsRepo.create({
+        equityPartnerId: partner.id,
+        accountKind: 'SUPPLIER',
+        branchId: null,
+        supplierProfileId: profile.id,
+        tenantSubscriptionId: null,
+        targetOwnerUserId: targetUser.id,
+        period: option.period,
+        amountDue: grossAmount,
+        equityCreditAmount,
+        settlementAmountDue,
+        currency: option.currency,
+        status: EquityPartnerBnplStatus.OUTSTANDING,
+        dueAt: endsAt,
+        metadata: {
+          targetOwnerEmail: input.targetOwnerEmail,
+          targetOwnerWasCreated: targetUser.requiresGoogleLink === true,
+          settlementModel: 'NET_OF_EQUITY_CREDIT',
+          supplierCompanyName: profile.companyName,
+          supplierSubscriptionId: subscription?.id ?? null,
+        },
+      }),
+    );
+
+    this.logger.log(
+      `Equity partner ${partner.id} BNPL-funded supplier #${profile.id} for user ${targetUser.id}; due ${endsAt.toISOString()}`,
+    );
+
+    await this.ensureCreditLedgerEntry(activation);
+
+    return activation;
+  }
+
   async listOutstandingForPartner(
     partnerUserId: number,
-  ): Promise<Array<EquityPartnerBnplActivation & { branchName: string }>> {
+  ): Promise<
+    Array<
+      EquityPartnerBnplActivation & { branchName: string; displayName: string }
+    >
+  > {
     const partner = await this.requireActivePartnerForUser(partnerUserId);
     const activations = await this.activationsRepo.find({
       where: { equityPartnerId: partner.id },
@@ -286,20 +413,7 @@ export class EquityPartnerBnplService {
       return [];
     }
 
-    const branches = await this.branchesRepo.find({
-      where: { id: In(activations.map((activation) => activation.branchId)) },
-      select: ['id', 'name'],
-    });
-    const branchNameById = new Map(
-      branches.map((branch) => [branch.id, branch.name]),
-    );
-
-    return activations.map((activation) => ({
-      ...activation,
-      branchName:
-        branchNameById.get(activation.branchId) ||
-        `Branch #${activation.branchId}`,
-    }));
+    return this.attachDisplayNames(activations);
   }
 
   async listCreditLedgerForPartner(
@@ -312,7 +426,7 @@ export class EquityPartnerBnplService {
       where: { equityPartnerId: partner.id },
       order: { createdAt: 'DESC' },
     });
-    return this.attachBranchNames(entries);
+    return this.attachDisplayNames(entries);
   }
 
   /**
@@ -398,7 +512,7 @@ export class EquityPartnerBnplService {
       where: { equityPartnerId: partnerId },
       order: { createdAt: 'DESC' },
     });
-    return this.attachBranchNames(entries);
+    return this.attachDisplayNames(entries);
   }
 
   async setCreditLimit(
@@ -539,21 +653,25 @@ export class EquityPartnerBnplService {
   /** Pricing table exposed to the partner UI. BNPL funds the yearly plan only
    *  (monthly BNPL is trivial — credit ≈ settlement), so the monthly option is
    *  filtered out here and rejected by the controller DTO. */
-  getSubscriptionOptions() {
-    return POS_BRANCH_SUBSCRIPTION_OPTIONS.filter(
-      (option) => option.period === 'ONE_YEAR',
-    ).map((option) => ({
-      period: option.period,
-      months: option.months,
-      amount: option.amount,
-      equityCreditAmount: this.calculateEquityCreditAmount(option.amount),
-      settlementAmountDue: Math.max(
-        0,
-        option.amount - this.calculateEquityCreditAmount(option.amount),
-      ),
-      currency: option.currency,
-      label: option.label,
-    }));
+  getSubscriptionOptions(kind: EquityPartnerBnplAccountKind = 'BRANCH') {
+    const source =
+      kind === 'SUPPLIER'
+        ? SUPPLIER_SUBSCRIPTION_OPTIONS
+        : POS_BRANCH_SUBSCRIPTION_OPTIONS;
+    return source
+      .filter((option) => option.period === 'ONE_YEAR')
+      .map((option) => ({
+        period: option.period,
+        months: option.months,
+        amount: option.amount,
+        equityCreditAmount: this.calculateEquityCreditAmount(option.amount),
+        settlementAmountDue: Math.max(
+          0,
+          option.amount - this.calculateEquityCreditAmount(option.amount),
+        ),
+        currency: option.currency,
+        label: option.label,
+      }));
   }
 
   private async requireActivePartnerForUser(
@@ -653,7 +771,9 @@ export class EquityPartnerBnplService {
     const entry = this.creditLedgerRepo.create({
       equityPartnerId: activation.equityPartnerId,
       bnplActivationId: activation.id,
-      branchId: activation.branchId,
+      accountKind: activation.accountKind ?? 'BRANCH',
+      branchId: activation.branchId ?? null,
+      supplierProfileId: activation.supplierProfileId ?? null,
       targetOwnerUserId: activation.targetOwnerUserId,
       period: activation.period,
       entryType: EquityPartnerBnplCreditLedgerEntryType.CREDIT_APPLIED,
@@ -735,25 +855,59 @@ export class EquityPartnerBnplService {
     return created;
   }
 
-  private async attachBranchNames<T extends { branchId: number }>(
+  /**
+   * Resolve a human label for each row regardless of what was funded: a branch
+   * name for accountKind='BRANCH', a supplier company name for 'SUPPLIER'.
+   * `branchName` is kept (mirrors `displayName`) so existing branch-only callers
+   * stay backward-compatible.
+   */
+  private async attachDisplayNames<
+    T extends {
+      accountKind?: EquityPartnerBnplAccountKind;
+      branchId?: number | null;
+      supplierProfileId?: number | null;
+    },
+  >(
     rows: T[],
-  ): Promise<Array<T & { branchName: string }>> {
+  ): Promise<Array<T & { branchName: string; displayName: string }>> {
     if (!rows.length) {
       return [];
     }
 
-    const branches = await this.branchesRepo.find({
-      where: { id: In(rows.map((row) => row.branchId)) },
-      select: ['id', 'name'],
-    });
-    const branchNameById = new Map(
-      branches.map((branch) => [branch.id, branch.name]),
+    const branchIds = rows
+      .map((row) => row.branchId)
+      .filter((id): id is number => Number(id) > 0);
+    const supplierIds = rows
+      .map((row) => row.supplierProfileId)
+      .filter((id): id is number => Number(id) > 0);
+
+    const branches = branchIds.length
+      ? await this.branchesRepo.find({
+          where: { id: In(branchIds) },
+          select: ['id', 'name'],
+        })
+      : [];
+    const branchNameById = new Map(branches.map((b) => [b.id, b.name]));
+
+    const suppliers = supplierIds.length
+      ? await this.supplierProfilesRepo.find({
+          where: { id: In(supplierIds) },
+          select: ['id', 'companyName'],
+        })
+      : [];
+    const supplierNameById = new Map(
+      suppliers.map((s) => [s.id, s.companyName]),
     );
 
-    return rows.map((row) => ({
-      ...row,
-      branchName: branchNameById.get(row.branchId) || `Branch #${row.branchId}`,
-    }));
+    return rows.map((row) => {
+      const isSupplier =
+        row.accountKind === 'SUPPLIER' || Number(row.supplierProfileId) > 0;
+      const displayName = isSupplier
+        ? supplierNameById.get(Number(row.supplierProfileId)) ||
+          `Supplier #${row.supplierProfileId}`
+        : branchNameById.get(Number(row.branchId)) || `Branch #${row.branchId}`;
+      return { ...row, branchName: displayName, displayName };
+    });
   }
 
   private async generateBranchCode(branchName: string): Promise<string> {

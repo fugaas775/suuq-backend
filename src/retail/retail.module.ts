@@ -17,6 +17,8 @@ import { PurchaseOrder } from '../purchase-orders/entities/purchase-order.entity
 import { PurchaseOrderReceiptEvent } from '../purchase-orders/entities/purchase-order-receipt-event.entity';
 import { PurchaseOrdersModule } from '../purchase-orders/purchase-orders.module';
 import { RedisModule } from '../redis/redis.module';
+import { SuppliersModule } from '../suppliers/suppliers.module';
+import { SupplierProfile } from '../suppliers/entities/supplier-profile.entity';
 import { Order } from '../orders/entities/order.entity';
 import { Product } from '../products/entities/product.entity';
 import { User } from '../users/entities/user.entity';
@@ -51,6 +53,7 @@ import { AdminEquityPartnersController } from './admin-equity-partners.controlle
     RedisModule,
     EbirrModule,
     NotificationsModule,
+    SuppliersModule,
     TypeOrmModule.forFeature([
       RetailTenant,
       Category,
@@ -77,6 +80,7 @@ import { AdminEquityPartnersController } from './admin-equity-partners.controlle
       EquityPayout,
       EquityPartnerBnplActivation,
       EquityPartnerBnplCreditLedgerEntry,
+      SupplierProfile,
     ]),
   ],
   controllers: [

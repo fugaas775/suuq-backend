@@ -10,6 +10,7 @@ import {
 } from 'typeorm';
 import { EquityPartner } from './equity-partner.entity';
 import {
+  EquityPartnerBnplAccountKind,
   EquityPartnerBnplActivation,
   EquityPartnerBnplStatus,
 } from './equity-partner-bnpl-activation.entity';
@@ -45,8 +46,17 @@ export class EquityPartnerBnplCreditLedgerEntry {
   @JoinColumn({ name: 'bnplActivationId' })
   activation?: EquityPartnerBnplActivation;
 
-  @Column({ type: 'int' })
-  branchId!: number;
+  /** Mirrors the activation: 'BRANCH' (default) or 'SUPPLIER'. */
+  @Column({ type: 'varchar', length: 16, default: 'BRANCH' })
+  accountKind!: EquityPartnerBnplAccountKind;
+
+  /** Set for branch-funded entries; null for supplier-funded ones. */
+  @Column({ type: 'int', nullable: true })
+  branchId?: number | null;
+
+  /** Set for supplier-funded entries; null for branch-funded ones. */
+  @Column({ type: 'int', nullable: true })
+  supplierProfileId?: number | null;
 
   @Column({ type: 'int' })
   targetOwnerUserId!: number;

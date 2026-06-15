@@ -205,6 +205,81 @@ export class SupplierActivationService {
     return saved;
   }
 
+  /**
+   * Activate a supplier subscription that was paid for out-of-band — currently
+   * an equity partner BNPL-funding the supplier go-live fee. Mirrors the
+   * subscription-create + profile-ACTIVE half of completeEbirrActivationPayment,
+   * but takes the profile + period directly (no Ebirr reference to parse) and
+   * records the funding source in metadata. Idempotent: returns the existing
+   * ACTIVE subscription if the supplier is already live.
+   */
+  async activateForFundedFlow(
+    supplierProfileId: number,
+    period: string | null | undefined,
+    meta?: { fundingMode?: string; equityPartnerId?: number; reason?: string },
+  ): Promise<SupplierSubscription> {
+    const profile = await this.profilesRepository.findOne({
+      where: { id: supplierProfileId },
+    });
+    if (!profile) {
+      throw new NotFoundException(
+        `Supplier profile ${supplierProfileId} not found for activation.`,
+      );
+    }
+
+    const option =
+      findSupplierSubscriptionOption(period) ??
+      requireSupplierSubscriptionOption(DEFAULT_SUPPLIER_PERIOD);
+    const billingInterval =
+      option.period === 'ONE_YEAR'
+        ? TenantBillingInterval.ONE_YEAR
+        : TenantBillingInterval.MONTHLY;
+
+    const latest = await this.subscriptionsRepository.findOne({
+      where: { supplierProfileId },
+      order: { createdAt: 'DESC' },
+    });
+    if (latest?.status === TenantSubscriptionStatus.ACTIVE) {
+      return latest;
+    }
+
+    const now = new Date();
+    const next =
+      latest ?? this.subscriptionsRepository.create({ supplierProfileId });
+    next.supplierProfileId = supplierProfileId;
+    next.planCode = option.planCode;
+    next.status = TenantSubscriptionStatus.ACTIVE;
+    next.billingInterval = billingInterval;
+    next.amount = option.amount;
+    next.amountTotal = option.amount;
+    next.periodMonths = option.months;
+    next.currency = option.currency;
+    next.startsAt = now;
+    next.endsAt = new Date(now.getTime() + option.months * 30 * 86_400_000);
+    next.autoRenew = false;
+    next.metadata = {
+      ...(latest?.metadata || {}),
+      fundingMode: meta?.fundingMode ?? 'EQUITY_BNPL',
+      equityPartnerId: meta?.equityPartnerId,
+      lastActivationPaymentMethod: meta?.fundingMode ?? 'EQUITY_BNPL',
+      lastActivatedAt: now.toISOString(),
+      subscriptionPeriod: option.period,
+      pendingActivation: undefined,
+    };
+    const saved = await this.subscriptionsRepository.save(next);
+
+    profile.activationStatus = SupplierActivationStatus.ACTIVE;
+    profile.lastActivatedAt = now;
+    await this.profilesRepository.save(profile);
+
+    this.logger.log(
+      `Funded-activated supplier #${supplierProfileId} (${option.planCode}) via ${
+        meta?.fundingMode ?? 'EQUITY_BNPL'
+      }`,
+    );
+    return saved;
+  }
+
   /** Lightweight activation/subscription state for the billing page. */
   async getActivationState(user: { id: number; roles?: string[] }) {
     const profile =
