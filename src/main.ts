@@ -72,7 +72,7 @@ async function bootstrap() {
             }
             // Remove user info
             if (event.user) {
-              event.user = { id: event.user?.id } as any;
+              event.user = { id: event.user?.id };
             }
           } catch {
             // ignore
@@ -272,6 +272,10 @@ async function bootstrap() {
       'X-Workspace-Id',
       'x-branch-id',
       'X-Branch-Id',
+      'x-supplier-id',
+      'X-Supplier-Id',
+      'x-active-supplier-id',
+      'X-Active-Supplier-Id',
       'x-vendor-id',
       'X-Vendor-Id',
       'x-portal-surface',
