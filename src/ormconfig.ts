@@ -34,7 +34,10 @@ export const dataSourceOptions: DataSourceOptions = {
   database: process.env.DB_DATABASE,
   entities: [__dirname + '/**/*.entity.{ts,js}'],
   migrations: [__dirname + '/migrations/*.{ts,js}'],
-  synchronize: false,
+  // Schema is migration-managed in every real environment. `DB_SYNCHRONIZE=true`
+  // is a local-only escape hatch to bootstrap an empty dev database from the
+  // entity definitions; never enable it against a shared/prod database.
+  synchronize: process.env.DB_SYNCHRONIZE === 'true',
   migrationsRun: isTestEnv,
   logging: process.env.NODE_ENV === 'development', // Only log queries in development
   maxQueryExecutionTime: parseInt(process.env.DB_SLOW_MS || '300', 10),

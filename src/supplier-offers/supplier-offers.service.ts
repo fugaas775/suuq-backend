@@ -18,6 +18,10 @@ import {
 } from './entities/supplier-offer.entity';
 import { CreateSupplierOfferDto } from './dto/create-supplier-offer.dto';
 import { UpdateSupplierOfferDto } from './dto/update-supplier-offer.dto';
+import {
+  listOwnedSupplierProfileIds,
+  resolveActiveOwnedProfile,
+} from '../suppliers/active-supplier.util';
 
 /**
  * Supplier-facing catalog management. Every operation is scoped to the supplier
@@ -40,8 +44,9 @@ export class SupplierOffersService {
 
   async listForUser(
     userId: number | null | undefined,
+    activeSupplierId?: number | null,
   ): Promise<SupplierOffer[]> {
-    const profile = await this.resolveProfileOrThrow(userId);
+    const profile = await this.resolveProfileOrThrow(userId, activeSupplierId);
     return this.offersRepository.find({
       where: { supplierProfileId: profile.id },
       order: { createdAt: 'DESC' },
@@ -52,8 +57,9 @@ export class SupplierOffersService {
   async createForUser(
     userId: number | null | undefined,
     dto: CreateSupplierOfferDto,
+    activeSupplierId?: number | null,
   ): Promise<SupplierOffer> {
-    const profile = await this.resolveProfileOrThrow(userId);
+    const profile = await this.resolveProfileOrThrow(userId, activeSupplierId);
     const product = await this.productsRepository.findOne({
       where: { id: dto.productId },
     });
@@ -129,13 +135,16 @@ export class SupplierOffersService {
 
   private async resolveProfileOrThrow(
     userId: number | null | undefined,
+    activeSupplierId?: number | null,
   ): Promise<SupplierProfile> {
     if (!userId) {
       throw new ForbiddenException('Authentication required');
     }
-    const profile = await this.profilesRepository.findOne({
-      where: { userId },
-    });
+    const profile = await resolveActiveOwnedProfile(
+      this.profilesRepository,
+      userId,
+      activeSupplierId,
+    );
     if (!profile) {
       throw new ForbiddenException(
         'You must create a supplier profile before managing offers',
@@ -148,12 +157,21 @@ export class SupplierOffersService {
     userId: number | null | undefined,
     id: number,
   ): Promise<SupplierOffer> {
-    const profile = await this.resolveProfileOrThrow(userId);
+    if (!userId) {
+      throw new ForbiddenException('Authentication required');
+    }
     const offer = await this.offersRepository.findOne({ where: { id } });
     if (!offer) {
       throw new NotFoundException(`Supplier offer ${id} not found`);
     }
-    if (offer.supplierProfileId !== profile.id) {
+    // Multi-supplier: the offer may belong to any of the user's supplier
+    // profiles (not just the currently-active one), so check membership against
+    // all owned profiles rather than a single resolved profile.
+    const ownedProfileIds = await listOwnedSupplierProfileIds(
+      this.profilesRepository,
+      userId,
+    );
+    if (!ownedProfileIds.includes(offer.supplierProfileId)) {
       throw new ForbiddenException('You can only manage your own offers');
     }
     return offer;

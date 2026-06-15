@@ -17,6 +17,7 @@ import { SupplierStaffService } from './supplier-staff.service';
 import { CreateSupplierStaffManualAccountDto } from './dto/create-supplier-staff-manual-account.dto';
 import { ChangeSupplierStaffPasswordDto } from './dto/change-supplier-staff-password.dto';
 import { UpdateSupplierStaffDto } from './dto/update-supplier-staff.dto';
+import { extractActiveSupplierId } from './active-supplier.util';
 
 /**
  * Supplier team management — the wholesaler-side mirror of branch staff.
@@ -35,6 +36,7 @@ export class SupplierStaffController {
     return this.supplierStaffService.listStaff({
       id: req.user?.id,
       roles: req.user?.roles,
+      supplierId: extractActiveSupplierId(req),
     });
   }
 
@@ -44,7 +46,11 @@ export class SupplierStaffController {
   })
   create(@Body() dto: CreateSupplierStaffManualAccountDto, @Req() req) {
     return this.supplierStaffService.createManualAccount(
-      { id: req.user?.id, roles: req.user?.roles },
+      {
+        id: req.user?.id,
+        roles: req.user?.roles,
+        supplierId: extractActiveSupplierId(req),
+      },
       dto,
     );
   }
@@ -57,7 +63,11 @@ export class SupplierStaffController {
     @Req() req,
   ) {
     return this.supplierStaffService.updateStaff(
-      { id: req.user?.id, roles: req.user?.roles },
+      {
+        id: req.user?.id,
+        roles: req.user?.roles,
+        supplierId: extractActiveSupplierId(req),
+      },
       id,
       dto,
     );
@@ -71,7 +81,11 @@ export class SupplierStaffController {
     @Req() req,
   ) {
     return this.supplierStaffService.changeStaffPassword(
-      { id: req.user?.id, roles: req.user?.roles },
+      {
+        id: req.user?.id,
+        roles: req.user?.roles,
+        supplierId: extractActiveSupplierId(req),
+      },
       id,
       dto.newPassword,
     );
@@ -81,7 +95,11 @@ export class SupplierStaffController {
   @ApiOperation({ summary: 'Deactivate a teammate' })
   remove(@Param('id', ParseIntPipe) id: number, @Req() req) {
     return this.supplierStaffService.removeStaff(
-      { id: req.user?.id, roles: req.user?.roles },
+      {
+        id: req.user?.id,
+        roles: req.user?.roles,
+        supplierId: extractActiveSupplierId(req),
+      },
       id,
     );
   }

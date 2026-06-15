@@ -1,4 +1,4 @@
-import { ConflictException, Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { UserRole } from '../auth/roles.enum';
@@ -46,15 +46,10 @@ export class SupplierOnboardingService {
     user: User,
     dto: CreateSupplierWorkspaceDto,
   ): Promise<CreateSupplierAccountResult> {
-    const existing = await this.profilesRepository.findOne({
-      where: { userId: user.id },
-    });
-    if (existing) {
-      throw new ConflictException(
-        'This account already has a supplier profile.',
-      );
-    }
-
+    // Multi-supplier: an account may own several supplier profiles, so we no
+    // longer reject when one already exists. Each created profile is independent
+    // (its own catalog, billing, staff and inbox) and selectable via the portal
+    // supplier switcher.
     const profile = await this.profilesRepository.save(
       this.profilesRepository.create({
         userId: user.id,

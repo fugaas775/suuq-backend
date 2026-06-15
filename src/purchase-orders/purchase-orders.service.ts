@@ -32,6 +32,10 @@ import {
   SupplierActivationStatus,
   SupplierProfile,
 } from '../suppliers/entities/supplier-profile.entity';
+import {
+  listOwnedSupplierProfileIds,
+  resolveActiveOwnedProfile,
+} from '../suppliers/active-supplier.util';
 import { BrowseAvailableOffersQueryDto } from './dto/browse-available-offers-query.dto';
 import { CreatePurchaseOrderDto } from './dto/create-purchase-order.dto';
 import { ApprovePurchaseOrderReceiptDiscrepancyDto } from './dto/approve-purchase-order-receipt-discrepancy.dto';
@@ -69,6 +73,8 @@ type PurchaseOrderActorContext = {
   email?: string | null;
   roles?: string[];
   branchId?: number;
+  /** Multi-supplier: the supplier profile the caller is currently operating. */
+  supplierId?: number | null;
 };
 
 const PURCHASE_ORDER_TRANSITIONS: Record<
@@ -297,6 +303,7 @@ export class PurchaseOrdersService {
     const roles = actor.roles ?? [];
     const supplierProfileId = await this.resolveActorSupplierProfileId(
       actor.id,
+      actor.supplierId,
     );
 
     if (!supplierProfileId) {
@@ -822,12 +829,17 @@ export class PurchaseOrdersService {
     const purchaseOrder = await this.findOneById(id);
 
     if (!isSupportAdmin) {
-      const supplierProfileId = await this.resolveActorSupplierProfileId(
-        actor.id,
-      );
+      // Multi-supplier: the user may own several supplier accounts, so authorize
+      // against ALL of them — the PO must be addressed to one the user owns.
+      const ownedSupplierProfileIds = actor.id
+        ? await listOwnedSupplierProfileIds(
+            this.supplierProfilesRepository,
+            actor.id,
+          )
+        : [];
       if (
-        !supplierProfileId ||
-        purchaseOrder.supplierProfileId !== supplierProfileId
+        !purchaseOrder.supplierProfileId ||
+        !ownedSupplierProfileIds.includes(purchaseOrder.supplierProfileId)
       ) {
         throw new ForbiddenException(
           'You can only update purchase orders addressed to your supplier account',
@@ -1310,14 +1322,16 @@ export class PurchaseOrdersService {
    */
   private async resolveActorSupplierProfileId(
     userId?: number | null,
+    preferredSupplierId?: number | null,
   ): Promise<number | null> {
     if (!userId) {
       return null;
     }
-    const profile = await this.supplierProfilesRepository.findOne({
-      where: { userId },
-      select: { id: true },
-    });
+    const profile = await resolveActiveOwnedProfile(
+      this.supplierProfilesRepository,
+      userId,
+      preferredSupplierId,
+    );
     return profile?.id ?? null;
   }
 

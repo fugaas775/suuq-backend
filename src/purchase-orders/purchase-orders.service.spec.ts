@@ -174,7 +174,8 @@ describe('PurchaseOrdersService — supplier inbox', () => {
   describe('findIncoming', () => {
     it('scopes to the caller’s resolved supplier profile and excludes drafts', async () => {
       const find = jest.fn().mockResolvedValue([{ id: 1 }]);
-      const supplierRepo = { findOne: jest.fn().mockResolvedValue({ id: 55 }) };
+      const supplierFind = jest.fn().mockResolvedValue([{ id: 55 }]);
+      const supplierRepo = { find: supplierFind };
       const service = makeSvc({ poRepo: { find }, supplierRepo });
 
       const result = await service.findIncoming({
@@ -182,9 +183,9 @@ describe('PurchaseOrdersService — supplier inbox', () => {
         roles: ['SUPPLIER_ACCOUNT'],
       });
 
-      expect(supplierRepo.findOne).toHaveBeenCalledWith({
+      expect(supplierFind).toHaveBeenCalledWith({
         where: { userId: 9 },
-        select: { id: true },
+        order: { id: 'ASC' },
       });
       const where = find.mock.calls[0][0].where;
       expect(where.supplierProfileId).toBe(55);
@@ -196,7 +197,7 @@ describe('PurchaseOrdersService — supplier inbox', () => {
       const find = jest.fn();
       const service = makeSvc({
         poRepo: { find },
-        supplierRepo: { findOne: jest.fn().mockResolvedValue(null) },
+        supplierRepo: { find: jest.fn().mockResolvedValue([]) },
       });
 
       const result = await service.findIncoming({
@@ -212,7 +213,7 @@ describe('PurchaseOrdersService — supplier inbox', () => {
       const find = jest.fn().mockResolvedValue([]);
       const service = makeSvc({
         poRepo: { find },
-        supplierRepo: { findOne: jest.fn().mockResolvedValue(null) },
+        supplierRepo: { find: jest.fn().mockResolvedValue([]) },
       });
 
       await service.findIncoming({ id: 1, roles: ['SUPER_ADMIN'] });
@@ -241,7 +242,7 @@ describe('PurchaseOrdersService — supplier inbox', () => {
           .fn()
           .mockResolvedValue({ id: 10, supplierProfileId: 999 }),
       };
-      const supplierRepo = { findOne: jest.fn().mockResolvedValue({ id: 55 }) };
+      const supplierRepo = { find: jest.fn().mockResolvedValue([{ id: 55 }]) };
       const service = makeSvc({ poRepo, supplierRepo });
 
       await expect(
@@ -257,7 +258,7 @@ describe('PurchaseOrdersService — supplier inbox', () => {
       const poRepo = {
         findOne: jest.fn().mockResolvedValue({ id: 10, supplierProfileId: 55 }),
       };
-      const supplierRepo = { findOne: jest.fn().mockResolvedValue({ id: 55 }) };
+      const supplierRepo = { find: jest.fn().mockResolvedValue([{ id: 55 }]) };
       const service = makeSvc({ poRepo, supplierRepo });
       const updateSpy = jest
         .spyOn(service, 'updateStatus')

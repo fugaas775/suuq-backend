@@ -15,6 +15,7 @@ import { RolesGuard } from '../auth/roles.guard';
 import { SupplierOffersService } from './supplier-offers.service';
 import { CreateSupplierOfferDto } from './dto/create-supplier-offer.dto';
 import { UpdateSupplierOfferDto } from './dto/update-supplier-offer.dto';
+import { extractActiveSupplierId } from '../suppliers/active-supplier.util';
 
 /**
  * Supplier catalog management. All routes are scoped to the acting user's own
@@ -31,13 +32,20 @@ export class SupplierOffersController {
   @Get('me')
   @ApiOperation({ summary: 'List the signed-in supplier’s offers' })
   listMine(@Req() req) {
-    return this.supplierOffersService.listForUser(req.user?.id);
+    return this.supplierOffersService.listForUser(
+      req.user?.id,
+      extractActiveSupplierId(req),
+    );
   }
 
   @Post('me')
   @ApiOperation({ summary: 'Create a draft offer for the signed-in supplier' })
   createMine(@Body() dto: CreateSupplierOfferDto, @Req() req) {
-    return this.supplierOffersService.createForUser(req.user?.id, dto);
+    return this.supplierOffersService.createForUser(
+      req.user?.id,
+      dto,
+      extractActiveSupplierId(req),
+    );
   }
 
   @Patch('me/:id')

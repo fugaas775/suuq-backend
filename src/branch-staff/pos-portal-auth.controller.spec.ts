@@ -53,6 +53,7 @@ describe('PosPortalAuthController', () => {
 
   const supplierStaffServiceMock = {
     getSupplierContextForUser: jest.fn(),
+    getSupplierContextsForUser: jest.fn().mockResolvedValue([]),
   };
 
   const supplierOnboardingServiceMock = {

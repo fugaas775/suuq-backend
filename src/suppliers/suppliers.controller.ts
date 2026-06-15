@@ -20,6 +20,7 @@ import { CreateSupplierProfileDto } from './dto/create-supplier-profile.dto';
 import { UpdateSupplierProfileDto } from './dto/update-supplier-profile.dto';
 import { RejectSupplierProfileDto } from './dto/reject-supplier-profile.dto';
 import { ListSupplierProfilesQueryDto } from './dto/list-supplier-profiles-query.dto';
+import { extractActiveSupplierId } from './active-supplier.util';
 
 @ApiTags('B2B Suppliers')
 @Controller('hub/v1/suppliers')
@@ -40,7 +41,10 @@ export class SuppliersController {
   @Get('me')
   @ApiOperation({ summary: 'Get the signed-in user’s supplier profile' })
   getMine(@Req() req) {
-    return this.suppliersService.getForUser(req.user?.id);
+    return this.suppliersService.getForUser(
+      req.user?.id,
+      extractActiveSupplierId(req),
+    );
   }
 
   @Patch('me')
@@ -49,13 +53,20 @@ export class SuppliersController {
       'Update the signed-in user’s supplier profile (draft / rejected only)',
   })
   updateMine(@Body() dto: UpdateSupplierProfileDto, @Req() req) {
-    return this.suppliersService.updateForUser(req.user?.id, dto);
+    return this.suppliersService.updateForUser(
+      req.user?.id,
+      dto,
+      extractActiveSupplierId(req),
+    );
   }
 
   @Post('me/submit')
   @ApiOperation({ summary: 'Submit the supplier profile for admin review' })
   submitMine(@Req() req) {
-    return this.suppliersService.submitForReview(req.user?.id);
+    return this.suppliersService.submitForReview(
+      req.user?.id,
+      extractActiveSupplierId(req),
+    );
   }
 
   // ---- Admin review --------------------------------------------------------

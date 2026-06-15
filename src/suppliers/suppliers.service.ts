@@ -1,6 +1,5 @@
 import {
   BadRequestException,
-  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -12,6 +11,7 @@ import {
   SupplierOnboardingStatus,
   SupplierProfile,
 } from './entities/supplier-profile.entity';
+import { resolveActiveOwnedProfile } from './active-supplier.util';
 import { CreateSupplierProfileDto } from './dto/create-supplier-profile.dto';
 import { UpdateSupplierProfileDto } from './dto/update-supplier-profile.dto';
 import { RejectSupplierProfileDto } from './dto/reject-supplier-profile.dto';
@@ -44,14 +44,8 @@ export class SuppliersService {
     if (!userId) {
       throw new ForbiddenException('Authentication required');
     }
-    const existing = await this.profilesRepository.findOne({
-      where: { userId },
-    });
-    if (existing) {
-      throw new ConflictException(
-        'A supplier profile already exists for this account',
-      );
-    }
+    // Multi-supplier: an account may own several supplier profiles, so creating
+    // another is allowed. Each is independent and selectable via the switcher.
     const profile = this.profilesRepository.create({
       userId,
       companyName: dto.companyName,
@@ -67,13 +61,16 @@ export class SuppliersService {
 
   async getForUser(
     userId: number | null | undefined,
+    activeSupplierId?: number | null,
   ): Promise<SupplierProfile> {
     if (!userId) {
       throw new ForbiddenException('Authentication required');
     }
-    const profile = await this.profilesRepository.findOne({
-      where: { userId },
-    });
+    const profile = await resolveActiveOwnedProfile(
+      this.profilesRepository,
+      userId,
+      activeSupplierId,
+    );
     if (!profile) {
       throw new NotFoundException(
         'No supplier profile exists for this account',
@@ -85,8 +82,9 @@ export class SuppliersService {
   async updateForUser(
     userId: number | null | undefined,
     dto: UpdateSupplierProfileDto,
+    activeSupplierId?: number | null,
   ): Promise<SupplierProfile> {
-    const profile = await this.getForUser(userId);
+    const profile = await this.getForUser(userId, activeSupplierId);
     this.assertEditable(profile);
 
     if (dto.companyName !== undefined) profile.companyName = dto.companyName;
@@ -102,8 +100,9 @@ export class SuppliersService {
 
   async submitForReview(
     userId: number | null | undefined,
+    activeSupplierId?: number | null,
   ): Promise<SupplierProfile> {
-    const profile = await this.getForUser(userId);
+    const profile = await this.getForUser(userId, activeSupplierId);
     if (!EDITABLE_STATES.includes(profile.onboardingStatus)) {
       throw new BadRequestException(
         'Only a draft or rejected profile can be submitted for review',

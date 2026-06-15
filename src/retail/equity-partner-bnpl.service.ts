@@ -370,10 +370,12 @@ export class EquityPartnerBnplService {
       { isSuperAdmin },
     );
 
-    // Find-or-create the supplier profile for the target owner.
-    // createSupplierAccountForUser throws if one already exists, so reuse it.
+    // Find-or-create the supplier profile for the target owner. The equity flow
+    // funds one supplier per owner, so reuse an existing profile rather than
+    // provisioning a duplicate (owners may hold several via the supplier portal).
     let profile = await this.supplierProfilesRepo.findOne({
       where: { userId: targetUser.id },
+      order: { id: 'ASC' },
     });
     if (!profile) {
       const created =

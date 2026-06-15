@@ -39,7 +39,16 @@ export interface SupplierContext {
   canPublishOffers: boolean;
 }
 
-type Actor = { id?: number | null; roles?: string[] };
+type Actor = {
+  id?: number | null;
+  roles?: string[];
+  /**
+   * Multi-supplier: the supplier profile the caller is currently operating
+   * (from the `x-supplier-id` header). When set and the user is a member of it,
+   * context resolution prefers it over the account's primary supplier.
+   */
+  supplierId?: number | null;
+};
 
 /**
  * Team-roster row returned to the supplier staff surface. Deliberately omits the
@@ -72,45 +81,18 @@ export class SupplierStaffService {
     private readonly usersRepository: Repository<User>,
   ) {}
 
-  /**
-   * Resolve the supplier identity for a user, independent of any branch.
-   * Prefers an explicit staff assignment; falls back to a directly-owned
-   * profile (legacy profiles created before staff assignments existed).
-   * Returns null when the user has no supplier account.
-   */
-  async getSupplierContextForUser(
-    actor: Actor,
-  ): Promise<SupplierContext | null> {
-    const userId = Number(actor?.id);
-    if (!Number.isFinite(userId) || userId <= 0) return null;
-
-    const assignment = await this.assignmentsRepository.findOne({
-      where: { userId, isActive: true },
-      relations: { supplierProfile: true },
-      order: { role: 'ASC' }, // MANAGER < OPERATOR alphabetically → prefer MANAGER
-    });
-
-    let profile = assignment?.supplierProfile ?? null;
-    let role = assignment?.role ?? null;
-    let permissions = assignment?.permissions ?? [];
-
-    if (!profile) {
-      // Legacy / owner-without-assignment fallback.
-      profile = await this.profilesRepository.findOne({ where: { userId } });
-      if (!profile) return null;
-      role = SupplierStaffRole.MANAGER;
-      permissions = [];
-    }
-
-    const isOwner = profile.userId === userId;
-    const resolvedRole = role ?? SupplierStaffRole.MANAGER;
-    const managerLevel = resolvedRole === SupplierStaffRole.MANAGER;
-
+  private buildSupplierContext(
+    profile: SupplierProfile,
+    role: SupplierStaffRole,
+    permissions: string[],
+    userId: number,
+  ): SupplierContext {
+    const managerLevel = role === SupplierStaffRole.MANAGER;
     return {
       supplierProfileId: profile.id,
       companyName: profile.companyName,
-      role: resolvedRole,
-      isOwner,
+      role,
+      isOwner: profile.userId === userId,
       activationStatus: profile.activationStatus,
       onboardingStatus: profile.onboardingStatus,
       permissions,
@@ -119,6 +101,110 @@ export class SupplierStaffService {
         profile.activationStatus === SupplierActivationStatus.ACTIVE &&
         profile.isActive,
     };
+  }
+
+  /**
+   * Resolve the ACTIVE supplier identity for a user, independent of any branch.
+   * With multi-supplier an account may belong to several supplier profiles; when
+   * the caller names one (`actor.supplierId`) and is a member of it, that one is
+   * returned. Otherwise this prefers an explicit staff assignment and falls back
+   * to a directly-owned profile (legacy). Returns null when the user has none.
+   */
+  async getSupplierContextForUser(
+    actor: Actor,
+  ): Promise<SupplierContext | null> {
+    const userId = Number(actor?.id);
+    if (!Number.isFinite(userId) || userId <= 0) return null;
+
+    // Explicit selection → resolve from the full set so the chosen profile wins.
+    const preferredId = Number(actor?.supplierId);
+    if (Number.isFinite(preferredId) && preferredId > 0) {
+      const contexts = await this.getSupplierContextsForUser(actor);
+      return (
+        contexts.find((c) => c.supplierProfileId === preferredId) ||
+        contexts[0] ||
+        null
+      );
+    }
+
+    // Default (single active) path — the account's primary supplier.
+    const assignment = await this.assignmentsRepository.findOne({
+      where: { userId, isActive: true },
+      relations: { supplierProfile: true },
+      order: { role: 'ASC' }, // MANAGER < OPERATOR alphabetically → prefer MANAGER
+    });
+
+    if (assignment?.supplierProfile) {
+      return this.buildSupplierContext(
+        assignment.supplierProfile,
+        assignment.role,
+        assignment.permissions ?? [],
+        userId,
+      );
+    }
+
+    // Legacy / owner-without-assignment fallback.
+    const profile = await this.profilesRepository.findOne({
+      where: { userId },
+    });
+    if (!profile) return null;
+    return this.buildSupplierContext(
+      profile,
+      SupplierStaffRole.MANAGER,
+      [],
+      userId,
+    );
+  }
+
+  /**
+   * Resolve EVERY supplier identity a user can act as — their owned profiles
+   * plus any staff assignments — deduped by profile and ordered owner-first then
+   * by id. Powers the portal's supplier switcher (availableSuppliers).
+   */
+  async getSupplierContextsForUser(actor: Actor): Promise<SupplierContext[]> {
+    const userId = Number(actor?.id);
+    if (!Number.isFinite(userId) || userId <= 0) return [];
+
+    const assignments = await this.assignmentsRepository.find({
+      where: { userId, isActive: true },
+      relations: { supplierProfile: true },
+      order: { role: 'ASC' }, // MANAGER < OPERATOR alphabetically → prefer MANAGER
+    });
+
+    const byProfileId = new Map<number, SupplierContext>();
+    const add = (
+      profile: SupplierProfile | null | undefined,
+      role: SupplierStaffRole,
+      permissions: string[],
+    ) => {
+      if (!profile || byProfileId.has(profile.id)) return;
+      byProfileId.set(
+        profile.id,
+        this.buildSupplierContext(profile, role, permissions, userId),
+      );
+    };
+
+    for (const assignment of assignments) {
+      add(
+        assignment.supplierProfile,
+        assignment.role,
+        assignment.permissions ?? [],
+      );
+    }
+
+    // Owned profiles without an active assignment (legacy, or freshly created
+    // before the owner assignment landed) — surface them as owner/manager.
+    const ownedProfiles = await this.profilesRepository.find({
+      where: { userId },
+    });
+    for (const profile of ownedProfiles) {
+      add(profile, SupplierStaffRole.MANAGER, []);
+    }
+
+    return [...byProfileId.values()].sort((a, b) => {
+      if (a.isOwner !== b.isOwner) return a.isOwner ? -1 : 1;
+      return a.supplierProfileId - b.supplierProfileId;
+    });
   }
 
   /**

@@ -1,6 +1,5 @@
 import {
   BadRequestException,
-  ConflictException,
   ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
@@ -23,12 +22,19 @@ describe('SuppliersService', () => {
       ).rejects.toBeInstanceOf(ForbiddenException);
     });
 
-    it('rejects a duplicate profile', async () => {
-      const repo = { findOne: jest.fn().mockResolvedValue({ id: 1 }) };
+    it('allows creating another profile for the same account (multi-supplier)', async () => {
+      const repo = {
+        findOne: jest.fn().mockResolvedValue({ id: 1 }),
+        find: jest.fn().mockResolvedValue([{ id: 1 }]),
+        create: (v: any) => v,
+        save: jest.fn(async (v: any) => ({ id: 11, ...v })),
+      };
       const service = makeService({ repo });
-      await expect(
-        service.createForUser(7, { companyName: 'X' } as any),
-      ).rejects.toBeInstanceOf(ConflictException);
+      const result = await service.createForUser(7, {
+        companyName: 'Second Co',
+      });
+      expect(result.userId).toBe(7);
+      expect(result.companyName).toBe('Second Co');
     });
 
     it('creates a DRAFT profile bound to the user', async () => {
@@ -51,11 +57,13 @@ describe('SuppliersService', () => {
   describe('updateForUser', () => {
     it('blocks edits once pending review', async () => {
       const repo = {
-        findOne: jest.fn().mockResolvedValue({
-          id: 1,
-          userId: 7,
-          onboardingStatus: 'PENDING_REVIEW',
-        }),
+        find: jest.fn().mockResolvedValue([
+          {
+            id: 1,
+            userId: 7,
+            onboardingStatus: 'PENDING_REVIEW',
+          },
+        ]),
       };
       const service = makeService({ repo });
       await expect(
@@ -71,7 +79,7 @@ describe('SuppliersService', () => {
         companyName: 'Old',
       };
       const repo = {
-        findOne: jest.fn().mockResolvedValue(profile),
+        find: jest.fn().mockResolvedValue([profile]),
         save: jest.fn(async (v: any) => v),
       };
       const service = makeService({ repo });
@@ -84,7 +92,7 @@ describe('SuppliersService', () => {
     it('moves a DRAFT to PENDING_REVIEW', async () => {
       const profile = { id: 1, userId: 7, onboardingStatus: 'DRAFT' };
       const repo = {
-        findOne: jest.fn().mockResolvedValue(profile),
+        find: jest.fn().mockResolvedValue([profile]),
         save: jest.fn(async (v: any) => v),
       };
       const service = makeService({ repo });
@@ -96,11 +104,13 @@ describe('SuppliersService', () => {
 
     it('refuses to submit an already-approved profile', async () => {
       const repo = {
-        findOne: jest.fn().mockResolvedValue({
-          id: 1,
-          userId: 7,
-          onboardingStatus: 'APPROVED',
-        }),
+        find: jest.fn().mockResolvedValue([
+          {
+            id: 1,
+            userId: 7,
+            onboardingStatus: 'APPROVED',
+          },
+        ]),
       };
       const service = makeService({ repo });
       await expect(service.submitForReview(7)).rejects.toBeInstanceOf(

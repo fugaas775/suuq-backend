@@ -27,6 +27,7 @@ import { SupplierStatusUpdateDto } from './dto/supplier-status-update.dto';
 import { UpdatePurchaseOrderStatusDto } from './dto/update-purchase-order-status.dto';
 import { PurchaseOrdersService } from './purchase-orders.service';
 import { SupplierAnalyticsService } from './supplier-analytics.service';
+import { extractActiveSupplierId } from '../suppliers/active-supplier.util';
 import { PurchaseOrderReevaluationResponseDto } from '../admin/dto/purchase-order-response.dto';
 
 @ApiTags('B2B Purchase Orders')
@@ -88,6 +89,7 @@ export class PurchaseOrdersController {
       email: req.user?.email ?? null,
       roles: req.user?.roles ?? [],
       branchId: query.branchId,
+      supplierId: extractActiveSupplierId(req),
     });
   }
 
@@ -199,6 +201,7 @@ export class PurchaseOrdersController {
       email: req.user?.email ?? null,
       roles: req.user?.roles ?? [],
       branchId: query.branchId,
+      supplierId: extractActiveSupplierId(req),
     });
   }
 

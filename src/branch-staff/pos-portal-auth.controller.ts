@@ -59,6 +59,7 @@ import { SupplierOnboardingService } from '../suppliers/supplier-onboarding.serv
 import { SupplierActivationService } from '../suppliers/supplier-activation.service';
 import { CreateSupplierWorkspaceDto } from '../suppliers/dto/create-supplier-workspace.dto';
 import { StartSupplierActivationDto } from '../suppliers/dto/start-supplier-activation.dto';
+import { extractActiveSupplierId } from '../suppliers/active-supplier.util';
 import {
   PosPortalAccessDeniedResponseDto,
   PosPortalAuthResponseDto,
@@ -759,7 +760,11 @@ export class PosPortalAuthController {
     @Req() req: AuthenticatedRequest,
   ) {
     return this.supplierActivationService.startEbirrActivationPayment(
-      { id: req.user.id, roles: req.user.roles },
+      {
+        id: req.user.id,
+        roles: req.user.roles,
+        supplierId: extractActiveSupplierId(req),
+      },
       dto,
     );
   }
@@ -775,6 +780,7 @@ export class PosPortalAuthController {
     return this.supplierActivationService.getActivationState({
       id: req.user.id,
       roles: req.user.roles,
+      supplierId: extractActiveSupplierId(req),
     });
   }
 
@@ -849,16 +855,36 @@ export class PosPortalAuthController {
     source: PortalAuthSource,
     isNewUser = false,
   ) {
-    const [allBranches, supplier] = await Promise.all([
+    // Multi-supplier: an account may own several supplier profiles. Resolve the
+    // full set for the switcher, and pick the active one from the caller's
+    // `x-supplier-id` selection (falling back to the primary supplier).
+    const preferredSupplierId = extractActiveSupplierId(req);
+    const [allBranches, resolvedSuppliers] = await Promise.all([
       this.branchStaffService.getPosBranchSummariesForUser({
         id: user.id,
         roles: user.roles,
       }),
-      this.supplierStaffService.getSupplierContextForUser({
+      this.supplierStaffService.getSupplierContextsForUser({
         id: user.id,
         roles: user.roles,
       }),
     ]);
+    const availableSuppliers = Array.isArray(resolvedSuppliers)
+      ? resolvedSuppliers
+      : [];
+    const supplier =
+      (preferredSupplierId &&
+        availableSuppliers.find(
+          (s) => s.supplierProfileId === preferredSupplierId,
+        )) ||
+      availableSuppliers[0] ||
+      null;
+    const supplierSelection = {
+      supplier,
+      availableSuppliers,
+      activeSupplierId: supplier?.supplierProfileId ?? null,
+      requiresSupplierSelection: availableSuppliers.length > 1,
+    };
 
     // Shift-window enforcement: operators with shift assignments may only
     // log in during their active shift window. Managers/owners are exempt.
@@ -900,7 +926,7 @@ export class PosPortalAuthController {
       if (supplier) {
         return {
           branches: [],
-          supplier,
+          ...supplierSelection,
           defaultBranchId: null,
           requiresBranchSelection: false,
           portalKey: 'pos',
@@ -982,7 +1008,7 @@ export class PosPortalAuthController {
 
     return {
       branches,
-      supplier: supplier ?? null,
+      ...supplierSelection,
       defaultBranchId: branches.length === 1 ? branches[0].branchId : null,
       requiresBranchSelection: branches.length > 1,
       portalKey: 'pos',

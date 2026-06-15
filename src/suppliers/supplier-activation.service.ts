@@ -64,7 +64,7 @@ export class SupplierActivationService {
   }
 
   async startEbirrActivationPayment(
-    user: { id: number; roles?: string[] },
+    user: { id: number; roles?: string[]; supplierId?: number | null },
     params: { phoneNumber: string; subscriptionPeriod?: string | null },
   ) {
     // Only an owner/manager of a supplier account may pay to activate it.
@@ -297,7 +297,11 @@ export class SupplierActivationService {
   }
 
   /** Lightweight activation/subscription state for the billing page. */
-  async getActivationState(user: { id: number; roles?: string[] }) {
+  async getActivationState(user: {
+    id: number;
+    roles?: string[];
+    supplierId?: number | null;
+  }) {
     const profile =
       await this.supplierStaffService.requireManagedSupplierProfile(user);
     const subscription = await this.subscriptionsRepository.findOne({
