@@ -121,3 +121,147 @@ describe('PosRegisterReportService.buildReport', () => {
     expect(r.variance).toBeNull();
   });
 });
+
+// End-to-end of the close-report dispatch: a client "Today"-tab report renders
+// to HTML + a PDF attachment that must decode to a valid PDF (the attachment
+// previously double-base64-encoded and would not open).
+describe('PosRegisterReportService.dispatchCloseReport (client report)', () => {
+  function makeService() {
+    const checkoutsRepository = {
+      createQueryBuilder: jest.fn(),
+      // resolveCurrency()
+      findOne: jest.fn().mockResolvedValue({ currency: 'ETB' }),
+    };
+    const branchesRepository = {
+      findOne: jest.fn().mockResolvedValue({
+        id: 3,
+        name: 'Bole Branch',
+        owner: { email: 'owner@x.com' },
+      }),
+    };
+    const sent: any[] = [];
+    const emailService = {
+      send: jest.fn(async (mail: any) => sent.push(mail)),
+    };
+    const service = new PosRegisterReportService(
+      checkoutsRepository as any,
+      branchesRepository as any,
+      emailService as any,
+    );
+    return { service, emailService, sent };
+  }
+
+  const session: any = {
+    id: 42,
+    branchId: 3,
+    branchSessionNumber: 12,
+    registerId: 'front-desk',
+    openingFloat: 500,
+    closingFloat: 9100,
+    openedByName: 'amir@x.com',
+    closedByName: 'amir@x.com',
+    openedAt: new Date('2026-06-14T08:00:00Z'),
+    closedAt: new Date('2026-06-14T20:00:00Z'),
+    note: null,
+  };
+
+  const clientReport = {
+    summary: {
+      grossSales: 12450,
+      returnsTotal: 300,
+      netSales: 12150,
+      receiptCount: 37,
+      averageTicket: 336.49,
+      readyTicketCount: 5,
+    },
+    paymentMix: [
+      { method: 'CASH', label: 'Cash', amount: 8100 },
+      { method: 'CARD', label: 'Card', amount: 4350 },
+    ],
+    waiters: [
+      {
+        name: 'Sara',
+        salesTotal: 7000,
+        itemCount: 40,
+        receiptCount: 20,
+        tableCount: 6,
+      },
+    ],
+    cooks: [
+      {
+        name: 'Mulu',
+        ticketCount: 18,
+        itemCount: 52,
+        stations: [{ label: 'Grill', ticketCount: 18 }],
+      },
+    ],
+    settledRooms: [
+      {
+        room: '101',
+        settled: 5000,
+        receiptCount: 2,
+        guestName: 'Jon',
+        settledBy: 'amir@x.com',
+      },
+    ],
+    settlers: [
+      { name: 'amir@x.com', settled: 12450, receiptCount: 37, roomCount: 8 },
+    ],
+    settledReceipts: [
+      {
+        label: 'R-001',
+        total: 500,
+        operatorName: 'amir@x.com',
+        paymentMethods: ['CASH'],
+        itemCount: 3,
+      },
+    ],
+    counts: {
+      waiters: 1,
+      cooks: 1,
+      settledRooms: 1,
+      settlers: 1,
+      settledReceipts: 1,
+    },
+    hasSales: true,
+    hasKitchenActivity: true,
+  };
+
+  it('emails the owner an HTML report whose PDF attachment decodes to a real PDF', async () => {
+    const { service, emailService, sent } = makeService();
+
+    await service.dispatchCloseReport(session, {
+      report: clientReport,
+      serviceFormat: 'HOTEL',
+    });
+
+    expect(emailService.send).toHaveBeenCalledTimes(1);
+    const mail = sent[0];
+    expect(mail.to).toBe('owner@x.com');
+    // HTML mirrors the Today tab sections
+    expect(mail.html).toContain('Sara'); // waiter
+    expect(mail.html).toContain('Mulu'); // cook
+    expect(mail.html).toContain('Settled rooms'); // HOTEL unit label
+    expect(mail.html).toContain('Ready tickets (KDS)');
+    // Cash variance: opening 500 + cash 8100 = 8600 expected; closing 9100 → +500
+    expect(mail.html).toContain('Variance');
+
+    // The attachment must be base64 that decodes to a valid PDF (not double-encoded)
+    const att = mail.attachments[0];
+    expect(att.encoding).toBe('base64');
+    expect(att.contentType).toBe('application/pdf');
+    const decoded = Buffer.from(att.content, 'base64');
+    expect(decoded.slice(0, 5).toString()).toBe('%PDF-');
+    expect(decoded.slice(-6).toString()).toContain('EOF');
+  });
+
+  it('skips silently when the branch has no owner email', async () => {
+    const { service, emailService } = makeService();
+    (service as any).branchesRepository.findOne = jest
+      .fn()
+      .mockResolvedValue({ id: 3, name: 'Bole', owner: null });
+
+    await service.dispatchCloseReport(session, { report: clientReport });
+    expect(emailService.send).not.toHaveBeenCalled();
+  });
+});

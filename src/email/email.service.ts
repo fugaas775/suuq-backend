@@ -192,6 +192,26 @@ export class EmailService {
       '"Suuq Marketplace" <admin@suuqsapp.com>';
     const mailToSend = { ...mail, from };
 
+    // Binary attachments travel through the BullMQ/Redis queue as JSON, so they
+    // are carried as a base64 string. Rehydrate to a real Buffer before handing
+    // it to nodemailer: the Postmark transport's getAttachments() ignores the
+    // `encoding` field, so a base64 string + encoding:'base64' gets base64
+    // encoded a SECOND time, producing a corrupt (unopenable) attachment.
+    if (Array.isArray(mailToSend.attachments)) {
+      mailToSend.attachments = mailToSend.attachments.map((att: any) => {
+        if (
+          att &&
+          att.encoding === 'base64' &&
+          typeof att.content === 'string'
+        ) {
+          const { encoding, ...rest } = att;
+          void encoding;
+          return { ...rest, content: Buffer.from(att.content, 'base64') };
+        }
+        return att;
+      });
+    }
+
     if (!this.transporter || !this.configOk) {
       this.logger.warn(
         `Email disabled or transporter not verified. Mail subject: ${mailToSend.subject} to: ${mailToSend.to}`,

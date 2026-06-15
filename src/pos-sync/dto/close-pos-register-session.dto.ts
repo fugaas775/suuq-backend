@@ -33,4 +33,20 @@ export class ClosePosRegisterSessionDto {
   @IsOptional()
   @IsObject()
   metadata?: Record<string, any>;
+
+  @ApiPropertyOptional({
+    description:
+      'Client-computed session report (same shape the "Today" tab renders) ' +
+      'used to email the branch owner an end-of-shift report. Kept as a free-' +
+      'form object so the email mirrors the in-app tab exactly.',
+  })
+  @IsOptional()
+  @IsObject()
+  report?: Record<string, any>;
+
+  @ApiPropertyOptional({ example: 'HOTEL' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(32)
+  serviceFormat?: string;
 }

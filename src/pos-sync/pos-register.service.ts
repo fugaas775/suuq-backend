@@ -180,10 +180,16 @@ export class PosRegisterService {
 
     const saved = await this.registerSessionsRepository.save(session);
 
-    // Fire-and-forget: email an end-of-shift sales report (with PDF) to the
-    // branch owner. dispatchCloseReport never throws, so a report/email failure
-    // can't break the close. Not awaited so the close response stays snappy.
-    void this.reportService.dispatchCloseReport(saved);
+    // Fire-and-forget: email an end-of-shift report (with PDF) to the branch
+    // owner. When the closing client sends its "Today"-tab session report we
+    // render that (exact match, incl. KDS data the server can't see); otherwise
+    // we fall back to a server-side aggregation. dispatchCloseReport never
+    // throws, so a report/email failure can't break the close, and it is not
+    // awaited so the close response stays snappy.
+    void this.reportService.dispatchCloseReport(saved, {
+      report: dto.report,
+      serviceFormat: dto.serviceFormat,
+    });
 
     return this.toSessionResponse(saved);
   }
