@@ -14,7 +14,8 @@ import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { SupplierStaffService } from './supplier-staff.service';
-import { InviteSupplierStaffDto } from './dto/invite-supplier-staff.dto';
+import { CreateSupplierStaffManualAccountDto } from './dto/create-supplier-staff-manual-account.dto';
+import { ChangeSupplierStaffPasswordDto } from './dto/change-supplier-staff-password.dto';
 import { UpdateSupplierStaffDto } from './dto/update-supplier-staff.dto';
 
 /**
@@ -38,9 +39,11 @@ export class SupplierStaffController {
   }
 
   @Post()
-  @ApiOperation({ summary: 'Invite a teammate to the supplier account' })
-  invite(@Body() dto: InviteSupplierStaffDto, @Req() req) {
-    return this.supplierStaffService.inviteStaff(
+  @ApiOperation({
+    summary: 'Create a manual login for a teammate (username + password)',
+  })
+  create(@Body() dto: CreateSupplierStaffManualAccountDto, @Req() req) {
+    return this.supplierStaffService.createManualAccount(
       { id: req.user?.id, roles: req.user?.roles },
       dto,
     );
@@ -57,6 +60,20 @@ export class SupplierStaffController {
       { id: req.user?.id, roles: req.user?.roles },
       id,
       dto,
+    );
+  }
+
+  @Post(':id/change-password')
+  @ApiOperation({ summary: "Reset a teammate's manual login password" })
+  changePassword(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: ChangeSupplierStaffPasswordDto,
+    @Req() req,
+  ) {
+    return this.supplierStaffService.changeStaffPassword(
+      { id: req.user?.id, roles: req.user?.roles },
+      id,
+      dto.newPassword,
     );
   }
 

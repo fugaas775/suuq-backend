@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import * as bcrypt from 'bcrypt';
 import { UserRole } from '../auth/roles.enum';
 import { User } from '../users/entities/user.entity';
 import {
@@ -18,7 +19,7 @@ import {
   SupplierStaffAssignment,
   SupplierStaffRole,
 } from './entities/supplier-staff-assignment.entity';
-import { InviteSupplierStaffDto } from './dto/invite-supplier-staff.dto';
+import { CreateSupplierStaffManualAccountDto } from './dto/create-supplier-staff-manual-account.dto';
 import { UpdateSupplierStaffDto } from './dto/update-supplier-staff.dto';
 
 /**
@@ -39,6 +40,26 @@ export interface SupplierContext {
 }
 
 type Actor = { id?: number | null; roles?: string[] };
+
+/**
+ * Team-roster row returned to the supplier staff surface. Deliberately omits the
+ * User password hash and synthetic internal email — manual logins are addressed
+ * by their username.
+ */
+export interface SupplierStaffMember {
+  id: number;
+  userId: number;
+  role: SupplierStaffRole;
+  permissions: string[];
+  isActive: boolean;
+  createdAt: Date;
+  user: {
+    id: number;
+    displayName: string | null;
+    username: string | null;
+    authMode: string | null;
+  } | null;
+}
 
 @Injectable()
 export class SupplierStaffService {
@@ -141,55 +162,129 @@ export class SupplierStaffService {
 
   // ---- Team management (used by SupplierStaffController) --------------------
 
-  async listStaff(actor: Actor): Promise<SupplierStaffAssignment[]> {
+  async listStaff(actor: Actor): Promise<SupplierStaffMember[]> {
     const profile = await this.requireManagedSupplierProfile(actor);
-    return this.assignmentsRepository.find({
+    const assignments = await this.assignmentsRepository.find({
       where: { supplierProfileId: profile.id },
       relations: { user: true },
       order: { createdAt: 'ASC' },
     });
+    return assignments.map((a) => this.serializeAssignment(a));
   }
 
-  async inviteStaff(
+  /**
+   * Create a manual supplier-staff login — the wholesaler-side mirror of branch
+   * staff manual accounts. The manager provisions a username + password directly
+   * (no email invite); the teammate signs in with those credentials.
+   */
+  async createManualAccount(
     actor: Actor,
-    dto: InviteSupplierStaffDto,
-  ): Promise<SupplierStaffAssignment> {
+    dto: CreateSupplierStaffManualAccountDto,
+  ): Promise<SupplierStaffMember> {
     const profile = await this.requireManagedSupplierProfile(actor);
-    const email = dto.email.trim().toLowerCase();
-    const invitee = await this.usersRepository.findOne({ where: { email } });
-    if (!invitee) {
+
+    const normalizedUsername = String(dto.username || '')
+      .trim()
+      .toLowerCase();
+    if (normalizedUsername.length < 3) {
       throw new BadRequestException(
-        'No account exists for that email. Ask them to sign up first, then invite them.',
+        'A username of at least 3 characters is required.',
       );
     }
-    const existing = await this.assignmentsRepository.findOne({
-      where: { supplierProfileId: profile.id, userId: invitee.id },
+
+    const hashedPassword = await bcrypt.hash(dto.password, 10);
+    const internalEmail = `supplier.m.${normalizedUsername}@sys.internal`;
+
+    // Purge any inactive MANUAL user that still holds this username or internal
+    // email so a deactivated teammate's username can be reused; reject a live one.
+    const staleByUsername = await this.usersRepository.findOne({
+      where: { posUsername: normalizedUsername },
     });
-    if (existing) {
-      throw new ConflictException(
-        'That user is already a member of this supplier account',
-      );
+    if (staleByUsername) {
+      if (staleByUsername.authMode === 'MANUAL' && !staleByUsername.isActive) {
+        await this.assignmentsRepository.delete({ userId: staleByUsername.id });
+        await this.usersRepository.remove(staleByUsername);
+      } else {
+        throw new ConflictException({
+          error: {
+            code: 'SUPPLIER_STAFF_USERNAME_CONFLICT',
+            message: 'This username is already in use.',
+            details: { field: 'username' },
+          },
+        });
+      }
     }
+
+    const staleByEmail = await this.usersRepository.findOne({
+      where: { email: internalEmail },
+    });
+    if (staleByEmail) {
+      await this.assignmentsRepository.delete({ userId: staleByEmail.id });
+      await this.usersRepository.remove(staleByEmail);
+    }
+
     const role = dto.role ?? SupplierStaffRole.OPERATOR;
+    const savedUser = await this.usersRepository.save(
+      this.usersRepository.create({
+        email: internalEmail,
+        posUsername: normalizedUsername,
+        authMode: 'MANUAL',
+        displayName: dto.displayName?.trim() || null,
+        password: hashedPassword,
+        roles: [],
+        isActive: true,
+      }),
+    );
+
     const assignment = await this.assignmentsRepository.save(
       this.assignmentsRepository.create({
         supplierProfileId: profile.id,
-        userId: invitee.id,
+        userId: savedUser.id,
         role,
-        permissions: dto.permissions ?? [],
+        permissions: [],
         isActive: true,
         invitedByUserId: Number(actor.id) || null,
       }),
     );
-    await this.grantSupplierRole(invitee, role);
-    return assignment;
+    await this.grantSupplierRole(savedUser, role);
+
+    return this.serializeAssignment({ ...assignment, user: savedUser });
+  }
+
+  /**
+   * Reset a teammate's manual login password. Manager-only; restricted to
+   * MANUAL logins in this supplier account (an OAuth/email user owns their own).
+   */
+  async changeStaffPassword(
+    actor: Actor,
+    assignmentId: number,
+    newPassword: string,
+  ): Promise<{ status: 'PASSWORD_CHANGED'; assignmentId: number }> {
+    const profile = await this.requireManagedSupplierProfile(actor);
+    const assignment = await this.assignmentsRepository.findOne({
+      where: { id: assignmentId, supplierProfileId: profile.id },
+      relations: { user: true },
+    });
+    if (!assignment) {
+      throw new NotFoundException('Staff assignment not found');
+    }
+    if (!assignment.user || assignment.user.authMode !== 'MANUAL') {
+      throw new BadRequestException(
+        'Passwords can only be changed for manually-created supplier logins.',
+      );
+    }
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    await this.usersRepository.update(assignment.user.id, {
+      password: hashedPassword,
+    });
+    return { status: 'PASSWORD_CHANGED', assignmentId: assignment.id };
   }
 
   async updateStaff(
     actor: Actor,
     assignmentId: number,
     dto: UpdateSupplierStaffDto,
-  ): Promise<SupplierStaffAssignment> {
+  ): Promise<SupplierStaffMember> {
     const profile = await this.requireManagedSupplierProfile(actor);
     const assignment = await this.assignmentsRepository.findOne({
       where: { id: assignmentId, supplierProfileId: profile.id },
@@ -214,7 +309,7 @@ export class SupplierStaffService {
     if (assignment.user && dto.role !== undefined) {
       await this.grantSupplierRole(assignment.user, dto.role);
     }
-    return saved;
+    return this.serializeAssignment(saved);
   }
 
   async removeStaff(actor: Actor, assignmentId: number): Promise<void> {
@@ -238,6 +333,28 @@ export class SupplierStaffService {
   }
 
   // ---- Helpers -------------------------------------------------------------
+
+  private serializeAssignment(
+    assignment: SupplierStaffAssignment,
+  ): SupplierStaffMember {
+    const user = assignment.user ?? null;
+    return {
+      id: assignment.id,
+      userId: assignment.userId,
+      role: assignment.role,
+      permissions: assignment.permissions ?? [],
+      isActive: assignment.isActive,
+      createdAt: assignment.createdAt,
+      user: user
+        ? {
+            id: user.id,
+            displayName: user.displayName ?? null,
+            username: user.posUsername ?? null,
+            authMode: user.authMode ?? null,
+          }
+        : null,
+    };
+  }
 
   private async assertNotLastManager(
     supplierProfileId: number,
