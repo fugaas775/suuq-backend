@@ -1,4 +1,15 @@
-import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Get,
+  Param,
+  ParseIntPipe,
+  Patch,
+  Query,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { SkipThrottle } from '@nestjs/throttler';
 import { ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
@@ -53,6 +64,31 @@ export class SuppliersAdminController {
       status: statusParsed,
       page,
       limit,
+    });
+  }
+
+  /**
+   * PATCH /api/admin/suppliers/:id
+   *
+   * Deactivate / reactivate a supplier account WITHOUT deleting it — the
+   * supplier-side mirror of PATCH /api/admin/branches/:id. Currently supports
+   * toggling `isActive`.
+   */
+  @Patch(':id')
+  @ApiOperation({
+    summary: 'Patch a supplier account (admin) — toggle isActive',
+  })
+  async patchSupplier(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { isActive?: boolean },
+    @Req() req,
+  ) {
+    if (body.isActive !== undefined && typeof body.isActive !== 'boolean') {
+      throw new BadRequestException('isActive must be a boolean');
+    }
+    return this.suppliersService.patchAdminSupplier(id, body, {
+      id: req.user?.id ?? null,
+      email: req.user?.email ?? null,
     });
   }
 }

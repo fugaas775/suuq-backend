@@ -182,6 +182,52 @@ export class SuppliersService {
     };
   }
 
+  /**
+   * SUPER_ADMIN / ADMIN deactivate / reactivate — the supplier-side mirror of
+   * BranchesService.patchAdminBranch. Flips `isActive` WITHOUT deleting any data:
+   * a deactivated supplier is blocked from sign-in (SupplierStaffService throws
+   * "This supplier account is deactivated.") and excluded from replenishment, but
+   * its profile, catalog and history are preserved and the change is reversible.
+   * Returns the same item shape as adminSearchSuppliers so the caller can update
+   * its list in place.
+   */
+  async patchAdminSupplier(
+    id: number,
+    patch: { isActive?: boolean },
+    actor: AdminActor = {},
+  ) {
+    const profile = await this.profilesRepository.findOne({
+      where: { id },
+      relations: { user: true },
+    });
+    if (!profile) {
+      throw new NotFoundException(`Supplier profile ${id} not found`);
+    }
+    if (patch.isActive !== undefined && patch.isActive !== profile.isActive) {
+      profile.isActive = patch.isActive;
+      await this.profilesRepository.save(profile);
+      await this.auditService.log({
+        action: patch.isActive
+          ? 'supplier_profile.reactivated'
+          : 'supplier_profile.deactivated',
+        targetType: 'SUPPLIER_PROFILE',
+        targetId: id,
+        actorId: actor.id ?? null,
+        actorEmail: actor.email ?? null,
+      });
+    }
+    return {
+      id: profile.id,
+      companyName: profile.companyName,
+      legalName: profile.legalName ?? null,
+      ownerId: profile.userId,
+      ownerEmail: profile.user?.email ?? null,
+      onboardingStatus: profile.onboardingStatus,
+      activationStatus: profile.activationStatus,
+      isActive: profile.isActive,
+    };
+  }
+
   async approve(id: number, actor: AdminActor = {}): Promise<SupplierProfile> {
     const profile = await this.findByIdOrThrow(id);
     this.assertPendingReview(profile);
