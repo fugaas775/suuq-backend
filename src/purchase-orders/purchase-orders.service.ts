@@ -360,40 +360,141 @@ export class PurchaseOrdersService {
       .take(limit)
       .getMany();
 
-    return offers.map((offer) => {
-      const product = offer.product as any;
-      const sortedImages = Array.isArray(product?.images)
-        ? [...product.images].sort(
-            (a: any, b: any) =>
-              (a?.sortOrder ?? 0) - (b?.sortOrder ?? 0) ||
-              (a?.id ?? 0) - (b?.id ?? 0),
-          )
-        : [];
-      const primaryImage = sortedImages[0];
-      const thumbnailUrl =
-        primaryImage?.thumbnailSrc ||
-        primaryImage?.src ||
-        product?.imageUrl ||
-        null;
+    return offers.map((offer) => this.mapBrowseOffer(offer));
+  }
 
-      return {
-        id: offer.id,
-        supplierProfileId: offer.supplierProfileId,
-        supplierName:
-          offer.supplierProfile?.companyName ||
-          offer.supplierProfile?.legalName ||
-          `Supplier #${offer.supplierProfileId}`,
-        productId: offer.productId,
-        productName: product?.name || `Product #${offer.productId}`,
-        productImageUrl: thumbnailUrl,
-        unitWholesalePrice: Number(offer.unitWholesalePrice),
-        currency: offer.currency,
-        moq: offer.moq ?? 1,
-        leadTimeDays: offer.leadTimeDays ?? 0,
-        availabilityStatus: offer.availabilityStatus,
-        fulfillmentRegions: offer.fulfillmentRegions ?? [],
-      };
+  /** Shared offer → buyer-facing DTO mapping (browse + storefront). */
+  private mapBrowseOffer(offer: SupplierOffer) {
+    const product = offer.product as any;
+    const sortedImages = Array.isArray(product?.images)
+      ? [...product.images].sort(
+          (a: any, b: any) =>
+            (a?.sortOrder ?? 0) - (b?.sortOrder ?? 0) ||
+            (a?.id ?? 0) - (b?.id ?? 0),
+        )
+      : [];
+    const primaryImage = sortedImages[0];
+    const thumbnailUrl =
+      primaryImage?.thumbnailSrc ||
+      primaryImage?.src ||
+      product?.imageUrl ||
+      null;
+
+    return {
+      id: offer.id,
+      supplierProfileId: offer.supplierProfileId,
+      supplierName:
+        offer.supplierProfile?.companyName ||
+        offer.supplierProfile?.legalName ||
+        `Supplier #${offer.supplierProfileId}`,
+      productId: offer.productId,
+      productName: product?.name || `Product #${offer.productId}`,
+      productImageUrl: thumbnailUrl,
+      unitWholesalePrice: Number(offer.unitWholesalePrice),
+      currency: offer.currency,
+      moq: offer.moq ?? 1,
+      leadTimeDays: offer.leadTimeDays ?? 0,
+      availabilityStatus: offer.availabilityStatus,
+      fulfillmentRegions: offer.fulfillmentRegions ?? [],
+    };
+  }
+
+  /**
+   * Buyer-facing supplier storefront directory: active suppliers that have at
+   * least one published, in-stock offer, with their offer count. The B2B mirror
+   * of a "browse vendors" page — lets a business discover whole suppliers
+   * instead of only reverse-looking-up a single product via findAvailableOffers.
+   */
+  async listSupplierStorefronts(query: {
+    search?: string;
+    limit?: number;
+  }): Promise<
+    Array<{
+      supplierProfileId: number;
+      supplierName: string;
+      countriesServed: string[];
+      offerCount: number;
+    }>
+  > {
+    const limit = Math.max(1, Math.min(100, Number(query.limit ?? 50)));
+    const qb = this.supplierOffersRepository
+      .createQueryBuilder('offer')
+      .innerJoin('offer.supplierProfile', 'sp')
+      .select('sp.id', 'supplierProfileId')
+      .addSelect('sp.companyName', 'companyName')
+      .addSelect('sp.legalName', 'legalName')
+      .addSelect('sp.countriesServed', 'countriesServed')
+      .addSelect('COUNT(offer.id)', 'offerCount')
+      .where('offer.status = :status', {
+        status: SupplierOfferStatus.PUBLISHED,
+      })
+      .andWhere('offer.availabilityStatus != :oos', {
+        oos: SupplierAvailabilityStatus.OUT_OF_STOCK,
+      })
+      .andWhere('sp.activationStatus = :active', {
+        active: SupplierActivationStatus.ACTIVE,
+      })
+      .andWhere('sp.isActive = true')
+      .groupBy('sp.id')
+      .addGroupBy('sp.companyName')
+      .addGroupBy('sp.legalName')
+      .addGroupBy('sp.countriesServed')
+      .orderBy('sp.companyName', 'ASC')
+      .limit(limit);
+    if (query.search) {
+      qb.andWhere('sp.companyName ILIKE :search', {
+        search: `%${query.search}%`,
+      });
+    }
+    const rows = await qb.getRawMany();
+    return rows.map((r) => ({
+      supplierProfileId: Number(r.supplierProfileId),
+      supplierName:
+        r.companyName || r.legalName || `Supplier #${r.supplierProfileId}`,
+      countriesServed: Array.isArray(r.countriesServed)
+        ? r.countriesServed
+        : [],
+      offerCount: Number(r.offerCount) || 0,
+    }));
+  }
+
+  /**
+   * Buyer-facing per-supplier catalog: every published offer for one active
+   * supplier, in the same shape as findAvailableOffers so the buyer UI can
+   * reuse the offer card.
+   */
+  async findSupplierStorefront(supplierId: number) {
+    const profile = await this.supplierProfilesRepository.findOne({
+      where: { id: supplierId },
     });
+    if (
+      !profile ||
+      !profile.isActive ||
+      profile.activationStatus !== SupplierActivationStatus.ACTIVE
+    ) {
+      throw new NotFoundException(`Supplier ${supplierId} is not available`);
+    }
+    const offers = await this.supplierOffersRepository
+      .createQueryBuilder('offer')
+      .leftJoinAndSelect('offer.supplierProfile', 'supplierProfile')
+      .leftJoinAndSelect('offer.product', 'product')
+      .leftJoinAndSelect('product.images', 'productImages')
+      .where('offer.supplierProfileId = :supplierId', { supplierId })
+      .andWhere('offer.status = :status', {
+        status: SupplierOfferStatus.PUBLISHED,
+      })
+      .orderBy('offer.unitWholesalePrice', 'ASC')
+      .addOrderBy('offer.id', 'ASC')
+      .getMany();
+    return {
+      supplier: {
+        supplierProfileId: profile.id,
+        supplierName:
+          profile.companyName || profile.legalName || `Supplier #${profile.id}`,
+        countriesServed: profile.countriesServed ?? [],
+      },
+      offers: offers.map((offer) => this.mapBrowseOffer(offer)),
+    };
   }
 
   async listReceiptEvents(

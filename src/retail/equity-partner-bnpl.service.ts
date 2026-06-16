@@ -422,6 +422,30 @@ export class EquityPartnerBnplService {
       );
     }
 
+    // The equity flow funds one supplier per owner and reuses the owner's
+    // existing (not-yet-active) profile. Apply the company name / details the
+    // admin typed so the funded supplier is named as requested, instead of
+    // silently keeping a stale name from an earlier draft profile. ACTIVE
+    // profiles were rejected above, so this only ever touches editable ones.
+    const profileUpdates: Partial<SupplierProfile> = {};
+    if (companyName && companyName !== profile.companyName) {
+      profileUpdates.companyName = companyName;
+    }
+    const legalName = String(input.legalName || '').trim();
+    if (legalName && legalName !== profile.legalName) {
+      profileUpdates.legalName = legalName;
+    }
+    if (
+      Array.isArray(input.countriesServed) &&
+      input.countriesServed.length > 0
+    ) {
+      profileUpdates.countriesServed = input.countriesServed;
+    }
+    if (Object.keys(profileUpdates).length > 0) {
+      Object.assign(profile, profileUpdates);
+      profile = await this.supplierProfilesRepo.save(profile);
+    }
+
     // Provision the supplier subscription ACTIVE immediately.
     const subscription =
       await this.supplierActivationService.activateForFundedFlow(

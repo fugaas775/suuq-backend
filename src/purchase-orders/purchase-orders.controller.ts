@@ -18,6 +18,10 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { ApprovePurchaseOrderReceiptDiscrepancyDto } from './dto/approve-purchase-order-receipt-discrepancy.dto';
 import { AcknowledgePurchaseOrderReceiptDto } from './dto/acknowledge-purchase-order-receipt.dto';
 import { BrowseAvailableOffersQueryDto } from './dto/browse-available-offers-query.dto';
+import {
+  SupplierStorefrontDirectoryQueryDto,
+  SupplierStorefrontQueryDto,
+} from './dto/supplier-storefront-query.dto';
 import { CreatePurchaseOrderDto } from './dto/create-purchase-order.dto';
 import { PurchaseOrderBranchScopeQueryDto } from './dto/purchase-order-branch-scope-query.dto';
 import { PurchaseOrderReceiptEventResponseDto } from './dto/purchase-order-receipt-event-response.dto';
@@ -69,6 +73,35 @@ export class PurchaseOrdersController {
   )
   browseAvailableOffers(@Query() query: BrowseAvailableOffersQueryDto) {
     return this.purchaseOrdersService.findAvailableOffers(query);
+  }
+
+  @Get('supplier-storefronts')
+  @ApiOperation({
+    summary:
+      'Browse active suppliers that have published offers (buyer storefront directory).',
+  })
+  @Roles(
+    UserRole.SUPER_ADMIN,
+    UserRole.ADMIN,
+    UserRole.POS_MANAGER,
+    UserRole.B2B_BUYER,
+  )
+  listSupplierStorefronts(@Query() query: SupplierStorefrontDirectoryQueryDto) {
+    return this.purchaseOrdersService.listSupplierStorefronts(query);
+  }
+
+  @Get('supplier-storefront')
+  @ApiOperation({
+    summary: "Browse one supplier's published catalog (buyer storefront).",
+  })
+  @Roles(
+    UserRole.SUPER_ADMIN,
+    UserRole.ADMIN,
+    UserRole.POS_MANAGER,
+    UserRole.B2B_BUYER,
+  )
+  findSupplierStorefront(@Query() query: SupplierStorefrontQueryDto) {
+    return this.purchaseOrdersService.findSupplierStorefront(query.supplierId);
   }
 
   @Get('incoming')
