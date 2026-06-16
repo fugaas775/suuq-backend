@@ -32,11 +32,20 @@ describe('EquityPartnerBnplService', () => {
   };
 
   const activationsRepo = {
-    count: jest.fn(),
+    createQueryBuilder: jest.fn(),
     findOne: jest.fn(),
     create: jest.fn((value) => value),
     save: jest.fn(async (value) => ({ id: 701, ...value })),
   };
+
+  // assertCreditCapacity() counts outstanding (non-direct) activations via an
+  // explicit QueryBuilder; stub the chain so tests can set the slot tally.
+  const mockOutstandingActivations = (n: number) =>
+    activationsRepo.createQueryBuilder.mockReturnValue({
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      getCount: jest.fn().mockResolvedValue(n),
+    });
 
   const creditLedgerRepo = {
     findOne: jest.fn(),
@@ -98,6 +107,7 @@ describe('EquityPartnerBnplService', () => {
 
   beforeEach(async () => {
     jest.resetAllMocks();
+    mockOutstandingActivations(0);
     retailTenantsRepo.create.mockImplementation((value) => value);
     retailTenantsRepo.save.mockImplementation(async (value) => ({
       id: 34,
@@ -202,7 +212,7 @@ describe('EquityPartnerBnplService', () => {
       status: EquityPartnerStatus.ACTIVE,
       bnplCreditLimit: 2,
     });
-    activationsRepo.count.mockResolvedValue(0);
+    mockOutstandingActivations(0);
     usersRepo.findOne.mockResolvedValue({
       id: 2202,
       email: 'owner@example.com',
@@ -258,7 +268,7 @@ describe('EquityPartnerBnplService', () => {
       status: EquityPartnerStatus.ACTIVE,
       bnplCreditLimit: 2,
     });
-    activationsRepo.count.mockResolvedValue(0);
+    mockOutstandingActivations(0);
     usersRepo.findOne.mockResolvedValue({
       id: 2202,
       email: 'wholesaler@example.com',
@@ -327,7 +337,7 @@ describe('EquityPartnerBnplService', () => {
       status: EquityPartnerStatus.ACTIVE,
       bnplCreditLimit: 2,
     });
-    activationsRepo.count.mockResolvedValue(0);
+    mockOutstandingActivations(0);
     usersRepo.findOne.mockResolvedValue({
       id: 2202,
       email: 'wholesaler@example.com',
@@ -363,7 +373,7 @@ describe('EquityPartnerBnplService', () => {
       status: EquityPartnerStatus.ACTIVE,
       bnplCreditLimit: 2,
     });
-    activationsRepo.count.mockResolvedValue(0);
+    mockOutstandingActivations(0);
     usersRepo.findOne.mockResolvedValue({
       id: 2202,
       email: 'wholesaler@example.com',

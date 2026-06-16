@@ -6,7 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Raw, Repository } from 'typeorm';
+import { Repository } from 'typeorm';
 import { Branch } from '../branches/entities/branch.entity';
 import {
   BranchStaffAssignment,
@@ -912,16 +912,25 @@ export class EquityPartnerBnplService {
   private async assertCreditCapacity(partner: EquityPartner) {
     // Direct (Ebirr-paid) activations don't draw the credit line, so exclude
     // them from the outstanding-slot count.
-    const outstanding = await this.activationsRepo.count({
-      where: {
-        equityPartnerId: partner.id,
+    //
+    // NOTE: this is an explicit QueryBuilder rather than `repo.count({ where:
+    // { metadata: Raw(...) } })`. Under TypeORM 0.3 the JSON `Raw` predicate in
+    // a `count()` emits an unquoted, lower-cased table alias that isn't in the
+    // FROM clause, so Postgres rejects it (42P01) and EVERY non-super-admin BNPL
+    // activation 500s. A controlled alias keeps the JSON filter valid.
+    const outstanding = await this.activationsRepo
+      .createQueryBuilder('activation')
+      .where('activation.equityPartnerId = :partnerId', {
+        partnerId: partner.id,
+      })
+      .andWhere('activation.status = :status', {
         status: EquityPartnerBnplStatus.OUTSTANDING,
-        metadata: Raw(
-          (alias) =>
-            `COALESCE(${alias}->>'fundingMode', 'EQUITY_BNPL') <> 'DIRECT_EBIRR'`,
-        ),
-      },
-    });
+      })
+      .andWhere(
+        `COALESCE(activation.metadata ->> 'fundingMode', 'EQUITY_BNPL') <> :direct`,
+        { direct: 'DIRECT_EBIRR' },
+      )
+      .getCount();
     if (outstanding >= partner.bnplCreditLimit) {
       throw new BadRequestException(
         `BNPL credit limit reached (${outstanding}/${partner.bnplCreditLimit}). Settle an existing activation before creating another, or pay directly via Ebirr.`,
