@@ -14,6 +14,8 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { SupplierOffersService } from './supplier-offers.service';
 import { CreateSupplierOfferDto } from './dto/create-supplier-offer.dto';
+import { CreateSupplierProductDto } from './dto/create-supplier-product.dto';
+import { BulkCreateSupplierProductsDto } from './dto/bulk-create-supplier-products.dto';
 import { UpdateSupplierOfferDto } from './dto/update-supplier-offer.dto';
 import { extractActiveSupplierId } from '../suppliers/active-supplier.util';
 
@@ -34,6 +36,37 @@ export class SupplierOffersController {
   listMine(@Req() req) {
     return this.supplierOffersService.listForUser(
       req.user?.id,
+      extractActiveSupplierId(req),
+      req.user?.roles,
+    );
+  }
+
+  @Post('me/products')
+  @ApiOperation({
+    summary:
+      'Create a B2B-only product and its wholesale offer in one step (supplier)',
+  })
+  createProductMine(@Body() dto: CreateSupplierProductDto, @Req() req) {
+    return this.supplierOffersService.createProductWithOfferForUser(
+      req.user?.id,
+      dto,
+      extractActiveSupplierId(req),
+      req.user?.roles,
+    );
+  }
+
+  @Post('me/products/bulk')
+  @ApiOperation({
+    summary:
+      'Bulk-create products + offers for the signed-in supplier (row-level results)',
+  })
+  bulkCreateProductsMine(
+    @Body() dto: BulkCreateSupplierProductsDto,
+    @Req() req,
+  ) {
+    return this.supplierOffersService.bulkCreateProductsWithOffersForUser(
+      req.user?.id,
+      dto,
       extractActiveSupplierId(req),
       req.user?.roles,
     );
