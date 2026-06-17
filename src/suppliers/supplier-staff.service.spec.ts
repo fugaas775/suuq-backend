@@ -309,3 +309,118 @@ describe('SupplierStaffService.createManualAccount', () => {
     expect(users.update).not.toHaveBeenCalled();
   });
 });
+
+describe('SupplierStaffService.deleteStaffAccount', () => {
+  const managerProfile = {
+    id: 55,
+    userId: 7,
+    companyName: 'Rift Valley',
+    activationStatus: 'ACTIVE',
+    onboardingStatus: 'DRAFT',
+    isActive: true,
+  };
+
+  // First findOne resolves the manager's own context; second resolves the
+  // target assignment (loaded with its user relation) inside deleteStaffAccount.
+  const managerContextAssignment = {
+    userId: 7,
+    role: SupplierStaffRole.MANAGER,
+    permissions: [],
+    supplierProfile: managerProfile,
+  };
+
+  it('hard-deletes a MANUAL teammate login (assignment + user) and re-syncs roles', async () => {
+    const target = {
+      id: 5,
+      userId: 9,
+      supplierProfileId: 55,
+      role: SupplierStaffRole.OPERATOR,
+      isActive: true,
+      user: { id: 9, authMode: 'MANUAL' },
+    };
+    const assignments = {
+      findOne: jest
+        .fn()
+        .mockResolvedValueOnce(managerContextAssignment)
+        .mockResolvedValueOnce(target),
+      remove: jest.fn(),
+      find: jest.fn().mockResolvedValue([]), // no remaining assignments after delete
+    };
+    const users = {
+      findOne: jest
+        .fn()
+        .mockResolvedValue({ id: 9, roles: ['SUPPLIER_OPERATOR'] }),
+      remove: jest.fn(),
+      update: jest.fn(),
+    };
+    const profiles = { findOne: jest.fn().mockResolvedValue(managerProfile) };
+    const svc = makeService({ profiles, assignments, users });
+
+    const result = await svc.deleteStaffAccount({ id: 7 }, 5);
+
+    expect(result).toMatchObject({
+      status: 'DELETED',
+      assignmentId: 5,
+      userId: 9,
+    });
+    expect(assignments.remove).toHaveBeenCalledWith(target);
+    expect(users.remove).toHaveBeenCalledWith(target.user);
+    // Global supplier role stripped once the only assignment is gone.
+    expect(users.update).toHaveBeenCalled();
+  });
+
+  it('refuses to delete a non-MANUAL (real email) account', async () => {
+    const target = {
+      id: 5,
+      userId: 9,
+      supplierProfileId: 55,
+      role: SupplierStaffRole.OPERATOR,
+      isActive: true,
+      user: { id: 9, authMode: 'STANDARD' },
+    };
+    const assignments = {
+      findOne: jest
+        .fn()
+        .mockResolvedValueOnce(managerContextAssignment)
+        .mockResolvedValueOnce(target),
+      remove: jest.fn(),
+      find: jest.fn().mockResolvedValue([]),
+    };
+    const users = { findOne: jest.fn(), remove: jest.fn(), update: jest.fn() };
+    const profiles = { findOne: jest.fn().mockResolvedValue(managerProfile) };
+    const svc = makeService({ profiles, assignments, users });
+
+    await expect(svc.deleteStaffAccount({ id: 7 }, 5)).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+    expect(assignments.remove).not.toHaveBeenCalled();
+    expect(users.remove).not.toHaveBeenCalled();
+  });
+
+  it('refuses to delete the supplier owner', async () => {
+    const target = {
+      id: 5,
+      userId: 7, // same as profile.userId → the owner
+      supplierProfileId: 55,
+      role: SupplierStaffRole.MANAGER,
+      isActive: true,
+      user: { id: 7, authMode: 'MANUAL' },
+    };
+    const assignments = {
+      findOne: jest
+        .fn()
+        .mockResolvedValueOnce(managerContextAssignment)
+        .mockResolvedValueOnce(target),
+      remove: jest.fn(),
+      find: jest.fn().mockResolvedValue([]),
+    };
+    const users = { findOne: jest.fn(), remove: jest.fn(), update: jest.fn() };
+    const profiles = { findOne: jest.fn().mockResolvedValue(managerProfile) };
+    const svc = makeService({ profiles, assignments, users });
+
+    await expect(svc.deleteStaffAccount({ id: 7 }, 5)).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    expect(users.remove).not.toHaveBeenCalled();
+  });
+});

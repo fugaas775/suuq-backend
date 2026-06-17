@@ -103,4 +103,19 @@ export class SupplierStaffController {
       id,
     );
   }
+
+  @Delete(':id/account')
+  @ApiOperation({
+    summary: 'Permanently delete a teammate manual login (frees the username)',
+  })
+  deleteAccount(@Param('id', ParseIntPipe) id: number, @Req() req) {
+    return this.supplierStaffService.deleteStaffAccount(
+      {
+        id: req.user?.id,
+        roles: req.user?.roles,
+        supplierId: extractActiveSupplierId(req),
+      },
+      id,
+    );
+  }
 }

@@ -517,6 +517,56 @@ export class SupplierStaffService {
     await this.syncSupplierRolesForUser(assignment.userId);
   }
 
+  /**
+   * Permanently delete a teammate's MANUAL login — the assignment AND the
+   * throwaway user — so the username frees up for reuse. Mirrors branch staff
+   * deleteStaffAccount. Only manual logins are deletable; the owner and the last
+   * active manager are protected.
+   */
+  async deleteStaffAccount(
+    actor: Actor,
+    assignmentId: number,
+  ): Promise<{ status: 'DELETED'; assignmentId: number; userId: number }> {
+    const profile = await this.requireManagedSupplierProfile(actor);
+    const assignment = await this.assignmentsRepository.findOne({
+      where: { id: assignmentId, supplierProfileId: profile.id },
+      relations: { user: true },
+    });
+    if (!assignment) {
+      throw new NotFoundException('Staff assignment not found');
+    }
+    if (assignment.userId === profile.userId) {
+      throw new BadRequestException(
+        'The supplier owner cannot be removed from the account',
+      );
+    }
+    const targetUser = assignment.user ?? null;
+    // Only throwaway MANUAL logins are deletable — never a real (email) account
+    // that merely happens to also belong to this supplier's team.
+    if (targetUser && targetUser.authMode !== 'MANUAL') {
+      throw new ForbiddenException({
+        error: {
+          code: 'SUPPLIER_STAFF_DELETE_NOT_ALLOWED',
+          message:
+            'Only manually-created supplier logins can be deleted from this surface.',
+        },
+      });
+    }
+    // Deleting the last active manager would lock the account out of team admin.
+    if (assignment.role === SupplierStaffRole.MANAGER && assignment.isActive) {
+      await this.assertNotLastManager(profile.id, assignment.id);
+    }
+    const userId = assignment.userId;
+    // Hard-delete the assignment first, then the throwaway user.
+    await this.assignmentsRepository.remove(assignment);
+    if (targetUser) {
+      await this.usersRepository.remove(targetUser);
+    }
+    // Reconcile global roles in case the user held other supplier assignments.
+    await this.syncSupplierRolesForUser(userId);
+    return { status: 'DELETED', assignmentId, userId };
+  }
+
   // ---- Helpers -------------------------------------------------------------
 
   private serializeAssignment(
