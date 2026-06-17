@@ -64,6 +64,20 @@ import {
   PosSuspendedCartStatus,
 } from './entities/pos-suspended-cart.entity';
 
+// Folio-scoped settlement dedupe window. HOTEL/hospitality folios accrue
+// duplicate settlement checkouts when an operator re-taps "Confirm", a page
+// reloads mid-settle, or a second device settles the same room — each mints a
+// fresh checkout that the board sums, inflating the room's recorded revenue
+// (prod: Room 405 settled the 14,000 balance 3x in 50s → ETB 45,500 for a
+// 17,500 stay). The client idempotencyKey can't be trusted to stop it: it
+// embeds a volatile amount and is only stamped on one code path, so the same
+// logical payment arrives under three different keys. We instead anchor on the
+// SERVER-SIDE invariant — at most one non-voided SALE settlement per
+// (branch, backendFolioId, amount) inside this window. Distinct amounts (a
+// 3,500 deposit vs a 14,000 balance) still post; two genuinely-separate equal
+// instalments on one folio spaced further apart than this window still post.
+const FOLIO_SETTLE_DEDUPE_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
+
 const POS_PROMO_CODES = {
   SAVE5: {
     code: 'SAVE5',
@@ -437,51 +451,80 @@ export class PosCheckoutService {
     // online captures; clamped device time for offline captures).
     const occurredAt = this.resolveOccurredAt(dto.occurredAt, dto.captureState);
 
-    const checkout = await this.posCheckoutsRepository.save(
-      this.posCheckoutsRepository.create({
-        branchId: dto.branchId,
-        partnerCredentialId: dto.partnerCredentialId ?? null,
-        externalCheckoutId: this.normalizeOptionalString(
-          dto.externalCheckoutId,
-        ),
-        idempotencyKey: this.normalizeOptionalString(dto.idempotencyKey),
-        registerId: this.normalizeOptionalString(dto.registerId),
-        registerSessionId: dto.registerSessionId ?? null,
-        suspendedCartId: dto.suspendedCartId ?? null,
-        receiptNumber: this.normalizeOptionalString(dto.receiptNumber),
-        transactionType: dto.transactionType,
-        status: PosCheckoutStatus.RECEIVED,
-        currency: dto.currency.trim().toUpperCase(),
-        subtotal: dto.subtotal,
-        discountAmount: dto.discountAmount ?? 0,
-        taxAmount: dto.taxAmount ?? 0,
-        total: dto.total,
-        paidAmount: dto.paidAmount ?? 0,
-        changeDue: dto.changeDue ?? 0,
-        tipAmount: dto.tipAmount ?? 0,
-        itemCount: dto.items.length,
-        occurredAt,
-        cashierUserId: dto.cashierUserId ?? actor.id ?? null,
-        cashierName: this.normalizeOptionalString(dto.cashierName),
-        note: this.normalizeOptionalString(dto.note),
-        failureReason: null,
-        metadata: this.buildCheckoutMetadata(dto),
-        tenders: dto.tenders ?? [],
-        items: dto.items.map((item) => ({
-          ...item,
-          aliasValue: this.normalizeOptionalString(item.aliasValue),
-          sku: this.normalizeOptionalString(item.sku),
-          title: this.normalizeOptionalString(item.title),
-          note: this.normalizeOptionalString(item.note),
-          reasonCode: this.normalizeOptionalString(item.reasonCode),
-          discountAmount: item.discountAmount ?? 0,
-          taxRate: item.taxRate ?? null,
-          taxableBase: item.taxableBase ?? null,
-          taxAmount: item.taxAmount ?? 0,
-          metadata: this.normalizeCheckoutItemMetadata(item.metadata),
-        })),
-      }),
-    );
+    const checkoutDraft = this.posCheckoutsRepository.create({
+      branchId: dto.branchId,
+      partnerCredentialId: dto.partnerCredentialId ?? null,
+      externalCheckoutId: this.normalizeOptionalString(dto.externalCheckoutId),
+      idempotencyKey: this.normalizeOptionalString(dto.idempotencyKey),
+      registerId: this.normalizeOptionalString(dto.registerId),
+      registerSessionId: dto.registerSessionId ?? null,
+      suspendedCartId: dto.suspendedCartId ?? null,
+      receiptNumber: this.normalizeOptionalString(dto.receiptNumber),
+      transactionType: dto.transactionType,
+      status: PosCheckoutStatus.RECEIVED,
+      currency: dto.currency.trim().toUpperCase(),
+      subtotal: dto.subtotal,
+      discountAmount: dto.discountAmount ?? 0,
+      taxAmount: dto.taxAmount ?? 0,
+      total: dto.total,
+      paidAmount: dto.paidAmount ?? 0,
+      changeDue: dto.changeDue ?? 0,
+      tipAmount: dto.tipAmount ?? 0,
+      itemCount: dto.items.length,
+      occurredAt,
+      cashierUserId: dto.cashierUserId ?? actor.id ?? null,
+      cashierName: this.normalizeOptionalString(dto.cashierName),
+      note: this.normalizeOptionalString(dto.note),
+      failureReason: null,
+      metadata: this.buildCheckoutMetadata(dto),
+      tenders: dto.tenders ?? [],
+      items: dto.items.map((item) => ({
+        ...item,
+        aliasValue: this.normalizeOptionalString(item.aliasValue),
+        sku: this.normalizeOptionalString(item.sku),
+        title: this.normalizeOptionalString(item.title),
+        note: this.normalizeOptionalString(item.note),
+        reasonCode: this.normalizeOptionalString(item.reasonCode),
+        discountAmount: item.discountAmount ?? 0,
+        taxRate: item.taxRate ?? null,
+        taxableBase: item.taxableBase ?? null,
+        taxAmount: item.taxAmount ?? 0,
+        metadata: this.normalizeCheckoutItemMetadata(item.metadata),
+      })),
+    });
+
+    // Folio-scoped settlement dedupe (see FOLIO_SETTLE_DEDUPE_WINDOW_MS). When
+    // this checkout settles a hospitality folio, serialise concurrent taps on
+    // the same folio with a transaction-scoped advisory lock, re-check for a
+    // recent non-voided settlement of the same amount, and collapse a duplicate
+    // to the original instead of minting a second revenue row.
+    const folioLockId = this.resolveFolioSettlementLockId(dto);
+    let checkout: PosCheckout;
+    if (folioLockId != null) {
+      const result = await this.dataSource.transaction(async (manager) => {
+        await manager.query('SELECT pg_advisory_xact_lock($1::int, $2::int)', [
+          dto.branchId,
+          folioLockId,
+        ]);
+        const duplicate = await this.findExistingFolioSettlement(dto, manager);
+        if (duplicate) {
+          return { duplicate };
+        }
+        const saved = await manager
+          .getRepository(PosCheckout)
+          .save(checkoutDraft);
+        return { saved };
+      });
+      if (result.duplicate) {
+        this.logger.warn(
+          `Collapsed duplicate folio settlement for branch ${dto.branchId} folio ${folioLockId} (amount ${dto.total}) onto checkout ${result.duplicate.id}`,
+        );
+        return this.toResponse(result.duplicate);
+      }
+      checkout = result.saved!;
+    } else {
+      checkout = await this.posCheckoutsRepository.save(checkoutDraft);
+    }
 
     try {
       await this.dataSource.transaction(async (manager) => {
@@ -1183,6 +1226,67 @@ export class PosCheckoutService {
     }
 
     return null;
+  }
+
+  /**
+   * Returns a stable int4 lock key (the backend folio id) when this checkout is
+   * a hospitality-folio settlement that should be guarded against duplicates,
+   * or null when the folio-scoped dedupe does not apply (no folio link, not a
+   * forward SALE, or a folio id outside int4 range for the advisory lock).
+   */
+  private resolveFolioSettlementLockId(
+    dto: IngestPosCheckoutDto,
+  ): number | null {
+    if (dto.transactionType !== PosCheckoutTransactionType.SALE) {
+      return null;
+    }
+    const raw = dto.metadata?.backendFolioId;
+    if (raw == null) {
+      return null;
+    }
+    const folioId = Number(raw);
+    // pg_advisory_xact_lock(int, int) needs an int4; folio ids are well within
+    // that range. Skip the lock (and the dedupe) for anything that isn't.
+    if (!Number.isInteger(folioId) || folioId <= 0 || folioId > 2147483647) {
+      return null;
+    }
+    return folioId;
+  }
+
+  /**
+   * Finds a recent non-voided, non-failed SALE settlement for the same folio and
+   * the same amount inside the dedupe window — i.e. a duplicate of the incoming
+   * settlement. Must run inside the advisory-locked transaction so concurrent
+   * taps on one folio are serialised. Anchors on metadata.backendFolioId (which
+   * the client stamps reliably), never on the fragile client idempotencyKey.
+   */
+  private async findExistingFolioSettlement(
+    dto: IngestPosCheckoutDto,
+    manager: EntityManager,
+  ): Promise<PosCheckout | null> {
+    const folioId = this.resolveFolioSettlementLockId(dto);
+    if (folioId == null) {
+      return null;
+    }
+    const amountCents = Math.round(Number(dto.total || 0) * 100);
+    const windowStart = new Date(Date.now() - FOLIO_SETTLE_DEDUPE_WINDOW_MS);
+    return manager
+      .getRepository(PosCheckout)
+      .createQueryBuilder('c')
+      .where('c.branchId = :branchId', { branchId: dto.branchId })
+      .andWhere("(c.metadata->>'backendFolioId') = :folioId", {
+        folioId: String(folioId),
+      })
+      .andWhere('c.transactionType = :tt', {
+        tt: PosCheckoutTransactionType.SALE,
+      })
+      .andWhere('c.status NOT IN (:...excluded)', {
+        excluded: [PosCheckoutStatus.VOIDED, PosCheckoutStatus.FAILED],
+      })
+      .andWhere('ROUND(c.total * 100) = :amountCents', { amountCents })
+      .andWhere('c.createdAt >= :windowStart', { windowStart })
+      .orderBy('c.id', 'ASC')
+      .getOne();
   }
 
   private async findOneById(id: number): Promise<PosCheckout> {

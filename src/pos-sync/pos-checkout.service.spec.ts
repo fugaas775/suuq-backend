@@ -109,6 +109,7 @@ describe('PosCheckoutService', () => {
     dataSource = {
       transaction: jest.fn(async (callback) =>
         callback({
+          query: jest.fn().mockResolvedValue([]),
           getRepository: jest.fn((entity) => {
             if (entity === PosCheckout) {
               return posCheckoutsRepository;
@@ -936,6 +937,86 @@ describe('PosCheckoutService', () => {
         pointsEarned: 12,
       }),
     );
+  });
+
+  it('collapses a duplicate HOTEL folio settlement onto the original (folio-scoped dedupe)', async () => {
+    // Mirrors the prod Room 405 failure: the client idempotencyKey did NOT match
+    // (it was a random per-attempt key), so findExistingForIdempotency returns
+    // null and the folio-scoped guard is the only thing that can stop the dupe.
+    posCheckoutsRepository.findOne.mockResolvedValue(null);
+    const original = {
+      id: 501,
+      branchId: 3,
+      externalCheckoutId: null,
+      idempotencyKey: 'receipt-aaa-POS-3',
+      transactionType: PosCheckoutTransactionType.SALE,
+      status: PosCheckoutStatus.PROCESSED,
+      currency: 'USD',
+      subtotal: 14000,
+      discountAmount: 0,
+      taxAmount: 0,
+      total: 14000,
+      paidAmount: 14000,
+      changeDue: 0,
+      itemCount: 1,
+      occurredAt: new Date('2026-06-17T00:29:42.000Z'),
+      processedAt: new Date('2026-06-17T00:29:43.000Z'),
+      metadata: { backendFolioId: 731, roomNumber: '405' },
+      tenders: [],
+      items: [],
+      createdAt: new Date('2026-06-17T00:29:42.000Z'),
+      updatedAt: new Date('2026-06-17T00:29:43.000Z'),
+    };
+    const folioQb = {
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      getOne: jest.fn().mockResolvedValue(original),
+    };
+    posCheckoutsRepository.createQueryBuilder.mockReturnValue(folioQb);
+
+    const result = await service.ingest({
+      branchId: 3,
+      transactionType: PosCheckoutTransactionType.SALE,
+      // A fresh random key, like the real re-tap — it matches nothing.
+      idempotencyKey: 'receipt-ccc-POS-3',
+      currency: 'USD',
+      subtotal: 14000,
+      total: 14000,
+      occurredAt: '2026-06-17T00:30:32.000Z',
+      metadata: { backendFolioId: 731, roomNumber: '405' },
+      items: [
+        { productId: 55, quantity: 1, unitPrice: 14000, lineTotal: 14000 },
+      ],
+    });
+
+    expect(result.id).toBe(501);
+    expect(posCheckoutsRepository.save).not.toHaveBeenCalled();
+    expect(inventoryLedgerService.recordMovement).not.toHaveBeenCalled();
+  });
+
+  it('lets a distinct-amount payment on the same folio through (3,500 deposit then 14,000 balance)', async () => {
+    const folioQb = {
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      // No same-amount settlement for this folio in the window.
+      getOne: jest.fn().mockResolvedValue(null),
+    };
+    posCheckoutsRepository.createQueryBuilder.mockReturnValue(folioQb);
+
+    await service.ingest({
+      branchId: 3,
+      transactionType: PosCheckoutTransactionType.SALE,
+      currency: 'USD',
+      subtotal: 3500,
+      total: 3500,
+      occurredAt: '2026-06-17T00:29:15.000Z',
+      metadata: { backendFolioId: 731, roomNumber: '405' },
+      items: [{ productId: 55, quantity: 1, unitPrice: 3500, lineTotal: 3500 }],
+    });
+
+    expect(posCheckoutsRepository.save).toHaveBeenCalled();
   });
 
   it('persists failed checkouts for business-rule errors', async () => {
