@@ -7,6 +7,7 @@ import {
   HttpCode,
   Param,
   ParseIntPipe,
+  Patch,
   Post,
   Query,
   Req,
@@ -41,6 +42,11 @@ import {
 import { RetailReplenishmentNetworkSummaryQueryDto } from './dto/retail-replenishment-network-summary-query.dto';
 import { RetailReplenishmentNetworkSummaryResponseDto } from './dto/retail-replenishment-network-summary-response.dto';
 import { MutateRetailBranchCatalogVendorLinkDto } from './dto/mutate-retail-branch-catalog-vendor-link.dto';
+import {
+  RetailConfirmShelfItemDto,
+  RetailPendingShelfItemDto,
+  RetailPendingShelfQueryDto,
+} from './dto/retail-shelf-setup.dto';
 import {
   RetailCommandCenterAlertSeverityFilter,
   RetailCommandCenterStatusFilter,
@@ -624,6 +630,54 @@ export class RetailOpsController {
       body.branchId,
       body.vendorId,
     );
+  }
+
+  @Get('branch-products/pending-shelf')
+  @UseGuards(RetailModulesGuard)
+  @Roles(
+    UserRole.SUPER_ADMIN,
+    UserRole.ADMIN,
+    UserRole.POS_MANAGER,
+    UserRole.POS_OPERATOR,
+    UserRole.B2B_BUYER,
+  )
+  @RequireRetailModules(RetailOsModule.INVENTORY_CORE)
+  @RetailBranchContext('query.branchId')
+  @ApiOperation({
+    summary:
+      'List products auto-staged into this branch catalog from received POs that still need a retail price and/or a consumer-listing decision',
+  })
+  @ApiOkResponse({ type: RetailPendingShelfItemDto, isArray: true })
+  pendingShelfItems(@Query() query: RetailPendingShelfQueryDto) {
+    return this.retailOpsService.getPendingShelfItems(query.branchId);
+  }
+
+  @Patch('branch-products/:productId/shelf')
+  @UseGuards(RetailModulesGuard)
+  @Roles(
+    UserRole.SUPER_ADMIN,
+    UserRole.ADMIN,
+    UserRole.POS_MANAGER,
+    UserRole.B2B_BUYER,
+  )
+  @RequireRetailModules(RetailOsModule.INVENTORY_CORE)
+  @RetailBranchContext('body.branchId')
+  @ApiOperation({
+    summary:
+      'Confirm a staged shelf item: set the per-branch retail price, sale price, consumer listing, and optionally a category + image',
+  })
+  @ApiBody({ type: RetailConfirmShelfItemDto })
+  confirmShelfItem(
+    @Param('productId', ParseIntPipe) productId: number,
+    @Body() body: RetailConfirmShelfItemDto,
+  ) {
+    return this.retailOpsService.confirmShelfItem(body.branchId, productId, {
+      retailPrice: body.retailPrice,
+      retailSalePrice: body.retailSalePrice,
+      consumerVisible: body.consumerVisible,
+      categoryId: body.categoryId,
+      imageUrl: body.imageUrl,
+    });
   }
 
   @Get('stock-health/export')

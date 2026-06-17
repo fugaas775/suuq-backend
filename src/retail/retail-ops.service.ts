@@ -1,7 +1,14 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { createHash } from 'crypto';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Brackets, In, IsNull, MoreThanOrEqual, Repository } from 'typeorm';
+import {
+  Brackets,
+  EntityManager,
+  In,
+  IsNull,
+  MoreThanOrEqual,
+  Repository,
+} from 'typeorm';
 import { UserRole } from '../auth/roles.enum';
 import { Product } from '../products/entities/product.entity';
 import { User } from '../users/entities/user.entity';
@@ -18,6 +25,8 @@ import {
   PurchaseOrderReevaluationOutcome,
   PurchaseOrdersService,
 } from '../purchase-orders/purchase-orders.service';
+import { Category } from '../categories/entities/category.entity';
+import { SupplierProfile } from '../suppliers/entities/supplier-profile.entity';
 import { Branch } from '../branches/entities/branch.entity';
 import { BranchInventory } from '../branches/entities/branch-inventory.entity';
 import { BranchInventoryVariant } from '../branches/entities/branch-inventory-variant.entity';
@@ -216,6 +225,7 @@ import {
   RetailBranchProductsResponseDto,
   RetailBranchProductsSummaryResponseDto,
 } from './dto/retail-branch-products-response.dto';
+import { RetailPendingShelfItemDto } from './dto/retail-shelf-setup.dto';
 import { RetailStockHealthQueryDto } from './dto/retail-stock-health-query.dto';
 import {
   RetailStockHealthItemResponseDto,
@@ -3847,9 +3857,37 @@ export class RetailOpsService {
     branchCatalogLink: BranchCatalogProductLink | null,
     branchCatalogVendorLink: BranchCatalogVendorLink | null,
   ): RetailBranchProductItemResponseDto {
-    const normalizedPrice = Number(product.price ?? 0);
+    // Per-branch retail layer: the catalog link can override the shared product
+    // price/sale price (COALESCE(link.retailPrice, product.price)).
+    const linkRetailPrice =
+      branchCatalogLink?.retailPrice == null
+        ? null
+        : Number(branchCatalogLink.retailPrice);
+    const linkRetailSalePrice =
+      branchCatalogLink?.retailSalePrice == null
+        ? null
+        : Number(branchCatalogLink.retailSalePrice);
+    const normalizedPrice =
+      linkRetailPrice != null ? linkRetailPrice : Number(product.price ?? 0);
     const normalizedSalePrice =
-      product.salePrice == null ? null : Number(product.salePrice);
+      linkRetailSalePrice != null
+        ? linkRetailSalePrice
+        : product.salePrice == null
+          ? null
+          : Number(product.salePrice);
+    const consumerVisible = !!branchCatalogLink?.consumerVisible;
+    const catalogLinkSource = branchCatalogLink?.source ?? null;
+    const sourceSupplierProfileId =
+      branchCatalogLink?.sourceSupplierProfileId ?? null;
+    const sourcePurchaseOrderId =
+      branchCatalogLink?.sourcePurchaseOrderId ?? null;
+    // A received-PO link still awaiting operator setup: no retail price yet, or
+    // not yet listed online.
+    const needsShelfSetup =
+      !!branchCatalogLink &&
+      branchCatalogLink.source === 'PURCHASE_ORDER' &&
+      (branchCatalogLink.retailPrice == null ||
+        !branchCatalogLink.consumerVisible);
     const isLinkedToBranch = !!branchCatalogLink || !!branchCatalogVendorLink;
     const isAssignedToBranch = !!inventory || isLinkedToBranch;
     const quantityOnHand = inventory
@@ -3892,6 +3930,13 @@ export class RetailOpsService {
       salePrice: normalizedSalePrice,
       effectivePrice:
         normalizedSalePrice != null ? normalizedSalePrice : normalizedPrice,
+      retailPrice: linkRetailPrice,
+      retailSalePrice: linkRetailSalePrice,
+      consumerVisible,
+      catalogLinkSource,
+      sourceSupplierProfileId,
+      sourcePurchaseOrderId,
+      needsShelfSetup,
       taxRate: product.taxRate == null ? null : Number(product.taxRate),
       imageUrl:
         product.thumbnail ||
@@ -3983,6 +4028,196 @@ export class RetailOpsService {
     }
 
     return { branchId, vendorId, removed: true };
+  }
+
+  /**
+   * Upsert a single product into a branch catalog (the per-branch retail layer).
+   * Existing rows are patched field-by-field; a manual link is never downgraded to a
+   * PURCHASE_ORDER source. Used by the receive→stage hook and the shelf-confirm flow.
+   * Pass a transaction `manager` to participate in a caller's transaction.
+   */
+  async linkBranchCatalogProduct(
+    branchId: number,
+    productId: number,
+    options: {
+      retailPrice?: number | null;
+      retailSalePrice?: number | null;
+      consumerVisible?: boolean;
+      source?: 'MANUAL' | 'PURCHASE_ORDER';
+      sourceSupplierProfileId?: number | null;
+      sourcePurchaseOrderId?: number | null;
+    } = {},
+    manager?: EntityManager,
+  ): Promise<BranchCatalogProductLink> {
+    const repo = manager
+      ? manager.getRepository(BranchCatalogProductLink)
+      : this.branchCatalogProductLinksRepository;
+
+    const existing = await repo.findOne({ where: { branchId, productId } });
+    if (existing) {
+      if (options.retailPrice !== undefined) {
+        existing.retailPrice = options.retailPrice;
+      }
+      if (options.retailSalePrice !== undefined) {
+        existing.retailSalePrice = options.retailSalePrice;
+      }
+      if (options.consumerVisible !== undefined) {
+        existing.consumerVisible = options.consumerVisible;
+      }
+      if (options.sourceSupplierProfileId !== undefined) {
+        existing.sourceSupplierProfileId = options.sourceSupplierProfileId;
+      }
+      if (options.sourcePurchaseOrderId !== undefined) {
+        existing.sourcePurchaseOrderId = options.sourcePurchaseOrderId;
+      }
+      return repo.save(existing);
+    }
+
+    return repo.save(
+      repo.create({
+        branchId,
+        productId,
+        retailPrice: options.retailPrice ?? null,
+        retailSalePrice: options.retailSalePrice ?? null,
+        consumerVisible: options.consumerVisible ?? false,
+        source: options.source ?? 'MANUAL',
+        sourceSupplierProfileId: options.sourceSupplierProfileId ?? null,
+        sourcePurchaseOrderId: options.sourcePurchaseOrderId ?? null,
+      }),
+    );
+  }
+
+  /**
+   * The operator review queue: products auto-staged into this branch catalog from a
+   * received purchase order that still need a retail price and/or a listing decision.
+   */
+  async getPendingShelfItems(
+    branchId: number,
+  ): Promise<RetailPendingShelfItemDto[]> {
+    await this.assertBranchExists(branchId);
+
+    const links = await this.branchCatalogProductLinksRepository.find({
+      where: { branchId, source: 'PURCHASE_ORDER' },
+      relations: { product: true },
+      order: { createdAt: 'DESC' },
+    });
+
+    const pending = links.filter(
+      (l) =>
+        (l.retailPrice == null || !l.consumerVisible) &&
+        l.product &&
+        !l.product.deletedAt,
+    );
+
+    const supplierIds = [
+      ...new Set(
+        pending
+          .map((l) => l.sourceSupplierProfileId)
+          .filter((x): x is number => x != null),
+      ),
+    ];
+    const suppliers = supplierIds.length
+      ? await this.branchCatalogProductLinksRepository.manager
+          .getRepository(SupplierProfile)
+          .find({ where: { id: In(supplierIds) } })
+      : [];
+    const supplierNameById = new Map(
+      suppliers.map((s) => [s.id, s.companyName]),
+    );
+
+    return pending.map((l) => ({
+      branchId,
+      productId: l.productId,
+      name: l.product?.name ?? null,
+      currency: l.product?.currency ?? null,
+      imageUrl: l.product?.imageUrl ?? null,
+      wholesaleCost: l.product?.price == null ? null : Number(l.product.price),
+      retailPrice: l.retailPrice == null ? null : Number(l.retailPrice),
+      consumerVisible: !!l.consumerVisible,
+      supplierProfileId: l.sourceSupplierProfileId ?? null,
+      supplierName:
+        l.sourceSupplierProfileId != null
+          ? (supplierNameById.get(l.sourceSupplierProfileId) ?? null)
+          : null,
+      purchaseOrderId: l.sourcePurchaseOrderId ?? null,
+      linkedAt: l.createdAt ?? null,
+    }));
+  }
+
+  /**
+   * Operator confirmation of a staged shelf item: sets the per-branch retail price,
+   * optional sale price, and whether to list it on suuq_s; optionally enriches the
+   * underlying product with a category + image for a good consumer listing.
+   * Returns the refreshed unified branch product row.
+   */
+  async confirmShelfItem(
+    branchId: number,
+    productId: number,
+    dto: {
+      retailPrice?: number | null;
+      retailSalePrice?: number | null;
+      consumerVisible?: boolean;
+      categoryId?: number | null;
+      imageUrl?: string | null;
+    },
+  ): Promise<RetailBranchProductItemResponseDto> {
+    const branch = await this.assertBranchExists(branchId);
+
+    const link = await this.branchCatalogProductLinksRepository.findOne({
+      where: { branchId, productId },
+    });
+    if (!link) {
+      throw new NotFoundException(
+        `Product ${productId} is not linked to branch ${branchId}`,
+      );
+    }
+
+    if (dto.retailPrice !== undefined) link.retailPrice = dto.retailPrice;
+    if (dto.retailSalePrice !== undefined) {
+      link.retailSalePrice = dto.retailSalePrice;
+    }
+    if (dto.consumerVisible !== undefined) {
+      link.consumerVisible = dto.consumerVisible;
+    }
+    await this.branchCatalogProductLinksRepository.save(link);
+
+    // Enrich the underlying product for a good consumer listing (supplier B2B
+    // products ship without an image or category).
+    if (dto.categoryId !== undefined || dto.imageUrl !== undefined) {
+      const product = await this.productRepository.findOne({
+        where: { id: productId },
+      });
+      if (product) {
+        if (dto.imageUrl !== undefined) product.imageUrl = dto.imageUrl;
+        if (dto.categoryId != null) {
+          product.category = { id: dto.categoryId } as Category;
+        }
+        await this.productRepository.save(product);
+      }
+    }
+
+    const product = await this.productRepository.findOne({
+      where: { id: productId },
+      relations: { category: true, vendor: true, images: true },
+    });
+    if (!product) {
+      throw new NotFoundException(`Product ${productId} not found`);
+    }
+    const inventory = await this.branchInventoryRepository.findOne({
+      where: { branchId, productId },
+    });
+    const refreshedLink =
+      await this.branchCatalogProductLinksRepository.findOne({
+        where: { branchId, productId },
+      });
+
+    return this.mapBranchProductItem(
+      branch,
+      product,
+      inventory ?? null,
+      refreshedLink ?? null,
+      null,
+    );
   }
 
   private mapStockHealthSummary(

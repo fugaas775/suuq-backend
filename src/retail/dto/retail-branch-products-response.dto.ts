@@ -72,6 +72,49 @@ export class RetailBranchProductItemResponseDto {
   @ApiPropertyOptional({
     nullable: true,
     description:
+      'Per-branch retail price override held on the catalog link. Null = sells at the shared product price.',
+  })
+  retailPrice!: number | null;
+
+  @ApiPropertyOptional({ nullable: true })
+  retailSalePrice!: number | null;
+
+  @ApiProperty({
+    description:
+      'Whether this linked product is listed to consumers on the suuq_s marketplace for this branch.',
+  })
+  consumerVisible!: boolean;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description:
+      "How the catalog link was created: 'MANUAL' (Seller HQ) or 'PURCHASE_ORDER' (auto-staged from a received PO).",
+  })
+  catalogLinkSource!: string | null;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description:
+      'For PURCHASE_ORDER links, the supplier whose received goods seeded this shelf entry.',
+  })
+  sourceSupplierProfileId!: number | null;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description:
+      'For PURCHASE_ORDER links, the purchase order whose receipt seeded this shelf entry.',
+  })
+  sourcePurchaseOrderId!: number | null;
+
+  @ApiProperty({
+    description:
+      'True when this product is a received-PO shelf entry still awaiting operator setup (no retail price or not yet listed).',
+  })
+  needsShelfSetup!: boolean;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description:
       'Per-product VAT/sales-tax rate as a decimal fraction (e.g. 0.15 = 15%). When null, callers should fall back to the branch default tax rate.',
     example: 0.15,
   })

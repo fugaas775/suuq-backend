@@ -7,7 +7,7 @@ import {
   Query,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { Branch } from '../branches/entities/branch.entity';
 import { VendorStore } from '../vendor/entities/vendor-store.entity';
 import { Product } from '../products/entities/product.entity';
@@ -208,7 +208,10 @@ export class ConsumerBranchController {
 
     if (linkedCount > 0) {
       // Build query via the catalog links table so we include all linked products
-      // regardless of their vendor_store_id assignment.
+      // regardless of their vendor_store_id assignment. Consumer visibility is gated
+      // per-branch on the link's consumer_visible flag (not the shared product
+      // status), so a branch can resell a supplier's product without the supplier
+      // having to publish it.
       const baseQb = this.productRepo
         .createQueryBuilder('p')
         .innerJoin(
@@ -217,7 +220,7 @@ export class ConsumerBranchController {
           'bcl."productId" = p.id AND bcl."branchId" = :branchId',
           { branchId },
         )
-        .where("p.status = 'publish'")
+        .where('bcl."consumer_visible" = true')
         .andWhere('p.deleted_at IS NULL');
 
       const total = await baseQb.clone().getCount();
@@ -229,17 +232,36 @@ export class ConsumerBranchController {
         .take(limit)
         .getMany();
 
-      const items: ConsumerBranchProductItemDto[] = products.map((p) => ({
-        id: p.id,
-        name: p.name,
-        price: Number(p.price),
-        currency: p.currency ?? null,
-        imageUrl: p.imageUrl ?? null,
-        productType: p.productType ?? null,
-        tags: (p.tags ?? [])
-          .map((t) => (t?.name ?? '').toLowerCase())
-          .filter((name) => name.length > 0),
-      }));
+      // Resolve per-branch retail price overrides for this page of products
+      // (effective price = COALESCE(link.retailPrice, product.price)).
+      const productIds = products.map((p) => p.id);
+      const links = productIds.length
+        ? await this.catalogLinkRepo.find({
+            where: { branchId, productId: In(productIds) },
+          })
+        : [];
+      const linkByProduct = new Map(links.map((l) => [l.productId, l]));
+
+      const items: ConsumerBranchProductItemDto[] = products.map((p) => {
+        const link = linkByProduct.get(p.id);
+        const effectivePrice =
+          link?.retailSalePrice != null
+            ? Number(link.retailSalePrice)
+            : link?.retailPrice != null
+              ? Number(link.retailPrice)
+              : Number(p.price);
+        return {
+          id: p.id,
+          name: p.name,
+          price: effectivePrice,
+          currency: p.currency ?? null,
+          imageUrl: p.imageUrl ?? null,
+          productType: p.productType ?? null,
+          tags: (p.tags ?? [])
+            .map((t) => (t?.name ?? '').toLowerCase())
+            .filter((name) => name.length > 0),
+        };
+      });
 
       return { items, total, page, limit };
     }

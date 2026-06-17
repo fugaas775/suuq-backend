@@ -8,7 +8,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, EntityManager, Not, Repository } from 'typeorm';
+import { DataSource, EntityManager, In, Not, Repository } from 'typeorm';
 import { AuditService } from '../audit/audit.service';
 import { UserRole } from '../auth/roles.enum';
 import { EmailService } from '../email/email.service';
@@ -19,6 +19,7 @@ import { InventoryLedgerService } from '../branches/inventory-ledger.service';
 import { ReplenishmentService } from '../branches/replenishment.service';
 import { Branch } from '../branches/entities/branch.entity';
 import { StockMovementType } from '../branches/entities/stock-movement.entity';
+import { BranchCatalogProductLink } from '../retail/entities/branch-catalog-product-link.entity';
 import { Product } from '../products/entities/product.entity';
 import { ProcurementWebhookEventType } from '../procurement-webhooks/entities/procurement-webhook-subscription.entity';
 import { ProcurementWebhooksService } from '../procurement-webhooks/procurement-webhooks.service';
@@ -560,6 +561,11 @@ export class PurchaseOrdersService {
         receiptSummary,
         actor.id ?? null,
         dto.reason,
+        manager,
+      );
+      await this.stageReceivedProductsIntoCatalog(
+        purchaseOrder,
+        receiptSummary,
         manager,
       );
       await this.persistReceiptEvent(
@@ -1312,6 +1318,63 @@ export class PurchaseOrdersService {
         manager,
       );
     }
+  }
+
+  /**
+   * Last mile of the supply chain: when a branch receives a PO, auto-stage every
+   * received product into the receiving branch's retail catalog so it becomes a
+   * sellable, listable branch product (operator confirms price + listing later).
+   * Stock is already posted by persistReceiptSideEffects; this only adds the shelf
+   * entry. Staged links are created with consumer_visible=false / retail_price=null
+   * (the "needs setup" state) and skipped for products already in the branch catalog,
+   * so a manual link is never overwritten.
+   */
+  private async stageReceivedProductsIntoCatalog(
+    purchaseOrder: PurchaseOrder,
+    receiptSummary: ReceiptLineSummary[],
+    manager: EntityManager,
+  ): Promise<void> {
+    const branchId = purchaseOrder.branchId;
+    if (!branchId) {
+      return;
+    }
+
+    const productIds = [
+      ...new Set(
+        receiptSummary
+          .filter((line) => line.receivedQuantity > 0 && line.productId)
+          .map((line) => line.productId),
+      ),
+    ];
+    if (!productIds.length) {
+      return;
+    }
+
+    const repo = manager.getRepository(BranchCatalogProductLink);
+    const existing = await repo.find({
+      where: { branchId, productId: In(productIds) },
+    });
+    const alreadyLinked = new Set(existing.map((link) => link.productId));
+
+    const toCreate = productIds.filter((id) => !alreadyLinked.has(id));
+    if (!toCreate.length) {
+      return;
+    }
+
+    await repo.save(
+      toCreate.map((productId) =>
+        repo.create({
+          branchId,
+          productId,
+          retailPrice: null,
+          retailSalePrice: null,
+          consumerVisible: false,
+          source: 'PURCHASE_ORDER',
+          sourceSupplierProfileId: purchaseOrder.supplierProfileId ?? null,
+          sourcePurchaseOrderId: purchaseOrder.id,
+        }),
+      ),
+    );
   }
 
   private buildInboundOpenPoProjection(
