@@ -92,6 +92,22 @@ export class Branch {
   @Column({ type: 'varchar', length: 512, nullable: true })
   logoUrl?: string | null;
 
+  /**
+   * When set, this branch is a wholesale Supplier's backing "cash & carry"
+   * outlet — the branch the supplier's Suuq POS counter runs against — rather
+   * than an ordinary retail branch. References supplier_profiles.id.
+   *
+   * Such outlets are deliberately EXCLUDED from a user's normal POS branch list
+   * (collectPosBranchAccessForUser) so the supplier stays branch-independent and
+   * no Retail⇄Wholesale switcher appears; they are surfaced to the client via the
+   * supplier context's outletBranchId instead. They are still owned by the
+   * supplier user, so the register/checkout guards authorize them normally, and
+   * effective-user-role still derives POS_MANAGER from them. Null = ordinary
+   * retail branch.
+   */
+  @Column({ type: 'int', nullable: true })
+  supplierOutletProfileId?: number | null;
+
   @CreateDateColumn()
   createdAt!: Date;
 

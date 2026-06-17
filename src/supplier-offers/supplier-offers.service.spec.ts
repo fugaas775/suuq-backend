@@ -15,6 +15,7 @@ function makeService({
     offers as any,
     profiles as any,
     products as any,
+    { syncOutletCatalog: jest.fn().mockResolvedValue(undefined) } as any, // supplierOutletService
   );
 }
 

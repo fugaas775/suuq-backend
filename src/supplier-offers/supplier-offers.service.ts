@@ -25,6 +25,7 @@ import {
   listOwnedSupplierProfileIds,
   resolveActiveOwnedProfile,
 } from '../suppliers/active-supplier.util';
+import { SupplierOutletService } from '../suppliers/supplier-outlet.service';
 
 /**
  * Supplier-facing catalog management. Every operation is scoped to the supplier
@@ -43,7 +44,19 @@ export class SupplierOffersService {
     private readonly profilesRepository: Repository<SupplierProfile>,
     @InjectRepository(Product)
     private readonly productsRepository: Repository<Product>,
+    private readonly supplierOutletService: SupplierOutletService,
   ) {}
+
+  /**
+   * Best-effort re-mirror of the supplier's published catalog into its Suuq POS
+   * counter outlet (no-op when the supplier has no outlet). Fire-and-forget so a
+   * catalog-sync hiccup never fails the product create/publish itself.
+   */
+  private resyncOutletCatalog(supplierProfileId: number): void {
+    void this.supplierOutletService
+      .syncOutletCatalog(supplierProfileId)
+      .catch(() => undefined);
+  }
 
   async listForUser(
     userId: number | null | undefined,
@@ -112,7 +125,9 @@ export class SupplierOffersService {
       activeSupplierId,
       actingRoles,
     );
-    return this.createProductOffer(profile, dto);
+    const offer = await this.createProductOffer(profile, dto);
+    this.resyncOutletCatalog(profile.id);
+    return offer;
   }
 
   /**
@@ -177,6 +192,9 @@ export class SupplierOffersService {
         });
       }
     }
+    if (created > 0) {
+      this.resyncOutletCatalog(profile.id);
+    }
     return { total: items.length, created, failed, results };
   }
 
@@ -232,7 +250,10 @@ export class SupplierOffersService {
       throw new BadRequestException('Inactive suppliers cannot publish offers');
     }
     offer.status = SupplierOfferStatus.PUBLISHED;
-    return this.offersRepository.save(offer);
+    const saved = await this.offersRepository.save(offer);
+    // A newly published offer should appear at the supplier's counter.
+    this.resyncOutletCatalog(offer.supplierProfileId);
+    return saved;
   }
 
   async archiveForUser(

@@ -23,6 +23,7 @@ const makeService = ({ profiles = {}, subscriptions = {} }: any) => {
   return new SupplierActivationService(
     {} as any, // ebirrService
     {} as any, // supplierStaffService
+    { ensureOutletForSupplier: jest.fn().mockResolvedValue(null) } as any, // supplierOutletService
     profiles,
     subscriptions,
   );

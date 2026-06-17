@@ -998,6 +998,12 @@ export class BranchStaffService {
     const byBranchId = new Map<number, PosBranchSummary>();
 
     for (const branch of ownedBranches) {
+      // A supplier's backing cash & carry outlet is owned by the supplier user
+      // but is NOT a normal POS branch — it is surfaced via the supplier context
+      // (outletBranchId), so keep it out of the branch list / switcher.
+      if (branch.supplierOutletProfileId) {
+        continue;
+      }
       byBranchId.set(branch.id, {
         branchId: branch.id,
         branchName: branch.name,
@@ -1033,6 +1039,10 @@ export class BranchStaffService {
     for (const tenant of tenantOwnedTenants) {
       for (const branch of tenant.branches ?? []) {
         if (!branch?.isActive || byBranchId.has(branch.id)) {
+          continue;
+        }
+        // Supplier outlet branches never surface in the normal branch list.
+        if (branch.supplierOutletProfileId) {
           continue;
         }
         // Skip branches explicitly transferred to another owner.
@@ -1077,6 +1087,10 @@ export class BranchStaffService {
 
     for (const assignment of assignments) {
       if (!assignment.branch?.isActive) {
+        continue;
+      }
+      // Supplier outlet branches never surface in the normal branch list.
+      if (assignment.branch.supplierOutletProfileId) {
         continue;
       }
 

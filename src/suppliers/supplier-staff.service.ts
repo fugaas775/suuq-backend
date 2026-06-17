@@ -22,6 +22,11 @@ import {
 import { CreateSupplierStaffManualAccountDto } from './dto/create-supplier-staff-manual-account.dto';
 import { UpdateSupplierStaffDto } from './dto/update-supplier-staff.dto';
 import { actorIsSuperAdmin } from './active-supplier.util';
+import { Branch } from '../branches/entities/branch.entity';
+import {
+  SupplierOutletService,
+  WHOLESALE_COUNTER_PROFILE_CODE,
+} from './supplier-outlet.service';
 
 /**
  * The branch-INDEPENDENT supplier identity surfaced into the portal session and
@@ -38,6 +43,15 @@ export interface SupplierContext {
   permissions: string[];
   /** UI hint: account is active AND the member can publish (manager-level). */
   canPublishOffers: boolean;
+  /**
+   * The supplier's backing "cash & carry" outlet branch — the branch its Suuq
+   * POS counter runs against — when one has been provisioned (ACTIVE suppliers).
+   * The pos-s client binds the register to this branch in supplier mode. Null
+   * when the supplier has no counter yet (the register surface stays hidden).
+   */
+  outletBranchId: number | null;
+  outletExperienceProfileCode: string | null;
+  outletBranchName: string | null;
 }
 
 type Actor = {
@@ -80,6 +94,7 @@ export class SupplierStaffService {
     private readonly assignmentsRepository: Repository<SupplierStaffAssignment>,
     @InjectRepository(User)
     private readonly usersRepository: Repository<User>,
+    private readonly supplierOutletService: SupplierOutletService,
   ) {}
 
   private buildSupplierContext(
@@ -101,7 +116,50 @@ export class SupplierStaffService {
         managerLevel &&
         profile.activationStatus === SupplierActivationStatus.ACTIVE &&
         profile.isActive,
+      // Outlet fields default to null; attachOutlet(s) fills them from the
+      // provisioned outlet branch (see getSupplierContextsForUser / ForUser).
+      outletBranchId: null,
+      outletExperienceProfileCode: null,
+      outletBranchName: null,
     };
+  }
+
+  /** Apply a resolved outlet branch to a context (no-op when none provisioned). */
+  private applyOutlet(
+    context: SupplierContext,
+    branch?: Branch | null,
+  ): SupplierContext {
+    if (!branch) return context;
+    return {
+      ...context,
+      outletBranchId: branch.id,
+      outletExperienceProfileCode: WHOLESALE_COUNTER_PROFILE_CODE,
+      outletBranchName: branch.name,
+    };
+  }
+
+  /** Enrich a single context with its backing outlet branch, if any. */
+  private async attachOutlet(
+    context: SupplierContext | null,
+  ): Promise<SupplierContext | null> {
+    if (!context) return null;
+    const map = await this.supplierOutletService.getOutletBranchesForProfiles([
+      context.supplierProfileId,
+    ]);
+    return this.applyOutlet(context, map.get(context.supplierProfileId));
+  }
+
+  /** Enrich a list of contexts with their backing outlet branches (one query). */
+  private async attachOutlets(
+    contexts: SupplierContext[],
+  ): Promise<SupplierContext[]> {
+    if (!contexts.length) return contexts;
+    const map = await this.supplierOutletService.getOutletBranchesForProfiles(
+      contexts.map((context) => context.supplierProfileId),
+    );
+    return contexts.map((context) =>
+      this.applyOutlet(context, map.get(context.supplierProfileId)),
+    );
   }
 
   /**
@@ -129,14 +187,17 @@ export class SupplierStaffService {
           where: { id: preferredId },
         });
         if (profile) {
-          return this.buildSupplierContext(
-            profile,
-            SupplierStaffRole.MANAGER,
-            [],
-            userId,
+          return this.attachOutlet(
+            this.buildSupplierContext(
+              profile,
+              SupplierStaffRole.MANAGER,
+              [],
+              userId,
+            ),
           );
         }
       }
+      // getSupplierContextsForUser already enriches with outlet info.
       const contexts = await this.getSupplierContextsForUser(actor);
       return (
         contexts.find((c) => c.supplierProfileId === preferredId) ||
@@ -153,11 +214,13 @@ export class SupplierStaffService {
     });
 
     if (assignment?.supplierProfile) {
-      return this.buildSupplierContext(
-        assignment.supplierProfile,
-        assignment.role,
-        assignment.permissions ?? [],
-        userId,
+      return this.attachOutlet(
+        this.buildSupplierContext(
+          assignment.supplierProfile,
+          assignment.role,
+          assignment.permissions ?? [],
+          userId,
+        ),
       );
     }
 
@@ -166,11 +229,8 @@ export class SupplierStaffService {
       where: { userId },
     });
     if (!profile) return null;
-    return this.buildSupplierContext(
-      profile,
-      SupplierStaffRole.MANAGER,
-      [],
-      userId,
+    return this.attachOutlet(
+      this.buildSupplierContext(profile, SupplierStaffRole.MANAGER, [], userId),
     );
   }
 
@@ -219,10 +279,11 @@ export class SupplierStaffService {
       add(profile, SupplierStaffRole.MANAGER, []);
     }
 
-    return [...byProfileId.values()].sort((a, b) => {
+    const sorted = [...byProfileId.values()].sort((a, b) => {
       if (a.isOwner !== b.isOwner) return a.isOwner ? -1 : 1;
       return a.supplierProfileId - b.supplierProfileId;
     });
+    return this.attachOutlets(sorted);
   }
 
   /**

@@ -17,6 +17,7 @@ import { UserRole } from '../auth/roles.enum';
 import { Roles } from '../common/decorators/roles.decorator';
 import { SuppliersService } from './suppliers.service';
 import { SupplierStaffService } from './supplier-staff.service';
+import { SupplierOutletService } from './supplier-outlet.service';
 import { CreateSupplierProfileDto } from './dto/create-supplier-profile.dto';
 import { UpdateSupplierProfileDto } from './dto/update-supplier-profile.dto';
 import { RejectSupplierProfileDto } from './dto/reject-supplier-profile.dto';
@@ -30,6 +31,7 @@ export class SuppliersController {
   constructor(
     private readonly suppliersService: SuppliersService,
     private readonly supplierStaffService: SupplierStaffService,
+    private readonly supplierOutletService: SupplierOutletService,
   ) {}
 
   // ---- Self-service: any authenticated user can apply to become a supplier --
@@ -112,6 +114,16 @@ export class SuppliersController {
       id: req.user?.id ?? null,
       email: req.user?.email ?? null,
     });
+  }
+
+  @Post('admin/backfill-outlets')
+  @ApiOperation({
+    summary:
+      'Provision Suuq POS cash & carry outlets for all already-active suppliers (admin, one-off backfill)',
+  })
+  @Roles(UserRole.SUPER_ADMIN)
+  backfillOutlets() {
+    return this.supplierOutletService.ensureOutletsForAllActiveSuppliers();
   }
 
   @Patch(':id/reject')

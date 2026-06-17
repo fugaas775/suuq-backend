@@ -17,6 +17,7 @@ import {
 } from './entities/supplier-profile.entity';
 import { SupplierSubscription } from './entities/supplier-subscription.entity';
 import { SupplierStaffService } from './supplier-staff.service';
+import { SupplierOutletService } from './supplier-outlet.service';
 import {
   SUPPLIER_SUBSCRIPTION_OPTIONS,
   SupplierSubscriptionOption,
@@ -47,11 +48,31 @@ export class SupplierActivationService {
   constructor(
     private readonly ebirrService: EbirrService,
     private readonly supplierStaffService: SupplierStaffService,
+    private readonly supplierOutletService: SupplierOutletService,
     @InjectRepository(SupplierProfile)
     private readonly profilesRepository: Repository<SupplierProfile>,
     @InjectRepository(SupplierSubscription)
     private readonly subscriptionsRepository: Repository<SupplierSubscription>,
   ) {}
+
+  /**
+   * Provision the supplier's backing cash & carry outlet (its Suuq POS counter)
+   * once the account is ACTIVE. Non-fatal: a provisioning hiccup must never block
+   * the activation itself — the outlet is re-ensured idempotently on the next
+   * activation/sync. Runs OUTSIDE the activation transaction so its own advisory
+   * lock + transaction never nest.
+   */
+  private async provisionOutletSafe(supplierProfileId: number): Promise<void> {
+    try {
+      await this.supplierOutletService.ensureOutletForSupplier(
+        supplierProfileId,
+      );
+    } catch (err: any) {
+      this.logger.warn(
+        `Supplier outlet provisioning failed for #${supplierProfileId}: ${err?.message}`,
+      );
+    }
+  }
 
   listSubscriptionOptions(): readonly SupplierSubscriptionOption[] {
     return SUPPLIER_SUBSCRIPTION_OPTIONS;
@@ -150,75 +171,85 @@ export class SupplierActivationService {
     // held for the transaction and covers the "no subscription row yet" case
     // too (where a row-level lock wouldn't), so the webhook and the return
     // redirect can't both pass the ACTIVE guard and double-write.
-    return this.subscriptionsRepository.manager.transaction(async (manager) => {
-      await manager.query('SELECT pg_advisory_xact_lock($1, $2)', [
-        SUPPLIER_ACTIVATION_LOCK_NAMESPACE,
-        supplierProfileId,
-      ]);
+    const result = await this.subscriptionsRepository.manager.transaction(
+      async (manager) => {
+        await manager.query('SELECT pg_advisory_xact_lock($1, $2)', [
+          SUPPLIER_ACTIVATION_LOCK_NAMESPACE,
+          supplierProfileId,
+        ]);
 
-      const profile = await manager.findOne(SupplierProfile, {
-        where: { id: supplierProfileId },
-      });
-      if (!profile) {
-        throw new NotFoundException(
-          `Supplier profile ${supplierProfileId} not found for activation.`,
+        const profile = await manager.findOne(SupplierProfile, {
+          where: { id: supplierProfileId },
+        });
+        if (!profile) {
+          throw new NotFoundException(
+            `Supplier profile ${supplierProfileId} not found for activation.`,
+          );
+        }
+
+        const latest = await manager.findOne(SupplierSubscription, {
+          where: { supplierProfileId },
+          order: { createdAt: 'DESC' },
+        });
+        if (latest?.status === TenantSubscriptionStatus.ACTIVE) {
+          return latest;
+        }
+
+        const pendingMeta = latest?.metadata?.pendingActivation as
+          | { period?: string }
+          | undefined;
+        const resolvedPeriod: SupplierSubscriptionPeriod =
+          explicitPeriod ??
+          (findSupplierSubscriptionOption(pendingMeta?.period)?.period ||
+            DEFAULT_SUPPLIER_PERIOD);
+        const option = requireSupplierSubscriptionOption(resolvedPeriod);
+        const billingInterval =
+          option.period === 'ONE_YEAR'
+            ? TenantBillingInterval.ONE_YEAR
+            : TenantBillingInterval.MONTHLY;
+
+        const now = new Date();
+        const next =
+          latest ?? this.subscriptionsRepository.create({ supplierProfileId });
+        next.supplierProfileId = supplierProfileId;
+        next.planCode = option.planCode;
+        next.status = TenantSubscriptionStatus.ACTIVE;
+        next.billingInterval = billingInterval;
+        next.amount = option.amount;
+        next.amountTotal = option.amount;
+        next.periodMonths = option.months;
+        next.currency = option.currency;
+        next.startsAt = now;
+        next.endsAt = new Date(now.getTime() + option.months * 30 * 86_400_000);
+        next.autoRenew = true;
+        next.metadata = {
+          ...(latest?.metadata || {}),
+          lastActivationReferenceId: referenceId,
+          lastActivationPaymentMethod: 'EBIRR',
+          lastActivatedAt: now.toISOString(),
+          subscriptionPeriod: option.period,
+          pendingActivation: undefined,
+        };
+        const saved = await manager.save(next);
+
+        profile.activationStatus = SupplierActivationStatus.ACTIVE;
+        profile.lastActivatedAt = now;
+        await manager.save(profile);
+
+        this.logger.log(
+          `Activated supplier #${supplierProfileId} (${option.planCode}) via ${referenceId}`,
         );
-      }
+        return saved;
+      },
+    );
 
-      const latest = await manager.findOne(SupplierSubscription, {
-        where: { supplierProfileId },
-        order: { createdAt: 'DESC' },
-      });
-      if (latest?.status === TenantSubscriptionStatus.ACTIVE) {
-        return latest;
-      }
-
-      const pendingMeta = latest?.metadata?.pendingActivation as
-        | { period?: string }
-        | undefined;
-      const resolvedPeriod: SupplierSubscriptionPeriod =
-        explicitPeriod ??
-        (findSupplierSubscriptionOption(pendingMeta?.period)?.period ||
-          DEFAULT_SUPPLIER_PERIOD);
-      const option = requireSupplierSubscriptionOption(resolvedPeriod);
-      const billingInterval =
-        option.period === 'ONE_YEAR'
-          ? TenantBillingInterval.ONE_YEAR
-          : TenantBillingInterval.MONTHLY;
-
-      const now = new Date();
-      const next =
-        latest ?? this.subscriptionsRepository.create({ supplierProfileId });
-      next.supplierProfileId = supplierProfileId;
-      next.planCode = option.planCode;
-      next.status = TenantSubscriptionStatus.ACTIVE;
-      next.billingInterval = billingInterval;
-      next.amount = option.amount;
-      next.amountTotal = option.amount;
-      next.periodMonths = option.months;
-      next.currency = option.currency;
-      next.startsAt = now;
-      next.endsAt = new Date(now.getTime() + option.months * 30 * 86_400_000);
-      next.autoRenew = true;
-      next.metadata = {
-        ...(latest?.metadata || {}),
-        lastActivationReferenceId: referenceId,
-        lastActivationPaymentMethod: 'EBIRR',
-        lastActivatedAt: now.toISOString(),
-        subscriptionPeriod: option.period,
-        pendingActivation: undefined,
-      };
-      const saved = await manager.save(next);
-
-      profile.activationStatus = SupplierActivationStatus.ACTIVE;
-      profile.lastActivatedAt = now;
-      await manager.save(profile);
-
-      this.logger.log(
-        `Activated supplier #${supplierProfileId} (${option.planCode}) via ${referenceId}`,
-      );
-      return saved;
-    });
+    // Provision the supplier's cash & carry outlet now that it is ACTIVE
+    // (idempotent; also backfills a supplier that was already ACTIVE before this
+    // feature shipped). Runs after the activation transaction commits.
+    if (result) {
+      await this.provisionOutletSafe(supplierProfileId);
+    }
+    return result;
   }
 
   /**
@@ -256,6 +287,8 @@ export class SupplierActivationService {
       order: { createdAt: 'DESC' },
     });
     if (latest?.status === TenantSubscriptionStatus.ACTIVE) {
+      // Already live — still ensure the outlet exists (backfill).
+      await this.provisionOutletSafe(supplierProfileId);
       return latest;
     }
 
@@ -293,6 +326,9 @@ export class SupplierActivationService {
         meta?.fundingMode ?? 'EQUITY_BNPL'
       }`,
     );
+
+    // Provision the supplier's cash & carry outlet now that it is ACTIVE.
+    await this.provisionOutletSafe(supplierProfileId);
     return saved;
   }
 

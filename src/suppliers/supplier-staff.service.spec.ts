@@ -2,8 +2,17 @@ import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { SupplierStaffService } from './supplier-staff.service';
 import { SupplierStaffRole } from './entities/supplier-staff-assignment.entity';
 
-const makeService = ({ profiles = {}, assignments = {}, users = {} }: any) =>
-  new SupplierStaffService(profiles, assignments, users);
+const makeService = ({
+  profiles = {},
+  assignments = {},
+  users = {},
+  outlet = {},
+}: any) =>
+  new SupplierStaffService(profiles, assignments, users, {
+    // Default: no backing outlet branch for any supplier.
+    getOutletBranchesForProfiles: jest.fn().mockResolvedValue(new Map()),
+    ...outlet,
+  });
 
 describe('SupplierStaffService.getSupplierContextForUser', () => {
   it('returns null for a user with no supplier identity', async () => {
@@ -37,6 +46,66 @@ describe('SupplierStaffService.getSupplierContextForUser', () => {
       role: SupplierStaffRole.MANAGER,
       isOwner: true,
       canPublishOffers: true,
+    });
+  });
+
+  it('attaches the backing outlet branch (Suuq POS counter) to the context when provisioned', async () => {
+    const assignments = {
+      findOne: jest.fn().mockResolvedValue({
+        userId: 7,
+        role: SupplierStaffRole.MANAGER,
+        permissions: [],
+        supplierProfile: {
+          id: 55,
+          userId: 7,
+          companyName: 'Rift Valley',
+          activationStatus: 'ACTIVE',
+          onboardingStatus: 'APPROVED',
+          isActive: true,
+        },
+      }),
+    };
+    const svc = makeService({
+      assignments,
+      outlet: {
+        getOutletBranchesForProfiles: jest
+          .fn()
+          .mockResolvedValue(
+            new Map([[55, { id: 900, name: 'Rift Valley Counter' }]]),
+          ),
+      },
+    });
+    const ctx = await svc.getSupplierContextForUser({ id: 7 });
+    expect(ctx).toMatchObject({
+      supplierProfileId: 55,
+      outletBranchId: 900,
+      outletExperienceProfileCode: 'WHOLESALE_COUNTER',
+      outletBranchName: 'Rift Valley Counter',
+    });
+  });
+
+  it('leaves outlet fields null when the supplier has no provisioned counter', async () => {
+    const assignments = {
+      findOne: jest.fn().mockResolvedValue({
+        userId: 7,
+        role: SupplierStaffRole.MANAGER,
+        permissions: [],
+        supplierProfile: {
+          id: 55,
+          userId: 7,
+          companyName: 'Rift Valley',
+          activationStatus: 'ACTIVE',
+          onboardingStatus: 'APPROVED',
+          isActive: true,
+        },
+      }),
+    };
+    const svc = makeService({ assignments });
+    const ctx = await svc.getSupplierContextForUser({ id: 7 });
+    expect(ctx).toMatchObject({
+      outletBranchId: null,
+      outletExperienceProfileCode: null,
+      outletBranchName: null,
     });
   });
 
