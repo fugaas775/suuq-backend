@@ -47,7 +47,7 @@ export class AddBranchCatalogProductLinkRetailLayer20260718000000
     await queryRunner.query(
       `UPDATE "branch_catalog_product_links" AS bcl
          SET "consumer_visible" = true
-        FROM "products" AS p
+        FROM "product" AS p
        WHERE p.id = bcl."productId"
          AND p.status = 'publish'
          AND p.deleted_at IS NULL`,
