@@ -16,6 +16,7 @@ import { RolesGuard } from '../auth/roles.guard';
 import { UserRole } from '../auth/roles.enum';
 import { Roles } from '../common/decorators/roles.decorator';
 import { SuppliersService } from './suppliers.service';
+import { SupplierStaffService } from './supplier-staff.service';
 import { CreateSupplierProfileDto } from './dto/create-supplier-profile.dto';
 import { UpdateSupplierProfileDto } from './dto/update-supplier-profile.dto';
 import { RejectSupplierProfileDto } from './dto/reject-supplier-profile.dto';
@@ -26,9 +27,29 @@ import { extractActiveSupplierId } from './active-supplier.util';
 @Controller('hub/v1/suppliers')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class SuppliersController {
-  constructor(private readonly suppliersService: SuppliersService) {}
+  constructor(
+    private readonly suppliersService: SuppliersService,
+    private readonly supplierStaffService: SupplierStaffService,
+  ) {}
 
   // ---- Self-service: any authenticated user can apply to become a supplier --
+
+  /**
+   * Every supplier account the signed-in user can operate (owned + manager/
+   * operator assignments). Powers the Seller Hub workspace switcher so a user
+   * can jump into any of their supplier accounts — the supplier mirror of the
+   * branch list. Independent of the (sometimes stale) cached portal session.
+   */
+  @Get('me/accounts')
+  @ApiOperation({
+    summary: 'List every supplier account the signed-in user can operate',
+  })
+  listMyAccounts(@Req() req) {
+    return this.supplierStaffService.getSupplierContextsForUser({
+      id: req.user?.id,
+      roles: req.user?.roles,
+    });
+  }
 
   @Post('me')
   @ApiOperation({
