@@ -150,6 +150,7 @@ export class StorefrontService {
 
   async getHotelRooms(storeId: number, query: StorefrontHotelRoomsQueryDto) {
     const branchId = await this.resolveBranchId(storeId, 'HOTEL');
+    await this.syncRoomsFromCatalog(storeId, branchId);
     const where: Record<string, unknown> = {
       branchId,
       status: HotelRoomStatus.ACTIVE,
@@ -167,6 +168,7 @@ export class StorefrontService {
 
   async getHotelRatePlans(storeId: number) {
     const branchId = await this.resolveBranchId(storeId, 'HOTEL');
+    await this.syncRoomsFromCatalog(storeId, branchId);
     const plans = await this.hotelRatePlanRepo.find({
       where: { branchId },
       order: { name: 'ASC' },
@@ -190,6 +192,10 @@ export class StorefrontService {
     }
 
     const branchId = await this.resolveBranchId(storeId, 'HOTEL');
+
+    // Keep the room registry mirrored from the merchant's room-charge products
+    // so availability reflects their live catalog without manual re-entry.
+    await this.syncRoomsFromCatalog(storeId, branchId);
 
     // Active rooms (optionally filtered by roomType)
     const roomWhere: Record<string, unknown> = {
@@ -354,5 +360,168 @@ export class StorefrontService {
       weekendRate: p.weekendRate ?? p.weekdayRate,
       currency: p.currency,
     };
+  }
+
+  private normalizeRoomType(name: string | null | undefined): string {
+    // Drop a trailing duration/unit phrase merchants append to room-charge
+    // product names, e.g. "Standard Room — 1 Night", "Deluxe Suite - 2 nights",
+    // "Room / night", so the derived type matches the registry convention
+    // (e.g. STANDARD_ROOM) instead of "STANDARD ROOM — 1 NIGHT".
+    const stripped = String(name ?? '')
+      .replace(/\s*[—–-]\s*\d*\s*nights?\b.*$/i, '')
+      .replace(/\s*\/\s*night\b.*$/i, '')
+      .replace(/\s*per\s+night\b.*$/i, '');
+    const t = stripped
+      .trim()
+      .toUpperCase()
+      .replace(/[^A-Z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '')
+      .slice(0, 64);
+    return t || 'STANDARD';
+  }
+
+  // Rooms the sync created carry this marker in metadata.source, so the sync only
+  // ever manages its own rows and never touches manually-configured/seeded rooms.
+  private static readonly ROOM_SYNC_SOURCE = 'CATALOG_SYNC';
+
+  /**
+   * Mirror a HOTEL branch's room-charge products into the pos_hotel_rooms
+   * registry (+ a rate plan per room type when none exists yet), so consumer
+   * availability works without merchants double-entering rooms. Rooms stay
+   * "service-format products": each room-charge product (one carrying an
+   * `attributes.hotelRooms` CSV of room numbers) maps to a room type — its
+   * (duration-stripped) name → roomType, its price → nightly rate, each CSV
+   * entry → a bookable room.
+   *
+   * NON-DESTRUCTIVE by design (verified against a live hotel whose registry is
+   * curated with intentional rates ≠ the product display price):
+   *   • Rooms: inserts missing rooms it owns; deactivates only its own rooms when
+   *     they leave the catalog. Manually-created/seeded rooms are never modified.
+   *   • Rate plans: creates a plan for a room type only when none exists; never
+   *     overwrites an existing rate (the merchant's plan is the booking price).
+   * Idempotent and never throws — a sync failure leaves the registry untouched.
+   */
+  private async syncRoomsFromCatalog(
+    storeId: number,
+    branchId: number,
+  ): Promise<void> {
+    try {
+      // HOTEL room products live on the branch's own vendor store
+      // (product.vendorStoreId === storeId), same source the storefront catalog uses.
+      const products = await this.productRepo
+        .createQueryBuilder('p')
+        .where('p.vendorStoreId = :storeId', { storeId })
+        .andWhere('(p.isDeleted = false OR p.isDeleted IS NULL)')
+        .getMany();
+
+      const desiredRooms = new Map<string, string>(); // roomNumber → roomType
+      const rateByType = new Map<
+        string,
+        { rate: number; currency: string; name: string }
+      >();
+
+      for (const p of products) {
+        const attrs =
+          p.attributes && typeof p.attributes === 'object' ? p.attributes : {};
+        const csv = String(attrs.hotelRooms ?? '').trim();
+        if (!csv) continue;
+        const roomType = this.normalizeRoomType(p.name);
+        const rate = Number(p.price) > 0 ? Number(p.price) : 0;
+        const currency = String(p.currency ?? 'ETB').toUpperCase();
+        if (!rateByType.has(roomType)) {
+          rateByType.set(roomType, {
+            rate,
+            currency,
+            name: String(p.name ?? roomType).trim() || roomType,
+          });
+        }
+        for (const raw of csv.split(',')) {
+          const roomNumber = raw.trim().slice(0, 64);
+          if (roomNumber) desiredRooms.set(roomNumber, roomType);
+        }
+      }
+
+      // ── Rooms: additive + provenance-scoped ───────────────────────────────
+      const existingRooms = await this.hotelRoomRepo.find({
+        where: { branchId },
+      });
+      const existingByNumber = new Map(
+        existingRooms.map((r) => [r.roomNumber, r]),
+      );
+      const isSyncOwned = (r: HotelRoom) =>
+        r.metadata?.source === StorefrontService.ROOM_SYNC_SOURCE;
+      const roomsToSave: HotelRoom[] = [];
+
+      for (const [roomNumber, roomType] of desiredRooms) {
+        const existing = existingByNumber.get(roomNumber);
+        if (!existing) {
+          // Insert a new sync-owned room.
+          roomsToSave.push(
+            this.hotelRoomRepo.create({
+              branchId,
+              roomNumber,
+              roomType,
+              maxOccupancy: 2,
+              status: HotelRoomStatus.ACTIVE,
+              metadata: { source: StorefrontService.ROOM_SYNC_SOURCE },
+            }),
+          );
+        } else if (isSyncOwned(existing)) {
+          // Keep our own rooms aligned with the catalog; leave manual rooms alone.
+          if (
+            existing.roomType !== roomType ||
+            existing.status !== HotelRoomStatus.ACTIVE
+          ) {
+            existing.roomType = roomType;
+            existing.status = HotelRoomStatus.ACTIVE;
+            roomsToSave.push(existing);
+          }
+        }
+        // existing && manual → respect it, never modify.
+      }
+      // Deactivate ONLY our own rooms that left the catalog (preserve manual rooms
+      // and the row itself so folio/reservation history survives).
+      for (const r of existingRooms) {
+        if (
+          isSyncOwned(r) &&
+          !desiredRooms.has(r.roomNumber) &&
+          r.status !== HotelRoomStatus.INACTIVE
+        ) {
+          r.status = HotelRoomStatus.INACTIVE;
+          roomsToSave.push(r);
+        }
+      }
+      if (roomsToSave.length) await this.hotelRoomRepo.save(roomsToSave);
+
+      // ── Rate plans: create-if-missing only, never overwrite ───────────────
+      // A merchant's existing rate plan is the authoritative booking price (it may
+      // intentionally differ from the product's POS/display price), so we only seed
+      // a plan for a room type that has none yet.
+      const existingPlans = await this.hotelRatePlanRepo.find({
+        where: { branchId },
+      });
+      const planTypes = new Set(
+        existingPlans.map((p) => String(p.roomType ?? '').toUpperCase()),
+      );
+      const plansToSave: HotelRatePlan[] = [];
+
+      for (const [roomType, info] of rateByType) {
+        if (info.rate <= 0 || planTypes.has(roomType)) continue;
+        plansToSave.push(
+          this.hotelRatePlanRepo.create({
+            branchId,
+            name: info.name,
+            roomType,
+            weekdayRate: info.rate,
+            weekendRate: null,
+            currency: info.currency,
+            isActive: true,
+          }),
+        );
+      }
+      if (plansToSave.length) await this.hotelRatePlanRepo.save(plansToSave);
+    } catch {
+      // Never let a registry sync failure break a consumer read.
+    }
   }
 }

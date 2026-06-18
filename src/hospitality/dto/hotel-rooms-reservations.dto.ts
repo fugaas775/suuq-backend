@@ -329,6 +329,15 @@ export class ListHotelReservationsQueryDto {
   @IsOptional()
   status?: HotelReservationStatus;
 
+  /**
+   * Filter by multiple statuses (comma-separated), e.g. `HOLD,CONFIRMED`.
+   * Used by the merchant "incoming bookings" inbox. Takes precedence over
+   * `status` when provided; unknown values are ignored.
+   */
+  @IsString()
+  @IsOptional()
+  statuses?: string;
+
   /** Filter by check-in date (YYYY-MM-DD) */
   @IsDateString()
   @IsOptional()

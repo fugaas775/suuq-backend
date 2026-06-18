@@ -207,8 +207,19 @@ export class HotelInventoryService {
       .createQueryBuilder('res')
       .where('res.branchId = :branchId', { branchId: query.branchId });
 
-    if (query.status)
+    const validStatuses = new Set<string>(
+      Object.values(HotelReservationStatus),
+    );
+    const multiStatuses = (query.statuses ?? '')
+      .split(',')
+      .map((s) => s.trim().toUpperCase())
+      .filter((s) => validStatuses.has(s));
+
+    if (multiStatuses.length) {
+      qb.andWhere('res.status IN (:...statuses)', { statuses: multiStatuses });
+    } else if (query.status) {
       qb.andWhere('res.status = :status', { status: query.status });
+    }
 
     if (query.checkInDate)
       qb.andWhere('res.checkInAt = :checkInDate', {
