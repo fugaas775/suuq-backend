@@ -157,10 +157,19 @@ export class RetailBranchProductItemResponseDto {
   safetyStock!: number;
 
   @ApiProperty()
+  parLevel!: number;
+
+  @ApiProperty()
+  reorderPoint!: number;
+
+  @ApiProperty()
   availableToSell!: number;
 
   @ApiProperty()
   shortageToSafetyStock!: number;
+
+  @ApiProperty()
+  reorderBreached!: boolean;
 
   @ApiProperty({
     enum: [

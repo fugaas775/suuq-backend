@@ -3907,6 +3907,8 @@ export class RetailOpsService {
       ? Number(inventory.outboundTransfers ?? 0)
       : 0;
     const safetyStock = inventory ? Number(inventory.safetyStock ?? 0) : 0;
+    const parLevel = inventory ? Number(inventory.parLevel ?? 0) : 0;
+    const reorderPoint = inventory ? Number(inventory.reorderPoint ?? 0) : 0;
     const availableToSell = inventory
       ? Number(inventory.availableToSell ?? 0)
       : 0;
@@ -3954,8 +3956,11 @@ export class RetailOpsService {
       inboundOpenPo,
       outboundTransfers,
       safetyStock,
+      parLevel,
+      reorderPoint,
       availableToSell,
       shortageToSafetyStock: Math.max(safetyStock - availableToSell, 0),
+      reorderBreached: reorderPoint > 0 && availableToSell < reorderPoint,
       stockStatus,
       manageStock: product.manageStock ?? false,
       lastReceivedAt: inventory?.lastReceivedAt ?? null,
