@@ -39,6 +39,10 @@ import { EquityPartnerBnplActivation } from './entities/equity-partner-bnpl-acti
 import { EquityPartnerBnplCreditLedgerEntry } from './entities/equity-partner-bnpl-credit-ledger.entity';
 import { BranchCatalogProductLink } from './entities/branch-catalog-product-link.entity';
 import { BranchCatalogVendorLink } from './entities/branch-catalog-vendor-link.entity';
+import { StockCount } from './entities/stock-count.entity';
+import { InventoryLedgerService } from '../branches/inventory-ledger.service';
+import { RetailInventoryOpsController } from './retail-inventory-ops.controller';
+import { RetailInventoryOpsService } from './retail-inventory-ops.service';
 import { EquityPartnerService } from './equity-partner.service';
 import { EquityPartnerBnplService } from './equity-partner-bnpl.service';
 import { RetailSubscriptionLifecycleService } from './retail-subscription-lifecycle.service';
@@ -73,6 +77,7 @@ import { AdminEquityPartnersController } from './admin-equity-partners.controlle
       Product,
       BranchCatalogProductLink,
       BranchCatalogVendorLink,
+      StockCount,
       User,
       PayoutLog,
       EquityPartner,
@@ -86,6 +91,7 @@ import { AdminEquityPartnersController } from './admin-equity-partners.controlle
   controllers: [
     RetailAdminController,
     RetailOpsController,
+    RetailInventoryOpsController,
     SellerEquityController,
     SellerEquityBnplController,
     AdminEquityPartnersController,
@@ -94,6 +100,8 @@ import { AdminEquityPartnersController } from './admin-equity-partners.controlle
     RetailEntitlementsService,
     RetailModulesGuard,
     RetailOpsService,
+    RetailInventoryOpsService,
+    InventoryLedgerService,
     RetailCommandCenterReportingService,
     EquityPartnerService,
     EquityPartnerBnplService,

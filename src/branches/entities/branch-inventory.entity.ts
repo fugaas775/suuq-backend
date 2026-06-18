@@ -52,6 +52,16 @@ export class BranchInventory {
   @Column({ type: 'int', default: 0 })
   safetyStock!: number;
 
+  // Target on-hand the branch wants to keep for this SKU (0 = unset). Purely
+  // informational — does NOT feed the availableToSell projection.
+  @Column({ type: 'int', default: 0 })
+  parLevel!: number;
+
+  // Re-order threshold: a breach is availableToSell < reorderPoint (0 = never
+  // breaches). Also informational — separate from safetyStock.
+  @Column({ type: 'int', default: 0 })
+  reorderPoint!: number;
+
   @Column({ type: 'int', default: 0 })
   availableToSell!: number;
 
