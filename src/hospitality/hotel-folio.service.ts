@@ -16,6 +16,7 @@ import { GlJournalSourceType } from '../accounting/entities/gl-journal-entry.ent
 import { splitTenders } from '../accounting/tender-split.util';
 import { HotelFolio, HotelFolioStatus } from './entities/hotel-folio.entity';
 import { HotelFolioCharge } from './entities/hotel-folio-charge.entity';
+import { HotelRoom, HotelRoomStatus } from './entities/hotel-room.entity';
 import {
   ListHotelFoliosQueryDto,
   OpenFolioDto,
@@ -36,6 +37,8 @@ export class HotelFolioService {
     private readonly folioRepo: Repository<HotelFolio>,
     @InjectRepository(HotelFolioCharge)
     private readonly chargeRepo: Repository<HotelFolioCharge>,
+    @InjectRepository(HotelRoom)
+    private readonly roomRepo: Repository<HotelRoom>,
     private readonly generalLedger: GeneralLedgerService,
   ) {}
 
@@ -109,6 +112,20 @@ export class HotelFolioService {
       });
       if (existing) {
         return this.toFolioResponse(existing);
+      }
+    }
+
+    // Don't check a guest into a room that's out of service. The board already
+    // blocks this, but guard it here so no offline-sync/non-board path can.
+    const roomNumber = String(dto.roomNumber || '').trim();
+    if (roomNumber) {
+      const room = await this.roomRepo.findOne({
+        where: { branchId: dto.branchId, roomNumber },
+      });
+      if (room?.status === HotelRoomStatus.MAINTENANCE) {
+        throw new BadRequestException(
+          `Room ${roomNumber} is out of service (maintenance).`,
+        );
       }
     }
 

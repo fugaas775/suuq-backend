@@ -9,6 +9,7 @@ import {
   IsOptional,
   IsPositive,
   IsString,
+  MaxLength,
   Min,
 } from 'class-validator';
 import { HotelRoomStatus } from '../entities/hotel-room.entity';
@@ -85,6 +86,23 @@ export class UpdateHotelRoomDto {
   @IsIn(Object.values(HotelRoomStatus))
   @IsOptional()
   status?: HotelRoomStatus;
+}
+
+// Toggle a room in/out of service. Scoped to its own endpoint + permission so an
+// operator granted SET_ROOM_MAINTENANCE can flip maintenance without gaining
+// general room-config edit rights.
+export class SetRoomMaintenanceDto {
+  @IsInt()
+  branchId!: number;
+
+  @IsIn([HotelRoomStatus.ACTIVE, HotelRoomStatus.MAINTENANCE])
+  status!: HotelRoomStatus;
+
+  @IsString()
+  @IsOptional()
+  @MaxLength(140)
+  @Transform(({ value }) => String(value ?? '').trim() || undefined)
+  reason?: string;
 }
 
 export class ListHotelRoomsQueryDto {

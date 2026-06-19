@@ -23,6 +23,7 @@ import {
   ListHotelReservationsQueryDto,
   ListHotelRoomsQueryDto,
   ListNightAuditLogsQueryDto,
+  SetRoomMaintenanceDto,
   TriggerNightAuditDto,
   UpdateHotelReservationDto,
   UpdateHotelRoomDto,
@@ -118,6 +119,28 @@ export class HotelInventoryService {
     if (dto.description !== undefined)
       room.description = dto.description ?? null;
     if (dto.status !== undefined) room.status = dto.status;
+
+    const saved = await this.roomRepo.save(room);
+    return this.toRoomResponse(saved);
+  }
+
+  // Put a room in/out of service. The maintenance note is shallow-merged into the
+  // room's metadata jsonb so other attributes (bed type, view, …) survive; returning
+  // to service clears the note.
+  async setRoomMaintenance(id: number, dto: SetRoomMaintenanceDto) {
+    const room = await this.roomRepo.findOne({
+      where: { id, branchId: dto.branchId },
+    });
+    if (!room) throw new NotFoundException(`Room ${id} not found.`);
+
+    room.status = dto.status;
+    room.metadata = {
+      ...(room.metadata ?? {}),
+      maintenance:
+        dto.status === HotelRoomStatus.MAINTENANCE
+          ? { reason: dto.reason ?? null, setAt: new Date().toISOString() }
+          : null,
+    };
 
     const saved = await this.roomRepo.save(room);
     return this.toRoomResponse(saved);

@@ -30,6 +30,7 @@ import {
   ListHotelReservationsQueryDto,
   ListHotelRoomsQueryDto,
   ListNightAuditLogsQueryDto,
+  SetRoomMaintenanceDto,
   TriggerNightAuditDto,
   UpdateHotelReservationDto,
   UpdateHotelRoomDto,
@@ -81,6 +82,16 @@ export class HotelInventoryController {
     @Body() dto: UpdateHotelRoomDto,
   ) {
     return this.svc.updateRoom(id, dto);
+  }
+
+  @Patch('rooms/:id/maintenance')
+  @RetailBranchContext('body.branchId')
+  @RequirePosPermissions(PosHospitalityPermission.SET_ROOM_MAINTENANCE)
+  setRoomMaintenance(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: SetRoomMaintenanceDto,
+  ) {
+    return this.svc.setRoomMaintenance(id, dto);
   }
 
   // ── Rate plans ──────────────────────────────────────────────────────────
