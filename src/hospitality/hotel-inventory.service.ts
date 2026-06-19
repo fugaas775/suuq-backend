@@ -124,24 +124,59 @@ export class HotelInventoryService {
     return this.toRoomResponse(saved);
   }
 
-  // Put a room in/out of service. The maintenance note is shallow-merged into the
-  // room's metadata jsonb so other attributes (bed type, view, …) survive; returning
-  // to service clears the note.
-  async setRoomMaintenance(id: number, dto: SetRoomMaintenanceDto) {
-    const room = await this.roomRepo.findOne({
-      where: { id, branchId: dto.branchId },
+  // Put a room in/out of service, keyed by roomNumber (not id) so it works for the
+  // many HOTEL branches whose rooms live only as product attributes with no
+  // pos_hotel_rooms registry row yet. Marking out of service upserts a MAINTENANCE
+  // row (auto-created ones are tagged); returning to service deletes an auto-created
+  // row so the registry never gains a stray ACTIVE row — Reports/Home fall back to
+  // product attributes only while the registry is empty, and a partial ACTIVE set
+  // would collapse their room totals. A pre-existing (real) row is set ACTIVE instead.
+  async setRoomMaintenance(dto: SetRoomMaintenanceDto) {
+    const roomNumber = String(dto.roomNumber || '').trim();
+    let room = await this.roomRepo.findOne({
+      where: { branchId: dto.branchId, roomNumber },
     });
-    if (!room) throw new NotFoundException(`Room ${id} not found.`);
 
-    room.status = dto.status;
-    room.metadata = {
-      ...(room.metadata ?? {}),
-      maintenance:
-        dto.status === HotelRoomStatus.MAINTENANCE
-          ? { reason: dto.reason ?? null, setAt: new Date().toISOString() }
-          : null,
-    };
+    if (dto.status === HotelRoomStatus.MAINTENANCE) {
+      if (!room) {
+        room = this.roomRepo.create({
+          branchId: dto.branchId,
+          roomNumber,
+          status: HotelRoomStatus.MAINTENANCE,
+          metadata: { autoCreatedForMaintenance: true },
+        });
+      } else {
+        room.status = HotelRoomStatus.MAINTENANCE;
+      }
+      room.metadata = {
+        ...(room.metadata ?? {}),
+        maintenance: {
+          reason: dto.reason ?? null,
+          setAt: new Date().toISOString(),
+        },
+      };
+      const saved = await this.roomRepo.save(room);
+      return this.toRoomResponse(saved);
+    }
 
+    // Return to service.
+    if (!room) {
+      return {
+        branchId: dto.branchId,
+        roomNumber,
+        status: HotelRoomStatus.ACTIVE,
+      };
+    }
+    if (room.metadata?.autoCreatedForMaintenance === true) {
+      await this.roomRepo.remove(room);
+      return {
+        branchId: dto.branchId,
+        roomNumber,
+        status: HotelRoomStatus.ACTIVE,
+      };
+    }
+    room.status = HotelRoomStatus.ACTIVE;
+    room.metadata = { ...(room.metadata ?? {}), maintenance: null };
     const saved = await this.roomRepo.save(room);
     return this.toRoomResponse(saved);
   }

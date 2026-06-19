@@ -84,14 +84,14 @@ export class HotelInventoryController {
     return this.svc.updateRoom(id, dto);
   }
 
-  @Patch('rooms/:id/maintenance')
+  // Keyed by roomNumber in the body (not a path id) so it works for branches whose
+  // rooms exist only as product attributes with no registry row yet. Distinct path
+  // (not rooms/:id/...) to avoid colliding with the numeric :id route above.
+  @Patch('room-maintenance')
   @RetailBranchContext('body.branchId')
   @RequirePosPermissions(PosHospitalityPermission.SET_ROOM_MAINTENANCE)
-  setRoomMaintenance(
-    @Param('id', ParseIntPipe) id: number,
-    @Body() dto: SetRoomMaintenanceDto,
-  ) {
-    return this.svc.setRoomMaintenance(id, dto);
+  setRoomMaintenance(@Body() dto: SetRoomMaintenanceDto) {
+    return this.svc.setRoomMaintenance(dto);
   }
 
   // ── Rate plans ──────────────────────────────────────────────────────────

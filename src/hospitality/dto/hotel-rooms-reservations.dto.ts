@@ -95,6 +95,11 @@ export class SetRoomMaintenanceDto {
   @IsInt()
   branchId!: number;
 
+  @IsString()
+  @IsNotEmpty()
+  @Transform(({ value }) => String(value ?? '').trim())
+  roomNumber!: string;
+
   @IsIn([HotelRoomStatus.ACTIVE, HotelRoomStatus.MAINTENANCE])
   status!: HotelRoomStatus;
 
