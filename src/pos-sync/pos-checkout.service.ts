@@ -6,7 +6,13 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Brackets, DataSource, EntityManager, Repository } from 'typeorm';
+import {
+  Brackets,
+  DataSource,
+  EntityManager,
+  Repository,
+  SelectQueryBuilder,
+} from 'typeorm';
 import { InventoryLedgerService } from '../branches/inventory-ledger.service';
 import { VariantInventoryService } from '../branches/variant-inventory.service';
 import { ProductVariant } from '../products/entities/product-variant.entity';
@@ -506,7 +512,9 @@ export class PosCheckoutService {
           dto.branchId,
           folioLockId,
         ]);
-        const duplicate = await this.findExistingFolioSettlement(dto, manager);
+        const duplicate =
+          (await this.findExistingFolioSettlement(dto, manager)) ??
+          (await this.findFullyPaidFolioDuplicate(dto, manager));
         if (duplicate) {
           return { duplicate };
         }
@@ -1285,6 +1293,73 @@ export class PosCheckoutService {
       })
       .andWhere('ROUND(c.total * 100) = :amountCents', { amountCents })
       .andWhere('c.createdAt >= :windowStart', { windowStart })
+      .orderBy('c.id', 'ASC')
+      .getOne();
+  }
+
+  /**
+   * Guards against re-collecting a hospitality folio that is ALREADY fully paid.
+   * The same-amount/10-minute window in findExistingFolioSettlement only catches
+   * rapid identical re-taps; it cannot catch a second, DIFFERENT-amount collection
+   * landing minutes-to-hours later because a stale board showed the room "unpaid"
+   * (prod: Blue Hotel folios collected well past their stay total). The client
+   * stamps `metadata.folioGrandTotal` — the folio's full billed total at settle
+   * time — so once the folio's cumulative non-voided SALE collection meets that
+   * total, an incoming settlement is a duplicate and is collapsed onto the original.
+   *
+   * Additive and safe:
+   *  - Skipped when the client omits folioGrandTotal (legacy bundles) — behaviour
+   *    is then exactly as before.
+   *  - Legitimate instalments accrue toward the total and are allowed while the
+   *    folio still owes; ONLY collection beyond the full total is collapsed.
+   *  - Never drops revenue without a target: collapses only when a prior settlement
+   *    exists to fold the duplicate onto.
+   * Anchors on metadata.backendFolioId; must run inside the advisory-locked txn.
+   */
+  private async findFullyPaidFolioDuplicate(
+    dto: IngestPosCheckoutDto,
+    manager: EntityManager,
+  ): Promise<PosCheckout | null> {
+    const folioId = this.resolveFolioSettlementLockId(dto);
+    if (folioId == null) {
+      return null;
+    }
+    const declaredTotal = Number(dto.metadata?.folioGrandTotal);
+    if (!Number.isFinite(declaredTotal) || declaredTotal <= 0) {
+      return null;
+    }
+    // Common predicate: this folio's non-voided forward SALEs.
+    const scopeFolioSales = <T>(
+      qb: SelectQueryBuilder<T>,
+    ): SelectQueryBuilder<T> =>
+      qb
+        .where('c.branchId = :branchId', { branchId: dto.branchId })
+        .andWhere("(c.metadata->>'backendFolioId') = :folioId", {
+          folioId: String(folioId),
+        })
+        .andWhere('c.transactionType = :tt', {
+          tt: PosCheckoutTransactionType.SALE,
+        })
+        .andWhere('c.status NOT IN (:...excluded)', {
+          excluded: [PosCheckoutStatus.VOIDED, PosCheckoutStatus.FAILED],
+        });
+
+    const sumRow = await scopeFolioSales(
+      manager
+        .getRepository(PosCheckout)
+        .createQueryBuilder('c')
+        .select('COALESCE(SUM(c.paidAmount), 0)', 'collected'),
+    ).getRawOne<{ collected: string }>();
+    const priorCollected = Number(sumRow?.collected ?? 0);
+    // 1-unit tolerance for rounding. Still owes → legitimate instalment, allow it.
+    if (priorCollected < declaredTotal - 1) {
+      return null;
+    }
+    // Folio already fully collected — this is a re-collection. Collapse onto the
+    // earliest prior settlement (a target always exists when priorCollected > 0).
+    return scopeFolioSales(
+      manager.getRepository(PosCheckout).createQueryBuilder('c'),
+    )
       .orderBy('c.id', 'ASC')
       .getOne();
   }

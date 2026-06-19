@@ -1019,6 +1019,95 @@ describe('PosCheckoutService', () => {
     expect(posCheckoutsRepository.save).toHaveBeenCalled();
   });
 
+  it('collapses a re-collection on an already fully-paid folio (different amount, folioGrandTotal cap)', async () => {
+    // Prod Blue Hotel shape: a folio was fully settled (16,000), the board reverted
+    // to "unpaid" (the paid-flag strip), and the operator re-collected a DIFFERENT
+    // amount (14,000) outside the same-amount path. findExistingFolioSettlement (same
+    // amount) returns null; the cumulative cap (prior 16,000 >= folioGrandTotal) is
+    // what stops the duplicate revenue row.
+    posCheckoutsRepository.findOne.mockResolvedValue(null); // idempotency: no match
+    const original = {
+      id: 901,
+      branchId: 3,
+      transactionType: PosCheckoutTransactionType.SALE,
+      status: PosCheckoutStatus.PROCESSED,
+      total: 16000,
+      paidAmount: 16000,
+      metadata: { backendFolioId: 787, roomNumber: '9' },
+      items: [],
+    };
+    const folioQb = {
+      select: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      getOne: jest
+        .fn()
+        // 1) findExistingFolioSettlement — no same-amount settlement in the window
+        .mockResolvedValueOnce(null)
+        // 2) findFullyPaidFolioDuplicate — the original settlement to collapse onto
+        .mockResolvedValueOnce(original),
+      // findFullyPaidFolioDuplicate — folio already collected its full 16,000
+      getRawOne: jest.fn().mockResolvedValue({ collected: '16000' }),
+    };
+    posCheckoutsRepository.createQueryBuilder.mockReturnValue(folioQb);
+
+    const result = await service.ingest({
+      branchId: 3,
+      transactionType: PosCheckoutTransactionType.SALE,
+      idempotencyKey: 'receipt-restrike-POS-3',
+      currency: 'USD',
+      subtotal: 14000,
+      total: 14000,
+      paidAmount: 14000,
+      occurredAt: '2026-06-18T13:43:00.000Z',
+      metadata: {
+        backendFolioId: 787,
+        roomNumber: '9',
+        folioGrandTotal: 16000,
+      },
+      items: [
+        { productId: 55, quantity: 1, unitPrice: 14000, lineTotal: 14000 },
+      ],
+    });
+
+    expect(result.id).toBe(901);
+    expect(posCheckoutsRepository.save).not.toHaveBeenCalled();
+    expect(inventoryLedgerService.recordMovement).not.toHaveBeenCalled();
+  });
+
+  it('still lets an instalment through while the folio owes (cap not yet reached)', async () => {
+    // Same cap path, but only 4,000 collected of a 16,000 folio — a legitimate
+    // partial must NOT be collapsed.
+    const folioQb = {
+      select: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      getOne: jest.fn().mockResolvedValue(null), // no same-amount dup
+      getRawOne: jest.fn().mockResolvedValue({ collected: '4000' }),
+    };
+    posCheckoutsRepository.createQueryBuilder.mockReturnValue(folioQb);
+
+    await service.ingest({
+      branchId: 3,
+      transactionType: PosCheckoutTransactionType.SALE,
+      currency: 'USD',
+      subtotal: 2000,
+      total: 2000,
+      paidAmount: 2000,
+      occurredAt: '2026-06-18T13:43:00.000Z',
+      metadata: {
+        backendFolioId: 787,
+        roomNumber: '9',
+        folioGrandTotal: 16000,
+      },
+      items: [{ productId: 55, quantity: 1, unitPrice: 2000, lineTotal: 2000 }],
+    });
+
+    expect(posCheckoutsRepository.save).toHaveBeenCalled();
+  });
+
   it('persists failed checkouts for business-rule errors', async () => {
     posCheckoutsRepository.findOne.mockResolvedValueOnce({
       id: 71,
