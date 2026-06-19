@@ -87,6 +87,15 @@ export class PosPortalBranchSummaryDto {
 
   @ApiPropertyOptional({ nullable: true })
   posExperienceProfileCode!: string | null;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    example: '11:00',
+    description:
+      'HOTEL standard checkout time "HH:MM" 24h. Seeds the folio default time ' +
+      'and the early/late fee boundary on the register. Null = 11:00 default.',
+  })
+  checkoutPolicyTime!: string | null;
 }
 
 export class PosPortalSessionResponseDto {

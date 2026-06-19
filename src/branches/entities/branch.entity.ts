@@ -86,6 +86,16 @@ export class Branch {
   defaultCategoryId?: number | null;
 
   /**
+   * Standard checkout time policy for HOTEL branches, as "HH:MM" 24h EAT
+   * (e.g. "11:00", "11:30", "10:30"). Drives the seeded folio default
+   * check-in/checkout time and the early-check-in / late-checkout fee
+   * boundary on the register. Null = use the global 11:00 default.
+   * HOTEL-only; ignored by other service formats.
+   */
+  @Column({ type: 'varchar', length: 5, nullable: true })
+  checkoutPolicyTime?: string | null;
+
+  /**
    * Brand logo URL for this branch (uploaded via /media). Shown in the register
    * branch badge across all service formats and on receipts. Null = no logo.
    */

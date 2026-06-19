@@ -340,6 +340,14 @@ export class SellerWorkspaceBranchWorkspaceDto {
   @ApiPropertyOptional({
     nullable: true,
     description:
+      'HOTEL standard checkout time as "HH:MM" 24h (e.g. "11:00", "11:30"). ' +
+      'Seeds the folio default time and the early/late fee boundary. Null = 11:00 default.',
+  })
+  checkoutPolicyTime?: string | null;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description:
       'Brand logo URL for this branch, shown in the register and on receipts.',
   })
   logoUrl?: string | null;

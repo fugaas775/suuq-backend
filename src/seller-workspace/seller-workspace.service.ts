@@ -425,6 +425,7 @@ export class SellerWorkspaceService {
           phone: branch.phone ?? null,
           tinNumber: branch.tinNumber ?? null,
           defaultCategoryId: branch.defaultCategoryId ?? null,
+          checkoutPolicyTime: branch.checkoutPolicyTime ?? null,
           logoUrl: branch.logoUrl ?? null,
           vendorStoreId:
             vendorStoresByBranchId.get(branch.branchId)?.id ?? null,
@@ -490,6 +491,7 @@ export class SellerWorkspaceService {
           phone: candidate.phone ?? null,
           tinNumber: candidate.tinNumber ?? null,
           defaultCategoryId: candidate.defaultCategoryId ?? null,
+          checkoutPolicyTime: candidate.checkoutPolicyTime ?? null,
           logoUrl: candidate.logoUrl ?? null,
           vendorStoreId:
             vendorStoresByBranchId.get(candidate.branchId)?.id ?? null,
@@ -2204,6 +2206,8 @@ export class SellerWorkspaceService {
     if (dto.tinNumber !== undefined) updates.tinNumber = dto.tinNumber;
     if (dto.defaultCategoryId !== undefined)
       updates.defaultCategoryId = dto.defaultCategoryId;
+    if (dto.checkoutPolicyTime !== undefined)
+      updates.checkoutPolicyTime = dto.checkoutPolicyTime;
     if (dto.logoUrl !== undefined) updates.logoUrl = dto.logoUrl;
     if (Object.keys(updates).length > 0) {
       await branchRepo.update(branchId, updates);

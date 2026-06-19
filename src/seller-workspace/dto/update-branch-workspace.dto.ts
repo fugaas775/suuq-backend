@@ -4,9 +4,11 @@ import {
   IsInt,
   IsOptional,
   IsString,
+  Matches,
   MaxLength,
   Min,
   MinLength,
+  ValidateIf,
 } from 'class-validator';
 
 function trimString(value: unknown) {
@@ -73,6 +75,23 @@ export class UpdateBranchWorkspaceDto {
   @IsInt()
   @Min(1)
   defaultCategoryId?: number | null;
+
+  @ApiPropertyOptional({
+    description:
+      'HOTEL standard checkout time as "HH:MM" 24h (e.g. "11:00", "11:30"). ' +
+      'Seeds the folio default time and the early-check-in / late-checkout fee ' +
+      'boundary on the register. Send null to clear (falls back to 11:00).',
+    nullable: true,
+    example: '11:30',
+  })
+  @Transform(({ value }) => trimString(value))
+  @IsOptional()
+  @ValidateIf((o) => o.checkoutPolicyTime !== null)
+  @IsString()
+  @Matches(/^([01]\d|2[0-3]):[0-5]\d$/, {
+    message: 'checkoutPolicyTime must be a valid "HH:MM" 24h time',
+  })
+  checkoutPolicyTime?: string | null;
 
   @ApiPropertyOptional({
     description: 'Brand logo URL for this branch. Send null to clear.',
