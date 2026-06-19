@@ -71,6 +71,7 @@ export class BranchStaffController {
             displayName: assignment.user.displayName ?? null,
             username: assignment.user.posUsername ?? null,
             authMode: assignment.user.authMode ?? null,
+            phoneNumber: assignment.user.phoneNumber ?? null,
           }
         : null,
     };

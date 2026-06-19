@@ -31,6 +31,12 @@ import {
   PosSuspendedCartStatus,
 } from './entities/pos-suspended-cart.entity';
 
+// Advisory-lock namespace (the objid of pg_advisory_xact_lock(branchId, ns)) used
+// to serialise per-branch QSR daily order-serial allocation. A high constant so it
+// can't collide with the folio-settlement lock, which keys on real folio ids
+// (small positive int4s) — see resolveFolioSettlementLockId in pos-checkout.service.
+const QSR_ORDER_SERIAL_LOCK_NS = 1_900_000_001;
+
 @Injectable()
 export class PosRegisterService {
   constructor(
@@ -273,27 +279,104 @@ export class PosRegisterService {
       }
     }
 
+    const baseFields = {
+      branchId: dto.branchId,
+      registerSessionId: dto.registerSessionId ?? null,
+      registerId: dto.registerId?.trim() || null,
+      clientRef,
+      label: dto.label.trim(),
+      status: PosSuspendedCartStatus.SUSPENDED,
+      currency: dto.currency.trim().toUpperCase(),
+      promoCode: dto.promoCode?.trim() || null,
+      itemCount: dto.itemCount,
+      total: dto.total,
+      note: dto.note?.trim() || null,
+      cartSnapshot: dto.cartSnapshot,
+      metadata: dto.metadata ?? null,
+      suspendedByUserId: actor.id ?? null,
+      suspendedByName: actor.email ?? null,
+    };
+
+    // QSR order slips carry a per-branch, per-day serial number (1..N, reset each
+    // EAT day) shared by the waiter slip and the kitchen note — the kitchen's
+    // "receipts received today" is simply that number — plus the assigned waiter's
+    // running daily total. Allocate inside a transaction-scoped advisory lock so
+    // two tills can't mint the same serial (mirrors the folio-settlement dedupe
+    // lock in pos-checkout.service). Non-QSR carts keep the plain save.
+    const isQsr = dto.cartSnapshot?.serviceFormat === 'QSR';
+    if (isQsr) {
+      const cart = await this.suspendedCartsRepository.manager.transaction(
+        async (tx) => {
+          await tx.query('SELECT pg_advisory_xact_lock($1::int, $2::int)', [
+            dto.branchId,
+            QSR_ORDER_SERIAL_LOCK_NS,
+          ]);
+          const repo = tx.getRepository(PosSuspendedCart);
+          const qsrOrderDate = this.eatDateKey();
+          const dayCount = await repo
+            .createQueryBuilder('c')
+            .where('c.branchId = :branchId', { branchId: dto.branchId })
+            .andWhere("c.metadata ->> 'qsrOrderDate' = :qsrOrderDate", {
+              qsrOrderDate,
+            })
+            .getCount();
+          const qsrOrderNo = dayCount + 1;
+
+          // Running grand total of every slip this waiter has sent today
+          // (this order included). Keyed on the waiter name the snapshot stores
+          // in hotelGuestName. Discarded carts are excluded.
+          const waiterName =
+            (dto.cartSnapshot?.hotelGuestName as string | null) || null;
+          let qsrWaiterDailyTotal = Number(dto.total) || 0;
+          if (waiterName) {
+            const priorRaw = await repo
+              .createQueryBuilder('c')
+              .select('COALESCE(SUM(c.total), 0)', 'sum')
+              .where('c.branchId = :branchId', { branchId: dto.branchId })
+              .andWhere("c.metadata ->> 'qsrOrderDate' = :qsrOrderDate", {
+                qsrOrderDate,
+              })
+              .andWhere("c.cartSnapshot ->> 'hotelGuestName' = :waiterName", {
+                waiterName,
+              })
+              .andWhere('c.status != :discarded', {
+                discarded: PosSuspendedCartStatus.DISCARDED,
+              })
+              .getRawOne<{ sum: string }>();
+            qsrWaiterDailyTotal =
+              (Number(priorRaw?.sum) || 0) + (Number(dto.total) || 0);
+          }
+
+          return repo.save(
+            repo.create({
+              ...baseFields,
+              metadata: {
+                ...(dto.metadata ?? {}),
+                qsrOrderNo,
+                qsrOrderDate,
+                qsrWaiterDailyTotal,
+              },
+            }),
+          );
+        },
+      );
+      return this.toSuspendedCartResponse(cart);
+    }
+
     const cart = await this.suspendedCartsRepository.save(
-      this.suspendedCartsRepository.create({
-        branchId: dto.branchId,
-        registerSessionId: dto.registerSessionId ?? null,
-        registerId: dto.registerId?.trim() || null,
-        clientRef,
-        label: dto.label.trim(),
-        status: PosSuspendedCartStatus.SUSPENDED,
-        currency: dto.currency.trim().toUpperCase(),
-        promoCode: dto.promoCode?.trim() || null,
-        itemCount: dto.itemCount,
-        total: dto.total,
-        note: dto.note?.trim() || null,
-        cartSnapshot: dto.cartSnapshot,
-        metadata: dto.metadata ?? null,
-        suspendedByUserId: actor.id ?? null,
-        suspendedByName: actor.email ?? null,
-      }),
+      this.suspendedCartsRepository.create(baseFields),
     );
 
     return this.toSuspendedCartResponse(cart);
+  }
+
+  // Business-day key (YYYY-MM-DD) at the EAT (UTC+3) midnight boundary, computed
+  // independently of the process timezone so the QSR daily serial resets at local
+  // midnight regardless of where the Node process thinks it is.
+  private eatDateKey(now: Date = new Date()): string {
+    return new Date(now.getTime() + 3 * 60 * 60 * 1000)
+      .toISOString()
+      .slice(0, 10);
   }
 
   async resumeSuspendedCart(

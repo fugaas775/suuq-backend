@@ -119,4 +119,15 @@ export class CreateBranchStaffManualAccountDto {
   @MaxLength(64)
   @Transform(({ value }) => trimString(value))
   posExperienceProfileCode?: string | null;
+
+  // WhatsApp number (full international form, e.g. +252612345678). Used by the
+  // QSR order-slip flow to deep-link the slip to a waiter's own phone. Optional.
+  @IsOptional()
+  @IsString()
+  @Matches(/^\+?[0-9]{6,20}$/, {
+    message: 'phoneNumber must be 6-20 digits, optionally prefixed with "+"',
+  })
+  @MaxLength(20)
+  @Transform(({ value }) => trimString(value))
+  phoneNumber?: string | null;
 }
