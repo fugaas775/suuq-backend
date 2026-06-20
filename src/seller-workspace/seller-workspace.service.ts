@@ -2177,6 +2177,7 @@ export class SellerWorkspaceService {
     userId: number,
     branchId: number,
     dto: UpdateBranchWorkspaceDto,
+    roles: string[] = [],
   ): Promise<SellerWorkspaceBranchWorkspaceDto> {
     const branchRepo =
       this.sellerWorkspacesRepository.manager.getRepository(Branch);
@@ -2189,9 +2190,15 @@ export class SellerWorkspaceService {
         `Branch workspace with ID ${branchId} not found.`,
       );
     }
+    // Platform admins (SUPER_ADMIN/ADMIN) may edit any branch's details — they
+    // act as the owner from the admin bar but keep their own user id, so the
+    // ownership check below would otherwise reject them.
+    const isPlatformAdmin =
+      Array.isArray(roles) &&
+      (roles.includes(UserRole.SUPER_ADMIN) || roles.includes(UserRole.ADMIN));
     const isOwner =
       branch.ownerId === userId || branch.retailTenant?.owner?.id === userId;
-    if (!isOwner) {
+    if (!isOwner && !isPlatformAdmin) {
       throw new ForbiddenException(
         'Only the branch or tenant owner can update branch details.',
       );
