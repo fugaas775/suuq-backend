@@ -16,9 +16,6 @@ export class BranchStaffUserSummaryDto {
 
   @ApiPropertyOptional({ nullable: true })
   authMode!: string | null;
-
-  @ApiPropertyOptional({ nullable: true })
-  phoneNumber!: string | null;
 }
 
 export class BranchStaffAssignmentResponseDto {

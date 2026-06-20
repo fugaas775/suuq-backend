@@ -279,15 +279,7 @@ export class BranchStaffService {
   async findStylistRoster(
     branchId: number,
     laneCodes: string[],
-  ): Promise<
-    {
-      userId: number;
-      displayName: string;
-      username: string;
-      phone: string;
-      hasPhone: boolean;
-    }[]
-  > {
+  ): Promise<{ userId: number; displayName: string }[]> {
     const normalizedCodes = laneCodes.map((c) => c.trim().toUpperCase());
     const assignments = await this.assignmentsRepository.find({
       where: { branchId, isActive: true },
@@ -296,12 +288,7 @@ export class BranchStaffService {
         id: true,
         userId: true,
         posExperienceProfileCode: true,
-        user: {
-          id: true,
-          displayName: true,
-          posUsername: true,
-          phoneNumber: true,
-        },
+        user: { id: true, displayName: true, posUsername: true },
       },
     });
     return assignments
@@ -310,19 +297,12 @@ export class BranchStaffService {
           String(a.posExperienceProfileCode || '').toUpperCase(),
         ),
       )
-      .map((a) => {
-        // Full WhatsApp number (with country code) as captured on the staff
-        // record — the QSR slip deep-links to it so a waiter receives their order.
-        const phone = a.user?.phoneNumber?.trim() || '';
-        return {
-          userId: a.userId,
-          displayName:
-            a.user?.displayName?.trim() || a.user?.posUsername?.trim() || '',
-          username: a.user?.posUsername?.trim() || '',
-          phone,
-          hasPhone: !!phone,
-        };
-      })
+      .map((a) => ({
+        userId: a.userId,
+        displayName:
+          a.user?.displayName?.trim() || a.user?.posUsername?.trim() || '',
+        username: a.user?.posUsername?.trim() || '',
+      }))
       .filter((s) => s.displayName);
   }
 
@@ -1377,8 +1357,6 @@ export class BranchStaffService {
       posUsername: normalizedUsername,
       authMode: 'MANUAL',
       displayName: dto.displayName?.trim() || null,
-      // WhatsApp number for the QSR order-slip flow (full international number).
-      phoneNumber: dto.phoneNumber?.trim() || null,
       password: hashedPassword,
       roles: [],
       isActive: true,
@@ -1438,7 +1416,6 @@ export class BranchStaffService {
       posExperienceProfileCode?: string | null;
       serviceSharePct?: number | null;
       isActive?: boolean;
-      phoneNumber?: string | null;
     },
     actor: { id?: number | null; email?: string | null; roles?: string[] },
   ) {
@@ -1486,14 +1463,6 @@ export class BranchStaffService {
     }
     if (dto.isActive !== undefined) {
       assignment.isActive = dto.isActive;
-    }
-
-    // Phone lives on the user, not the assignment. An empty string clears it.
-    if (dto.phoneNumber !== undefined) {
-      await this.usersRepository.update(
-        { id: userId },
-        { phoneNumber: dto.phoneNumber ? dto.phoneNumber.trim() : null },
-      );
     }
 
     // Use update() instead of save() to avoid TypeORM nulling the userId FK

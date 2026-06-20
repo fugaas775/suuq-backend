@@ -69,14 +69,4 @@ export class UpdateBranchStaffAssignmentDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
-
-  // WhatsApp number (full international form, e.g. +252612345678) used by the QSR
-  // order-slip flow. Updates the underlying user's phone. Empty string clears it.
-  @IsOptional()
-  @IsString()
-  @Matches(/^(\+?[0-9]{6,20})?$/, {
-    message: 'phoneNumber must be 6-20 digits, optionally prefixed with "+"',
-  })
-  @MaxLength(20)
-  phoneNumber?: string | null;
 }
