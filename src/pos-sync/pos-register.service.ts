@@ -273,7 +273,7 @@ export class PosRegisterService {
       }
     }
 
-    const cart = await this.suspendedCartsRepository.save(
+    const buildCart = () =>
       this.suspendedCartsRepository.create({
         branchId: dto.branchId,
         registerSessionId: dto.registerSessionId ?? null,
@@ -290,10 +290,78 @@ export class PosRegisterService {
         metadata: dto.metadata ?? null,
         suspendedByUserId: actor.id ?? null,
         suspendedByName: actor.email ?? null,
-      }),
+      });
+
+    // Single-live-row invariant for folio re-saves. Editing a folio (adding a
+    // charge, a discount, guest details) creates a FRESH suspended-cart row and
+    // the client then discards the old one. When that discard is lost — offline,
+    // a multi-device race, a failed mutation, or a rapid re-save loop — the old
+    // row survives. The room board SUMS every live row for a room, so duplicates
+    // MULTIPLY its charge (Blue Hotel Room 10 accumulated 8 live rows of 40,000
+    // and displayed ~320,000 until staff voided the extras by hand). Make the
+    // supersede atomic on the server so duplicates can never be written,
+    // whatever the client does: under an advisory lock keyed on the folio,
+    // discard any prior live row for the SAME folio+unit before inserting.
+    //
+    // Keyed on the room/table/seat unit too, NOT folio id alone: PROPERTY_RENTAL
+    // bookings can legitimately share a backendFolioId across DISTINCT units, and
+    // those must never be merged. Same-folio + same-unit is the exact "true
+    // duplicate" condition. Skipped when there is no backendFolioId (RETAIL/QSR
+    // baskets and not-yet-opened folios) — each of those is a distinct row.
+    const snapshot = (dto.cartSnapshot ?? {}) as Record<string, unknown>;
+    const backendFolioId =
+      snapshot.backendFolioId != null && String(snapshot.backendFolioId).trim()
+        ? String(snapshot.backendFolioId).trim()
+        : null;
+
+    if (!backendFolioId) {
+      return this.toSuspendedCartResponse(
+        await this.suspendedCartsRepository.save(buildCart()),
+      );
+    }
+
+    const folioUnitKey = String(
+      snapshot.hotelRoomNumber ??
+        snapshot.cafeteriaTableNumber ??
+        snapshot.barberSeatNumber ??
+        dto.label ??
+        '',
+    )
+      .trim()
+      .toLowerCase();
+
+    const saved = await this.suspendedCartsRepository.manager.transaction(
+      async (em) => {
+        // Serialize concurrent saves of the same folio so two devices can't both
+        // insert before seeing each other's row. Released at transaction end.
+        await em.query('SELECT pg_advisory_xact_lock(hashtext($1)::bigint)', [
+          `pos-folio:${dto.branchId}:${backendFolioId}`,
+        ]);
+        await em.query(
+          `UPDATE pos_suspended_carts
+              SET status = $1, "discardedAt" = now(), "discardedByName" = $2
+            WHERE "branchId" = $3
+              AND status = $4
+              AND "cartSnapshot" ->> 'backendFolioId' = $5
+              AND lower(btrim(coalesce(
+                    "cartSnapshot" ->> 'hotelRoomNumber',
+                    "cartSnapshot" ->> 'cafeteriaTableNumber',
+                    "cartSnapshot" ->> 'barberSeatNumber',
+                    label, ''))) = $6`,
+          [
+            PosSuspendedCartStatus.DISCARDED,
+            'superseded by folio re-save',
+            dto.branchId,
+            PosSuspendedCartStatus.SUSPENDED,
+            backendFolioId,
+            folioUnitKey,
+          ],
+        );
+        return em.getRepository(PosSuspendedCart).save(buildCart());
+      },
     );
 
-    return this.toSuspendedCartResponse(cart);
+    return this.toSuspendedCartResponse(saved);
   }
 
   async resumeSuspendedCart(
