@@ -33,6 +33,7 @@ export enum PosCheckoutStatus {
 }
 
 export type PosCheckoutItem = {
+  lineId?: string | null;
   productId?: number | null;
   aliasType?: ProductAliasType | null;
   aliasValue?: string | null;

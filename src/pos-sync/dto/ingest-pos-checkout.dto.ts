@@ -43,6 +43,11 @@ export class PosCheckoutTenderDto {
 
 export class PosCheckoutItemDto {
   @IsOptional()
+  @IsString()
+  @MaxLength(128)
+  lineId?: string;
+
+  @IsOptional()
   @Type(() => Number)
   @IsNumber()
   productId?: number;

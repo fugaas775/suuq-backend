@@ -37,6 +37,7 @@ import {
 import { SettleReceivableDto } from './dto/settle-receivable.dto';
 import { PosCheckoutQuoteResponseDto } from './dto/pos-checkout-quote-response.dto';
 import { ListPosCheckoutsQueryDto } from './dto/list-pos-checkouts-query.dto';
+import { FindReturnSourceQueryDto } from './dto/find-return-source-query.dto';
 import { SearchPosCustomersQueryDto } from './dto/search-pos-customers-query.dto';
 import { PosCustomerSearchResponseDto } from './dto/pos-customer-search-response.dto';
 import {
@@ -1691,6 +1692,19 @@ export class PosCheckoutService {
     });
 
     if (processedSourceSale) {
+      // Server-side over-return guard. Previously the only protection against
+      // returning more than was sold (or returning an item twice) was client-side,
+      // computed from the device's LOCAL return history — so a receipt fetched from
+      // the server on a device with no local history could be over-refunded. Reject
+      // any return whose per-line quantity, plus everything already returned against
+      // this source, exceeds what was sold. Additive: only lines that exist on the
+      // source sale (have a lineId and a sold qty) are checked, so it can never
+      // block a return that worked before.
+      await this.assertReturnQuantitiesWithinRemaining(
+        dto,
+        processedSourceSale,
+        checkoutRepository,
+      );
       return;
     }
 
@@ -1711,6 +1725,124 @@ export class PosCheckoutService {
     throw new BadRequestException(
       `Return source sale ${sourceReceiptNumber} is ${sourceSale.status} and cannot be returned until it is PROCESSED`,
     );
+  }
+
+  // Sum already-returned quantity per source line, across every PROCESSED RETURN
+  // that references this source receipt number. Returns are linked via
+  // metadata.returnContext.sourceReceiptNumber and carry the source line's lineId.
+  private async sumReturnedByLineId(
+    repo: Repository<PosCheckout>,
+    branchId: number,
+    sourceReceiptNumber: string,
+  ): Promise<Map<string, number>> {
+    const priorReturns = await repo
+      .createQueryBuilder('c')
+      .where('c.branchId = :branchId', { branchId })
+      .andWhere('c.transactionType = :t', {
+        t: PosCheckoutTransactionType.RETURN,
+      })
+      .andWhere('c.status = :s', { s: PosCheckoutStatus.PROCESSED })
+      .andWhere(
+        "c.metadata -> 'returnContext' ->> 'sourceReceiptNumber' = :rn",
+        { rn: sourceReceiptNumber },
+      )
+      .getMany();
+
+    const returnedByLineId = new Map<string, number>();
+    for (const ret of priorReturns) {
+      for (const item of ret.items ?? []) {
+        const lineId = this.normalizeOptionalString(item.lineId);
+        if (!lineId) continue;
+        returnedByLineId.set(
+          lineId,
+          (returnedByLineId.get(lineId) ?? 0) + Number(item.quantity || 0),
+        );
+      }
+    }
+    return returnedByLineId;
+  }
+
+  private async assertReturnQuantitiesWithinRemaining(
+    dto: IngestPosCheckoutDto,
+    sourceSale: PosCheckout,
+    repo: Repository<PosCheckout>,
+  ): Promise<void> {
+    const soldByLineId = new Map<string, number>();
+    for (const item of sourceSale.items ?? []) {
+      const lineId = this.normalizeOptionalString(item.lineId);
+      if (!lineId) continue;
+      soldByLineId.set(
+        lineId,
+        (soldByLineId.get(lineId) ?? 0) + Number(item.quantity || 0),
+      );
+    }
+    if (soldByLineId.size === 0) {
+      return; // legacy sale with no line ids — nothing to anchor the check on
+    }
+
+    const returnedByLineId = await this.sumReturnedByLineId(
+      repo,
+      sourceSale.branchId,
+      sourceSale.receiptNumber,
+    );
+
+    for (const item of dto.items ?? []) {
+      const lineId = this.normalizeOptionalString(item.lineId);
+      if (!lineId) continue;
+      const requested = Number(item.quantity || 0);
+      if (requested <= 0) continue;
+      const sold = soldByLineId.get(lineId) ?? 0;
+      if (sold <= 0) continue; // line not on the source sale — leave it to other validation
+      const already = returnedByLineId.get(lineId) ?? 0;
+      if (already + requested > sold + 1e-6) {
+        const remaining = Math.max(0, sold - already);
+        throw new BadRequestException(
+          `Return for "${item.title ?? lineId}" exceeds the remaining returnable quantity ` +
+            `(sold ${sold}, already returned ${already}, only ${remaining} left).`,
+        );
+      }
+    }
+  }
+
+  // Look up a PROCESSED source SALE by receipt number for the returns workflow,
+  // together with how much of each line has already been returned — so a cashier
+  // can pull up and return a sale that is no longer in the device's local cache
+  // (older than the recent window, or rung up on another device).
+  async findReturnSource(query: FindReturnSourceQueryDto): Promise<{
+    found: boolean;
+    sale: ReturnType<PosCheckoutService['toListItem']> | null;
+    returnedByLineId: Record<string, number>;
+  }> {
+    const receiptNumber = this.normalizeOptionalString(query.receiptNumber);
+    if (!receiptNumber) {
+      throw new BadRequestException('receiptNumber is required');
+    }
+
+    const sale = await this.posCheckoutsRepository.findOne({
+      where: {
+        branchId: query.branchId,
+        receiptNumber,
+        transactionType: PosCheckoutTransactionType.SALE,
+        status: PosCheckoutStatus.PROCESSED,
+      },
+      order: { id: 'DESC' },
+    });
+
+    if (!sale) {
+      return { found: false, sale: null, returnedByLineId: {} };
+    }
+
+    const returnedMap = await this.sumReturnedByLineId(
+      this.posCheckoutsRepository,
+      query.branchId,
+      receiptNumber,
+    );
+
+    return {
+      found: true,
+      sale: this.toListItem(sale),
+      returnedByLineId: Object.fromEntries(returnedMap),
+    };
   }
 
   private normalizeCheckoutItemMetadata(
@@ -2090,6 +2222,7 @@ export class PosCheckoutService {
         metadata: tender.metadata ?? null,
       })),
       items: (checkout.items ?? []).map((item) => ({
+        lineId: item.lineId ?? null,
         productId: item.productId ?? null,
         aliasType: item.aliasType ?? null,
         aliasValue: item.aliasValue ?? null,
