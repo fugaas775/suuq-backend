@@ -71,6 +71,12 @@ export class RetailStockHealthItemResponseDto {
   })
   stockStatus!: 'HEALTHY' | 'LOW_STOCK' | 'REORDER_NOW' | 'OUT_OF_STOCK';
 
+  @ApiPropertyOptional({
+    description:
+      'True when the status was estimated from service-format default thresholds (the SKU has no configured safety stock / reorder point).',
+  })
+  thresholdEstimated?: boolean;
+
   @ApiProperty()
   version!: number;
 

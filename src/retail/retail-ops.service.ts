@@ -232,6 +232,7 @@ import {
   RetailStockHealthResponseDto,
   RetailStockHealthSummaryResponseDto,
 } from './dto/retail-stock-health-response.dto';
+import { resolveEffectiveStockStatus } from './stock-thresholds';
 
 @Injectable()
 export class RetailOpsService {
@@ -1230,7 +1231,7 @@ export class RetailOpsService {
   async getStockHealth(
     query: RetailStockHealthQueryDto,
   ): Promise<RetailStockHealthResponseDto> {
-    await this.assertBranchExists(query.branchId);
+    const branch = await this.assertBranchExists(query.branchId);
 
     const page = Math.max(query.page ?? 1, 1);
     const perPage = Math.min(Math.max(query.limit ?? 20, 1), 200);
@@ -1281,7 +1282,9 @@ export class RetailOpsService {
 
     return {
       summary,
-      items: items.map((item) => this.mapStockHealthItem(item)),
+      items: items.map((item) =>
+        this.mapStockHealthItem(item, branch.serviceFormat),
+      ),
       total,
       page,
       perPage,
@@ -1664,7 +1667,7 @@ export class RetailOpsService {
       .map((branch) => {
         const branchItems = inventories
           .filter((item) => item.branchId === branch.id)
-          .map((item) => this.mapStockHealthItem(item));
+          .map((item) => this.mapStockHealthItem(item, branch.serviceFormat));
 
         return this.mapStockHealthNetworkBranch(branch, branchItems);
       })
@@ -3912,9 +3915,15 @@ export class RetailOpsService {
     const availableToSell = inventory
       ? Number(inventory.availableToSell ?? 0)
       : 0;
-    const stockStatus = inventory
-      ? this.getStockStatus(inventory)
-      : 'NOT_STOCKED';
+    // Un-configured (no safety stock / reorder point) but stocked SKUs get a
+    // status estimated from the branch's service-format defaults; truly
+    // un-stocked rows (no inventory) stay NOT_STOCKED for the frontend's
+    // vendor-truth enrichment to resolve.
+    const stockSignal = inventory
+      ? resolveEffectiveStockStatus(inventory, branch.serviceFormat)
+      : null;
+    const stockStatus = stockSignal ? stockSignal.stockStatus : 'NOT_STOCKED';
+    const thresholdEstimated = stockSignal?.estimated ?? false;
 
     return {
       inventoryId: inventory?.id ?? null,
@@ -3959,9 +3968,12 @@ export class RetailOpsService {
       parLevel,
       reorderPoint,
       availableToSell,
-      shortageToSafetyStock: Math.max(safetyStock - availableToSell, 0),
+      shortageToSafetyStock: stockSignal
+        ? stockSignal.shortageToSafetyStock
+        : Math.max(safetyStock - availableToSell, 0),
       reorderBreached: reorderPoint > 0 && availableToSell < reorderPoint,
       stockStatus,
+      thresholdEstimated,
       manageStock: product.manageStock ?? false,
       lastReceivedAt: inventory?.lastReceivedAt ?? null,
       lastPurchaseOrderId: inventory?.lastPurchaseOrderId ?? null,
@@ -4251,8 +4263,9 @@ export class RetailOpsService {
 
   private mapStockHealthItem(
     item: BranchInventory,
+    serviceFormat?: string | null,
   ): RetailStockHealthItemResponseDto {
-    const stockStatus = this.getStockStatus(item);
+    const signal = resolveEffectiveStockStatus(item, serviceFormat);
 
     return {
       id: item.id,
@@ -4266,11 +4279,9 @@ export class RetailOpsService {
       outboundTransfers: item.outboundTransfers,
       safetyStock: item.safetyStock,
       availableToSell: item.availableToSell,
-      shortageToSafetyStock: Math.max(
-        item.safetyStock - item.availableToSell,
-        0,
-      ),
-      stockStatus,
+      shortageToSafetyStock: signal.shortageToSafetyStock,
+      stockStatus: signal.stockStatus,
+      thresholdEstimated: signal.estimated,
       version: item.version,
       lastReceivedAt: item.lastReceivedAt ?? null,
       lastPurchaseOrderId: item.lastPurchaseOrderId ?? null,
@@ -8399,24 +8410,17 @@ export class RetailOpsService {
     return rank[left] - rank[right];
   }
 
+  /**
+   * Stock status for a SKU. When `serviceFormat` is supplied, SKUs with no
+   * configured safety stock / reorder point are estimated from that format's
+   * defaults (see stock-thresholds.ts); otherwise the legacy zero-threshold
+   * behaviour is preserved for callers that don't opt in.
+   */
   private getStockStatus(
     item: BranchInventory,
+    serviceFormat?: string | null,
   ): 'HEALTHY' | 'LOW_STOCK' | 'REORDER_NOW' | 'OUT_OF_STOCK' {
-    if ((item.quantityOnHand ?? 0) <= 0) {
-      return 'OUT_OF_STOCK';
-    }
-
-    if ((item.availableToSell ?? 0) <= (item.safetyStock ?? 0)) {
-      return 'REORDER_NOW';
-    }
-
-    if (
-      (item.availableToSell ?? 0) <= Math.max((item.safetyStock ?? 0) * 2, 1)
-    ) {
-      return 'LOW_STOCK';
-    }
-
-    return 'HEALTHY';
+    return resolveEffectiveStockStatus(item, serviceFormat).stockStatus;
   }
 
   private mapReplenishmentSummary(

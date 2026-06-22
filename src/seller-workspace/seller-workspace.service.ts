@@ -2227,9 +2227,23 @@ export class SellerWorkspaceService {
       }
     }
     const refreshed = await this.getBranchWorkspaces(userId);
-    const updatedWorkspace = refreshed.items.find(
+    let updatedWorkspace = refreshed.items.find(
       (item) => item.branchId === branchId,
     );
+    if (!updatedWorkspace) {
+      // A platform admin can update a branch that is NOT in their own workspace list
+      // (getBranchWorkspaces is keyed to the caller's account), so the reload above
+      // won't contain it — the update already persisted, but we'd 404 building the
+      // response. Resolve the updated branch via its OWNER's workspaces instead so the
+      // full enriched DTO comes back.
+      const ownerId = branch.ownerId ?? branch.retailTenant?.owner?.id ?? null;
+      if (ownerId && ownerId !== userId) {
+        const ownerRefreshed = await this.getBranchWorkspaces(ownerId);
+        updatedWorkspace = ownerRefreshed.items.find(
+          (item) => item.branchId === branchId,
+        );
+      }
+    }
     if (!updatedWorkspace) {
       throw new NotFoundException(
         'Updated branch workspace could not be resolved.',
