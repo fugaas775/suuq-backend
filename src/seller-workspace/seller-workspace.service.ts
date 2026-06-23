@@ -6,7 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { Brackets, In, Repository } from 'typeorm';
 import { User, SubscriptionTier } from '../users/entities/user.entity';
 import { VendorStaffService } from '../vendor/vendor-staff.service';
 import { BranchStaffService } from '../branch-staff/branch-staff.service';
@@ -858,12 +858,16 @@ export class SellerWorkspaceService {
       throw new ForbiddenException('Cannot transfer ownership to yourself.');
     }
 
+    // The branch's products belong to its current owner (branch.ownerId), which
+    // can differ from the caller when a platform admin performs the transfer.
+    const previousOwnerId = branch.ownerId ?? callerId;
+
     // Get previous owner email for notification
     const prevOwner = await this.usersRepository.findOne({
-      where: { id: callerId },
+      where: { id: previousOwnerId },
       select: ['id', 'email'],
     });
-    const prevOwnerEmail = prevOwner?.email ?? `User #${callerId}`;
+    const prevOwnerEmail = prevOwner?.email ?? `User #${previousOwnerId}`;
 
     // Transfer ownership: update branch.ownerId
     await this.branchesRepository.update(
@@ -871,22 +875,22 @@ export class SellerWorkspaceService {
       { ownerId: newOwner.id },
     );
 
-    // Transfer the branch's vendor store and its products to the new owner
-    if (branch.vendorStoreId) {
-      await this.vendorStoresRepository.update(
-        { id: branch.vendorStoreId },
-        { ownerUserId: newOwner.id },
-      );
-      await this.productsRepository.query(
-        `UPDATE product SET "vendorId" = $1 WHERE vendor_store_id = $2`,
-        [newOwner.id, branch.vendorStoreId],
-      );
-    }
+    // Transfer the branch's products (and their catalog/inventory data) to the
+    // new owner. Products link to a branch through its vendor store, through
+    // per-product inventory/catalog links, or through a vendor-catalog link —
+    // reassign every such product and PRESERVE the links so the new owner
+    // inherits the full catalog (PROPERTY units, HOTEL rooms, RETAIL SKUs)
+    // instead of an empty branch.
+    await this.transferBranchOwnedProducts(
+      branch,
+      previousOwnerId,
+      newOwner.id,
+    );
 
     // Revoke previous owner's staff assignment on this branch
     const prevOwnerAssignment =
       await this.branchStaffAssignmentsRepository.findOne({
-        where: { branchId, userId: callerId },
+        where: { branchId, userId: previousOwnerId },
       });
     if (prevOwnerAssignment) {
       prevOwnerAssignment.isActive = false;
@@ -913,8 +917,6 @@ export class SellerWorkspaceService {
         }),
       );
     }
-
-    await this.detachTransferredCreatorCatalog(branchId, callerId);
 
     // Send email notifications (non-fatal)
     const notifyParams = {
@@ -949,44 +951,106 @@ export class SellerWorkspaceService {
     return { success: true };
   }
 
-  private async detachTransferredCreatorCatalog(
-    branchId: number,
-    creatorId: number,
+  /**
+   * Reassign every product the branch owns to the new owner while keeping the
+   * branch's catalog/inventory links intact. A transferred branch must arrive
+   * with its full catalog (PROPERTY units, HOTEL rooms, RETAIL SKUs) and data —
+   * we never detach products, or the new owner inherits an empty branch.
+   */
+  private async transferBranchOwnedProducts(
+    branch: Pick<Branch, 'id' | 'vendorStoreId'>,
+    previousOwnerId: number,
+    newOwnerId: number,
   ): Promise<void> {
-    const creatorProductRows = await this.productsRepository
+    const branchId = branch.id;
+
+    // The branch's own consumer store (if any) moves to the new owner; every
+    // product scoped to it belongs to the branch.
+    if (branch.vendorStoreId) {
+      await this.vendorStoresRepository.update(
+        { id: branch.vendorStoreId },
+        { ownerUserId: newOwnerId },
+      );
+    }
+
+    // Collect every product that belongs to this branch: products scoped to the
+    // branch's vendor store, plus the previous owner's products linked to this
+    // branch through inventory or per-product catalog links.
+    const rows = await this.productsRepository
       .createQueryBuilder('product')
       .select('product.id', 'id')
-      .innerJoin(
+      .leftJoin(
         BranchInventory,
         'inventory',
         'inventory.productId = product.id AND inventory.branchId = :branchId',
         { branchId },
       )
-      .where(
-        '(product."vendorId" = :creatorId OR product.created_by_id = :creatorId)',
-        { creatorId },
+      .leftJoin(
+        BranchCatalogProductLink,
+        'catalogLink',
+        'catalogLink.productId = product.id AND catalogLink.branchId = :branchId',
+        { branchId },
       )
-      .getRawMany();
+      .where('product.deletedAt IS NULL')
+      .andWhere(
+        new Brackets((qb) => {
+          qb.where(
+            new Brackets((owned) => {
+              owned
+                .where('product.vendorId = :previousOwnerId', {
+                  previousOwnerId,
+                })
+                .andWhere(
+                  new Brackets((linked) => {
+                    linked
+                      .where('inventory.id IS NOT NULL')
+                      .orWhere('catalogLink.id IS NOT NULL');
+                  }),
+                );
+            }),
+          );
+          if (branch.vendorStoreId) {
+            qb.orWhere('product.vendor_store_id = :vendorStoreId', {
+              vendorStoreId: branch.vendorStoreId,
+            });
+          }
+        }),
+      )
+      .getRawMany<{ id: number }>();
 
-    const creatorProductIds = creatorProductRows
+    const productIds = rows
       .map((row) => Number(row.id))
       .filter((id) => Number.isFinite(id) && id > 0);
 
-    if (creatorProductIds.length > 0) {
-      await this.branchInventoryRepository.delete({
-        branchId,
-        productId: In(creatorProductIds),
-      });
-      await this.branchCatalogProductLinksRepository.delete({
-        branchId,
-        productId: In(creatorProductIds),
-      });
+    if (productIds.length > 0) {
+      // `vendorId` is an auto-generated relation FK (no standalone @Column), so
+      // it must be set via raw SQL rather than the typed repository update.
+      await this.productsRepository.query(
+        `UPDATE product SET "vendorId" = $1 WHERE id = ANY($2::int[])`,
+        [newOwnerId, productIds],
+      );
     }
 
-    await this.branchCatalogVendorLinksRepository.delete({
-      branchId,
-      vendorId: creatorId,
-    });
+    // Re-point any vendor-catalog link from the previous owner to the new owner
+    // so the branch keeps surfacing those products after their vendorId changed,
+    // honouring the (branchId, vendorId) unique constraint.
+    if (previousOwnerId !== newOwnerId) {
+      const newOwnerLinkExists =
+        await this.branchCatalogVendorLinksRepository.findOne({
+          where: { branchId, vendorId: newOwnerId },
+        });
+      if (newOwnerLinkExists) {
+        await this.branchCatalogVendorLinksRepository.delete({
+          branchId,
+          vendorId: previousOwnerId,
+        });
+      } else {
+        await this.branchCatalogVendorLinksRepository.update(
+          { branchId, vendorId: previousOwnerId },
+          { vendorId: newOwnerId },
+        );
+      }
+    }
   }
 
   async updatePlanSelection(
