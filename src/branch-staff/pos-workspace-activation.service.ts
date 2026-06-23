@@ -389,6 +389,7 @@ export class PosWorkspaceActivationService {
       tinNumber?: string;
       referralCode?: string;
       ownerEmail?: string;
+      subscriptionPeriod?: string;
     },
   ) {
     // Resolve the user's tenant via their branch assignments
@@ -433,6 +434,13 @@ export class PosWorkspaceActivationService {
     const referenceId = `${BRANCH_CREATE_REFERENCE_PREFIX}-${tenantId}-${user.id}-${Date.now()}`;
     const invoiceId = `${BRANCH_CREATE_REFERENCE_PREFIX}INV-${tenantId}-${Date.now()}`;
 
+    // Resolve the billing period the caller chose (Monthly or 1-year −10%),
+    // defaulting to the monthly plan when omitted. The period is persisted in
+    // the pending metadata so completion charges/pays out the matching amount.
+    const additionalBranchOption =
+      findPosBranchSubscriptionOption(dto.subscriptionPeriod) ??
+      requirePosBranchSubscriptionOption(DEFAULT_POS_BRANCH_PERIOD);
+
     // Store pending creation params in subscription metadata
     subscription.metadata = {
       ...(subscription.metadata ?? {}),
@@ -449,6 +457,7 @@ export class PosWorkspaceActivationService {
         referralCode: dto.referralCode?.trim().toUpperCase() ?? null,
         userEmail: user.email?.trim() ?? null,
         ownerEmail: dto.ownerEmail?.trim().toLowerCase() ?? null,
+        period: additionalBranchOption.period,
         createdBranchId: null,
       },
     };
@@ -466,12 +475,6 @@ export class PosWorkspaceActivationService {
         ),
       );
 
-    // Additional-branch creation now uses the same per-branch pricing as
-    // first-branch activation. We default to the 6-month option here; the
-    // owner can later upgrade by paying the difference at renewal.
-    const additionalBranchOption = requirePosBranchSubscriptionOption(
-      DEFAULT_POS_BRANCH_PERIOD,
-    );
     let paymentResponse: any;
     try {
       paymentResponse = await this.ebirrService.initiatePayment({
@@ -571,9 +574,6 @@ export class PosWorkspaceActivationService {
       return { branchId: 0, created: false };
     }
     const { tenantId, userId } = parsed;
-    const additionalBranchOption = requirePosBranchSubscriptionOption(
-      DEFAULT_POS_BRANCH_PERIOD,
-    );
 
     const subscription = await this.tenantSubscriptionsRepository.findOne({
       where: { tenantId },
@@ -589,6 +589,7 @@ export class PosWorkspaceActivationService {
           address?: string | null;
           userEmail?: string | null;
           ownerEmail?: string | null;
+          period?: string | null;
           createdBranchId?: number | null;
         }
       | undefined;
@@ -604,6 +605,12 @@ export class PosWorkspaceActivationService {
     if (pending.createdBranchId) {
       return { branchId: pending.createdBranchId, created: false };
     }
+
+    // Resolve the billing period chosen at initiation (persisted in metadata)
+    // so the equity-partner payout amount / description match what was charged.
+    const additionalBranchOption =
+      findPosBranchSubscriptionOption(pending.period) ??
+      requirePosBranchSubscriptionOption(DEFAULT_POS_BRANCH_PERIOD);
 
     const code = await this.generateBranchCode(
       this.branchesRepository,

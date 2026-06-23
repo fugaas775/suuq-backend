@@ -41,7 +41,11 @@ export const POS_BRANCH_SUBSCRIPTION_OPTIONS: readonly PosBranchSubscriptionOpti
     {
       period: 'ONE_YEAR',
       months: 12,
-      amount: 22_800,
+      // 10% discount off 12× the 1,900 ETB monthly price (22,800 → 20,520) to
+      // reward paying for a full year up front. Must match the pos-s frontend
+      // POS_BRANCH_SUBSCRIPTION_OPTIONS so the charged amount lines up with the
+      // price displayed at the gate / billing UI.
+      amount: 20_520,
       currency: POS_BRANCH_SUBSCRIPTION_CURRENCY,
       label: '1 year',
       planCode: 'POS_BRANCH_1Y',
