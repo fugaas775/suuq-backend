@@ -1,7 +1,6 @@
 import { ForbiddenException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { In } from 'typeorm';
 import { BranchStaffService } from '../branch-staff/branch-staff.service';
 import {
   BranchStaffAssignment,
@@ -68,10 +67,14 @@ describe('SellerWorkspaceService', () => {
   let retailTenantsRepository: { find: jest.Mock };
   let tenantModuleEntitlementsRepository: { findOne: jest.Mock };
   let tenantSubscriptionsRepository: { find: jest.Mock };
-  let productsRepository: { createQueryBuilder: jest.Mock };
+  let productsRepository: { createQueryBuilder: jest.Mock; query: jest.Mock };
   let branchInventoryRepository: { delete: jest.Mock };
   let branchCatalogProductLinksRepository: { delete: jest.Mock };
-  let branchCatalogVendorLinksRepository: { delete: jest.Mock };
+  let branchCatalogVendorLinksRepository: {
+    delete: jest.Mock;
+    findOne: jest.Mock;
+    update: jest.Mock;
+  };
   let posRegisterSessionsRepository: { count: jest.Mock };
   let sellerWorkspacesRepository: {
     findOne: jest.Mock;
@@ -118,7 +121,10 @@ describe('SellerWorkspaceService', () => {
       findOne: jest.fn().mockResolvedValue(null),
     };
     tenantSubscriptionsRepository = { find: jest.fn() };
-    productsRepository = { createQueryBuilder: jest.fn() };
+    productsRepository = {
+      createQueryBuilder: jest.fn(),
+      query: jest.fn().mockResolvedValue(undefined),
+    };
     branchInventoryRepository = {
       delete: jest.fn().mockResolvedValue(undefined),
     };
@@ -127,6 +133,8 @@ describe('SellerWorkspaceService', () => {
     };
     branchCatalogVendorLinksRepository = {
       delete: jest.fn().mockResolvedValue(undefined),
+      findOne: jest.fn().mockResolvedValue(null),
+      update: jest.fn().mockResolvedValue(undefined),
     };
     posRegisterSessionsRepository = { count: jest.fn() };
     sellerWorkspacesRepository = {
@@ -892,7 +900,7 @@ describe('SellerWorkspaceService', () => {
     });
   });
 
-  it('removes previous-owner catalog attachments during branch ownership transfer', async () => {
+  it('transfers the branch products to the new owner and keeps their catalog links on ownership transfer', async () => {
     equityPartnerService.getSellerProfile.mockResolvedValue({
       id: 91,
       status: EquityPartnerStatus.ACTIVE,
@@ -916,10 +924,13 @@ describe('SellerWorkspaceService', () => {
       });
     productsRepository.createQueryBuilder.mockReturnValue({
       select: jest.fn().mockReturnThis(),
-      innerJoin: jest.fn().mockReturnThis(),
+      leftJoin: jest.fn().mockReturnThis(),
       where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
       getRawMany: jest.fn().mockResolvedValue([{ id: 401 }, { id: '402' }]),
     });
+    // No pre-existing vendor-catalog link for the new owner on this branch.
+    branchCatalogVendorLinksRepository.findOne.mockResolvedValue(null);
 
     const result = await service.transferBranchOwnership(
       41,
@@ -932,18 +943,21 @@ describe('SellerWorkspaceService', () => {
       { id: 11 },
       { ownerId: 77 },
     );
-    expect(branchInventoryRepository.delete).toHaveBeenCalledWith({
-      branchId: 11,
-      productId: In([401, 402]),
-    });
-    expect(branchCatalogProductLinksRepository.delete).toHaveBeenCalledWith({
-      branchId: 11,
-      productId: In([401, 402]),
-    });
-    expect(branchCatalogVendorLinksRepository.delete).toHaveBeenCalledWith({
-      branchId: 11,
-      vendorId: 41,
-    });
+    // The branch's products are reassigned to the new owner...
+    expect(productsRepository.query).toHaveBeenCalledWith(
+      expect.stringContaining('UPDATE product SET "vendorId"'),
+      [77, [401, 402]],
+    );
+    // ...and the previous owner's vendor-catalog link is re-pointed (not dropped)
+    // so those products keep surfacing for the branch under the new owner.
+    expect(branchCatalogVendorLinksRepository.update).toHaveBeenCalledWith(
+      { branchId: 11, vendorId: 41 },
+      { vendorId: 77 },
+    );
+    // The branch must NEVER be detached from its catalog/inventory on transfer.
+    expect(branchInventoryRepository.delete).not.toHaveBeenCalled();
+    expect(branchCatalogProductLinksRepository.delete).not.toHaveBeenCalled();
+    expect(branchCatalogVendorLinksRepository.delete).not.toHaveBeenCalled();
   });
 
   it('allows retail branch creation for tenants with retail in allow-list', async () => {
