@@ -130,7 +130,7 @@ export class PosPortalSubscriptionOptionDto {
   @ApiProperty({ example: 1 })
   months!: number;
 
-  @ApiProperty({ example: 1900 })
+  @ApiProperty({ example: 3900 })
   amount!: number;
 
   @ApiProperty({ example: 'ETB' })
@@ -144,7 +144,7 @@ export class PosPortalSubscriptionOptionDto {
 }
 
 export class PosPortalWorkspacePricingDto {
-  @ApiProperty({ example: 1900 })
+  @ApiProperty({ example: 3900 })
   amount!: number;
 
   @ApiProperty({ example: 'ETB' })

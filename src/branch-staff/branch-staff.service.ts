@@ -154,7 +154,7 @@ export interface PosPortalSupportDiagnostic {
   };
 }
 
-const POS_WORKSPACE_MONTHLY_PRICE = 1900;
+const POS_WORKSPACE_MONTHLY_PRICE = 3900;
 const POS_WORKSPACE_CURRENCY = 'ETB';
 const POS_WORKSPACE_PAYMENT_METHOD = 'EBIRR';
 @Injectable()
@@ -849,8 +849,8 @@ export class BranchStaffService {
   }
 
   getPosWorkspacePricing(): PosWorkspaceActivationCandidate['pricing'] {
-    // Effective monthly price is preserved (1,900 ETB) so derived metrics
-    // such as equity-partner payouts keep working unchanged. The activation
+    // Effective monthly price is 3,900 ETB; derived metrics such as
+    // equity-partner payouts (1/2 = 1,950 ETB) scale with it. The activation
     // surface should additionally show the per-period totals from
     // `subscriptionOptions` and let the user pick 6 months or 1 year.
     return {

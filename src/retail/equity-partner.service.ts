@@ -22,12 +22,12 @@ import {
   UpdateEquitySplitAssignmentDto,
 } from './dto/equity-partner.dto';
 
-const BRANCH_MONTHLY_PRICE = 1900;
+const BRANCH_MONTHLY_PRICE = 3900;
 const SPLIT_NUMERATOR = 1;
 const SPLIT_DENOMINATOR = 2;
 const PARTNER_SPLIT_AMOUNT = Math.floor(
   (BRANCH_MONTHLY_PRICE * SPLIT_NUMERATOR) / SPLIT_DENOMINATOR,
-); // 950 — partner earns 1/2 (50%) of the monthly branch subscription
+); // 1950 — partner earns 1/2 (50%) of the monthly branch subscription
 
 /** Public pricing constants exposed for the seller dashboard / referral copy. */
 export const EQUITY_PRICING = {

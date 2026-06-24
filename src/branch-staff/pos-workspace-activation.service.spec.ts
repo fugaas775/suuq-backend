@@ -170,7 +170,7 @@ describe('PosWorkspaceActivationService', () => {
     expect(ebirrServiceMock.initiatePayment).toHaveBeenCalledWith(
       expect.objectContaining({
         phoneNumber: '0911223344',
-        amount: '1900.00',
+        amount: '3900.00',
         invoiceId: 'POSACTINV-21',
       }),
     );
@@ -239,8 +239,8 @@ describe('PosWorkspaceActivationService', () => {
         tenantId: 31,
         branchId: 21,
         status: TenantSubscriptionStatus.ACTIVE,
-        amount: 1900,
-        amountTotal: 1900,
+        amount: 3900,
+        amountTotal: 3900,
         periodMonths: 1,
         currency: 'ETB',
         autoRenew: true,

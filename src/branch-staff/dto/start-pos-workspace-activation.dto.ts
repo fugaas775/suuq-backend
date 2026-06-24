@@ -62,7 +62,7 @@ export class PosWorkspaceActivationPaymentResponseDto {
   })
   subscriptionPeriod?: 'MONTHLY' | 'ONE_YEAR';
 
-  @ApiPropertyOptional({ example: 1900 })
+  @ApiPropertyOptional({ example: 3900 })
   amount?: number;
 
   @ApiPropertyOptional({ example: 'ETB' })

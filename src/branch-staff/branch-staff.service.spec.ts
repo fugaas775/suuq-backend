@@ -552,7 +552,7 @@ describe('BranchStaffService', () => {
         canStartActivation: true,
         canOpenNow: false,
         pricing: {
-          amount: 1900,
+          amount: 3900,
           currency: 'ETB',
           billingInterval: TenantBillingInterval.MONTHLY,
           paymentMethod: 'EBIRR',
@@ -560,7 +560,7 @@ describe('BranchStaffService', () => {
             {
               period: 'MONTHLY',
               months: 1,
-              amount: 1900,
+              amount: 3900,
               currency: 'ETB',
               label: '1 month',
               planCode: 'POS_BRANCH_1M',
@@ -568,7 +568,7 @@ describe('BranchStaffService', () => {
             {
               period: 'ONE_YEAR',
               months: 12,
-              amount: 22800,
+              amount: 42120,
               currency: 'ETB',
               label: '1 year',
               planCode: 'POS_BRANCH_1Y',

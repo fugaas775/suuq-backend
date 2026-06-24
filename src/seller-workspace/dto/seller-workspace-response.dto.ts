@@ -223,7 +223,7 @@ export class SellerWorkspaceRetailContextDto {
 }
 
 export class SellerWorkspacePricingDto {
-  @ApiProperty({ example: 1900 })
+  @ApiProperty({ example: 3900 })
   amount!: number;
 
   @ApiProperty({ example: 'ETB' })
