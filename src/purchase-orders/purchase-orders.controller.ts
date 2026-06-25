@@ -28,6 +28,10 @@ import { PurchaseOrderReceiptEventResponseDto } from './dto/purchase-order-recei
 import { RecordPurchaseOrderReceiptDto } from './dto/record-purchase-order-receipt.dto';
 import { ResolvePurchaseOrderReceiptDiscrepancyDto } from './dto/resolve-purchase-order-receipt-discrepancy.dto';
 import { SupplierStatusUpdateDto } from './dto/supplier-status-update.dto';
+import { DeclinePurchaseOrderDto } from './dto/decline-purchase-order.dto';
+import { ProposePurchaseOrderChangesDto } from './dto/propose-purchase-order-changes.dto';
+import { RespondPurchaseOrderChangesDto } from './dto/respond-purchase-order-changes.dto';
+import { DispatchPurchaseOrderDto } from './dto/dispatch-purchase-order.dto';
 import { UpdatePurchaseOrderStatusDto } from './dto/update-purchase-order-status.dto';
 import { PurchaseOrdersService } from './purchase-orders.service';
 import { SupplierAnalyticsService } from './supplier-analytics.service';
@@ -235,6 +239,106 @@ export class PurchaseOrdersController {
       roles: req.user?.roles ?? [],
       branchId: query.branchId,
       supplierId: extractActiveSupplierId(req),
+    });
+  }
+
+  @Patch(':id/decline')
+  @ApiOperation({
+    summary: 'Supplier declines an incoming purchase order (SUBMITTED → DECLINED)',
+  })
+  @ApiBody({ type: DeclinePurchaseOrderDto })
+  @Roles(
+    UserRole.SUPER_ADMIN,
+    UserRole.ADMIN,
+    UserRole.SUPPLIER_ACCOUNT,
+    UserRole.SUPPLIER_MANAGER,
+  )
+  declineOrder(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: DeclinePurchaseOrderDto,
+    @Req() req,
+  ) {
+    return this.purchaseOrdersService.declineOrder(id, dto, {
+      id: req.user?.id ?? null,
+      email: req.user?.email ?? null,
+      roles: req.user?.roles ?? [],
+      supplierId: extractActiveSupplierId(req),
+    });
+  }
+
+  @Patch(':id/propose-changes')
+  @ApiOperation({
+    summary:
+      'Supplier counter-offers amended quantities/prices/delivery (SUBMITTED → CHANGES_PROPOSED)',
+  })
+  @ApiBody({ type: ProposePurchaseOrderChangesDto })
+  @Roles(
+    UserRole.SUPER_ADMIN,
+    UserRole.ADMIN,
+    UserRole.SUPPLIER_ACCOUNT,
+    UserRole.SUPPLIER_MANAGER,
+  )
+  proposeChanges(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: ProposePurchaseOrderChangesDto,
+    @Req() req,
+  ) {
+    return this.purchaseOrdersService.proposeChanges(id, dto, {
+      id: req.user?.id ?? null,
+      email: req.user?.email ?? null,
+      roles: req.user?.roles ?? [],
+      supplierId: extractActiveSupplierId(req),
+    });
+  }
+
+  @Patch(':id/dispatch')
+  @ApiOperation({
+    summary:
+      'Supplier (partially) dispatches an acknowledged order with per-line shipped quantities (→ PARTIALLY_SHIPPED | SHIPPED)',
+  })
+  @ApiBody({ type: DispatchPurchaseOrderDto })
+  @Roles(
+    UserRole.SUPER_ADMIN,
+    UserRole.ADMIN,
+    UserRole.SUPPLIER_ACCOUNT,
+    UserRole.SUPPLIER_MANAGER,
+  )
+  dispatchOrder(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: DispatchPurchaseOrderDto,
+    @Req() req,
+  ) {
+    return this.purchaseOrdersService.dispatchOrder(id, dto, {
+      id: req.user?.id ?? null,
+      email: req.user?.email ?? null,
+      roles: req.user?.roles ?? [],
+      supplierId: extractActiveSupplierId(req),
+    });
+  }
+
+  @Patch(':id/respond-changes')
+  @ApiOperation({
+    summary:
+      'Buyer accepts (→ ACKNOWLEDGED) or rejects (→ CANCELLED) a supplier counter-offer',
+  })
+  @ApiBody({ type: RespondPurchaseOrderChangesDto })
+  @Roles(
+    UserRole.SUPER_ADMIN,
+    UserRole.ADMIN,
+    UserRole.POS_MANAGER,
+    UserRole.B2B_BUYER,
+  )
+  respondToChanges(
+    @Param('id', ParseIntPipe) id: number,
+    @Query() query: PurchaseOrderBranchScopeQueryDto,
+    @Body() dto: RespondPurchaseOrderChangesDto,
+    @Req() req,
+  ) {
+    return this.purchaseOrdersService.respondToChanges(id, dto, {
+      id: req.user?.id ?? null,
+      email: req.user?.email ?? null,
+      roles: req.user?.roles ?? [],
+      branchId: query.branchId,
     });
   }
 

@@ -45,6 +45,10 @@ import { RecordPurchaseOrderReceiptDto } from './dto/record-purchase-order-recei
 import { ResolvePurchaseOrderReceiptDiscrepancyDto } from './dto/resolve-purchase-order-receipt-discrepancy.dto';
 import { UpdatePurchaseOrderStatusDto } from './dto/update-purchase-order-status.dto';
 import { SupplierStatusUpdateDto } from './dto/supplier-status-update.dto';
+import { DeclinePurchaseOrderDto } from './dto/decline-purchase-order.dto';
+import { ProposePurchaseOrderChangesDto } from './dto/propose-purchase-order-changes.dto';
+import { RespondPurchaseOrderChangesDto } from './dto/respond-purchase-order-changes.dto';
+import { DispatchPurchaseOrderDto } from './dto/dispatch-purchase-order.dto';
 import { ForceClosePurchaseOrderReceiptDiscrepancyDto } from '../admin/dto/force-close-purchase-order-receipt-discrepancy.dto';
 import {
   PurchaseOrder,
@@ -88,15 +92,32 @@ const PURCHASE_ORDER_TRANSITIONS: Record<
   ],
   [PurchaseOrderStatus.SUBMITTED]: [
     PurchaseOrderStatus.ACKNOWLEDGED,
+    PurchaseOrderStatus.CHANGES_PROPOSED,
+    PurchaseOrderStatus.DECLINED,
+    PurchaseOrderStatus.CANCELLED,
+  ],
+  // Counter-offer: the buyer accepts (→ ACKNOWLEDGED) or rejects (→ CANCELLED).
+  [PurchaseOrderStatus.CHANGES_PROPOSED]: [
+    PurchaseOrderStatus.ACKNOWLEDGED,
     PurchaseOrderStatus.CANCELLED,
   ],
   [PurchaseOrderStatus.ACKNOWLEDGED]: [
     PurchaseOrderStatus.SHIPPED,
+    PurchaseOrderStatus.PARTIALLY_SHIPPED,
     PurchaseOrderStatus.CANCELLED,
+  ],
+  // The self-loop (next partial dispatch) is driven by the dedicated /dispatch
+  // endpoint, NOT the generic pipeline (updateLoadedStatus early-returns on a
+  // same-status transition); it stays here so the map documents the lifecycle.
+  [PurchaseOrderStatus.PARTIALLY_SHIPPED]: [
+    PurchaseOrderStatus.SHIPPED,
+    PurchaseOrderStatus.PARTIALLY_SHIPPED,
+    PurchaseOrderStatus.RECEIVED,
   ],
   [PurchaseOrderStatus.SHIPPED]: [PurchaseOrderStatus.RECEIVED],
   [PurchaseOrderStatus.RECEIVED]: [PurchaseOrderStatus.RECONCILED],
   [PurchaseOrderStatus.RECONCILED]: [],
+  [PurchaseOrderStatus.DECLINED]: [],
   [PurchaseOrderStatus.CANCELLED]: [],
 };
 
@@ -523,16 +544,22 @@ export class PurchaseOrdersService {
     const roles = actor.roles ?? [];
 
     if (
-      ![PurchaseOrderStatus.SHIPPED, PurchaseOrderStatus.RECEIVED].includes(
-        purchaseOrder.status,
-      )
+      ![
+        PurchaseOrderStatus.PARTIALLY_SHIPPED,
+        PurchaseOrderStatus.SHIPPED,
+        PurchaseOrderStatus.RECEIVED,
+      ].includes(purchaseOrder.status)
     ) {
       throw new BadRequestException(
         'Receipt events can only be recorded for shipped or received purchase orders',
       );
     }
 
-    this.assertRoleAllowedForStatus(PurchaseOrderStatus.RECEIVED, roles);
+    this.assertRoleAllowedForStatus(
+      previousStatus,
+      PurchaseOrderStatus.RECEIVED,
+      roles,
+    );
 
     const now = new Date();
     const receiptSummary = this.applyReceiptSideEffects(
@@ -926,38 +953,306 @@ export class PurchaseOrdersService {
       );
     }
 
-    const roles = actor.roles ?? [];
-    const isSupportAdmin = this.hasAnyRole(roles, [
-      UserRole.SUPER_ADMIN,
-      UserRole.ADMIN,
-    ]);
-
-    // Load without branch scope: suppliers don't own the buyer's branch, so the
-    // ownership boundary is the supplierProfileId, not branchId.
-    const purchaseOrder = await this.findOneById(id);
-
-    if (!isSupportAdmin) {
-      // Multi-supplier: the user may own several supplier accounts, so authorize
-      // against ALL of them — the PO must be addressed to one the user owns.
-      const ownedSupplierProfileIds = actor.id
-        ? await listOwnedSupplierProfileIds(
-            this.supplierProfilesRepository,
-            actor.id,
-          )
-        : [];
-      if (
-        !purchaseOrder.supplierProfileId ||
-        !ownedSupplierProfileIds.includes(purchaseOrder.supplierProfileId)
-      ) {
-        throw new ForbiddenException(
-          'You can only update purchase orders addressed to your supplier account',
-        );
-      }
-    }
+    await this.assertSupplierAuthorizedForOrder(id, actor);
 
     // Delegate to the shared status pipeline; clear branchId so the re-load
     // inside updateStatus is by id only (the supplier's branch ≠ the PO branch).
     return this.updateStatus(id, dto, { ...actor, branchId: undefined });
+  }
+
+  /**
+   * Loads a purchase order by id (no branch scope) and asserts the caller's
+   * supplier account is the one the order is addressed to. The ownership
+   * boundary for every supplier-driven action is supplierProfileId — never the
+   * branch (the PO's branch belongs to the buyer). SUPER_ADMIN / ADMIN bypass for
+   * support. Returns the loaded order so callers don't re-fetch.
+   */
+  private async assertSupplierAuthorizedForOrder(
+    id: number,
+    actor: PurchaseOrderActorContext,
+  ): Promise<PurchaseOrder> {
+    const roles = actor.roles ?? [];
+    const purchaseOrder = await this.findOneById(id);
+
+    if (this.hasAnyRole(roles, [UserRole.SUPER_ADMIN, UserRole.ADMIN])) {
+      return purchaseOrder;
+    }
+
+    // Multi-supplier: the user may own several supplier accounts, so authorize
+    // against ALL of them — the PO must be addressed to one the user owns.
+    const ownedSupplierProfileIds = actor.id
+      ? await listOwnedSupplierProfileIds(
+          this.supplierProfilesRepository,
+          actor.id,
+        )
+      : [];
+    if (
+      !purchaseOrder.supplierProfileId ||
+      !ownedSupplierProfileIds.includes(purchaseOrder.supplierProfileId)
+    ) {
+      throw new ForbiddenException(
+        'You can only update purchase orders addressed to your supplier account',
+      );
+    }
+
+    return purchaseOrder;
+  }
+
+  /**
+   * Supplier declines an incoming order (SUBMITTED → DECLINED). Terminal — the
+   * buyer can re-draft from the declined order. Runs through the shared status
+   * pipeline so fanout/webhook/audit/email all fire.
+   */
+  async declineOrder(
+    id: number,
+    dto: DeclinePurchaseOrderDto,
+    actor: PurchaseOrderActorContext = {},
+  ): Promise<PurchaseOrder> {
+    await this.assertSupplierAuthorizedForOrder(id, actor);
+    return this.updateStatus(
+      id,
+      {
+        status: PurchaseOrderStatus.DECLINED,
+        reason: dto.reason,
+        metadata: {
+          decline: {
+            reason: dto.reason,
+            byUserId: actor.id ?? null,
+            at: new Date().toISOString(),
+          },
+        },
+      },
+      { ...actor, branchId: undefined },
+    );
+  }
+
+  /**
+   * Supplier counter-offers amended quantities/prices/delivery (SUBMITTED →
+   * CHANGES_PROPOSED). The proposal is stored on statusMeta.proposedChanges and
+   * is only applied to the real line items if the buyer accepts (respondToChanges).
+   */
+  async proposeChanges(
+    id: number,
+    dto: ProposePurchaseOrderChangesDto,
+    actor: PurchaseOrderActorContext = {},
+  ): Promise<PurchaseOrder> {
+    await this.assertSupplierAuthorizedForOrder(id, actor);
+    return this.updateStatus(
+      id,
+      {
+        status: PurchaseOrderStatus.CHANGES_PROPOSED,
+        reason: dto.note,
+        metadata: {
+          proposedChanges: {
+            proposedLines: dto.proposedLines,
+            proposedDeliveryDate: dto.proposedDeliveryDate ?? null,
+            note: dto.note ?? null,
+            byUserId: actor.id ?? null,
+            at: new Date().toISOString(),
+          },
+        },
+      },
+      { ...actor, branchId: undefined },
+    );
+  }
+
+  /**
+   * Buyer responds to a supplier counter-offer (CHANGES_PROPOSED).
+   *  - REJECT → CANCELLED.
+   *  - ACCEPT → apply the proposed line changes + recompute totals (in a
+   *    projection-synced transaction so inbound open-PO stock tracks the new
+   *    quantities), then advance to ACKNOWLEDGED through the shared pipeline.
+   */
+  async respondToChanges(
+    id: number,
+    dto: RespondPurchaseOrderChangesDto,
+    actor: PurchaseOrderActorContext = {},
+  ): Promise<PurchaseOrder> {
+    if (dto.decision === 'REJECT') {
+      return this.updateStatus(
+        id,
+        {
+          status: PurchaseOrderStatus.CANCELLED,
+          reason: dto.note ?? 'Counter-offer rejected by buyer',
+        },
+        actor,
+      );
+    }
+
+    const purchaseOrder = await this.findOneById(id, {
+      branchId: actor.branchId,
+    });
+    if (purchaseOrder.status !== PurchaseOrderStatus.CHANGES_PROPOSED) {
+      throw new BadRequestException(
+        'Only a purchase order with proposed changes can be accepted',
+      );
+    }
+
+    // Apply the amended quantities/prices/date and recompute totals, syncing the
+    // inbound open-PO projection against the pre-change quantities (the status
+    // flip below is projection-neutral, so the quantity delta must register here).
+    const previousInboundProjection =
+      this.buildInboundOpenPoProjection(purchaseOrder);
+    this.applyProposedChangesToOrder(purchaseOrder);
+    await this.dataSource.transaction(async (manager) => {
+      await manager.getRepository(PurchaseOrder).save(purchaseOrder);
+      await this.syncInboundOpenPoProjection(
+        purchaseOrder,
+        previousInboundProjection,
+        manager,
+      );
+    });
+
+    return this.updateStatus(
+      id,
+      {
+        status: PurchaseOrderStatus.ACKNOWLEDGED,
+        reason: dto.note ?? 'Counter-offer accepted by buyer',
+      },
+      actor,
+    );
+  }
+
+  /**
+   * Supplier (partially) dispatches an acknowledged order. Each line's shipped
+   * quantity is incremented (capped at ordered); the order then becomes SHIPPED
+   * if every line is fully shipped, otherwise PARTIALLY_SHIPPED. Shipping does
+   * not touch the GL or the inbound projection (only receipt does) — it only
+   * records progress, so the item save + a status pass through the shared
+   * pipeline (which fires the realtime fanout / email even when the status is
+   * unchanged on a follow-up partial dispatch).
+   */
+  async dispatchOrder(
+    id: number,
+    dto: DispatchPurchaseOrderDto,
+    actor: PurchaseOrderActorContext = {},
+  ): Promise<PurchaseOrder> {
+    const purchaseOrder = await this.assertSupplierAuthorizedForOrder(id, actor);
+
+    if (
+      ![
+        PurchaseOrderStatus.ACKNOWLEDGED,
+        PurchaseOrderStatus.PARTIALLY_SHIPPED,
+      ].includes(purchaseOrder.status)
+    ) {
+      throw new BadRequestException(
+        'Only an acknowledged or partially shipped purchase order can be dispatched',
+      );
+    }
+
+    const itemById = new Map(purchaseOrder.items.map((it) => [it.id, it]));
+
+    // Validate every line before mutating any.
+    for (const line of dto.lines) {
+      const item = itemById.get(line.itemId);
+      if (!item) {
+        throw new BadRequestException(
+          `Line item ${line.itemId} is not on purchase order ${id}`,
+        );
+      }
+      const increment = Number(line.shippedQuantity) || 0;
+      if (increment < 0) {
+        throw new BadRequestException('Shipped quantity cannot be negative');
+      }
+      if ((item.shippedQuantity ?? 0) + increment > item.orderedQuantity) {
+        throw new BadRequestException(
+          `Shipped quantity exceeds the ${item.orderedQuantity} ordered for purchase order item ${line.itemId}`,
+        );
+      }
+    }
+
+    let shippedAnything = false;
+    for (const line of dto.lines) {
+      const increment = Number(line.shippedQuantity) || 0;
+      if (increment <= 0) continue;
+      const item = itemById.get(line.itemId)!;
+      item.shippedQuantity = (item.shippedQuantity ?? 0) + increment;
+      shippedAnything = true;
+    }
+    if (!shippedAnything) {
+      throw new BadRequestException('No quantities were shipped in this dispatch');
+    }
+
+    // Stamp the first-dispatch time + tracking; persist the per-line shipped
+    // quantities (the shared pipeline below reloads from this save).
+    if (!purchaseOrder.shippedAt) {
+      purchaseOrder.shippedAt = new Date();
+    }
+    purchaseOrder.statusMeta = {
+      ...(purchaseOrder.statusMeta ?? {}),
+      shipping: {
+        trackingReference:
+          dto.trackingReference ??
+          purchaseOrder.statusMeta?.shipping?.trackingReference ??
+          null,
+        shippedAt: purchaseOrder.shippedAt.toISOString(),
+      },
+    };
+    await this.purchaseOrdersRepository.save(purchaseOrder);
+
+    const fullyShipped = purchaseOrder.items.every(
+      (it) => (it.shippedQuantity ?? 0) >= it.orderedQuantity,
+    );
+    const nextStatus = fullyShipped
+      ? PurchaseOrderStatus.SHIPPED
+      : PurchaseOrderStatus.PARTIALLY_SHIPPED;
+
+    return this.updateStatus(
+      id,
+      {
+        status: nextStatus,
+        trackingReference: dto.trackingReference,
+        reason: dto.note,
+      },
+      { ...actor, branchId: undefined },
+    );
+  }
+
+  /**
+   * Applies statusMeta.proposedChanges onto the loaded order's line items and
+   * recomputes subtotal/total (total = subtotal; the model carries no tax/ship
+   * line). Throws if there is nothing to apply.
+   */
+  private applyProposedChangesToOrder(purchaseOrder: PurchaseOrder): void {
+    const proposed = (purchaseOrder.statusMeta?.proposedChanges ?? null) as {
+      proposedLines?: {
+        itemId: number;
+        proposedQuantity?: number;
+        proposedUnitPrice?: number;
+      }[];
+      proposedDeliveryDate?: string | null;
+    } | null;
+
+    if (!proposed?.proposedLines?.length) {
+      throw new BadRequestException(
+        'This purchase order has no proposed changes to accept',
+      );
+    }
+
+    const changeByItemId = new Map(
+      proposed.proposedLines.map((line) => [line.itemId, line]),
+    );
+    for (const item of purchaseOrder.items) {
+      const change = changeByItemId.get(item.id);
+      if (!change) continue;
+      if (change.proposedQuantity != null) {
+        item.orderedQuantity = change.proposedQuantity;
+      }
+      if (change.proposedUnitPrice != null) {
+        item.unitPrice = change.proposedUnitPrice;
+      }
+    }
+
+    if (proposed.proposedDeliveryDate) {
+      purchaseOrder.expectedDeliveryDate = proposed.proposedDeliveryDate;
+    }
+
+    const subtotal = purchaseOrder.items.reduce(
+      (sum, item) => sum + item.orderedQuantity * Number(item.unitPrice),
+      0,
+    );
+    purchaseOrder.subtotal = subtotal;
+    purchaseOrder.total = subtotal;
   }
 
   async updateStatusWithManager(
@@ -1078,7 +1373,7 @@ export class PurchaseOrdersService {
       );
     }
 
-    this.assertRoleAllowedForStatus(nextStatus, roles);
+    this.assertRoleAllowedForStatus(previousStatus, nextStatus, roles);
 
     if (nextStatus === PurchaseOrderStatus.RECONCILED) {
       await this.assertReadyForReconciliation(purchaseOrder, manager);
@@ -1213,6 +1508,29 @@ export class PurchaseOrdersService {
       !purchaseOrder.cancelledAt
     ) {
       purchaseOrder.cancelledAt = now;
+    }
+
+    // Supplier decline: persist the reason at top-level statusMeta so the buyer
+    // can surface it (and re-draft). No dedicated timestamp column — the time
+    // rides inside statusMeta.decline.
+    if (status === PurchaseOrderStatus.DECLINED) {
+      purchaseOrder.statusMeta = {
+        ...(purchaseOrder.statusMeta ?? {}),
+        decline: (dto.metadata as any)?.decline ?? {
+          reason: dto.reason ?? null,
+          at: now.toISOString(),
+        },
+      };
+    }
+
+    // Supplier counter-offer: keep the proposed lines/date at top-level
+    // statusMeta (survives the next lastTransition overwrite) until the buyer
+    // accepts or rejects.
+    if (status === PurchaseOrderStatus.CHANGES_PROPOSED) {
+      purchaseOrder.statusMeta = {
+        ...(purchaseOrder.statusMeta ?? {}),
+        proposedChanges: (dto.metadata as any)?.proposedChanges ?? null,
+      };
     }
   }
 
@@ -1382,7 +1700,9 @@ export class PurchaseOrdersService {
   ): Map<number, number> {
     const activeStatuses = new Set<PurchaseOrderStatus>([
       PurchaseOrderStatus.SUBMITTED,
+      PurchaseOrderStatus.CHANGES_PROPOSED,
       PurchaseOrderStatus.ACKNOWLEDGED,
+      PurchaseOrderStatus.PARTIALLY_SHIPPED,
       PurchaseOrderStatus.SHIPPED,
       PurchaseOrderStatus.RECEIVED,
     ]);
@@ -1596,6 +1916,7 @@ export class PurchaseOrdersService {
   }
 
   private assertRoleAllowedForStatus(
+    previousStatus: PurchaseOrderStatus,
     targetStatus: PurchaseOrderStatus,
     roles: string[],
   ): void {
@@ -1606,21 +1927,39 @@ export class PurchaseOrdersService {
     const buyerRoles = [UserRole.POS_MANAGER, UserRole.B2B_BUYER];
     const supplierRoles = [UserRole.SUPPLIER_ACCOUNT];
 
+    // ACKNOWLEDGED is reachable two ways, disambiguated by the from-status:
+    // SUBMITTED→ACKNOWLEDGED is the supplier acknowledging; CHANGES_PROPOSED→
+    // ACKNOWLEDGED is the BUYER accepting the supplier's counter-offer.
+    const isBuyerAcceptOfCounterOffer =
+      previousStatus === PurchaseOrderStatus.CHANGES_PROPOSED &&
+      targetStatus === PurchaseOrderStatus.ACKNOWLEDGED;
+    const isSupplierAcknowledge =
+      previousStatus === PurchaseOrderStatus.SUBMITTED &&
+      targetStatus === PurchaseOrderStatus.ACKNOWLEDGED;
+
+    // Buyer lane: submit, accept a counter-offer, receive, reconcile.
     if (
-      [
+      ([
         PurchaseOrderStatus.SUBMITTED,
         PurchaseOrderStatus.RECEIVED,
         PurchaseOrderStatus.RECONCILED,
-      ].includes(targetStatus) &&
+      ].includes(targetStatus) ||
+        isBuyerAcceptOfCounterOffer) &&
       this.hasAnyRole(roles, buyerRoles)
     ) {
       return;
     }
 
+    // Supplier lane: acknowledge a fresh submit, counter-offer, decline,
+    // (partially) ship.
     if (
-      [PurchaseOrderStatus.ACKNOWLEDGED, PurchaseOrderStatus.SHIPPED].includes(
-        targetStatus,
-      ) &&
+      (isSupplierAcknowledge ||
+        [
+          PurchaseOrderStatus.CHANGES_PROPOSED,
+          PurchaseOrderStatus.DECLINED,
+          PurchaseOrderStatus.PARTIALLY_SHIPPED,
+          PurchaseOrderStatus.SHIPPED,
+        ].includes(targetStatus)) &&
       this.hasAnyRole(roles, supplierRoles)
     ) {
       return;

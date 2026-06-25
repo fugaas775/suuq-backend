@@ -613,10 +613,13 @@ CREATE TYPE public.product_request_urgency_enum AS ENUM (
 CREATE TYPE public.purchase_orders_status_enum AS ENUM (
     'DRAFT',
     'SUBMITTED',
+    'CHANGES_PROPOSED',
     'ACKNOWLEDGED',
+    'PARTIALLY_SHIPPED',
     'SHIPPED',
     'RECEIVED',
     'RECONCILED',
+    'DECLINED',
     'CANCELLED'
 );
 
@@ -4204,6 +4207,7 @@ CREATE TABLE public.purchase_order_items (
     "unitPrice" numeric(12,2) NOT NULL,
     "shortageQuantity" integer DEFAULT 0 NOT NULL,
     "damagedQuantity" integer DEFAULT 0 NOT NULL,
+    "shippedQuantity" integer DEFAULT 0 NOT NULL,
     note text
 );
 
