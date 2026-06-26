@@ -62,7 +62,7 @@ describe('SellerWorkspaceService', () => {
   let usersRepository: { findOne: jest.Mock };
   let ordersRepository: { createQueryBuilder: jest.Mock };
   let purchaseOrdersRepository: { find: jest.Mock };
-  let posCheckoutsRepository: { createQueryBuilder: jest.Mock };
+  let posCheckoutsRepository: { createQueryBuilder: jest.Mock; query: jest.Mock };
   let posSyncJobsRepository: { createQueryBuilder: jest.Mock };
   let retailTenantsRepository: { find: jest.Mock };
   let tenantModuleEntitlementsRepository: { findOne: jest.Mock };
@@ -114,7 +114,10 @@ describe('SellerWorkspaceService', () => {
     usersRepository = { findOne: jest.fn() };
     ordersRepository = { createQueryBuilder: jest.fn() };
     purchaseOrdersRepository = { find: jest.fn() };
-    posCheckoutsRepository = { createQueryBuilder: jest.fn() };
+    posCheckoutsRepository = {
+      createQueryBuilder: jest.fn(),
+      query: jest.fn().mockResolvedValue([]),
+    };
     posSyncJobsRepository = { createQueryBuilder: jest.fn() };
     retailTenantsRepository = { find: jest.fn().mockResolvedValue([]) };
     tenantModuleEntitlementsRepository = {
@@ -958,6 +961,44 @@ describe('SellerWorkspaceService', () => {
     expect(branchInventoryRepository.delete).not.toHaveBeenCalled();
     expect(branchCatalogProductLinksRepository.delete).not.toHaveBeenCalled();
     expect(branchCatalogVendorLinksRepository.delete).not.toHaveBeenCalled();
+    // The transferred branch is reconciled so it always arrives with financials:
+    // any paid leases lacking backing checkouts get their accrual rent checkouts.
+    expect(posCheckoutsRepository.query).toHaveBeenCalledWith(
+      expect.stringContaining('rental-revenue-reconcile'),
+      [11],
+    );
+  });
+
+  it('does not fail the transfer when rental-revenue reconciliation throws', async () => {
+    equityPartnerService.getSellerProfile.mockResolvedValue({
+      id: 91,
+      status: EquityPartnerStatus.ACTIVE,
+    });
+    branchesRepository.findOne.mockResolvedValue({
+      id: 11,
+      name: 'Smart Barber',
+      ownerId: 41,
+      retailTenantId: 13,
+    });
+    usersRepository.findOne
+      .mockResolvedValueOnce({ id: 77, email: 'newowner@example.com' })
+      .mockResolvedValueOnce({ id: 41, email: 'owner@example.com' });
+    branchStaffAssignmentsRepository.findOne
+      .mockResolvedValueOnce({ branchId: 11, userId: 41, isActive: true })
+      .mockResolvedValueOnce(null);
+    productsRepository.createQueryBuilder.mockReturnValue({
+      select: jest.fn().mockReturnThis(),
+      leftJoin: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      getRawMany: jest.fn().mockResolvedValue([]),
+    });
+    branchCatalogVendorLinksRepository.findOne.mockResolvedValue(null);
+    posCheckoutsRepository.query.mockRejectedValueOnce(new Error('boom'));
+
+    await expect(
+      service.transferBranchOwnership(41, 11, 'newowner@example.com'),
+    ).resolves.toEqual({ success: true });
   });
 
   it('allows retail branch creation for tenants with retail in allow-list', async () => {

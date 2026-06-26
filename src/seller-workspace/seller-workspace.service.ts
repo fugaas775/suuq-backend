@@ -25,6 +25,7 @@ import {
   PosCheckout,
   PosCheckoutStatus,
 } from '../pos-sync/entities/pos-checkout.entity';
+import { reconcileRentalRevenueCheckouts } from '../pos-sync/rental-revenue-reconciliation';
 import {
   PosSyncJob,
   PosSyncStatus,
@@ -915,6 +916,29 @@ export class SellerWorkspaceService {
           permissions: [],
           isActive: true,
         }),
+      );
+    }
+
+    // Guarantee the branch arrives with consistent financials. A branch onboarded
+    // by inserting its tenancies directly as paid suspended carts (no backing
+    // checkouts) would show full Tenancies data but ETB 0 revenue, because every
+    // financial report reads `pos_checkouts`. Reconciliation backfills the missing
+    // accrual rent checkouts. No-op unless this is a PROPERTY_RENTAL branch with
+    // paid leases and zero rent checkouts; idempotent; never fatal to the transfer.
+    try {
+      const reconciled = await reconcileRentalRevenueCheckouts(
+        (sql, params) => this.posCheckoutsRepository.query(sql, params),
+        branchId,
+      );
+      if (reconciled.checkoutsCreated > 0) {
+        console.log(
+          `[transferBranchOwnership] Backfilled ${reconciled.checkoutsCreated} rental-revenue checkout(s) for branch #${branchId}.`,
+        );
+      }
+    } catch (error) {
+      console.error(
+        `[transferBranchOwnership] Rental-revenue reconciliation failed for branch #${branchId} (non-fatal):`,
+        error,
       );
     }
 
