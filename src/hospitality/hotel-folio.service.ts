@@ -13,7 +13,7 @@ import {
 } from '../accounting/general-ledger.service';
 import { GlAccountCode } from '../accounting/gl-accounts.constant';
 import { GlJournalSourceType } from '../accounting/entities/gl-journal-entry.entity';
-import { splitTenders } from '../accounting/tender-split.util';
+import { splitTenders, extractBadDebt } from '../accounting/tender-split.util';
 import { HotelFolio, HotelFolioStatus } from './entities/hotel-folio.entity';
 import { HotelFolioCharge } from './entities/hotel-folio-charge.entity';
 import { HotelRoom, HotelRoomStatus } from './entities/hotel-room.entity';
@@ -278,7 +278,16 @@ export class HotelFolioService {
       // (any excess stays on the folio, the source of truth); the shortfall on a
       // partially-paid folio becomes a receivable.
       const settledCash = Math.min(paid, recognised);
-      const { cash, clearing } = splitTenders(dto.payments, settledCash);
+      // A BAD_DEBT payment is a manager-approved write-off, not cash collected:
+      // carve it out (capped at settledCash) and post it to BAD_DEBT_EXPENSE so
+      // the room revenue is still recognized while the loss offsets it, instead
+      // of parking the write-off in tender-clearing as a collectable asset.
+      const { badDebt: rawBadDebt, collected } = extractBadDebt(dto.payments);
+      const badDebt = Math.min(rawBadDebt, settledCash);
+      const { cash, clearing } = splitTenders(
+        collected,
+        round2(settledCash - badDebt),
+      );
       const receivable = Math.max(0, round2(recognised - paid));
       const lines: JournalLineInput[] = [];
       if (cash > 0)
@@ -287,6 +296,11 @@ export class HotelFolioService {
         lines.push({
           accountCode: GlAccountCode.TENDER_CLEARING,
           debit: clearing,
+        });
+      if (badDebt > 0)
+        lines.push({
+          accountCode: GlAccountCode.BAD_DEBT_EXPENSE,
+          debit: badDebt,
         });
       if (receivable > 0)
         lines.push({

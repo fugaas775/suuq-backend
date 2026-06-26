@@ -13,7 +13,7 @@ async function run() {
     getRepositoryToken(UiSetting),
   );
 
-  const siteUrl = process.env.SITE_URL || 'https://suuq.ugasfuad.com';
+  const siteUrl = process.env.SITE_URL || 'https://suuq-s.com';
 
   const settings = [
     {

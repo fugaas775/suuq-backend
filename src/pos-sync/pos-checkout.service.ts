@@ -28,7 +28,7 @@ import {
 } from '../accounting/general-ledger.service';
 import { GlAccountCode } from '../accounting/gl-accounts.constant';
 import { GlJournalSourceType } from '../accounting/entities/gl-journal-entry.entity';
-import { splitTenders } from '../accounting/tender-split.util';
+import { splitTenders, extractBadDebt } from '../accounting/tender-split.util';
 import { ProductCostService } from '../purchase-orders/product-cost.service';
 import {
   IngestPosCheckoutDto,
@@ -1439,11 +1439,19 @@ export class PosCheckoutService {
       return;
     }
 
-    // Split the retained tender between cash on hand and clearing (cards/mobile/
-    // bank), reconciled to netCash, via the shared helper.
-    const { cash, clearing } = splitTenders(
+    // A BAD_DEBT tender is a manager-approved write-off, not money received: it
+    // must NOT inflate cash or tender-clearing. Pull it out (capped at netCash so
+    // the split target never goes negative), split only the collectable tenders
+    // against the reduced target, and post the write-off to BAD_DEBT_EXPENSE
+    // below. Debits stay reconciled to `total`: cash + clearing now sum to
+    // (netCash − badDebt), and the badDebt + receivable legs restore the rest.
+    const { badDebt: rawBadDebt, collected } = extractBadDebt(
       Array.isArray(checkout.tenders) ? checkout.tenders : [],
-      netCash,
+    );
+    const badDebt = Math.min(rawBadDebt, netCash);
+    const { cash, clearing } = splitTenders(
+      collected,
+      this.round2(netCash - badDebt),
     );
 
     const debits: JournalLineInput[] = [];
@@ -1453,6 +1461,11 @@ export class PosCheckoutService {
       debits.push({
         accountCode: GlAccountCode.TENDER_CLEARING,
         debit: clearing,
+      });
+    if (badDebt > 0)
+      debits.push({
+        accountCode: GlAccountCode.BAD_DEBT_EXPENSE,
+        debit: badDebt,
       });
     if (receivable > 0)
       debits.push({

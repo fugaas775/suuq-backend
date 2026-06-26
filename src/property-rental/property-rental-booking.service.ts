@@ -13,7 +13,7 @@ import {
 } from '../accounting/general-ledger.service';
 import { GlAccountCode } from '../accounting/gl-accounts.constant';
 import { GlJournalSourceType } from '../accounting/entities/gl-journal-entry.entity';
-import { splitTenders } from '../accounting/tender-split.util';
+import { splitTenders, extractBadDebt } from '../accounting/tender-split.util';
 import {
   PropertyBookingPaymentRecord,
   PropertyRentalBillingCycle,
@@ -135,7 +135,17 @@ export class PropertyRentalBookingService {
     try {
       const recognised = this.round2(priorDeferred + finalPaid);
       if (recognised > 0) {
-        const { cash, clearing } = splitTenders(finalRows, finalPaid);
+        // A BAD_DEBT payment at move-out is a manager-approved write-off of the
+        // tenant's unpaid rent, not cash collected: carve it out (capped at the
+        // final payment) and post it to BAD_DEBT_EXPENSE so the rent is still
+        // recognized while the loss offsets it, rather than parking the write-off
+        // in tender-clearing as a collectable asset.
+        const { badDebt: rawBadDebt, collected } = extractBadDebt(finalRows);
+        const badDebt = Math.min(rawBadDebt, this.round2(finalPaid));
+        const { cash, clearing } = splitTenders(
+          collected,
+          this.round2(finalPaid - badDebt),
+        );
         const lines: JournalLineInput[] = [];
         if (cash > 0)
           lines.push({ accountCode: GlAccountCode.CASH, debit: cash });
@@ -143,6 +153,11 @@ export class PropertyRentalBookingService {
           lines.push({
             accountCode: GlAccountCode.TENDER_CLEARING,
             debit: clearing,
+          });
+        if (badDebt > 0)
+          lines.push({
+            accountCode: GlAccountCode.BAD_DEBT_EXPENSE,
+            debit: badDebt,
           });
         if (priorDeferred > 0)
           lines.push({

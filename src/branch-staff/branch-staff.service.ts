@@ -1279,7 +1279,7 @@ export class BranchStaffService {
     branchName: string;
     isExistingUser: boolean;
   }) {
-    const portalUrl = process.env.POS_PORTAL_URL || 'https://pos.ugasfuad.com';
+    const portalUrl = process.env.POS_PORTAL_URL || 'https://pos.suuq-s.com';
     const subject = params.isExistingUser
       ? `POS access granted for ${params.branchName}`
       : `You've been invited to ${params.branchName} on POS`;

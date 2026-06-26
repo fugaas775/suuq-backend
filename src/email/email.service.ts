@@ -287,10 +287,7 @@ export class EmailService {
   }
 
   private normalizeApiBaseUrl(url: string | null | undefined) {
-    const normalized = this.normalizeBaseUrl(
-      url,
-      'https://suuq.ugasfuad.com/api',
-    );
+    const normalized = this.normalizeBaseUrl(url, 'https://suuq-s.com/api');
     return normalized.endsWith('/api') ? normalized : `${normalized}/api`;
   }
 
@@ -699,7 +696,7 @@ export class EmailService {
     const trimmedNote = note?.trim();
     const siteUrl = this.normalizeBaseUrl(
       this.configService.get('SITE_URL') || this.configService.get('ADMIN_URL'),
-      'https://suuq.ugasfuad.com',
+      'https://suuq-s.com',
     );
     const apiUrl = this.normalizeApiBaseUrl(this.configService.get('API_URL'));
     const appScheme = this.normalizeAppScheme(
@@ -889,11 +886,10 @@ export class EmailService {
     isExistingUser: boolean,
   ) {
     const adminUrl =
-      this.configService.get('ADMIN_URL') || 'https://suuq.ugasfuad.com';
+      this.configService.get('ADMIN_URL') || 'https://suuq-s.com';
 
     // Ensure API Url has logic to map to correct backend endpoint
-    let apiUrl =
-      this.configService.get('API_URL') || 'https://suuq.ugasfuad.com/api';
+    let apiUrl = this.configService.get('API_URL') || 'https://suuq-s.com/api';
 
     // If it's a root domain without /api, append /api to match Controller prefix
     if (!apiUrl.endsWith('/api')) {

@@ -4,9 +4,10 @@
 
 const { Client } = require('pg');
 
-const API_BASE = (
-  process.env.API_URL || 'https://api.suuq.ugasfuad.com'
-).replace(/\/+$/, '');
+const API_BASE = (process.env.API_URL || 'https://api.suuq-s.com').replace(
+  /\/+$/,
+  '',
+);
 
 async function main() {
   const client = new Client({

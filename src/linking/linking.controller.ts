@@ -185,12 +185,12 @@ export class LinkingController {
   }
 
   private getWebProductUrl(productId: string): string {
-    const webBase = process.env.SITE_URL || 'https://suuq.ugasfuad.com';
+    const webBase = process.env.SITE_URL || 'https://suuq-s.com';
     return `${webBase}/product-detail?id=${encodeURIComponent(productId)}`;
   }
 
   private getWebRequestUrl(requestId: string): string {
-    const webBase = process.env.SITE_URL || 'https://suuq.ugasfuad.com';
+    const webBase = process.env.SITE_URL || 'https://suuq-s.com';
     return `${webBase}/request-detail?id=${encodeURIComponent(requestId)}`;
   }
 

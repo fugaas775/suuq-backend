@@ -1,5 +1,5 @@
-# Nginx config snippet for suuq.ugasfuad.com to proxy /api to the backend API
-# Place inside the server {} for suuq.ugasfuad.com
+# Nginx config snippet for suuq-s.com to proxy /api to the backend API
+# Place inside the server {} for suuq-s.com
 
 # Block common probe targets early
 location ~* ^/(?:\.env(?:\..*)?|\.git(?:/|$)) {
@@ -8,7 +8,7 @@ location ~* ^/(?:\.env(?:\..*)?|\.git(?:/|$)) {
 
 # Universal/App Links association files (must be on the primary domain, no /api prefix)
 location = /apple-app-site-association {
-    proxy_pass https://api.suuq.ugasfuad.com/api/linking/apple-app-site-association;
+    proxy_pass https://api.suuq-s.com/api/linking/apple-app-site-association;
     proxy_http_version 1.1;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
@@ -18,7 +18,7 @@ location = /apple-app-site-association {
 }
 
 location = /.well-known/apple-app-site-association {
-    proxy_pass https://api.suuq.ugasfuad.com/api/linking/apple-app-site-association;
+    proxy_pass https://api.suuq-s.com/api/linking/apple-app-site-association;
     proxy_http_version 1.1;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
@@ -28,7 +28,7 @@ location = /.well-known/apple-app-site-association {
 }
 
 location = /.well-known/assetlinks.json {
-    proxy_pass https://api.suuq.ugasfuad.com/api/linking/assetlinks.json;
+    proxy_pass https://api.suuq-s.com/api/linking/assetlinks.json;
     proxy_http_version 1.1;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
@@ -39,7 +39,7 @@ location = /.well-known/assetlinks.json {
 
 # Share landing shortcut on primary domain: /l/product?id=123
 location = /l/product {
-    proxy_pass https://api.suuq.ugasfuad.com/api/linking/product-share-landing$is_args$args;
+    proxy_pass https://api.suuq-s.com/api/linking/product-share-landing$is_args$args;
     proxy_http_version 1.1;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
@@ -49,7 +49,7 @@ location = /l/product {
 }
 
 location ~ ^/s/p/(.+)$ {
-    proxy_pass https://api.suuq.ugasfuad.com/api/linking/product-share/$1;
+    proxy_pass https://api.suuq-s.com/api/linking/product-share/$1;
     proxy_http_version 1.1;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
@@ -59,7 +59,7 @@ location ~ ^/s/p/(.+)$ {
 }
 
 location ~ ^/s/r/(.+)$ {
-    proxy_pass https://api.suuq.ugasfuad.com/api/linking/request-share/$1;
+    proxy_pass https://api.suuq-s.com/api/linking/request-share/$1;
     proxy_http_version 1.1;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
@@ -73,7 +73,7 @@ location /api/ {
     # proxy_pass http://127.0.0.1:3000$request_uri;
 
     # Or forward to the api subdomain
-    proxy_pass https://api.suuq.ugasfuad.com$request_uri;
+    proxy_pass https://api.suuq-s.com$request_uri;
 
     proxy_http_version 1.1;
     proxy_set_header Host $host;

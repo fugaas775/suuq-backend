@@ -103,8 +103,6 @@ const GOOGLE_OAUTH_SCOPE = 'openid email profile';
 const GOOGLE_OAUTH_DEFAULT_RETURN_ORIGINS = [
   'https://pos.suuq-s.com',
   'https://www.pos.suuq-s.com',
-  'https://pos.ugasfuad.com',
-  'https://www.pos.ugasfuad.com',
   'http://localhost:4174',
   'http://localhost:5173',
 ];

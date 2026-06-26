@@ -69,9 +69,10 @@ export class VendorService {
   private static readonly BULK_CREATE_MAX_ROWS = 1000;
 
   private static generateProductPlaceholderImageUrl(name: string): string {
-    const apiBase = (
-      process.env.API_URL || 'https://api.suuq.ugasfuad.com'
-    ).replace(/\/+$/, '');
+    const apiBase = (process.env.API_URL || 'https://api.suuq-s.com').replace(
+      /\/+$/,
+      '',
+    );
     return `${apiBase}/api/img/initials?name=${encodeURIComponent((name || 'PR').trim())}`;
   }
 
@@ -2900,7 +2901,7 @@ export class VendorService {
     const savedUser = await this.userRepository.save(user);
 
     // Auto-provision a POS workspace (tenant + branch) whenever a vendor is
-    // approved so they can immediately use pos.ugasfuad.com without a separate
+    // approved so they can immediately use pos.suuq-s.com without a separate
     // sign-up flow.  Errors are non-fatal — the approval still completes.
     if (status === VerificationStatus.APPROVED) {
       void this.provisionPosWorkspaceForVendor(savedUser).catch((err: any) =>

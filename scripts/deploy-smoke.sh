@@ -4,7 +4,7 @@ set -euo pipefail
 # Simple deployment smoke test for the Suuq backend.
 #
 # Required env vars (with defaults):
-#   BASE_URL       - API base URL (default: https://suuq.ugasfuad.com)
+#   BASE_URL       - API base URL (default: https://suuq-s.com)
 #   TIMEOUT        - curl timeout seconds (default: 10)
 # Optional env vars for auth checks (skipped if missing):
 #   TEST_EMAIL     - user email for login
@@ -16,7 +16,7 @@ set -euo pipefail
 # Exit status:
 #   0 on success, non-zero if any critical check fails.
 
-BASE_URL=${BASE_URL:-"https://suuq.ugasfuad.com"}
+BASE_URL=${BASE_URL:-"https://suuq-s.com"}
 TIMEOUT=${TIMEOUT:-10}
 
 tmpdir=$(mktemp -d)

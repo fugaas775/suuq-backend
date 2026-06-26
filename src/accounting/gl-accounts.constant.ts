@@ -56,6 +56,7 @@ export enum GlAccountCode {
   EXPENSE_DEPRECIATION = '6070',
   EXPENSE_INTEREST = '6080',
   EXPENSE_OTHER = '6090',
+  BAD_DEBT_EXPENSE = '6100',
 }
 
 export interface GlAccountSeed {
@@ -293,6 +294,16 @@ export const GL_ACCOUNT_SEED: readonly GlAccountSeed[] = Object.freeze([
   {
     code: GlAccountCode.EXPENSE_OTHER,
     name: 'Expense — other',
+    type: A.EXPENSE,
+    normalBalance: D,
+    isCurrent: null,
+    contra: false,
+  },
+  {
+    // Where a manager-approved BAD_DEBT tender lands: the loss leg that offsets
+    // recognized revenue when a sale/folio is settled as uncollectible.
+    code: GlAccountCode.BAD_DEBT_EXPENSE,
+    name: 'Bad debt expense',
     type: A.EXPENSE,
     normalBalance: D,
     isCurrent: null,

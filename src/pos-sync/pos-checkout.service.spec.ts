@@ -1459,6 +1459,46 @@ describe('PosCheckoutService', () => {
       expect(findLine(entry.lines, '1100').debit).toBe(60); // ACCOUNTS_RECEIVABLE
     });
 
+    it('posts a BAD_DEBT write-off to Bad Debt Expense, not cash/clearing/AR', async () => {
+      await (service as any).postCheckoutToLedger(
+        cashSaleCheckout({
+          paidAmount: 100,
+          tenders: [{ method: 'BAD_DEBT', amount: 100 }],
+        }),
+      );
+
+      const entry = generalLedgerService.post.mock.calls[0][0];
+      const { debit, credit } = lineTotals(entry.lines);
+      expect(debit).toBe(100);
+      expect(credit).toBe(100);
+      expect(findLine(entry.lines, '6100').debit).toBe(100); // BAD_DEBT_EXPENSE
+      // The write-off is neither cash, a clearing asset, nor a receivable.
+      expect(findLine(entry.lines, '1000')).toBeUndefined(); // CASH
+      expect(findLine(entry.lines, '1010')).toBeUndefined(); // TENDER_CLEARING
+      expect(findLine(entry.lines, '1100')).toBeUndefined(); // ACCOUNTS_RECEIVABLE
+      expect(findLine(entry.lines, '4000').credit).toBe(100); // revenue still recognized
+    });
+
+    it('keeps a mixed cash + BAD_DEBT settle balanced', async () => {
+      await (service as any).postCheckoutToLedger(
+        cashSaleCheckout({
+          paidAmount: 100,
+          tenders: [
+            { method: 'CASH', amount: 60 },
+            { method: 'BAD_DEBT', amount: 40 },
+          ],
+        }),
+      );
+
+      const entry = generalLedgerService.post.mock.calls[0][0];
+      const { debit, credit } = lineTotals(entry.lines);
+      expect(debit).toBe(100);
+      expect(credit).toBe(100);
+      expect(findLine(entry.lines, '1000').debit).toBe(60); // CASH actually collected
+      expect(findLine(entry.lines, '6100').debit).toBe(40); // BAD_DEBT_EXPENSE
+      expect(findLine(entry.lines, '1010')).toBeUndefined(); // not parked in clearing
+    });
+
     it('splits tax out of revenue into the tax-payable account', async () => {
       await (service as any).postCheckoutToLedger(
         cashSaleCheckout({ taxAmount: 15 }),

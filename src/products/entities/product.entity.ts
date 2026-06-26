@@ -38,9 +38,10 @@ export class Product {
   @AfterLoad()
   computePlaceholder() {
     if (!this.imageUrl && !(this.images && this.images.length > 0)) {
-      const apiBase = (
-        process.env.API_URL || 'https://api.suuq.ugasfuad.com'
-      ).replace(/\/+$/, '');
+      const apiBase = (process.env.API_URL || 'https://api.suuq-s.com').replace(
+        /\/+$/,
+        '',
+      );
       const name = (this.name || 'PR').trim();
       this._placeholderImageUrl = `${apiBase}/api/img/initials?name=${encodeURIComponent(name)}`;
       // Populate imageUrl in-memory so ALL serialization paths (any client app) get the placeholder

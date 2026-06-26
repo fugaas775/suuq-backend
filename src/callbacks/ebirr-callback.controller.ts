@@ -32,7 +32,7 @@ export class EbirrCallbackController {
     referenceId?: string | null;
     reason?: string | null;
   }): string {
-    const portalUrl = process.env.POS_PORTAL_URL || 'https://pos.ugasfuad.com';
+    const portalUrl = process.env.POS_PORTAL_URL || 'https://pos.suuq-s.com';
     const query = new URLSearchParams();
     query.set('activationStatus', params.status);
 
@@ -293,7 +293,7 @@ export class EbirrCallbackController {
             }),
           );
         }
-        const siteUrl = process.env.SITE_URL || 'https://suuq.ugasfuad.com';
+        const siteUrl = process.env.SITE_URL || 'https://suuq-s.com';
         return res.redirect(
           `${siteUrl}/payment/ebirr/finish?status=failed&reason=${encodeURIComponent(String(verifiedReturn.reason || 'invalid_return'))}`,
         );
@@ -415,7 +415,7 @@ export class EbirrCallbackController {
 
             const successUrl = process.env.SITE_URL
               ? `${process.env.SITE_URL}/payment/ebirr/finish`
-              : 'https://suuq.ugasfuad.com/payment/ebirr/finish';
+              : 'https://suuq-s.com/payment/ebirr/finish';
             return res.redirect(`${successUrl}?status=success&ref=${refId}`);
           } catch (e: any) {
             this.logger.error(`Ebirr Boost failed: ${e.message}`);
@@ -430,7 +430,7 @@ export class EbirrCallbackController {
 
       const successUrl = process.env.SITE_URL
         ? `${process.env.SITE_URL}/payment/ebirr/finish`
-        : 'https://suuq.ugasfuad.com/payment/ebirr/finish';
+        : 'https://suuq-s.com/payment/ebirr/finish';
 
       if (
         order &&
@@ -468,7 +468,7 @@ export class EbirrCallbackController {
         );
       }
       // Redirect to failure page
-      const siteUrl = process.env.SITE_URL || 'https://suuq.ugasfuad.com';
+      const siteUrl = process.env.SITE_URL || 'https://suuq-s.com';
       return res.redirect(`${siteUrl}/payment/ebirr/finish?status=error`);
     }
   }

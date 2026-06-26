@@ -197,14 +197,15 @@ async function bootstrap() {
 
   // CORS configuration (supports env list + robust preflight handling)
   const defaultAllowedOrigins = [
-    'https://ugasfuad.com',
-    'https://www.ugasfuad.com',
+    'https://suuq-s.com',
+    'https://www.suuq-s.com',
+    'https://pos.suuq-s.com',
+    'https://admin.suuq-s.com',
+    'https://supplier.suuq-s.com',
+    'https://app.suuq-s.com',
+    'https://api.suuq-s.com',
+    // Legacy consumer hosts kept alive for already-installed mobile apps (transition):
     'https://suuq.ugasfuad.com',
-    'https://admin.suuq.ugasfuad.com',
-    'https://pos.ugasfuad.com',
-    'https://www.pos.ugasfuad.com',
-    'https://b2b.ugasfuad.com',
-    'https://www.b2b.ugasfuad.com',
     'https://api.suuq.ugasfuad.com',
     'http://localhost:5173',
     'http://localhost:3000',
