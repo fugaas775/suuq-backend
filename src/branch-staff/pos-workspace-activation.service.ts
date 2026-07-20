@@ -880,6 +880,10 @@ export class PosWorkspaceActivationService {
         'GAS_STATION',
         'ELECTRONICS',
         'QSR',
+        'CAFETERIA',
+        'PROPERTY_RENTAL',
+        'BARBER',
+        'PRINTING_PRESS',
       ].includes(normalized)
     ) {
       return null;

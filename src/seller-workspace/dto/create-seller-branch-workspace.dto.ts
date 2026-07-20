@@ -22,6 +22,11 @@ export enum SellerBranchServiceFormat {
   BUTCHERY = 'BUTCHERY',
   GAS_STATION = 'GAS_STATION',
   ELECTRONICS = 'ELECTRONICS',
+  QSR = 'QSR',
+  CAFETERIA = 'CAFETERIA',
+  PROPERTY_RENTAL = 'PROPERTY_RENTAL',
+  BARBER = 'BARBER',
+  PRINTING_PRESS = 'PRINTING_PRESS',
 }
 
 export class CreateSellerBranchWorkspaceDto {
