@@ -6,6 +6,7 @@ import {
 } from '../../retail/entities/tenant-subscription.entity';
 import { RetailModule } from '../../retail/entities/tenant-module-entitlement.entity';
 import { PosUserFitCategory } from '../../categories/entities/category.entity';
+import { BranchHomeConfig } from '../../branches/entities/branch-home-config.type';
 
 export enum SellerPlanCode {
   STARTER = 'STARTER',
@@ -351,6 +352,14 @@ export class SellerWorkspaceBranchWorkspaceDto {
       'Brand logo URL for this branch, shown in the register and on receipts.',
   })
   logoUrl?: string | null;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description:
+      'Per-branch layout for the customizable Home page (widgets, order, ' +
+      'quick-links, welcome note, branding). Null = per-format default.',
+  })
+  homeConfig?: BranchHomeConfig | null;
 
   @ApiPropertyOptional({
     nullable: true,

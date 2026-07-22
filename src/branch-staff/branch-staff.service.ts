@@ -19,6 +19,7 @@ import {
 } from './entities/branch-staff-assignment.entity';
 import { BranchStaffInvite } from './entities/branch-staff-invite.entity';
 import { Branch } from '../branches/entities/branch.entity';
+import { BranchHomeConfig } from '../branches/entities/branch-home-config.type';
 import { EmailService } from '../email/email.service';
 import { RetailEntitlementsService } from '../retail/retail-entitlements.service';
 import { RetailTenant } from '../retail/entities/retail-tenant.entity';
@@ -61,6 +62,7 @@ export interface PosBranchSummary {
   defaultCategoryId: number | null;
   checkoutPolicyTime: string | null;
   logoUrl: string | null;
+  homeConfig: BranchHomeConfig | null;
   posExperienceProfileCode: string | null;
 }
 
@@ -78,6 +80,7 @@ export interface PosWorkspaceActivationCandidate {
   defaultCategoryId: number | null;
   checkoutPolicyTime: string | null;
   logoUrl: string | null;
+  homeConfig: BranchHomeConfig | null;
   role: BranchStaffRole;
   permissions: string[];
   assignedSurfaces: string[] | null;
@@ -621,6 +624,7 @@ export class BranchStaffService {
           defaultCategoryId: summary.defaultCategoryId ?? null,
           checkoutPolicyTime: summary.checkoutPolicyTime ?? null,
           logoUrl: summary.logoUrl ?? null,
+          homeConfig: summary.homeConfig ?? null,
           role: summary.role,
           isOwner: summary.isOwner,
           isTenantOwner: summary.isTenantOwner,
@@ -1021,6 +1025,7 @@ export class BranchStaffService {
         defaultCategoryId: branch.defaultCategoryId ?? null,
         checkoutPolicyTime: branch.checkoutPolicyTime ?? null,
         logoUrl: branch.logoUrl ?? null,
+        homeConfig: branch.homeConfig ?? null,
         role: BranchStaffRole.MANAGER,
         permissions: [],
         assignedSurfaces: null,
@@ -1070,6 +1075,7 @@ export class BranchStaffService {
           defaultCategoryId: branch.defaultCategoryId ?? null,
           checkoutPolicyTime: branch.checkoutPolicyTime ?? null,
           logoUrl: branch.logoUrl ?? null,
+          homeConfig: branch.homeConfig ?? null,
           role: BranchStaffRole.MANAGER,
           permissions: [],
           assignedSurfaces: null,
@@ -1128,6 +1134,8 @@ export class BranchStaffService {
           assignment.branch.checkoutPolicyTime ??
           null,
         logoUrl: existing?.logoUrl ?? assignment.branch.logoUrl ?? null,
+        homeConfig:
+          existing?.homeConfig ?? assignment.branch.homeConfig ?? null,
         role: assignment.role ?? existing?.role ?? BranchStaffRole.OPERATOR,
         permissions: mergedPermissions,
         assignedSurfaces:

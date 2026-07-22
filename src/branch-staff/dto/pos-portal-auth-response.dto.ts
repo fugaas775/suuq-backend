@@ -5,6 +5,7 @@ import {
   BranchStaffRole,
 } from '../entities/branch-staff-assignment.entity';
 import { RetailModule } from '../../retail/entities/tenant-module-entitlement.entity';
+import { BranchHomeConfig } from '../../branches/entities/branch-home-config.type';
 import {
   TenantBillingInterval,
   TenantSubscriptionStatus,
@@ -96,6 +97,14 @@ export class PosPortalBranchSummaryDto {
       'and the early/late fee boundary on the register. Null = 11:00 default.',
   })
   checkoutPolicyTime!: string | null;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description:
+      'Per-branch layout for the customizable Home page (widgets, order, ' +
+      'quick-links, welcome note, branding). Null = per-format default.',
+  })
+  homeConfig!: BranchHomeConfig | null;
 }
 
 export class PosPortalSessionResponseDto {

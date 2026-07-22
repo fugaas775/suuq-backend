@@ -10,6 +10,7 @@ import {
 } from 'typeorm';
 import { User } from '../../users/entities/user.entity';
 import { RetailTenant } from '../../retail/entities/retail-tenant.entity';
+import { BranchHomeConfig } from './branch-home-config.type';
 
 @Entity('branches')
 @Index(['ownerId', 'name'])
@@ -101,6 +102,16 @@ export class Branch {
    */
   @Column({ type: 'varchar', length: 512, nullable: true })
   logoUrl?: string | null;
+
+  /**
+   * Per-branch layout for the branch-customizable Home page (POS `/home`) — which
+   * widgets show and in what order, custom quick-links, a welcome note and
+   * branding. Null = never customized; the client renders a per-format default.
+   * The fixed analytics Dashboard (`/dashboard`) ignores this. See
+   * {@link BranchHomeConfig}.
+   */
+  @Column({ type: 'jsonb', nullable: true })
+  homeConfig?: BranchHomeConfig | null;
 
   /**
    * When set, this branch is a wholesale Supplier's backing "cash & carry"

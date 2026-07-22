@@ -428,6 +428,7 @@ export class SellerWorkspaceService {
           defaultCategoryId: branch.defaultCategoryId ?? null,
           checkoutPolicyTime: branch.checkoutPolicyTime ?? null,
           logoUrl: branch.logoUrl ?? null,
+          homeConfig: branch.homeConfig ?? null,
           vendorStoreId:
             vendorStoresByBranchId.get(branch.branchId)?.id ?? null,
           consumerStoreName:
@@ -494,6 +495,7 @@ export class SellerWorkspaceService {
           defaultCategoryId: candidate.defaultCategoryId ?? null,
           checkoutPolicyTime: candidate.checkoutPolicyTime ?? null,
           logoUrl: candidate.logoUrl ?? null,
+          homeConfig: candidate.homeConfig ?? null,
           vendorStoreId:
             vendorStoresByBranchId.get(candidate.branchId)?.id ?? null,
           consumerStoreName:
@@ -2304,6 +2306,7 @@ export class SellerWorkspaceService {
     if (dto.checkoutPolicyTime !== undefined)
       updates.checkoutPolicyTime = dto.checkoutPolicyTime;
     if (dto.logoUrl !== undefined) updates.logoUrl = dto.logoUrl;
+    if (dto.homeConfig !== undefined) updates.homeConfig = dto.homeConfig;
     if (Object.keys(updates).length > 0) {
       await branchRepo.update(branchId, updates);
       // Sync storeName to VendorStore whenever the branch name changes.

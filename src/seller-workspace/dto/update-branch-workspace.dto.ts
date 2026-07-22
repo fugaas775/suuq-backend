@@ -1,6 +1,9 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { Transform } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
+  IsArray,
+  IsBoolean,
   IsInt,
   IsOptional,
   IsString,
@@ -9,10 +12,116 @@ import {
   Min,
   MinLength,
   ValidateIf,
+  ValidateNested,
 } from 'class-validator';
 
 function trimString(value: unknown) {
   return typeof value === 'string' ? value.trim() : value;
+}
+
+// A Home quick-link target: an internal path ("/ops/reports") or an absolute
+// https:// URL. Anything else — notably javascript: and data: URIs, which would
+// render as a user-clickable link — is rejected. Mirrored by the client-side
+// validation so both ends agree.
+const HOME_QUICK_LINK_TARGET = /^(\/[^\s]*|https:\/\/[^\s]+)$/;
+
+class HomeWidgetConfigDto {
+  @IsString()
+  @MaxLength(64)
+  id!: string;
+
+  @IsBoolean()
+  enabled!: boolean;
+}
+
+class HomeQuickLinkDto {
+  @IsString()
+  @MaxLength(64)
+  id!: string;
+
+  @Transform(({ value }) => trimString(value))
+  @IsString()
+  @MinLength(1)
+  @MaxLength(48)
+  label!: string;
+
+  @Transform(({ value }) => trimString(value))
+  @IsString()
+  @MaxLength(512)
+  @Matches(HOME_QUICK_LINK_TARGET, {
+    message: 'quick-link target must be an internal path or an https:// URL',
+  })
+  to!: string;
+
+  @IsOptional()
+  @IsBoolean()
+  external?: boolean;
+}
+
+class HomeWelcomeDto {
+  @Transform(({ value }) => trimString(value))
+  @IsOptional()
+  @ValidateIf((o) => o.title !== null)
+  @IsString()
+  @MaxLength(80)
+  title?: string | null;
+
+  @Transform(({ value }) => trimString(value))
+  @IsOptional()
+  @ValidateIf((o) => o.body !== null)
+  @IsString()
+  @MaxLength(600)
+  body?: string | null;
+
+  @IsBoolean()
+  enabled!: boolean;
+}
+
+class HomeBrandingDto {
+  @Transform(({ value }) => trimString(value))
+  @IsOptional()
+  @ValidateIf((o) => o.coverImageUrl !== null)
+  @IsString()
+  @MaxLength(512)
+  coverImageUrl?: string | null;
+
+  @Transform(({ value }) => trimString(value))
+  @IsOptional()
+  @ValidateIf((o) => o.accent !== null)
+  @IsString()
+  @MaxLength(32)
+  accent?: string | null;
+}
+
+// The whole branch Home layout. Array sizes are capped because this blob ships on
+// the login payload for EVERY branch a user can access, so an unbounded config
+// would bloat every sign-in.
+export class BranchHomeConfigDto {
+  @IsInt()
+  @Min(1)
+  version!: number;
+
+  @IsArray()
+  @ArrayMaxSize(24)
+  @ValidateNested({ each: true })
+  @Type(() => HomeWidgetConfigDto)
+  widgets!: HomeWidgetConfigDto[];
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => HomeWelcomeDto)
+  welcome?: HomeWelcomeDto | null;
+
+  @IsArray()
+  @ArrayMaxSize(8)
+  @ValidateNested({ each: true })
+  @Type(() => HomeQuickLinkDto)
+  quickLinks!: HomeQuickLinkDto[];
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => HomeBrandingDto)
+  branding?: HomeBrandingDto | null;
 }
 
 export class UpdateBranchWorkspaceDto {
@@ -103,4 +212,17 @@ export class UpdateBranchWorkspaceDto {
   @IsString()
   @MaxLength(512)
   logoUrl?: string | null;
+
+  @ApiPropertyOptional({
+    description:
+      'Per-branch layout for the customizable Home page (widgets, order, ' +
+      'quick-links, welcome note, branding). Send null to reset to the ' +
+      'per-format default.',
+    nullable: true,
+    type: BranchHomeConfigDto,
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => BranchHomeConfigDto)
+  homeConfig?: BranchHomeConfigDto | null;
 }
