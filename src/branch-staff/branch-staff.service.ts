@@ -60,6 +60,13 @@ export interface PosBranchSummary {
   /** True while this branch is open on the auto-provisioned free trial. */
   isTrialWorkspace: boolean;
   canStartActivation: boolean;
+  /**
+   * The platform will accept a payment for this branch right now. True wherever
+   * canStartActivation is (the workspace is closed until paid), PLUS a live free
+   * trial — which is open, so it is NOT an activation candidate, but its owner
+   * may still convert early instead of waiting to be locked out.
+   */
+  canPayNow: boolean;
   canOpenNow: boolean;
   joinedAt: Date;
   phone: string | null;
@@ -105,6 +112,8 @@ export interface PosWorkspaceActivationCandidate {
   subscriptionStatus: TenantSubscriptionStatus | null;
   planCode: string | null;
   canStartActivation: boolean;
+  /** Mirrors canStartActivation here — a candidate is closed until it is paid. */
+  canPayNow: boolean;
   canOpenNow: boolean;
   activationBlockers: string[];
   pricing: {
@@ -576,6 +585,15 @@ export class BranchStaffService {
               workspace.subscription,
             ),
             canStartActivation: false,
+            // Only ACTIVE workspaces reach here, and a self-serve trial reports
+            // ACTIVE only while it is still live — so a trial row here is by
+            // construction a convertible one. Owners and managers may pay for it
+            // early; operators may not.
+            canPayNow:
+              isPosSelfServeTrialSubscription(workspace.subscription) &&
+              (summary.isOwner ||
+                summary.isTenantOwner ||
+                summary.role === BranchStaffRole.MANAGER),
             canOpenNow: true,
           };
         } catch (error) {
@@ -617,6 +635,12 @@ export class BranchStaffService {
             workspace.workspaceStatus,
           );
 
+        // An ACTIVE workspace is NOT an activation candidate, and this drop must
+        // stay even though a live trial is ACTIVE-but-unpaid. Seller HQ builds
+        // its branch list as [...activeBranches, ...activationCandidates], so a
+        // branch appearing in both returns two DTO rows for one branchId.
+        // Early payment for a trial rides `canPayNow` on the branch summary
+        // instead — see getPayableActivationCandidate.
         if (workspace.workspaceStatus === 'ACTIVE') {
           return null;
         }
@@ -645,6 +669,7 @@ export class BranchStaffService {
           subscriptionStatus: workspace.subscription?.status ?? null,
           planCode: workspace.subscription?.planCode ?? null,
           canStartActivation,
+          canPayNow: canStartActivation,
           canOpenNow: false,
           activationBlockers: this.describeActivationBlockers(workspace),
           pricing: this.getPosWorkspacePricing(),
@@ -1052,6 +1077,7 @@ export class BranchStaffService {
         subscriptionEndsAt: null,
         isTrialWorkspace: false,
         canStartActivation: false,
+        canPayNow: false,
         canOpenNow: false,
         joinedAt: branch.createdAt,
         posExperienceProfileCode: null,
@@ -1104,6 +1130,7 @@ export class BranchStaffService {
           subscriptionEndsAt: null,
           isTrialWorkspace: false,
           canStartActivation: false,
+          canPayNow: false,
           canOpenNow: false,
           joinedAt: branch.createdAt,
           posExperienceProfileCode: null,
@@ -1175,6 +1202,7 @@ export class BranchStaffService {
         subscriptionEndsAt: existing?.subscriptionEndsAt ?? null,
         isTrialWorkspace: existing?.isTrialWorkspace ?? false,
         canStartActivation: existing?.canStartActivation ?? false,
+        canPayNow: existing?.canPayNow ?? false,
         canOpenNow: existing?.canOpenNow ?? false,
         joinedAt: existing?.joinedAt ?? assignment.createdAt,
         posExperienceProfileCode:

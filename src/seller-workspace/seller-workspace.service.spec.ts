@@ -1395,4 +1395,66 @@ describe('SellerWorkspaceService', () => {
       getBranchWorkspaces.mockRestore();
     });
   });
+  it('lists a trialing branch exactly once, with early payment offered', async () => {
+    // Regression lock: a live trial is ACTIVE-but-unpaid. If it were ever also
+    // emitted as an activation candidate, getBranchWorkspaces would return TWO
+    // rows for the same branchId — duplicate cards and duplicate React keys.
+    usersRepository.findOne.mockResolvedValue({
+      id: 41,
+      email: 'seller@suuq.test',
+      roles: ['VENDOR', 'POS_MANAGER'],
+      subscriptionTier: SubscriptionTier.PRO,
+    });
+    const trialEndsAt = new Date('2026-08-12T00:00:00.000Z');
+    branchStaffService.getPosBranchSummariesForUser.mockResolvedValue([
+      {
+        branchId: 7,
+        branchName: 'Bole Bites',
+        branchCode: 'BB-7',
+        role: 'MANAGER',
+        permissions: ['OPEN_REGISTER'],
+        isOwner: true,
+        retailTenantId: 13,
+        retailTenantName: 'Seller Tenant',
+        modules: ['POS_CORE'],
+        workspaceStatus: 'ACTIVE',
+        subscriptionStatus: TenantSubscriptionStatus.TRIAL,
+        planCode: 'POS_BRANCH_TRIAL_14D',
+        subscriptionEndsAt: trialEndsAt,
+        isTrialWorkspace: true,
+        canStartActivation: false,
+        canPayNow: true,
+        canOpenNow: true,
+        joinedAt: new Date('2026-07-29T00:00:00.000Z'),
+      },
+    ]);
+    branchStaffService.getPosWorkspaceActivationCandidatesForUser.mockResolvedValue(
+      [],
+    );
+    tenantSubscriptionsRepository.find.mockResolvedValue([
+      {
+        tenantId: 13,
+        branchId: 7,
+        planCode: 'POS_BRANCH_TRIAL_14D',
+        status: TenantSubscriptionStatus.TRIAL,
+        billingInterval: TenantBillingInterval.MONTHLY,
+        startsAt: new Date('2026-07-29T00:00:00.000Z'),
+        endsAt: trialEndsAt,
+        autoRenew: false,
+      },
+    ]);
+
+    const result = await service.getBranchWorkspaces(41);
+
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]).toMatchObject({
+      branchId: 7,
+      workspaceStatus: 'ACTIVE',
+      isTrialWorkspace: true,
+      canPayNow: true,
+      canStartActivation: false,
+      canOpenNow: true,
+      subscriptionEndsAt: trialEndsAt,
+    });
+  });
 });

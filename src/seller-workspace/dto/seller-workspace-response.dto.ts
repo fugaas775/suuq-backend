@@ -316,6 +316,18 @@ export class SellerWorkspaceBranchWorkspaceDto {
   @ApiProperty()
   canStartActivation!: boolean;
 
+  @ApiProperty({
+    description:
+      'The platform will accept a payment for this branch now — true for a closed workspace awaiting activation, and for an open branch on a live free trial.',
+  })
+  canPayNow!: boolean;
+
+  @ApiProperty({ description: 'Open on the auto-provisioned free trial.' })
+  isTrialWorkspace!: boolean;
+
+  @ApiPropertyOptional({ nullable: true, type: Date })
+  subscriptionEndsAt!: Date | null;
+
   @ApiProperty()
   canOpenNow!: boolean;
 

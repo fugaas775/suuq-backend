@@ -40,6 +40,10 @@ export interface OwnerBranchBilling {
   workspaceStatus: string | null;
   canStartRenewal: boolean;
   activationBlockers: string[];
+  /** Open on the auto-provisioned free trial rather than a paid period. */
+  isTrialWorkspace: boolean;
+  /** When that trial runs out; null for a paid branch. */
+  trialEndsAt: Date | null;
   subscription: {
     period: string | null;
     status: string | null;
@@ -237,23 +241,34 @@ export class BranchBillingService {
       number,
       Pick<
         OwnerBranchBilling,
-        'workspaceStatus' | 'canStartRenewal' | 'activationBlockers'
+        | 'workspaceStatus'
+        | 'canStartRenewal'
+        | 'activationBlockers'
+        | 'isTrialWorkspace'
+        | 'trialEndsAt'
       >
     >(
       activeSummaries.map((summary) => [
         summary.branchId,
         {
           workspaceStatus: summary.workspaceStatus,
-          canStartRenewal: false,
+          // An open branch on a live free trial can be paid for early.
+          canStartRenewal: Boolean(summary.canPayNow),
           activationBlockers: [],
+          isTrialWorkspace: Boolean(summary.isTrialWorkspace),
+          trialEndsAt: summary.isTrialWorkspace
+            ? (summary.subscriptionEndsAt ?? null)
+            : null,
         },
       ]),
     );
     for (const candidate of activationCandidates) {
       workspaceStatusByBranch.set(candidate.branchId, {
         workspaceStatus: candidate.workspaceStatus,
-        canStartRenewal: Boolean(candidate.canStartActivation),
+        canStartRenewal: Boolean(candidate.canPayNow),
         activationBlockers: candidate.activationBlockers || [],
+        isTrialWorkspace: false,
+        trialEndsAt: null,
       });
     }
 
@@ -268,6 +283,8 @@ export class BranchBillingService {
         workspaceStatus: null,
         canStartRenewal: false,
         activationBlockers: [],
+        isTrialWorkspace: false,
+        trialEndsAt: null,
       };
       return {
         branchId: branch.id,
@@ -276,6 +293,8 @@ export class BranchBillingService {
         workspaceStatus: workspace.workspaceStatus,
         canStartRenewal: workspace.canStartRenewal,
         activationBlockers: workspace.activationBlockers,
+        isTrialWorkspace: workspace.isTrialWorkspace,
+        trialEndsAt: workspace.trialEndsAt,
         subscription: sub
           ? {
               period:

@@ -6,7 +6,27 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, IsNull, Repository } from 'typeorm';
-import { BranchStaffService } from './branch-staff.service';
+import { isLivePosSelfServeTrial } from '../retail/pos-self-serve-trial.policy';
+import {
+  BranchStaffService,
+  PosBranchSummary,
+  PosWorkspaceActivationCandidate,
+} from './branch-staff.service';
+
+/**
+ * What `getPayableActivationCandidate` needs from either source: a closed
+ * workspace awaiting activation, or an open branch on a convertible free trial.
+ */
+type PayableActivationTarget = Pick<
+  PosWorkspaceActivationCandidate | PosBranchSummary,
+  | 'branchId'
+  | 'branchName'
+  | 'serviceFormat'
+  | 'retailTenantId'
+  | 'isOwner'
+  | 'role'
+  | 'canPayNow'
+> & { workspaceStatus: string };
 import { RetailEntitlementsService } from '../retail/retail-entitlements.service';
 import { EbirrService } from '../ebirr/ebirr.service';
 import { EmailService } from '../email/email.service';
@@ -293,6 +313,15 @@ export class PosWorkspaceActivationService {
         : TenantBillingInterval.MONTHLY;
 
     const now = new Date();
+    // Converting a live free trial extends from the trial's end, not from today
+    // — otherwise paying on day 3 of 14 forfeits the remaining 11 days, which
+    // penalises exactly the early conversion this flow is trying to encourage.
+    const paidPeriodStartsAt = isLivePosSelfServeTrial(
+      branchSubscription,
+      now.getTime(),
+    )
+      ? new Date(branchSubscription.endsAt).getTime()
+      : now.getTime();
     const nextSubscription =
       branchSubscription ??
       this.tenantSubscriptionsRepository.create({
@@ -309,9 +338,11 @@ export class PosWorkspaceActivationService {
     nextSubscription.amountTotal = option.amount;
     nextSubscription.periodMonths = option.months;
     nextSubscription.currency = option.currency;
+    // startsAt records when they paid; endsAt runs from the trial tail when one
+    // is still live.
     nextSubscription.startsAt = now;
     nextSubscription.endsAt = new Date(
-      now.getTime() + option.months * 30 * 86_400_000,
+      paidPeriodStartsAt + option.months * 30 * 86_400_000,
     );
     nextSubscription.autoRenew = true;
     nextSubscription.metadata = {
@@ -838,7 +869,22 @@ export class PosWorkspaceActivationService {
       await this.branchStaffService.getPosWorkspaceActivationCandidatesForUser(
         user,
       );
-    const candidate = candidates.find((entry) => entry.branchId === branchId);
+    let candidate: PayableActivationTarget | null =
+      candidates.find((entry) => entry.branchId === branchId) ?? null;
+
+    if (!candidate) {
+      // A branch on a live free trial is OPEN, so it is not an activation
+      // candidate — but its owner may convert early rather than wait to be
+      // locked out. `canPayNow` on the branch summary is the signal.
+      const summaries =
+        await this.branchStaffService.getPosBranchSummariesForUser(user);
+      const convertibleTrial = summaries.find(
+        (entry) => entry.branchId === branchId && entry.canPayNow,
+      );
+      if (convertibleTrial) {
+        candidate = convertibleTrial;
+      }
+    }
 
     if (!candidate) {
       throw new NotFoundException(
@@ -852,14 +898,7 @@ export class PosWorkspaceActivationService {
       );
     }
 
-    const payableStatuses = new Set([
-      'PAYMENT_REQUIRED',
-      'PAST_DUE',
-      'EXPIRED',
-      'CANCELLED',
-    ]);
-
-    if (!payableStatuses.has(candidate.workspaceStatus)) {
+    if (!candidate.canPayNow) {
       throw new ForbiddenException(
         `Branch ${branchId} cannot start payment while workspace status is ${candidate.workspaceStatus}.`,
       );
