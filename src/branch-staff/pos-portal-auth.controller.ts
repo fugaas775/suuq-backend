@@ -916,6 +916,61 @@ export class PosPortalAuthController {
     }
 
     if (!branches.length) {
+      // A brand-new signup gets a working POS instead of a setup wall: provision
+      // a QSR branch on a free trial and open it now (the owner pays when the
+      // trial lapses). Only for a first-time signup with nothing else attached —
+      // an existing branchless account (ex-staff, equity partner, supplier-to-be)
+      // must never be handed a tenant behind its back.
+      if (isNewUser && !supplier) {
+        let provisioned: { tenantId: number; branchId: number } | null = null;
+
+        try {
+          provisioned =
+            await this.posPortalOnboardingService.createTrialWorkspaceForNewUser(
+              user,
+            );
+        } catch (error) {
+          // Never break sign-in over this — fall through to the onboarding
+          // gates, which can still create the workspace by hand.
+          this.logger.error(
+            `Auto-provisioning a trial workspace for new user #${user.id} failed: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+        }
+
+        if (provisioned) {
+          const provisionedBranches =
+            await this.branchStaffService.getPosBranchSummariesForUser({
+              id: user.id,
+              roles: user.roles,
+            });
+
+          if (provisionedBranches.length) {
+            await this.recordPortalAuthEvent({
+              action: 'pos_portal.auth.trial_workspace_provisioned',
+              event: 'pos_portal_auth_trial_workspace_provisioned',
+              level: 'log',
+              req,
+              user,
+              meta: {
+                source,
+                branchId: provisioned.branchId,
+                tenantId: provisioned.tenantId,
+              },
+            });
+
+            return {
+              branches: provisionedBranches,
+              ...supplierSelection,
+              defaultBranchId: provisionedBranches[0].branchId,
+              requiresBranchSelection: false,
+              portalKey: 'pos',
+            };
+          }
+        }
+      }
+
       // A first-class supplier account is branch-independent: if the user has a
       // supplier identity, return a valid branchless supplier session instead of
       // denying POS access. The supplier portal surfaces its own activation gate

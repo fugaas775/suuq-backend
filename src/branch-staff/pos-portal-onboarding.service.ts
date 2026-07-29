@@ -10,6 +10,7 @@ import {
   buildSelfServeServiceFormatMetadata,
   getDefaultAllowedSelfServeServiceFormats,
 } from '../retail/self-serve-service-format.policy';
+import { POS_SELF_SERVE_TRIAL_SERVICE_FORMAT } from '../retail/pos-self-serve-trial.policy';
 import { User } from '../users/entities/user.entity';
 import { UserRole } from '../auth/roles.enum';
 import { BranchStaffService } from './branch-staff.service';
@@ -176,6 +177,121 @@ export class PosPortalOnboardingService {
       activationCandidates: createdCandidates,
       onboardingProfile: updatedTenant?.onboardingProfile ?? null,
     };
+  }
+
+  /**
+   * Auto-provisions the workspace a brand-new signup lands in: a QSR branch on
+   * a free trial, openable immediately (see pos-self-serve-trial.policy.ts).
+   * Called from the portal sign-in path for a first-time signup that has no
+   * branch, no supplier and no pending activation — so the owner reaches a
+   * working POS instead of a setup wall. Paying converts the same branch.
+   *
+   * Returns null when the account already has (or is mid-) a workspace, so the
+   * caller falls back to the normal onboarding / activation gates.
+   */
+  async createTrialWorkspaceForNewUser(
+    user: User,
+  ): Promise<{ tenantId: number; branchId: number } | null> {
+    const [existingBranches, activationCandidates] = await Promise.all([
+      this.branchStaffService.getPosBranchSummariesForUser({
+        id: user.id,
+        roles: user.roles,
+      }),
+      this.branchStaffService.getPosWorkspaceActivationCandidatesForUser({
+        id: user.id,
+        roles: user.roles,
+      }),
+    ]);
+
+    if (existingBranches.length || activationCandidates.length) {
+      return null;
+    }
+
+    const workspaceName = this.resolveDefaultWorkspaceName(user);
+
+    const tenant = await this.retailEntitlementsService.createTenant({
+      name: workspaceName,
+      billingEmail: user.email,
+      defaultCurrency: 'ETB',
+      ownerUserId: user.id,
+    });
+
+    const branch = await this.branchesRepository.save(
+      this.branchesRepository.create({
+        name: workspaceName,
+        ownerId: user.id,
+        retailTenantId: tenant.id,
+        serviceFormat: POS_SELF_SERVE_TRIAL_SERVICE_FORMAT,
+        isActive: true,
+      }),
+    );
+
+    await this.assignmentsRepository.save(
+      this.assignmentsRepository.create({
+        branchId: branch.id,
+        userId: user.id,
+        role: BranchStaffRole.MANAGER,
+        permissions: [],
+        isActive: true,
+      }),
+    );
+
+    if (!user.roles.includes(UserRole.POS_MANAGER)) {
+      const roles = [...user.roles, UserRole.POS_MANAGER];
+      await this.usersRepository.update(user.id, { roles });
+      // Keep the in-memory user in step: the caller resolves branch access from
+      // it immediately after this returns.
+      user.roles = roles;
+    }
+
+    await Promise.all([
+      this.retailEntitlementsService.upsertModuleEntitlement(
+        tenant.id,
+        RetailModule.POS_CORE,
+        {
+          enabled: true,
+          reason: 'Enabled during POS-S self-serve onboarding',
+          metadata: buildSelfServeServiceFormatMetadata(),
+        },
+      ),
+      this.retailEntitlementsService.upsertModuleEntitlement(
+        tenant.id,
+        RetailModule.INVENTORY_CORE,
+        {
+          enabled: true,
+          reason: 'Enabled during POS-S self-serve onboarding',
+        },
+      ),
+    ]);
+
+    // The trial is what makes the branch openable — without it the workspace
+    // resolves to PAYMENT_REQUIRED and drops straight back out of the session.
+    await this.retailEntitlementsService.startPosSelfServeTrial(
+      tenant.id,
+      branch.id,
+    );
+
+    void this.linkSellerWorkspaceTenant(user.id, tenant.id);
+
+    this.logger.log(
+      `Auto-provisioned trial ${POS_SELF_SERVE_TRIAL_SERVICE_FORMAT} workspace ` +
+        `(tenant #${tenant.id}, branch #${branch.id}) for new user #${user.id}`,
+    );
+
+    return { tenantId: tenant.id, branchId: branch.id };
+  }
+
+  private resolveDefaultWorkspaceName(user: User): string {
+    const candidates = [
+      (user as { displayName?: string | null }).displayName,
+      (user as { fullName?: string | null }).fullName,
+      user.email ? user.email.split('@')[0] : null,
+    ];
+    const base = candidates
+      .map((value) => String(value || '').trim())
+      .find((value) => value.length > 0);
+
+    return base ? `${base}'s Kitchen`.slice(0, 120) : 'My QSR';
   }
 
   private async linkSellerWorkspaceTenant(

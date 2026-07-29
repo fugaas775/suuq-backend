@@ -40,6 +40,7 @@ describe('PosPortalOnboardingService', () => {
       },
     })),
     upsertModuleEntitlement: jest.fn(async () => undefined),
+    startPosSelfServeTrial: jest.fn(async () => ({ id: 71 })),
   };
 
   const branchStaffService = {
@@ -101,6 +102,9 @@ describe('PosPortalOnboardingService', () => {
     retailEntitlementsService.upsertModuleEntitlement.mockResolvedValue(
       undefined,
     );
+    retailEntitlementsService.startPosSelfServeTrial.mockResolvedValue({
+      id: 71,
+    });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -267,6 +271,7 @@ describe('PosPortalOnboardingService', () => {
             'GAS_STATION',
             'ELECTRONICS',
             'HOTEL',
+            'QSR',
           ],
         },
       }),
@@ -302,6 +307,98 @@ describe('PosPortalOnboardingService', () => {
     expect(result.workspace).toMatchObject({
       branchId: 21,
       branchName: 'Main Branch',
+    });
+  });
+  describe('createTrialWorkspaceForNewUser', () => {
+    it('provisions a QSR branch on a free trial so a new signup can open POS immediately', async () => {
+      branchStaffService.getPosBranchSummariesForUser.mockResolvedValue([]);
+      branchStaffService.getPosWorkspaceActivationCandidatesForUser.mockResolvedValue(
+        [],
+      );
+
+      const user = {
+        id: 9,
+        email: 'newowner@gmail.com',
+        roles: ['VENDOR'],
+        displayName: 'Abdi',
+      } as unknown as User;
+
+      const result = await service.createTrialWorkspaceForNewUser(user);
+
+      expect(result).toEqual({ tenantId: 31, branchId: 21 });
+      expect(branchesRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: "Abdi's Kitchen",
+          serviceFormat: 'QSR',
+          ownerId: 9,
+          retailTenantId: 31,
+        }),
+      );
+      expect(assignmentsRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          branchId: 21,
+          userId: 9,
+          role: BranchStaffRole.MANAGER,
+        }),
+      );
+      // Without the trial the workspace resolves to PAYMENT_REQUIRED and the
+      // branch drops straight back out of the session.
+      expect(
+        retailEntitlementsService.startPosSelfServeTrial,
+      ).toHaveBeenCalledWith(31, 21);
+      // The caller resolves branch access from this user object immediately.
+      expect(user.roles).toContain('POS_MANAGER');
+    });
+
+    it('names the workspace from the email when the account has no display name', async () => {
+      branchStaffService.getPosBranchSummariesForUser.mockResolvedValue([]);
+      branchStaffService.getPosWorkspaceActivationCandidatesForUser.mockResolvedValue(
+        [],
+      );
+
+      await service.createTrialWorkspaceForNewUser({
+        id: 9,
+        email: 'bolebites@gmail.com',
+        roles: [],
+      } as unknown as User);
+
+      expect(branchesRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({ name: "bolebites's Kitchen" }),
+      );
+    });
+
+    it('refuses to provision over an existing branch', async () => {
+      branchStaffService.getPosBranchSummariesForUser.mockResolvedValue([
+        { branchId: 4 },
+      ]);
+      branchStaffService.getPosWorkspaceActivationCandidatesForUser.mockResolvedValue(
+        [],
+      );
+
+      await expect(
+        service.createTrialWorkspaceForNewUser({
+          id: 9,
+          email: 'owner@gmail.com',
+          roles: [],
+        } as unknown as User),
+      ).resolves.toBeNull();
+      expect(retailEntitlementsService.createTenant).not.toHaveBeenCalled();
+    });
+
+    it('refuses to provision while an activation is already pending', async () => {
+      branchStaffService.getPosBranchSummariesForUser.mockResolvedValue([]);
+      branchStaffService.getPosWorkspaceActivationCandidatesForUser.mockResolvedValue(
+        [{ branchId: 7 }],
+      );
+
+      await expect(
+        service.createTrialWorkspaceForNewUser({
+          id: 9,
+          email: 'owner@gmail.com',
+          roles: [],
+        } as unknown as User),
+      ).resolves.toBeNull();
+      expect(retailEntitlementsService.createTenant).not.toHaveBeenCalled();
     });
   });
 });

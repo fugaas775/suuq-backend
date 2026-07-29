@@ -15,11 +15,14 @@ const EXTENDED_RETAIL_SELF_SERVE_SERVICE_FORMATS = [
   'GAS_STATION',
   'ELECTRONICS',
 ];
-const HOSPITALITY_SELF_SERVE_SERVICE_FORMATS = new Set(['HOTEL']);
+// QSR is the format every brand-new signup is auto-provisioned with (see
+// pos-self-serve-trial.policy.ts), so it must be self-servable wherever HOTEL is.
+const HOSPITALITY_SELF_SERVE_SERVICE_FORMATS = new Set(['HOTEL', 'QSR']);
 const HOSPITALITY_ENABLED_SELF_SERVE_SERVICE_FORMATS = [
   ...RETAIL_SELF_SERVE_SERVICE_FORMATS,
   ...EXTENDED_RETAIL_SELF_SERVE_SERVICE_FORMATS,
   'HOTEL',
+  'QSR',
 ];
 
 function expandRetailLinkedSelfServeServiceFormats(formats: string[]) {

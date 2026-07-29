@@ -29,6 +29,7 @@ import {
   TenantSubscription,
   TenantSubscriptionStatus,
 } from '../retail/entities/tenant-subscription.entity';
+import { isPosSelfServeTrialSubscription } from '../retail/pos-self-serve-trial.policy';
 import { PosSessionRevocationService } from '../auth/pos-session-revocation.service';
 import { User } from '../users/entities/user.entity';
 import { POS_BRANCH_SUBSCRIPTION_OPTIONS } from './pos-workspace-pricing';
@@ -54,6 +55,10 @@ export interface PosBranchSummary {
   workspaceStatus: 'ACTIVE';
   subscriptionStatus: TenantSubscriptionStatus | null;
   planCode: string | null;
+  /** End of the current subscription period; drives the free-trial countdown. */
+  subscriptionEndsAt: Date | null;
+  /** True while this branch is open on the auto-provisioned free trial. */
+  isTrialWorkspace: boolean;
   canStartActivation: boolean;
   canOpenNow: boolean;
   joinedAt: Date;
@@ -564,6 +569,12 @@ export class BranchStaffService {
             workspaceStatus: workspace.workspaceStatus,
             subscriptionStatus: workspace.subscription?.status ?? null,
             planCode: workspace.subscription?.planCode ?? null,
+            // Lets POS-S count down a free trial (see pos-self-serve-trial.policy)
+            // instead of the branch silently locking out when it lapses.
+            subscriptionEndsAt: workspace.subscription?.endsAt ?? null,
+            isTrialWorkspace: isPosSelfServeTrialSubscription(
+              workspace.subscription,
+            ),
             canStartActivation: false,
             canOpenNow: true,
           };
@@ -1038,6 +1049,8 @@ export class BranchStaffService {
         workspaceStatus: 'ACTIVE',
         subscriptionStatus: null,
         planCode: null,
+        subscriptionEndsAt: null,
+        isTrialWorkspace: false,
         canStartActivation: false,
         canOpenNow: false,
         joinedAt: branch.createdAt,
@@ -1088,6 +1101,8 @@ export class BranchStaffService {
           workspaceStatus: 'ACTIVE',
           subscriptionStatus: null,
           planCode: null,
+          subscriptionEndsAt: null,
+          isTrialWorkspace: false,
           canStartActivation: false,
           canOpenNow: false,
           joinedAt: branch.createdAt,
@@ -1157,6 +1172,8 @@ export class BranchStaffService {
         workspaceStatus: existing?.workspaceStatus ?? 'ACTIVE',
         subscriptionStatus: existing?.subscriptionStatus ?? null,
         planCode: existing?.planCode ?? null,
+        subscriptionEndsAt: existing?.subscriptionEndsAt ?? null,
+        isTrialWorkspace: existing?.isTrialWorkspace ?? false,
         canStartActivation: existing?.canStartActivation ?? false,
         canOpenNow: existing?.canOpenNow ?? false,
         joinedAt: existing?.joinedAt ?? assignment.createdAt,

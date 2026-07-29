@@ -42,6 +42,13 @@ import {
   RETAIL_PLAN_PRESETS,
   RetailPlanPreset,
 } from './retail-plan-presets';
+import {
+  getPosSelfServeTrialEndsAt,
+  isLivePosSelfServeTrial,
+  isPosSelfServeTrialSubscription,
+  POS_SELF_SERVE_TRIAL_DAYS,
+  POS_SELF_SERVE_TRIAL_PLAN_CODE,
+} from './pos-self-serve-trial.policy';
 
 type PosWorkspaceStatus =
   | 'ACTIVE'
@@ -247,6 +254,49 @@ export class RetailEntitlementsService {
     });
 
     return this.tenantSubscriptionsRepository.save(subscription);
+  }
+
+  /**
+   * Starts the free trial that lets an auto-provisioned branch open before it
+   * is paid for. Branch-scoped, so a later paid subscription supersedes it, and
+   * idempotent per branch — a second call returns the existing trial rather
+   * than extending it.
+   */
+  async startPosSelfServeTrial(
+    tenantId: number,
+    branchId: number,
+  ): Promise<TenantSubscription> {
+    const existing = await this.tenantSubscriptionsRepository.findOne({
+      where: { tenantId, branchId },
+      order: { createdAt: 'DESC' },
+    });
+
+    if (existing) {
+      return existing;
+    }
+
+    const startsAt = new Date();
+
+    return this.tenantSubscriptionsRepository.save(
+      this.tenantSubscriptionsRepository.create({
+        tenantId,
+        branchId,
+        planCode: POS_SELF_SERVE_TRIAL_PLAN_CODE,
+        status: TenantSubscriptionStatus.TRIAL,
+        billingInterval: TenantBillingInterval.MONTHLY,
+        amount: 0,
+        amountTotal: 0,
+        currency: 'ETB',
+        startsAt,
+        endsAt: getPosSelfServeTrialEndsAt(startsAt),
+        autoRenew: false,
+        metadata: {
+          source: 'POS_SELF_SERVE_AUTO_TRIAL',
+          trialDays: POS_SELF_SERVE_TRIAL_DAYS,
+          branchId,
+        },
+      }),
+    );
   }
 
   async updateOnboardingProfile(
@@ -525,7 +575,11 @@ export class RetailEntitlementsService {
       subscription: nextSubscription,
       entitlements,
       hasPosModule,
-      workspaceStatus: subscriptionStatusMap[effectiveSubscriptionStatus],
+      // A live self-serve trial opens the branch; a lapsed one was already
+      // rewritten to EXPIRED above, so it falls through to the paywall.
+      workspaceStatus: isLivePosSelfServeTrial(subscription, now)
+        ? 'ACTIVE'
+        : subscriptionStatusMap[effectiveSubscriptionStatus],
     };
   }
 
@@ -663,12 +717,17 @@ export class RetailEntitlementsService {
       return null;
     }
 
-    const endsAt = subscription.endsAt?.getTime() ?? null;
+    const endsAt = subscription.endsAt
+      ? new Date(subscription.endsAt).getTime()
+      : null;
 
     if (
       endsAt != null &&
       endsAt < now &&
-      subscription.status === TenantSubscriptionStatus.ACTIVE
+      (subscription.status === TenantSubscriptionStatus.ACTIVE ||
+        // A lapsed self-serve trial expires the same way a paid period does, so
+        // the owner is routed to the Ebirr paywall instead of staying open.
+        isPosSelfServeTrialSubscription(subscription))
     ) {
       return TenantSubscriptionStatus.EXPIRED;
     }
@@ -802,7 +861,11 @@ export class RetailEntitlementsService {
       case TenantSubscriptionStatus.ACTIVE:
         return 'ACTIVE';
       case TenantSubscriptionStatus.TRIAL:
-        return 'PAYMENT_REQUIRED';
+        // Only the auto-provisioned trial opens a workspace, and only until it
+        // lapses; every other TRIAL row keeps its pay-first meaning.
+        return isLivePosSelfServeTrial(latestSubscription)
+          ? 'ACTIVE'
+          : 'PAYMENT_REQUIRED';
       case TenantSubscriptionStatus.PAST_DUE:
         return 'PAST_DUE';
       case TenantSubscriptionStatus.EXPIRED:
