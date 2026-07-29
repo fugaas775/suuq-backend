@@ -621,4 +621,80 @@ describe('RetailEntitlementsService', () => {
       service.createTenant({ name: 'Retail HQ', ownerUserId: 99 }),
     ).rejects.toThrow(NotFoundException);
   });
+  describe('branch-scoped subscription resolution', () => {
+    function stubTenantAndBranch(branchId: number) {
+      branchesRepository.findOne.mockResolvedValue({
+        id: branchId,
+        retailTenantId: 5,
+        retailTenant: { id: 5 },
+      });
+      retailTenantsRepository.findOne.mockResolvedValue({
+        id: 5,
+        status: RetailTenantStatus.ACTIVE,
+        branches: [],
+        subscriptions: [],
+        entitlements: [],
+      });
+      tenantModuleEntitlementsRepository.find.mockResolvedValue([
+        { tenantId: 5, module: RetailModule.POS_CORE, enabled: true },
+      ]);
+    }
+
+    it("resolves each branch's own subscription on a multi-branch tenant", async () => {
+      stubTenantAndBranch(8);
+      // Branch 8 is trialing; branch 9's newer paid row must not govern it.
+      tenantSubscriptionsRepository.findOne.mockImplementation(
+        async ({ where }: any) =>
+          where.branchId === 8
+            ? {
+                id: 71,
+                tenantId: 5,
+                branchId: 8,
+                status: TenantSubscriptionStatus.TRIAL,
+                planCode: 'POS_BRANCH_TRIAL_14D',
+                endsAt: new Date(Date.now() + 5 * 86_400_000),
+              }
+            : null,
+      );
+
+      const result = await service.getBranchWorkspaceStatus(8);
+
+      expect(result.subscription?.branchId).toBe(8);
+      expect(result.workspaceStatus).toBe('ACTIVE'); // live trial opens the branch
+      // The lookup is never issued without a branch scope.
+      for (const call of tenantSubscriptionsRepository.findOne.mock.calls) {
+        expect(call[0].where).toHaveProperty('branchId');
+      }
+    });
+
+    it('falls back to a legacy tenant-wide row for a branch that has none', async () => {
+      stubTenantAndBranch(8);
+      const legacyRow = {
+        id: 60,
+        tenantId: 5,
+        branchId: null,
+        status: TenantSubscriptionStatus.ACTIVE,
+        billingInterval: TenantBillingInterval.MONTHLY,
+      };
+      tenantSubscriptionsRepository.findOne.mockImplementation(
+        async ({ where }: any) => (where.branchId === 8 ? null : legacyRow),
+      );
+
+      const result = await service.getBranchWorkspaceStatus(8);
+
+      expect(result.subscription).toMatchObject({ id: 60 });
+      expect(result.workspaceStatus).toBe('ACTIVE');
+    });
+
+    it('reports PAYMENT_REQUIRED rather than borrowing a sibling row', async () => {
+      stubTenantAndBranch(8);
+      // Only branch 9 has a row. Neither query matches, so branch 8 has none.
+      tenantSubscriptionsRepository.findOne.mockResolvedValue(null);
+
+      const result = await service.getBranchWorkspaceStatus(8);
+
+      expect(result.subscription).toBeNull();
+      expect(result.workspaceStatus).toBe('PAYMENT_REQUIRED');
+    });
+  });
 });

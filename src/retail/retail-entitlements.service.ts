@@ -5,7 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { IsNull, Repository } from 'typeorm';
 import { Branch } from '../branches/entities/branch.entity';
 import { BranchStaffAssignment } from '../branch-staff/entities/branch-staff-assignment.entity';
 import {
@@ -96,6 +96,7 @@ type RetailTenantWithPosWorkspaceAudit = RetailTenant & {
       workspaceStatus: PosWorkspaceStatus;
       subscriptionStatus: TenantSubscriptionStatus | null;
       planCode: string | null;
+      subscriptionEndsAt: Date | null;
       isSelfServeProvisioned: boolean;
     }>;
   };
@@ -254,6 +255,62 @@ export class RetailEntitlementsService {
     });
 
     return this.tenantSubscriptionsRepository.save(subscription);
+  }
+
+  /**
+   * The subscription that governs ONE branch.
+   *
+   * Subscriptions are per-branch, but rows created before that change carry
+   * `branchId = null` and govern the whole tenant. So: the branch's own latest
+   * row wins, else the latest legacy tenant-wide row. The fallback is
+   * deliberately `branchId: IsNull()` and NOT "any row on this tenant" — a
+   * plain `{ tenantId }` lookup lets a sibling branch's newer row govern this
+   * one, which silently extends (or ends) a branch's subscription for reasons
+   * that have nothing to do with it.
+   */
+  private async findSubscriptionForBranch(
+    tenantId: number,
+    branchId: number,
+  ): Promise<TenantSubscription | null> {
+    const branchScoped = await this.tenantSubscriptionsRepository.findOne({
+      where: { tenantId, branchId },
+      order: { createdAt: 'DESC' },
+    });
+
+    if (branchScoped) {
+      return branchScoped;
+    }
+
+    return this.tenantSubscriptionsRepository.findOne({
+      where: { tenantId, branchId: IsNull() },
+      order: { createdAt: 'DESC' },
+    });
+  }
+
+  /**
+   * In-memory twin of findSubscriptionForBranch, for callers that already
+   * eager-loaded `tenant.subscriptions` (the admin audit path) and must not
+   * issue a query per branch. Same precedence rule.
+   */
+  private pickSubscriptionForBranch(
+    subscriptions: TenantSubscription[] = [],
+    branchId: number | null,
+  ): TenantSubscription | null {
+    const byRecency = [...subscriptions].sort((left, right) => {
+      const leftTime = new Date(left.startsAt ?? left.createdAt ?? 0).getTime();
+      const rightTime = new Date(
+        right.startsAt ?? right.createdAt ?? 0,
+      ).getTime();
+      return rightTime - leftTime;
+    });
+
+    return (
+      (branchId != null
+        ? byRecency.find((entry) => entry.branchId === branchId)
+        : null) ??
+      byRecency.find((entry) => entry.branchId == null) ??
+      null
+    );
   }
 
   /**
@@ -486,10 +543,10 @@ export class RetailEntitlementsService {
     }
 
     const tenant = await this.findTenantOrThrow(branch.retailTenantId);
-    const subscription = await this.tenantSubscriptionsRepository.findOne({
-      where: { tenantId: tenant.id },
-      order: { createdAt: 'DESC' },
-    });
+    const subscription = await this.findSubscriptionForBranch(
+      tenant.id,
+      branchId,
+    );
     const now = Date.now();
     const effectiveSubscriptionStatus = this.resolveEffectiveSubscriptionStatus(
       subscription,
@@ -744,17 +801,25 @@ export class RetailEntitlementsService {
         ? 'POS_SELF_SERVE'
         : 'ADMIN_OR_BACKOFFICE';
     const branchWorkspaces = (tenant.branches ?? []).map((branch) => {
+      // Each branch is governed by ITS OWN subscription (legacy tenant-wide rows
+      // still cover branches that have none) — stamping the tenant's newest row
+      // onto every branch reported a paid branch's status for a trialing one.
+      const branchSubscription = this.pickSubscriptionForBranch(
+        tenant.subscriptions ?? [],
+        branch.id,
+      );
       const workspaceStatus = this.resolveTenantWorkspaceStatus(
         tenant,
-        latestSubscription,
+        branchSubscription,
       );
       return {
         branchId: branch.id,
         branchName: branch.name,
         branchCode: branch.code ?? null,
         workspaceStatus,
-        subscriptionStatus: latestSubscription?.status ?? null,
-        planCode: latestSubscription?.planCode ?? null,
+        subscriptionStatus: branchSubscription?.status ?? null,
+        planCode: branchSubscription?.planCode ?? null,
+        subscriptionEndsAt: branchSubscription?.endsAt ?? null,
         isSelfServeProvisioned: provisioningSource === 'POS_SELF_SERVE',
       };
     });

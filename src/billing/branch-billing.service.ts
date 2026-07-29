@@ -5,7 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Between, In, Repository } from 'typeorm';
+import { Between, In, IsNull, Repository } from 'typeorm';
 import { GeneralLedgerService } from '../accounting/general-ledger.service';
 import { GlAccountCode } from '../accounting/gl-accounts.constant';
 import { GlJournalSourceType } from '../accounting/entities/gl-journal-entry.entity';
@@ -188,14 +188,37 @@ export class BranchBillingService {
     if (!branches.length) return [];
 
     const branchIds = branches.map((b) => b.id);
-    const subs = await this.subscriptionsRepo.find({
-      where: { branchId: In(branchIds) },
-      order: { createdAt: 'DESC' },
-    });
+    const tenantIds = Array.from(
+      new Set(
+        branches
+          .map((b) => b.retailTenantId)
+          .filter((id): id is number => typeof id === 'number'),
+      ),
+    );
+    const [subs, legacyTenantSubs] = await Promise.all([
+      this.subscriptionsRepo.find({
+        where: { branchId: In(branchIds) },
+        order: { createdAt: 'DESC' },
+      }),
+      // Rows predating per-branch billing carry branchId null and still govern
+      // their tenant's branches; without them a legacy branch reported no
+      // subscription at all.
+      tenantIds.length
+        ? this.subscriptionsRepo.find({
+            where: { tenantId: In(tenantIds), branchId: IsNull() },
+            order: { createdAt: 'DESC' },
+          })
+        : Promise.resolve([] as TenantSubscription[]),
+    ]);
     const subByBranch = new Map<number, TenantSubscription>();
     for (const s of subs) {
       if (s.branchId == null) continue;
       if (!subByBranch.has(s.branchId)) subByBranch.set(s.branchId, s);
+    }
+    const legacySubByTenant = new Map<number, TenantSubscription>();
+    for (const s of legacyTenantSubs) {
+      if (!legacySubByTenant.has(s.tenantId))
+        legacySubByTenant.set(s.tenantId, s);
     }
 
     const lastPaymentByBranch =
@@ -235,7 +258,11 @@ export class BranchBillingService {
     }
 
     return branches.map((branch) => {
-      const sub = subByBranch.get(branch.id) || null;
+      const sub =
+        subByBranch.get(branch.id) ||
+        (branch.retailTenantId
+          ? legacySubByTenant.get(branch.retailTenantId) || null
+          : null);
       const meta = (sub?.metadata as any) || {};
       const workspace = workspaceStatusByBranch.get(branch.id) || {
         workspaceStatus: null,

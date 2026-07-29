@@ -5,7 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { In, IsNull, Repository } from 'typeorm';
 import { BranchStaffService } from './branch-staff.service';
 import { RetailEntitlementsService } from '../retail/retail-entitlements.service';
 import { EbirrService } from '../ebirr/ebirr.service';
@@ -95,7 +95,11 @@ export class PosWorkspaceActivationService {
     const option =
       findPosBranchSubscriptionOption(params.subscriptionPeriod) ??
       requirePosBranchSubscriptionOption(DEFAULT_POS_BRANCH_PERIOD);
-    const referenceId = `${POS_WORKSPACE_REFERENCE_PREFIX}-${candidate.branchId}-${Date.now()}`;
+    // The period rides on the reference so completion can recover it even when
+    // the branch has no subscription row to stash `pendingActivation` on.
+    // parseBranchIdFromReference is anchored (/^POSACT-(\d+)-/), so appending a
+    // suffix stays compatible with every reference already in the Ebirr ledger.
+    const referenceId = `${POS_WORKSPACE_REFERENCE_PREFIX}-${candidate.branchId}-${Date.now()}-${option.period}`;
     const invoiceId = `${POS_WORKSPACE_REFERENCE_PREFIX}INV-${candidate.branchId}`;
     const paymentResponse = await this.ebirrService.initiatePayment({
       phoneNumber: params.phoneNumber,
@@ -180,10 +184,19 @@ export class PosWorkspaceActivationService {
       await this.retailEntitlementsService.getBranchWorkspaceStatus(branchId);
     if (!workspace.tenant) return;
 
-    const latest = await this.tenantSubscriptionsRepository.findOne({
-      where: { tenantId: workspace.tenant.id },
-      order: { createdAt: 'DESC' },
-    });
+    // Must use the SAME precedence as the reader in completeEbirrActivationPayment
+    // (branch row, else the legacy tenant-wide row) — a plain `{ tenantId }`
+    // lookup stamps the pending period onto a sibling branch's row, where the
+    // reader never looks, and the payment silently completes as MONTHLY.
+    const latest =
+      (await this.tenantSubscriptionsRepository.findOne({
+        where: { tenantId: workspace.tenant.id, branchId },
+        order: { createdAt: 'DESC' },
+      })) ??
+      (await this.tenantSubscriptionsRepository.findOne({
+        where: { tenantId: workspace.tenant.id, branchId: IsNull() },
+        order: { createdAt: 'DESC' },
+      }));
     if (!latest) return;
 
     latest.metadata = {
@@ -247,7 +260,9 @@ export class PosWorkspaceActivationService {
     const tenantWideFallback = branchSubscription
       ? null
       : await this.tenantSubscriptionsRepository.findOne({
-          where: { tenantId: workspace.tenant.id },
+          // Legacy tenant-wide rows only — a sibling branch's row must never
+          // stand in for this one.
+          where: { tenantId: workspace.tenant.id, branchId: IsNull() },
           order: { createdAt: 'DESC' },
         });
     const reference = branchSubscription ?? tenantWideFallback;
@@ -256,13 +271,20 @@ export class PosWorkspaceActivationService {
       return branchSubscription;
     }
 
-    // Resolve the subscription period: explicit caller > pendingActivation > default.
+    // Resolve the subscription period: explicit caller > pendingActivation >
+    // the period stamped on the reference id > default. The reference suffix is
+    // the safety net for a branch with NO subscription row at all — there,
+    // recordPendingPeriodOnSubscription has nothing to write to, and falling
+    // back to MONTHLY grants a month for a year that was already charged.
     const pendingMeta = reference?.metadata?.pendingActivation as
       | { period?: string; referenceId?: string }
       | undefined;
     const resolvedPeriod: PosBranchSubscriptionPeriod =
       explicitPeriod ??
       (findPosBranchSubscriptionOption(pendingMeta?.period)?.period ||
+        findPosBranchSubscriptionOption(
+          this.parsePeriodFromReference(referenceId),
+        )?.period ||
         DEFAULT_POS_BRANCH_PERIOD);
     const option = requirePosBranchSubscriptionOption(resolvedPeriod);
     const billingInterval =
@@ -415,7 +437,10 @@ export class PosWorkspaceActivationService {
       );
     }
 
-    // Verify the tenant has an active or trial subscription
+    // Verify the tenant has an active or trial subscription.
+    // Deliberately TENANT-WIDE, unlike the per-branch lookups elsewhere: the
+    // question here is "does this tenant pay for anything yet", not "what
+    // governs branch X". Do not branch-scope this.
     const subscription = await this.tenantSubscriptionsRepository.findOne({
       where: { tenantId },
       order: { createdAt: 'DESC' },
@@ -575,6 +600,9 @@ export class PosWorkspaceActivationService {
     }
     const { tenantId, userId } = parsed;
 
+    // Deliberately TENANT-WIDE: `pendingBranchCreation` is a tenant-level
+    // handshake (the branch does not exist yet, so it cannot be branch-scoped),
+    // and its writer uses the same tenant-latest row. Do not branch-scope this.
     const subscription = await this.tenantSubscriptionsRepository.findOne({
       where: { tenantId },
       order: { createdAt: 'DESC' },
@@ -782,6 +810,14 @@ export class PosWorkspaceActivationService {
       );
 
     return { branchId: savedBranch.id, created: true };
+  }
+
+  /** Reads the period suffix off a `POSACT-<branchId>-<ts>-<PERIOD>` reference. */
+  private parsePeriodFromReference(referenceId: string): string | null {
+    const match = String(referenceId || '').match(
+      /^POSACT-\d+-\d+-([A-Z_]+)$/u,
+    );
+    return match?.[1] ?? null;
   }
 
   private parseBranchIdFromReference(referenceId: string): number | null {

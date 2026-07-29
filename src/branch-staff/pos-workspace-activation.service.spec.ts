@@ -370,4 +370,120 @@ describe('PosWorkspaceActivationService', () => {
     expect(source).not.toMatch(/BranchInventory/);
     expect(source).not.toMatch(/Product\b/);
   });
+  describe('branch-scoped subscription resolution', () => {
+    function stubWorkspace() {
+      retailEntitlementsServiceMock.getBranchWorkspaceStatus.mockResolvedValue({
+        tenant: { id: 31, name: 'Bole Retail' },
+        entitlements: [{ module: RetailModule.POS_CORE }],
+        trialStartedAt: null,
+        trialEndsAt: null,
+        trialDaysRemaining: null,
+      });
+    }
+
+    it('never falls back to a sibling branch subscription when this branch has none', async () => {
+      stubWorkspace();
+      // Branch 21 has no row; branch 99's row must NOT stand in for it. Only a
+      // legacy tenant-wide row (branchId null) may.
+      tenantSubscriptionsRepository.findOne.mockImplementation(
+        async ({ where }: any) => {
+          if (where.branchId === 21) return null;
+          if (where.branchId === undefined)
+            return { id: 4, tenantId: 31, branchId: 99 };
+          return null; // the IsNull() legacy query
+        },
+      );
+
+      await service.completeEbirrActivationPayment('POSACT-21-1731100000000');
+
+      // A fresh row is created for branch 21 rather than branch 99's being reused.
+      expect(tenantSubscriptionsRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({ tenantId: 31, branchId: 21 }),
+      );
+      expect(tenantSubscriptionsRepository.save).not.toHaveBeenCalledWith(
+        expect.objectContaining({ id: 4 }),
+      );
+    });
+
+    it('writes the pending period onto the row the completion reader will look at', async () => {
+      stubWorkspace();
+      const branchRow = { id: 8, tenantId: 31, branchId: 21, metadata: {} };
+      tenantSubscriptionsRepository.findOne.mockImplementation(
+        async ({ where }: any) => (where.branchId === 21 ? branchRow : null),
+      );
+      ebirrServiceMock.initiatePayment.mockResolvedValue({
+        errorCode: '0',
+        params: { state: 'PENDING' },
+      });
+      branchStaffServiceMock.getPosWorkspaceActivationCandidatesForUser.mockResolvedValue(
+        [
+          {
+            branchId: 21,
+            branchName: 'Bole Flagship',
+            isOwner: true,
+            role: 'MANAGER',
+            workspaceStatus: 'PAYMENT_REQUIRED',
+            retailTenantId: 31,
+            serviceFormat: 'RETAIL',
+            canStartActivation: true,
+          },
+        ],
+      );
+      tenantModuleEntitlementsRepository.findOne.mockResolvedValue({
+        enabled: true,
+      });
+
+      await service.startEbirrActivationPayment(
+        { id: 41, roles: ['POS_MANAGER'] },
+        {
+          branchId: 21,
+          phoneNumber: '251911223344',
+          subscriptionPeriod: 'ONE_YEAR',
+        },
+      );
+
+      expect(tenantSubscriptionsRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 8,
+          metadata: expect.objectContaining({
+            pendingActivation: expect.objectContaining({
+              branchId: 21,
+              period: 'ONE_YEAR',
+            }),
+          }),
+        }),
+      );
+    });
+
+    it('recovers the period from the reference when no subscription row exists to stash it on', async () => {
+      stubWorkspace();
+      // No row anywhere: the pending-period write had nothing to land on, so
+      // without the reference suffix this would grant a MONTHLY period for a
+      // year that was already charged.
+      tenantSubscriptionsRepository.findOne.mockResolvedValue(null);
+
+      await service.completeEbirrActivationPayment(
+        'POSACT-21-1731100000000-ONE_YEAR',
+      );
+
+      expect(tenantSubscriptionsRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          branchId: 21,
+          periodMonths: 12,
+          status: TenantSubscriptionStatus.ACTIVE,
+        }),
+      );
+    });
+
+    it('still parses legacy references with no period suffix', async () => {
+      stubWorkspace();
+      tenantSubscriptionsRepository.findOne.mockResolvedValue(null);
+
+      await service.completeEbirrActivationPayment('POSACT-21-1731100000000');
+
+      expect(tenantSubscriptionsRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({ branchId: 21, periodMonths: 1 }),
+      );
+    });
+  });
 });
