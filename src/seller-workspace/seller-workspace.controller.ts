@@ -166,6 +166,7 @@ export class SellerWorkspaceController {
       req.user.id,
       branchId,
       dto,
+      req.user.roles,
     );
   }
 

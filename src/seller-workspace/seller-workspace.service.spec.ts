@@ -62,7 +62,10 @@ describe('SellerWorkspaceService', () => {
   let usersRepository: { findOne: jest.Mock };
   let ordersRepository: { createQueryBuilder: jest.Mock };
   let purchaseOrdersRepository: { find: jest.Mock };
-  let posCheckoutsRepository: { createQueryBuilder: jest.Mock; query: jest.Mock };
+  let posCheckoutsRepository: {
+    createQueryBuilder: jest.Mock;
+    query: jest.Mock;
+  };
   let posSyncJobsRepository: { createQueryBuilder: jest.Mock };
   let retailTenantsRepository: { find: jest.Mock };
   let tenantModuleEntitlementsRepository: { findOne: jest.Mock };
@@ -107,7 +110,7 @@ describe('SellerWorkspaceService', () => {
     create: jest.Mock;
     save: jest.Mock;
   };
-  let vendorStoresRepository: { find: jest.Mock };
+  let vendorStoresRepository: { find: jest.Mock; update: jest.Mock };
 
   beforeEach(async () => {
     delete process.env.POS_HOSPITALITY_SERVICE_FORMATS_ENABLED;
@@ -198,7 +201,10 @@ describe('SellerWorkspaceService', () => {
       create: jest.fn((v) => v),
       save: jest.fn().mockResolvedValue(undefined),
     };
-    vendorStoresRepository = { find: jest.fn().mockResolvedValue([]) };
+    vendorStoresRepository = {
+      find: jest.fn().mockResolvedValue([]),
+      update: jest.fn().mockResolvedValue(undefined),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -1295,5 +1301,98 @@ describe('SellerWorkspaceService', () => {
     ).rejects.toThrow(
       'Seller HQ branch creation only supports RETAIL until hospitality rollout is enabled for this tenant.',
     );
+  });
+  describe('updateBranchWorkspaceServiceFormat', () => {
+    function stubBranchRepo(branch) {
+      const branchRepo = {
+        findOne: jest.fn().mockResolvedValue(branch),
+        update: jest.fn().mockResolvedValue(undefined),
+      };
+      sellerWorkspacesRepository.manager.getRepository.mockImplementation(
+        (entity) => (entity === Branch ? branchRepo : {}),
+      );
+      return branchRepo;
+    }
+
+    it('refuses a caller who neither owns the branch nor administers the platform, without writing', async () => {
+      const branchRepo = stubBranchRepo({
+        id: 11,
+        ownerId: 41,
+        retailTenantId: 13,
+        serviceFormat: 'QSR',
+        retailTenant: { owner: { id: 41 } },
+      });
+
+      await expect(
+        service.updateBranchWorkspaceServiceFormat(
+          999,
+          11,
+          { serviceFormat: 'RETAIL' } as any,
+          ['POS_MANAGER'],
+        ),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+
+      // The write must never land: it used to persist before the response
+      // builder 404'd, so a rejected caller still changed the branch.
+      expect(branchRepo.update).not.toHaveBeenCalled();
+      expect(vendorStoresRepository.update).not.toHaveBeenCalled();
+    });
+
+    it('lets a platform admin change a branch they do not own and resolves the DTO via the owner', async () => {
+      const branchRepo = stubBranchRepo({
+        id: 11,
+        ownerId: 41,
+        retailTenantId: 13,
+        serviceFormat: 'QSR',
+        retailTenant: { owner: { id: 41 } },
+      });
+      const workspaceItem = { branchId: 11, branchName: 'Bole Bites' };
+      const getBranchWorkspaces = jest
+        .spyOn(service, 'getBranchWorkspaces')
+        .mockImplementation(async (userId: number) =>
+          userId === 41 ? ({ items: [workspaceItem] } as any) : { items: [] },
+        );
+
+      const result = await service.updateBranchWorkspaceServiceFormat(
+        999,
+        11,
+        { serviceFormat: 'RETAIL' },
+        ['SUPER_ADMIN'],
+      );
+
+      expect(branchRepo.update).toHaveBeenCalledWith(11, {
+        serviceFormat: 'RETAIL',
+      });
+      expect(result).toBe(workspaceItem);
+      // The admin's own workspace list has no such branch — the owner's does.
+      expect(getBranchWorkspaces).toHaveBeenCalledWith(999);
+      expect(getBranchWorkspaces).toHaveBeenCalledWith(41);
+      getBranchWorkspaces.mockRestore();
+    });
+
+    it('lets the branch owner change their own service format', async () => {
+      const branchRepo = stubBranchRepo({
+        id: 11,
+        ownerId: 41,
+        retailTenantId: 13,
+        serviceFormat: 'QSR',
+        retailTenant: { owner: { id: 41 } },
+      });
+      const getBranchWorkspaces = jest
+        .spyOn(service, 'getBranchWorkspaces')
+        .mockResolvedValue({ items: [{ branchId: 11 }] } as any);
+
+      await service.updateBranchWorkspaceServiceFormat(
+        41,
+        11,
+        { serviceFormat: 'RETAIL' },
+        [],
+      );
+
+      expect(branchRepo.update).toHaveBeenCalledWith(11, {
+        serviceFormat: 'RETAIL',
+      });
+      getBranchWorkspaces.mockRestore();
+    });
   });
 });

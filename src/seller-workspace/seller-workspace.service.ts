@@ -358,17 +358,36 @@ export class SellerWorkspaceService {
         parseInt(cnt, 10),
       ]),
     );
+    // Per-branch first, with the legacy tenant-wide row (branchId null) as the
+    // fallback — keying only by tenant let one branch's subscription describe
+    // every other branch on the same tenant.
+    const latestSubscriptionByBranchId = new Map<number, TenantSubscription>();
     for (const subscription of subscriptions) {
-      if (!latestSubscriptionByTenantId.has(subscription.tenantId)) {
-        latestSubscriptionByTenantId.set(subscription.tenantId, subscription);
+      if (subscription.branchId == null) {
+        if (!latestSubscriptionByTenantId.has(subscription.tenantId)) {
+          latestSubscriptionByTenantId.set(subscription.tenantId, subscription);
+        }
+        continue;
+      }
+      if (!latestSubscriptionByBranchId.has(subscription.branchId)) {
+        latestSubscriptionByBranchId.set(subscription.branchId, subscription);
       }
     }
+    const resolveSubscription = (
+      branchId: number,
+      retailTenantId: number | null,
+    ) =>
+      latestSubscriptionByBranchId.get(branchId) ||
+      (retailTenantId
+        ? latestSubscriptionByTenantId.get(retailTenantId) || null
+        : null);
 
     const items: SellerWorkspaceBranchWorkspaceDto[] = [
       ...activeBranches.map((branch) => {
-        const subscription = branch.retailTenantId
-          ? latestSubscriptionByTenantId.get(branch.retailTenantId) || null
-          : null;
+        const subscription = resolveSubscription(
+          branch.branchId,
+          branch.retailTenantId,
+        );
         const roster = rosterByBranchId.get(branch.branchId);
         const tenant = branch.retailTenantId
           ? tenantById.get(branch.retailTenantId) || null
@@ -2347,6 +2366,7 @@ export class SellerWorkspaceService {
     userId: number,
     branchId: number,
     dto: UpdateBranchServiceFormatDto,
+    roles: string[] = [],
   ): Promise<SellerWorkspaceBranchWorkspaceDto> {
     const branch = await this.sellerWorkspacesRepository.manager
       .getRepository(Branch)
@@ -2357,6 +2377,20 @@ export class SellerWorkspaceService {
     if (!branch) {
       throw new NotFoundException(
         `Branch workspace with ID ${branchId} not found.`,
+      );
+    }
+    // Same ownership rule as updateBranchWorkspace: the service format decides
+    // the whole POS lane, so it must never be rewritable by a caller who merely
+    // knows the branch id. This has to run BEFORE the writes below — the update
+    // persists even when the response builder later fails to resolve the DTO.
+    const isPlatformAdmin =
+      Array.isArray(roles) &&
+      (roles.includes(UserRole.SUPER_ADMIN) || roles.includes(UserRole.ADMIN));
+    const isOwner =
+      branch.ownerId === userId || branch.retailTenant?.owner?.id === userId;
+    if (!isOwner && !isPlatformAdmin) {
+      throw new ForbiddenException(
+        'Only the branch or tenant owner can change the branch service format.',
       );
     }
     const tenantId = branch.retailTenantId;
@@ -2385,9 +2419,21 @@ export class SellerWorkspaceService {
       { serviceFormat: normalizedServiceFormat },
     );
     const refreshed = await this.getBranchWorkspaces(userId);
-    const updatedWorkspace = refreshed.items.find(
+    let updatedWorkspace = refreshed.items.find(
       (item) => item.branchId === branchId,
     );
+    if (!updatedWorkspace) {
+      // A platform admin's own workspace list won't contain this branch, and the
+      // write has already persisted — resolve the DTO via the owner instead of
+      // 404ing on a successful update (mirrors updateBranchWorkspace).
+      const ownerId = branch.ownerId ?? branch.retailTenant?.owner?.id ?? null;
+      if (ownerId && ownerId !== userId) {
+        const ownerRefreshed = await this.getBranchWorkspaces(ownerId);
+        updatedWorkspace = ownerRefreshed.items.find(
+          (item) => item.branchId === branchId,
+        );
+      }
+    }
     if (!updatedWorkspace) {
       throw new NotFoundException(
         'Updated branch workspace could not be resolved.',
