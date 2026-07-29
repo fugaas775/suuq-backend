@@ -1362,6 +1362,8 @@ describe('SellerWorkspaceService', () => {
 
       expect(branchRepo.update).toHaveBeenCalledWith(11, {
         serviceFormat: 'RETAIL',
+        // The saved Home layout is per-format, so a real change resets it.
+        homeConfig: null,
       });
       expect(result).toBe(workspaceItem);
       // The admin's own workspace list has no such branch — the owner's does.
@@ -1391,7 +1393,60 @@ describe('SellerWorkspaceService', () => {
 
       expect(branchRepo.update).toHaveBeenCalledWith(11, {
         serviceFormat: 'RETAIL',
+        // The saved Home layout is per-format, so a real change resets it.
+        homeConfig: null,
       });
+      getBranchWorkspaces.mockRestore();
+    });
+
+    it('keeps the saved Home layout when the format is re-submitted unchanged', async () => {
+      const branchRepo = stubBranchRepo({
+        id: 11,
+        ownerId: 41,
+        retailTenantId: 13,
+        serviceFormat: 'QSR',
+        retailTenant: { owner: { id: 41 } },
+      });
+      const getBranchWorkspaces = jest
+        .spyOn(service, 'getBranchWorkspaces')
+        .mockResolvedValue({ items: [{ branchId: 11 }] } as any);
+
+      await service.updateBranchWorkspaceServiceFormat(
+        41,
+        11,
+        { serviceFormat: 'QSR' },
+        [],
+      );
+
+      expect(branchRepo.update).toHaveBeenCalledWith(11, {
+        serviceFormat: 'QSR',
+      });
+      getBranchWorkspaces.mockRestore();
+    });
+
+    it("always accepts the branch's current format, even outside the allow-list", async () => {
+      // PROPERTY_RENTAL is only self-servable while the hospitality rollout is
+      // on; a branch already running it must still be able to re-submit it.
+      delete process.env.POS_HOSPITALITY_SERVICE_FORMATS_ENABLED;
+      stubBranchRepo({
+        id: 11,
+        ownerId: 41,
+        retailTenantId: 13,
+        serviceFormat: 'PROPERTY_RENTAL',
+        retailTenant: { owner: { id: 41 } },
+      });
+      const getBranchWorkspaces = jest
+        .spyOn(service, 'getBranchWorkspaces')
+        .mockResolvedValue({ items: [{ branchId: 11 }] } as any);
+
+      await expect(
+        service.updateBranchWorkspaceServiceFormat(
+          41,
+          11,
+          { serviceFormat: 'PROPERTY_RENTAL' } as any,
+          [],
+        ),
+      ).resolves.toBeDefined();
       getBranchWorkspaces.mockRestore();
     });
   });

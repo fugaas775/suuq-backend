@@ -7,10 +7,15 @@ import { RetailEntitlementsService } from '../retail/retail-entitlements.service
 import { RetailModule } from '../retail/entities/tenant-module-entitlement.entity';
 import {
   assertAllowedSelfServeServiceFormat,
-  buildSelfServeServiceFormatMetadata,
   getDefaultAllowedSelfServeServiceFormats,
 } from '../retail/self-serve-service-format.policy';
 import { POS_SELF_SERVE_TRIAL_SERVICE_FORMAT } from '../retail/pos-self-serve-trial.policy';
+
+/**
+ * Stamped on the POS_CORE entitlement so admin reporting can tell a self-served
+ * tenant from an admin-provisioned one without sniffing the free-text reason.
+ */
+export const POS_SELF_SERVE_PROVISIONING_SOURCE = 'POS_SELF_SERVE_AUTO_TRIAL';
 import { User } from '../users/entities/user.entity';
 import { UserRole } from '../auth/roles.enum';
 import { BranchStaffService } from './branch-staff.service';
@@ -117,7 +122,12 @@ export class PosPortalOnboardingService {
         {
           enabled: true,
           reason: 'Enabled during POS-S self-serve onboarding',
-          metadata: buildSelfServeServiceFormatMetadata(),
+          // Deliberately NOT buildSelfServeServiceFormatMetadata(): pinning the
+          // allow-list as it stood at signup froze tenants provisioned before a
+          // rollout flag flipped (resolveAllowedSelfServeServiceFormats prefers
+          // stored metadata over the live defaults), so they could never pick a
+          // newly-enabled format — including the one they were provisioned with.
+          metadata: { provisioningSource: POS_SELF_SERVE_PROVISIONING_SOURCE },
         },
       ),
       this.retailEntitlementsService.upsertModuleEntitlement(
@@ -251,7 +261,12 @@ export class PosPortalOnboardingService {
         {
           enabled: true,
           reason: 'Enabled during POS-S self-serve onboarding',
-          metadata: buildSelfServeServiceFormatMetadata(),
+          // Deliberately NOT buildSelfServeServiceFormatMetadata(): pinning the
+          // allow-list as it stood at signup froze tenants provisioned before a
+          // rollout flag flipped (resolveAllowedSelfServeServiceFormats prefers
+          // stored metadata over the live defaults), so they could never pick a
+          // newly-enabled format — including the one they were provisioned with.
+          metadata: { provisioningSource: POS_SELF_SERVE_PROVISIONING_SOURCE },
         },
       ),
       this.retailEntitlementsService.upsertModuleEntitlement(

@@ -174,9 +174,8 @@ describe('PosPortalOnboardingService', () => {
       RetailModule.POS_CORE,
       expect.objectContaining({
         enabled: true,
-        metadata: {
-          allowedSelfServeServiceFormats: ['RETAIL'],
-        },
+        // No pinned allow-list: the tenant tracks the live rollout defaults.
+        metadata: { provisioningSource: 'POS_SELF_SERVE_AUTO_TRIAL' },
       }),
     );
     expect(
@@ -260,20 +259,8 @@ describe('PosPortalOnboardingService', () => {
       RetailModule.POS_CORE,
       expect.objectContaining({
         enabled: true,
-        metadata: {
-          allowedSelfServeServiceFormats: [
-            'RETAIL',
-            'PHARMACY',
-            'GROCERY',
-            'BAKERY',
-            'LAUNDRY',
-            'BUTCHERY',
-            'GAS_STATION',
-            'ELECTRONICS',
-            'HOTEL',
-            'QSR',
-          ],
-        },
+        // No pinned allow-list: the tenant tracks the live rollout defaults.
+        metadata: { provisioningSource: 'POS_SELF_SERVE_AUTO_TRIAL' },
       }),
     );
   });

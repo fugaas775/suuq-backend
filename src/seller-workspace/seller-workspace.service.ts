@@ -2339,10 +2339,7 @@ export class SellerWorkspaceService {
       await branchRepo.update(branchId, updates);
       // Sync storeName to VendorStore whenever the branch name changes.
       if (dto.name !== undefined) {
-        await this.vendorStoresRepository.update(
-          { branchId },
-          { storeName: dto.name },
-        );
+        await this.syncVendorStoreFromBranch(branchId, { storeName: dto.name });
       }
     }
     const refreshed = await this.getBranchWorkspaces(userId);
@@ -2369,6 +2366,21 @@ export class SellerWorkspaceService {
       );
     }
     return updatedWorkspace;
+  }
+
+  /**
+   * Push branch fields the consumer storefront mirrors onto its VendorStore.
+   * Keep in step with BranchesService.syncVendorStore — that service is not
+   * available in SellerWorkspaceModule, so the two intentionally duplicate.
+   */
+  private async syncVendorStoreFromBranch(
+    branchId: number,
+    updates: { storeName?: string; serviceFormat?: string },
+  ): Promise<void> {
+    if (!Object.keys(updates).length) {
+      return;
+    }
+    await this.vendorStoresRepository.update({ branchId }, updates);
   }
 
   async updateBranchWorkspaceServiceFormat(
@@ -2410,23 +2422,34 @@ export class SellerWorkspaceService {
           module: RetailModule.POS_CORE,
         },
       });
+    const previousServiceFormat = branch.serviceFormat ?? null;
     const normalizedServiceFormat = assertAllowedSelfServeServiceFormat(
       dto.serviceFormat,
       'Branch service format update',
-      resolveAllowedSelfServeServiceFormats(
-        getPosCoreEntitlement([posCoreEntitlement].filter(Boolean)),
-      ),
+      // The branch's CURRENT format is always allowed: re-submitting what a
+      // branch already runs on must never fail, even if the rollout that
+      // enabled it has since been narrowed.
+      [
+        ...resolveAllowedSelfServeServiceFormats(
+          getPosCoreEntitlement([posCoreEntitlement].filter(Boolean)),
+        ),
+        ...(previousServiceFormat ? [previousServiceFormat] : []),
+      ],
     );
+    const formatChanged = previousServiceFormat !== normalizedServiceFormat;
     await this.sellerWorkspacesRepository.manager
       .getRepository(Branch)
-      .update(branchId, { serviceFormat: normalizedServiceFormat });
+      .update(branchId, {
+        serviceFormat: normalizedServiceFormat,
+        // The saved Home layout is per-format; keeping a QSR layout on a branch
+        // that just became a hotel leaves widgets that no longer apply. Null
+        // restores the new format's default.
+        ...(formatChanged ? { homeConfig: null } : {}),
+      });
     branch.serviceFormat = normalizedServiceFormat;
-    // Keep the consumer-facing VendorStore in sync so storefront listings
-    // (/api/v2/stores) reflect the new service format.
-    await this.vendorStoresRepository.update(
-      { branchId },
-      { serviceFormat: normalizedServiceFormat },
-    );
+    await this.syncVendorStoreFromBranch(branchId, {
+      serviceFormat: normalizedServiceFormat,
+    });
     const refreshed = await this.getBranchWorkspaces(userId);
     let updatedWorkspace = refreshed.items.find(
       (item) => item.branchId === branchId,

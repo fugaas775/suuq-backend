@@ -15,14 +15,23 @@ const EXTENDED_RETAIL_SELF_SERVE_SERVICE_FORMATS = [
   'GAS_STATION',
   'ELECTRONICS',
 ];
-// QSR is the format every brand-new signup is auto-provisioned with (see
-// pos-self-serve-trial.policy.ts), so it must be self-servable wherever HOTEL is.
-const HOSPITALITY_SELF_SERVE_SERVICE_FORMATS = new Set(['HOTEL', 'QSR']);
+// The non-retail formats POS-S offers in its self-serve picker
+// (SELF_SERVE_SERVICE_FORMAT_ORDER in pos-s/src/features/register/registerCatalog.js).
+// These two lists MUST stay in step: a format the picker offers but this policy
+// rejects fails at creation with a 400 the user cannot act on. QSR additionally
+// backs auto-provisioning (see pos-self-serve-trial.policy.ts).
+const HOSPITALITY_SELF_SERVE_SERVICE_FORMATS = new Set([
+  'HOTEL',
+  'QSR',
+  'CAFETERIA',
+  'PROPERTY_RENTAL',
+  'BARBER',
+  'PRINTING_PRESS',
+]);
 const HOSPITALITY_ENABLED_SELF_SERVE_SERVICE_FORMATS = [
   ...RETAIL_SELF_SERVE_SERVICE_FORMATS,
   ...EXTENDED_RETAIL_SELF_SERVE_SERVICE_FORMATS,
-  'HOTEL',
-  'QSR',
+  ...HOSPITALITY_SELF_SERVE_SERVICE_FORMATS,
 ];
 
 function expandRetailLinkedSelfServeServiceFormats(formats: string[]) {
