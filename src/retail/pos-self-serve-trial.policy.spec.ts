@@ -4,7 +4,9 @@ import {
 } from './entities/tenant-subscription.entity';
 import {
   getPosSelfServeTrialEndsAt,
+  isLapsedPosSelfServeTrial,
   isLivePosSelfServeTrial,
+  isPosSelfServeTrialPlan,
   isPosSelfServeTrialSubscription,
   POS_SELF_SERVE_TRIAL_DAYS,
   POS_SELF_SERVE_TRIAL_PLAN_CODE,
@@ -65,5 +67,43 @@ describe('pos self-serve trial policy', () => {
       ),
     ).toBe(false);
     expect(isLivePosSelfServeTrial(null)).toBe(false);
+  });
+  describe('predicate split (survives the cron persisting EXPIRED)', () => {
+    it('still recognises the plan once the row has been expired', () => {
+      const expired = buildSubscription({
+        status: TenantSubscriptionStatus.EXPIRED,
+        endsAt: new Date(Date.now() - 86_400_000),
+      });
+
+      // Status-based predicates stop matching...
+      expect(isPosSelfServeTrialSubscription(expired)).toBe(false);
+      expect(isLivePosSelfServeTrial(expired)).toBe(false);
+      // ...but "did this start life on the trial?" must not.
+      expect(isPosSelfServeTrialPlan(expired)).toBe(true);
+    });
+
+    it('answers lapsed the same before and after the sweep', () => {
+      const lapsedNotYetSwept = buildSubscription({
+        endsAt: new Date(Date.now() - 60_000),
+      });
+      const swept = buildSubscription({
+        status: TenantSubscriptionStatus.EXPIRED,
+        endsAt: new Date(Date.now() - 60_000),
+      });
+
+      expect(isLapsedPosSelfServeTrial(lapsedNotYetSwept)).toBe(true);
+      expect(isLapsedPosSelfServeTrial(swept)).toBe(true);
+    });
+
+    it('does not call a live trial lapsed, nor a converted row a trial', () => {
+      expect(isLapsedPosSelfServeTrial(buildSubscription())).toBe(false);
+      // A paid conversion overwrites planCode, so nothing matches any more.
+      const converted = buildSubscription({
+        planCode: 'POS_BRANCH_1M',
+        status: TenantSubscriptionStatus.ACTIVE,
+      });
+      expect(isPosSelfServeTrialPlan(converted)).toBe(false);
+      expect(isLapsedPosSelfServeTrial(converted)).toBe(false);
+    });
   });
 });

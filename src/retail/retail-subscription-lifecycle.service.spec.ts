@@ -59,10 +59,11 @@ describe('RetailSubscriptionLifecycleService', () => {
     expect(notificationsService.createAndDispatch).toHaveBeenCalledWith(
       expect.objectContaining({ userId: 900 }),
     );
-    // Idempotency flag persisted for this term end.
-    expect(sub.metadata?.renewalReminderSentForEndsAt).toBe(
-      sub.endsAt.toISOString(),
-    );
+    // Idempotency record persisted for this term end.
+    expect(sub.metadata?.lifecycleRemindersSent).toEqual({
+      endsAt: sub.endsAt.toISOString(),
+      milestones: [3],
+    });
   });
 
   it('does not re-send a reminder already sent for the same term end', async () => {
@@ -83,5 +84,152 @@ describe('RetailSubscriptionLifecycleService', () => {
 
     expect(sent).toBe(0);
     expect(notificationsService.createAndDispatch).not.toHaveBeenCalled();
+  });
+  const TRIAL_PLAN = 'POS_BRANCH_TRIAL_14D';
+
+  describe('free trials', () => {
+    it('expires a lapsed auto-trial so the paywall takes over', async () => {
+      const { service, subscriptionsRepo, tenantsRepo } = createService();
+      const sub = {
+        id: 3,
+        tenantId: 34,
+        branchId: 21,
+        planCode: TRIAL_PLAN,
+        status: TenantSubscriptionStatus.TRIAL,
+        endsAt: new Date('2026-06-01T00:00:00.000Z'),
+        metadata: null as Record<string, any> | null,
+      };
+      subscriptionsRepo.find.mockResolvedValueOnce([sub]);
+      tenantsRepo.findOne.mockResolvedValue({ id: 34, ownerUserId: 900 });
+
+      const count = await service.expireOverdueSubscriptions(now);
+
+      expect(count).toBe(1);
+      expect(sub.status).toBe(TenantSubscriptionStatus.EXPIRED);
+      // The query must ask for trial rows by PLAN CODE, never by status alone —
+      // a hand-set TRIAL row on another plan keeps its open-ended meaning.
+      expect(subscriptionsRepo.find).toHaveBeenCalledWith({
+        where: expect.arrayContaining([
+          expect.objectContaining({ planCode: TRIAL_PLAN }),
+        ]),
+      });
+    });
+
+    it('tells the owner once when their trial has ended', async () => {
+      const { service, subscriptionsRepo, tenantsRepo, notificationsService } =
+        createService();
+      const sub = {
+        id: 3,
+        tenantId: 34,
+        branchId: 21,
+        planCode: TRIAL_PLAN,
+        status: TenantSubscriptionStatus.TRIAL,
+        endsAt: new Date('2026-06-01T00:00:00.000Z'),
+        metadata: null as Record<string, any> | null,
+      };
+      subscriptionsRepo.find.mockResolvedValueOnce([sub]);
+      tenantsRepo.findOne.mockResolvedValue({ id: 34, ownerUserId: 900 });
+
+      await service.expireOverdueSubscriptions(now);
+
+      expect(notificationsService.createAndDispatch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: 900,
+          data: expect.objectContaining({ kind: 'POS_TRIAL_ENDED' }),
+        }),
+      );
+      expect(sub.metadata?.trialEndedNotifiedAt).toBeTruthy();
+    });
+
+    it('does not re-announce a trial end it already announced', async () => {
+      const { service, subscriptionsRepo, notificationsService } =
+        createService();
+      subscriptionsRepo.find.mockResolvedValueOnce([
+        {
+          id: 3,
+          tenantId: 34,
+          planCode: TRIAL_PLAN,
+          status: TenantSubscriptionStatus.TRIAL,
+          endsAt: new Date('2026-06-01T00:00:00.000Z'),
+          metadata: { trialEndedNotifiedAt: '2026-06-02T00:00:00.000Z' },
+        },
+      ]);
+
+      await service.expireOverdueSubscriptions(now);
+
+      expect(notificationsService.createAndDispatch).not.toHaveBeenCalled();
+    });
+
+    it('warns at 7, then 3, then 1 day — once each', async () => {
+      const endsAt = new Date('2026-06-16T00:00:00.000Z'); // 7 days out
+      const sub = {
+        id: 4,
+        tenantId: 34,
+        branchId: 21,
+        planCode: TRIAL_PLAN,
+        status: TenantSubscriptionStatus.TRIAL,
+        endsAt,
+        metadata: null as Record<string, any> | null,
+      };
+
+      async function runOn(day: string) {
+        const {
+          service,
+          subscriptionsRepo,
+          tenantsRepo,
+          notificationsService,
+        } = createService();
+        subscriptionsRepo.find.mockResolvedValueOnce([sub]);
+        tenantsRepo.findOne.mockResolvedValue({ id: 34, ownerUserId: 900 });
+        const sent = await service.sendUpcomingRenewalReminders(new Date(day));
+        return { sent, notificationsService };
+      }
+
+      const day7 = await runOn('2026-06-09T00:00:00.000Z');
+      expect(day7.sent).toBe(1);
+      expect(day7.notificationsService.createAndDispatch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            kind: 'POS_TRIAL_ENDING',
+            daysLeft: 7,
+          }),
+        }),
+      );
+
+      // Same day again: nothing new is due.
+      expect((await runOn('2026-06-09T00:00:00.000Z')).sent).toBe(0);
+      // Still nothing at 5 days out — the next milestone is 3.
+      expect((await runOn('2026-06-11T00:00:00.000Z')).sent).toBe(0);
+
+      const day3 = await runOn('2026-06-13T00:00:00.000Z');
+      expect(day3.sent).toBe(1);
+      expect(sub.metadata?.lifecycleRemindersSent?.milestones).toEqual([7, 3]);
+
+      const day1 = await runOn('2026-06-15T00:00:00.000Z');
+      expect(day1.sent).toBe(1);
+      expect(sub.metadata?.lifecycleRemindersSent?.milestones).toEqual([
+        7, 3, 1,
+      ]);
+      expect((await runOn('2026-06-15T00:00:00.000Z')).sent).toBe(0);
+    });
+
+    it('keeps a paid subscription on its single 3-day reminder', async () => {
+      const { service, subscriptionsRepo, tenantsRepo, notificationsService } =
+        createService();
+      const sub = {
+        id: 5,
+        tenantId: 34,
+        planCode: 'POS_BRANCH_1M',
+        status: TenantSubscriptionStatus.ACTIVE,
+        endsAt: new Date('2026-06-16T00:00:00.000Z'), // 7 days out
+        metadata: null as Record<string, any> | null,
+      };
+      subscriptionsRepo.find.mockResolvedValueOnce([sub]);
+      tenantsRepo.findOne.mockResolvedValue({ id: 34, ownerUserId: 900 });
+
+      // 7 days out is a trial-only milestone — a paid term stays quiet.
+      expect(await service.sendUpcomingRenewalReminders(now)).toBe(0);
+      expect(notificationsService.createAndDispatch).not.toHaveBeenCalled();
+    });
   });
 });

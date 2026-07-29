@@ -31,13 +31,54 @@ export function getPosSelfServeTrialEndsAt(startsAt: Date): Date {
   );
 }
 
-/** A subscription row provisioned by the auto-trial (live or lapsed). */
+/**
+ * This row was created by the auto-trial — whatever its status is NOW.
+ *
+ * Once the lifecycle cron persists a lapsed trial as EXPIRED (and once a paid
+ * conversion overwrites the row), status-based predicates stop matching it.
+ * Reporting and audit code that asks "did this workspace start life on the
+ * trial?" must use this one.
+ */
+export function isPosSelfServeTrialPlan(
+  subscription: TenantSubscription | null | undefined,
+): boolean {
+  return subscription?.planCode === POS_SELF_SERVE_TRIAL_PLAN_CODE;
+}
+
+/** Still on the unpaid trial — not yet converted, not yet expired. */
 export function isPosSelfServeTrialSubscription(
   subscription: TenantSubscription | null | undefined,
 ): boolean {
   return (
     subscription?.status === TenantSubscriptionStatus.TRIAL &&
-    subscription?.planCode === POS_SELF_SERVE_TRIAL_PLAN_CODE
+    isPosSelfServeTrialPlan(subscription)
+  );
+}
+
+/**
+ * The trial ran out. Answers the same before and after the cron persists
+ * EXPIRED, so callers do not change behaviour the night the sweep first runs.
+ */
+export function isLapsedPosSelfServeTrial(
+  subscription: TenantSubscription | null | undefined,
+  now: number = Date.now(),
+): boolean {
+  if (!isPosSelfServeTrialPlan(subscription)) {
+    return false;
+  }
+
+  if (subscription?.status === TenantSubscriptionStatus.EXPIRED) {
+    return true;
+  }
+
+  const endsAt = subscription?.endsAt
+    ? new Date(subscription.endsAt).getTime()
+    : null;
+
+  return (
+    subscription?.status === TenantSubscriptionStatus.TRIAL &&
+    endsAt != null &&
+    endsAt <= now
   );
 }
 
