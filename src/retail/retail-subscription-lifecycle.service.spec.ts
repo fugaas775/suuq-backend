@@ -9,15 +9,30 @@ function createService() {
   const tenantsRepo = {
     findOne: jest.fn(),
   };
+  const branchesRepo = {
+    findOne: jest.fn(async () => ({ id: 21, name: 'Bole Bites' })),
+  };
   const notificationsService = {
     createAndDispatch: jest.fn(async () => undefined),
+  };
+  const emailService = {
+    sendPosTrialReminderEmail: jest.fn(async () => undefined),
   };
   const service = new RetailSubscriptionLifecycleService(
     subscriptionsRepo as any,
     tenantsRepo as any,
+    branchesRepo as any,
     notificationsService as any,
+    emailService as any,
   );
-  return { service, subscriptionsRepo, tenantsRepo, notificationsService };
+  return {
+    service,
+    subscriptionsRepo,
+    tenantsRepo,
+    branchesRepo,
+    notificationsService,
+    emailService,
+  };
 }
 
 describe('RetailSubscriptionLifecycleService', () => {
@@ -230,6 +245,157 @@ describe('RetailSubscriptionLifecycleService', () => {
       // 7 days out is a trial-only milestone — a paid term stays quiet.
       expect(await service.sendUpcomingRenewalReminders(now)).toBe(0);
       expect(notificationsService.createAndDispatch).not.toHaveBeenCalled();
+    });
+  });
+  describe('reaching an owner who is not in the app', () => {
+    const TRIAL_PLAN = 'POS_BRANCH_TRIAL_14D';
+
+    it('emails the owner at each trial milestone, not just in-app', async () => {
+      const { service, subscriptionsRepo, tenantsRepo, emailService } =
+        createService();
+      const endsAt = new Date('2026-06-16T00:00:00.000Z');
+      subscriptionsRepo.find.mockResolvedValueOnce([
+        {
+          id: 4,
+          tenantId: 34,
+          branchId: 21,
+          planCode: TRIAL_PLAN,
+          status: TenantSubscriptionStatus.TRIAL,
+          endsAt,
+          metadata: null as Record<string, any> | null,
+        },
+      ]);
+      tenantsRepo.findOne.mockResolvedValue({
+        id: 34,
+        ownerUserId: 900,
+        owner: { email: 'owner@example.com' },
+      });
+
+      await service.sendUpcomingRenewalReminders(
+        new Date('2026-06-09T00:00:00.000Z'),
+      );
+
+      expect(emailService.sendPosTrialReminderEmail).toHaveBeenCalledWith(
+        expect.objectContaining({
+          to: 'owner@example.com',
+          branchName: 'Bole Bites',
+          branchId: 21,
+          daysLeft: 7,
+        }),
+      );
+    });
+
+    it('emails the trial-ended notice when the sweep closes a branch', async () => {
+      const { service, subscriptionsRepo, tenantsRepo, emailService } =
+        createService();
+      subscriptionsRepo.find.mockResolvedValueOnce([
+        {
+          id: 3,
+          tenantId: 34,
+          branchId: 21,
+          planCode: TRIAL_PLAN,
+          status: TenantSubscriptionStatus.TRIAL,
+          endsAt: new Date('2026-06-01T00:00:00.000Z'),
+          metadata: null as Record<string, any> | null,
+        },
+      ]);
+      tenantsRepo.findOne.mockResolvedValue({
+        id: 34,
+        ownerUserId: 900,
+        owner: { email: 'owner@example.com' },
+      });
+
+      await service.expireOverdueSubscriptions(now);
+
+      expect(emailService.sendPosTrialReminderEmail).toHaveBeenCalledWith(
+        expect.objectContaining({ hasEnded: true, daysLeft: 0 }),
+      );
+    });
+
+    it('falls back to the tenant billing address when the owner has no account email', async () => {
+      const { service, subscriptionsRepo, tenantsRepo, emailService } =
+        createService();
+      subscriptionsRepo.find.mockResolvedValueOnce([
+        {
+          id: 3,
+          tenantId: 34,
+          branchId: 21,
+          planCode: TRIAL_PLAN,
+          status: TenantSubscriptionStatus.TRIAL,
+          endsAt: new Date('2026-06-01T00:00:00.000Z'),
+          metadata: null as Record<string, any> | null,
+        },
+      ]);
+      tenantsRepo.findOne.mockResolvedValue({
+        id: 34,
+        ownerUserId: 900,
+        owner: null,
+        billingEmail: 'billing@example.com',
+      });
+
+      await service.expireOverdueSubscriptions(now);
+
+      expect(emailService.sendPosTrialReminderEmail).toHaveBeenCalledWith(
+        expect.objectContaining({ to: 'billing@example.com' }),
+      );
+    });
+
+    it('still expires the row and notifies in-app when the email fails', async () => {
+      const {
+        service,
+        subscriptionsRepo,
+        tenantsRepo,
+        notificationsService,
+        emailService,
+      } = createService();
+      const sub = {
+        id: 3,
+        tenantId: 34,
+        branchId: 21,
+        planCode: TRIAL_PLAN,
+        status: TenantSubscriptionStatus.TRIAL,
+        endsAt: new Date('2026-06-01T00:00:00.000Z'),
+        metadata: null as Record<string, any> | null,
+      };
+      subscriptionsRepo.find.mockResolvedValueOnce([sub]);
+      tenantsRepo.findOne.mockResolvedValue({
+        id: 34,
+        ownerUserId: 900,
+        owner: { email: 'owner@example.com' },
+      });
+      emailService.sendPosTrialReminderEmail.mockRejectedValue(
+        new Error('mailer down'),
+      );
+
+      await expect(service.expireOverdueSubscriptions(now)).resolves.toBe(1);
+
+      expect(sub.status).toBe(TenantSubscriptionStatus.EXPIRED);
+      expect(notificationsService.createAndDispatch).toHaveBeenCalled();
+    });
+
+    it('does not email a paid renewal — that keeps the in-app nudge only', async () => {
+      const { service, subscriptionsRepo, tenantsRepo, emailService } =
+        createService();
+      subscriptionsRepo.find.mockResolvedValueOnce([
+        {
+          id: 5,
+          tenantId: 34,
+          branchId: 21,
+          planCode: 'POS_BRANCH_1M',
+          status: TenantSubscriptionStatus.ACTIVE,
+          endsAt: new Date('2026-06-10T00:00:00.000Z'),
+          metadata: null as Record<string, any> | null,
+        },
+      ]);
+      tenantsRepo.findOne.mockResolvedValue({
+        id: 34,
+        ownerUserId: 900,
+        owner: { email: 'owner@example.com' },
+      });
+
+      await service.sendUpcomingRenewalReminders(now);
+
+      expect(emailService.sendPosTrialReminderEmail).not.toHaveBeenCalled();
     });
   });
 });

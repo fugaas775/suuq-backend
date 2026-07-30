@@ -15,6 +15,7 @@ import {
   BranchStaffRole,
 } from '../branch-staff/entities/branch-staff-assignment.entity';
 import { Branch } from '../branches/entities/branch.entity';
+import { BranchHomeConfig } from '../branches/entities/branch-home-config.type';
 import { BranchInventory } from '../branches/entities/branch-inventory.entity';
 import { Order, PaymentStatus } from '../orders/entities/order.entity';
 import {
@@ -2334,7 +2335,17 @@ export class SellerWorkspaceService {
     if (dto.checkoutPolicyTime !== undefined)
       updates.checkoutPolicyTime = dto.checkoutPolicyTime;
     if (dto.logoUrl !== undefined) updates.logoUrl = dto.logoUrl;
-    if (dto.homeConfig !== undefined) updates.homeConfig = dto.homeConfig;
+    if (dto.homeConfig !== undefined) {
+      // firstRun is server-owned, and the client's Home normalizer only carries
+      // the layout — so a layout save must not erase the milestones.
+      updates.homeConfig = dto.homeConfig
+        ? {
+            ...dto.homeConfig,
+            firstRun:
+              branch.homeConfig?.firstRun ?? dto.homeConfig.firstRun ?? null,
+          }
+        : dto.homeConfig;
+    }
     if (Object.keys(updates).length > 0) {
       await branchRepo.update(branchId, updates);
       // Sync storeName to VendorStore whenever the branch name changes.
@@ -2437,14 +2448,28 @@ export class SellerWorkspaceService {
       ],
     );
     const formatChanged = previousServiceFormat !== normalizedServiceFormat;
+    // Reaching this endpoint IS the owner confirming what the branch sells —
+    // including when they keep the format they were auto-provisioned with, which
+    // is why the client calls it even for a no-op. Durable and cross-device,
+    // unlike the localStorage flag it replaces.
+    const firstRun = {
+      ...(branch.homeConfig?.firstRun ?? {}),
+      businessTypeConfirmedAt: new Date().toISOString(),
+    };
     await this.sellerWorkspacesRepository.manager
       .getRepository(Branch)
       .update(branchId, {
         serviceFormat: normalizedServiceFormat,
         // The saved Home layout is per-format; keeping a QSR layout on a branch
-        // that just became a hotel leaves widgets that no longer apply. Null
-        // restores the new format's default.
-        ...(formatChanged ? { homeConfig: null } : {}),
+        // that just became a hotel leaves widgets that no longer apply. Reset the
+        // layout but carry the milestones over.
+        // A config carrying firstRun but NO `widgets` key still means "this branch
+        // has never chosen a layout" — the client falls back to the per-format
+        // default. That is what lets the milestone live here without pinning an
+        // empty Home on a branch that never customized one.
+        homeConfig: formatChanged
+          ? { firstRun }
+          : { ...(branch.homeConfig ?? {}), firstRun },
       });
     branch.serviceFormat = normalizedServiceFormat;
     await this.syncVendorStoreFromBranch(branchId, {

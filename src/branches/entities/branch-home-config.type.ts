@@ -36,6 +36,23 @@ export interface BranchHomeBranding {
   accent?: string | null;
 }
 
+/**
+ * First-run milestones for this branch. Server-owned: written as a side effect
+ * of the actions themselves, never sent up by the client, and preserved across
+ * Home layout saves (which only carry the layout).
+ *
+ * It rides on `homeConfig` because that is an existing per-branch jsonb column
+ * already threaded onto the session — no migration, no new column.
+ */
+export interface BranchHomeFirstRun {
+  /**
+   * When the owner confirmed what this branch sells. Auto-provisioned branches
+   * all start on QSR, so the format alone cannot distinguish "confirmed" from
+   * "never looked at it".
+   */
+  businessTypeConfirmedAt?: string | null;
+}
+
 export interface BranchHomeConfig {
   version: number;
   /** Ordered — the branch's chosen widget order and on/off state. */
@@ -44,4 +61,5 @@ export interface BranchHomeConfig {
   // Optional: an unset welcome/branding is treated the same as null (default).
   welcome?: BranchHomeWelcome | null;
   branding?: BranchHomeBranding | null;
+  firstRun?: BranchHomeFirstRun | null;
 }

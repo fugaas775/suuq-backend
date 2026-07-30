@@ -12,6 +12,7 @@ import { RolesGuard } from '../auth/roles.guard';
 import { BranchStaffAssignment } from '../branch-staff/entities/branch-staff-assignment.entity';
 import { EbirrModule } from '../ebirr/ebirr.module';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { EmailModule } from '../email/email.module';
 import { PosSyncJob } from '../pos-sync/entities/pos-sync-job.entity';
 import { PurchaseOrder } from '../purchase-orders/entities/purchase-order.entity';
 import { PurchaseOrderReceiptEvent } from '../purchase-orders/entities/purchase-order-receipt-event.entity';
@@ -57,6 +58,8 @@ import { AdminEquityPartnersController } from './admin-equity-partners.controlle
     RedisModule,
     EbirrModule,
     NotificationsModule,
+    // The subscription lifecycle emails trial owners off-app.
+    EmailModule,
     SuppliersModule,
     TypeOrmModule.forFeature([
       RetailTenant,

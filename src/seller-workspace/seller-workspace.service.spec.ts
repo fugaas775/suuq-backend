@@ -1360,11 +1360,14 @@ describe('SellerWorkspaceService', () => {
         ['SUPER_ADMIN'],
       );
 
-      expect(branchRepo.update).toHaveBeenCalledWith(11, {
-        serviceFormat: 'RETAIL',
-        // The saved Home layout is per-format, so a real change resets it.
-        homeConfig: null,
-      });
+      expect(branchRepo.update).toHaveBeenCalledWith(
+        11,
+        expect.objectContaining({ serviceFormat: 'RETAIL' }),
+      );
+      // The saved Home layout is per-format, so a real change drops it (see the
+      // milestone tests below for what survives).
+      const [, updates] = branchRepo.update.mock.calls[0];
+      expect(updates.homeConfig.widgets).toBeUndefined();
       expect(result).toBe(workspaceItem);
       // The admin's own workspace list has no such branch — the owner's does.
       expect(getBranchWorkspaces).toHaveBeenCalledWith(999);
@@ -1391,11 +1394,14 @@ describe('SellerWorkspaceService', () => {
         [],
       );
 
-      expect(branchRepo.update).toHaveBeenCalledWith(11, {
-        serviceFormat: 'RETAIL',
-        // The saved Home layout is per-format, so a real change resets it.
-        homeConfig: null,
-      });
+      expect(branchRepo.update).toHaveBeenCalledWith(
+        11,
+        expect.objectContaining({ serviceFormat: 'RETAIL' }),
+      );
+      // The saved Home layout is per-format, so a real change drops it (see the
+      // milestone tests below for what survives).
+      const [, updates] = branchRepo.update.mock.calls[0];
+      expect(updates.homeConfig.widgets).toBeUndefined();
       getBranchWorkspaces.mockRestore();
     });
 
@@ -1418,9 +1424,13 @@ describe('SellerWorkspaceService', () => {
         [],
       );
 
-      expect(branchRepo.update).toHaveBeenCalledWith(11, {
-        serviceFormat: 'QSR',
-      });
+      expect(branchRepo.update).toHaveBeenCalledWith(
+        11,
+        expect.objectContaining({ serviceFormat: 'QSR' }),
+      );
+      // An unchanged format keeps the layout it already had.
+      const [, updates] = branchRepo.update.mock.calls[0];
+      expect(updates.homeConfig.widgets).toBeUndefined();
       getBranchWorkspaces.mockRestore();
     });
 
@@ -1447,6 +1457,118 @@ describe('SellerWorkspaceService', () => {
           [],
         ),
       ).resolves.toBeDefined();
+      getBranchWorkspaces.mockRestore();
+    });
+
+    it('records the confirmation server-side, even when the format is unchanged', async () => {
+      const branchRepo = stubBranchRepo({
+        id: 11,
+        ownerId: 41,
+        retailTenantId: 13,
+        serviceFormat: 'QSR',
+        homeConfig: null,
+        retailTenant: { owner: { id: 41 } },
+      });
+      const getBranchWorkspaces = jest
+        .spyOn(service, 'getBranchWorkspaces')
+        .mockResolvedValue({ items: [{ branchId: 11 }] } as any);
+
+      await service.updateBranchWorkspaceServiceFormat(
+        41,
+        11,
+        { serviceFormat: 'QSR' },
+        [],
+      );
+
+      const [, updates] = branchRepo.update.mock.calls[0];
+      expect(updates.homeConfig.firstRun.businessTypeConfirmedAt).toEqual(
+        expect.any(String),
+      );
+      // No layout was invented for a branch that never customized Home: without
+      // a `widgets` key the client still renders the per-format default.
+      expect(updates.homeConfig.widgets).toBeUndefined();
+    });
+
+    it('keeps the milestone when a format change resets the Home layout', async () => {
+      const branchRepo = stubBranchRepo({
+        id: 11,
+        ownerId: 41,
+        retailTenantId: 13,
+        serviceFormat: 'QSR',
+        homeConfig: {
+          version: 1,
+          widgets: [{ id: 'sales', enabled: true }],
+          quickLinks: [],
+          firstRun: { businessTypeConfirmedAt: '2026-07-01T00:00:00.000Z' },
+        },
+        retailTenant: { owner: { id: 41 } },
+      });
+      const getBranchWorkspaces = jest
+        .spyOn(service, 'getBranchWorkspaces')
+        .mockResolvedValue({ items: [{ branchId: 11 }] } as any);
+
+      await service.updateBranchWorkspaceServiceFormat(
+        41,
+        11,
+        { serviceFormat: 'RETAIL' },
+        [],
+      );
+
+      const [, updates] = branchRepo.update.mock.calls[0];
+      // The QSR layout is dropped...
+      expect(updates.homeConfig.widgets).toBeUndefined();
+      // ...but the first-run history survives, re-stamped with this confirmation.
+      expect(updates.homeConfig.firstRun.businessTypeConfirmedAt).not.toBe(
+        '2026-07-01T00:00:00.000Z',
+      );
+      getBranchWorkspaces.mockRestore();
+    });
+
+    it('does not let a Home layout save erase the milestone', async () => {
+      const branchRepo = {
+        findOne: jest.fn().mockResolvedValue({
+          id: 11,
+          ownerId: 41,
+          retailTenantId: 13,
+          serviceFormat: 'QSR',
+          homeConfig: {
+            version: 1,
+            widgets: [],
+            quickLinks: [],
+            firstRun: { businessTypeConfirmedAt: '2026-07-01T00:00:00.000Z' },
+          },
+          retailTenant: { owner: { id: 41 } },
+        }),
+        update: jest.fn().mockResolvedValue(undefined),
+      };
+      sellerWorkspacesRepository.manager.getRepository.mockImplementation(
+        (entity: any) => (entity === Branch ? branchRepo : {}),
+      );
+      const getBranchWorkspaces = jest
+        .spyOn(service, 'getBranchWorkspaces')
+        .mockResolvedValue({ items: [{ branchId: 11 }] } as any);
+
+      // The client's Home normalizer only carries the layout.
+      await service.updateBranchWorkspace(
+        41,
+        11,
+        {
+          homeConfig: {
+            version: 1,
+            widgets: [{ id: 'sales', enabled: true }],
+            quickLinks: [],
+          },
+        },
+        [],
+      );
+
+      const [, updates] = branchRepo.update.mock.calls[0];
+      expect(updates.homeConfig.widgets).toEqual([
+        { id: 'sales', enabled: true },
+      ]);
+      expect(updates.homeConfig.firstRun).toEqual({
+        businessTypeConfirmedAt: '2026-07-01T00:00:00.000Z',
+      });
       getBranchWorkspaces.mockRestore();
     });
   });

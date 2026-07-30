@@ -93,6 +93,20 @@ class HomeBrandingDto {
   accent?: string | null;
 }
 
+/**
+ * First-run milestones. Server-owned — a client may echo it back on a layout
+ * save, but the service preserves the stored value either way, so nothing here
+ * is trusted from the request.
+ */
+class HomeFirstRunDto {
+  @Transform(({ value }) => trimString(value))
+  @IsOptional()
+  @ValidateIf((o) => o.businessTypeConfirmedAt !== null)
+  @IsString()
+  @MaxLength(40)
+  businessTypeConfirmedAt?: string | null;
+}
+
 // The whole branch Home layout. Array sizes are capped because this blob ships on
 // the login payload for EVERY branch a user can access, so an unbounded config
 // would bloat every sign-in.
@@ -122,6 +136,11 @@ export class BranchHomeConfigDto {
   @ValidateNested()
   @Type(() => HomeBrandingDto)
   branding?: HomeBrandingDto | null;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => HomeFirstRunDto)
+  firstRun?: HomeFirstRunDto | null;
 }
 
 export class UpdateBranchWorkspaceDto {

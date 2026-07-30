@@ -13,6 +13,9 @@ import {
 } from './pos-self-serve-trial.policy';
 import { NotificationsService } from '../notifications/notifications.service';
 import { NotificationType } from '../notifications/entities/notification.entity';
+import { EmailService } from '../email/email.service';
+import { Branch } from '../branches/entities/branch.entity';
+import { POS_BRANCH_SUBSCRIPTION_MONTHLY_EQUIVALENT } from '../branch-staff/pos-workspace-pricing';
 
 /**
  * How many days before a term ends we warn the owner.
@@ -52,7 +55,10 @@ export class RetailSubscriptionLifecycleService {
     private readonly subscriptionsRepo: Repository<TenantSubscription>,
     @InjectRepository(RetailTenant)
     private readonly tenantsRepo: Repository<RetailTenant>,
+    @InjectRepository(Branch)
+    private readonly branchesRepo: Repository<Branch>,
     private readonly notificationsService: NotificationsService,
+    private readonly emailService: EmailService,
   ) {}
 
   @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
@@ -139,6 +145,14 @@ export class RetailSubscriptionLifecycleService {
         },
       });
 
+      await this.sendTrialEmail({
+        tenantId: sub.tenantId,
+        branchId: sub.branchId ?? null,
+        endsAt: sub.endsAt ?? new Date(),
+        daysLeft: 0,
+        hasEnded: true,
+      });
+
       sub.metadata = {
         ...meta,
         trialEndedNotifiedAt: new Date().toISOString(),
@@ -204,6 +218,15 @@ export class RetailSubscriptionLifecycleService {
         },
       });
 
+      if (isTrial) {
+        await this.sendTrialEmail({
+          tenantId: sub.tenantId,
+          branchId: sub.branchId ?? null,
+          endsAt: sub.endsAt,
+          daysLeft: milestone,
+        });
+      }
+
       sub.metadata = {
         ...meta,
         lifecycleRemindersSent: {
@@ -261,5 +284,71 @@ export class RetailSubscriptionLifecycleService {
   private async resolveOwnerUserId(tenantId: number): Promise<number | null> {
     const tenant = await this.tenantsRepo.findOne({ where: { id: tenantId } });
     return tenant?.ownerUserId ?? null;
+  }
+
+  /**
+   * Where to reach the owner off-app. The owner's account email first, then the
+   * tenant's billing email — a tenant can be billed to an address that is not
+   * anybody's login.
+   */
+  private async resolveOwnerContact(
+    tenantId: number,
+  ): Promise<{ userId: number | null; email: string | null }> {
+    const tenant = await this.tenantsRepo.findOne({
+      where: { id: tenantId },
+      relations: { owner: true },
+    });
+
+    return {
+      userId: tenant?.ownerUserId ?? null,
+      email:
+        tenant?.owner?.email?.trim() || tenant?.billingEmail?.trim() || null,
+    };
+  }
+
+  private async resolveBranchName(branchId: number | null): Promise<string> {
+    if (!branchId) {
+      return 'your branch';
+    }
+    const branch = await this.branchesRepo.findOne({
+      where: { id: branchId },
+      select: { id: true, name: true },
+    });
+    return branch?.name?.trim() || `Branch #${branchId}`;
+  }
+
+  /**
+   * Email is best-effort: a bounced or misconfigured mailer must never stop the
+   * lifecycle pass (which also persists expiry) or the in-app notification.
+   */
+  private async sendTrialEmail(params: {
+    tenantId: number;
+    branchId: number | null;
+    endsAt: Date;
+    daysLeft: number;
+    hasEnded?: boolean;
+  }): Promise<void> {
+    try {
+      const contact = await this.resolveOwnerContact(params.tenantId);
+      if (!contact.email) {
+        return;
+      }
+
+      await this.emailService.sendPosTrialReminderEmail({
+        to: contact.email,
+        branchName: await this.resolveBranchName(params.branchId),
+        branchId: params.branchId ?? 0,
+        endsAt: params.endsAt,
+        daysLeft: params.daysLeft,
+        amount: POS_BRANCH_SUBSCRIPTION_MONTHLY_EQUIVALENT,
+        hasEnded: params.hasEnded,
+      });
+    } catch (error) {
+      this.logger.warn(
+        `Trial email for tenant #${params.tenantId} failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
   }
 }
