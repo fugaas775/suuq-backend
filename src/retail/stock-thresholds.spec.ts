@@ -2,7 +2,9 @@ import {
   getDefaultStockThresholds,
   resolveEffectiveStockStatus,
   FALLBACK_STOCK_THRESHOLDS,
+  STOCK_THRESHOLD_DEFAULTS,
 } from './stock-thresholds';
+import { SellerBranchServiceFormat } from '../seller-workspace/dto/create-seller-branch-workspace.dto';
 
 describe('getDefaultStockThresholds', () => {
   it('returns bespoke defaults per format (case-insensitive)', () => {
@@ -21,6 +23,74 @@ describe('getDefaultStockThresholds', () => {
       FALLBACK_STOCK_THRESHOLDS,
     );
     expect(getDefaultStockThresholds(null)).toEqual(FALLBACK_STOCK_THRESHOLDS);
+  });
+});
+
+/**
+ * Drift guard for the frontend mirror.
+ *
+ * PRINTING_PRESS shipped with bespoke thresholds on the frontend and NO entry
+ * here, so it silently fell through to FALLBACK on this side — invisible to
+ * every existing test because falling back is also the correct behaviour for a
+ * genuinely unknown format. There is no way to import the frontend SSOT from
+ * this repo, so the invariant is enforced against the service-format enum
+ * instead: every format POS-S can create must be a DELIBERATE choice here,
+ * either bespoke or explicitly listed as intentionally-fallback.
+ *
+ * Adding a format to the enum without touching this file now fails the suite.
+ * When it does: check pos-s `src/features/stock-health/stockThresholds.js` and
+ * either mirror its numbers or add the format to INTENTIONALLY_FALLBACK below.
+ */
+const INTENTIONALLY_FALLBACK: ReadonlySet<string> = new Set([
+  // Retail-shaped formats that share RETAIL's 3/6/12 — the fallback IS their
+  // value, and the frontend map likewise gives them no bespoke entry.
+  'PHARMACY',
+  'GROCERY',
+  'BUTCHERY',
+  'GAS_STATION',
+  'ELECTRONICS',
+]);
+
+describe('stock threshold defaults mirror the frontend SSOT', () => {
+  it('gives every POS-S service format a deliberate threshold', () => {
+    const undecided = Object.values(SellerBranchServiceFormat).filter(
+      (format) =>
+        !STOCK_THRESHOLD_DEFAULTS[format] &&
+        !INTENTIONALLY_FALLBACK.has(format),
+    );
+    expect(undecided).toEqual([]);
+  });
+
+  it('pins the numbers the frontend applies to the same raw fields', () => {
+    // Hand-mirrored from pos-s STOCK_THRESHOLD_DEFAULTS. If a value here is
+    // edited without editing the frontend (or vice versa) the two sides stop
+    // agreeing on an un-configured SKU's status and the surfaces contradict.
+    expect(STOCK_THRESHOLD_DEFAULTS).toEqual({
+      RETAIL: { safetyStock: 3, reorderPoint: 6, parLevel: 12 },
+      QSR: { safetyStock: 5, reorderPoint: 10, parLevel: 20 },
+      CAFETERIA: { safetyStock: 5, reorderPoint: 10, parLevel: 20 },
+      BAKERY: { safetyStock: 5, reorderPoint: 10, parLevel: 20 },
+      HOTEL: { safetyStock: 4, reorderPoint: 8, parLevel: 16 },
+      LAUNDRY: { safetyStock: 3, reorderPoint: 6, parLevel: 12 },
+      BARBER: { safetyStock: 3, reorderPoint: 6, parLevel: 12 },
+      PROPERTY_RENTAL: { safetyStock: 2, reorderPoint: 4, parLevel: 8 },
+      PRINTING_PRESS: { safetyStock: 6, reorderPoint: 12, parLevel: 24 },
+    });
+  });
+
+  it('estimates a print shop on the deeper band, not the retail fallback', () => {
+    // 8 reels: HEALTHY under the old fallback (reorder 6), LOW_STOCK now —
+    // matching what Stock Health already showed the operator.
+    const sig = resolveEffectiveStockStatus(
+      {
+        quantityOnHand: 8,
+        availableToSell: 8,
+        safetyStock: 0,
+        reorderPoint: 0,
+      },
+      'PRINTING_PRESS',
+    );
+    expect(sig).toMatchObject({ stockStatus: 'LOW_STOCK', estimated: true });
   });
 });
 

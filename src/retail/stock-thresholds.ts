@@ -32,6 +32,14 @@ export const STOCK_THRESHOLD_DEFAULTS: Record<string, StockThresholdDefaults> =
     LAUNDRY: { safetyStock: 3, reorderPoint: 6, parLevel: 12 },
     BARBER: { safetyStock: 3, reorderPoint: 6, parLevel: 12 },
     PROPERTY_RENTAL: { safetyStock: 2, reorderPoint: 4, parLevel: 8 },
+    // Print shops hold bulk consumables (paper reels, ink, toner, vinyl) with
+    // long supplier lead times, so they need deeper cover than a service
+    // counter. Missing here until 2026-07-31 while the frontend already had it:
+    // PRINTING_PRESS fell through to FALLBACK (3/6/12) on this side only, which
+    // broke the idempotence the header above promises — the same un-configured
+    // SKU at 8 units read HEALTHY from the backend estimate (Home dashboard,
+    // Network summary) and LOW_STOCK once Stock Health re-derived it.
+    PRINTING_PRESS: { safetyStock: 6, reorderPoint: 12, parLevel: 24 },
   };
 
 export const FALLBACK_STOCK_THRESHOLDS: StockThresholdDefaults = {
