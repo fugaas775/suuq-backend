@@ -13,20 +13,6 @@ import {
   PosWorkspaceActivationCandidate,
 } from './branch-staff.service';
 
-/**
- * What `getPayableActivationCandidate` needs from either source: a closed
- * workspace awaiting activation, or an open branch on a convertible free trial.
- */
-type PayableActivationTarget = Pick<
-  PosWorkspaceActivationCandidate | PosBranchSummary,
-  | 'branchId'
-  | 'branchName'
-  | 'serviceFormat'
-  | 'retailTenantId'
-  | 'isOwner'
-  | 'role'
-  | 'canPayNow'
-> & { workspaceStatus: string };
 import { RetailEntitlementsService } from '../retail/retail-entitlements.service';
 import { EbirrService } from '../ebirr/ebirr.service';
 import { EmailService } from '../email/email.service';
@@ -55,6 +41,21 @@ import {
   findPosBranchSubscriptionOption,
   requirePosBranchSubscriptionOption,
 } from './pos-workspace-pricing';
+
+/**
+ * What `getPayableActivationCandidate` needs from either source: a closed
+ * workspace awaiting activation, or an open branch on a convertible free trial.
+ */
+type PayableActivationTarget = Pick<
+  PosWorkspaceActivationCandidate | PosBranchSummary,
+  | 'branchId'
+  | 'branchName'
+  | 'serviceFormat'
+  | 'retailTenantId'
+  | 'isOwner'
+  | 'role'
+  | 'canPayNow'
+> & { workspaceStatus: string };
 
 const POS_WORKSPACE_REFERENCE_PREFIX = 'POSACT';
 export { POS_WORKSPACE_REFERENCE_PREFIX };
