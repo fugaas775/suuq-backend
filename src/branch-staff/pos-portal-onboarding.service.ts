@@ -296,6 +296,17 @@ export class PosPortalOnboardingService {
     return { tenantId: tenant.id, branchId: branch.id };
   }
 
+  /**
+   * Names the auto-provisioned workspace after the account, and nothing else.
+   *
+   * This deliberately carries NO business-type flavour. The branch is created as
+   * QSR only because the provisioner has to pick something before the owner has
+   * told us anything (they re-lane it from the first-run checklist), so baking
+   * the guess into the name misdescribes every non-food signup. A printing press
+   * owner once landed in "Asal Printing's Kitchen" and reasonably read it as
+   * being in the wrong account — the name was the only thing that looked wrong,
+   * which sent the diagnosis down the wrong path entirely.
+   */
   private resolveDefaultWorkspaceName(user: User): string {
     const candidates = [
       (user as { displayName?: string | null }).displayName,
@@ -306,7 +317,7 @@ export class PosPortalOnboardingService {
       .map((value) => String(value || '').trim())
       .find((value) => value.length > 0);
 
-    return base ? `${base}'s Kitchen`.slice(0, 120) : 'My QSR';
+    return base ? base.slice(0, 120) : 'My Business';
   }
 
   private async linkSellerWorkspaceTenant(

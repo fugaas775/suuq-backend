@@ -7,6 +7,7 @@ import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, ILike, Repository } from 'typeorm';
 import { Branch } from './entities/branch.entity';
 import { CreateBranchDto } from './dto/create-branch.dto';
+import { User } from '../users/entities/user.entity';
 import { VendorStore } from '../vendor/entities/vendor-store.entity';
 
 export interface AdminListBranchesQuery {
@@ -15,6 +16,31 @@ export interface AdminListBranchesQuery {
   isActive?: boolean;
   page?: number;
   limit?: number;
+}
+
+/**
+ * True when a branch's owner account has no way to authenticate at all — no
+ * Google link, no Apple link, no password. Admin-provisioned owners start in
+ * exactly this state: the row is created with the email the admin typed, and
+ * `googleId` is only attached the first time someone signs in with that
+ * address.
+ *
+ * It is worth surfacing because the failure it predicts is silent and
+ * expensive. If the owner signs in with a *different* address than the one the
+ * branch was provisioned for, that sign-in is a first-time signup with no
+ * branches, so `createTrialWorkspaceForNewUser` hands them a brand-new tenant
+ * and trial branch of their own. They then report "my branch shows the wrong
+ * name" while actually sitting in a second, unrelated workspace, and the branch
+ * an admin prepared stays untouched with nobody able to open it. (Asal
+ * Printing, 2026-08-01: branch #108 vs auto-provisioned #110.)
+ *
+ * Deliberately NOT keyed on `User.lastLoginAt` — that column exists but is
+ * never written by any login path (verified null for all 1799 prod users), so
+ * it would flag every account on the platform.
+ */
+function ownerHasNoCredentials(owner?: User | null): boolean {
+  if (!owner) return false;
+  return !owner.googleId && !owner.appleId && !owner.password;
 }
 
 @Injectable()
@@ -75,7 +101,14 @@ export class BranchesService {
     ]);
 
     return {
-      items,
+      // Mutated in place rather than spread into a plain object on purpose: the
+      // global ClassSerializerInterceptor relies on these staying Branch
+      // instances so the nested owner's @Exclude()'d password is still stripped.
+      items: items.map((branch) =>
+        Object.assign(branch, {
+          ownerNeverSignedIn: ownerHasNoCredentials(branch.owner),
+        }),
+      ),
       total,
       page,
       limit,

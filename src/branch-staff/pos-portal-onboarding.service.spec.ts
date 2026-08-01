@@ -315,7 +315,7 @@ describe('PosPortalOnboardingService', () => {
       expect(result).toEqual({ tenantId: 31, branchId: 21 });
       expect(branchesRepository.save).toHaveBeenCalledWith(
         expect.objectContaining({
-          name: "Abdi's Kitchen",
+          name: 'Abdi',
           serviceFormat: 'QSR',
           ownerId: 9,
           retailTenantId: 31,
@@ -350,8 +350,30 @@ describe('PosPortalOnboardingService', () => {
       } as unknown as User);
 
       expect(branchesRepository.save).toHaveBeenCalledWith(
-        expect.objectContaining({ name: "bolebites's Kitchen" }),
+        expect.objectContaining({ name: 'bolebites' }),
       );
+    });
+
+    // The branch is QSR because the provisioner must pick something, not because
+    // we know the business sells food. Naming it "<X>'s Kitchen" told every
+    // non-food owner they were in the wrong workspace — keep the name neutral.
+    it('does not bake the provisional QSR format into the workspace name', async () => {
+      branchStaffService.getPosBranchSummariesForUser.mockResolvedValue([]);
+      branchStaffService.getPosWorkspaceActivationCandidatesForUser.mockResolvedValue(
+        [],
+      );
+
+      await service.createTrialWorkspaceForNewUser({
+        id: 9,
+        email: 'asalprinting401@gmail.com',
+        roles: [],
+        displayName: 'Asal Printing',
+      } as unknown as User);
+
+      const calls = branchesRepository.save.mock.calls;
+      const [savedBranch] = calls[calls.length - 1] as [{ name: string }];
+      expect(savedBranch.name).toBe('Asal Printing');
+      expect(savedBranch.name).not.toMatch(/kitchen|QSR/i);
     });
 
     it('refuses to provision over an existing branch', async () => {
