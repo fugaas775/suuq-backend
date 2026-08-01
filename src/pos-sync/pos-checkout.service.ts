@@ -448,9 +448,19 @@ export class PosCheckoutService {
     this.assertPricingSummary(dto.pricingSummary, dto);
 
     const existing = await this.findExistingForIdempotency(dto);
-    if (existing) {
+    if (existing && existing.status !== PosCheckoutStatus.FAILED) {
       return this.toResponse(existing);
     }
+    // A FAILED row is a captured sale the device still holds and keeps retrying.
+    // Echoing the old failure straight back made every retry a no-op: the row
+    // stayed dead on the server (excluded from revenue, since reports read
+    // PROCESSED only) while the device's "not yet synced" banner never cleared —
+    // it re-posted, got FAILED back, and showed the warning again, forever.
+    // Re-run processing on the SAME row instead. Safe against double-counting:
+    // all stock/ledger work happens inside the processing transaction below, so a
+    // row that reached FAILED committed no movements to repeat, and reusing its
+    // id updates that row rather than minting a second revenue record.
+    const retryOf = existing ?? null;
 
     await this.assertScope(dto.branchId, dto.partnerCredentialId);
 
@@ -500,6 +510,13 @@ export class PosCheckoutService {
       })),
     });
 
+    // On a retry, carry the dead row's identity so the save below UPDATES it
+    // instead of inserting a second row for the same sale.
+    if (retryOf) {
+      checkoutDraft.id = retryOf.id;
+      checkoutDraft.createdAt = retryOf.createdAt;
+    }
+
     // Folio-scoped settlement dedupe (see FOLIO_SETTLE_DEDUPE_WINDOW_MS). When
     // this checkout settles a hospitality folio, serialise concurrent taps on
     // the same folio with a transaction-scoped advisory lock, re-check for a
@@ -535,8 +552,15 @@ export class PosCheckoutService {
       checkout = await this.posCheckoutsRepository.save(checkoutDraft);
     }
 
+    // Lines that carried no catalogue product, collected as the stock loop runs
+    // and stamped onto the checkout so an unmapped barcode stays traceable.
+    const nonInventoryLines: ReturnType<
+      PosCheckoutService['describeNonInventoryLine']
+    >[] = [];
+
     try {
       await this.dataSource.transaction(async (manager) => {
+        nonInventoryLines.length = 0;
         const registerSession = await this.assertRegisterSession(dto, manager);
         const suspendedCart = await this.assertSuspendedCart(
           dto,
@@ -562,6 +586,19 @@ export class PosCheckoutService {
             dto.partnerCredentialId,
             item,
           );
+          // No product behind this line — it is an ad-hoc charge, not stock.
+          // Packaging charges, manager discounts, late fees, printing presets and
+          // typed custom quote lines all post with productId null, and a line
+          // that isn't in the catalogue has no inventory to move. Rejecting the
+          // whole sale over one of them lost the money for every OTHER line on
+          // the receipt too (prod: a 295k rent collection, packaging-charge cafe
+          // sales, printing jobs). Record the line, skip the movement, keep the
+          // sale. Non-catalogue lines are listed on the checkout metadata so a
+          // genuinely mis-mapped barcode is still traceable rather than silent.
+          if (productId == null) {
+            nonInventoryLines.push(this.describeNonInventoryLine(item));
+            continue;
+          }
           const quantity = Math.abs(item.quantity);
           const movementType =
             dto.transactionType === PosCheckoutTransactionType.SALE
@@ -633,6 +670,12 @@ export class PosCheckoutService {
         checkout.status = PosCheckoutStatus.PROCESSED;
         checkout.processedAt = new Date();
         checkout.failureReason = null;
+        checkout.metadata = {
+          ...(checkout.metadata ?? {}),
+          nonInventoryLines: nonInventoryLines.length
+            ? nonInventoryLines
+            : null,
+        };
 
         if (suspendedCart) {
           suspendedCart.status = PosSuspendedCartStatus.RESUMED;
@@ -758,36 +801,58 @@ export class PosCheckoutService {
     return null;
   }
 
+  /**
+   * The catalogue product a checkout line moves stock for, or `null` when the
+   * line has none.
+   *
+   * This used to throw — and because the throw happened inside the processing
+   * transaction, one non-catalogue line failed the ENTIRE checkout: the row was
+   * saved FAILED, excluded from every report (they read PROCESSED only), and the
+   * capturing device retried it forever behind a "not yet synced" warning.
+   *
+   * A sale that already happened cannot be un-happened by refusing to record it,
+   * so a missing product now costs only its stock movement, never the receipt.
+   * Callers record what was skipped (see describeNonInventoryLine).
+   */
   private async resolveProductId(
     branchId: number,
     partnerCredentialId: number | undefined,
     item: PosCheckoutItemDto,
-  ): Promise<number> {
+  ): Promise<number | null> {
     if (item.productId != null) {
       return item.productId;
     }
 
     if (!item.aliasType || !item.aliasValue?.trim()) {
-      throw new BadRequestException(
-        'Each POS checkout item requires productId or aliasType plus aliasValue',
-      );
+      return null;
     }
 
-    const productId =
-      await this.productAliasesService.resolveProductIdForBranch(
-        branchId,
-        partnerCredentialId,
-        item.aliasType,
-        item.aliasValue,
-      );
+    return this.productAliasesService.resolveProductIdForBranch(
+      branchId,
+      partnerCredentialId,
+      item.aliasType,
+      item.aliasValue,
+    );
+  }
 
-    if (productId == null) {
-      throw new BadRequestException(
-        `No product alias matched ${item.aliasType}:${item.aliasValue}`,
-      );
-    }
-
-    return productId;
+  /** Audit descriptor for a line that carried no catalogue product. */
+  private describeNonInventoryLine(item: PosCheckoutItemDto): {
+    lineId: string | null;
+    sku: string | null;
+    title: string | null;
+    alias: string | null;
+    quantity: number;
+  } {
+    return {
+      lineId: this.normalizeOptionalString(item.lineId),
+      sku: this.normalizeOptionalString(item.sku),
+      title: this.normalizeOptionalString(item.title),
+      alias:
+        item.aliasType && item.aliasValue?.trim()
+          ? `${item.aliasType}:${item.aliasValue.trim()}`
+          : null,
+      quantity: Number(item.quantity ?? 0),
+    };
   }
 
   private async resolveQuoteLine(

@@ -939,6 +939,61 @@ describe('PosCheckoutService', () => {
     );
   });
 
+  // Retrying a FAILED sale used to be pointless: the idempotency lookup echoed
+  // the old failure straight back, so the row stayed dead on the server (reports
+  // read PROCESSED only) while the capturing device re-posted forever behind a
+  // "not yet synced" warning that could never clear. The retry now re-runs
+  // processing on the SAME row — no second revenue record.
+  it('re-processes a FAILED checkout on retry instead of echoing the failure back', async () => {
+    posCheckoutsRepository.findOne.mockResolvedValue({
+      id: 71,
+      branchId: 3,
+      externalCheckoutId: 'sale-001',
+      idempotencyKey: 'idem-1',
+      transactionType: PosCheckoutTransactionType.SALE,
+      status: PosCheckoutStatus.FAILED,
+      failureReason: 'Register session 405 is not open',
+      currency: 'USD',
+      subtotal: 15,
+      discountAmount: 0,
+      taxAmount: 0,
+      total: 15,
+      paidAmount: 15,
+      changeDue: 0,
+      itemCount: 1,
+      occurredAt: new Date('2026-04-01T10:00:00.000Z'),
+      processedAt: new Date('2026-04-01T10:01:00.000Z'),
+      tenders: [],
+      items: [],
+      createdAt: new Date('2026-04-01T09:59:00.000Z'),
+      updatedAt: new Date('2026-04-01T10:01:00.000Z'),
+    });
+
+    await service.ingest({
+      branchId: 3,
+      transactionType: PosCheckoutTransactionType.SALE,
+      idempotencyKey: 'idem-1',
+      currency: 'USD',
+      subtotal: 15,
+      total: 15,
+      occurredAt: '2026-04-01T10:00:00.000Z',
+      items: [{ productId: 55, quantity: 1, unitPrice: 15, lineTotal: 15 }],
+    });
+
+    // Same row — the retry updates checkout 71 rather than inserting a second
+    // one, so the sale can never be counted twice.
+    expect(posCheckoutsRepository.save).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 71 }),
+    );
+    expect(posCheckoutsRepository.save).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        id: 71,
+        status: PosCheckoutStatus.PROCESSED,
+        failureReason: null,
+      }),
+    );
+  });
+
   it('collapses a duplicate HOTEL folio settlement onto the original (folio-scoped dedupe)', async () => {
     // Mirrors the prod Room 405 failure: the client idempotencyKey did NOT match
     // (it was a random per-attempt key), so findExistingForIdempotency returns
@@ -1108,12 +1163,16 @@ describe('PosCheckoutService', () => {
     expect(posCheckoutsRepository.save).toHaveBeenCalled();
   });
 
-  it('persists failed checkouts for business-rule errors', async () => {
+  // A sale that already happened cannot be un-happened by refusing to record it.
+  // An unresolvable alias used to fail the whole checkout — losing the money for
+  // every OTHER line on the receipt too — so it now costs only the stock movement
+  // for that one line, which is recorded on the checkout for reconciliation.
+  it('records a checkout whose line matches no product, listing it as non-inventory', async () => {
     posCheckoutsRepository.findOne.mockResolvedValueOnce({
       id: 71,
       branchId: 3,
       transactionType: PosCheckoutTransactionType.SALE,
-      status: PosCheckoutStatus.FAILED,
+      status: PosCheckoutStatus.PROCESSED,
       currency: 'USD',
       subtotal: 15,
       discountAmount: 0,
@@ -1124,7 +1183,7 @@ describe('PosCheckoutService', () => {
       itemCount: 1,
       occurredAt: new Date('2026-04-01T10:00:00.000Z'),
       processedAt: new Date('2026-04-01T10:01:00.000Z'),
-      failureReason: 'No product alias matched BARCODE:0001',
+      failureReason: null,
       tenders: [],
       items: [
         {
@@ -1162,11 +1221,16 @@ describe('PosCheckoutService', () => {
 
     expect(posCheckoutsRepository.save).toHaveBeenLastCalledWith(
       expect.objectContaining({
-        status: PosCheckoutStatus.FAILED,
-        failureReason: 'No product alias matched BARCODE:0001',
+        status: PosCheckoutStatus.PROCESSED,
+        failureReason: null,
+        metadata: expect.objectContaining({
+          nonInventoryLines: [
+            expect.objectContaining({ alias: 'BARCODE:0001', quantity: 1 }),
+          ],
+        }),
       }),
     );
-    expect(result.status).toBe(PosCheckoutStatus.FAILED);
+    expect(result.status).toBe(PosCheckoutStatus.PROCESSED);
   });
 
   it('returns paginated branch-scoped checkout history', async () => {
