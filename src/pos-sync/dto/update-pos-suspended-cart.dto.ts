@@ -1,6 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsNumber, IsObject, IsOptional } from 'class-validator';
+import { IsNumber, IsObject, IsOptional, IsString } from 'class-validator';
 
 export class UpdatePosSuspendedCartDto {
   @ApiProperty({ example: 4 })
@@ -30,6 +30,16 @@ export class UpdatePosSuspendedCartDto {
   @IsOptional()
   @IsObject()
   cartSnapshot?: Record<string, any>;
+
+  @ApiPropertyOptional({
+    example: 'Hodan Print Co',
+    description:
+      'Row label. Sent alongside cartSnapshot when an in-place edit renames the ' +
+      'folio, so the row does not keep the name it was parked under.',
+  })
+  @IsOptional()
+  @IsString()
+  label?: string;
 
   @ApiPropertyOptional({
     example: 3,

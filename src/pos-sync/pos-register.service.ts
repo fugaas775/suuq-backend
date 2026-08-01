@@ -447,6 +447,9 @@ export class PosRegisterService {
     if (dto.cartSnapshot && typeof dto.cartSnapshot === 'object') {
       cart.cartSnapshot = dto.cartSnapshot;
     }
+    if (typeof dto.label === 'string' && dto.label.trim()) {
+      cart.label = dto.label.trim();
+    }
     if (typeof dto.itemCount === 'number' && Number.isFinite(dto.itemCount)) {
       cart.itemCount = dto.itemCount;
     }
