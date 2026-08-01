@@ -435,6 +435,25 @@ export class PosRegisterService {
       };
     }
 
+    // Replaced wholesale, unlike metadata above: the snapshot is a self-contained
+    // document (guest context, line items, payment state), so a shallow merge
+    // would leave stale nested keys behind whenever the caller sends a shorter
+    // one. Callers send the whole snapshot they want persisted.
+    //
+    // Without this the endpoint accepted a cartSnapshot and silently discarded
+    // it — 200 OK, nothing written — so a board wanting to edit a parked folio
+    // had to create a replacement row and discard the original, churning the id
+    // (and with it every folioId reference) on each edit.
+    if (dto.cartSnapshot && typeof dto.cartSnapshot === 'object') {
+      cart.cartSnapshot = dto.cartSnapshot;
+    }
+    if (typeof dto.itemCount === 'number' && Number.isFinite(dto.itemCount)) {
+      cart.itemCount = dto.itemCount;
+    }
+    if (typeof dto.total === 'number' && Number.isFinite(dto.total)) {
+      cart.total = dto.total;
+    }
+
     return this.toSuspendedCartResponse(
       await this.suspendedCartsRepository.save(cart),
     );
