@@ -1945,13 +1945,17 @@ export class SellerWorkspaceService {
       where: { ownerUserId: user.id },
     });
 
+    // Requested and remembered are passed SEPARATELY, not coalesced: only the
+    // caller's explicit choice may 403. See resolvePrimaryVendorId.
     const primaryVendorId = this.resolvePrimaryVendorId(
       access.stores,
-      bootstrap?.primaryVendorId ?? existing?.primaryVendorId,
+      bootstrap?.primaryVendorId,
+      existing?.primaryVendorId,
     );
     const primaryRetailTenantId = this.resolvePrimaryRetailTenantId(
       access.branches,
-      bootstrap?.primaryRetailTenantId ?? existing?.primaryRetailTenantId,
+      bootstrap?.primaryRetailTenantId,
+      existing?.primaryRetailTenantId,
     );
 
     const workspace = this.sellerWorkspacesRepository.create({
@@ -1987,27 +1991,53 @@ export class SellerWorkspaceService {
     return this.sellerWorkspacesRepository.save(workspace);
   }
 
+  /**
+   * A REQUESTED primary (the caller naming one in the bootstrap DTO) must be one
+   * they can reach — asking for someone else's is a 403.
+   *
+   * A REMEMBERED primary (the value already persisted on the workspace row) is
+   * different: access legitimately changes underneath it. A branch is
+   * transferred, deleted, or its tenant is emptied, and the stored id quietly
+   * stops being reachable. Treating that as a 403 bricked the workspace — every
+   * read threw, so Seller HQ rendered permanent skeletons, and the page that
+   * could have corrected the stored value was itself the page failing. Prod hit
+   * exactly this: a workspace pinned to a tenant with zero branches left, which
+   * could never validate again.
+   *
+   * So a stale remembered value falls back to something available and is saved
+   * over by the caller, healing the row on the next read.
+   */
   private resolvePrimaryVendorId(
     stores: SellerWorkspaceStoreSummaryDto[],
     requestedVendorId?: number | null,
+    rememberedVendorId?: number | null,
   ): number | null {
-    if (requestedVendorId == null) {
-      return stores[0]?.vendorId ?? null;
-    }
-
-    const match = stores.find((store) => store.vendorId === requestedVendorId);
-    if (!match) {
-      throw new ForbiddenException(
-        `Seller workspace cannot select vendor ${requestedVendorId} without access`,
+    if (requestedVendorId != null) {
+      const match = stores.find(
+        (store) => store.vendorId === requestedVendorId,
       );
+      if (!match) {
+        throw new ForbiddenException(
+          `Seller workspace cannot select vendor ${requestedVendorId} without access`,
+        );
+      }
+      return match.vendorId;
     }
 
-    return match.vendorId;
+    if (
+      rememberedVendorId != null &&
+      stores.some((store) => store.vendorId === rememberedVendorId)
+    ) {
+      return rememberedVendorId;
+    }
+
+    return stores[0]?.vendorId ?? null;
   }
 
   private resolvePrimaryRetailTenantId(
     branches: SellerWorkspaceBranchSummaryDto[],
     requestedTenantId?: number | null,
+    rememberedTenantId?: number | null,
   ): number | null {
     const availableTenantIds = Array.from(
       new Set(
@@ -2017,17 +2047,23 @@ export class SellerWorkspaceService {
       ),
     );
 
-    if (requestedTenantId == null) {
-      return availableTenantIds[0] ?? null;
+    if (requestedTenantId != null) {
+      if (!availableTenantIds.includes(requestedTenantId)) {
+        throw new ForbiddenException(
+          `Seller workspace cannot select tenant ${requestedTenantId} without access`,
+        );
+      }
+      return requestedTenantId;
     }
 
-    if (!availableTenantIds.includes(requestedTenantId)) {
-      throw new ForbiddenException(
-        `Seller workspace cannot select tenant ${requestedTenantId} without access`,
-      );
+    if (
+      rememberedTenantId != null &&
+      availableTenantIds.includes(rememberedTenantId)
+    ) {
+      return rememberedTenantId;
     }
 
-    return requestedTenantId;
+    return availableTenantIds[0] ?? null;
   }
 
   private assertTenantAccess(
