@@ -20,6 +20,19 @@ export class PosCatalogSearchItemResponseDto {
   @ApiProperty()
   unitPrice!: number;
 
+  /**
+   * Per-branch retail price from the branch catalog link, or null when the
+   * branch has not priced this product. Additive: the register uses it (with
+   * catalogLinkSource) to refuse a PO-received SKU that shelf-setup has not
+   * priced yet, which would otherwise sell at the supplier's wholesale cost.
+   */
+  @ApiProperty({ required: false, nullable: true })
+  retailPrice?: number | null;
+
+  /** 'PURCHASE_ORDER' | 'MANUAL' | null — provenance of the branch catalog link. */
+  @ApiProperty({ required: false, nullable: true })
+  catalogLinkSource?: string | null;
+
   @ApiProperty()
   availableToSell!: number;
 

@@ -7,6 +7,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { BranchInventory } from '../branches/entities/branch-inventory.entity';
 import { Branch } from '../branches/entities/branch.entity';
+import { BranchCatalogProductLink } from '../retail/entities/branch-catalog-product-link.entity';
 import { ProductAlias } from '../product-aliases/entities/product-alias.entity';
 import { Product } from '../products/entities/product.entity';
 import { absolutize } from '../common/utils/media-url.util';
@@ -83,6 +84,19 @@ export class PosCatalogService {
           branchId: query.branchId,
         },
       )
+      // The per-branch retail layer. Without it a scanned item priced at the
+      // counter still rang up at the supplier's product price, because this
+      // search — unlike /retail/v1/ops/branch-products — never consulted the
+      // branch catalog link. It also carries the provenance the register needs
+      // to refuse a PO-received SKU that shelf-setup has not priced yet.
+      .leftJoin(
+        BranchCatalogProductLink,
+        'link',
+        'link.productId = product.id AND link.branchId = :branchId',
+        {
+          branchId: query.branchId,
+        },
+      )
       .where("COALESCE(product.status, 'publish') = 'publish'")
       .andWhere(
         "(LOWER(product.name) LIKE :search OR LOWER(COALESCE(product.sku, '')) LIKE :search OR LOWER(COALESCE(alias.aliasValue, '')) LIKE :search OR LOWER(COALESCE(alias.normalizedAliasValue, '')) LIKE :search OR LOWER(COALESCE(product.attributes::text, '')) LIKE :search)",
@@ -101,6 +115,9 @@ export class PosCatalogService {
         'alias.aliasValue AS alias_value',
         'inventory.availableToSell AS inventory_available_to_sell',
         'inventory.safetyStock AS inventory_safety_stock',
+        'link.retailPrice AS link_retail_price',
+        'link.retailSalePrice AS link_retail_sale_price',
+        'link.source AS link_source',
       ])
       .orderBy(
         `CASE
@@ -144,13 +161,33 @@ export class PosCatalogService {
           stockStatus = 'LOW_STOCK';
         }
 
+        // RETAIL prices from the branch catalog link when it carries one, which
+        // is what the tile grid already charges (COALESCE(retailPrice, price)).
+        // Scanning the same item used to ring it at the vendor price. Scoped to
+        // RETAIL so no other format's pricing moves.
+        const isRetailBranch =
+          String(branch.serviceFormat ?? '')
+            .trim()
+            .toUpperCase() === 'RETAIL';
+        const linkRetailPrice =
+          row.link_retail_sale_price ?? row.link_retail_price ?? null;
+        const unitPrice =
+          isRetailBranch && linkRetailPrice != null
+            ? Number(linkRetailPrice)
+            : Number(row.product_sale_price ?? row.product_price ?? 0);
+
         seen.set(productId, {
           productId,
           name: row.product_name,
           sku: row.product_sku ?? null,
           imageUrl: absolutize(row.product_image_url ?? null) ?? null,
           currency: row.product_currency || 'ETB',
-          unitPrice: Number(row.product_sale_price ?? row.product_price ?? 0),
+          unitPrice,
+          retailPrice:
+            row.link_retail_price == null
+              ? null
+              : Number(row.link_retail_price),
+          catalogLinkSource: row.link_source ?? null,
           availableToSell,
           stockStatus,
           matchedAliasType: row.alias_type ?? null,
