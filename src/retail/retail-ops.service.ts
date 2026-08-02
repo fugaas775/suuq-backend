@@ -1544,7 +1544,19 @@ export class RetailOpsService {
         );
         const variantRows = variantsByProductId.get(product.id);
         if (variantRows && variantRows.length) {
-          const productPrice = Number(product.price ?? item.price ?? 0);
+          // `item.price` is the effective price the branch sells at
+          // (COALESCE(link.retailPrice, product.price)); `product.price` is the
+          // supplier's. A variant with no priceOverride inherits the parent, so
+          // reading the raw product price made a PO-staged variant product show
+          // the retail price on the tile and the wholesale price in the picker.
+          // RETAIL-scoped: no other format's variant pricing moves.
+          const isRetailBranch =
+            String(branch.serviceFormat ?? '')
+              .trim()
+              .toUpperCase() === 'RETAIL';
+          const productPrice = isRetailBranch
+            ? Number(item.price ?? product.price ?? 0)
+            : Number(product.price ?? item.price ?? 0);
           item.variants = variantRows.map((v) => ({
             variantId: v.variantId,
             variantKey: v.variantKey,

@@ -66,6 +66,26 @@ export class PosCheckoutItemDto {
   @MaxLength(128)
   sku?: string;
 
+  /**
+   * RETAIL variant identity. Declared here on purpose: the global ValidationPipe
+   * runs with `whitelist: true`, so a top-level property the DTO does not know
+   * about is stripped in silence. Until now the only channel was `metadata`,
+   * which survives merely because it is an untyped @IsObject — a fragile place
+   * for the value that decides which variant's stock gets decremented.
+   *
+   * The metadata fallback stays supported forever: outbox records captured on a
+   * device before the client change carry the ids only there.
+   */
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  variantId?: number;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  variantKey?: string;
+
   @IsOptional()
   @IsString()
   @MaxLength(255)

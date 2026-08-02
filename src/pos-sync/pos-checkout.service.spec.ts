@@ -1852,6 +1852,137 @@ describe('PosCheckoutService', () => {
       ]);
     });
 
+    it('resolves a variant from the top-level variantId', async () => {
+      branchesRepository.findOne.mockResolvedValue({
+        id: 3,
+        serviceFormat: 'RETAIL',
+      });
+      const variantRepo = {
+        findOne: jest.fn().mockResolvedValue({ id: 4004 }),
+      };
+      dataSource.transaction.mockImplementation(async (callback: any) =>
+        callback({
+          query: jest.fn().mockResolvedValue([]),
+          getRepository: jest.fn((entity: any) => {
+            if (entity === PosCheckout) return posCheckoutsRepository;
+            if (entity === PosRegisterSession)
+              return registerSessionsRepository;
+            if (entity === PosSuspendedCart) return suspendedCartsRepository;
+            if (entity === Branch) return branchesRepository;
+            if (entity === Product) return productsRepository;
+            if (entity === BranchInventory) return branchInventoryRepository;
+            if (entity === BranchInventoryVariant)
+              return branchInventoryVariantRepository;
+            return variantRepo;
+          }),
+        }),
+      );
+      branchInventoryVariantRepository.findOne.mockResolvedValue({
+        id: 7,
+        quantityOnHand: 9,
+      });
+
+      posCheckoutsRepository.findOne
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ id: 71, items: [], tenders: [] });
+
+      await service.ingest(
+        {
+          branchId: 3,
+          transactionType: PosCheckoutTransactionType.SALE,
+          externalCheckoutId: 'variant-top-level',
+          currency: 'ETB',
+          subtotal: 30,
+          total: 30,
+          paidAmount: 30,
+          occurredAt: '2026-08-01T10:00:00.000Z',
+          items: [
+            {
+              productId: 55,
+              quantity: 1,
+              unitPrice: 30,
+              lineTotal: 30,
+              variantId: 4004,
+            },
+          ],
+          tenders: [{ method: 'CASH', amount: 30 }],
+        },
+        { id: 9 },
+      );
+
+      expect(variantRepo.findOne).toHaveBeenCalledWith({
+        where: { id: 4004, productId: 55 },
+      });
+      expect(
+        variantInventoryService.recordVariantMovement,
+      ).toHaveBeenCalledWith(
+        expect.objectContaining({ variantId: 4004, quantityDelta: -1 }),
+        expect.anything(),
+      );
+    });
+
+    it('records unresolvedVariantLines instead of silently skipping the movement', async () => {
+      // A named variant that does not exist used to fall through to the product
+      // path, where manageStock=false meant no decrement at all — no error, no
+      // movement, no trace.
+      branchesRepository.findOne.mockResolvedValue({
+        id: 3,
+        serviceFormat: 'RETAIL',
+      });
+      dataSource.transaction.mockImplementation(async (callback: any) =>
+        callback({
+          query: jest.fn().mockResolvedValue([]),
+          getRepository: jest.fn((entity: any) => {
+            if (entity === PosCheckout) return posCheckoutsRepository;
+            if (entity === PosRegisterSession)
+              return registerSessionsRepository;
+            if (entity === PosSuspendedCart) return suspendedCartsRepository;
+            if (entity === Branch) return branchesRepository;
+            if (entity === Product) return productsRepository;
+            if (entity === BranchInventory) return branchInventoryRepository;
+            if (entity === BranchInventoryVariant)
+              return branchInventoryVariantRepository;
+            return { findOne: jest.fn().mockResolvedValue(null) };
+          }),
+        }),
+      );
+
+      posCheckoutsRepository.findOne
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ id: 71, items: [], tenders: [] });
+
+      await service.ingest(
+        {
+          branchId: 3,
+          transactionType: PosCheckoutTransactionType.SALE,
+          externalCheckoutId: 'variant-unresolved',
+          currency: 'ETB',
+          subtotal: 30,
+          total: 30,
+          paidAmount: 30,
+          occurredAt: '2026-08-01T10:00:00.000Z',
+          items: [
+            {
+              productId: 55,
+              quantity: 1,
+              unitPrice: 30,
+              lineTotal: 30,
+              metadata: { variantKey: 'size:xxl' },
+            },
+          ],
+          tenders: [{ method: 'CASH', amount: 30 }],
+        },
+        { id: 9 },
+      );
+
+      expect(
+        variantInventoryService.recordVariantMovement,
+      ).not.toHaveBeenCalled();
+      const saved = savedCheckout();
+      expect(saved?.status).toBe(PosCheckoutStatus.PROCESSED);
+      expect(saved?.metadata?.unresolvedVariantLines).toHaveLength(1);
+    });
+
     it('clamps a RETAIL variant line the same way', async () => {
       branchesRepository.findOne.mockResolvedValue({
         id: 3,

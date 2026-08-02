@@ -573,11 +573,17 @@ export class PosCheckoutService {
     const oversoldLines: ReturnType<
       PosCheckoutService['describeOversoldLine']
     >[] = [];
+    // Lines that named a variant which does not exist on the product. Recorded
+    // rather than thrown: the sale is still real money.
+    const unresolvedVariantLines: ReturnType<
+      PosCheckoutService['describeNonInventoryLine']
+    >[] = [];
 
     try {
       await this.dataSource.transaction(async (manager) => {
         nonInventoryLines.length = 0;
         oversoldLines.length = 0;
+        unresolvedVariantLines.length = 0;
         const registerSession = await this.assertRegisterSession(dto, manager);
         const suspendedCart = await this.assertSuspendedCart(
           dto,
@@ -630,11 +636,14 @@ export class PosCheckoutService {
           // cascades to the product-level rollup. Runs BEFORE the manageStock
           // gate because variant products are stock-tracked at the variant level
           // even when the product-level manageStock flag is false.
-          const variantId = await this.resolveCheckoutVariantId(
-            productId,
-            item.metadata,
-            manager,
-          );
+          const { variantId, requested: variantRequested } =
+            await this.resolveCheckoutVariantId(productId, item, manager);
+          if (variantRequested && !variantId) {
+            // The line named a variant that does not exist on this product.
+            // Falling through to the product path would decrement the wrong
+            // thing (or, on manageStock=false, nothing) without a word.
+            unresolvedVariantLines.push(this.describeNonInventoryLine(item));
+          }
           if (variantId) {
             const variantDelta = isRetailBranch
               ? await this.clampRetailSaleDelta(
@@ -741,6 +750,9 @@ export class PosCheckoutService {
             ? nonInventoryLines
             : null,
           oversoldLines: oversoldLines.length ? oversoldLines : null,
+          unresolvedVariantLines: unresolvedVariantLines.length
+            ? unresolvedVariantLines
+            : null,
         };
 
         if (suspendedCart) {
@@ -840,31 +852,51 @@ export class PosCheckoutService {
    * variantKey), scoped to the line's product. Returns null for non-variant
    * lines so checkout falls through to the product-level decrement.
    */
+  /**
+   * The variant a checkout line moves stock for.
+   *
+   * Reads the top-level `variantId`/`variantKey` first and falls back to the
+   * same keys inside `metadata` — the only channel that existed before the DTO
+   * carried them, and still the only one an offline outbox record captured on an
+   * older client will have. The fallback is permanent, not transitional.
+   *
+   * Returns `{ variantId, requested }`: `requested` says the line NAMED a
+   * variant, so a null id means the reference did not resolve. That case used to
+   * fall through to the product-level path in silence, where a manageStock=false
+   * product then decremented nothing at all — a typo'd key lost the movement
+   * with no trace. The caller records it on the checkout instead.
+   */
   private async resolveCheckoutVariantId(
     productId: number,
-    metadata: Record<string, any> | null | undefined,
+    item: PosCheckoutItemDto,
     manager: EntityManager,
-  ): Promise<number | null> {
-    if (!metadata || typeof metadata !== 'object') {
-      return null;
+  ): Promise<{ variantId: number | null; requested: boolean }> {
+    const metadata =
+      item.metadata && typeof item.metadata === 'object' ? item.metadata : {};
+    const rawId = Number(item.variantId ?? metadata.variantId);
+    const rawKeySource = item.variantKey ?? metadata.variantKey;
+    const variantKey =
+      typeof rawKeySource === 'string' ? rawKeySource.trim() : '';
+    const requested = (Number.isFinite(rawId) && rawId > 0) || !!variantKey;
+
+    if (!requested) {
+      return { variantId: null, requested: false };
     }
+
     const repo = manager.getRepository(ProductVariant);
-    const rawId = Number(metadata.variantId);
     if (Number.isFinite(rawId) && rawId > 0) {
       const byId = await repo.findOne({ where: { id: rawId, productId } });
       if (byId) {
-        return byId.id;
+        return { variantId: byId.id, requested: true };
       }
     }
-    const variantKey =
-      typeof metadata.variantKey === 'string' ? metadata.variantKey.trim() : '';
     if (variantKey) {
       const byKey = await repo.findOne({ where: { productId, variantKey } });
       if (byKey) {
-        return byKey.id;
+        return { variantId: byKey.id, requested: true };
       }
     }
-    return null;
+    return { variantId: null, requested: true };
   }
 
   /**
