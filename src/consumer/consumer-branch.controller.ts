@@ -1,6 +1,7 @@
 import {
   Controller,
   Get,
+  Header,
   NotFoundException,
   Param,
   ParseIntPipe,
@@ -9,6 +10,8 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import { Branch } from '../branches/entities/branch.entity';
+import { BranchInventory } from '../branches/entities/branch-inventory.entity';
+import { KitchenProductAvailability } from '../hospitality/entities/kitchen-product-availability.entity';
 import { VendorStore } from '../vendor/entities/vendor-store.entity';
 import { Product } from '../products/entities/product.entity';
 import { BranchCatalogProductLink } from '../retail/entities/branch-catalog-product-link.entity';
@@ -18,13 +21,54 @@ import {
   ConsumerBranchProductItemDto,
   ConsumerBranchProductsDto,
   ConsumerBranchQrDto,
+  ConsumerStockState,
 } from './dto/consumer-response.dto';
 import { ConsumerBranchQueryDto } from './dto/consumer-branch-query.dto';
-import { SERVICE_FORMAT_LABELS } from './dto/place-consumer-order.dto';
+import { serviceFormatLabel } from '../common/service-formats';
+import { resolveBranchPresence } from '../common/operating-hours';
 
-function toFormatLabel(code: string | null | undefined): string {
-  if (!code) return 'Business';
-  return (SERVICE_FORMAT_LABELS as Record<string, string>)[code] ?? code;
+const toFormatLabel = serviceFormatLabel;
+
+/**
+ * Maps a branch's inventory row to a buyability band.
+ *
+ * No row means the branch does not track inventory for this item (services,
+ * made-to-order food, unmanaged SKUs) — that is `UNKNOWN` and stays buyable.
+ * Reading it as out-of-stock would empty the shelf of every branch that has not
+ * onboarded inventory.
+ *
+ * `safetyStock` is the merchant's own "getting low" threshold; when they have
+ * not set one, fall back to a small constant so "low" still means something.
+ */
+const DEFAULT_LOW_STOCK_THRESHOLD = 5;
+
+function toStockState(
+  inventory: BranchInventory | undefined,
+): ConsumerStockState {
+  if (!inventory) return 'UNKNOWN';
+  const available = Number(inventory.availableToSell ?? 0);
+  if (available <= 0) return 'OUT_OF_STOCK';
+  const lowThreshold =
+    Number(inventory.safetyStock ?? 0) > 0
+      ? Number(inventory.safetyStock)
+      : DEFAULT_LOW_STOCK_THRESHOLD;
+  return available <= lowThreshold ? 'LOW' : 'IN_STOCK';
+}
+
+/**
+ * A cheap fingerprint of the shelf a client just received.
+ *
+ * Built from the newest `updatedAt` across the page plus the row count, so any
+ * price change, 86 flip, or item appearing/disappearing moves it. Lets the app
+ * decide whether to re-render without diffing.
+ */
+function shelfVersion(items: ConsumerBranchProductItemDto[]): string {
+  let newest = 0;
+  for (const item of items) {
+    const at = item.updatedAt ? Date.parse(item.updatedAt) : 0;
+    if (at > newest) newest = at;
+  }
+  return `${items.length}-${newest}`;
 }
 
 /** Public base URL used to build branch QR universal links. */
@@ -33,10 +77,18 @@ function publicBaseUrl(): string {
   return raw.replace(/\/+$/, '');
 }
 
-function toBranchItem(branch: Branch): ConsumerBranchItemDto {
+function toBranchItem(
+  branch: Branch,
+  store: VendorStore | null,
+): ConsumerBranchItemDto {
   const owner = branch.owner ?? null;
+  const presence = resolveBranchPresence(store?.operatingHours ?? null);
   return {
     branchId: branch.id,
+    storeId: store?.id ?? null,
+    operatingHours: store?.operatingHours ?? null,
+    isOpenNow: presence.isOpenNow,
+    nextOpenAt: presence.nextOpenAt,
     name: branch.name,
     serviceFormat: branch.serviceFormat ?? null,
     serviceFormatLabel: toFormatLabel(branch.serviceFormat),
@@ -63,7 +115,82 @@ export class ConsumerBranchController {
     private readonly productRepo: Repository<Product>,
     @InjectRepository(BranchCatalogProductLink)
     private readonly catalogLinkRepo: Repository<BranchCatalogProductLink>,
+    @InjectRepository(BranchInventory)
+    private readonly branchInventoryRepo: Repository<BranchInventory>,
+    @InjectRepository(KitchenProductAvailability)
+    private readonly kitchenAvailabilityRepo: Repository<KitchenProductAvailability>,
   ) {}
+
+  /**
+   * Resolves buyability for a page of products at one branch.
+   *
+   * Two independent sources, and the stricter one wins: `branch_inventory`
+   * counts physical stock, while the hospitality 86-list is the kitchen saying
+   * "we're out of this" regardless of what inventory thinks. A dish 86'd at the
+   * pass must read as unavailable to the shopper even when no stock is tracked.
+   */
+  private async resolveStockStates(
+    branchId: number,
+    productIds: number[],
+  ): Promise<Map<number, ConsumerStockState>> {
+    if (productIds.length === 0) return new Map();
+
+    const [inventoryRows, kitchenRows] = await Promise.all([
+      this.branchInventoryRepo.find({
+        where: { branchId, productId: In(productIds) },
+      }),
+      // productId is varchar on the 86 table (it also holds ad-hoc menu keys),
+      // so match on the string form.
+      this.kitchenAvailabilityRepo.find({
+        where: { branchId, productId: In(productIds.map(String)) },
+      }),
+    ]);
+
+    const inventoryByProduct = new Map(
+      inventoryRows.map((row) => [row.productId, row]),
+    );
+    const unavailableInKitchen = new Set(
+      kitchenRows.filter((row) => !row.available).map((row) => row.productId),
+    );
+
+    return new Map(
+      productIds.map((id) => [
+        id,
+        unavailableInKitchen.has(String(id))
+          ? 'OUT_OF_STOCK'
+          : toStockState(inventoryByProduct.get(id)),
+      ]),
+    );
+  }
+
+  /**
+   * Maps branchId → its consumer storefront.
+   *
+   * Resolved from the `vendor_stores` side using the same predicate as the
+   * listing filter, so the store we hand out is always the one the shopper can
+   * actually reach. Reading `branch.vendorStoreId` instead would trust the other
+   * half of an unenforced 1:1 and can drift — see
+   * `scripts/reconcile-branch-vendor-store-links.ts`.
+   *
+   * The storefront also carries the published hours, which is what makes
+   * "open now" answerable.
+   */
+  private async resolveStores(
+    branchIds: number[],
+  ): Promise<Map<number, VendorStore>> {
+    if (branchIds.length === 0) return new Map();
+    const stores = await this.vendorStoreRepo.find({
+      where: { branchId: In(branchIds), isConsumerVisible: true },
+      select: ['id', 'branchId', 'operatingHours'],
+    });
+    return new Map(
+      stores
+        .filter(
+          (s): s is VendorStore & { branchId: number } => s.branchId != null,
+        )
+        .map((s) => [s.branchId, s]),
+    );
+  }
 
   /**
    * GET /consumer/v1/branches
@@ -136,9 +263,12 @@ export class ConsumerBranchController {
     qb.skip(skip).take(limit);
 
     const [branches, total] = await qb.getManyAndCount();
+    const storeByBranch = await this.resolveStores(branches.map((b) => b.id));
 
     return {
-      items: branches.map(toBranchItem),
+      items: branches.map((b) =>
+        toBranchItem(b, storeByBranch.get(b.id) ?? null),
+      ),
       total,
       page,
       totalPages: Math.ceil(total / limit),
@@ -160,7 +290,8 @@ export class ConsumerBranchController {
     if (!branch) {
       throw new NotFoundException(`Branch ${branchId} not found`);
     }
-    return toBranchItem(branch);
+    const storeByBranch = await this.resolveStores([branch.id]);
+    return toBranchItem(branch, storeByBranch.get(branch.id) ?? null);
   }
 
   /**
@@ -190,6 +321,12 @@ export class ConsumerBranchController {
    * Returns published products for a branch's consumer-visible catalog.
    * Returns an empty list (not 404) when the branch has no catalog configured.
    */
+  // The shelf must read live: a price change or an 86 has to reach the shopper
+  // on the next look. `must-revalidate` with a zero lifetime means every request
+  // asks the server, and Express's ETag turns an unchanged shelf into a cheap
+  // 304 — which the app's ApiClient already understands. That is how this gets
+  // near-live freshness without a realtime transport.
+  @Header('Cache-Control', 'private, max-age=0, must-revalidate')
   @Get(':branchId/products')
   async getBranchProducts(
     @Param('branchId', ParseIntPipe) branchId: number,
@@ -241,6 +378,10 @@ export class ConsumerBranchController {
           })
         : [];
       const linkByProduct = new Map(links.map((l) => [l.productId, l]));
+      const stockByProduct = await this.resolveStockStates(
+        branchId,
+        productIds,
+      );
 
       const items: ConsumerBranchProductItemDto[] = products.map((p) => {
         const link = linkByProduct.get(p.id);
@@ -260,10 +401,21 @@ export class ConsumerBranchController {
           tags: (p.tags ?? [])
             .map((t) => (t?.name ?? '').toLowerCase())
             .filter((name) => name.length > 0),
+          stockState: stockByProduct.get(p.id) ?? 'UNKNOWN',
+          // The link *is* the shelf entry, so its timestamp is what moves when
+          // the merchant reprices, re-lists, or hides the item.
+          updatedAt: link?.updatedAt?.toISOString() ?? null,
         };
       });
 
-      return { items, total, page, limit };
+      return {
+        items,
+        total,
+        page,
+        limit,
+        catalogSource: 'BRANCH_CATALOG',
+        version: shelfVersion(items),
+      };
     }
 
     // Fallback: vendor_store products linked directly by vendor_store_id
@@ -272,7 +424,14 @@ export class ConsumerBranchController {
       where: { branchId, isConsumerVisible: true },
     });
     if (!store) {
-      return { items: [], total: 0, page, limit };
+      return {
+        items: [],
+        total: 0,
+        page,
+        limit,
+        catalogSource: 'VENDOR_STORE_FALLBACK',
+        version: '0-0',
+      };
     }
 
     const baseQb = this.productRepo
@@ -290,6 +449,9 @@ export class ConsumerBranchController {
       .take(limit)
       .getMany();
 
+    // No catalog links means no branch shelf, so there is no branch stock to
+    // report either. These rows are marketplace truth, not POS truth — the
+    // catalogSource below is how the client knows not to present them as live.
     const items: ConsumerBranchProductItemDto[] = products.map((p) => ({
       id: p.id,
       name: p.name,
@@ -300,8 +462,18 @@ export class ConsumerBranchController {
       tags: (p.tags ?? [])
         .map((t) => (t?.name ?? '').toLowerCase())
         .filter((name) => name.length > 0),
+      stockState: 'UNKNOWN',
+      // No shelf entry exists on this path, so there is no shelf timestamp.
+      updatedAt: null,
     }));
 
-    return { items, total, page, limit };
+    return {
+      items,
+      total,
+      page,
+      limit,
+      catalogSource: 'VENDOR_STORE_FALLBACK',
+      version: shelfVersion(items),
+    };
   }
 }

@@ -705,6 +705,8 @@ describe('SellerWorkspaceService', () => {
         createdAt: new Date('2026-03-08T00:00:00.000Z'),
         ...value,
       })),
+      // linkBranchToVendorStore writes both halves of the 1:1.
+      update: jest.fn().mockResolvedValue(undefined),
     };
     const assignmentsRepository = {
       create: jest.fn((value) => value),
@@ -746,6 +748,8 @@ describe('SellerWorkspaceService', () => {
               return {
                 create: jest.fn((value) => value),
                 save: jest.fn(async (value) => ({ id: 99, ...value })),
+                // linkBranchToVendorStore writes both halves of the 1:1.
+                update: jest.fn().mockResolvedValue(undefined),
               };
             }
             throw new Error(`Unexpected repository request: ${entity?.name}`);
@@ -1026,6 +1030,8 @@ describe('SellerWorkspaceService', () => {
       ]),
       findOne: jest.fn().mockResolvedValue(null),
       save: jest.fn(async (value) => ({ id: 8, code: 'BB-8', ...value })),
+      // linkBranchToVendorStore writes both halves of the 1:1.
+      update: jest.fn().mockResolvedValue(undefined),
     };
     const assignmentsRepository = {
       create: jest.fn((value) => value),
@@ -1070,6 +1076,8 @@ describe('SellerWorkspaceService', () => {
               return {
                 create: jest.fn((value) => value),
                 save: jest.fn(async (value) => ({ id: 99, ...value })),
+                // linkBranchToVendorStore writes both halves of the 1:1.
+                update: jest.fn().mockResolvedValue(undefined),
               };
             }
             throw new Error(`Unexpected repository request: ${entity?.name}`);

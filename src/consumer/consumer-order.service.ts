@@ -3,6 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { randomBytes } from 'crypto';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Branch } from '../branches/entities/branch.entity';
@@ -21,6 +22,29 @@ import {
   ConsumerOrderStatusDto,
 } from './dto/consumer-response.dto';
 
+/**
+ * Random suffix appended to a consumer order reference.
+ *
+ * The reference used to be `C-<cartId>` — derivable from the id, so it could not
+ * gate anything. A random suffix makes the reference an actual capability: you
+ * can only read an order's status if you were handed its number at placement.
+ */
+function mintOrderRef(): string {
+  return randomBytes(4).toString('hex').toUpperCase();
+}
+
+function composeOrderNumber(cartId: number, ref?: string | null): string {
+  return ref ? `C-${cartId}-${ref}` : `C-${cartId}`;
+}
+
+/** Accepts either the bare suffix or the whole `C-<id>-<suffix>` reference. */
+function normalizeRef(raw: string | null | undefined): string | null {
+  const trimmed = raw?.trim();
+  if (!trimmed) return null;
+  const tail = trimmed.split('-').pop();
+  return tail ? tail.toUpperCase() : null;
+}
+
 @Injectable()
 export class ConsumerOrderService {
   constructor(
@@ -35,7 +59,7 @@ export class ConsumerOrderService {
     dto: PlaceConsumerOrderDto,
   ): Promise<ConsumerOrderResponseDto> {
     // 1. Validate service format vs order mode combination
-    const allowedModes = FORMAT_ORDER_MODES[dto.serviceFormat] ?? [];
+    const allowedModes: string[] = FORMAT_ORDER_MODES[dto.serviceFormat] ?? [];
     if (!allowedModes.includes(dto.orderMode)) {
       throw new BadRequestException(
         `Order mode "${dto.orderMode}" is not valid for service format "${dto.serviceFormat}". Allowed: ${allowedModes.join(', ')}`,
@@ -79,6 +103,7 @@ export class ConsumerOrderService {
       .slice(0, 255);
 
     // 7. Create suspended cart (consumer acts as anonymous — no actor session)
+    const orderRef = mintOrderRef();
     const cart = await this.posRegisterService.suspendCart(
       {
         branchId: dto.branchId,
@@ -94,6 +119,7 @@ export class ConsumerOrderService {
         },
         metadata: {
           consumerSource: 'SUUQS',
+          consumerOrderRef: orderRef,
           consumerName: dto.consumerName ?? null,
           consumerPhone: dto.consumerPhone ?? null,
           consumerNote: dto.consumerNote ?? null,
@@ -110,7 +136,7 @@ export class ConsumerOrderService {
 
     return {
       orderId: cart.id,
-      orderNumber: `C-${cart.id}`,
+      orderNumber: composeOrderNumber(cart.id, orderRef),
       branchId: cart.branchId,
       serviceFormat: dto.serviceFormat,
       orderMode: dto.orderMode,
@@ -118,7 +144,10 @@ export class ConsumerOrderService {
     };
   }
 
-  async getOrderStatus(orderId: number): Promise<ConsumerOrderStatusDto> {
+  async getOrderStatus(
+    orderId: number,
+    ref?: string,
+  ): Promise<ConsumerOrderStatusDto> {
     const cart = await this.suspendedCartsRepository.findOne({
       where: { id: orderId },
     });
@@ -132,11 +161,21 @@ export class ConsumerOrderService {
       throw new NotFoundException(`Order ${orderId} not found`);
     }
 
+    // Orders minted with a reference must present it. Orders placed before the
+    // reference existed stay readable by id so in-flight polls keep working.
+    // A mismatch is a 404, not a 403 — a wrong ref must not confirm the id exists.
+    const storedRef = normalizeRef(
+      cart.metadata?.consumerOrderRef as string | undefined,
+    );
+    if (storedRef && normalizeRef(ref) !== storedRef) {
+      throw new NotFoundException(`Order ${orderId} not found`);
+    }
+
     const status = this.mapCartStatus(cart.status);
 
     return {
       orderId: cart.id,
-      orderNumber: `C-${cart.id}`,
+      orderNumber: composeOrderNumber(cart.id, storedRef),
       branchId: cart.branchId,
       serviceFormat: cart.metadata?.serviceFormat ?? '',
       orderMode: cart.metadata?.orderMode ?? '',

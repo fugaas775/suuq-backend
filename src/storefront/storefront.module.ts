@@ -6,6 +6,7 @@ import { Product } from '../products/entities/product.entity';
 import { HotelRoom } from '../hospitality/entities/hotel-room.entity';
 import { HotelRatePlan } from '../hospitality/entities/hotel-rate-plan.entity';
 import { HotelReservation } from '../hospitality/entities/hotel-reservation.entity';
+import { HotelFolio } from '../hospitality/entities/hotel-folio.entity';
 import { StorefrontController } from './storefront.controller';
 import { StorefrontService } from './storefront.service';
 
@@ -18,6 +19,7 @@ import { StorefrontService } from './storefront.service';
       HotelRoom,
       HotelRatePlan,
       HotelReservation,
+      HotelFolio,
     ]),
   ],
   controllers: [StorefrontController],

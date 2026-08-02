@@ -14,6 +14,10 @@ import {
 } from '../hospitality/entities/hotel-room.entity';
 import { HotelRatePlan } from '../hospitality/entities/hotel-rate-plan.entity';
 import {
+  HotelFolio,
+  HotelFolioStatus,
+} from '../hospitality/entities/hotel-folio.entity';
+import {
   HotelReservation,
   HotelReservationStatus,
 } from '../hospitality/entities/hotel-reservation.entity';
@@ -22,6 +26,7 @@ import {
   StorefrontProductsQueryDto,
   StorefrontHotelRoomsQueryDto,
 } from './dto/storefront-query.dto';
+import { resolveBranchPresence } from '../common/operating-hours';
 
 @Injectable()
 export class StorefrontService {
@@ -38,6 +43,8 @@ export class StorefrontService {
     private readonly hotelRatePlanRepo: Repository<HotelRatePlan>,
     @InjectRepository(HotelReservation)
     private readonly hotelReservationRepo: Repository<HotelReservation>,
+    @InjectRepository(HotelFolio)
+    private readonly hotelFolioRepo: Repository<HotelFolio>,
   ) {}
 
   // ── Store listing ─────────────────────────────────────────────────────────
@@ -224,6 +231,30 @@ export class StorefrontService {
       occupied.map((r) => r.roomNumber).filter(Boolean),
     );
 
+    // Reservations are only half the truth. A walk-in checked in at the front
+    // desk has an open folio and no reservation at all, so a room that is
+    // physically occupied still read as bookable here — and the app would sell
+    // it twice. Net out open folios too.
+    //
+    // A folio with no dates is an in-house stay of unknown length: treat it as
+    // occupying the room for any window, since the desk has not said when it
+    // ends.
+    const openFolios = await this.hotelFolioRepo
+      .createQueryBuilder('f')
+      .where('f."branchId" = :branchId', { branchId })
+      .andWhere('f."status" = :status', { status: HotelFolioStatus.OPEN })
+      .andWhere('(f."checkInAt" IS NULL OR f."checkInAt" < :checkOut)', {
+        checkOut: checkOutAt,
+      })
+      .andWhere('(f."checkOutAt" IS NULL OR f."checkOutAt" > :checkIn)', {
+        checkIn: checkInAt,
+      })
+      .getMany();
+
+    for (const folio of openFolios) {
+      if (folio.roomNumber) occupiedRoomNumbers.add(folio.roomNumber);
+    }
+
     const availableRooms = allRooms.filter(
       (r) => !occupiedRoomNumbers.has(r.roomNumber),
     );
@@ -298,12 +329,18 @@ export class StorefrontService {
     store: VendorStore,
     branch: Branch | null | undefined,
   ) {
+    // Decided here, not on the device: a shopper's phone clock and timezone are
+    // not the shop's. `isOpenNow: null` means no published hours — unknown, not
+    // closed.
+    const presence = resolveBranchPresence(store.operatingHours ?? null);
     return {
       storeId: store.id,
       branchId: store.branchId ?? null,
       storeName: store.storeName,
       serviceFormat: store.serviceFormat ?? null,
       coverImageUrl: store.coverImageUrl ?? null,
+      isOpenNow: presence.isOpenNow,
+      nextOpenAt: presence.nextOpenAt,
       city: branch?.city ?? null,
       country: branch?.country ?? null,
       address: branch?.address ?? null,
@@ -313,6 +350,7 @@ export class StorefrontService {
   }
 
   private toStoreDetail(store: VendorStore, branch: Branch | null | undefined) {
+    const presence = resolveBranchPresence(store.operatingHours ?? null);
     return {
       storeId: store.id,
       branchId: store.branchId ?? null,
@@ -320,6 +358,8 @@ export class StorefrontService {
       serviceFormat: store.serviceFormat ?? null,
       coverImageUrl: store.coverImageUrl ?? null,
       operatingHours: store.operatingHours ?? null,
+      isOpenNow: presence.isOpenNow,
+      nextOpenAt: presence.nextOpenAt,
       city: branch?.city ?? null,
       country: branch?.country ?? null,
       address: branch?.address ?? null,

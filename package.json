@@ -51,6 +51,8 @@
     "backfill:sales": "ts-node -r tsconfig-paths/register --transpile-only scripts/backfill-product-sales.ts",
     "reconcile:ledger": "ts-node -r tsconfig-paths/register --transpile-only scripts/reconcile-ledger.ts",
     "reconcile:variant-inventory": "ts-node -r tsconfig-paths/register --transpile-only scripts/reconcile-variant-inventory.ts",
+    "reconcile:branch-store-links": "node --env-file=.env -r ts-node/register -r tsconfig-paths/register scripts/reconcile-branch-vendor-store-links.ts",
+    "reconcile:branch-store-links:execute": "node --env-file=.env -r ts-node/register -r tsconfig-paths/register scripts/reconcile-branch-vendor-store-links.ts --execute",
     "backfill:phash": "ts-node -r tsconfig-paths/register --transpile-only scripts/backfill-phash.ts",
     "cleanup:nonvehicle-attrs": "node --env-file=.env -r ts-node/register -r tsconfig-paths/register scripts/cleanup-nonvehicle-attributes.ts --dry-run",
     "cleanup:nonvehicle-attrs:execute": "node --env-file=.env -r ts-node/register -r tsconfig-paths/register scripts/cleanup-nonvehicle-attributes.ts --execute",

@@ -41,6 +41,12 @@ Current focus:
 
 POS-S should be built against the implemented backend contract in `retail-ops.controller.ts` and `purchase-orders.controller.ts`, not against admin procurement routes or inferred backend behavior.
 
+The POS-S → Consumer app direction (shop identity, service formats, shelf price/stock, branch
+presence, hotel rooms) is specified separately in `pos-s/docs/pos-consumer-storefront-contract.md`.
+That document also records which consumer→POS surfaces are frozen — `POST /api/consumer/v1/orders`,
+`GET /api/consumer/v1/orders/:orderId/status`, and the parked-order pair — and the known defects in
+them that are deliberately left unfixed. DTO changes on that seam land there first.
+
 POS portal auth/session routes:
 
 - `POST /api/pos-portal/auth/login`

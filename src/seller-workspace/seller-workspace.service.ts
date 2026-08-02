@@ -15,6 +15,7 @@ import {
   BranchStaffRole,
 } from '../branch-staff/entities/branch-staff-assignment.entity';
 import { Branch } from '../branches/entities/branch.entity';
+import { linkBranchToVendorStore } from '../branches/branch-store-link';
 import { BranchHomeConfig } from '../branches/entities/branch-home-config.type';
 import { BranchInventory } from '../branches/entities/branch-inventory.entity';
 import { Order, PaymentStatus } from '../orders/entities/order.entity';
@@ -800,8 +801,14 @@ export class SellerWorkspaceService {
           serviceFormat: normalizedServiceFormat ?? null,
         });
         const savedVendorStore = await vendorStoresRepo.save(vendorStore);
+        // Both halves of the branch↔store 1:1 go through one writer so the link
+        // can never end up one-sided. See branch-store-link.ts.
+        await linkBranchToVendorStore(
+          manager,
+          savedBranch.id,
+          savedVendorStore.id,
+        );
         savedBranch.vendorStoreId = savedVendorStore.id;
-        await branchesRepository.save(savedBranch);
 
         createdBranchId = savedBranch.id;
       },
