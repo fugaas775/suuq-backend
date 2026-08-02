@@ -14,13 +14,18 @@ import {
 import { GlAccountCode } from '../accounting/gl-accounts.constant';
 import { GlJournalSourceType } from '../accounting/entities/gl-journal-entry.entity';
 import { splitTenders, extractBadDebt } from '../accounting/tender-split.util';
-import { HotelFolio, HotelFolioStatus } from './entities/hotel-folio.entity';
+import {
+  HotelFolio,
+  HotelFolioPaymentRecord,
+  HotelFolioStatus,
+} from './entities/hotel-folio.entity';
 import { HotelFolioCharge } from './entities/hotel-folio-charge.entity';
 import { HotelRoom, HotelRoomStatus } from './entities/hotel-room.entity';
 import {
   ListHotelFoliosQueryDto,
   OpenFolioDto,
   PostFolioChargeDto,
+  RecordFolioPaymentDto,
   SettleFolioDto,
   TransferFolioRoomDto,
   VoidFolioDto,
@@ -233,6 +238,119 @@ export class HotelFolioService {
     };
   }
 
+  private normalizeFolioPaymentRows(
+    rows: {
+      method?: string;
+      amount?: number;
+      currency?: string;
+      reference?: string;
+    }[],
+    fallbackCurrency: string,
+    meta: {
+      checkoutId?: string | null;
+      idempotencyKey?: string | null;
+      paidAt: string;
+    },
+  ): { records: HotelFolioPaymentRecord[]; total: number } {
+    const records: HotelFolioPaymentRecord[] = (rows || [])
+      .filter((p) => Number(p.amount || 0) > 0)
+      .map((p) => ({
+        amount:
+          Math.round((Number(p.amount || 0) + Number.EPSILON) * 100) / 100,
+        method: String(p.method || 'CASH')
+          .trim()
+          .toUpperCase(),
+        currency: p.currency
+          ? String(p.currency).trim().toUpperCase()
+          : fallbackCurrency,
+        reference: p.reference ? String(p.reference).trim() : null,
+        checkoutId: meta.checkoutId ?? null,
+        idempotencyKey: meta.idempotencyKey ?? null,
+        paidAt: meta.paidAt,
+      }));
+    const total =
+      Math.round(
+        (records.reduce((s, p) => s + p.amount, 0) + Number.EPSILON) * 100,
+      ) / 100;
+    return { records, total };
+  }
+
+  /**
+   * Records a partial (instalment) payment against an OPEN folio.
+   *
+   * Appends to the `payments` ledger and ACCRUES `paidAmount`; the folio stays
+   * OPEN until check-out. This exists because settleFolio is terminal — it flips
+   * the folio to SETTLED unconditionally, so the POS could never call it for an
+   * instalment (the Muntaha Room 210 incident) and simply skipped the backend
+   * entirely. The result was a folio.paidAmount that only ever reflected the LAST
+   * payment.
+   *
+   * Deliberately posts NO general-ledger entry. A HOTEL instalment's cash is
+   * already recognised through the POS checkout ingestion path, and settleFolio
+   * separately credits SERVICE_REVENUE for the folio's charges — a third posting
+   * here would double-book. (This is where it differs from the property-rental
+   * analogue, whose rent is deferred and does post on payment.)
+   */
+  async recordPayment(folioId: number, dto: RecordFolioPaymentDto) {
+    const folio = await this.folioRepo.findOne({ where: { id: folioId } });
+    if (!folio) {
+      throw new NotFoundException(`Hotel folio ${folioId} not found.`);
+    }
+    if (folio.status !== HotelFolioStatus.OPEN) {
+      throw new BadRequestException(
+        `Folio ${folioId} cannot take a payment from status ${folio.status}.`,
+      );
+    }
+
+    const idempotencyKey = String(dto.idempotencyKey || '').trim() || null;
+    const ledger: HotelFolioPaymentRecord[] = Array.isArray(folio.payments)
+      ? folio.payments
+      : [];
+    if (
+      idempotencyKey &&
+      ledger.some((p) => p.idempotencyKey === idempotencyKey)
+    ) {
+      // Idempotent retry — this instalment is already on the ledger. Returning
+      // the folio unchanged matters: the mirror call retries on failure, and a
+      // retry that lands after a slow success must not double the paidAmount.
+      return this.toFolioResponse(folio);
+    }
+
+    const rows =
+      dto.payments && dto.payments.length > 0
+        ? dto.payments
+        : dto.amount !== undefined
+          ? [
+              {
+                method: dto.paymentMethod,
+                amount: dto.amount,
+                currency: dto.currency,
+              },
+            ]
+          : [];
+    const paidAt = dto.paidAt
+      ? new Date(dto.paidAt).toISOString()
+      : new Date().toISOString();
+    const { records, total } = this.normalizeFolioPaymentRows(
+      rows,
+      folio.currency,
+      { checkoutId: dto.checkoutId ?? null, idempotencyKey, paidAt },
+    );
+    if (total <= 0) {
+      throw new BadRequestException(
+        'Payment amount must be greater than zero.',
+      );
+    }
+
+    folio.payments = [...ledger, ...records];
+    folio.paidAmount =
+      Math.round(
+        ((Number(folio.paidAmount) || 0) + total + Number.EPSILON) * 100,
+      ) / 100;
+    const saved = await this.folioRepo.save(folio);
+    return this.toFolioResponse(saved);
+  }
+
   async settleFolio(folioId: number, dto: SettleFolioDto) {
     const folio = await this.folioRepo.findOne({ where: { id: folioId } });
 
@@ -254,12 +372,24 @@ export class HotelFolioService {
     folio.status = HotelFolioStatus.SETTLED;
     folio.settledCheckoutId = dto.checkoutId ?? null;
     // If multi-payment array is provided, sum it; otherwise fall back to legacy flat field.
-    folio.paidAmount =
+    const settleTender =
       dto.payments && dto.payments.length > 0
         ? dto.payments.reduce((sum, p) => sum + Number(p.amount || 0), 0)
         : dto.paidAmount !== undefined
           ? dto.paidAmount
           : null;
+    // ADD the closing tender to what recordPayment already accrued. This used to
+    // OVERWRITE, so a folio paid 7,500 + 10,000 settled reading 10,000 — and
+    // because the GL below books `receivable = recognised - paid`, every
+    // instalment-settled folio posted phantom accounts receivable equal to the
+    // earlier instalments.
+    const priorPaid = Number(folio.paidAmount) || 0;
+    folio.paidAmount =
+      settleTender === null && priorPaid === 0
+        ? null
+        : Math.round(
+            (priorPaid + Number(settleTender || 0) + Number.EPSILON) * 100,
+          ) / 100;
     folio.settledAt = dto.settledAt ? new Date(dto.settledAt) : new Date();
 
     const saved = await this.folioRepo.save(folio);

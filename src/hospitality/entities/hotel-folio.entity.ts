@@ -7,6 +7,17 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 
+/** One recorded instalment against an OPEN folio. */
+export interface HotelFolioPaymentRecord {
+  amount: number;
+  method: string;
+  currency: string;
+  reference: string | null;
+  checkoutId: string | null;
+  idempotencyKey: string | null;
+  paidAt: string;
+}
+
 export enum HotelFolioStatus {
   OPEN = 'OPEN',
   SETTLED = 'SETTLED',
@@ -74,8 +85,22 @@ export class HotelFolio {
   @Column({ type: 'varchar', length: 128, nullable: true })
   settledCheckoutId!: string | null;
 
+  /**
+   * Cumulative amount collected against this folio. ACCRUES across instalments —
+   * recordPayment adds to it and settleFolio adds the final tender. It used to be
+   * overwritten at settle with only the last payment, which is what made
+   * instalment-settled folios post phantom accounts receivable.
+   */
   @Column({ type: 'numeric', precision: 14, scale: 2, nullable: true })
   paidAmount!: number | null;
+
+  /**
+   * Instalment payment ledger (partial payments collected while OPEN). Also the
+   * idempotency record: a retried recordPayment is recognised by finding its
+   * idempotencyKey here.
+   */
+  @Column({ type: 'jsonb', nullable: true })
+  payments!: HotelFolioPaymentRecord[] | null;
 
   @Column({ type: 'text', nullable: true })
   voidReason!: string | null;
