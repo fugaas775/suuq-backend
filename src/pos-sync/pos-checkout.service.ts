@@ -17,6 +17,8 @@ import { InventoryLedgerService } from '../branches/inventory-ledger.service';
 import { VariantInventoryService } from '../branches/variant-inventory.service';
 import { ProductVariant } from '../products/entities/product-variant.entity';
 import { Branch } from '../branches/entities/branch.entity';
+import { BranchInventory } from '../branches/entities/branch-inventory.entity';
+import { BranchInventoryVariant } from '../branches/entities/branch-inventory-variant.entity';
 import { StockMovementType } from '../branches/entities/stock-movement.entity';
 import { PartnerCredential } from '../partner-credentials/entities/partner-credential.entity';
 import { ProductAliasesService } from '../product-aliases/product-aliases.service';
@@ -462,7 +464,15 @@ export class PosCheckoutService {
     // id updates that row rather than minting a second revenue record.
     const retryOf = existing ?? null;
 
-    await this.assertScope(dto.branchId, dto.partnerCredentialId);
+    const branch = await this.assertScope(
+      dto.branchId,
+      dto.partnerCredentialId,
+    );
+    // RETAIL stock semantics differ from every other format (see the stock loop
+    // below): a branch inventory row — not the global product.manageStock flag —
+    // is what says "this branch counts units of this SKU", and a sale must never
+    // be destroyed by an oversell. Resolved once, here, so the loop stays cheap.
+    const isRetailBranch = this.isRetailServiceFormat(branch);
 
     // Authoritative sale time — independent of the device clock (server time for
     // online captures; clamped device time for offline captures).
@@ -557,10 +567,17 @@ export class PosCheckoutService {
     const nonInventoryLines: ReturnType<
       PosCheckoutService['describeNonInventoryLine']
     >[] = [];
+    // RETAIL lines that asked for more units than the branch had on hand. The
+    // sale still completes (see the clamp in the stock loop); the shortfall is
+    // recorded here so an oversell is visible rather than silently swallowed.
+    const oversoldLines: ReturnType<
+      PosCheckoutService['describeOversoldLine']
+    >[] = [];
 
     try {
       await this.dataSource.transaction(async (manager) => {
         nonInventoryLines.length = 0;
+        oversoldLines.length = 0;
         const registerSession = await this.assertRegisterSession(dto, manager);
         const suspendedCart = await this.assertSuspendedCart(
           dto,
@@ -619,21 +636,32 @@ export class PosCheckoutService {
             manager,
           );
           if (variantId) {
-            await this.variantInventoryService.recordVariantMovement(
-              {
-                branchId: dto.branchId,
-                productId,
-                variantId,
-                quantityDelta,
-                movementType,
-                sourceType: 'POS_CHECKOUT',
-                sourceReferenceId: checkout.id,
-                actorUserId: actor.id ?? null,
-                note: this.buildMovementNote(dto, item),
-                occurredAt,
-              },
-              manager,
-            );
+            const variantDelta = isRetailBranch
+              ? await this.clampRetailSaleDelta(
+                  quantityDelta,
+                  () =>
+                    this.readVariantOnHand(dto.branchId, variantId, manager),
+                  item,
+                  oversoldLines,
+                )
+              : quantityDelta;
+            if (variantDelta !== 0) {
+              await this.variantInventoryService.recordVariantMovement(
+                {
+                  branchId: dto.branchId,
+                  productId,
+                  variantId,
+                  quantityDelta: variantDelta,
+                  movementType,
+                  sourceType: 'POS_CHECKOUT',
+                  sourceReferenceId: checkout.id,
+                  actorUserId: actor.id ?? null,
+                  note: this.buildMovementNote(dto, item),
+                  occurredAt,
+                },
+                manager,
+              );
+            }
             continue;
           }
 
@@ -642,12 +670,49 @@ export class PosCheckoutService {
           // treated as always-available (e.g. made-to-order food items) and
           // must not be deducted — doing so would immediately fail because they
           // have no inventory record (onHand starts at 0).
+          //
+          // RETAIL is the exception, and deliberately so: manageStock is a
+          // GLOBAL product flag, but whether a branch counts units of a SKU is a
+          // PER-BRANCH fact, and the branch inventory row is exactly that fact.
+          // Every RETAIL branch in production carries inventory rows on products
+          // whose manageStock is false (they are created by PO receipts, counts
+          // and adjustments, none of which set the flag), so the flag alone left
+          // on-hand rising forever and never falling on a sale. Gated on RETAIL
+          // so QSR/CAFETERIA keep "made-to-order, always available" — those
+          // formats hold inventory rows for ingredients and must not decrement.
           const product = await manager.getRepository(Product).findOne({
             where: { id: productId },
             select: ['id', 'manageStock'],
           });
 
-          if (!product?.manageStock) {
+          let shouldDecrement = Boolean(product?.manageStock);
+          if (!shouldDecrement && isRetailBranch) {
+            shouldDecrement = await manager
+              .getRepository(BranchInventory)
+              .exists({ where: { branchId: dto.branchId, productId } });
+          }
+
+          if (!shouldDecrement) {
+            continue;
+          }
+
+          // Clamp instead of throwing. recordMovement rejects a movement that
+          // would drive on-hand negative, and that rejection aborts the whole
+          // checkout transaction — the sale lands FAILED and drops out of every
+          // report (production already holds such rows). Losing the revenue is
+          // strictly worse than an imprecise stock count, so an oversold RETAIL
+          // line records what it could and reports the shortfall on the
+          // checkout instead of failing the sale.
+          const appliedDelta = isRetailBranch
+            ? await this.clampRetailSaleDelta(
+                quantityDelta,
+                () => this.readProductOnHand(dto.branchId, productId, manager),
+                item,
+                oversoldLines,
+              )
+            : quantityDelta;
+
+          if (appliedDelta === 0) {
             continue;
           }
 
@@ -656,7 +721,7 @@ export class PosCheckoutService {
               branchId: dto.branchId,
               productId,
               movementType,
-              quantityDelta,
+              quantityDelta: appliedDelta,
               sourceType: 'POS_CHECKOUT',
               sourceReferenceId: checkout.id,
               actorUserId: actor.id ?? null,
@@ -675,6 +740,7 @@ export class PosCheckoutService {
           nonInventoryLines: nonInventoryLines.length
             ? nonInventoryLines
             : null,
+          oversoldLines: oversoldLines.length ? oversoldLines : null,
         };
 
         if (suspendedCart) {
@@ -855,6 +921,90 @@ export class PosCheckoutService {
     };
   }
 
+  /** True only for the RETAIL service format (see the stock loop in ingest). */
+  private isRetailServiceFormat(branch: Branch | null | undefined): boolean {
+    return (
+      String(branch?.serviceFormat ?? '')
+        .trim()
+        .toUpperCase() === 'RETAIL'
+    );
+  }
+
+  private describeOversoldLine(
+    item: PosCheckoutItemDto,
+    requested: number,
+    applied: number,
+  ): {
+    lineId: string | null;
+    sku: string | null;
+    title: string | null;
+    requested: number;
+    applied: number;
+    shortfall: number;
+  } {
+    return {
+      lineId: this.normalizeOptionalString(item.lineId),
+      sku: this.normalizeOptionalString(item.sku),
+      title: this.normalizeOptionalString(item.title),
+      requested,
+      applied,
+      shortfall: this.roundMoney(requested - applied),
+    };
+  }
+
+  private async readProductOnHand(
+    branchId: number,
+    productId: number,
+    manager: EntityManager,
+  ): Promise<number> {
+    const row = await manager.getRepository(BranchInventory).findOne({
+      where: { branchId, productId },
+      select: ['id', 'quantityOnHand'],
+    });
+    return Number(row?.quantityOnHand ?? 0);
+  }
+
+  private async readVariantOnHand(
+    branchId: number,
+    variantId: number,
+    manager: EntityManager,
+  ): Promise<number> {
+    const row = await manager.getRepository(BranchInventoryVariant).findOne({
+      where: { branchId, variantId },
+      select: ['id', 'quantityOnHand'],
+    });
+    return Number(row?.quantityOnHand ?? 0);
+  }
+
+  /**
+   * Clamp a RETAIL sale movement to the units the branch actually holds.
+   *
+   * Returning 0 means "record no movement" — the caller skips the ledger write
+   * entirely. Anything clamped (including to 0) is appended to `oversoldLines`
+   * so the shortfall reaches the checkout metadata. Returns positive deltas
+   * (returns/refunds) untouched: those add stock back and can never go negative.
+   */
+  private async clampRetailSaleDelta(
+    quantityDelta: number,
+    readOnHand: () => Promise<number>,
+    item: PosCheckoutItemDto,
+    oversoldLines: ReturnType<PosCheckoutService['describeOversoldLine']>[],
+  ): Promise<number> {
+    if (quantityDelta >= 0) {
+      return quantityDelta;
+    }
+
+    const requested = Math.abs(quantityDelta);
+    const onHand = await readOnHand();
+    const applied = Math.min(requested, Math.max(0, onHand));
+
+    if (applied < requested) {
+      oversoldLines.push(this.describeOversoldLine(item, requested, applied));
+    }
+
+    return -applied;
+  }
+
   private async resolveQuoteLine(
     branchId: number,
     item: QuotePosCheckoutItemDto,
@@ -914,7 +1064,7 @@ export class PosCheckoutService {
   private async assertScope(
     branchId: number,
     partnerCredentialId?: number,
-  ): Promise<void> {
+  ): Promise<Branch> {
     const branch = await this.branchesRepository.findOne({
       where: { id: branchId },
     });
@@ -923,7 +1073,7 @@ export class PosCheckoutService {
     }
 
     if (partnerCredentialId == null) {
-      return;
+      return branch;
     }
 
     const partnerCredential = await this.partnerCredentialsRepository.findOne({

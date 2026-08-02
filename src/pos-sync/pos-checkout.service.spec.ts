@@ -6,6 +6,8 @@ import { VariantInventoryService } from '../branches/variant-inventory.service';
 import { GeneralLedgerService } from '../accounting/general-ledger.service';
 import { ProductCostService } from '../purchase-orders/product-cost.service';
 import { Branch } from '../branches/entities/branch.entity';
+import { BranchInventory } from '../branches/entities/branch-inventory.entity';
+import { BranchInventoryVariant } from '../branches/entities/branch-inventory-variant.entity';
 import { StockMovementType } from '../branches/entities/stock-movement.entity';
 import { PartnerCredential } from '../partner-credentials/entities/partner-credential.entity';
 import { EmailService } from '../email/email.service';
@@ -42,6 +44,9 @@ describe('PosCheckoutService', () => {
   let registerSessionsRepository: { findOne: jest.Mock; save: jest.Mock };
   let suspendedCartsRepository: { findOne: jest.Mock; save: jest.Mock };
   let inventoryLedgerService: { recordMovement: jest.Mock };
+  let branchInventoryRepository: { exists: jest.Mock; findOne: jest.Mock };
+  let branchInventoryVariantRepository: { findOne: jest.Mock };
+  let variantInventoryService: { recordVariantMovement: jest.Mock };
   let productAliasesService: { resolveProductIdForBranch: jest.Mock };
   let dataSource: { transaction: jest.Mock };
   let generalLedgerService: {
@@ -102,6 +107,21 @@ describe('PosCheckoutService', () => {
       recordMovement: jest.fn().mockResolvedValue({}),
     };
 
+    // No branch inventory row and no variant row by default, so every existing
+    // expectation keeps running through the manageStock path unchanged.
+    branchInventoryRepository = {
+      exists: jest.fn().mockResolvedValue(false),
+      findOne: jest.fn().mockResolvedValue(null),
+    };
+
+    branchInventoryVariantRepository = {
+      findOne: jest.fn().mockResolvedValue(null),
+    };
+
+    variantInventoryService = {
+      recordVariantMovement: jest.fn().mockResolvedValue({}),
+    };
+
     productAliasesService = {
       resolveProductIdForBranch: jest.fn().mockResolvedValue(55),
     };
@@ -125,6 +145,12 @@ describe('PosCheckoutService', () => {
             }
             if (entity === Product) {
               return productsRepository;
+            }
+            if (entity === BranchInventory) {
+              return branchInventoryRepository;
+            }
+            if (entity === BranchInventoryVariant) {
+              return branchInventoryVariantRepository;
             }
 
             return null;
@@ -163,7 +189,7 @@ describe('PosCheckoutService', () => {
         { provide: EmailService, useValue: {} },
         {
           provide: VariantInventoryService,
-          useValue: { recordVariantMovement: jest.fn() },
+          useValue: variantInventoryService,
         },
         { provide: GeneralLedgerService, useValue: generalLedgerService },
         { provide: ProductCostService, useValue: productCostService },
@@ -1662,6 +1688,248 @@ describe('PosCheckoutService', () => {
       expect(findLine(entry.lines, '1100').credit).toBe(300); // ACCOUNTS_RECEIVABLE
       const { debit, credit } = lineTotals(entry.lines);
       expect(debit).toBe(credit);
+    });
+  });
+
+  describe('RETAIL stock decrement', () => {
+    // A RETAIL branch counts units of a SKU because it has a branch inventory
+    // row for it — not because the global product.manageStock flag happens to be
+    // true. In production it almost never is (82 of 83 RETAIL inventory rows sat
+    // on manageStock=false), so the flag alone left on-hand rising forever.
+    const ingestOneLine = async (quantity = 2) => {
+      posCheckoutsRepository.findOne
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({
+          id: 71,
+          branchId: 3,
+          transactionType: PosCheckoutTransactionType.SALE,
+          status: PosCheckoutStatus.PROCESSED,
+          currency: 'ETB',
+          subtotal: 15,
+          discountAmount: 0,
+          taxAmount: 0,
+          total: 15,
+          paidAmount: 15,
+          changeDue: 0,
+          itemCount: 1,
+          occurredAt: new Date('2026-08-01T10:00:00.000Z'),
+          processedAt: new Date('2026-08-01T10:00:01.000Z'),
+          tenders: [{ method: 'CASH', amount: 15 }],
+          items: [{ productId: 55, quantity, unitPrice: 7.5, lineTotal: 15 }],
+          createdAt: new Date('2026-08-01T10:00:00.000Z'),
+          updatedAt: new Date('2026-08-01T10:00:01.000Z'),
+        });
+
+      return service.ingest(
+        {
+          branchId: 3,
+          transactionType: PosCheckoutTransactionType.SALE,
+          externalCheckoutId: `retail-stock-${quantity}`,
+          currency: 'ETB',
+          subtotal: 15,
+          total: 15,
+          paidAmount: 15,
+          occurredAt: '2026-08-01T10:00:00.000Z',
+          items: [{ productId: 55, quantity, unitPrice: 7.5, lineTotal: 15 }],
+          tenders: [{ method: 'CASH', amount: 15 }],
+        },
+        { id: 9 },
+      );
+    };
+
+    const savedCheckout = () =>
+      posCheckoutsRepository.save.mock.calls
+        .map((call) => call[0])
+        .find((row) => row?.status === PosCheckoutStatus.PROCESSED);
+
+    beforeEach(() => {
+      productsRepository.findOne.mockResolvedValue({
+        id: 55,
+        name: 'Shelf Item',
+        manageStock: false,
+      });
+    });
+
+    it('decrements a RETAIL line with manageStock=false when a branch inventory row exists', async () => {
+      branchesRepository.findOne.mockResolvedValue({
+        id: 3,
+        serviceFormat: 'RETAIL',
+      });
+      branchInventoryRepository.exists.mockResolvedValue(true);
+      branchInventoryRepository.findOne.mockResolvedValue({
+        id: 1,
+        quantityOnHand: 10,
+      });
+
+      await ingestOneLine(2);
+
+      expect(inventoryLedgerService.recordMovement).toHaveBeenCalledWith(
+        expect.objectContaining({
+          branchId: 3,
+          productId: 55,
+          quantityDelta: -2,
+          movementType: StockMovementType.SALE,
+        }),
+        expect.anything(),
+      );
+    });
+
+    it('does NOT decrement the same product on a CAFETERIA branch', async () => {
+      // Isolation proof: CAFETERIA holds branch inventory rows for ingredients
+      // while relying on manageStock=false meaning "made to order, always
+      // available". The RETAIL escape hatch must never fire there.
+      branchesRepository.findOne.mockResolvedValue({
+        id: 3,
+        serviceFormat: 'CAFETERIA',
+      });
+      branchInventoryRepository.exists.mockResolvedValue(true);
+      branchInventoryRepository.findOne.mockResolvedValue({
+        id: 1,
+        quantityOnHand: 10,
+      });
+
+      await ingestOneLine(2);
+
+      expect(inventoryLedgerService.recordMovement).not.toHaveBeenCalled();
+    });
+
+    it('does NOT decrement a RETAIL product with no branch inventory row', async () => {
+      branchesRepository.findOne.mockResolvedValue({
+        id: 3,
+        serviceFormat: 'RETAIL',
+      });
+      branchInventoryRepository.exists.mockResolvedValue(false);
+
+      await ingestOneLine(2);
+
+      expect(inventoryLedgerService.recordMovement).not.toHaveBeenCalled();
+    });
+
+    it('clamps an oversold RETAIL line to on-hand and keeps the sale PROCESSED', async () => {
+      branchesRepository.findOne.mockResolvedValue({
+        id: 3,
+        serviceFormat: 'RETAIL',
+      });
+      branchInventoryRepository.exists.mockResolvedValue(true);
+      branchInventoryRepository.findOne.mockResolvedValue({
+        id: 1,
+        quantityOnHand: 2,
+      });
+
+      await ingestOneLine(5);
+
+      expect(inventoryLedgerService.recordMovement).toHaveBeenCalledWith(
+        expect.objectContaining({ quantityDelta: -2 }),
+        expect.anything(),
+      );
+      const saved = savedCheckout();
+      expect(saved?.status).toBe(PosCheckoutStatus.PROCESSED);
+      expect(saved?.metadata?.oversoldLines).toEqual([
+        expect.objectContaining({ requested: 5, applied: 2, shortfall: 3 }),
+      ]);
+    });
+
+    it('records an oversold line and stays PROCESSED when on-hand is zero', async () => {
+      branchesRepository.findOne.mockResolvedValue({
+        id: 3,
+        serviceFormat: 'RETAIL',
+      });
+      branchInventoryRepository.exists.mockResolvedValue(true);
+      branchInventoryRepository.findOne.mockResolvedValue({
+        id: 1,
+        quantityOnHand: 0,
+      });
+
+      await ingestOneLine(3);
+
+      // No movement at all — recordMovement would have thrown on a negative
+      // on-hand, failing the whole sale.
+      expect(inventoryLedgerService.recordMovement).not.toHaveBeenCalled();
+      const saved = savedCheckout();
+      expect(saved?.status).toBe(PosCheckoutStatus.PROCESSED);
+      expect(saved?.metadata?.oversoldLines).toEqual([
+        expect.objectContaining({ requested: 3, applied: 0, shortfall: 3 }),
+      ]);
+    });
+
+    it('clamps a RETAIL variant line the same way', async () => {
+      branchesRepository.findOne.mockResolvedValue({
+        id: 3,
+        serviceFormat: 'RETAIL',
+      });
+      // resolveCheckoutVariantId reads ProductVariant through the manager.
+      dataSource.transaction.mockImplementation(async (callback: any) =>
+        callback({
+          query: jest.fn().mockResolvedValue([]),
+          getRepository: jest.fn((entity: any) => {
+            if (entity === PosCheckout) return posCheckoutsRepository;
+            if (entity === PosRegisterSession)
+              return registerSessionsRepository;
+            if (entity === PosSuspendedCart) return suspendedCartsRepository;
+            if (entity === Branch) return branchesRepository;
+            if (entity === Product) return productsRepository;
+            if (entity === BranchInventory) return branchInventoryRepository;
+            if (entity === BranchInventoryVariant)
+              return branchInventoryVariantRepository;
+            return { findOne: jest.fn().mockResolvedValue({ id: 4004 }) };
+          }),
+        }),
+      );
+      branchInventoryVariantRepository.findOne.mockResolvedValue({
+        id: 7,
+        quantityOnHand: 1,
+      });
+
+      posCheckoutsRepository.findOne
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({
+          id: 71,
+          branchId: 3,
+          transactionType: PosCheckoutTransactionType.SALE,
+          status: PosCheckoutStatus.PROCESSED,
+          currency: 'ETB',
+          subtotal: 30,
+          total: 30,
+          paidAmount: 30,
+          itemCount: 1,
+          occurredAt: new Date('2026-08-01T10:00:00.000Z'),
+          tenders: [],
+          items: [],
+          createdAt: new Date('2026-08-01T10:00:00.000Z'),
+          updatedAt: new Date('2026-08-01T10:00:00.000Z'),
+        });
+
+      await service.ingest(
+        {
+          branchId: 3,
+          transactionType: PosCheckoutTransactionType.SALE,
+          externalCheckoutId: 'retail-variant-1',
+          currency: 'ETB',
+          subtotal: 30,
+          total: 30,
+          paidAmount: 30,
+          occurredAt: '2026-08-01T10:00:00.000Z',
+          items: [
+            {
+              productId: 55,
+              quantity: 4,
+              unitPrice: 7.5,
+              lineTotal: 30,
+              metadata: { variantId: 4004 },
+            },
+          ],
+          tenders: [{ method: 'CASH', amount: 30 }],
+        },
+        { id: 9 },
+      );
+
+      expect(
+        variantInventoryService.recordVariantMovement,
+      ).toHaveBeenCalledWith(
+        expect.objectContaining({ variantId: 4004, quantityDelta: -1 }),
+        expect.anything(),
+      );
+      expect(savedCheckout()?.status).toBe(PosCheckoutStatus.PROCESSED);
     });
   });
 });
