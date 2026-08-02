@@ -591,7 +591,11 @@ export class PosCheckoutService {
           manager,
         );
 
-        await this.assertReturnSourceSaleProcessed(dto, manager);
+        await this.assertReturnSourceSaleProcessed(
+          dto,
+          manager,
+          isRetailBranch,
+        );
 
         if (registerSession && !checkout.registerId) {
           checkout.registerId = registerSession.registerId;
@@ -1927,6 +1931,7 @@ export class PosCheckoutService {
   private async assertReturnSourceSaleProcessed(
     dto: IngestPosCheckoutDto,
     manager: EntityManager,
+    isRetailBranch = false,
   ): Promise<void> {
     if (dto.transactionType !== PosCheckoutTransactionType.RETURN) {
       return;
@@ -1964,6 +1969,7 @@ export class PosCheckoutService {
         dto,
         processedSourceSale,
         checkoutRepository,
+        isRetailBranch,
       );
       return;
     }
@@ -1994,7 +2000,8 @@ export class PosCheckoutService {
     repo: Repository<PosCheckout>,
     branchId: number,
     sourceReceiptNumber: string,
-  ): Promise<Map<string, number>> {
+    allowFallbackKey = false,
+  ): Promise<Map<string, { quantity: number; amount: number }>> {
     const priorReturns = await repo
       .createQueryBuilder('c')
       .where('c.branchId = :branchId', { branchId })
@@ -2008,58 +2015,131 @@ export class PosCheckoutService {
       )
       .getMany();
 
-    const returnedByLineId = new Map<string, number>();
+    const returnedByLineId = new Map<
+      string,
+      { quantity: number; amount: number }
+    >();
     for (const ret of priorReturns) {
       for (const item of ret.items ?? []) {
-        const lineId = this.normalizeOptionalString(item.lineId);
-        if (!lineId) continue;
-        returnedByLineId.set(
-          lineId,
-          (returnedByLineId.get(lineId) ?? 0) + Number(item.quantity || 0),
-        );
+        const key = this.resolveReturnLineKey(item, allowFallbackKey);
+        if (!key) continue;
+        const current = returnedByLineId.get(key) ?? { quantity: 0, amount: 0 };
+        returnedByLineId.set(key, {
+          quantity: current.quantity + Number(item.quantity || 0),
+          amount: current.amount + Number(item.lineTotal || 0),
+        });
       }
     }
     return returnedByLineId;
+  }
+
+  /**
+   * Key a return line against the sale line it came from.
+   *
+   * `lineId` is the anchor when present. RETAIL additionally falls back to
+   * (productId, sku): three separate holes in this guard all came from lines
+   * with no lineId — a legacy sale disabled the check entirely, and individual
+   * unanchored lines were skipped — which is exactly the shape of receipt a
+   * refund gets run against twice.
+   */
+  private resolveReturnLineKey(
+    item: { lineId?: string; productId?: number; sku?: string },
+    allowFallback: boolean,
+  ): string | null {
+    const lineId = this.normalizeOptionalString(item.lineId);
+    if (lineId) {
+      return lineId;
+    }
+    if (!allowFallback) {
+      return null;
+    }
+    const productId = Number(item.productId);
+    const sku = this.normalizeOptionalString(item.sku);
+    if (Number.isFinite(productId) && productId > 0) {
+      return `p:${productId}`;
+    }
+    return sku ? `s:${sku.toUpperCase()}` : null;
   }
 
   private async assertReturnQuantitiesWithinRemaining(
     dto: IngestPosCheckoutDto,
     sourceSale: PosCheckout,
     repo: Repository<PosCheckout>,
+    isRetailBranch = false,
   ): Promise<void> {
     const soldByLineId = new Map<string, number>();
+    const soldAmountByLineId = new Map<string, number>();
     for (const item of sourceSale.items ?? []) {
-      const lineId = this.normalizeOptionalString(item.lineId);
-      if (!lineId) continue;
+      const key = this.resolveReturnLineKey(item, isRetailBranch);
+      if (!key) continue;
       soldByLineId.set(
-        lineId,
-        (soldByLineId.get(lineId) ?? 0) + Number(item.quantity || 0),
+        key,
+        (soldByLineId.get(key) ?? 0) + Number(item.quantity || 0),
+      );
+      soldAmountByLineId.set(
+        key,
+        (soldAmountByLineId.get(key) ?? 0) + Number(item.lineTotal || 0),
       );
     }
     if (soldByLineId.size === 0) {
-      return; // legacy sale with no line ids — nothing to anchor the check on
+      return; // legacy sale with nothing to anchor the check on
     }
 
     const returnedByLineId = await this.sumReturnedByLineId(
       repo,
       sourceSale.branchId,
       sourceSale.receiptNumber,
+      isRetailBranch,
     );
 
     for (const item of dto.items ?? []) {
-      const lineId = this.normalizeOptionalString(item.lineId);
-      if (!lineId) continue;
+      const key = this.resolveReturnLineKey(item, isRetailBranch);
       const requested = Number(item.quantity || 0);
       if (requested <= 0) continue;
-      const sold = soldByLineId.get(lineId) ?? 0;
-      if (sold <= 0) continue; // line not on the source sale — leave it to other validation
-      const already = returnedByLineId.get(lineId) ?? 0;
+
+      if (!key) {
+        if (!isRetailBranch) continue;
+        throw new BadRequestException(
+          `Return line "${item.title ?? item.sku ?? 'unknown'}" cannot be matched to the original sale.`,
+        );
+      }
+
+      const sold = soldByLineId.get(key) ?? 0;
+      if (sold <= 0) {
+        // A line that is not on the source sale is not returnable. Skipping it
+        // (the old behaviour) let a refund be issued for goods this receipt
+        // never sold.
+        if (!isRetailBranch) continue;
+        throw new BadRequestException(
+          `Return for "${item.title ?? key}" does not appear on sale ${sourceSale.receiptNumber}.`,
+        );
+      }
+
+      const already = returnedByLineId.get(key)?.quantity ?? 0;
       if (already + requested > sold + 1e-6) {
         const remaining = Math.max(0, sold - already);
         throw new BadRequestException(
-          `Return for "${item.title ?? lineId}" exceeds the remaining returnable quantity ` +
+          `Return for "${item.title ?? key}" exceeds the remaining returnable quantity ` +
             `(sold ${sold}, already returned ${already}, only ${remaining} left).`,
         );
+      }
+
+      // Quantities alone let a discounted unit be refunded at full price. Cap
+      // the money too. RETAIL-only so no other format's returns start failing.
+      if (isRetailBranch) {
+        const soldAmount = soldAmountByLineId.get(key) ?? 0;
+        const alreadyAmount = returnedByLineId.get(key)?.amount ?? 0;
+        const requestedAmount = Number(item.lineTotal || 0);
+        if (
+          soldAmount > 0 &&
+          alreadyAmount + requestedAmount > soldAmount + 0.01
+        ) {
+          const remainingAmount = Math.max(0, soldAmount - alreadyAmount);
+          throw new BadRequestException(
+            `Refund for "${item.title ?? key}" exceeds what was paid for it ` +
+              `(sold ${soldAmount}, already refunded ${alreadyAmount}, only ${remainingAmount} left).`,
+          );
+        }
       }
     }
   }
@@ -2101,7 +2181,14 @@ export class PosCheckoutService {
     return {
       found: true,
       sale: this.toListItem(sale),
-      returnedByLineId: Object.fromEntries(returnedMap),
+      // The wire contract stays lineId -> quantity; the amount tally is used
+      // server-side only (the refund-value cap in the over-return guard).
+      returnedByLineId: Object.fromEntries(
+        Array.from(returnedMap.entries()).map(([key, value]) => [
+          key,
+          value.quantity,
+        ]),
+      ),
     };
   }
 
@@ -2675,12 +2762,123 @@ export class PosCheckoutService {
       );
     }
 
+    // Voiding backed the money out of the books but left the stock gone: the
+    // units were decremented at sale time and nothing ever put them back, so a
+    // voided RETAIL sale permanently understated on-hand. Reverse the movements
+    // too. Best-effort and RETAIL-scoped — no other format decremented for a
+    // manageStock=false product, so none has anything to give back.
+    if (checkout.status === PosCheckoutStatus.PROCESSED) {
+      try {
+        await this.restoreVoidedCheckoutStock(
+          checkout,
+          voidedByUserId,
+          voidedAt,
+        );
+      } catch (error) {
+        this.logger.warn(
+          `Stock restore failed for void of checkout ${checkoutId}: ${
+            error instanceof Error ? error.message : error
+          }`,
+        );
+      }
+    }
+
     return {
       id: checkoutId,
       status: 'VOIDED',
       voidedAt: voidedAt.toISOString(),
       voidedByUserId,
     };
+  }
+
+  /**
+   * Put back the units a now-voided RETAIL sale took off the shelf.
+   *
+   * Mirrors the ingest stock loop: variant lines go back through the variant
+   * ledger, product lines through the product ledger, and a line the sale never
+   * moved (no product, or a product the branch does not stock) is skipped. A
+   * RETURN is not reversed — its movement added stock, and voiding a refund is
+   * out of scope here.
+   */
+  private async restoreVoidedCheckoutStock(
+    checkout: PosCheckout,
+    actorUserId: number,
+    occurredAt: Date,
+  ): Promise<void> {
+    if (checkout.transactionType !== PosCheckoutTransactionType.SALE) {
+      return;
+    }
+
+    const branch = await this.branchesRepository.findOne({
+      where: { id: checkout.branchId },
+    });
+    if (!this.isRetailServiceFormat(branch)) {
+      return;
+    }
+
+    const items = Array.isArray(checkout.items) ? checkout.items : [];
+    if (!items.length) {
+      return;
+    }
+
+    await this.dataSource.transaction(async (manager) => {
+      for (const item of items as PosCheckoutItemDto[]) {
+        const productId = Number(item.productId);
+        if (!Number.isFinite(productId) || productId <= 0) {
+          continue;
+        }
+        const quantity = Math.abs(Number(item.quantity ?? 0));
+        if (!quantity) {
+          continue;
+        }
+
+        const { variantId } = await this.resolveCheckoutVariantId(
+          productId,
+          item,
+          manager,
+        );
+        if (variantId) {
+          await this.variantInventoryService.recordVariantMovement(
+            {
+              branchId: checkout.branchId,
+              productId,
+              variantId,
+              quantityDelta: quantity,
+              movementType: StockMovementType.ADJUSTMENT,
+              sourceType: 'POS_CHECKOUT_VOID',
+              sourceReferenceId: checkout.id,
+              actorUserId,
+              note: `Void of checkout ${checkout.receiptNumber ?? checkout.id}`,
+              occurredAt,
+            },
+            manager,
+          );
+          continue;
+        }
+
+        const hasInventoryRow = await manager
+          .getRepository(BranchInventory)
+          .exists({ where: { branchId: checkout.branchId, productId } });
+        if (!hasInventoryRow) {
+          continue;
+        }
+
+        await this.inventoryLedgerService.recordMovement(
+          {
+            branchId: checkout.branchId,
+            productId,
+            movementType: StockMovementType.ADJUSTMENT,
+            quantityDelta: quantity,
+            sourceType: 'POS_CHECKOUT_VOID',
+            sourceReferenceId: checkout.id,
+            actorUserId,
+            note: `Void of checkout ${checkout.receiptNumber ?? checkout.id}`,
+            occurredAt,
+          },
+          manager,
+        );
+      }
+    });
   }
 
   private toResponse(checkout: PosCheckout): PosCheckoutResponseDto {

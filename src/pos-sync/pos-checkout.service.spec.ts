@@ -1983,6 +1983,56 @@ describe('PosCheckoutService', () => {
       expect(saved?.metadata?.unresolvedVariantLines).toHaveLength(1);
     });
 
+    it('restores stock when a RETAIL sale is voided', async () => {
+      // Voiding backed the money out but left the units gone forever.
+      branchesRepository.findOne.mockResolvedValue({
+        id: 3,
+        serviceFormat: 'RETAIL',
+      });
+      branchInventoryRepository.exists.mockResolvedValue(true);
+      posCheckoutsRepository.findOne.mockResolvedValue({
+        id: 71,
+        branchId: 3,
+        transactionType: PosCheckoutTransactionType.SALE,
+        status: PosCheckoutStatus.PROCESSED,
+        receiptNumber: 'POS-3-1',
+        items: [{ productId: 55, quantity: 2, unitPrice: 10, lineTotal: 20 }],
+      });
+      posCheckoutsRepository.update = jest.fn().mockResolvedValue({});
+
+      await service.voidCheckout(71, { reason: 'keyed twice' }, 9, 3);
+
+      expect(inventoryLedgerService.recordMovement).toHaveBeenCalledWith(
+        expect.objectContaining({
+          productId: 55,
+          quantityDelta: 2,
+          sourceType: 'POS_CHECKOUT_VOID',
+        }),
+        expect.anything(),
+      );
+    });
+
+    it('issues no stock movement when a CAFETERIA checkout is voided', async () => {
+      branchesRepository.findOne.mockResolvedValue({
+        id: 3,
+        serviceFormat: 'CAFETERIA',
+      });
+      branchInventoryRepository.exists.mockResolvedValue(true);
+      posCheckoutsRepository.findOne.mockResolvedValue({
+        id: 71,
+        branchId: 3,
+        transactionType: PosCheckoutTransactionType.SALE,
+        status: PosCheckoutStatus.PROCESSED,
+        receiptNumber: 'POS-3-1',
+        items: [{ productId: 55, quantity: 2, unitPrice: 10, lineTotal: 20 }],
+      });
+      posCheckoutsRepository.update = jest.fn().mockResolvedValue({});
+
+      await service.voidCheckout(71, { reason: 'keyed twice' }, 9, 3);
+
+      expect(inventoryLedgerService.recordMovement).not.toHaveBeenCalled();
+    });
+
     it('clamps a RETAIL variant line the same way', async () => {
       branchesRepository.findOne.mockResolvedValue({
         id: 3,
