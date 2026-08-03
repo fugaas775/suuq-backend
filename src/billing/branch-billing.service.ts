@@ -10,8 +10,13 @@ import { GeneralLedgerService } from '../accounting/general-ledger.service';
 import { GlAccountCode } from '../accounting/gl-accounts.constant';
 import { GlJournalSourceType } from '../accounting/entities/gl-journal-entry.entity';
 import { BranchStaffService } from '../branch-staff/branch-staff.service';
+import {
+  BranchStaffAssignment,
+  BranchStaffRole,
+} from '../branch-staff/entities/branch-staff-assignment.entity';
 import { Branch } from '../branches/entities/branch.entity';
 import { UserRole } from '../auth/roles.enum';
+import { RetailTenant } from '../retail/entities/retail-tenant.entity';
 import {
   TenantSubscription,
   TenantSubscriptionStatus,
@@ -84,6 +89,14 @@ export class BranchBillingService {
     private readonly longTermDebtRepo: Repository<BranchLongTermDebt>,
     private readonly branchStaffService: BranchStaffService,
     private readonly generalLedger: GeneralLedgerService,
+    // Books/statement access is owner-OR-manager (see
+    // `assertBranchAccountingAccess`), so the guard resolves branch authority
+    // straight from the assignment + tenant rows rather than paying for the
+    // portal's full per-branch workspace resolution on every report call.
+    @InjectRepository(BranchStaffAssignment)
+    private readonly staffAssignmentsRepo: Repository<BranchStaffAssignment>,
+    @InjectRepository(RetailTenant)
+    private readonly retailTenantsRepo: Repository<RetailTenant>,
   ) {}
 
   private readonly logger = new Logger(BranchBillingService.name);
@@ -316,23 +329,96 @@ export class BranchBillingService {
     });
   }
 
+  /** Platform admins operate any branch as its owner (see VendorPermissionGuard). */
+  private isPlatformAdmin(roles: string[] = []): boolean {
+    return (
+      Array.isArray(roles) &&
+      (roles.includes(UserRole.SUPER_ADMIN) || roles.includes(UserRole.ADMIN))
+    );
+  }
+
+  private async loadBranchOrFail(branchId: number): Promise<Branch> {
+    const branch = await this.branchesRepo.findOne({
+      where: { id: branchId },
+    });
+    if (!branch) throw new NotFoundException(`Branch #${branchId} not found.`);
+    return branch;
+  }
+
+  /**
+   * Owner-only authority. Subscription money — payments, renewal, receipts —
+   * belongs to whoever pays for the workspace, so it stays on this check.
+   */
   async assertBranchOwnedBy(
     branchId: number,
     userId: number,
     roles: string[] = [],
   ): Promise<Branch> {
-    const branch = await this.branchesRepo.findOne({
-      where: { id: branchId },
-    });
-    if (!branch) throw new NotFoundException(`Branch #${branchId} not found.`);
-    // Platform admins may operate any branch as its owner (SUPER_ADMIN can act
-    // as any vendor; see VendorPermissionGuard). Everyone else must own it.
-    const isPlatformAdmin =
-      Array.isArray(roles) &&
-      (roles.includes(UserRole.SUPER_ADMIN) || roles.includes(UserRole.ADMIN));
-    if (!isPlatformAdmin && branch.ownerId !== userId) {
+    const branch = await this.loadBranchOrFail(branchId);
+    if (!this.isPlatformAdmin(roles) && branch.ownerId !== userId) {
       throw new ForbiddenException('You do not own this branch.');
     }
+    return branch;
+  }
+
+  /**
+   * Authority over a branch's OWN books and statements — expenses, fixed
+   * assets, depreciation, accrued liabilities, debt, and the P&L / balance
+   * sheet / trial balance.
+   *
+   * This is deliberately wider than `assertBranchOwnedBy`: it mirrors the
+   * authority the POS portal already grants, which is owner **or manager**.
+   * pos-s routes `/dashboard` (whose whole hero is `getBranchPL`) and
+   * `/seller/financials` to owners AND branch managers — see `canAccessSurface`
+   * in `src/app/shell/navigation.js`. Enforcing owner-only here left every
+   * branch manager on a Dashboard that rendered no numbers and an expense form
+   * that 403'd on submit.
+   *
+   * Tenant owners are included for the same reason `collectPosBranchAccessForUser`
+   * grants them manager-equivalent access to their tenant's branches.
+   *
+   * `assignedSurfaces` is intentionally NOT consulted: it is a navigation
+   * whitelist the owner uses to scope a manager's menu, enforced client-side
+   * only, and no backend route has ever treated it as an authorization boundary.
+   */
+  async assertBranchAccountingAccess(
+    branchId: number,
+    userId: number,
+    roles: string[] = [],
+  ): Promise<Branch> {
+    const branch = await this.loadBranchOrFail(branchId);
+    if (this.isPlatformAdmin(roles) || branch.ownerId === userId) {
+      return branch;
+    }
+
+    const [assignment, tenant] = await Promise.all([
+      this.staffAssignmentsRepo.findOne({
+        where: {
+          branchId,
+          userId,
+          role: BranchStaffRole.MANAGER,
+          isActive: true,
+        },
+      }),
+      branch.retailTenantId
+        ? this.retailTenantsRepo.findOne({
+            where: { id: branch.retailTenantId },
+          })
+        : Promise.resolve(null),
+    ]);
+
+    // A tenant owner reaches a branch they own the tenant of — but not one that
+    // has since been transferred to a different branch owner.
+    const isTenantOwner =
+      tenant?.ownerUserId === userId &&
+      (branch.ownerId == null || branch.ownerId === userId);
+
+    if (!assignment && !isTenantOwner) {
+      throw new ForbiddenException(
+        'You need branch owner or manager access to this branch to view its books.',
+      );
+    }
+
     return branch;
   }
 

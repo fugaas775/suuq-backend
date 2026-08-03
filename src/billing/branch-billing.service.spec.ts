@@ -1,4 +1,4 @@
-import { NotFoundException } from '@nestjs/common';
+import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { BranchBillingService } from './branch-billing.service';
 import { BranchAccruedLiabilityCategory } from './entities/branch-accrued-liability.entity';
 import { BranchFixedAssetCategory } from './entities/branch-fixed-asset.entity';
@@ -36,6 +36,9 @@ describe('BranchBillingService', () => {
       findEntryByIdempotencyKey: jest.fn().mockResolvedValue(null),
     };
 
+    const staffAssignmentsRepo = createRepo();
+    const retailTenantsRepo = createRepo();
+
     const service = new BranchBillingService(
       branchesRepo as any,
       subscriptionsRepo as any,
@@ -47,6 +50,8 @@ describe('BranchBillingService', () => {
       longTermDebtRepo as any,
       branchStaffService as any,
       generalLedger as any,
+      staffAssignmentsRepo as any,
+      retailTenantsRepo as any,
     );
 
     return {
@@ -61,8 +66,93 @@ describe('BranchBillingService', () => {
       longTermDebtRepo,
       branchStaffService,
       generalLedger,
+      staffAssignmentsRepo,
+      retailTenantsRepo,
     };
   }
+
+  describe('assertBranchAccountingAccess', () => {
+    it('lets the branch owner through without touching the staff roster', async () => {
+      const { service, branchesRepo, staffAssignmentsRepo } = createService();
+      branchesRepo.findOne.mockResolvedValue({ id: 108, ownerId: 2326 });
+
+      await expect(
+        service.assertBranchAccountingAccess(108, 2326, ['CUSTOMER']),
+      ).resolves.toMatchObject({ id: 108 });
+      expect(staffAssignmentsRepo.findOne).not.toHaveBeenCalled();
+    });
+
+    it('lets an active branch MANAGER read the branch books', async () => {
+      const { service, branchesRepo, staffAssignmentsRepo } = createService();
+      branchesRepo.findOne.mockResolvedValue({ id: 108, ownerId: 2326 });
+      staffAssignmentsRepo.findOne.mockResolvedValue({
+        id: 7,
+        branchId: 108,
+        userId: 2339,
+        role: 'MANAGER',
+        isActive: true,
+      });
+
+      await expect(
+        service.assertBranchAccountingAccess(108, 2339, []),
+      ).resolves.toMatchObject({ id: 108 });
+      expect(staffAssignmentsRepo.findOne).toHaveBeenCalledWith({
+        where: {
+          branchId: 108,
+          userId: 2339,
+          role: 'MANAGER',
+          isActive: true,
+        },
+      });
+    });
+
+    it('rejects an operator with no manager assignment', async () => {
+      const { service, branchesRepo } = createService();
+      branchesRepo.findOne.mockResolvedValue({ id: 108, ownerId: 2326 });
+
+      await expect(
+        service.assertBranchAccountingAccess(108, 2338, []),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('lets the tenant owner through for an untransferred branch', async () => {
+      const { service, branchesRepo, retailTenantsRepo } = createService();
+      branchesRepo.findOne.mockResolvedValue({
+        id: 108,
+        ownerId: null,
+        retailTenantId: 12,
+      });
+      retailTenantsRepo.findOne.mockResolvedValue({ id: 12, ownerUserId: 500 });
+
+      await expect(
+        service.assertBranchAccountingAccess(108, 500, []),
+      ).resolves.toMatchObject({ id: 108 });
+    });
+
+    it('rejects the tenant owner once the branch is transferred away', async () => {
+      const { service, branchesRepo, retailTenantsRepo } = createService();
+      branchesRepo.findOne.mockResolvedValue({
+        id: 108,
+        ownerId: 2326,
+        retailTenantId: 12,
+      });
+      retailTenantsRepo.findOne.mockResolvedValue({ id: 12, ownerUserId: 500 });
+
+      await expect(
+        service.assertBranchAccountingAccess(108, 500, []),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('keeps subscription billing owner-only', async () => {
+      const { service, branchesRepo, staffAssignmentsRepo } = createService();
+      branchesRepo.findOne.mockResolvedValue({ id: 108, ownerId: 2326 });
+      staffAssignmentsRepo.findOne.mockResolvedValue({ role: 'MANAGER' });
+
+      await expect(service.assertBranchOwnedBy(108, 2339, [])).rejects.toThrow(
+        ForbiddenException,
+      );
+    });
+  });
 
   it('creates fixed assets with owner billing defaults', async () => {
     const { service, fixedAssetsRepo } = createService();

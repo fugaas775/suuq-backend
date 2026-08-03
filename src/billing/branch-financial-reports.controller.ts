@@ -52,7 +52,7 @@ export class BranchFinancialReportsController {
     @Query('to') to?: string,
   ) {
     const userId = (req.user as any).id;
-    await this.billing.assertBranchOwnedBy(
+    await this.billing.assertBranchAccountingAccess(
       branchId,
       userId,
       (req.user as any).roles,
@@ -70,7 +70,7 @@ export class BranchFinancialReportsController {
     @Query('asOfAt') asOfAt?: string,
   ) {
     const userId = (req.user as any).id;
-    await this.billing.assertBranchOwnedBy(
+    await this.billing.assertBranchAccountingAccess(
       branchId,
       userId,
       (req.user as any).roles,
@@ -87,7 +87,7 @@ export class BranchFinancialReportsController {
     @Query('asOfAt') asOfAt?: string,
   ) {
     const userId = (req.user as any).id;
-    await this.billing.assertBranchOwnedBy(
+    await this.billing.assertBranchAccountingAccess(
       branchId,
       userId,
       (req.user as any).roles,
