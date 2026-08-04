@@ -8,33 +8,48 @@ import {
   PosCheckoutTransactionType,
 } from './entities/pos-checkout.entity';
 import {
+  PosSuspendedCart,
+  PosSuspendedCartStatus,
+} from './entities/pos-suspended-cart.entity';
+import {
   formatReceiptVerificationCode,
   normalizeReceiptVerificationCode,
 } from './receipt-verification-code';
 
 /**
- * What a scanned receipt QR resolves to.
+ * What a scanned QR resolves to.
  *
- * VALID              settled on our books, nothing reversed
- * PARTIALLY_REFUNDED some of it has come back as a RETURN
- * REFUNDED           all of it has
- * VOIDED             cancelled after the fact
- * PENDING            reached us but never finished processing — the receipt is
- *                    real paper the books have not fully recognised
+ * For a receipt:
+ *   VALID              settled on our books, nothing reversed
+ *   PARTIALLY_REFUNDED some of it has come back as a RETURN
+ *   REFUNDED           all of it has
+ *   VOIDED             cancelled after the fact
+ *   PENDING            reached us but never finished processing — the receipt
+ *                      is real paper the books have not fully recognised
+ *
+ * For an order slip, which is a list of what was ordered and not a payment:
+ *   OPEN               the order stands, unpaid
+ *   SETTLED            it was paid for; a receipt exists
+ *   CANCELLED          the order was dropped without being paid
  */
 export type PublicReceiptStatus =
   | 'VALID'
   | 'PARTIALLY_REFUNDED'
   | 'REFUNDED'
   | 'VOIDED'
-  | 'PENDING';
+  | 'PENDING'
+  | 'OPEN'
+  | 'SETTLED'
+  | 'CANCELLED';
+
+export type PublicDocumentType = PosCheckoutTransactionType | 'ORDER_SLIP';
 
 export interface PublicReceiptVerificationResult {
   found: boolean;
   code?: string;
   displayCode?: string;
   status?: PublicReceiptStatus;
-  documentType?: PosCheckoutTransactionType;
+  documentType?: PublicDocumentType;
   receiptNumber?: string | null;
   currency?: string;
   total?: number;
@@ -46,6 +61,9 @@ export interface PublicReceiptVerificationResult {
   branch?: { name: string; city: string | null };
   /** For a RETURN document: the sale it reverses. */
   sourceReceiptNumber?: string | null;
+  /** For an ORDER_SLIP: the table, room or order it names, and its receipt once paid. */
+  orderLabel?: string | null;
+  settledReceiptNumber?: string | null;
 }
 
 /**
@@ -63,6 +81,8 @@ export class PublicReceiptVerificationService {
   constructor(
     @InjectRepository(PosCheckout)
     private readonly posCheckoutsRepository: Repository<PosCheckout>,
+    @InjectRepository(PosSuspendedCart)
+    private readonly suspendedCartsRepository: Repository<PosSuspendedCart>,
     @InjectRepository(Branch)
     private readonly branchesRepository: Repository<Branch>,
   ) {}
@@ -77,8 +97,12 @@ export class PublicReceiptVerificationService {
       where: { verificationCode: code },
     });
     if (!checkout) {
+      // Not a receipt — it may be an order slip, which is a different document
+      // making a much smaller claim.
+      const slip = await this.verifyOrderSlip(code);
+      if (slip) return slip;
       // Worth a breadcrumb: a well-formed token that resolves to nothing is
-      // either a receipt whose sale never reached us, or someone probing.
+      // either a sale that never reached us, or someone probing.
       this.logger.debug(`Receipt verification miss for code ${code}`);
       return { found: false };
     }
@@ -108,6 +132,69 @@ export class PublicReceiptVerificationService {
       branch: { name: branch?.name ?? 'SUUQ POS', city: branch?.city ?? null },
       sourceReceiptNumber:
         checkout.metadata?.returnContext?.sourceReceiptNumber ?? null,
+    };
+  }
+
+  /**
+   * An order slip — the ticket handed over when an order is placed, before any
+   * money changes hands.
+   *
+   * It deserves its own answer rather than being folded into the receipt one.
+   * A slip that resolved to the same "genuine" card as a receipt would be a
+   * tool for passing an unpaid order off as a paid sale, which is precisely the
+   * confusion this whole feature exists to remove. So it reports what a slip
+   * actually is: an order that stands, was paid, or was dropped.
+   *
+   * The token lives in the cart's metadata beside the print record — the write
+   * that already happens when the slip is printed — so no slip needs a second
+   * round trip to become checkable.
+   */
+  private async verifyOrderSlip(
+    code: string,
+  ): Promise<PublicReceiptVerificationResult | null> {
+    const cart = await this.suspendedCartsRepository
+      .createQueryBuilder('c')
+      .where("c.metadata -> 'qsrPrint' ->> 'code' = :code", { code })
+      .getOne();
+    if (!cart) return null;
+
+    const branch = await this.branchesRepository.findOne({
+      where: { id: cart.branchId },
+      select: { id: true, name: true, city: true },
+    });
+
+    // A settled order is discarded from the board, so "discarded" alone cannot
+    // tell paid from abandoned. The checkout that consumed the cart can.
+    const settledBy = await this.posCheckoutsRepository.findOne({
+      where: {
+        branchId: cart.branchId,
+        suspendedCartId: cart.id,
+        status: PosCheckoutStatus.PROCESSED,
+      },
+      order: { id: 'DESC' },
+    });
+
+    const status: PublicReceiptStatus = settledBy
+      ? 'SETTLED'
+      : cart.status === PosSuspendedCartStatus.DISCARDED
+        ? 'CANCELLED'
+        : 'OPEN';
+
+    return {
+      found: true,
+      code,
+      displayCode: formatReceiptVerificationCode(code),
+      status,
+      documentType: 'ORDER_SLIP',
+      receiptNumber: null,
+      currency: cart.currency,
+      total: Number(cart.total ?? 0),
+      itemCount: cart.itemCount ?? 0,
+      issuedAt: this.toIso(cart.createdAt),
+      recordedAt: this.toIso(cart.updatedAt),
+      branch: { name: branch?.name ?? 'SUUQ POS', city: branch?.city ?? null },
+      orderLabel: cart.label ?? null,
+      settledReceiptNumber: settledBy?.receiptNumber ?? null,
     };
   }
 

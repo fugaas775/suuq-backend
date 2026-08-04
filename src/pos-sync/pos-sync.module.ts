@@ -68,6 +68,7 @@ import { PosSyncJob } from './entities/pos-sync-job.entity';
   providers: [
     PosSyncService,
     PublicReceiptVerificationService,
+
     PosCheckoutService,
     PosCatalogService,
     PosRegisterService,

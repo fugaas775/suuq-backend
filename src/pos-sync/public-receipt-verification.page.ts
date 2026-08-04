@@ -68,6 +68,36 @@ const STATUS_COPY: Record<
       so: 'Iibkan wuxuu gaadhay SUUQ laakiin wali lama dhammaystirin. Dukaanka weydii inuu xaqiijiyo.',
     },
   },
+  // An order slip is not a payment. Every one of these says so, in the title
+  // and again in the body, because a slip mistaken for a receipt is exactly the
+  // confusion this page exists to end.
+  OPEN: {
+    tone: 'warn',
+    mark: '🧾',
+    title: { en: 'Order slip — not paid', so: 'Amar — lama bixin' },
+    detail: {
+      en: 'This is a real order at the shop, and it has not been paid for. It is not a receipt.',
+      so: 'Kani waa amar dhab ah oo dukaanka ku jira, lamana bixin. Rasiid ma aha.',
+    },
+  },
+  SETTLED: {
+    tone: 'ok',
+    mark: '✓',
+    title: { en: 'Order slip — paid', so: 'Amar — waa la bixiyay' },
+    detail: {
+      en: 'This order was paid for. The receipt for it is the proof of payment, not this slip.',
+      so: 'Amarkan waa la bixiyay. Rasiidka ayaa caddayn u ah lacag-bixinta, ee ma aha warqaddan.',
+    },
+  },
+  CANCELLED: {
+    tone: 'bad',
+    mark: '⊘',
+    title: { en: 'Order cancelled', so: 'Amarka waa la joojiyay' },
+    detail: {
+      en: 'This order was dropped without being paid for.',
+      so: 'Amarkan waa la joojiyay iyadoo aan la bixin.',
+    },
+  },
   NOT_FOUND: {
     tone: 'bad',
     mark: '?',
@@ -236,6 +266,53 @@ export function renderVerificationFormPage(
   return shell('Check a receipt', body);
 }
 
+function renderOrderSlipPage(
+  result: PublicReceiptVerificationResult,
+  currency: string,
+): string {
+  const status = result.status ?? 'OPEN';
+  const rows = [
+    row({ en: 'Shop', so: 'Dukaanka' }, result.branch?.name ?? '—'),
+    result.branch?.city
+      ? row({ en: 'Place', so: 'Goobta' }, result.branch.city)
+      : '',
+    result.orderLabel
+      ? row({ en: 'Order', so: 'Amarka' }, result.orderLabel)
+      : '',
+    row(
+      { en: 'Placed on', so: 'Waxaa la dalbaday' },
+      formatMoment(result.issuedAt),
+    ),
+    row({ en: 'Items', so: 'Alaabta' }, String(result.itemCount ?? 0)),
+    result.settledReceiptNumber
+      ? row(
+          { en: 'Paid on receipt', so: 'Rasiidka lagu bixiyay' },
+          result.settledReceiptNumber,
+        )
+      : '',
+  ]
+    .filter(Boolean)
+    .join('');
+
+  const totalRow = `
+      <div class="row total">
+        <div class="label"><span>Order total</span><em>Wadarta amarka</em></div>
+        <div class="value">${esc(formatMoney(result.total ?? 0, currency))}</div>
+      </div>`;
+
+  const codeRow = `
+      <div class="row">
+        <div class="label"><span>Verification code</span><em>Koodhka xaqiijinta</em></div>
+        <div class="value code">${esc(result.displayCode ?? '')}</div>
+      </div>`;
+
+  return shell(
+    STATUS_COPY[status].title.en,
+    statusBlock(status) +
+      `<div class="rows">${rows}${totalRow}${codeRow}</div>`,
+  );
+}
+
 export function renderVerificationResultPage(
   result: PublicReceiptVerificationResult,
 ): string {
@@ -249,6 +326,9 @@ export function renderVerificationResultPage(
 
   const currency = result.currency ?? 'ETB';
   const isReturn = result.documentType === 'RETURN';
+  const isSlip = result.documentType === 'ORDER_SLIP';
+
+  if (isSlip) return renderOrderSlipPage(result, currency);
 
   const rows = [
     row({ en: 'Shop', so: 'Dukaanka' }, result.branch?.name ?? '—'),
