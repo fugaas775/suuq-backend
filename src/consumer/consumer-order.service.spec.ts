@@ -91,6 +91,33 @@ describe('ConsumerOrderService order reference', () => {
     );
   });
 
+  it('says the shop is preparing it once staff accept, board or not', async () => {
+    // QSR leaves the row SUSPENDED while the order is worked — that is what keeps
+    // it on the board — so without the accept stamp the customer's phone said
+    // "waiting for staff" right through to collection.
+    const { service } = buildService(
+      consumerCart({
+        consumerSource: 'SUUQS',
+        consumerOrderRef: 'A1B2C3D4',
+        consumerAcceptedAt: '2026-08-05T07:00:00.000Z',
+      }),
+    );
+
+    const status = await service.getOrderStatus(4242, 'C-4242-A1B2C3D4');
+
+    expect(status.status).toBe('IN_PREPARATION');
+  });
+
+  it('still reads as waiting while nobody has accepted it', async () => {
+    const { service } = buildService(
+      consumerCart({ consumerSource: 'SUUQS', consumerOrderRef: 'A1B2C3D4' }),
+    );
+
+    const status = await service.getOrderStatus(4242, 'C-4242-A1B2C3D4');
+
+    expect(status.status).toBe('RECEIVED');
+  });
+
   it('hides the order when the reference is wrong or missing', async () => {
     const { service } = buildService(
       consumerCart({ consumerSource: 'SUUQS', consumerOrderRef: 'A1B2C3D4' }),

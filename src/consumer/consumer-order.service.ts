@@ -171,7 +171,7 @@ export class ConsumerOrderService {
       throw new NotFoundException(`Order ${orderId} not found`);
     }
 
-    const status = this.mapCartStatus(cart.status);
+    const status = this.mapCartStatus(cart.status, cart.metadata);
 
     return {
       orderId: cart.id,
@@ -185,9 +185,26 @@ export class ConsumerOrderService {
     };
   }
 
+  /**
+   * What the customer's phone should say about their order.
+   *
+   * `RESUMED` is the obvious "staff have it" signal, but the board formats — QSR
+   * among them — deliberately leave the row SUSPENDED while the order is worked,
+   * because that is what keeps it on the board. So a scanned café order stayed
+   * "waiting for staff to pick it up" from the moment it was accepted right
+   * through to collection. The accept stamp the register writes says otherwise.
+   */
   private mapCartStatus(
     cartStatus: PosSuspendedCartStatus,
+    metadata?: Record<string, unknown> | null,
   ): 'RECEIVED' | 'IN_PREPARATION' | 'CANCELLED' {
+    if (
+      cartStatus === PosSuspendedCartStatus.SUSPENDED &&
+      metadata?.consumerAcceptedAt
+    ) {
+      return 'IN_PREPARATION';
+    }
+
     switch (cartStatus) {
       case PosSuspendedCartStatus.SUSPENDED:
         return 'RECEIVED';
