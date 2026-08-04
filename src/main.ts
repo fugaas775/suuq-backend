@@ -294,6 +294,12 @@ async function bootstrap() {
     ],
     preflightContinue: false,
     optionsSuccessStatus: 204,
+    // Without this every distinct URL pays a CORS preflight before its real
+    // request. The POS register opens by fetching one detail per product, so a
+    // 128-product branch spent 128 extra OPTIONS round-trips on load — the
+    // preflights alone were half of that traffic. Browsers cap what they honour
+    // (Chrome at 2h), so this is an upper bound, not a promise.
+    maxAge: 7200,
   });
 
   // JSON already configured above
