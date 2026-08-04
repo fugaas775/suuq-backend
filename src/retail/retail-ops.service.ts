@@ -4174,6 +4174,126 @@ export class RetailOpsService {
   }
 
   /**
+   * Lists a branch's own products on its public shop, in one call.
+   *
+   * `confirmShelfItem` below can only confirm a link that already exists, and
+   * until now the only thing that ever created one was receiving a purchase
+   * order. A branch that built its menu in Product Management — which is how
+   * most of them are built — therefore had a full catalog, an empty public shop,
+   * and nothing in between. This is the crossing.
+   *
+   * "The branch's own products" is deliberately the same set `getBranchProducts`
+   * shows the operator: anything with branch inventory, an existing catalog link,
+   * or reaching the branch through its vendor-catalog link. Publishing a set the
+   * merchant cannot see in their own catalog would be publishing a surprise.
+   *
+   * Prices are untouched. The consumer read is
+   * COALESCE(link.retailSalePrice, link.retailPrice, product.price), so a link
+   * created here with a null price shows the product's own price — one price to
+   * maintain, not two.
+   */
+  async publishBranchShelf(
+    branchId: number,
+    options: { productIds?: number[]; consumerVisible?: boolean } = {},
+  ): Promise<{
+    branchId: number;
+    total: number;
+    published: number;
+    unchanged: number;
+  }> {
+    const branch = await this.assertBranchExists(branchId);
+    const consumerVisible = options.consumerVisible ?? true;
+
+    const scopedIds = (options.productIds ?? [])
+      .map((id) => Number(id))
+      .filter((id) => Number.isFinite(id) && id > 0);
+
+    const query = this.productRepository
+      .createQueryBuilder('product')
+      .select('product.id', 'id')
+      .leftJoin(
+        BranchInventory,
+        'inventory',
+        'inventory.productId = product.id AND inventory.branchId = :branchId',
+        { branchId },
+      )
+      .leftJoin(
+        BranchCatalogProductLink,
+        'link',
+        'link.productId = product.id AND link.branchId = :branchId',
+        { branchId },
+      )
+      .leftJoin(
+        BranchCatalogVendorLink,
+        'vendorLink',
+        'vendorLink.vendorId = product.vendorId AND vendorLink.branchId = :branchId AND product.vendor_store_id = :branchVendorStoreId',
+        { branchId, branchVendorStoreId: branch.vendorStoreId ?? null },
+      )
+      .where('product.deletedAt IS NULL')
+      .andWhere(
+        new Brackets((qb) => {
+          qb.where('inventory.id IS NOT NULL')
+            .orWhere('link.id IS NOT NULL')
+            .orWhere('vendorLink.id IS NOT NULL');
+        }),
+      );
+
+    if (scopedIds.length) {
+      query.andWhere('product.id IN (:...scopedIds)', { scopedIds });
+    }
+
+    const rows = await query.getRawMany<{ id: number }>();
+    const productIds = rows.map((row) => Number(row.id)).filter(Boolean);
+
+    if (!productIds.length) {
+      return { branchId, total: 0, published: 0, unchanged: 0 };
+    }
+
+    const existing = await this.branchCatalogProductLinksRepository.find({
+      where: { branchId, productId: In(productIds) },
+    });
+    const existingByProduct = new Map(existing.map((l) => [l.productId, l]));
+
+    let published = 0;
+    let unchanged = 0;
+
+    for (const productId of productIds) {
+      const link = existingByProduct.get(productId);
+      if (link) {
+        if (link.consumerVisible === consumerVisible) {
+          unchanged += 1;
+          continue;
+        }
+        link.consumerVisible = consumerVisible;
+        await this.branchCatalogProductLinksRepository.save(link);
+        published += 1;
+        continue;
+      }
+
+      // Hiding a product that was never listed is already true — creating a row
+      // to record it would be writing a link the merchant never asked for.
+      if (!consumerVisible) {
+        unchanged += 1;
+        continue;
+      }
+
+      await this.branchCatalogProductLinksRepository.save(
+        this.branchCatalogProductLinksRepository.create({
+          branchId,
+          productId,
+          retailPrice: null,
+          retailSalePrice: null,
+          consumerVisible: true,
+          source: 'MANUAL',
+        }),
+      );
+      published += 1;
+    }
+
+    return { branchId, total: productIds.length, published, unchanged };
+  }
+
+  /**
    * Operator confirmation of a staged shelf item: sets the per-branch retail price,
    * optional sale price, and whether to list it on suuq_s; optionally enriches the
    * underlying product with a category + image for a good consumer listing.

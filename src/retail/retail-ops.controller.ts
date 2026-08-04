@@ -46,6 +46,8 @@ import {
   RetailConfirmShelfItemDto,
   RetailPendingShelfItemDto,
   RetailPendingShelfQueryDto,
+  RetailPublishBranchShelfDto,
+  RetailPublishBranchShelfResultDto,
 } from './dto/retail-shelf-setup.dto';
 import {
   RetailCommandCenterAlertSeverityFilter,
@@ -650,6 +652,29 @@ export class RetailOpsController {
   @ApiOkResponse({ type: RetailPendingShelfItemDto, isArray: true })
   pendingShelfItems(@Query() query: RetailPendingShelfQueryDto) {
     return this.retailOpsService.getPendingShelfItems(query.branchId);
+  }
+
+  @Post('branch-products/publish-shelf')
+  @UseGuards(RetailModulesGuard)
+  @Roles(
+    UserRole.SUPER_ADMIN,
+    UserRole.ADMIN,
+    UserRole.POS_MANAGER,
+    UserRole.B2B_BUYER,
+  )
+  @RequireRetailModules(RetailOsModule.INVENTORY_CORE)
+  @RetailBranchContext('body.branchId')
+  @ApiOperation({
+    summary:
+      "List a branch's own products on its public shop in one call, creating the catalog links a per-product shelf confirmation cannot",
+  })
+  @ApiBody({ type: RetailPublishBranchShelfDto })
+  @ApiOkResponse({ type: RetailPublishBranchShelfResultDto })
+  publishBranchShelf(@Body() body: RetailPublishBranchShelfDto) {
+    return this.retailOpsService.publishBranchShelf(body.branchId, {
+      productIds: body.productIds,
+      consumerVisible: body.consumerVisible,
+    });
   }
 
   @Patch('branch-products/:productId/shelf')

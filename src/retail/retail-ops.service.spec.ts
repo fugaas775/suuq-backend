@@ -67,6 +67,7 @@ describe('RetailOpsService', () => {
   let productVariantRepository: { find: jest.Mock };
   let branchCatalogProductLinksRepository: {
     findOne: jest.Mock;
+    find: jest.Mock;
     create: jest.Mock;
     save: jest.Mock;
     delete: jest.Mock;
@@ -163,6 +164,7 @@ describe('RetailOpsService', () => {
     };
     branchCatalogProductLinksRepository = {
       findOne: jest.fn().mockResolvedValue(null),
+      find: jest.fn().mockResolvedValue([]),
       create: jest.fn((value) => value),
       save: jest.fn(async (value) => ({ id: 1, ...value })),
       delete: jest.fn().mockResolvedValue({ affected: 1 }),
@@ -4274,5 +4276,114 @@ describe('RetailOpsService', () => {
         },
       }),
     );
+  });
+
+  describe('publishBranchShelf', () => {
+    // The branch's products, as getBranchProducts defines them: inventory, an
+    // existing link, or reach through the vendor-catalog link.
+    function stubBranchProducts(ids: number[]) {
+      productRepository.createQueryBuilder.mockReturnValue({
+        select: jest.fn().mockReturnThis(),
+        leftJoin: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        getRawMany: jest.fn().mockResolvedValue(ids.map((id) => ({ id }))),
+      });
+    }
+
+    it('creates the link a per-product shelf confirmation cannot, and lists it', async () => {
+      stubBranchProducts([9, 11]);
+      branchCatalogProductLinksRepository.find.mockResolvedValue([]);
+
+      const result = await service.publishBranchShelf(3);
+
+      expect(result).toEqual({
+        branchId: 3,
+        total: 2,
+        published: 2,
+        unchanged: 0,
+      });
+      expect(branchCatalogProductLinksRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          branchId: 3,
+          productId: 9,
+          consumerVisible: true,
+        }),
+      );
+    });
+
+    it('leaves the price null so the shop shows the product own price', async () => {
+      stubBranchProducts([9]);
+      branchCatalogProductLinksRepository.find.mockResolvedValue([]);
+
+      await service.publishBranchShelf(3);
+
+      expect(branchCatalogProductLinksRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({ retailPrice: null, retailSalePrice: null }),
+      );
+    });
+
+    it('flips an existing link rather than creating a second one', async () => {
+      stubBranchProducts([9]);
+      branchCatalogProductLinksRepository.find.mockResolvedValue([
+        { id: 5, branchId: 3, productId: 9, consumerVisible: false },
+      ]);
+
+      const result = await service.publishBranchShelf(3);
+
+      expect(result.published).toBe(1);
+      expect(branchCatalogProductLinksRepository.create).not.toHaveBeenCalled();
+      expect(branchCatalogProductLinksRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 5, consumerVisible: true }),
+      );
+    });
+
+    it('writes nothing for a product that is already listed', async () => {
+      stubBranchProducts([9]);
+      branchCatalogProductLinksRepository.find.mockResolvedValue([
+        { id: 5, branchId: 3, productId: 9, consumerVisible: true },
+      ]);
+
+      const result = await service.publishBranchShelf(3);
+
+      expect(result).toEqual({
+        branchId: 3,
+        total: 1,
+        published: 0,
+        unchanged: 1,
+      });
+      expect(branchCatalogProductLinksRepository.save).not.toHaveBeenCalled();
+    });
+
+    it('hides without inventing a link for something never listed', async () => {
+      stubBranchProducts([9]);
+      branchCatalogProductLinksRepository.find.mockResolvedValue([]);
+
+      const result = await service.publishBranchShelf(3, {
+        consumerVisible: false,
+      });
+
+      expect(result).toEqual({
+        branchId: 3,
+        total: 1,
+        published: 0,
+        unchanged: 1,
+      });
+      expect(branchCatalogProductLinksRepository.save).not.toHaveBeenCalled();
+    });
+
+    it('reports an empty branch instead of pretending it published', async () => {
+      stubBranchProducts([]);
+
+      const result = await service.publishBranchShelf(3);
+
+      expect(result).toEqual({
+        branchId: 3,
+        total: 0,
+        published: 0,
+        unchanged: 0,
+      });
+      expect(branchCatalogProductLinksRepository.save).not.toHaveBeenCalled();
+    });
   });
 });
