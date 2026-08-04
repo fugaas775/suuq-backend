@@ -24,6 +24,8 @@ import { PosRegisterController } from './pos-register.controller';
 import { PosRegisterReportService } from './pos-register-report.service';
 import { PosRegisterService } from './pos-register.service';
 import { PosSyncController } from './pos-sync.controller';
+import { PublicReceiptVerificationController } from './public-receipt-verification.controller';
+import { PublicReceiptVerificationService } from './public-receipt-verification.service';
 import { PosSyncRequestAuthGuard } from './pos-sync-request-auth.guard';
 import { PosBranchAccessGuard } from '../auth/pos-branch-access.guard';
 import { PosCheckout } from './entities/pos-checkout.entity';
@@ -61,9 +63,11 @@ import { PosSyncJob } from './entities/pos-sync-job.entity';
     PosCatalogController,
     PosRegisterController,
     PosPartnerRegisterController,
+    PublicReceiptVerificationController,
   ],
   providers: [
     PosSyncService,
+    PublicReceiptVerificationService,
     PosCheckoutService,
     PosCatalogService,
     PosRegisterService,

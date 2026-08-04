@@ -36,6 +36,7 @@ import {
   IngestPosCheckoutDto,
   PosCheckoutItemDto,
 } from './dto/ingest-pos-checkout.dto';
+import { normalizeReceiptVerificationCode } from './receipt-verification-code';
 import { SettleReceivableDto } from './dto/settle-receivable.dto';
 import { PosCheckoutQuoteResponseDto } from './dto/pos-checkout-quote-response.dto';
 import { ListPosCheckoutsQueryDto } from './dto/list-pos-checkouts-query.dto';
@@ -487,6 +488,7 @@ export class PosCheckoutService {
       registerSessionId: dto.registerSessionId ?? null,
       suspendedCartId: dto.suspendedCartId ?? null,
       receiptNumber: this.normalizeOptionalString(dto.receiptNumber),
+      verificationCode: this.normalizeVerificationCode(dto.verificationCode),
       transactionType: dto.transactionType,
       status: PosCheckoutStatus.RECEIVED,
       currency: dto.currency.trim().toUpperCase(),
@@ -2299,6 +2301,13 @@ export class PosCheckoutService {
     return trimmed ? trimmed : null;
   }
 
+  // A malformed token is dropped rather than rejected: the sale is the thing
+  // that matters, and a receipt that simply can't be verified beats a checkout
+  // that 400s at the counter over its QR.
+  private normalizeVerificationCode(value?: string | null): string | null {
+    return normalizeReceiptVerificationCode(value);
+  }
+
   private roundMoney(value: number): number {
     return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
   }
@@ -2535,6 +2544,7 @@ export class PosCheckoutService {
       registerSessionId: checkout.registerSessionId ?? null,
       suspendedCartId: checkout.suspendedCartId ?? null,
       receiptNumber: checkout.receiptNumber ?? null,
+      verificationCode: checkout.verificationCode ?? null,
       transactionType: checkout.transactionType,
       status: checkout.status,
       currency: checkout.currency,

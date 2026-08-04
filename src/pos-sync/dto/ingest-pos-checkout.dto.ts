@@ -252,6 +252,12 @@ export class IngestPosCheckoutDto {
   @MaxLength(128)
   receiptNumber?: string;
 
+  /** Opaque token printed as the receipt QR; resolves on the public verify page. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(16)
+  verificationCode?: string;
+
   @IsString()
   @Length(3, 3)
   currency!: string;
