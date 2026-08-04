@@ -33,7 +33,7 @@ export class ConsumerOrderStatusDto {
    *  - IN_PREPARATION — staff has picked up the order (resumed the cart)
    *  - CANCELLED     — order was discarded by staff
    */
-  status!: 'RECEIVED' | 'IN_PREPARATION' | 'CANCELLED';
+  status!: 'RECEIVED' | 'IN_PREPARATION' | 'COMPLETED' | 'CANCELLED';
 
   placedAt!: string;
   updatedAt!: string;

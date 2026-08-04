@@ -118,6 +118,43 @@ describe('ConsumerOrderService order reference', () => {
     expect(status.status).toBe('RECEIVED');
   });
 
+  it('reads a settled order as finished, not cancelled', async () => {
+    // Settling discards the row, and a discarded row used to mean CANCELLED —
+    // so the last thing a paying guest saw was "talk to the staff".
+    const { service } = buildService({
+      id: 4242,
+      branchId: 7,
+      status: PosSuspendedCartStatus.DISCARDED,
+      createdAt: new Date('2026-08-01T09:00:00Z'),
+      updatedAt: new Date('2026-08-01T09:00:00Z'),
+      metadata: {
+        consumerSource: 'SUUQS',
+        consumerOrderRef: 'A1B2C3D4',
+        consumerAcceptedAt: '2026-08-05T07:00:00.000Z',
+        consumerCompletedAt: '2026-08-05T07:20:00.000Z',
+      },
+    });
+
+    const status = await service.getOrderStatus(4242, 'C-4242-A1B2C3D4');
+
+    expect(status.status).toBe('COMPLETED');
+  });
+
+  it('still reads a rejected order as cancelled', async () => {
+    const { service } = buildService({
+      id: 4242,
+      branchId: 7,
+      status: PosSuspendedCartStatus.DISCARDED,
+      createdAt: new Date('2026-08-01T09:00:00Z'),
+      updatedAt: new Date('2026-08-01T09:00:00Z'),
+      metadata: { consumerSource: 'SUUQS', consumerOrderRef: 'A1B2C3D4' },
+    });
+
+    const status = await service.getOrderStatus(4242, 'C-4242-A1B2C3D4');
+
+    expect(status.status).toBe('CANCELLED');
+  });
+
   it('hides the order when the reference is wrong or missing', async () => {
     const { service } = buildService(
       consumerCart({ consumerSource: 'SUUQS', consumerOrderRef: 'A1B2C3D4' }),

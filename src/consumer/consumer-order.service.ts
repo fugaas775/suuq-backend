@@ -197,7 +197,18 @@ export class ConsumerOrderService {
   private mapCartStatus(
     cartStatus: PosSuspendedCartStatus,
     metadata?: Record<string, unknown> | null,
-  ): 'RECEIVED' | 'IN_PREPARATION' | 'CANCELLED' {
+  ): 'RECEIVED' | 'IN_PREPARATION' | 'COMPLETED' | 'CANCELLED' {
+    // Settling discards the row — that is how the order leaves the board — so a
+    // guest who had just paid and collected was told "this order was cancelled".
+    // The register stamps a settled order; a discard without that stamp really
+    // was a rejection.
+    if (
+      cartStatus === PosSuspendedCartStatus.DISCARDED &&
+      metadata?.consumerCompletedAt
+    ) {
+      return 'COMPLETED';
+    }
+
     if (
       cartStatus === PosSuspendedCartStatus.SUSPENDED &&
       metadata?.consumerAcceptedAt
