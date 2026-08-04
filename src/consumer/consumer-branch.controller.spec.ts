@@ -34,6 +34,9 @@ describe('ConsumerBranchController.getBranchProducts', () => {
 
     const productRepo = {
       createQueryBuilder: jest.fn().mockReturnValue(baseQb),
+      // Stock-tracking flags, read when banding the shelf. Default: tracked,
+      // unless a case supplies its own rows.
+      find: jest.fn().mockResolvedValue(opts.stockManagedRows ?? []),
     };
     const vendorStoreRepo = {
       findOne: jest.fn().mockResolvedValue(opts.store),
@@ -256,6 +259,8 @@ describe('ConsumerBranchController shelf truth', () => {
     links?: unknown[];
     inventory?: unknown[];
     kitchen?: unknown[];
+    /** manage_stock per product; anything omitted counts as tracked. */
+    stockManaged?: unknown[];
   }) {
     const baseQb: Record<string, jest.Mock> = {};
     for (const m of [
@@ -277,7 +282,10 @@ describe('ConsumerBranchController shelf truth', () => {
     const controller = new ConsumerBranchController(
       { findOne: jest.fn() } as never,
       { findOne: jest.fn() } as never,
-      { createQueryBuilder: jest.fn().mockReturnValue(baseQb) } as never,
+      {
+        createQueryBuilder: jest.fn().mockReturnValue(baseQb),
+        find: jest.fn().mockResolvedValue(opts.stockManaged ?? []),
+      } as never,
       {
         // Non-zero link count selects the branch-catalog path.
         count: jest.fn().mockResolvedValue(opts.products.length),
@@ -328,6 +336,33 @@ describe('ConsumerBranchController shelf truth', () => {
     // Most branches track no inventory for services or made-to-order food.
     // Reading "no row" as sold out would empty their shelves.
     expect(res.items[0].stockState).toBe('UNKNOWN');
+  });
+
+  it('keeps a café menu buyable when its zeroed rows track nothing', async () => {
+    // The case that emptied a real shelf: 128 menu items, every one
+    // manage_stock=false, each with an onboarding inventory row sitting at zero.
+    // An americano is made when ordered — the row is not a count of anything.
+    const { controller } = buildController({
+      products: [burger],
+      inventory: [{ productId: 10, availableToSell: 0, safetyStock: 0 }],
+      stockManaged: [{ id: 10, manageStock: false }],
+    });
+
+    const res = await controller.getBranchProducts(7);
+
+    expect(res.items[0].stockState).toBe('UNKNOWN');
+  });
+
+  it('still reports a tracked product with no stock as sold out', async () => {
+    const { controller } = buildController({
+      products: [burger],
+      inventory: [{ productId: 10, availableToSell: 0, safetyStock: 5 }],
+      stockManaged: [{ id: 10, manageStock: true }],
+    });
+
+    const res = await controller.getBranchProducts(7);
+
+    expect(res.items[0].stockState).toBe('OUT_OF_STOCK');
   });
 
   it('lets the kitchen 86-list override counted stock', async () => {

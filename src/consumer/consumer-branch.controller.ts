@@ -37,6 +37,13 @@ const toFormatLabel = serviceFormatLabel;
  * Reading it as out-of-stock would empty the shelf of every branch that has not
  * onboarded inventory.
  *
+ * A row can exist and still mean nothing. A café's menu carries
+ * `manage_stock = false` on every line — an americano is made when ordered, not
+ * drawn down from a count — yet the branch may still have inventory rows sitting
+ * at zero from onboarding. Reading those as out-of-stock marked all 128 items on
+ * one café's shelf sold out, which is the same empty shelf this function's first
+ * rule exists to prevent. An untracked product is UNKNOWN whatever its row says.
+ *
  * `safetyStock` is the merchant's own "getting low" threshold; when they have
  * not set one, fall back to a small constant so "low" still means something.
  */
@@ -44,8 +51,9 @@ const DEFAULT_LOW_STOCK_THRESHOLD = 5;
 
 function toStockState(
   inventory: BranchInventory | undefined,
+  managesStock = true,
 ): ConsumerStockState {
-  if (!inventory) return 'UNKNOWN';
+  if (!inventory || !managesStock) return 'UNKNOWN';
   const available = Number(inventory.availableToSell ?? 0);
   if (available <= 0) return 'OUT_OF_STOCK';
   const lowThreshold =
@@ -135,7 +143,7 @@ export class ConsumerBranchController {
   ): Promise<Map<number, ConsumerStockState>> {
     if (productIds.length === 0) return new Map();
 
-    const [inventoryRows, kitchenRows] = await Promise.all([
+    const [inventoryRows, kitchenRows, stockManagedRows] = await Promise.all([
       this.branchInventoryRepo.find({
         where: { branchId, productId: In(productIds) },
       }),
@@ -144,7 +152,20 @@ export class ConsumerBranchController {
       this.kitchenAvailabilityRepo.find({
         where: { branchId, productId: In(productIds.map(String)) },
       }),
+      // Whether each product is stock-tracked at all. Without this a café's
+      // untracked menu reads as sold out — see toStockState.
+      this.productRepo.find({
+        where: { id: In(productIds) },
+        select: { id: true, manageStock: true },
+      }),
     ]);
+
+    const managesStockByProduct = new Map(
+      stockManagedRows.map((row) => [
+        Number(row.id),
+        row.manageStock !== false,
+      ]),
+    );
 
     const inventoryByProduct = new Map(
       inventoryRows.map((row) => [row.productId, row]),
@@ -158,7 +179,10 @@ export class ConsumerBranchController {
         id,
         unavailableInKitchen.has(String(id))
           ? 'OUT_OF_STOCK'
-          : toStockState(inventoryByProduct.get(id)),
+          : toStockState(
+              inventoryByProduct.get(id),
+              managesStockByProduct.get(id) ?? true,
+            ),
       ]),
     );
   }
