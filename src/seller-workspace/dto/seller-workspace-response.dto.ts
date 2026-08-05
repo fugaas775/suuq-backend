@@ -377,6 +377,13 @@ export class SellerWorkspaceBranchWorkspaceDto {
   taxRate?: number;
 
   @ApiPropertyOptional({
+    description:
+      'Whether catalog prices already contain the tax (inclusive) rather than ' +
+      'having it added at checkout (exclusive, the default).',
+  })
+  taxInclusive?: boolean;
+
+  @ApiPropertyOptional({
     nullable: true,
     description:
       'Per-branch layout for the customizable Home page (widgets, order, ' +

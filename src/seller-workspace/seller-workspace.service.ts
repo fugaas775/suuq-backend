@@ -454,6 +454,7 @@ export class SellerWorkspaceService {
           logoUrl: branch.logoUrl ?? null,
           taxEnabled: Boolean(branch.taxEnabled),
           taxRate: Number(branch.taxRate ?? 0.15),
+          taxInclusive: Boolean(branch.taxInclusive),
           homeConfig: branch.homeConfig ?? null,
           vendorStoreId:
             vendorStoresByBranchId.get(branch.branchId)?.id ?? null,
@@ -526,6 +527,7 @@ export class SellerWorkspaceService {
           logoUrl: candidate.logoUrl ?? null,
           taxEnabled: Boolean(candidate.taxEnabled),
           taxRate: Number(candidate.taxRate ?? 0.15),
+          taxInclusive: Boolean(candidate.taxInclusive),
           homeConfig: candidate.homeConfig ?? null,
           vendorStoreId:
             vendorStoresByBranchId.get(candidate.branchId)?.id ?? null,
@@ -2384,6 +2386,7 @@ export class SellerWorkspaceService {
     if (dto.logoUrl !== undefined) updates.logoUrl = dto.logoUrl;
     if (dto.taxEnabled !== undefined) updates.taxEnabled = dto.taxEnabled;
     if (dto.taxRate !== undefined) updates.taxRate = dto.taxRate;
+    if (dto.taxInclusive !== undefined) updates.taxInclusive = dto.taxInclusive;
     if (dto.homeConfig !== undefined) {
       // firstRun is server-owned, and the client's Home normalizer only carries
       // the layout — so a layout save must not erase the milestones.

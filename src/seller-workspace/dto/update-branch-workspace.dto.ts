@@ -261,6 +261,18 @@ export class UpdateBranchWorkspaceDto {
 
   @ApiPropertyOptional({
     description:
+      'Whether catalog prices ALREADY contain the tax. false (default) = ' +
+      'exclusive, tax is added at checkout and the customer pays more. true = ' +
+      'inclusive, the shelf price is what the customer pays and the tax is ' +
+      'extracted out of it for the receipt and the ledger.',
+    example: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  taxInclusive?: boolean;
+
+  @ApiPropertyOptional({
+    description:
       'Per-branch layout for the customizable Home page (widgets, order, ' +
       'quick-links, welcome note, branding). Send null to reset to the ' +
       'per-format default.',

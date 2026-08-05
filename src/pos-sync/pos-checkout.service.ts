@@ -277,10 +277,14 @@ export class PosCheckoutService {
       ),
     );
 
+    const branchTaxInclusive =
+      branchTaxRate > 0 && Boolean(branch?.taxInclusive);
+
     return {
-      ...this.buildQuoteResponse(dto, resolvedLines),
+      ...this.buildQuoteResponse(dto, resolvedLines, branchTaxInclusive),
       branchTaxEnabled: branchTaxRate > 0,
       branchTaxRate,
+      branchTaxInclusive,
     };
   }
 
@@ -1073,6 +1077,38 @@ export class PosCheckoutService {
     return Number.isFinite(rate) && rate > 0 ? rate : 0;
   }
 
+  /**
+   * Splits a discounted line amount into its ex-tax base and its tax.
+   *
+   * Exclusive: the amount IS the base and the tax sits on top.
+   * Inclusive: the amount is the gross the customer pays and the tax comes out
+   * of it.
+   *
+   * Either way the caller's `base + tax` is what the line is worth, so every
+   * downstream total, ledger split and receipt row is written once.
+   */
+  private splitLineTax(
+    discounted: number,
+    rate: number,
+    inclusive: boolean,
+  ): { taxableBase: number; taxAmount: number } {
+    const r = Number(rate) || 0;
+    if (r <= 0) {
+      return { taxableBase: discounted, taxAmount: 0 };
+    }
+    if (!inclusive) {
+      return {
+        taxableBase: discounted,
+        taxAmount: this.roundMoney(discounted * r),
+      };
+    }
+    const taxableBase = this.roundMoney(discounted / (1 + r));
+    return {
+      taxableBase,
+      taxAmount: this.roundMoney(discounted - taxableBase),
+    };
+  }
+
   private async resolveQuoteLine(
     branchId: number,
     item: QuotePosCheckoutItemDto,
@@ -1173,6 +1209,7 @@ export class PosCheckoutService {
   private buildQuoteResponse(
     dto: QuotePosCheckoutDto,
     resolvedLines: ResolvedQuoteLineInput[],
+    taxInclusive = false,
   ): PosCheckoutQuoteResponseDto {
     const customerPricingRule = this.getCustomerPricingRule(
       dto.customerProfile?.customerType,
@@ -1272,19 +1309,25 @@ export class PosCheckoutService {
         }
       }
 
-      const taxableBase = this.roundMoney(
+      const discounted = this.roundMoney(
         line.grossSubtotal -
           line.customerTypeDiscount -
           line.automaticDiscount -
           promoCodeDiscount,
       );
-      const taxAmount = this.roundMoney(taxableBase * line.taxRate);
+      const { taxableBase, taxAmount } = this.splitLineTax(
+        discounted,
+        line.taxRate,
+        taxInclusive,
+      );
 
       return {
         ...line,
         promoCodeDiscount,
         taxableBase,
         taxAmount,
+        // Holds in BOTH modes: exclusive adds the tax to the base, inclusive
+        // splits the same discounted amount into base + tax.
         total: this.roundMoney(taxableBase + taxAmount),
       };
     });
@@ -1292,10 +1335,17 @@ export class PosCheckoutService {
     const discountTotal = this.roundMoney(
       customerTypeDiscount + automaticDiscount + promoCodeDiscountTotal,
     );
-    const netSubtotal = this.roundMoney(subtotal - discountTotal);
     const taxTotal = this.roundMoney(
       lines.reduce((sum, line) => sum + line.taxAmount, 0),
     );
+    // netSubtotal is always the EX-TAX figure, so `grandTotal = netSubtotal +
+    // taxTotal` holds in both modes. Exclusive: the discounted subtotal is
+    // already ex-tax and the grand total rises by the tax. Inclusive: the
+    // discounted subtotal is the gross the customer pays, so the tax comes out
+    // of it and the grand total is unchanged by enabling tax at all.
+    const netSubtotal = taxInclusive
+      ? this.roundMoney(subtotal - discountTotal - taxTotal)
+      : this.roundMoney(subtotal - discountTotal);
     const grandTotal = this.roundMoney(netSubtotal + taxTotal);
 
     return {

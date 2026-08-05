@@ -76,6 +76,7 @@ export interface PosBranchSummary {
   logoUrl: string | null;
   taxEnabled: boolean;
   taxRate: number;
+  taxInclusive: boolean;
   homeConfig: BranchHomeConfig | null;
   posExperienceProfileCode: string | null;
 }
@@ -96,6 +97,7 @@ export interface PosWorkspaceActivationCandidate {
   logoUrl: string | null;
   taxEnabled: boolean;
   taxRate: number;
+  taxInclusive: boolean;
   homeConfig: BranchHomeConfig | null;
   role: BranchStaffRole;
   permissions: string[];
@@ -665,6 +667,7 @@ export class BranchStaffService {
           logoUrl: summary.logoUrl ?? null,
           taxEnabled: Boolean(summary.taxEnabled),
           taxRate: Number(summary.taxRate ?? 0.15),
+          taxInclusive: Boolean(summary.taxInclusive),
           homeConfig: summary.homeConfig ?? null,
           role: summary.role,
           isOwner: summary.isOwner,
@@ -1069,6 +1072,7 @@ export class BranchStaffService {
         logoUrl: branch.logoUrl ?? null,
         taxEnabled: Boolean(branch.taxEnabled),
         taxRate: Number(branch.taxRate ?? 0.15),
+        taxInclusive: Boolean(branch.taxInclusive),
         homeConfig: branch.homeConfig ?? null,
         role: BranchStaffRole.MANAGER,
         permissions: [],
@@ -1124,6 +1128,7 @@ export class BranchStaffService {
           logoUrl: branch.logoUrl ?? null,
           taxEnabled: Boolean(branch.taxEnabled),
           taxRate: Number(branch.taxRate ?? 0.15),
+          taxInclusive: Boolean(branch.taxInclusive),
           homeConfig: branch.homeConfig ?? null,
           role: BranchStaffRole.MANAGER,
           permissions: [],
@@ -1190,6 +1195,9 @@ export class BranchStaffService {
           existing?.taxEnabled ?? assignment.branch.taxEnabled ?? false,
         ),
         taxRate: Number(existing?.taxRate ?? assignment.branch.taxRate ?? 0.15),
+        taxInclusive: Boolean(
+          existing?.taxInclusive ?? assignment.branch.taxInclusive ?? false,
+        ),
         homeConfig:
           existing?.homeConfig ?? assignment.branch.homeConfig ?? null,
         role: assignment.role ?? existing?.role ?? BranchStaffRole.OPERATOR,

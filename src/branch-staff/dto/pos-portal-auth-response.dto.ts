@@ -121,6 +121,13 @@ export class PosPortalBranchSummaryDto {
   taxRate!: number;
 
   @ApiPropertyOptional({
+    description:
+      'Whether catalog prices already contain the tax. false = exclusive (tax ' +
+      'added at checkout); true = inclusive (extracted out of the shelf price).',
+  })
+  taxInclusive!: boolean;
+
+  @ApiPropertyOptional({
     nullable: true,
     description:
       'Per-branch layout for the customizable Home page (widgets, order, ' +

@@ -154,4 +154,12 @@ export class PosCheckoutQuoteResponseDto {
     example: 0.15,
   })
   branchTaxRate?: number;
+
+  @ApiPropertyOptional({
+    description:
+      'Whether the branch prices tax-inclusive. When true the line totals are ' +
+      'unchanged by tax and the tax was extracted out of them; when false the ' +
+      'tax was added on top.',
+  })
+  branchTaxInclusive?: boolean;
 }

@@ -140,6 +140,26 @@ export class Branch {
   taxRate!: number;
 
   /**
+   * Whether the branch's catalog prices ALREADY contain the tax.
+   *
+   * false (default) — EXCLUSIVE. The price is net; tax is added at checkout, so
+   * enabling tax raises what the customer pays by the rate.
+   *
+   * true — INCLUSIVE. The price on the shelf is what the customer pays; the tax
+   * is extracted out of it for the receipt and the ledger. Enabling tax changes
+   * no price at all, only how the takings are split between revenue and tax
+   * payable. This is what a branch that already priced its goods with VAT in
+   * them wants, and it is the only mode where turning tax on is free of any
+   * re-pricing.
+   *
+   * Both modes satisfy `grandTotal = netSubtotal + tax` and
+   * `tax = grandTotal − grandTotal / (1 + rate)`; they differ only in whether
+   * the discounted line amount is read as the net or as the gross.
+   */
+  @Column({ type: 'boolean', default: false })
+  taxInclusive!: boolean;
+
+  /**
    * Per-branch layout for the branch-customizable Home page (POS `/home`) — which
    * widgets show and in what order, custom quick-links, a welcome note and
    * branding. Null = never customized; the client renders a per-format default.

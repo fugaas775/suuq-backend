@@ -279,6 +279,42 @@ describe('PosCheckoutService', () => {
       expect(result.taxTotal).toBeGreaterThan(0);
     });
 
+    it('leaves the price alone when the branch prices tax-inclusive', async () => {
+      branchesRepository.findOne.mockResolvedValue({
+        id: 3,
+        taxEnabled: true,
+        taxRate: 0.15,
+        taxInclusive: true,
+      });
+
+      const result = await taxQuote();
+
+      expect(result.branchTaxInclusive).toBe(true);
+      // The unit price was 15 and the customer still pays 15 — the tax came out
+      // of it rather than going on top.
+      expect(result.grandTotal).toBeCloseTo(15, 2);
+      expect(result.taxTotal).toBeCloseTo(15 - 15 / 1.15, 2);
+      // The identity the ledger posts on, in both modes.
+      expect(result.netSubtotal + result.taxTotal).toBeCloseTo(
+        result.grandTotal,
+        2,
+      );
+    });
+
+    it('charges more for the same price when exclusive, and that is the difference', async () => {
+      branchesRepository.findOne.mockResolvedValue({
+        id: 3,
+        taxEnabled: true,
+        taxRate: 0.15,
+        taxInclusive: false,
+      });
+
+      const result = await taxQuote();
+
+      expect(result.branchTaxInclusive).toBe(false);
+      expect(result.grandTotal).toBeCloseTo(15 * 1.15, 2);
+    });
+
     it('reads a numeric column that pg hands back as a string', async () => {
       branchesRepository.findOne.mockResolvedValue({
         id: 3,
