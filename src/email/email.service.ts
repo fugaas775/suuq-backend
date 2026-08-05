@@ -1300,7 +1300,7 @@ export class EmailService {
       : `${dayLabel} left on your free trial`;
     const lead = hasEnded
       ? `${params.branchName} is closed until the subscription is paid. Everything you set up is still there — paying reopens it exactly as you left it.`
-      : `${params.branchName} stays open until ${endsAtStr}. Paying now costs you nothing in trial days: the paid period starts when the trial ends.`;
+      : `${params.branchName} stays open until ${endsAtStr}. Paying starts your subscription that day and ends the trial, so there is no gap — and no need to pay before you are ready.`;
     const action = hasEnded
       ? 'Sign in to POS-S and pay with Ebirr to reopen this branch.'
       : 'Pay with Ebirr from Seller HQ whenever you are ready.';

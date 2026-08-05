@@ -567,8 +567,8 @@ describe('PosWorkspaceActivationService', () => {
       ).rejects.toBeInstanceOf(NotFoundException);
     });
 
-    it('extends the paid period from the trial tail, not from today', async () => {
-      const trialEndsAt = new Date(Date.now() + 11 * 86_400_000);
+    it('ends a live trial on payment and starts the paid period today', async () => {
+      const trialEndsAt = new Date(Date.now() + 120 * 86_400_000);
       retailEntitlementsServiceMock.getBranchWorkspaceStatus.mockResolvedValue({
         tenant: { id: 31, name: 'Bole Retail' },
         entitlements: [{ module: RetailModule.POS_CORE }],
@@ -589,9 +589,18 @@ describe('PosWorkspaceActivationService', () => {
 
       const saved = tenantSubscriptionsRepository.save.mock.calls[0][0];
       expect(saved.status).toBe(TenantSubscriptionStatus.ACTIVE);
-      // 30 days on top of the 11 that were left, not 30 from now.
-      expect(saved.endsAt.getTime()).toBe(
-        trialEndsAt.getTime() + 30 * 86_400_000,
+      // 30 days from today. The 120 free days still on the trial are given up —
+      // stacking them would push a paid month four months out.
+      expect(saved.endsAt.getTime()).toBeLessThan(Date.now() + 31 * 86_400_000);
+      expect(saved.endsAt.getTime()).toBeGreaterThan(
+        Date.now() + 29 * 86_400_000,
+      );
+      // The trial is over: the row no longer carries a trial plan code, and the
+      // free time it gave up is on the record.
+      expect(saved.planCode).not.toMatch(/TRIAL/);
+      expect(saved.metadata.convertedFromTrialAt).toBeTruthy();
+      expect(saved.metadata.trialWouldHaveEndedAt).toBe(
+        trialEndsAt.toISOString(),
       );
       // One row, converted in place.
       expect(saved.id).toBe(8);

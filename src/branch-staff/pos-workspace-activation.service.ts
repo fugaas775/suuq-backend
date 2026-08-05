@@ -314,15 +314,23 @@ export class PosWorkspaceActivationService {
         : TenantBillingInterval.MONTHLY;
 
     const now = new Date();
-    // Converting a live free trial extends from the trial's end, not from today
-    // — otherwise paying on day 3 of 14 forfeits the remaining 11 days, which
-    // penalises exactly the early conversion this flow is trying to encourage.
-    const paidPeriodStartsAt = isLivePosSelfServeTrial(
+    // Payment ends the trial there and then: the paid period starts today, not
+    // at the trial's tail. Stacking the two made sense at 14 days; at six free
+    // months it would park a paid year half a year out, and an owner who pays
+    // in month one would not see the subscription they just bought begin until
+    // month seven. The remaining free days are given up — the copy on both the
+    // pay screens and the reminder email says so.
+    const convertedFromLiveTrial = isLivePosSelfServeTrial(
       branchSubscription,
       now.getTime(),
-    )
-      ? new Date(branchSubscription.endsAt).getTime()
-      : now.getTime();
+    );
+    // Read before the writes below: the trial row is converted IN PLACE, so
+    // `branchSubscription.endsAt` becomes the paid end date a few lines on.
+    const trialWouldHaveEndedAt =
+      convertedFromLiveTrial && branchSubscription?.endsAt
+        ? new Date(branchSubscription.endsAt).toISOString()
+        : null;
+    const paidPeriodStartsAt = now.getTime();
     const nextSubscription =
       branchSubscription ??
       this.tenantSubscriptionsRepository.create({
@@ -339,8 +347,7 @@ export class PosWorkspaceActivationService {
     nextSubscription.amountTotal = option.amount;
     nextSubscription.periodMonths = option.months;
     nextSubscription.currency = option.currency;
-    // startsAt records when they paid; endsAt runs from the trial tail when one
-    // is still live.
+    // startsAt records when they paid, which is also when the paid term begins.
     nextSubscription.startsAt = now;
     nextSubscription.endsAt = new Date(
       paidPeriodStartsAt + option.months * 30 * 86_400_000,
@@ -357,6 +364,15 @@ export class PosWorkspaceActivationService {
       amountTotal: option.amount,
       branchId,
       pendingActivation: undefined,
+      // Conversion overwrites planCode, so the row itself stops answering "did
+      // this start life on the free trial?". These two keep that answerable,
+      // and record the free time the owner chose to end early.
+      ...(convertedFromLiveTrial
+        ? {
+            convertedFromTrialAt: now.toISOString(),
+            trialWouldHaveEndedAt,
+          }
+        : {}),
     };
 
     const saved =
