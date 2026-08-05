@@ -20,10 +20,13 @@ import { SupplierAvailabilityStatus } from '../entities/supplier-offer.entity';
  * A supplier "product": one product record plus its wholesale offer, created in
  * a single step (the supplier-portal mirror of how a branch adds a product).
  *
- * The product is stored in the shared products table but is B2B-only — it is
- * created with status 'draft' and no consumer VendorStore scope, so it never
- * surfaces in the consumer marketplace; it only exists to back the wholesale
- * offer that buyers see in the supplier catalog.
+ * The product is stored in the shared products table and starts B2B-only — it is
+ * created with status 'draft' and no consumer VendorStore scope, so on its own it
+ * only backs the wholesale offer that buyers see in the supplier catalog.
+ *
+ * A supplier can later list it to shoppers through their cash & carry outlet, at
+ * a separate consumer price held on the outlet's catalog link. `unitWholesalePrice`
+ * below is the buyer price and is never shown to a shopper.
  */
 export class CreateSupplierProductDto {
   @ApiProperty({ example: 'Bottled Water 500ml — Case of 24' })

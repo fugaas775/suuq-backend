@@ -1,7 +1,9 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource, EntityManager } from 'typeorm';
 import { Branch } from '../branches/entities/branch.entity';
+import { linkBranchToVendorStore } from '../branches/branch-store-link';
+import { VendorStore } from '../vendor/entities/vendor-store.entity';
 import { BranchInventory } from '../branches/entities/branch-inventory.entity';
 import {
   BranchStaffAssignment,
@@ -146,6 +148,7 @@ export class SupplierOutletService {
       }
 
       await this.ensureOwnerAssignment(manager, branch.id, profile.userId);
+      await this.ensureOutletStorefront(manager, branch, profile);
       await this.syncOutletCatalogWithin(manager, profile.id, branch.id);
 
       return branch;
@@ -197,7 +200,175 @@ export class SupplierOutletService {
     );
   }
 
+  /**
+   * The public-listing state of every product on a supplier's outlet shelf,
+   * keyed by productId. Lets the supplier catalog render "listed / not listed"
+   * and the consumer price without a second round trip per offer.
+   */
+  async getConsumerListings(
+    supplierProfileId: number,
+  ): Promise<
+    Map<number, { consumerVisible: boolean; retailPrice: number | null }>
+  > {
+    const map = new Map<
+      number,
+      { consumerVisible: boolean; retailPrice: number | null }
+    >();
+    if (!supplierProfileId) return map;
+
+    const branch = await this.getOutletBranchForProfile(supplierProfileId);
+    if (!branch) return map;
+
+    const links = await this.dataSource
+      .getRepository(BranchCatalogProductLink)
+      .find({ where: { branchId: branch.id } });
+
+    for (const link of links) {
+      map.set(link.productId, {
+        consumerVisible: link.consumerVisible === true,
+        retailPrice: link.retailPrice ?? null,
+      });
+    }
+    return map;
+  }
+
+  /**
+   * List (or unlist) one of the supplier's own products on the public
+   * marketplace, at a consumer retail price that is theirs to set.
+   *
+   * A supplier posts one price to buyers — `unitWholesalePrice` — and
+   * `createProductOffer` copies it onto the backing `Product.price`. The consumer
+   * shelf prices at `COALESCE(retail_sale_price, retail_price, product.price)`,
+   * so listing an offer without a retail price would publish the supplier's
+   * wholesale price to shoppers. Refusing that here is the write half of the
+   * guard; the read half lives in the consumer catalog query, because a link row
+   * can also be reached through the Seller-HQ shelf tools.
+   *
+   * The outlet storefront is only revealed once something is actually listed —
+   * an empty shop on the marketplace is worse than no shop.
+   */
+  async setOfferConsumerListing(
+    supplierProfileId: number,
+    productId: number,
+    options: { consumerVisible: boolean; retailPrice?: number | null },
+  ): Promise<{
+    branchId: number;
+    consumerVisible: boolean;
+    retailPrice: number | null;
+  }> {
+    const retailPrice =
+      options.retailPrice == null ? null : Number(options.retailPrice);
+
+    if (options.consumerVisible) {
+      if (
+        retailPrice == null ||
+        !Number.isFinite(retailPrice) ||
+        retailPrice <= 0
+      ) {
+        throw new BadRequestException(
+          'Set a consumer price before listing this product publicly. Your wholesale price is never shown to shoppers.',
+        );
+      }
+    }
+
+    const branch = await this.getOutletBranchForProfile(supplierProfileId);
+    if (!branch) {
+      throw new BadRequestException(
+        'Your wholesale counter is not set up yet, so there is nothing to list from.',
+      );
+    }
+
+    return this.dataSource.transaction(async (manager) => {
+      const link = await manager.findOne(BranchCatalogProductLink, {
+        where: { branchId: branch.id, productId },
+      });
+      if (!link) {
+        throw new BadRequestException(
+          'That product is not on your counter catalog yet. Publish the offer first.',
+        );
+      }
+
+      // Only move the price when the caller supplied one, so unlisting keeps the
+      // price the supplier already set and re-listing does not ask for it again.
+      if (options.retailPrice !== undefined) {
+        link.retailPrice = retailPrice;
+      }
+      link.consumerVisible = options.consumerVisible;
+      await manager.save(link);
+
+      if (options.consumerVisible) {
+        const profile = await manager.findOne(SupplierProfile, {
+          where: { id: supplierProfileId },
+        });
+        if (profile) {
+          await this.ensureOutletStorefront(manager, branch, profile, {
+            consumerVisible: true,
+          });
+        }
+      }
+
+      return {
+        branchId: branch.id,
+        consumerVisible: link.consumerVisible,
+        retailPrice: link.retailPrice ?? null,
+      };
+    });
+  }
+
   // ── internals ─────────────────────────────────────────────────────────────
+
+  /**
+   * Give the outlet branch the consumer storefront it needs to be reachable.
+   *
+   * `GET /consumer/v1/branches` filters on an EXISTS against `vendor_stores`, so
+   * a branch without one is invisible to shoppers no matter what is on its
+   * shelf. Created hidden: a supplier who has listed nothing should not appear as
+   * an empty shop. `linkBranchToVendorStore` writes both halves of the
+   * unenforced 1:1 so the link can never end up one-sided.
+   */
+  private async ensureOutletStorefront(
+    manager: EntityManager,
+    branch: Branch,
+    profile: SupplierProfile,
+    options: { consumerVisible?: boolean } = {},
+  ): Promise<VendorStore> {
+    const existing = await manager.findOne(VendorStore, {
+      where: { branchId: branch.id },
+    });
+
+    if (existing) {
+      let dirty = false;
+      if (options.consumerVisible && !existing.isConsumerVisible) {
+        existing.isConsumerVisible = true;
+        dirty = true;
+      }
+      if (existing.serviceFormat !== branch.serviceFormat) {
+        existing.serviceFormat = branch.serviceFormat ?? null;
+        dirty = true;
+      }
+      if (dirty) await manager.save(existing);
+      // Repair a half-written link rather than trusting branch.vendorStoreId.
+      if (branch.vendorStoreId !== existing.id) {
+        await linkBranchToVendorStore(manager, branch.id, existing.id);
+      }
+      return existing;
+    }
+
+    const store = await manager.save(
+      manager.create(VendorStore, {
+        ownerUserId: profile.userId,
+        branchId: branch.id,
+        storeName: profile.companyName?.trim() || branch.name,
+        serviceFormat: branch.serviceFormat ?? null,
+        isConsumerVisible: options.consumerVisible ?? false,
+      }),
+    );
+    await linkBranchToVendorStore(manager, branch.id, store.id);
+    this.logger.log(
+      `Provisioned outlet storefront #${store.id} for supplier #${profile.id} (branch #${branch.id})`,
+    );
+    return store;
+  }
 
   private async provisionOutletWorkspace(
     manager: EntityManager,
@@ -319,6 +490,11 @@ export class SupplierOutletService {
    * and a seeded branch_inventory row (counter stock). Existing inventory is
    * never clobbered — re-sync only ADDS new products and links, so counted
    * counter stock survives subsequent syncs.
+   *
+   * New links are stamped `SUPPLIER_OFFER` and stay `consumerVisible = false`.
+   * Being on the counter shelf and being listed to the public are separate
+   * decisions, and the second one needs a consumer price the supplier has not
+   * given yet — see `setOfferConsumerListing`.
    */
   private async syncOutletCatalogWithin(
     manager: EntityManager,
@@ -343,7 +519,12 @@ export class SupplierOutletService {
       });
       if (!existingLink) {
         await manager.save(
-          manager.create(BranchCatalogProductLink, { branchId, productId }),
+          manager.create(BranchCatalogProductLink, {
+            branchId,
+            productId,
+            source: 'SUPPLIER_OFFER',
+            sourceSupplierProfileId: supplierProfileId,
+          }),
         );
       }
 

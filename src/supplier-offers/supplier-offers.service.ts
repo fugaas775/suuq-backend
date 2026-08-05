@@ -20,12 +20,21 @@ import { CreateSupplierOfferDto } from './dto/create-supplier-offer.dto';
 import { CreateSupplierProductDto } from './dto/create-supplier-product.dto';
 import { BulkCreateSupplierProductsDto } from './dto/bulk-create-supplier-products.dto';
 import { UpdateSupplierOfferDto } from './dto/update-supplier-offer.dto';
+import { SetOfferConsumerListingDto } from './dto/set-offer-consumer-listing.dto';
 import {
   actorIsSuperAdmin,
   listOwnedSupplierProfileIds,
   resolveActiveOwnedProfile,
 } from '../suppliers/active-supplier.util';
 import { SupplierOutletService } from '../suppliers/supplier-outlet.service';
+
+/** Whether shoppers can see an offer on suuq-s.com, and at what price. */
+export interface ConsumerListingState {
+  consumerVisible: boolean;
+  retailPrice: number | null;
+  /** False until the offer has been mirrored onto the supplier's counter shelf. */
+  onCounter: boolean;
+}
 
 /**
  * Supplier-facing catalog management. Every operation is scoped to the supplier
@@ -58,20 +67,44 @@ export class SupplierOffersService {
       .catch(() => undefined);
   }
 
+  /**
+   * The supplier's offers, each carrying its public-listing state.
+   *
+   * `consumerListing` describes the same offer's life on the retail side —
+   * whether shoppers can see it on suuq-s.com and at what price. It lives on the
+   * outlet catalog link rather than the offer, because the offer is the
+   * wholesale contract and must not carry a consumer price.
+   */
   async listForUser(
     userId: number | null | undefined,
     activeSupplierId?: number | null,
     actingRoles?: string[] | null,
-  ): Promise<SupplierOffer[]> {
+  ): Promise<Array<SupplierOffer & { consumerListing: ConsumerListingState }>> {
     const profile = await this.resolveProfileOrThrow(
       userId,
       activeSupplierId,
       actingRoles,
     );
-    return this.offersRepository.find({
-      where: { supplierProfileId: profile.id },
-      order: { createdAt: 'DESC' },
-      relations: { product: true },
+    const [offers, listings] = await Promise.all([
+      this.offersRepository.find({
+        where: { supplierProfileId: profile.id },
+        order: { createdAt: 'DESC' },
+        relations: { product: true },
+      }),
+      this.supplierOutletService.getConsumerListings(profile.id),
+    ]);
+
+    return offers.map((offer) => {
+      const listing = offer.productId ? listings.get(offer.productId) : null;
+      return Object.assign(offer, {
+        consumerListing: {
+          // No link row means the offer has not reached the counter shelf yet,
+          // which reads the same to a supplier as "not listed".
+          consumerVisible: listing?.consumerVisible ?? false,
+          retailPrice: listing?.retailPrice ?? null,
+          onCounter: listing != null,
+        },
+      });
     });
   }
 
@@ -108,11 +141,15 @@ export class SupplierOffersService {
   }
 
   /**
-   * Create a B2B-only product plus its wholesale offer in one step — the
-   * supplier-portal equivalent of a branch adding a product. The product is
-   * owned by the supplier's user, stored with status 'draft' and no consumer
-   * VendorStore scope so it never surfaces in the consumer marketplace; it only
-   * exists to back the offer that buyers see in the supplier catalog.
+   * Create a product plus its wholesale offer in one step — the supplier-portal
+   * equivalent of a branch adding a product. The product is owned by the
+   * supplier's user and stored with status 'draft' and no consumer VendorStore
+   * scope, so it reaches buyers only through the offer.
+   *
+   * It starts B2B-only but need not stay that way: a supplier can list it to
+   * shoppers through their cash & carry outlet (`setConsumerListingForUser`),
+   * which sells it at a separate consumer price. The wholesale price on this
+   * offer is never what a shopper sees.
    */
   async createProductWithOfferForUser(
     userId: number | null | undefined,
@@ -270,6 +307,52 @@ export class SupplierOffersService {
     );
     offer.status = SupplierOfferStatus.ARCHIVED;
     return this.offersRepository.save(offer);
+  }
+
+  /**
+   * List one of the supplier's own products to shoppers on suuq-s.com, priced
+   * for consumers rather than for buyers.
+   *
+   * A supplier sells wholesale to branches and — through their cash & carry
+   * outlet — retail to the public. Those are two prices for one product, so the
+   * consumer price lives on the outlet's catalog link and `unitWholesalePrice`
+   * never leaves the B2B side. The outlet service owns that row and enforces the
+   * price-before-listing rule.
+   */
+  async setConsumerListingForUser(
+    userId: number | null | undefined,
+    id: number,
+    dto: SetOfferConsumerListingDto,
+    activeSupplierId?: number | null,
+    actingRoles?: string[] | null,
+  ) {
+    const offer = await this.findOwnedOfferOrThrow(
+      userId,
+      id,
+      activeSupplierId,
+      actingRoles,
+    );
+    if (!offer.productId) {
+      throw new BadRequestException('This offer has no product to list');
+    }
+    if (dto.consumerVisible && offer.status !== SupplierOfferStatus.PUBLISHED) {
+      throw new BadRequestException(
+        'Publish this offer before listing it to shoppers',
+      );
+    }
+
+    // The link only exists once the offer has been mirrored to the counter.
+    // Publishing schedules that mirror in the background, so a supplier who
+    // publishes and lists in one breath would otherwise hit "not on your
+    // counter catalog yet".
+    await this.supplierOutletService.syncOutletCatalog(offer.supplierProfileId);
+
+    const result = await this.supplierOutletService.setOfferConsumerListing(
+      offer.supplierProfileId,
+      offer.productId,
+      { consumerVisible: dto.consumerVisible, retailPrice: dto.retailPrice },
+    );
+    return { offerId: offer.id, productId: offer.productId, ...result };
   }
 
   // ---- Helpers -------------------------------------------------------------

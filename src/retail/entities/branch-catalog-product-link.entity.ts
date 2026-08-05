@@ -80,9 +80,17 @@ export class BranchCatalogProductLink {
   @Column({ name: 'consumer_visible', type: 'boolean', default: false })
   consumerVisible!: boolean;
 
-  /** How the link was created: a manual Seller-HQ link, or auto-staged from a received PO. */
+  /**
+   * How the link was created: a manual Seller-HQ link, auto-staged from a
+   * received PO, or mirrored from the supplier's own published offer into their
+   * cash & carry outlet catalog (`SUPPLIER_OFFER` — see SupplierOutletService).
+   *
+   * The distinction matters for pricing: a `SUPPLIER_OFFER` link's backing
+   * Product carries the *wholesale* price, so it may never fall back to
+   * `product.price` on a consumer shelf.
+   */
   @Column({ name: 'source', type: 'varchar', length: 32, default: 'MANUAL' })
-  source!: 'MANUAL' | 'PURCHASE_ORDER';
+  source!: 'MANUAL' | 'PURCHASE_ORDER' | 'SUPPLIER_OFFER';
 
   /** Provenance: the supplier whose received goods seeded this link (PURCHASE_ORDER source). */
   @Column({ name: 'source_supplier_profile_id', type: 'int', nullable: true })

@@ -124,6 +124,17 @@ export class ConsumerBranchProductItemDto {
    */
   tags!: string[];
   /**
+   * The merchant's own menu grouping, from `product.attributes.browseCategory` —
+   * the same token the POS register's category rail is built from, so a shop's
+   * sections read the same to staff and to shoppers.
+   *
+   * Not the `Category` relation: POS branches leave `categoryId` null and group
+   * by this instead. Free merchant text, so treat it as an opaque label to group
+   * and title-case, never as an enum. `null` means this shop never grouped its
+   * menu — render a flat list.
+   */
+  browseCategory!: string | null;
+  /**
    * Buyability band, from `branch_inventory` and merged with the hospitality
    * 86-list so a dish taken off at the pass reads as out of stock here.
    */
@@ -150,6 +161,61 @@ export class ConsumerBranchProductsDto {
    * Changes whenever anything on this branch's shelf changes. Lets a client
    * cheaply decide whether to re-render without diffing the page.
    */
+  version!: string;
+}
+
+/**
+ * Who is selling a catalog item.
+ *
+ * A `SUPPLIER` shop is a wholesaler's cash & carry counter selling to the public
+ * as well as to retailers. It behaves like any other branch — same shelf, same
+ * ordering, collection at the counter — but shoppers benefit from knowing they
+ * are buying at a wholesaler.
+ */
+export type ConsumerSellerType = 'BRANCH' | 'SUPPLIER';
+
+/**
+ * One buyable thing at one shop.
+ *
+ * The unit of identity is the pair `(branchId, productId)`, not the product: the
+ * same `product` row sits on many shelves at different prices and different
+ * availability, and collapsing them would mean showing a shopper a price they
+ * cannot get.
+ */
+export class ConsumerCatalogItemDto {
+  branchId!: number;
+  branchName!: string;
+  serviceFormat!: string | null;
+  serviceFormatLabel!: string;
+  sellerType!: ConsumerSellerType;
+  city!: string | null;
+  /** Whether the shop is trading right now; null when it published no hours. */
+  isOpenNow!: boolean | null;
+
+  productId!: number;
+  name!: string;
+  /** What this shop charges. Always in `currency` — never converted. */
+  price!: number;
+  currency!: string | null;
+  imageUrl!: string | null;
+  productType!: string | null;
+  tags!: string[];
+  /**
+   * The merchant's own menu grouping — the same `attributes.browseCategory`
+   * token the branch shelf carries, so a shop's sections read identically
+   * whether a shopper arrived through search or through the shop page.
+   */
+  browseCategory!: string | null;
+  stockState!: ConsumerStockState;
+  updatedAt!: string | null;
+}
+
+/** Paginated cross-shop catalog response. */
+export class ConsumerCatalogListDto {
+  items!: ConsumerCatalogItemDto[];
+  total!: number;
+  page!: number;
+  limit!: number;
   version!: string;
 }
 

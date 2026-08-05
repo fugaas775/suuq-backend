@@ -9,9 +9,11 @@ import { Product } from '../products/entities/product.entity';
 import { BranchCatalogProductLink } from '../retail/entities/branch-catalog-product-link.entity';
 import { PosSyncModule } from '../pos-sync/pos-sync.module';
 import { ConsumerBranchController } from './consumer-branch.controller';
+import { ConsumerCatalogController } from './consumer-catalog.controller';
 import { ConsumerOrderController } from './consumer-order.controller';
 import { ConsumerServiceFormatController } from './consumer-service-format.controller';
 import { ConsumerOrderService } from './consumer-order.service';
+import { ConsumerShelfService } from './consumer-shelf.service';
 
 @Module({
   imports: [
@@ -28,9 +30,10 @@ import { ConsumerOrderService } from './consumer-order.service';
   ],
   controllers: [
     ConsumerBranchController,
+    ConsumerCatalogController,
     ConsumerOrderController,
     ConsumerServiceFormatController,
   ],
-  providers: [ConsumerOrderService],
+  providers: [ConsumerOrderService, ConsumerShelfService],
 })
 export class ConsumerModule {}

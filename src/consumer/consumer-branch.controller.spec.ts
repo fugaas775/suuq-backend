@@ -1,4 +1,5 @@
 import { ConsumerBranchController } from './consumer-branch.controller';
+import { ConsumerShelfService } from './consumer-shelf.service';
 
 /**
  * Unit tests for ConsumerBranchController.getBranchProducts.
@@ -12,6 +13,8 @@ describe('ConsumerBranchController.getBranchProducts', () => {
     store: unknown;
     products: unknown[];
     count: number;
+    /** manage_stock per product; anything omitted counts as tracked. */
+    stockManagedRows?: unknown[];
   }) {
     const getMany = jest.fn().mockResolvedValue(opts.products);
     const getCount = jest.fn().mockResolvedValue(opts.count);
@@ -54,8 +57,11 @@ describe('ConsumerBranchController.getBranchProducts', () => {
       vendorStoreRepo as never,
       productRepo as never,
       catalogLinkRepo as never,
-      branchInventoryRepo as never,
-      kitchenAvailabilityRepo as never,
+      new ConsumerShelfService(
+        productRepo as never,
+        branchInventoryRepo as never,
+        kitchenAvailabilityRepo as never,
+      ),
     );
     return { controller, baseQb, getCount, vendorStoreRepo };
   }
@@ -96,6 +102,9 @@ describe('ConsumerBranchController.getBranchProducts', () => {
       currency: 'ETB',
       imageUrl: 'https://cdn/standard.webp',
       productType: 'service',
+      // Null: this fixture's product carries no attributes, which is the shape
+      // of a shop that never grouped its menu.
+      browseCategory: null,
       tags: ['hotel', 'room', 'nightly'],
       // This branch tracks no inventory for the item, which must stay buyable
       // rather than reading as sold out.
@@ -181,6 +190,68 @@ describe('ConsumerBranchController.getBranchProducts', () => {
       where: { branchId: 123, isConsumerVisible: true },
     });
   });
+  describe('ConsumerBranchController menu grouping', () => {
+    // A café's menu is grouped in the POS by attributes.browseCategory — the same
+    // token the register's category rail reads. Exposing it is what lets a guest
+    // tap "Burgers" instead of scrolling 128 rows.
+    it('surfaces the grouping the merchant already set', async () => {
+      const { controller } = buildController({
+        store: { id: 3 },
+        products: [
+          {
+            id: 1,
+            name: 'Chicken Burger',
+            price: 300,
+            attributes: { browseCategory: 'BURGERS' },
+          },
+        ],
+      });
+
+      const res = await controller.getBranchProducts(7);
+
+      expect(res.items[0].browseCategory).toBe('BURGERS');
+    });
+
+    it('trims what a merchant typed rather than emitting it padded', async () => {
+      const { controller } = buildController({
+        store: { id: 3 },
+        products: [
+          {
+            id: 1,
+            name: 'Tea',
+            price: 60,
+            attributes: { browseCategory: '  BEVERAGES  ' },
+          },
+        ],
+      });
+
+      const res = await controller.getBranchProducts(7);
+
+      expect(res.items[0].browseCategory).toBe('BEVERAGES');
+    });
+
+    it('reports null for a shop that never grouped its menu', async () => {
+      // Null is normal and means "render a flat list", not an error.
+      const { controller } = buildController({
+        store: { id: 3 },
+        products: [
+          { id: 1, name: 'A', price: 1 },
+          { id: 2, name: 'B', price: 1, attributes: {} },
+          { id: 3, name: 'C', price: 1, attributes: { browseCategory: '   ' } },
+          { id: 4, name: 'D', price: 1, attributes: { browseCategory: 42 } },
+        ],
+      });
+
+      const res = await controller.getBranchProducts(7);
+
+      expect(res.items.map((i) => i.browseCategory)).toEqual([
+        null,
+        null,
+        null,
+        null,
+      ]);
+    });
+  });
 });
 
 /**
@@ -205,8 +276,11 @@ describe('ConsumerBranchController.getBranch storeId', () => {
       vendorStoreRepo as never,
       { createQueryBuilder: jest.fn() } as never,
       { count: jest.fn() } as never,
-      { find: jest.fn() } as never,
-      { find: jest.fn() } as never,
+      new ConsumerShelfService(
+        { find: jest.fn() } as never,
+        { find: jest.fn() } as never,
+        { find: jest.fn() } as never,
+      ),
     );
     return { controller, vendorStoreRepo };
   }
@@ -253,6 +327,7 @@ describe('ConsumerBranchController.getBranch storeId', () => {
  * where staff take a dish off regardless of counted stock — and the stricter one
  * wins.
  */
+
 describe('ConsumerBranchController shelf truth', () => {
   function buildController(opts: {
     products: unknown[];
@@ -279,20 +354,28 @@ describe('ConsumerBranchController shelf truth', () => {
       getCount: jest.fn().mockResolvedValue(opts.products.length),
     });
 
+    const productRepo = {
+      createQueryBuilder: jest.fn().mockReturnValue(baseQb),
+      find: jest.fn().mockResolvedValue(opts.stockManaged ?? []),
+    };
+    // The real shelf service, not a stub: banding and pricing are precisely
+    // what these cases assert, so mocking them would test nothing.
+    const shelf = new ConsumerShelfService(
+      productRepo as never,
+      { find: jest.fn().mockResolvedValue(opts.inventory ?? []) } as never,
+      { find: jest.fn().mockResolvedValue(opts.kitchen ?? []) } as never,
+    );
+
     const controller = new ConsumerBranchController(
       { findOne: jest.fn() } as never,
       { findOne: jest.fn() } as never,
-      {
-        createQueryBuilder: jest.fn().mockReturnValue(baseQb),
-        find: jest.fn().mockResolvedValue(opts.stockManaged ?? []),
-      } as never,
+      productRepo as never,
       {
         // Non-zero link count selects the branch-catalog path.
         count: jest.fn().mockResolvedValue(opts.products.length),
         find: jest.fn().mockResolvedValue(opts.links ?? []),
       } as never,
-      { find: jest.fn().mockResolvedValue(opts.inventory ?? []) } as never,
-      { find: jest.fn().mockResolvedValue(opts.kitchen ?? []) } as never,
+      shelf,
     );
     return { controller };
   }
@@ -303,9 +386,12 @@ describe('ConsumerBranchController shelf truth', () => {
   it('bands stock rather than leaking the count', async () => {
     const { controller } = buildController({
       products: [burger, fries],
+      // Rows carry their own branchId, as every real branch_inventory row does:
+      // the shelf is keyed per (branch, product) so one product can be plentiful
+      // at one shop and sold out at another.
       inventory: [
-        { productId: 10, availableToSell: 42, safetyStock: 5 },
-        { productId: 11, availableToSell: 3, safetyStock: 5 },
+        { branchId: 7, productId: 10, availableToSell: 42, safetyStock: 5 },
+        { branchId: 7, productId: 11, availableToSell: 3, safetyStock: 5 },
       ],
     });
 
@@ -320,7 +406,9 @@ describe('ConsumerBranchController shelf truth', () => {
   it('reports zero available as out of stock', async () => {
     const { controller } = buildController({
       products: [burger],
-      inventory: [{ productId: 10, availableToSell: 0, safetyStock: 5 }],
+      inventory: [
+        { branchId: 7, productId: 10, availableToSell: 0, safetyStock: 5 },
+      ],
     });
 
     const res = await controller.getBranchProducts(7);
@@ -344,7 +432,9 @@ describe('ConsumerBranchController shelf truth', () => {
     // An americano is made when ordered — the row is not a count of anything.
     const { controller } = buildController({
       products: [burger],
-      inventory: [{ productId: 10, availableToSell: 0, safetyStock: 0 }],
+      inventory: [
+        { branchId: 7, productId: 10, availableToSell: 0, safetyStock: 0 },
+      ],
       stockManaged: [{ id: 10, manageStock: false }],
     });
 
@@ -356,7 +446,9 @@ describe('ConsumerBranchController shelf truth', () => {
   it('still reports a tracked product with no stock as sold out', async () => {
     const { controller } = buildController({
       products: [burger],
-      inventory: [{ productId: 10, availableToSell: 0, safetyStock: 5 }],
+      inventory: [
+        { branchId: 7, productId: 10, availableToSell: 0, safetyStock: 5 },
+      ],
       stockManaged: [{ id: 10, manageStock: true }],
     });
 
@@ -368,9 +460,11 @@ describe('ConsumerBranchController shelf truth', () => {
   it('lets the kitchen 86-list override counted stock', async () => {
     const { controller } = buildController({
       products: [burger],
-      inventory: [{ productId: 10, availableToSell: 99, safetyStock: 5 }],
+      inventory: [
+        { branchId: 7, productId: 10, availableToSell: 99, safetyStock: 5 },
+      ],
       // productId is varchar on the 86 table.
-      kitchen: [{ productId: '10', available: false }],
+      kitchen: [{ branchId: 7, productId: '10', available: false }],
     });
 
     const res = await controller.getBranchProducts(7);

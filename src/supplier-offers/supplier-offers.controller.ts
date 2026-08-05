@@ -17,6 +17,7 @@ import { CreateSupplierOfferDto } from './dto/create-supplier-offer.dto';
 import { CreateSupplierProductDto } from './dto/create-supplier-product.dto';
 import { BulkCreateSupplierProductsDto } from './dto/bulk-create-supplier-products.dto';
 import { UpdateSupplierOfferDto } from './dto/update-supplier-offer.dto';
+import { SetOfferConsumerListingDto } from './dto/set-offer-consumer-listing.dto';
 import { extractActiveSupplierId } from '../suppliers/active-supplier.util';
 
 /**
@@ -107,6 +108,25 @@ export class SupplierOffersController {
     return this.supplierOffersService.publishForUser(
       req.user?.id,
       id,
+      extractActiveSupplierId(req),
+      req.user?.roles,
+    );
+  }
+
+  @Patch('me/:id/consumer-listing')
+  @ApiOperation({
+    summary:
+      'List/unlist an offer to shoppers on suuq-s.com at a consumer retail price',
+  })
+  setConsumerListingMine(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: SetOfferConsumerListingDto,
+    @Req() req,
+  ) {
+    return this.supplierOffersService.setConsumerListingForUser(
+      req.user?.id,
+      id,
+      dto,
       extractActiveSupplierId(req),
       req.user?.roles,
     );

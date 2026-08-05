@@ -43,6 +43,10 @@ POS-S should be built against the implemented backend contract in `retail-ops.co
 
 The POS-S → Consumer app direction (shop identity, service formats, shelf price/stock, branch
 presence, hotel rooms) is specified separately in `pos-s/docs/pos-consumer-storefront-contract.md`.
+The shelf response carries `browseCategory` — the merchant's own menu grouping from
+`product.attributes.browseCategory`, the same token the POS register's category rail reads. It is
+free merchant text, not the `Category` relation, and `null` means "render a flat list".
+
 That document also records which consumer→POS surfaces are frozen — `POST /api/consumer/v1/orders`,
 `GET /api/consumer/v1/orders/:orderId/status`, and the parked-order pair — and the known defects in
 them that are deliberately left unfixed. DTO changes on that seam land there first.
