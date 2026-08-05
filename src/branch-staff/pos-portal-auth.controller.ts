@@ -87,6 +87,19 @@ type IdentifierLikeDto = {
   resolveIdentifier?: () => string;
 };
 
+/**
+ * Rollback switch for the old "silently provision a QSR branch at sign-in"
+ * behaviour. Default OFF — the gate's signup screen replaced it. See the call
+ * site in buildPortalSession for why.
+ */
+function isSignInAutoProvisionEnabled(): boolean {
+  return ['1', 'true', 'yes', 'on'].includes(
+    String(process.env.POS_SELF_SERVE_AUTO_PROVISION_ON_SIGNIN || '')
+      .trim()
+      .toLowerCase(),
+  );
+}
+
 const PORTAL_AUTH_WRITE_THROTTLE = { default: { ttl: 60_000, limit: 10 } };
 const PORTAL_AUTH_SESSION_THROTTLE = { default: { ttl: 60_000, limit: 30 } };
 
@@ -720,7 +733,29 @@ export class PosPortalAuthController {
   ) {
     const user = await this.authService.getUsersService().findById(req.user.id);
 
-    return this.posPortalOnboardingService.createWorkspaceForUser(user, dto);
+    const created =
+      await this.posPortalOnboardingService.createWorkspaceForUser(user, dto);
+
+    // The second half of the signup funnel. Removing the sign-in auto-provision
+    // took away `pos_portal.auth.trial_workspace_provisioned`, which was the
+    // only count of new POS businesses — this replaces it, and carries the
+    // chosen format so we can see what people actually run.
+    await this.recordPortalAuthEvent({
+      action: 'pos_portal.workspace.self_serve_created',
+      event: 'pos_portal_workspace_self_serve_created',
+      level: 'log',
+      req,
+      user,
+      meta: {
+        branchId: created.workspace.branchId,
+        tenantId: created.workspace.tenantId,
+        serviceFormat: dto.serviceFormat ?? null,
+        trial: Boolean(created.trial),
+        onboardingState: created.onboardingState,
+      },
+    });
+
+    return created;
   }
 
   @Post('supplier-workspace')
@@ -916,12 +951,20 @@ export class PosPortalAuthController {
     }
 
     if (!branches.length) {
-      // A brand-new signup gets a working POS instead of a setup wall: provision
-      // a QSR branch on a free trial and open it now (the owner pays when the
-      // trial lapses). Only for a first-time signup with nothing else attached —
-      // an existing branchless account (ex-staff, equity partner, supplier-to-be)
-      // must never be handed a tenant behind its back.
-      if (isNewUser && !supplier) {
+      // Superseded by the signup screen, and off by default.
+      //
+      // This used to hand a brand-new Google signup a QSR branch on the spot.
+      // It got them into a working POS in zero screens, but roughly three in
+      // four owners do not run a QSR — so most arrived in the wrong lane and had
+      // to find the re-lane step in Seller HQ to fix it. It also only ever fired
+      // for Google (`isNewUser` is set by googleLogin alone), leaving Apple and
+      // username/password signups to the paywall.
+      //
+      // Now every branchless sign-in gets the same 403 + onboardingAccessToken,
+      // and the gate asks one question before creating anything. Kept behind a
+      // flag purely as an instant rollback if that extra screen costs more
+      // signups than the right lane is worth.
+      if (isNewUser && !supplier && isSignInAutoProvisionEnabled()) {
         let provisioned: { tenantId: number; branchId: number } | null = null;
 
         try {
@@ -1025,16 +1068,24 @@ export class PosPortalAuthController {
         });
       }
 
+      // Every branchless sign-in reaches here now that the gate asks before
+      // provisioning — this is the first half of the signup funnel, not an
+      // incident, so it logs rather than warns. Genuine access problems (outside
+      // shift hours, a deactivated branch) throw earlier and keep their levels.
+      //
+      // Pair with `pos_portal.workspace.self_serve_created`: the ratio between
+      // the two is the signup conversion rate.
       await this.recordPortalAuthEvent({
         action: 'pos_portal.auth.access_denied',
         event: 'pos_portal_auth_access_denied',
-        level: 'warn',
+        level: 'log',
         req,
         user,
         meta: {
           source,
           branchCount: 0,
           accountCreated: isNewUser,
+          funnelStage: 'AWAITING_BUSINESS_SETUP',
         },
       });
 

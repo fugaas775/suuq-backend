@@ -38,10 +38,12 @@ export class CreatePosWorkspaceDto {
   @MaxLength(255)
   businessName!: string;
 
-  @ApiProperty({ example: 'Main Branch' })
+  /** Defaults to `businessName` — most owners' first branch IS the business. */
+  @ApiPropertyOptional({ example: 'Main Branch' })
+  @IsOptional()
   @IsString()
   @MaxLength(255)
-  branchName!: string;
+  branchName?: string;
 
   @ApiPropertyOptional({
     enum: SelfServePosWorkspaceServiceFormat,
@@ -110,6 +112,25 @@ export class CreatePosWorkspaceDto {
   @IsOptional()
   @IsEnum(PosUserFitCategory)
   userFit?: PosUserFitCategory | null;
+
+  /**
+   * Equity partner who referred this owner.
+   *
+   * Attribution used to happen at payment, which was the same moment the
+   * workspace was created. Now that a first branch opens on a free trial, that
+   * moment is six months later — so the code has to be captured here or the
+   * partner loses the referral entirely.
+   */
+  @ApiPropertyOptional({ example: 'PART-XXXX', nullable: true })
+  @Transform(({ value }) =>
+    String(value ?? '')
+      .trim()
+      .toUpperCase(),
+  )
+  @IsOptional()
+  @IsString()
+  @MaxLength(32)
+  referralCode?: string | null;
 }
 
 export class PosWorkspaceSummaryDto {
@@ -128,22 +149,43 @@ export class PosWorkspaceSummaryDto {
   @ApiPropertyOptional({ nullable: true })
   branchCode!: string | null;
 
-  @ApiProperty({ example: 'PAYMENT_REQUIRED' })
+  @ApiProperty({ example: 'ACTIVE' })
   workspaceStatus!: string;
 }
 
+export class PosWorkspaceTrialDto {
+  @ApiProperty({ example: 'POS_BRANCH_TRIAL_6M' })
+  planCode!: string;
+
+  @ApiProperty({ example: 6 })
+  months!: number;
+
+  @ApiProperty({ example: '2027-02-05T09:00:00.000Z', nullable: true })
+  endsAt!: string | null;
+}
+
 export class CreatePosWorkspaceResponseDto {
-  @ApiProperty({ example: 'BRANCH_WORKSPACE_ACTIVATION_REQUIRED' })
+  @ApiProperty({ example: 'BRANCH_WORKSPACE_TRIAL_ACTIVE' })
   onboardingState!: string;
 
   @ApiProperty({
-    example:
-      'Your POS-S workspace was created. Start your 15-day free trial to open it.',
+    example: 'Your POS-S workspace is open and free for 6 months.',
   })
   message!: string;
 
   @ApiProperty({ type: PosWorkspaceSummaryDto })
   workspace!: PosWorkspaceSummaryDto;
+
+  /**
+   * Present when the workspace opened on a free trial. Null means the branch
+   * still needs billing activation before it can open.
+   */
+  @ApiPropertyOptional({ type: PosWorkspaceTrialDto, nullable: true })
+  trial?: {
+    planCode: string;
+    months: number;
+    endsAt: string | null;
+  } | null;
 
   @ApiProperty({ type: PosPortalWorkspacePricingDto })
   pricing!: PosPortalWorkspacePricingDto;

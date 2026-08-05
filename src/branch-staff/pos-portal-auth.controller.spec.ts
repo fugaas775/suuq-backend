@@ -500,49 +500,86 @@ describe('PosPortalAuthController', () => {
     });
   });
 
-  it('auto-provisions a trial QSR workspace and signs a brand-new Google account straight in', async () => {
+  it('asks a brand-new Google account what it sells instead of guessing QSR', async () => {
+    // The silent auto-provision handed everyone a QSR branch. Roughly three in
+    // four owners do not run one, so most landed in the wrong lane. Now the gate
+    // asks first, and sign-in provisions nothing.
     authServiceMock.googleLogin.mockResolvedValue({
       accessToken: 'access-token',
       refreshToken: 'refresh-token',
       user,
       isNewUser: true,
     });
-    const trialBranch = {
-      branchId: 900,
-      branchName: "POS Manager's Kitchen",
-      serviceFormat: 'QSR',
-      role: 'MANAGER',
-      isOwner: true,
-      workspaceStatus: 'ACTIVE',
-      subscriptionStatus: 'TRIAL',
-      canOpenNow: true,
-    };
-    branchStaffServiceMock.getPosBranchSummariesForUser
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([trialBranch]);
+    branchStaffServiceMock.getPosBranchSummariesForUser.mockResolvedValue([]);
     branchStaffServiceMock.getPosWorkspaceActivationCandidatesForUser.mockResolvedValue(
       [],
     );
-    posPortalOnboardingServiceMock.createTrialWorkspaceForNewUser.mockResolvedValue(
-      { tenantId: 300, branchId: 900 },
-    );
 
-    const response = await controller.google({ idToken: 'google-id-token' }, {
-      headers: { 'user-agent': 'jest' },
-      method: 'POST',
-      route: { path: '/pos-portal/auth/google' },
-    } as any);
+    await expect(
+      controller.google({ idToken: 'google-id-token' }, {
+        headers: { 'user-agent': 'jest' },
+        method: 'POST',
+        route: { path: '/pos-portal/auth/google' },
+      } as any),
+    ).rejects.toMatchObject({
+      response: expect.objectContaining({ code: 'POS_PORTAL_ACCESS_DENIED' }),
+    });
 
     expect(
       posPortalOnboardingServiceMock.createTrialWorkspaceForNewUser,
-    ).toHaveBeenCalledWith(user);
-    expect(response).toMatchObject({
-      accessToken: 'access-token',
-      branches: [trialBranch],
-      defaultBranchId: 900,
-      requiresBranchSelection: false,
-    });
+    ).not.toHaveBeenCalled();
   });
+
+  it.each([
+    [
+      'apple',
+      () => authServiceMock.appleLogin,
+      (c: any) =>
+        c.apple(
+          { identityToken: 'apple-token' } as any,
+          {
+            headers: { 'user-agent': 'jest' },
+            method: 'POST',
+            route: { path: '/pos-portal/auth/apple' },
+          } as any,
+        ),
+    ],
+    [
+      'username/password',
+      () => authServiceMock.loginWithIdentifier,
+      (c: any) =>
+        c.login(
+          { identifier: 'pos@suuq.test', password: 'pw' } as any,
+          {
+            headers: { 'user-agent': 'jest' },
+            method: 'POST',
+            route: { path: '/pos-portal/auth/login' },
+          } as any,
+        ),
+    ],
+  ])(
+    'gives a branchless %s sign-in the same self-serve route as Google',
+    async (_label, getAuthMock, callController) => {
+      // Parity is the point: isNewUser was only ever set by googleLogin, so
+      // Apple and password signups could never reach the trial at all.
+      const authMock = getAuthMock();
+      if (!authMock) return;
+      authMock.mockResolvedValue({
+        accessToken: 'access-token',
+        refreshToken: 'refresh-token',
+        user,
+        isNewUser: false,
+      });
+      branchStaffServiceMock.getPosBranchSummariesForUser.mockResolvedValue([]);
+      branchStaffServiceMock.getPosWorkspaceActivationCandidatesForUser.mockResolvedValue(
+        [],
+      );
+
+      await expect(callController(controller)).rejects.toMatchObject({
+        response: expect.objectContaining({ code: 'POS_PORTAL_ACCESS_DENIED' }),
+      });
+    },
+  );
 
   it('does not auto-provision a workspace for an existing branchless account', async () => {
     authServiceMock.loginWithIdentifier.mockResolvedValue({

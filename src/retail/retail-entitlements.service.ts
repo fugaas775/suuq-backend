@@ -5,7 +5,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { IsNull, Repository } from 'typeorm';
+import { randomUUID } from 'crypto';
+import { DeepPartial, IsNull, Repository } from 'typeorm';
 import { Branch } from '../branches/entities/branch.entity';
 import { BranchStaffAssignment } from '../branch-staff/entities/branch-staff-assignment.entity';
 import {
@@ -63,6 +64,36 @@ type PosWorkspaceStatus =
   | 'CANCELLED';
 
 const MILLISECONDS_PER_DAY = 86_400_000;
+
+/** How many numbered variants of a taken tenant name to try before giving up. */
+const MAX_TENANT_NAME_ATTEMPTS = 20;
+
+/** The unique index behind `retail_tenants.name` (@Index(['name'], {unique:true})). */
+const TENANT_NAME_UNIQUE_INDEX = 'IDX_a554b4063de337d98a28c992e0';
+
+/**
+ * A Postgres unique violation on the tenant NAME specifically.
+ *
+ * `retail_tenants` also has UQ_retail_tenants_code, and a caller passing a
+ * duplicate code has a real error to hear about — retrying under a different
+ * name would silently paper over it. So match the constraint, not just 23505.
+ */
+function isTenantNameConflict(error: unknown): boolean {
+  const driverError = (error as { driverError?: Record<string, unknown> })
+    ?.driverError;
+  const detail = (driverError ?? error) as Record<string, unknown> | undefined;
+
+  if (String(detail?.code || '') !== '23505') {
+    return false;
+  }
+
+  const constraint = String(detail?.constraint || '');
+  return (
+    constraint === TENANT_NAME_UNIQUE_INDEX ||
+    // Defensive: a renamed index still reports the column in its detail text.
+    /\bname\b/i.test(String(detail?.detail || ''))
+  );
+}
 
 type RetailTenantWithPosWorkspaceAudit = RetailTenant & {
   posWorkspaceAudit: {
@@ -166,7 +197,7 @@ export class RetailEntitlementsService {
       }
     }
 
-    const tenant = this.retailTenantsRepository.create({
+    const tenant = await this.saveTenantWithUniqueName({
       name: dto.name,
       code: dto.code?.trim() || null,
       billingEmail: dto.billingEmail?.trim() || null,
@@ -175,8 +206,54 @@ export class RetailEntitlementsService {
       status: RetailTenantStatus.ACTIVE,
     });
 
-    await this.retailTenantsRepository.save(tenant);
     return this.findTenantOrThrow(tenant.id);
+  }
+
+  /**
+   * Insert the tenant, disambiguating its name if that name is taken.
+   *
+   * `retail_tenants.name` is UNIQUE, and self-serve signup derives the name from
+   * the owner's account (display name → email local-part → 'My Business'). Two
+   * owners called Ahmed, or two who fall through to the generic default,
+   * therefore collide — and the sign-in path swallows the throw, so the second
+   * one is dropped at the onboarding gate with nothing but a log line to explain
+   * it. As signups grow, so does the chance of hitting it.
+   *
+   * Insert-and-retry rather than "does this name exist?" first: a pre-flight
+   * SELECT races two simultaneous signups, which is the exact case that fails.
+   *
+   * Only the TENANT name is suffixed. The tenant is an internal billing
+   * container; the branch name is what the owner sees on receipts, and callers
+   * name the branch separately.
+   */
+  private async saveTenantWithUniqueName(
+    attributes: DeepPartial<RetailTenant>,
+  ): Promise<RetailTenant> {
+    // Leave room for the suffix inside the column's 255 chars.
+    const base = String(attributes.name || '').slice(0, 240);
+
+    for (let attempt = 1; attempt <= MAX_TENANT_NAME_ATTEMPTS; attempt += 1) {
+      const name = attempt === 1 ? base : `${base} (${attempt})`;
+
+      try {
+        return await this.retailTenantsRepository.save(
+          this.retailTenantsRepository.create({ ...attributes, name }),
+        );
+      } catch (error) {
+        if (!isTenantNameConflict(error)) {
+          throw error;
+        }
+      }
+    }
+
+    // Every numbered name was taken too. Fall back to something that cannot
+    // collide rather than failing a signup outright.
+    return this.retailTenantsRepository.save(
+      this.retailTenantsRepository.create({
+        ...attributes,
+        name: `${base} (${randomUUID().slice(0, 8)})`,
+      }),
+    );
   }
 
   async listTenants(

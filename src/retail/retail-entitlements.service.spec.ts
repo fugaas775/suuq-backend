@@ -132,6 +132,83 @@ describe('RetailEntitlementsService', () => {
     expect(result.id).toBe(41);
   });
 
+  describe('when the tenant name is already taken', () => {
+    // Self-serve signup derives the tenant name from the owner's account, so
+    // two owners called Ahmed — or two who fall through to 'My Business' —
+    // collide on the UNIQUE index. Sign-in swallowed the throw, so the second
+    // one was silently dropped at the onboarding gate.
+    function uniqueViolation(constraint: string) {
+      return Object.assign(new Error('duplicate key value'), {
+        code: '23505',
+        constraint,
+      });
+    }
+
+    const NAME_INDEX = 'IDX_a554b4063de337d98a28c992e0';
+
+    beforeEach(() => {
+      retailTenantsRepository.findOne.mockResolvedValue({
+        id: 41,
+        status: RetailTenantStatus.ACTIVE,
+        branches: [],
+        subscriptions: [],
+        entitlements: [],
+      });
+    });
+
+    it('numbers the name instead of failing the signup', async () => {
+      retailTenantsRepository.save
+        .mockRejectedValueOnce(uniqueViolation(NAME_INDEX))
+        .mockRejectedValueOnce(uniqueViolation(NAME_INDEX))
+        .mockImplementation(async (value: any) => value);
+
+      await service.createTenant({ name: 'Ahmed' });
+
+      expect(retailTenantsRepository.save).toHaveBeenNthCalledWith(
+        3,
+        expect.objectContaining({ name: 'Ahmed (3)' }),
+      );
+    });
+
+    it('gives up on a name it can never win and uses a unique one', async () => {
+      retailTenantsRepository.save.mockImplementation(async (value: any) => {
+        if (/^Ahmed( \(\d+\))?$/.test(value.name)) {
+          throw uniqueViolation(NAME_INDEX);
+        }
+        return value;
+      });
+
+      await service.createTenant({ name: 'Ahmed' });
+
+      const saved = retailTenantsRepository.save.mock.calls.at(-1)[0];
+      expect(saved.name).toMatch(/^Ahmed \([0-9a-f]{8}\)$/);
+    });
+
+    it('rethrows a duplicate CODE — that is a real error, not a name clash', async () => {
+      retailTenantsRepository.save.mockRejectedValue(
+        uniqueViolation('UQ_retail_tenants_code'),
+      );
+
+      await expect(
+        service.createTenant({ name: 'Ahmed', code: 'TAKEN' }),
+      ).rejects.toThrow('duplicate key value');
+      expect(retailTenantsRepository.save).toHaveBeenCalledTimes(1);
+    });
+
+    it('reads the violation through TypeORM driverError too', async () => {
+      retailTenantsRepository.save
+        .mockRejectedValueOnce({ driverError: uniqueViolation(NAME_INDEX) })
+        .mockImplementation(async (value: any) => value);
+
+      await service.createTenant({ name: 'Ahmed' });
+
+      expect(retailTenantsRepository.save).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({ name: 'Ahmed (2)' }),
+      );
+    });
+  });
+
   it('assigns a branch to a retail tenant', async () => {
     branchesRepository.findOne
       .mockResolvedValueOnce({ id: 8, name: 'Branch 8' })

@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { Branch } from '../branches/entities/branch.entity';
 import { RetailEntitlementsService } from '../retail/retail-entitlements.service';
+import { EquityPartnerService } from '../retail/equity-partner.service';
 import { RetailModule } from '../retail/entities/tenant-module-entitlement.entity';
 import { User } from '../users/entities/user.entity';
 import { SellerWorkspace } from '../seller-workspace/entities/seller-workspace.entity';
@@ -43,6 +44,11 @@ describe('PosPortalOnboardingService', () => {
     startPosSelfServeTrial: jest.fn(async () => ({ id: 71 })),
   };
 
+  const equityPartnerService = {
+    findActivePartnerByReferralCode: jest.fn(async () => null),
+    recordReferralFromActivation: jest.fn(async () => null),
+  };
+
   const branchStaffService = {
     getPosBranchSummariesForUser: jest.fn(),
     getPosWorkspaceActivationCandidatesForUser: jest.fn(),
@@ -74,7 +80,12 @@ describe('PosPortalOnboardingService', () => {
 
   beforeEach(async () => {
     delete process.env.POS_HOSPITALITY_SERVICE_FORMATS_ENABLED;
+    delete process.env.POS_FIRST_BRANCH_TRIAL_ENABLED;
     jest.resetAllMocks();
+    equityPartnerService.findActivePartnerByReferralCode.mockResolvedValue(
+      null,
+    );
+    equityPartnerService.recordReferralFromActivation.mockResolvedValue(null);
     branchesRepository.create.mockImplementation((value) => value);
     branchesRepository.save.mockImplementation(async (value) => ({
       id: 21,
@@ -119,6 +130,7 @@ describe('PosPortalOnboardingService', () => {
           useValue: retailEntitlementsService,
         },
         { provide: BranchStaffService, useValue: branchStaffService },
+        { provide: EquityPartnerService, useValue: equityPartnerService },
         { provide: getRepositoryToken(User), useValue: { update: jest.fn() } },
         {
           provide: getRepositoryToken(SellerWorkspace),
@@ -296,6 +308,162 @@ describe('PosPortalOnboardingService', () => {
       branchName: 'Main Branch',
     });
   });
+
+  describe('the free trial on a first branch', () => {
+    const OWNER = {
+      id: 9,
+      email: 'seller@suuq.test',
+      roles: ['VENDOR'],
+    } as unknown as User;
+
+    function expectFirstBranch() {
+      // The guard reads both lists; only the second call sees the new branch.
+      branchStaffService.getPosBranchSummariesForUser
+        .mockResolvedValueOnce([])
+        .mockResolvedValue([
+          {
+            branchId: 21,
+            branchName: 'Bole Bites',
+            branchCode: 'BL-21',
+            workspaceStatus: 'ACTIVE',
+          },
+        ]);
+      branchStaffService.getPosWorkspaceActivationCandidatesForUser.mockResolvedValue(
+        [],
+      );
+    }
+
+    it('opens the workspace free for six months instead of demanding payment', async () => {
+      process.env.POS_FIRST_BRANCH_TRIAL_ENABLED = '1';
+      expectFirstBranch();
+      retailEntitlementsService.startPosSelfServeTrial.mockResolvedValue({
+        id: 71,
+        planCode: 'POS_BRANCH_TRIAL_6M',
+        endsAt: new Date('2027-02-05T09:00:00.000Z'),
+      });
+
+      const result = await service.createWorkspaceForUser(OWNER, {
+        businessName: 'Bole Bites',
+      });
+
+      expect(
+        retailEntitlementsService.startPosSelfServeTrial,
+      ).toHaveBeenCalledWith(31, 21);
+      expect(result.onboardingState).toBe('BRANCH_WORKSPACE_TRIAL_ACTIVE');
+      expect(result.trial).toMatchObject({
+        planCode: 'POS_BRANCH_TRIAL_6M',
+        months: 6,
+        endsAt: '2027-02-05T09:00:00.000Z',
+      });
+    });
+
+    it('reports the workspace ACTIVE, not PAYMENT_REQUIRED', async () => {
+      // The trap: a branch on a live trial is not an "activation candidate"
+      // (that query only returns branches that still owe money), so reading the
+      // status from that list reports PAYMENT_REQUIRED for a workspace that is
+      // already open — and the client would send the owner off to pay.
+      process.env.POS_FIRST_BRANCH_TRIAL_ENABLED = '1';
+      expectFirstBranch();
+
+      const result = await service.createWorkspaceForUser(OWNER, {
+        businessName: 'Bole Bites',
+      });
+
+      expect(result.activationCandidates).toEqual([]);
+      expect(result.workspace.workspaceStatus).toBe('ACTIVE');
+    });
+
+    it('still asks for payment while the flag is off', async () => {
+      branchStaffService.getPosBranchSummariesForUser.mockResolvedValue([]);
+      branchStaffService.getPosWorkspaceActivationCandidatesForUser
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([
+          { branchId: 21, workspaceStatus: 'PAYMENT_REQUIRED' },
+        ]);
+
+      const result = await service.createWorkspaceForUser(OWNER, {
+        businessName: 'Bole Bites',
+      });
+
+      expect(
+        retailEntitlementsService.startPosSelfServeTrial,
+      ).not.toHaveBeenCalled();
+      expect(result.onboardingState).toBe(
+        'BRANCH_WORKSPACE_ACTIVATION_REQUIRED',
+      );
+      expect(result.trial).toBeNull();
+      expect(result.workspace.workspaceStatus).toBe('PAYMENT_REQUIRED');
+    });
+
+    it('names the branch after the business when only one name is given', async () => {
+      process.env.POS_FIRST_BRANCH_TRIAL_ENABLED = '1';
+      expectFirstBranch();
+
+      await service.createWorkspaceForUser(OWNER, {
+        businessName: 'Bole Bites',
+      });
+
+      expect(branchesRepository.create).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'Bole Bites' }),
+      );
+    });
+
+    it('records the format choice as the business-type confirmation', async () => {
+      // The owner was asked on the way in and answered — Seller HQ must not
+      // open by asking the same question again.
+      process.env.POS_FIRST_BRANCH_TRIAL_ENABLED = '1';
+      expectFirstBranch();
+
+      await service.createWorkspaceForUser(OWNER, {
+        businessName: 'Bole Bites',
+        serviceFormat: SelfServePosWorkspaceServiceFormat.RETAIL,
+      });
+
+      const created = branchesRepository.create.mock.calls[0][0];
+      expect(created.serviceFormat).toBe('RETAIL');
+      expect(created.homeConfig.firstRun.businessTypeConfirmedAt).toBeTruthy();
+      // No widgets key — this branch has never chosen a Home layout.
+      expect(created.homeConfig.widgets).toBeUndefined();
+    });
+
+    it('keeps the referring partner on record for the conversion six months out', async () => {
+      process.env.POS_FIRST_BRANCH_TRIAL_ENABLED = '1';
+      expectFirstBranch();
+      equityPartnerService.findActivePartnerByReferralCode.mockResolvedValue({
+        id: 4,
+      });
+
+      await service.createWorkspaceForUser(OWNER, {
+        businessName: 'Bole Bites',
+        referralCode: 'PART-9X2A',
+      });
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(
+        equityPartnerService.findActivePartnerByReferralCode,
+      ).toHaveBeenCalledWith('PART-9X2A');
+      expect(
+        equityPartnerService.recordReferralFromActivation,
+      ).toHaveBeenCalledWith(4, 21, 31);
+    });
+
+    it('does not lose the workspace over a bad referral code', async () => {
+      process.env.POS_FIRST_BRANCH_TRIAL_ENABLED = '1';
+      expectFirstBranch();
+      equityPartnerService.findActivePartnerByReferralCode.mockRejectedValue(
+        new Error('partner lookup down'),
+      );
+
+      const result = await service.createWorkspaceForUser(OWNER, {
+        businessName: 'Bole Bites',
+        referralCode: 'PART-DEAD',
+      });
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(result.workspace.branchId).toBe(21);
+    });
+  });
+
   describe('createTrialWorkspaceForNewUser', () => {
     it('provisions a QSR branch on a free trial so a new signup can open POS immediately', async () => {
       branchStaffService.getPosBranchSummariesForUser.mockResolvedValue([]);
