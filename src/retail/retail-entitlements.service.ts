@@ -48,7 +48,7 @@ import {
   isLivePosSelfServeTrial,
   isPosSelfServeTrialPlan,
   isPosSelfServeTrialSubscription,
-  POS_SELF_SERVE_TRIAL_DAYS,
+  POS_SELF_SERVE_TRIAL_MONTHS,
   POS_SELF_SERVE_TRIAL_PLAN_CODE,
 } from './pos-self-serve-trial.policy';
 
@@ -360,7 +360,7 @@ export class RetailEntitlementsService {
         autoRenew: false,
         metadata: {
           source: 'POS_SELF_SERVE_AUTO_TRIAL',
-          trialDays: POS_SELF_SERVE_TRIAL_DAYS,
+          trialMonths: POS_SELF_SERVE_TRIAL_MONTHS,
           branchId,
         },
       }),

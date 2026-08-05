@@ -8,7 +8,7 @@ import {
   isLivePosSelfServeTrial,
   isPosSelfServeTrialPlan,
   isPosSelfServeTrialSubscription,
-  POS_SELF_SERVE_TRIAL_DAYS,
+  POS_SELF_SERVE_TRIAL_MONTHS,
   POS_SELF_SERVE_TRIAL_PLAN_CODE,
 } from './pos-self-serve-trial.policy';
 
@@ -24,14 +24,43 @@ function buildSubscription(
 }
 
 describe('pos self-serve trial policy', () => {
-  it('ends the trial the configured number of days after it starts', () => {
-    const startsAt = new Date('2026-07-01T09:00:00.000Z');
-
-    expect(getPosSelfServeTrialEndsAt(startsAt).toISOString()).toBe(
-      new Date(
-        startsAt.getTime() + POS_SELF_SERVE_TRIAL_DAYS * 86_400_000,
-      ).toISOString(),
+  it('ends the trial the configured number of calendar months later', () => {
+    // 1 Jul 2026 + 6 months = 1 Jan 2027.
+    const startsAt = new Date(2026, 6, 1, 9, 0, 0);
+    const expected = new Date(
+      2026,
+      6 + POS_SELF_SERVE_TRIAL_MONTHS,
+      1,
+      9,
+      0,
+      0,
     );
+    const endsAt = getPosSelfServeTrialEndsAt(startsAt);
+
+    // Same day-of-month and clock time, six months on.
+    expect(endsAt.toISOString()).toBe(expected.toISOString());
+    expect(endsAt.getFullYear()).toBe(2027);
+    expect(endsAt.getMonth()).toBe(0);
+    expect(endsAt.getDate()).toBe(1);
+  });
+
+  it('clamps a start day the end month does not have', () => {
+    // 31 Aug + 6 months has no 31 Feb — the trial ends on the last of February
+    // rather than spilling into March.
+    const endsAt = getPosSelfServeTrialEndsAt(new Date(2026, 7, 31, 9, 0, 0));
+
+    expect(endsAt.getFullYear()).toBe(2027);
+    expect(endsAt.getMonth()).toBe(1);
+    expect(endsAt.getDate()).toBe(28);
+  });
+
+  it('still recognises a trial row stamped with a superseded plan code', () => {
+    // Rows created before the trial was lengthened must keep opening their
+    // branch until their own endsAt, not lock out mid-trial.
+    const legacy = buildSubscription({ planCode: 'POS_BRANCH_TRIAL_14D' });
+
+    expect(isPosSelfServeTrialPlan(legacy)).toBe(true);
+    expect(isLivePosSelfServeTrial(legacy)).toBe(true);
   });
 
   it('treats an unexpired auto-trial as live', () => {

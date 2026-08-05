@@ -15,20 +15,45 @@ import {
  *
  * The plan code is the marker. Legacy TRIAL subscriptions (created before this
  * existed, and any TRIAL row an admin sets by hand) keep their old
- * PAYMENT_REQUIRED meaning — only rows stamped with this plan code can open a
- * branch without payment, and only until `endsAt`.
+ * PAYMENT_REQUIRED meaning — only rows stamped with one of the auto-trial plan
+ * codes can open a branch without payment, and only until `endsAt`.
  */
-export const POS_SELF_SERVE_TRIAL_PLAN_CODE = 'POS_BRANCH_TRIAL_14D';
+export const POS_SELF_SERVE_TRIAL_PLAN_CODE = 'POS_BRANCH_TRIAL_6M';
 
-export const POS_SELF_SERVE_TRIAL_DAYS = 14;
+export const POS_SELF_SERVE_TRIAL_MONTHS = 6;
+
+/**
+ * Plan codes that mark an auto-trial row — current first, then superseded ones.
+ *
+ * The code is baked into every row already in the database, so shortening the
+ * list would strand live trials: a branch whose row still says the old code
+ * would stop matching, drop to PAYMENT_REQUIRED and lock its owner out
+ * mid-trial. Old codes stay recognised for as long as their rows can exist.
+ */
+export const POS_SELF_SERVE_TRIAL_PLAN_CODES = [
+  POS_SELF_SERVE_TRIAL_PLAN_CODE,
+  'POS_BRANCH_TRIAL_14D',
+] as const;
 
 /** The service format a brand-new signup is auto-provisioned with. */
 export const POS_SELF_SERVE_TRIAL_SERVICE_FORMAT = 'QSR';
 
+/**
+ * Calendar months, not 30-day blocks: a trial started on the 3rd ends on the
+ * 3rd, which is what "six months free" means to the owner reading the date.
+ * A start day with no counterpart in the end month (31 Aug + 6) clamps back to
+ * that month's last day rather than spilling into the next one.
+ */
 export function getPosSelfServeTrialEndsAt(startsAt: Date): Date {
-  return new Date(
-    startsAt.getTime() + POS_SELF_SERVE_TRIAL_DAYS * 24 * 60 * 60 * 1000,
-  );
+  const endsAt = new Date(startsAt.getTime());
+  const startDayOfMonth = endsAt.getDate();
+
+  endsAt.setMonth(endsAt.getMonth() + POS_SELF_SERVE_TRIAL_MONTHS);
+  if (endsAt.getDate() !== startDayOfMonth) {
+    endsAt.setDate(0);
+  }
+
+  return endsAt;
 }
 
 /**
@@ -42,7 +67,9 @@ export function getPosSelfServeTrialEndsAt(startsAt: Date): Date {
 export function isPosSelfServeTrialPlan(
   subscription: TenantSubscription | null | undefined,
 ): boolean {
-  return subscription?.planCode === POS_SELF_SERVE_TRIAL_PLAN_CODE;
+  return (POS_SELF_SERVE_TRIAL_PLAN_CODES as readonly string[]).includes(
+    subscription?.planCode ?? '',
+  );
 }
 
 /** Still on the unpaid trial — not yet converted, not yet expired. */

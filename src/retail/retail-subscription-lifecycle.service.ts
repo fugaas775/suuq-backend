@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Between, LessThan, Repository } from 'typeorm';
+import { Between, In, LessThan, Repository } from 'typeorm';
 import {
   TenantSubscription,
   TenantSubscriptionStatus,
@@ -9,7 +9,7 @@ import {
 import { RetailTenant } from './entities/retail-tenant.entity';
 import {
   isPosSelfServeTrialPlan,
-  POS_SELF_SERVE_TRIAL_PLAN_CODE,
+  POS_SELF_SERVE_TRIAL_PLAN_CODES,
 } from './pos-self-serve-trial.policy';
 import { NotificationsService } from '../notifications/notifications.service';
 import { NotificationType } from '../notifications/entities/notification.entity';
@@ -20,12 +20,13 @@ import { POS_BRANCH_SUBSCRIPTION_MONTHLY_EQUIVALENT } from '../branch-staff/pos-
 /**
  * How many days before a term ends we warn the owner.
  *
- * A paid month gets one nudge; a 14-day free trial gets three, because the
- * whole term is shorter than two paid reminder windows and losing the workspace
- * is a bigger surprise than a renewal that lapses.
+ * A paid month gets one nudge; the free trial gets four, spread wider. Losing
+ * the workspace is a bigger surprise than a renewal that lapses, and after six
+ * months of free use the end date is long out of mind — the first nudge has to
+ * land far enough out to be a plan rather than a scramble.
  */
 const PAID_REMINDER_DAYS = [3];
-const TRIAL_REMINDER_DAYS = [7, 3, 1];
+const TRIAL_REMINDER_DAYS = [30, 7, 3, 1];
 const MAX_REMINDER_DAYS = Math.max(
   ...PAID_REMINDER_DAYS,
   ...TRIAL_REMINDER_DAYS,
@@ -93,7 +94,7 @@ export class RetailSubscriptionLifecycleService {
         },
         {
           status: TenantSubscriptionStatus.TRIAL,
-          planCode: POS_SELF_SERVE_TRIAL_PLAN_CODE,
+          planCode: In([...POS_SELF_SERVE_TRIAL_PLAN_CODES]),
           endsAt: LessThan(now),
         },
       ],
@@ -172,7 +173,7 @@ export class RetailSubscriptionLifecycleService {
         },
         {
           status: TenantSubscriptionStatus.TRIAL,
-          planCode: POS_SELF_SERVE_TRIAL_PLAN_CODE,
+          planCode: In([...POS_SELF_SERVE_TRIAL_PLAN_CODES]),
           endsAt: Between(now, windowEnd),
         },
       ],
@@ -264,9 +265,14 @@ export class RetailSubscriptionLifecycleService {
   }
 
   /**
-   * The tightest unsent milestone this row has already reached — e.g. 4 days
-   * left with [7, 3, 1] configured fires the 7-day nudge, 2 days left fires the
-   * 3-day one. Returns null when nothing is due.
+   * The tightest milestone this row has already reached — e.g. 4 days left with
+   * [30, 7, 3, 1] configured fires the 7-day nudge, 2 days left fires the 3-day
+   * one. Returns null when that milestone has already been sent.
+   *
+   * Only the tightest one is ever a candidate. A wider milestone the row sailed
+   * past (a trial first seen with 7 days left never had a 30-day moment) is
+   * spent, not pending — treating it as pending would fire a second "30 days
+   * left" nudge the day after the 7-day one.
    */
   private resolveDueMilestone(
     msLeft: number,
@@ -274,11 +280,15 @@ export class RetailSubscriptionLifecycleService {
     alreadySent: number[],
   ): number | null {
     const daysLeft = Math.max(0, Math.ceil(msLeft / DAY_MS));
-    const due = milestones
-      .filter((day) => day >= daysLeft && !alreadySent.includes(day))
-      .sort((left, right) => left - right);
+    const reached = milestones
+      .filter((day) => day >= daysLeft)
+      .sort((left, right) => left - right)[0];
 
-    return due[0] ?? null;
+    if (reached == null || alreadySent.includes(reached)) {
+      return null;
+    }
+
+    return reached;
   }
 
   private async resolveOwnerUserId(tenantId: number): Promise<number | null> {

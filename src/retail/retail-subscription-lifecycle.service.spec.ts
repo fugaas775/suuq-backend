@@ -1,5 +1,6 @@
 import { RetailSubscriptionLifecycleService } from './retail-subscription-lifecycle.service';
 import { TenantSubscriptionStatus } from './entities/tenant-subscription.entity';
+import { POS_SELF_SERVE_TRIAL_PLAN_CODE } from './pos-self-serve-trial.policy';
 
 function createService() {
   const subscriptionsRepo = {
@@ -122,12 +123,15 @@ describe('RetailSubscriptionLifecycleService', () => {
       expect(count).toBe(1);
       expect(sub.status).toBe(TenantSubscriptionStatus.EXPIRED);
       // The query must ask for trial rows by PLAN CODE, never by status alone —
-      // a hand-set TRIAL row on another plan keeps its open-ended meaning.
-      expect(subscriptionsRepo.find).toHaveBeenCalledWith({
-        where: expect.arrayContaining([
-          expect.objectContaining({ planCode: TRIAL_PLAN }),
-        ]),
-      });
+      // a hand-set TRIAL row on another plan keeps its open-ended meaning. The
+      // superseded code is in the list too, so trials opened before the term was
+      // lengthened still expire on their own date.
+      const trialWhere = subscriptionsRepo.find.mock.calls[0][0].where.find(
+        (clause: any) => clause.planCode,
+      );
+      expect(trialWhere.planCode._value).toEqual(
+        expect.arrayContaining([POS_SELF_SERVE_TRIAL_PLAN_CODE, TRIAL_PLAN]),
+      );
     });
 
     it('tells the owner once when their trial has ended', async () => {
@@ -226,6 +230,76 @@ describe('RetailSubscriptionLifecycleService', () => {
         7, 3, 1,
       ]);
       expect((await runOn('2026-06-15T00:00:00.000Z')).sent).toBe(0);
+    });
+
+    it('opens the long trial with a 30-day nudge, then holds until 7', async () => {
+      // Six free months is long enough that the end date is out of mind, so the
+      // first warning lands a month ahead rather than a week.
+      const sub = {
+        id: 6,
+        tenantId: 34,
+        branchId: 21,
+        planCode: POS_SELF_SERVE_TRIAL_PLAN_CODE,
+        status: TenantSubscriptionStatus.TRIAL,
+        endsAt: new Date('2026-12-02T00:00:00.000Z'),
+        metadata: null as Record<string, any> | null,
+      };
+
+      async function runOn(day: string) {
+        const {
+          service,
+          subscriptionsRepo,
+          tenantsRepo,
+          notificationsService,
+        } = createService();
+        subscriptionsRepo.find.mockResolvedValueOnce([sub]);
+        tenantsRepo.findOne.mockResolvedValue({ id: 34, ownerUserId: 900 });
+        const sent = await service.sendUpcomingRenewalReminders(new Date(day));
+        return { sent, notificationsService };
+      }
+
+      const day30 = await runOn('2026-11-02T00:00:00.000Z');
+      expect(day30.sent).toBe(1);
+      expect(day30.notificationsService.createAndDispatch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            kind: 'POS_TRIAL_ENDING',
+            daysLeft: 30,
+          }),
+        }),
+      );
+
+      // Every day in between stays quiet — 30 is spent, 7 is not yet reached.
+      expect((await runOn('2026-11-10T00:00:00.000Z')).sent).toBe(0);
+      expect((await runOn('2026-11-20T00:00:00.000Z')).sent).toBe(0);
+
+      expect((await runOn('2026-11-25T00:00:00.000Z')).sent).toBe(1);
+      expect(sub.metadata?.lifecycleRemindersSent?.milestones).toEqual([30, 7]);
+    });
+
+    it('does not re-nudge a trial first seen inside the 30-day window', async () => {
+      // A trial the sweep only meets at 7 days left never had a 30-day moment;
+      // that milestone is spent, not pending.
+      const sub = {
+        id: 7,
+        tenantId: 34,
+        branchId: 21,
+        planCode: POS_SELF_SERVE_TRIAL_PLAN_CODE,
+        status: TenantSubscriptionStatus.TRIAL,
+        endsAt: new Date('2026-06-16T00:00:00.000Z'),
+        metadata: null as Record<string, any> | null,
+      };
+
+      async function runOn(day: string) {
+        const { service, subscriptionsRepo, tenantsRepo } = createService();
+        subscriptionsRepo.find.mockResolvedValueOnce([sub]);
+        tenantsRepo.findOne.mockResolvedValue({ id: 34, ownerUserId: 900 });
+        return service.sendUpcomingRenewalReminders(new Date(day));
+      }
+
+      expect(await runOn('2026-06-09T00:00:00.000Z')).toBe(1); // 7 days left
+      expect(await runOn('2026-06-10T00:00:00.000Z')).toBe(0);
+      expect(sub.metadata?.lifecycleRemindersSent?.milestones).toEqual([7]);
     });
 
     it('keeps a paid subscription on its single 3-day reminder', async () => {
