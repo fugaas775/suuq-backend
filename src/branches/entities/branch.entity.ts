@@ -104,6 +104,42 @@ export class Branch {
   logoUrl?: string | null;
 
   /**
+   * Whether this branch charges tax (VAT) on sales. Off by default so every
+   * existing branch keeps trading exactly as before until its owner opts in
+   * from Seller HQ. All service formats honour it.
+   */
+  @Column({ type: 'boolean', default: false })
+  taxEnabled!: boolean;
+
+  /**
+   * Tax (VAT) rate as a FRACTION — 0.1500 is 15%. The fraction is the single
+   * unit used end to end: DB, wire (`items[].taxRate`), and the POS session.
+   * Percent exists only inside the Seller HQ input. Defaults to the Ethiopian
+   * 15% so enabling the toggle is a one-click action; ignored while
+   * {@link taxEnabled} is false.
+   *
+   * Tax is EXCLUSIVE (added on top): grandTotal = netSubtotal + tax.
+   *
+   * The transformer is required — pg returns `numeric` as a string, and a
+   * string would multiply fine but break every other numeric operation.
+   */
+  @Column('decimal', {
+    precision: 5,
+    scale: 4,
+    default: 0.15,
+    transformer: {
+      to: (value: number | null | undefined) => value,
+      from: (value: string | number | null | undefined) =>
+        value == null
+          ? 0
+          : typeof value === 'string'
+            ? parseFloat(value)
+            : value,
+    },
+  })
+  taxRate!: number;
+
+  /**
    * Per-branch layout for the branch-customizable Home page (POS `/home`) — which
    * widgets show and in what order, custom quick-links, a welcome note and
    * branding. Null = never customized; the client renders a per-format default.

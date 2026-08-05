@@ -74,6 +74,8 @@ export interface PosBranchSummary {
   defaultCategoryId: number | null;
   checkoutPolicyTime: string | null;
   logoUrl: string | null;
+  taxEnabled: boolean;
+  taxRate: number;
   homeConfig: BranchHomeConfig | null;
   posExperienceProfileCode: string | null;
 }
@@ -92,6 +94,8 @@ export interface PosWorkspaceActivationCandidate {
   defaultCategoryId: number | null;
   checkoutPolicyTime: string | null;
   logoUrl: string | null;
+  taxEnabled: boolean;
+  taxRate: number;
   homeConfig: BranchHomeConfig | null;
   role: BranchStaffRole;
   permissions: string[];
@@ -659,6 +663,8 @@ export class BranchStaffService {
           defaultCategoryId: summary.defaultCategoryId ?? null,
           checkoutPolicyTime: summary.checkoutPolicyTime ?? null,
           logoUrl: summary.logoUrl ?? null,
+          taxEnabled: Boolean(summary.taxEnabled),
+          taxRate: Number(summary.taxRate ?? 0.15),
           homeConfig: summary.homeConfig ?? null,
           role: summary.role,
           isOwner: summary.isOwner,
@@ -1061,6 +1067,8 @@ export class BranchStaffService {
         defaultCategoryId: branch.defaultCategoryId ?? null,
         checkoutPolicyTime: branch.checkoutPolicyTime ?? null,
         logoUrl: branch.logoUrl ?? null,
+        taxEnabled: Boolean(branch.taxEnabled),
+        taxRate: Number(branch.taxRate ?? 0.15),
         homeConfig: branch.homeConfig ?? null,
         role: BranchStaffRole.MANAGER,
         permissions: [],
@@ -1114,6 +1122,8 @@ export class BranchStaffService {
           defaultCategoryId: branch.defaultCategoryId ?? null,
           checkoutPolicyTime: branch.checkoutPolicyTime ?? null,
           logoUrl: branch.logoUrl ?? null,
+          taxEnabled: Boolean(branch.taxEnabled),
+          taxRate: Number(branch.taxRate ?? 0.15),
           homeConfig: branch.homeConfig ?? null,
           role: BranchStaffRole.MANAGER,
           permissions: [],
@@ -1176,6 +1186,10 @@ export class BranchStaffService {
           assignment.branch.checkoutPolicyTime ??
           null,
         logoUrl: existing?.logoUrl ?? assignment.branch.logoUrl ?? null,
+        taxEnabled: Boolean(
+          existing?.taxEnabled ?? assignment.branch.taxEnabled ?? false,
+        ),
+        taxRate: Number(existing?.taxRate ?? assignment.branch.taxRate ?? 0.15),
         homeConfig:
           existing?.homeConfig ?? assignment.branch.homeConfig ?? null,
         role: assignment.role ?? existing?.role ?? BranchStaffRole.OPERATOR,

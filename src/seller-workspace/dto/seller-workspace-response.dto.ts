@@ -366,6 +366,17 @@ export class SellerWorkspaceBranchWorkspaceDto {
   logoUrl?: string | null;
 
   @ApiPropertyOptional({
+    description: 'Whether this branch charges tax (VAT) on sales.',
+  })
+  taxEnabled?: boolean;
+
+  @ApiPropertyOptional({
+    description:
+      'Tax (VAT) rate as a FRACTION — 0.15 is 15%. Ignored while taxEnabled is false.',
+  })
+  taxRate?: number;
+
+  @ApiPropertyOptional({
     nullable: true,
     description:
       'Per-branch layout for the customizable Home page (widgets, order, ' +

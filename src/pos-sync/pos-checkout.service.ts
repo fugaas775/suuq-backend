@@ -269,12 +269,19 @@ export class PosCheckoutService {
       );
     }
 
-    await this.assertScope(dto.branchId, undefined);
+    const branch = await this.assertScope(dto.branchId, undefined);
+    const branchTaxRate = this.resolveBranchTaxRate(branch);
     const resolvedLines = await Promise.all(
-      dto.items.map((item) => this.resolveQuoteLine(dto.branchId, item)),
+      dto.items.map((item) =>
+        this.resolveQuoteLine(dto.branchId, item, branchTaxRate),
+      ),
     );
 
-    return this.buildQuoteResponse(dto, resolvedLines);
+    return {
+      ...this.buildQuoteResponse(dto, resolvedLines),
+      branchTaxEnabled: branchTaxRate > 0,
+      branchTaxRate,
+    };
   }
 
   async findAll(
@@ -474,6 +481,15 @@ export class PosCheckoutService {
     // is what says "this branch counts units of this SKU", and a sale must never
     // be destroyed by an oversell. Resolved once, here, so the loop stays cheap.
     const isRetailBranch = this.isRetailServiceFormat(branch);
+
+    // Tax is deliberately NOT enforced here. assertPricingSummary already checks
+    // the client's own summary against its own totals, which is the right guard;
+    // asserting taxAmount against the CURRENT branch rate would permanently
+    // strand every offline receipt captured before the owner flipped the VAT
+    // toggle and synced after it — real money stuck in the outbox with no way
+    // through. Warn so a genuine client/server drift is visible in the logs, and
+    // revisit enforcement only once the rate carries an effective-from date.
+    this.warnOnTaxDrift(branch, dto);
 
     // Authoritative sale time — independent of the device clock (server time for
     // online captures; clamped device time for offline captures).
@@ -1043,9 +1059,24 @@ export class PosCheckoutService {
     return -applied;
   }
 
+  /**
+   * The branch's tax (VAT) rate as a fraction, or 0 when the branch does not
+   * charge tax. Owners set both from Seller HQ; every service format honours
+   * it. Kept as a fraction end to end — the percent form exists only in the
+   * Seller HQ input.
+   */
+  private resolveBranchTaxRate(branch: Branch | undefined | null): number {
+    if (!branch?.taxEnabled) {
+      return 0;
+    }
+    const rate = Number(branch.taxRate ?? 0);
+    return Number.isFinite(rate) && rate > 0 ? rate : 0;
+  }
+
   private async resolveQuoteLine(
     branchId: number,
     item: QuotePosCheckoutItemDto,
+    branchTaxRate = 0,
   ): Promise<ResolvedQuoteLineInput> {
     let resolvedProductId = item.productId ?? null;
 
@@ -1093,7 +1124,13 @@ export class PosCheckoutService {
         this.normalizeOptionalString(item.currency ?? product?.currency) ??
         'ETB',
       metadata: this.normalizeCheckoutItemMetadata(item.metadata),
-      taxRate: Number(item.taxRate ?? 0),
+      // Branch VAT policy WINS over whatever the client sent. Deliberately not
+      // `item.taxRate ?? branchTaxRate`: the register stamps an explicit
+      // chargeRate: 0 on every product line, so a nullish fallback would never
+      // fire. Not `Math.max` either — that would let a client inflate the tax.
+      // With VAT off, branchTaxRate is 0 and this falls through to the client's
+      // rate, i.e. today's behaviour byte-for-byte.
+      taxRate: branchTaxRate > 0 ? branchTaxRate : Number(item.taxRate ?? 0),
       unitPrice,
       quantity: Math.max(0.000001, Number(item.quantity || 0)),
     };
@@ -2221,6 +2258,36 @@ export class PosCheckoutService {
     return Object.keys(normalized).some((key) => normalized[key] != null)
       ? normalized
       : null;
+  }
+
+  /**
+   * Logs when an ingested checkout's taxAmount does not look like the branch's
+   * current VAT rate. Never throws — see the call site for why enforcement here
+   * would strand offline receipts. Tax is exclusive, so for a taxed sale
+   * `total = net × (1 + rate)` and the VAT is `total − total / (1 + rate)`.
+   */
+  private warnOnTaxDrift(
+    branch: Branch | undefined | null,
+    dto: IngestPosCheckoutDto,
+  ): void {
+    const rate = this.resolveBranchTaxRate(branch);
+    if (rate <= 0) {
+      return;
+    }
+    const total = Number(dto.total);
+    if (!Number.isFinite(total) || total === 0) {
+      return;
+    }
+    const expected = this.roundMoney(total - total / (1 + rate));
+    const actual = this.roundMoney(Number(dto.taxAmount ?? 0));
+    if (Math.abs(expected - actual) > 0.5) {
+      this.logger.warn(
+        `Branch ${dto.branchId} charges VAT at ${rate} but checkout ` +
+          `${dto.externalCheckoutId ?? dto.idempotencyKey ?? '(no ref)'} ` +
+          `reported taxAmount ${actual} on total ${total} (expected ~${expected}). ` +
+          `Accepted as sent — the device is authoritative for captured money.`,
+      );
+    }
   }
 
   private assertPricingSummary(

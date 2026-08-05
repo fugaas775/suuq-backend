@@ -5,9 +5,11 @@ import {
   IsArray,
   IsBoolean,
   IsInt,
+  IsNumber,
   IsOptional,
   IsString,
   Matches,
+  Max,
   MaxLength,
   Min,
   MinLength,
@@ -231,6 +233,31 @@ export class UpdateBranchWorkspaceDto {
   @IsString()
   @MaxLength(512)
   logoUrl?: string | null;
+
+  @ApiPropertyOptional({
+    description:
+      'Whether this branch charges tax (VAT) on sales. Applies to all service ' +
+      'formats. Off means the register behaves exactly as it does today.',
+    example: true,
+  })
+  @IsOptional()
+  @IsBoolean()
+  taxEnabled?: boolean;
+
+  @ApiPropertyOptional({
+    description:
+      'Tax (VAT) rate as a FRACTION, not a percent — 0.15 is 15%. Ignored ' +
+      'while taxEnabled is false. Tax is exclusive: it is added on top of the ' +
+      'discounted subtotal.',
+    example: 0.15,
+    minimum: 0,
+    maximum: 1,
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(1)
+  taxRate?: number;
 
   @ApiPropertyOptional({
     description:

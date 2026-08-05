@@ -224,6 +224,75 @@ describe('PosCheckoutService', () => {
     expect(result.lines[0]?.promotionLabels.length).toBeGreaterThan(0);
   });
 
+  // Per-branch VAT. The precedence is deliberately "branch wins", not a nullish
+  // fallback: the register stamps an explicit taxRate: 0 on every product line,
+  // so `item.taxRate ?? branchRate` would never fire and the setting would look
+  // enabled while charging nothing.
+  describe('branch tax (VAT) policy', () => {
+    const taxQuote = () =>
+      service.quote({
+        branchId: 3,
+        transactionType: PosCheckoutTransactionType.SALE,
+        items: [
+          {
+            lineId: 'line-1',
+            productId: 55,
+            sku: 'WATER-600',
+            category: 'SNACK',
+            quantity: 1,
+            unitPrice: 15,
+            taxRate: 0,
+          },
+        ],
+      });
+
+    it('charges nothing when the branch has tax off, whatever the client sent', async () => {
+      branchesRepository.findOne.mockResolvedValue({
+        id: 3,
+        taxEnabled: false,
+        taxRate: 0.15,
+      });
+
+      const result = await taxQuote();
+
+      expect(result.taxTotal).toBe(0);
+      expect(result.grandTotal).toBe(result.netSubtotal);
+      expect(result.branchTaxEnabled).toBe(false);
+    });
+
+    it("overrides the client's explicit zero once the branch charges tax", async () => {
+      branchesRepository.findOne.mockResolvedValue({
+        id: 3,
+        taxEnabled: true,
+        taxRate: 0.15,
+      });
+
+      const result = await taxQuote();
+
+      expect(result.lines[0]?.taxRate).toBe(0.15);
+      expect(result.branchTaxRate).toBe(0.15);
+      // Exclusive: tax is added on top of the discounted subtotal.
+      expect(result.grandTotal).toBeCloseTo(
+        result.netSubtotal + result.taxTotal,
+        2,
+      );
+      expect(result.taxTotal).toBeGreaterThan(0);
+    });
+
+    it('reads a numeric column that pg hands back as a string', async () => {
+      branchesRepository.findOne.mockResolvedValue({
+        id: 3,
+        taxEnabled: true,
+        taxRate: '0.1500' as unknown as number,
+      });
+
+      const result = await taxQuote();
+
+      expect(result.branchTaxRate).toBe(0.15);
+      expect(result.lines[0]?.taxRate).toBe(0.15);
+    });
+  });
+
   it('quotes customer-type discounts for food-service baskets', async () => {
     const result = await service.quote({
       branchId: 3,
