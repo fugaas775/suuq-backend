@@ -54,6 +54,20 @@ server {
         add_header Cache-Control "no-store";
     }
 
+    # The app shell must never be cached, while /assets/* above is cached for a
+    # year. That pairing is what makes a hashed-asset SPA deployable: the shell
+    # is the only file whose name does not change, so a cached copy keeps
+    # pointing at asset hashes that the next deploy deleted — a white screen for
+    # anyone who visited before. This host had no directive at all, so browsers
+    # applied heuristic caching and returning visitors kept getting the previous
+    # site after a deploy. pos.suuq-s.com has carried the same rule for exactly
+    # this reason.
+    location = /index.html {
+        add_header Cache-Control "no-cache, no-store, must-revalidate";
+        add_header Pragma "no-cache";
+        expires 0;
+    }
+
     # Receipt verification — the page behind the QR printed on every POS
     # receipt and order slip. Proxied to the API so the answer always comes
     # from the same records the register writes to, and so a customer scanning
