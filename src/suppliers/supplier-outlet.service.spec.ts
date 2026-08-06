@@ -20,6 +20,10 @@ function makeService({
     save: jest.fn(async (obj: any) =>
       obj.id ? obj : { ...obj, id: (nextId += 1) },
     ),
+    // The outlet's consumer storefront is linked through
+    // `linkBranchToVendorStore`, which writes both halves of the unenforced 1:1
+    // with repository updates rather than entity saves.
+    getRepository: jest.fn(() => ({ update: jest.fn().mockResolvedValue({}) })),
   };
   const qb = {
     where: jest.fn().mockReturnThis(),
@@ -86,6 +90,18 @@ describe('SupplierOutletService.ensureOutletForSupplier', () => {
       .find((v: any) => v?.posExperienceProfileCode === 'WHOLESALE_COUNTER');
     expect(savedAssignment).toBeTruthy();
     expect(savedAssignment.role).toBe('MANAGER');
+
+    // A consumer storefront is provisioned too — without one the outlet is
+    // invisible to `/consumer/v1/branches`, which filters on an EXISTS against
+    // vendor_stores, so nothing the supplier lists could ever be found.
+    const savedStore = manager.save.mock.calls
+      .map((c) => c[0])
+      .find((v: any) => v?.storeName !== undefined);
+    expect(savedStore).toBeTruthy();
+    expect(savedStore.ownerUserId).toBe(7);
+    // Created hidden: a supplier who has listed nothing must not appear on the
+    // marketplace as an empty shop. `setOfferConsumerListing` reveals it.
+    expect(savedStore.isConsumerVisible).toBe(false);
   });
 
   it('does not re-provision when an outlet already exists', async () => {

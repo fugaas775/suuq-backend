@@ -55,9 +55,15 @@ export class ConsumerOrderService {
     private readonly suspendedCartsRepository: Repository<PosSuspendedCart>,
   ) {}
 
-  async placeOrder(
-    dto: PlaceConsumerOrderDto,
-  ): Promise<ConsumerOrderResponseDto> {
+  /**
+   * Everything that can be checked before anything is written.
+   *
+   * Split out so a multi-shop checkout can vet every seller before placing the
+   * first order. Placing a cart on a till cannot be rolled back by our own
+   * transaction — staff may already be looking at it — so the only real
+   * protection against a half-placed basket is to find the bad seller first.
+   */
+  async validatePlacement(dto: PlaceConsumerOrderDto): Promise<Branch> {
     // 1. Validate service format vs order mode combination
     const allowedModes: string[] = FORMAT_ORDER_MODES[dto.serviceFormat] ?? [];
     if (!allowedModes.includes(dto.orderMode)) {
@@ -82,6 +88,14 @@ export class ConsumerOrderService {
         `Branch ${dto.branchId} uses service format "${branch.serviceFormat}", not "${dto.serviceFormat}"`,
       );
     }
+
+    return branch;
+  }
+
+  async placeOrder(
+    dto: PlaceConsumerOrderDto,
+  ): Promise<ConsumerOrderResponseDto> {
+    await this.validatePlacement(dto);
 
     // 4. Resolve currency: use dto-provided value, defaulting to ETB
     const currency = (dto.currency ?? 'ETB').trim().toUpperCase();

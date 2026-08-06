@@ -8,11 +8,17 @@ import { VendorStore } from '../vendor/entities/vendor-store.entity';
 import { Product } from '../products/entities/product.entity';
 import { BranchCatalogProductLink } from '../retail/entities/branch-catalog-product-link.entity';
 import { PosSyncModule } from '../pos-sync/pos-sync.module';
+import {
+  ConsumerOrderGroup,
+  ConsumerOrderGroupItem,
+} from './entities/consumer-order-group.entity';
 import { ConsumerBranchController } from './consumer-branch.controller';
 import { ConsumerCatalogController } from './consumer-catalog.controller';
 import { ConsumerOrderController } from './consumer-order.controller';
+import { ConsumerOrderGroupController } from './consumer-order-group.controller';
 import { ConsumerServiceFormatController } from './consumer-service-format.controller';
 import { ConsumerOrderService } from './consumer-order.service';
+import { ConsumerOrderGroupService } from './consumer-order-group.service';
 import { ConsumerShelfService } from './consumer-shelf.service';
 
 @Module({
@@ -26,14 +32,21 @@ import { ConsumerShelfService } from './consumer-shelf.service';
       VendorStore,
       Product,
       BranchCatalogProductLink,
+      ConsumerOrderGroup,
+      ConsumerOrderGroupItem,
     ]),
   ],
   controllers: [
     ConsumerBranchController,
     ConsumerCatalogController,
     ConsumerOrderController,
+    ConsumerOrderGroupController,
     ConsumerServiceFormatController,
   ],
-  providers: [ConsumerOrderService, ConsumerShelfService],
+  providers: [
+    ConsumerOrderService,
+    ConsumerOrderGroupService,
+    ConsumerShelfService,
+  ],
 })
 export class ConsumerModule {}
