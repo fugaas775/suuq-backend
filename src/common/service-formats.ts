@@ -37,6 +37,36 @@ export const ORDER_MODES = [
 
 export type OrderMode = (typeof ORDER_MODES)[number];
 
+/**
+ * Modes that are meaningless without a time.
+ *
+ * An appointment for no particular moment, or a laundry pick-up on no
+ * particular day, is not an order a shop can act on — it is a row someone has
+ * to chase the customer about.
+ */
+const TIMED_MODES: ReadonlySet<string> = new Set([
+  'APPOINTMENT',
+  'BOOKING',
+  'SCHEDULED',
+]);
+
+export function modeNeedsTime(orderMode: string | null | undefined): boolean {
+  return TIMED_MODES.has(
+    String(orderMode ?? '')
+      .trim()
+      .toUpperCase(),
+  );
+}
+
+/** Eating in is the one mode that needs to know where the guest is sitting. */
+export function modeNeedsTable(orderMode: string | null | undefined): boolean {
+  return (
+    String(orderMode ?? '')
+      .trim()
+      .toUpperCase() === 'DINE_IN'
+  );
+}
+
 export interface ServiceFormatDefinition {
   code: string;
   /** Human-readable name shown to shoppers and operators. */

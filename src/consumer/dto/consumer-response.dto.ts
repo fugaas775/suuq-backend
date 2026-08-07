@@ -216,6 +216,12 @@ export class ConsumerCatalogListDto {
   total!: number;
   page!: number;
   limit!: number;
+  /**
+   * Menu sections present in this result set, commonest first — the chips a
+   * client offers to narrow it. Computed over the filtered set *minus* any
+   * category filter, so picking one does not collapse the row to itself.
+   */
+  categories!: string[];
   version!: string;
 }
 

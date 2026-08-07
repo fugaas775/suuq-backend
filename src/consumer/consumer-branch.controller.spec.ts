@@ -61,6 +61,7 @@ describe('ConsumerBranchController.getBranchProducts', () => {
         productRepo as never,
         branchInventoryRepo as never,
         kitchenAvailabilityRepo as never,
+        { createQueryBuilder: jest.fn() } as never,
       ),
     );
     return { controller, baseQb, getCount, vendorStoreRepo };
@@ -280,6 +281,7 @@ describe('ConsumerBranchController.getBranch storeId', () => {
         { find: jest.fn() } as never,
         { find: jest.fn() } as never,
         { find: jest.fn() } as never,
+        { createQueryBuilder: jest.fn() } as never,
       ),
     );
     return { controller, vendorStoreRepo };
@@ -364,6 +366,7 @@ describe('ConsumerBranchController shelf truth', () => {
       productRepo as never,
       { find: jest.fn().mockResolvedValue(opts.inventory ?? []) } as never,
       { find: jest.fn().mockResolvedValue(opts.kitchen ?? []) } as never,
+      { createQueryBuilder: jest.fn() } as never,
     );
 
     const controller = new ConsumerBranchController(

@@ -1,11 +1,12 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { In, Repository, SelectQueryBuilder } from 'typeorm';
 import { BranchInventory } from '../branches/entities/branch-inventory.entity';
 import { KitchenProductAvailability } from '../hospitality/entities/kitchen-product-availability.entity';
 import { Product } from '../products/entities/product.entity';
 import { BranchCatalogProductLink } from '../retail/entities/branch-catalog-product-link.entity';
 import { ConsumerStockState } from './dto/consumer-response.dto';
+import { CONSUMER_FORMAT_ORDER_MODES } from '../common/service-formats';
 
 /**
  * The rules a shelf obeys, wherever it is read from.
@@ -25,9 +26,35 @@ import { ConsumerStockState } from './dto/consumer-response.dto';
  */
 const DEFAULT_LOW_STOCK_THRESHOLD = 5;
 
+/**
+ * Formats whose shelves belong in a product catalog.
+ *
+ * Derived from the service-format registry rather than listed here, so a format
+ * that stops (or starts) accepting consumer orders needs no edit in this file.
+ * Two exclusions fall out of that: formats that accept no consumer order at all
+ * (FSR, PROPERTY_RENTAL, PRINTING_PRESS), and booking-only formats like HOTEL —
+ * a room is not a cart line, it is an availability search against dates, and
+ * putting "Standard Room — 1 Night" in a shopping grid sells a night that may
+ * already be occupied.
+ */
+export const CATALOG_SERVICE_FORMATS: readonly string[] = Object.entries(
+  CONSUMER_FORMAT_ORDER_MODES,
+)
+  .filter(([, modes]) => modes.some((mode) => mode !== 'BOOKING'))
+  .map(([code]) => code);
+
 /** Composite key for a shelf entry, which is per (branch, product). */
 function pairKey(branchId: number, productId: number): string {
   return `${branchId}:${productId}`;
+}
+
+/** One shelf entry as the server knows it — never as a client described it. */
+export interface SellableShelfLine {
+  productId: number;
+  name: string;
+  price: number;
+  currency: string | null;
+  stockState: ConsumerStockState;
 }
 
 @Injectable()
@@ -39,7 +66,115 @@ export class ConsumerShelfService {
     private readonly branchInventoryRepo: Repository<BranchInventory>,
     @InjectRepository(KitchenProductAvailability)
     private readonly kitchenAvailabilityRepo: Repository<KitchenProductAvailability>,
+    @InjectRepository(BranchCatalogProductLink)
+    private readonly linkRepo: Repository<BranchCatalogProductLink>,
   ) {}
+
+  /**
+   * What a shopper is allowed to buy, before any filter — the one definition.
+   *
+   * Applied to a builder aliased `bcl` (link) / `p` (product) / `b` (branch).
+   * Both the catalog read and the order write go through it, and that is the
+   * whole point: the read used to own this predicate privately, so the write had
+   * no way to ask the same question and simply trusted whatever the client sent.
+   *
+   * The last condition is the one that matters most. A supplier's product row
+   * carries their *wholesale* price — `createProductOffer` copies
+   * `unitWholesalePrice` onto `product.price` — and the shelf falls back to
+   * `product.price` when the branch has set no retail price. On a supplier outlet
+   * that fallback would publish trade pricing to the public and hand every
+   * retailer's margin away. Guarding only the read left the order path able to
+   * buy at exactly the price the read refuses to show.
+   */
+  applySellablePredicate<T>(qb: SelectQueryBuilder<T>): SelectQueryBuilder<T> {
+    return qb
+      .andWhere('bcl.consumer_visible = true')
+      .andWhere('p.deleted_at IS NULL')
+      .andWhere('b."isActive" = true')
+      .andWhere(
+        `EXISTS (
+          SELECT 1 FROM vendor_stores vs
+          WHERE vs."branchId" = b.id AND vs."isConsumerVisible" = true
+        )`,
+      )
+      .andWhere('b."serviceFormat" IN (:...catalogFormats)', {
+        catalogFormats: CATALOG_SERVICE_FORMATS,
+      })
+      .andWhere(
+        '(b."supplierOutletProfileId" IS NULL OR bcl.retail_price IS NOT NULL)',
+      );
+  }
+
+  /**
+   * The authoritative price and name for products a shopper is trying to buy at
+   * one branch.
+   *
+   * A product missing from the returned map is not sellable there — it may not
+   * exist, may be soft-deleted, may sit on a different shop's shelf, may be
+   * unlisted, or may be a supplier row with no consumer price. The caller must
+   * treat absence as a refusal rather than falling back to anything the client
+   * supplied, because everything the client supplied is what this exists to
+   * distrust.
+   */
+  async resolveSellableLines(
+    branchId: number,
+    productIds: number[],
+  ): Promise<Map<number, SellableShelfLine>> {
+    const ids = Array.from(
+      new Set(productIds.filter((id) => Number.isInteger(id) && id > 0)),
+    );
+    const result = new Map<number, SellableShelfLine>();
+    if (!ids.length) return result;
+
+    const qb = this.linkRepo
+      .createQueryBuilder('bcl')
+      .innerJoin('product', 'p', 'p.id = bcl."productId"')
+      .innerJoin('branches', 'b', 'b.id = bcl."branchId"')
+      .where('bcl."branchId" = :branchId', { branchId })
+      .andWhere('p.id IN (:...ids)', { ids });
+
+    const rows = await this.applySellablePredicate(qb)
+      .select([
+        'p.id AS "productId"',
+        'p.name AS "name"',
+        'p.price AS "productPrice"',
+        'p.currency AS "currency"',
+        'bcl.retail_price AS "retailPrice"',
+        'bcl.retail_sale_price AS "retailSalePrice"',
+      ])
+      .getRawMany<{
+        productId: number;
+        name: string;
+        productPrice: string | number;
+        currency: string | null;
+        retailPrice: string | number | null;
+        retailSalePrice: string | number | null;
+      }>();
+
+    const stockByPair = await this.resolveStockStatesForPairs(
+      rows.map((r) => ({ branchId, productId: Number(r.productId) })),
+    );
+
+    for (const row of rows) {
+      const productId = Number(row.productId);
+      result.set(productId, {
+        productId,
+        name: row.name,
+        price: this.effectivePrice(
+          {
+            retailPrice:
+              row.retailPrice == null ? null : Number(row.retailPrice),
+            retailSalePrice:
+              row.retailSalePrice == null ? null : Number(row.retailSalePrice),
+          },
+          { price: Number(row.productPrice) },
+        ),
+        currency: row.currency ?? null,
+        stockState: stockByPair.get(pairKey(branchId, productId)) ?? 'UNKNOWN',
+      });
+    }
+    return result;
+  }
 
   /**
    * Maps a branch's inventory row to a buyability band.

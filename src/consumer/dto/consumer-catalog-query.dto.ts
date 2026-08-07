@@ -52,6 +52,17 @@ export class ConsumerCatalogQueryDto {
   @IsInt()
   categoryId?: number;
 
+  /**
+   * The merchant's own menu section — `attributes.browseCategory`, the token the
+   * POS register's category rail is built from. Not `categoryId`: POS branches
+   * leave the `Category` relation null and group by this instead.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  browseCategory?: string;
+
   @IsOptional()
   @IsString()
   @MaxLength(120)

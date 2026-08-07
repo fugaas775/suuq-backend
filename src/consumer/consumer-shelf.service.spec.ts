@@ -13,11 +13,20 @@ function buildService(opts: {
   inventory?: unknown[];
   kitchen?: unknown[];
   stockManaged?: unknown[];
+  /** Rows the sellable-shelf query returns; see the resolveSellableLines block. */
+  shelfRows?: unknown[];
 }) {
+  const qb: Record<string, jest.Mock> = {};
+  for (const m of ['innerJoin', 'where', 'andWhere', 'select']) {
+    qb[m] = jest.fn().mockReturnValue(qb);
+  }
+  qb.getRawMany = jest.fn().mockResolvedValue(opts.shelfRows ?? []);
+
   return new ConsumerShelfService(
     { find: jest.fn().mockResolvedValue(opts.stockManaged ?? []) } as never,
     { find: jest.fn().mockResolvedValue(opts.inventory ?? []) } as never,
     { find: jest.fn().mockResolvedValue(opts.kitchen ?? []) } as never,
+    { createQueryBuilder: jest.fn().mockReturnValue(qb) } as never,
   );
 }
 

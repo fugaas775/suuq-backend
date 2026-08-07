@@ -17,29 +17,9 @@ import {
 } from './dto/consumer-response.dto';
 import { ConsumerCatalogQueryDto } from './dto/consumer-catalog-query.dto';
 import { ConsumerShelfService } from './consumer-shelf.service';
-import {
-  CONSUMER_FORMAT_ORDER_MODES,
-  serviceFormatLabel,
-} from '../common/service-formats';
+import { serviceFormatLabel } from '../common/service-formats';
 import { resolveBranchPresence } from '../common/operating-hours';
 import { resolveProductCatalogMetadata } from '../common/utils/media-url.util';
-
-/**
- * Formats whose shelves belong in a product catalog.
- *
- * Derived from the service-format registry rather than listed here, so a format
- * that stops (or starts) accepting consumer orders needs no edit in this file.
- * Two exclusions fall out of that: formats that accept no consumer order at all
- * (FSR, PROPERTY_RENTAL, PRINTING_PRESS), and booking-only formats like HOTEL —
- * a room is not a cart line, it is an availability search against dates, and
- * putting "Standard Room — 1 Night" in a shopping grid sells a night that may
- * already be occupied.
- */
-const CATALOG_SERVICE_FORMATS: readonly string[] = Object.entries(
-  CONSUMER_FORMAT_ORDER_MODES,
-)
-  .filter(([, modes]) => modes.some((mode) => mode !== 'BOOKING'))
-  .map(([code]) => code);
 
 /** The shape one catalog row comes back as from the query builder. */
 interface CatalogRow {
@@ -81,35 +61,19 @@ export class ConsumerCatalogController {
   /**
    * Everything a shopper is allowed to see, before any filter.
    *
-   * The last condition is the one that matters most. A supplier's product row
-   * carries their *wholesale* price — `createProductOffer` copies
-   * `unitWholesalePrice` onto `product.price` — and the shelf falls back to
-   * `product.price` when the branch has set no retail price. On a supplier
-   * outlet that fallback would publish the wholesale price to shoppers and hand
-   * every retailer's margin to the public. The supplier UI refuses to list
-   * without a consumer price; this refuses to *show* one that slipped through by
-   * any other route.
+   * The predicate itself lives in `ConsumerShelfService` so the order path can
+   * ask the identical question — it used to live here privately, which is how
+   * the write path ended up trusting client-supplied prices for rows this read
+   * would have refused.
    */
   private baseQuery(): SelectQueryBuilder<BranchCatalogProductLink> {
-    return this.catalogLinkRepo
-      .createQueryBuilder('bcl')
-      .innerJoin('product', 'p', 'p.id = bcl."productId"')
-      .innerJoin('branches', 'b', 'b.id = bcl."branchId"')
-      .where('bcl.consumer_visible = true')
-      .andWhere('p.deleted_at IS NULL')
-      .andWhere('b."isActive" = true')
-      .andWhere(
-        `EXISTS (
-          SELECT 1 FROM vendor_stores vs
-          WHERE vs."branchId" = b.id AND vs."isConsumerVisible" = true
-        )`,
-      )
-      .andWhere('b."serviceFormat" IN (:...catalogFormats)', {
-        catalogFormats: CATALOG_SERVICE_FORMATS,
-      })
-      .andWhere(
-        '(b."supplierOutletProfileId" IS NULL OR bcl.retail_price IS NOT NULL)',
-      );
+    return this.shelf.applySellablePredicate(
+      this.catalogLinkRepo
+        .createQueryBuilder('bcl')
+        .innerJoin('product', 'p', 'p.id = bcl."productId"')
+        .innerJoin('branches', 'b', 'b.id = bcl."branchId"')
+        .where('1 = 1'),
+    );
   }
 
   private applyFilters(
@@ -148,6 +112,16 @@ export class ConsumerCatalogController {
 
     if (query.city) {
       qb.andWhere('LOWER(b.city) = LOWER(:city)', { city: query.city });
+    }
+
+    if (query.browseCategory) {
+      // Free merchant text, matched case- and whitespace-insensitively because
+      // "Hot Drinks", "HOT_DRINKS" and " hot drinks " are the same section to
+      // everyone except a string comparison.
+      qb.andWhere(
+        "btrim(LOWER(p.attributes->>'browseCategory')) = btrim(LOWER(:browseCategory))",
+        { browseCategory: query.browseCategory },
+      );
     }
 
     if (query.lat != null && query.lng != null && query.radius != null) {
@@ -286,26 +260,70 @@ export class ConsumerCatalogController {
     const rowsQb = this.baseQuery();
     this.applyFilters(rowsQb, query);
     const rows = await this.selectRowColumns(rowsQb)
-      // Grouped by shop, then alphabetical, then the link id as a stable
-      // tiebreak — without that last one two rows with equal names can swap
-      // between pages and a shopper sees one item twice and another never.
-      // Stock state cannot join the sort: it is resolved after the query, from
-      // inventory and the kitchen 86-list.
-      .orderBy('b.name', 'ASC')
+      // Round-robin across shops, not alphabetical by shop.
+      //
+      // Ordering by `b.name` put every one of a café's 128 items ahead of the
+      // next shop's first, so page one of a 347-item marketplace held two shops
+      // and the other six were unreachable without guessing a search term. The
+      // window function takes each shop's first item, then each shop's second,
+      // so a page is a spread rather than one merchant's menu.
+      //
+      // The link id stays last: without a total tiebreak two rows with equal
+      // names can swap between pages and a shopper sees one item twice and
+      // another never. Stock state cannot join the sort — it is resolved after
+      // the query, from inventory and the kitchen 86-list.
+      .addSelect(
+        'ROW_NUMBER() OVER (PARTITION BY b.id ORDER BY p.name, bcl.id)',
+        'shop_rank',
+      )
+      .orderBy('"shop_rank"', 'ASC')
+      .addOrderBy('b.name', 'ASC')
       .addOrderBy('p.name', 'ASC')
       .addOrderBy('bcl.id', 'ASC')
       .offset(skip)
       .limit(limit)
       .getRawMany<CatalogRow>();
 
-    const items = await this.toItems(rows);
+    const [items, categories] = await Promise.all([
+      this.toItems(rows),
+      this.resolveCategoryFacet(query),
+    ]);
+
     return {
       items,
       total,
       page,
       limit,
+      categories,
       version: this.shelf.shelfVersion(items),
     };
+  }
+
+  /**
+   * The category chips to offer alongside these results.
+   *
+   * Computed over the filtered set *minus* the category filter itself, so
+   * choosing "Burgers" does not collapse the chip row to just "Burgers" and
+   * strand a shopper with no way back. Free merchant text out of `attributes`,
+   * not the `Category` relation — POS branches leave `categoryId` null and group
+   * by `browseCategory`, which is the same token the register's own rail reads.
+   */
+  private async resolveCategoryFacet(
+    query: ConsumerCatalogQueryDto,
+  ): Promise<string[]> {
+    const qb = this.baseQuery();
+    this.applyFilters(qb, { ...query, browseCategory: undefined });
+
+    const rows = await qb
+      .select("p.attributes->>'browseCategory'", 'category')
+      .andWhere("p.attributes->>'browseCategory' IS NOT NULL")
+      .andWhere("btrim(p.attributes->>'browseCategory') <> ''")
+      .groupBy("p.attributes->>'browseCategory'")
+      .orderBy('COUNT(*)', 'DESC')
+      .limit(24)
+      .getRawMany<{ category: string }>();
+
+    return rows.map((r) => r.category.trim()).filter(Boolean);
   }
 
   /**
