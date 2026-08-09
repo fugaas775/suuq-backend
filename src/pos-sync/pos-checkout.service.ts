@@ -1160,13 +1160,17 @@ export class PosCheckoutService {
         this.normalizeOptionalString(item.currency ?? product?.currency) ??
         'ETB',
       metadata: this.normalizeCheckoutItemMetadata(item.metadata),
-      // Branch VAT policy WINS over whatever the client sent. Deliberately not
-      // `item.taxRate ?? branchTaxRate`: the register stamps an explicit
-      // chargeRate: 0 on every product line, so a nullish fallback would never
-      // fire. Not `Math.max` either — that would let a client inflate the tax.
-      // With VAT off, branchTaxRate is 0 and this falls through to the client's
-      // rate, i.e. today's behaviour byte-for-byte.
-      taxRate: branchTaxRate > 0 ? branchTaxRate : Number(item.taxRate ?? 0),
+      // Branch VAT policy is the ONLY answer, in both directions. A branch that
+      // charges no tax quotes no tax — this used to fall through to whatever
+      // rate the caller sent, which let any client put a tax line on the bill of
+      // a branch that is not registered to charge one, and price it itself.
+      //
+      // Deliberately not `item.taxRate ?? branchTaxRate`: the register stamps an
+      // explicit chargeRate: 0 on every product line, so a nullish fallback
+      // would never fire. Not `Math.max` either — that would let a client
+      // inflate the tax. Per-product rates are not honoured here; see
+      // product.taxRate, which nothing reads.
+      taxRate: branchTaxRate,
       unitPrice,
       quantity: Math.max(0.000001, Number(item.quantity || 0)),
     };

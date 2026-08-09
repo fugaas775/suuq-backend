@@ -315,6 +315,37 @@ describe('PosCheckoutService', () => {
       expect(result.grandTotal).toBeCloseTo(15 * 1.15, 2);
     });
 
+    it('ignores a rate the client sent when the branch charges no tax', async () => {
+      // This used to fall through to the caller's rate whenever the branch had
+      // tax off, which let any client put a tax line on the bill of a branch
+      // that is not registered to charge one — and price it itself.
+      branchesRepository.findOne.mockResolvedValue({
+        id: 3,
+        taxEnabled: false,
+        taxRate: 0.15,
+      });
+
+      const result = await service.quote({
+        branchId: 3,
+        transactionType: PosCheckoutTransactionType.SALE,
+        items: [
+          {
+            lineId: 'line-1',
+            productId: 55,
+            quantity: 1,
+            unitPrice: 100,
+            taxRate: 0.25,
+          },
+        ],
+      });
+
+      expect(result.branchTaxEnabled).toBe(false);
+      expect(result.lines[0]?.taxRate).toBe(0);
+      expect(result.taxTotal).toBe(0);
+      // Priced from the catalog, not from the client's unitPrice either.
+      expect(result.grandTotal).toBe(15);
+    });
+
     it('reads a numeric column that pg hands back as a string', async () => {
       branchesRepository.findOne.mockResolvedValue({
         id: 3,

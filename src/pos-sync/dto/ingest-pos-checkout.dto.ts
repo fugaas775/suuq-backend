@@ -10,6 +10,7 @@ import {
   IsString,
   Length,
   MaxLength,
+  Max,
   Min,
   ValidateNested,
 } from 'class-validator';
@@ -111,6 +112,9 @@ export class PosCheckoutItemDto {
   @Type(() => Number)
   @IsNumber()
   @Min(0)
+  // A rate is a FRACTION — 0.15 is 15%. Unbounded, a client sending 15 for
+  // "15%" prices a 1500% tax, and nothing downstream would question it.
+  @Max(1)
   taxRate?: number;
 
   @IsOptional()
