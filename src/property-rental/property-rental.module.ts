@@ -4,6 +4,7 @@ import { RetailModule } from '../retail/retail.module';
 import { AccountingModule } from '../accounting/accounting.module';
 import { PosBranchAccessGuard } from '../auth/pos-branch-access.guard';
 import { RolesGuard } from '../auth/roles.guard';
+import { Branch } from '../branches/entities/branch.entity';
 import { PropertyRentalBooking } from './entities/property-rental-booking.entity';
 import { PropertyRentalBookingCharge } from './entities/property-rental-booking-charge.entity';
 import { PropertyUnit } from './entities/property-unit.entity';
@@ -29,6 +30,9 @@ import { RevenueAccrualService } from './revenue-accrual.service';
       PropertyUnit,
       PropertyRatePlan,
       PropertyReservation,
+      // Read-only: the booking service stamps the branch's tax rate onto a new
+      // lease so every later posting for it splits the same way.
+      Branch,
     ]),
     RetailModule,
     AccountingModule,

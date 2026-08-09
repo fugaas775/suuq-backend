@@ -5,6 +5,7 @@ import { Repository } from 'typeorm';
 import { GeneralLedgerService } from '../accounting/general-ledger.service';
 import { GlAccountCode } from '../accounting/gl-accounts.constant';
 import { GlJournalSourceType } from '../accounting/entities/gl-journal-entry.entity';
+import { splitGrossTax } from '../accounting/tax-split.util';
 import {
   PropertyRentalBooking,
   PropertyRentalBookingStatus,
@@ -131,6 +132,18 @@ export class RevenueAccrualService {
     );
     if (recognizeNow <= 0) return 0;
 
+    // The booking's amounts are gross, but deferred revenue holds NET — the tax
+    // was credited to TAX_PAYABLE when the instalment was collected, so it never
+    // entered deferred revenue and must not be moved out of it now. Posting the
+    // gross here would draw down more than went in and drive deferred revenue
+    // negative by the tax on every lease.
+    //
+    // The rate comes off the BOOKING, not the branch: this job runs nightly for
+    // the whole life of a lease, and an owner flipping the tax toggle mid-lease
+    // would otherwise leave a residue stuck in deferred revenue forever.
+    const { net } = splitGrossTax(recognizeNow, Number(booking.taxRate) || 0);
+    if (net <= 0) return 0;
+
     await this.generalLedger.post({
       branchId: booking.branchId,
       occurredAt: asOf,
@@ -140,8 +153,8 @@ export class RevenueAccrualService {
       currency: booking.currency,
       memo: `Rent recognized — booking ${booking.id}`,
       lines: [
-        { accountCode: GlAccountCode.DEFERRED_REVENUE, debit: recognizeNow },
-        { accountCode: GlAccountCode.RENTAL_REVENUE, credit: recognizeNow },
+        { accountCode: GlAccountCode.DEFERRED_REVENUE, debit: net },
+        { accountCode: GlAccountCode.RENTAL_REVENUE, credit: net },
       ],
     });
 

@@ -15,6 +15,11 @@ import { GlAccountCode } from '../accounting/gl-accounts.constant';
 import { GlJournalSourceType } from '../accounting/entities/gl-journal-entry.entity';
 import { splitTenders, extractBadDebt } from '../accounting/tender-split.util';
 import {
+  resolveBranchTaxRate,
+  splitGrossTax,
+} from '../accounting/tax-split.util';
+import { Branch } from '../branches/entities/branch.entity';
+import {
   HotelFolio,
   HotelFolioPaymentRecord,
   HotelFolioStatus,
@@ -44,8 +49,36 @@ export class HotelFolioService {
     private readonly chargeRepo: Repository<HotelFolioCharge>,
     @InjectRepository(HotelRoom)
     private readonly roomRepo: Repository<HotelRoom>,
+    @InjectRepository(Branch)
+    private readonly branchRepo: Repository<Branch>,
     private readonly generalLedger: GeneralLedgerService,
   ) {}
+
+  /**
+   * The branch's tax rate, read live at settlement.
+   *
+   * A folio, unlike a lease, hits the ledger exactly once — cash in and revenue
+   * out in the same entry — so there is no second posting for a later rate
+   * change to contradict. The live rate is also the one the register grossed the
+   * folio up with, which is what the guest was charged. Falls back to 0 rather
+   * than guessing, so an unreadable branch posts as it always did.
+   */
+  private async resolveSettlementTaxRate(branchId: number): Promise<number> {
+    try {
+      const branch = await this.branchRepo.findOne({
+        where: { id: branchId },
+        select: { id: true, taxEnabled: true, taxRate: true },
+      });
+      return resolveBranchTaxRate(branch);
+    } catch (error) {
+      this.logger.warn(
+        `Could not read tax settings for branch ${branchId}; settling folio untaxed: ${
+          error instanceof Error ? error.message : error
+        }`,
+      );
+      return 0;
+    }
+  }
 
   private toFolioResponse(folio: HotelFolio, charges: HotelFolioCharge[] = []) {
     return {
@@ -437,9 +470,21 @@ export class HotelFolioService {
           accountCode: GlAccountCode.ACCOUNTS_RECEIVABLE,
           debit: receivable,
         });
+      // The folio total is gross — the register grossed it up (or the price
+      // already contained the tax) before it was ever stored. Splitting it here
+      // is the only point at which a hotel's VAT reaches the ledger: the POS
+      // checkout path skips accrual formats entirely to avoid double-counting
+      // this very entry, so without this leg a hotel shows zero tax owed no
+      // matter how much it collected.
+      const { net, tax } = splitGrossTax(
+        recognised,
+        await this.resolveSettlementTaxRate(saved.branchId),
+      );
+      if (tax > 0)
+        lines.push({ accountCode: GlAccountCode.TAX_PAYABLE, credit: tax });
       lines.push({
         accountCode: GlAccountCode.SERVICE_REVENUE,
-        credit: recognised,
+        credit: net,
       });
       await this.generalLedger
         .post({

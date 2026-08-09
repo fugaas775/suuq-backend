@@ -15,6 +15,11 @@ import { GlAccountCode } from '../accounting/gl-accounts.constant';
 import { GlJournalSourceType } from '../accounting/entities/gl-journal-entry.entity';
 import { splitTenders, extractBadDebt } from '../accounting/tender-split.util';
 import {
+  resolveBranchTaxRate,
+  splitGrossTax,
+} from '../accounting/tax-split.util';
+import { Branch } from '../branches/entities/branch.entity';
+import {
   PropertyBookingPaymentRecord,
   PropertyRentalBillingCycle,
   PropertyRentalBooking,
@@ -67,8 +72,31 @@ export class PropertyRentalBookingService {
     private readonly bookingRepo: Repository<PropertyRentalBooking>,
     @InjectRepository(PropertyRentalBookingCharge)
     private readonly chargeRepo: Repository<PropertyRentalBookingCharge>,
+    @InjectRepository(Branch)
+    private readonly branchRepo: Repository<Branch>,
     private readonly generalLedger: GeneralLedgerService,
   ) {}
+
+  /**
+   * The tax rate to stamp on a new booking. Falls back to 0 — an unreadable
+   * branch must not silently start splitting rent at a guessed rate.
+   */
+  private async resolveOpeningTaxRate(branchId: number): Promise<number> {
+    try {
+      const branch = await this.branchRepo.findOne({
+        where: { id: branchId },
+        select: { id: true, taxEnabled: true, taxRate: true },
+      });
+      return resolveBranchTaxRate(branch);
+    } catch (error) {
+      this.logger.warn(
+        `Could not read tax settings for branch ${branchId}; opening booking untaxed: ${
+          error instanceof Error ? error.message : error
+        }`,
+      );
+      return 0;
+    }
+  }
 
   private round2(value: number): number {
     return Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
@@ -78,6 +106,12 @@ export class PropertyRentalBookingService {
    * Post a rent payment to the ledger. While the booking is OPEN the cash is
    * deferred (Cr Deferred revenue); recognition into Rental revenue happens at
    * settlement. Best-effort — a ledger hiccup never blocks the payment.
+   *
+   * The tax inside the instalment is credited to TAX_PAYABLE here, not deferred
+   * with the rent: it is owed to the authority as soon as the money is taken,
+   * which is also how every cash-basis format in the system treats it. Deferred
+   * revenue therefore holds NET rent from this point on, and the recognition and
+   * settlement postings both draw it down net so it clears to exactly zero.
    */
   private async postRentDeferral(
     booking: PropertyRentalBooking,
@@ -89,6 +123,7 @@ export class PropertyRentalBookingService {
     const amount = this.round2(total);
     if (amount <= 0) return;
     const { cash, clearing } = splitTenders(rows, amount);
+    const { net, tax } = splitGrossTax(amount, Number(booking.taxRate) || 0);
     const lines: JournalLineInput[] = [];
     if (cash > 0) lines.push({ accountCode: GlAccountCode.CASH, debit: cash });
     if (clearing > 0)
@@ -96,7 +131,9 @@ export class PropertyRentalBookingService {
         accountCode: GlAccountCode.TENDER_CLEARING,
         debit: clearing,
       });
-    lines.push({ accountCode: GlAccountCode.DEFERRED_REVENUE, credit: amount });
+    if (tax > 0)
+      lines.push({ accountCode: GlAccountCode.TAX_PAYABLE, credit: tax });
+    lines.push({ accountCode: GlAccountCode.DEFERRED_REVENUE, credit: net });
     await this.generalLedger
       .post({
         branchId: booking.branchId,
@@ -123,6 +160,11 @@ export class PropertyRentalBookingService {
    * Post the move-out settlement: recognize all collected rent (the final
    * payment plus any previously-deferred instalments) into Rental revenue, and
    * clear the held deposit via refund (→ cash) and forfeit (→ income).
+   *
+   * Tax is credited only on the FINAL payment. Everything already deferred had
+   * its tax credited when it was collected, so taxing it again here would
+   * declare the same rent's VAT twice — the deferred balance being drawn down is
+   * already net of it.
    */
   private async postBookingSettlement(
     booking: PropertyRentalBooking,
@@ -146,6 +188,13 @@ export class PropertyRentalBookingService {
           collected,
           this.round2(finalPaid - badDebt),
         );
+        const rate = Number(booking.taxRate) || 0;
+        // The final payment's own tax — the only tax not yet on the ledger.
+        const finalSplit = splitGrossTax(this.round2(finalPaid), rate);
+        // Deferred revenue holds net, so it is drawn down net; the revenue leg
+        // is the net of both halves, which is what the branch actually earned.
+        const deferredNet = splitGrossTax(this.round2(priorDeferred), rate).net;
+        const revenue = this.round2(deferredNet + finalSplit.net);
         const lines: JournalLineInput[] = [];
         if (cash > 0)
           lines.push({ accountCode: GlAccountCode.CASH, debit: cash });
@@ -162,11 +211,16 @@ export class PropertyRentalBookingService {
         if (priorDeferred > 0)
           lines.push({
             accountCode: GlAccountCode.DEFERRED_REVENUE,
-            debit: this.round2(priorDeferred),
+            debit: deferredNet,
+          });
+        if (finalSplit.tax > 0)
+          lines.push({
+            accountCode: GlAccountCode.TAX_PAYABLE,
+            credit: finalSplit.tax,
           });
         lines.push({
           accountCode: GlAccountCode.RENTAL_REVENUE,
-          credit: recognised,
+          credit: revenue,
         });
         await this.generalLedger.post({
           branchId: booking.branchId,
@@ -206,6 +260,11 @@ export class PropertyRentalBookingService {
         this.round2(deposit.forfeit),
         this.round2(held - refund),
       );
+      // A forfeited deposit is posted whole, with no tax split. It was taken as
+      // a refundable liability, not a sale, and whether keeping it is taxable
+      // supply or non-taxable compensation is a question of local law, not one
+      // the register can answer. Recording it untaxed states no position; a split
+      // invented here would.
       if (forfeit > 0) {
         await this.generalLedger.post({
           branchId: booking.branchId,
@@ -383,6 +442,9 @@ export class PropertyRentalBookingService {
           ? Number(dto.depositAmount)
           : 0,
       chargesTotal: 0,
+      // Captured once, here, and used by every later posting for this lease —
+      // see the column's note on why the live rate cannot be read at each one.
+      taxRate: await this.resolveOpeningTaxRate(dto.branchId),
       idempotencyKey: key,
       openedByUserId: actor?.id ?? null,
     });

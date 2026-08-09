@@ -3453,7 +3453,8 @@ CREATE TABLE public.pos_property_rental_bookings (
     "voidedAt" timestamp with time zone,
     payments jsonb,
     "depositForfeit" numeric(14,2),
-    "recognizedAmount" numeric(14,2) DEFAULT '0'::numeric NOT NULL
+    "recognizedAmount" numeric(14,2) DEFAULT '0'::numeric NOT NULL,
+    "taxRate" numeric(5,4) DEFAULT '0'::numeric NOT NULL
 );
 
 

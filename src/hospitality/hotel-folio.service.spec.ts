@@ -21,6 +21,7 @@ describe('HotelFolioService — partial payments', () => {
   let folioRepo: { findOne: jest.Mock; save: jest.Mock };
   let chargeRepo: { find: jest.Mock };
   let roomRepo: { findOne: jest.Mock; save: jest.Mock };
+  let branchRepo: { findOne: jest.Mock };
   let generalLedger: { post: jest.Mock };
 
   const openFolio = (over: Record<string, unknown> = {}) => ({
@@ -52,10 +53,20 @@ describe('HotelFolioService — partial payments', () => {
     chargeRepo = { find: jest.fn(async () => []) };
     roomRepo = { findOne: jest.fn(), save: jest.fn() };
     generalLedger = { post: jest.fn(async () => undefined) };
+    // Tax off by default so the existing gross-figure expectations still read as
+    // they always did; the tax tests below opt a branch in.
+    branchRepo = {
+      findOne: jest.fn(async () => ({
+        id: 3,
+        taxEnabled: false,
+        taxRate: 0.15,
+      })),
+    };
     service = new HotelFolioService(
       folioRepo as never,
       chargeRepo as never,
       roomRepo as never,
+      branchRepo as never,
       generalLedger as never,
     );
   });
@@ -275,6 +286,78 @@ describe('HotelFolioService — partial payments', () => {
         payments: [{ method: 'CASH', amount: 10000 }],
       });
       expect(folioRepo.save).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('tax on a settled folio', () => {
+    const lineFor = (entry: any, code: string) =>
+      entry.lines.find((l: any) => l.accountCode === code);
+    const sum = (entry: any, side: 'debit' | 'credit') =>
+      Math.round(
+        entry.lines.reduce(
+          (total: number, line: any) => total + Number(line[side] || 0),
+          0,
+        ) * 100,
+      ) / 100;
+
+    const taxedBranch = () => {
+      branchRepo.findOne = jest.fn(async () => ({
+        id: 4,
+        taxEnabled: true,
+        taxRate: 0.15,
+      }));
+    };
+
+    it('splits the folio total into revenue and tax payable', async () => {
+      // The POS checkout path skips accrual formats to avoid double-counting
+      // this entry, so this is the ONLY place a hotel's VAT reaches the ledger.
+      // Without the split a hotel shows zero tax owed however much it collected.
+      taxedBranch();
+      folioRepo.findOne.mockResolvedValue(
+        openFolio({ chargesTotal: 11500, paidAmount: null, payments: null }),
+      );
+
+      await service.settleFolio(91, {
+        payments: [{ method: 'CASH', amount: 11500 }],
+      });
+
+      const entry = generalLedger.post.mock.calls[0][0];
+      expect(lineFor(entry, '1000').debit).toBe(11500); // CASH — the gross taken
+      expect(lineFor(entry, '2100').credit).toBe(1500); // TAX_PAYABLE
+      expect(lineFor(entry, '4000').credit).toBe(10000); // SERVICE_REVENUE — net
+      expect(sum(entry, 'debit')).toBe(sum(entry, 'credit'));
+    });
+
+    it('keeps the entry balanced when the guest short-paid', async () => {
+      // The receivable is gross (it is what the guest still owes), while revenue
+      // is net — so the tax leg is what makes both sides meet.
+      taxedBranch();
+      folioRepo.findOne.mockResolvedValue(
+        openFolio({ chargesTotal: 11500, paidAmount: null, payments: null }),
+      );
+
+      await service.settleFolio(91, {
+        payments: [{ method: 'CASH', amount: 4000 }],
+      });
+
+      const entry = generalLedger.post.mock.calls[0][0];
+      expect(lineFor(entry, '1100').debit).toBe(7500); // ACCOUNTS_RECEIVABLE
+      expect(lineFor(entry, '2100').credit).toBe(1500); // tax is owed on the whole stay
+      expect(sum(entry, 'debit')).toBe(sum(entry, 'credit'));
+    });
+
+    it('posts no tax leg for a branch that does not charge tax', async () => {
+      folioRepo.findOne.mockResolvedValue(
+        openFolio({ chargesTotal: 11500, paidAmount: null, payments: null }),
+      );
+
+      await service.settleFolio(91, {
+        payments: [{ method: 'CASH', amount: 11500 }],
+      });
+
+      const entry = generalLedger.post.mock.calls[0][0];
+      expect(lineFor(entry, '2100')).toBeUndefined();
+      expect(lineFor(entry, '4000').credit).toBe(11500);
     });
   });
 });

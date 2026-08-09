@@ -122,4 +122,67 @@ describe('RevenueAccrualService.recognizeBooking', () => {
     expect(recognized).toBe(0);
     expect(generalLedger.post).not.toHaveBeenCalled();
   });
+
+  it('moves the NET out of deferred revenue on a taxed lease', async () => {
+    // Deferred revenue only ever received the net — the tax was credited to tax
+    // payable when the rent was collected. Recognizing the gross here would draw
+    // out more than went in and drive deferred revenue negative by the tax on
+    // every lease, permanently.
+    const generalLedger = { post: jest.fn().mockResolvedValue({ id: 1 }) };
+    const bookingRepo = { save: jest.fn(async (b: any) => b) };
+    const service = new RevenueAccrualService(
+      bookingRepo as never,
+      generalLedger as never,
+    );
+    const booking: any = {
+      id: 78,
+      branchId: 4,
+      currency: 'ETB',
+      ...baseBooking,
+      taxRate: 0.15,
+    };
+
+    await service.recognizeBooking(booking, new Date('2026-02-01T00:00:00Z'));
+
+    const entry = generalLedger.post.mock.calls[0][0];
+    expect(entry.lines.find((l: any) => l.accountCode === '2400').debit).toBe(
+      869.57,
+    ); // DEFERRED_REVENUE — net of the 15% already taxed at collection
+    expect(entry.lines.find((l: any) => l.accountCode === '4100').credit).toBe(
+      869.57,
+    ); // RENTAL_REVENUE
+    // No tax leg: the tax was already owed the day the money came in.
+    expect(
+      entry.lines.find((l: any) => l.accountCode === '2100'),
+    ).toBeUndefined();
+    // recognizedAmount stays in the booking's own gross terms so it keeps
+    // comparing against paidAmount.
+    expect(booking.recognizedAmount).toBe(1000);
+  });
+
+  it('uses the lease-stamped rate, not whatever the branch charges today', async () => {
+    // A booking opened before the owner switched tax on carries rate 0. Reading
+    // the branch live would net rent that was deferred gross and strand the
+    // difference in deferred revenue forever.
+    const generalLedger = { post: jest.fn().mockResolvedValue({ id: 1 }) };
+    const bookingRepo = { save: jest.fn(async (b: any) => b) };
+    const service = new RevenueAccrualService(
+      bookingRepo as never,
+      generalLedger as never,
+    );
+    const booking: any = {
+      id: 79,
+      branchId: 4,
+      currency: 'ETB',
+      ...baseBooking,
+      taxRate: 0,
+    };
+
+    await service.recognizeBooking(booking, new Date('2026-02-01T00:00:00Z'));
+
+    const entry = generalLedger.post.mock.calls[0][0];
+    expect(entry.lines.find((l: any) => l.accountCode === '2400').debit).toBe(
+      1000,
+    );
+  });
 });
