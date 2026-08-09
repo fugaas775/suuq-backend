@@ -646,4 +646,167 @@ describe('BranchFinancialReportsService', () => {
       expect(tb.lines[0].account).toBe('Cash');
     });
   });
+
+  describe('sales tax remittance', () => {
+    // A taxed sale: 1,150 collected in cash, of which 150 is VAT owed onward.
+    const TAXED_SALE = {
+      id: 1,
+      currency: 'ETB',
+      total: 1150,
+      taxAmount: 150,
+      status: PosCheckoutStatus.PROCESSED,
+      transactionType: PosCheckoutTransactionType.SALE,
+      registerSessionId: 1,
+      tenders: [{ method: 'CASH', amount: 1150 }],
+      items: [],
+    };
+
+    function stubBalanceSheet(repos: any, expenses: any[]) {
+      repos.checkoutsRepo.createQueryBuilder.mockReturnValue(
+        createBuilder([TAXED_SALE]),
+      );
+      repos.registerSessionsRepo.createQueryBuilder.mockReturnValue(
+        createBuilder([
+          {
+            id: 1,
+            registerId: 'front-counter',
+            status: PosRegisterSessionStatus.CLOSED,
+            openedAt: new Date('2026-08-01T08:00:00.000Z'),
+            closedAt: new Date('2026-08-01T18:00:00.000Z'),
+            openingFloat: null,
+            closingFloat: null,
+          },
+        ]),
+      );
+      repos.expensesRepo.createQueryBuilder.mockReturnValue(
+        createBuilder(expenses),
+      );
+      repos.fixedAssetsRepo.createQueryBuilder.mockReturnValue(
+        createBuilder([]),
+      );
+      repos.depreciationEntriesRepo.createQueryBuilder.mockReturnValue(
+        createBuilder([]),
+      );
+      repos.accruedLiabilitiesRepo.createQueryBuilder.mockReturnValue(
+        createBuilder([]),
+      );
+      repos.longTermDebtRepo.createQueryBuilder.mockReturnValue(
+        createBuilder([]),
+      );
+      repos.purchaseOrdersRepo.createQueryBuilder.mockReturnValue(
+        createBuilder([]),
+      );
+      repos.purchaseOrderItemsRepo.createQueryBuilder.mockReturnValue(
+        createBuilder([], true),
+      );
+    }
+
+    it('clears the payable by what has been remitted, and still takes the cash', async () => {
+      const repos = createService();
+      stubBalanceSheet(repos, [
+        {
+          amount: 100,
+          category: 'TAX_REMITTANCE',
+          occurredAt: new Date('2026-08-05T00:00:00.000Z'),
+        },
+      ]);
+
+      const bs = await repos.service.getBalanceSheet(44, {
+        asOfAt: new Date('2026-08-09T18:00:00.000Z'),
+      });
+
+      // 150 collected − 100 handed over = 50 still owed.
+      expect(bs.liabilities.current.taxPayable).toBe(50);
+      // The cash left the drawer exactly once: 1,150 taken − 100 paid out.
+      expect(bs.assets.cash).toBe(1050);
+    });
+
+    it('leaves the whole payable standing when nothing has been remitted', async () => {
+      const repos = createService();
+      stubBalanceSheet(repos, []);
+
+      const bs = await repos.service.getBalanceSheet(44, {
+        asOfAt: new Date('2026-08-09T18:00:00.000Z'),
+      });
+
+      expect(bs.liabilities.current.taxPayable).toBe(150);
+      expect(bs.assets.cash).toBe(1150);
+    });
+
+    it('does not let an ordinary expense clear the tax payable', async () => {
+      const repos = createService();
+      stubBalanceSheet(repos, [
+        {
+          amount: 100,
+          category: 'TAXES',
+          occurredAt: new Date('2026-08-05T00:00:00.000Z'),
+        },
+      ]);
+
+      const bs = await repos.service.getBalanceSheet(44, {
+        asOfAt: new Date('2026-08-09T18:00:00.000Z'),
+      });
+
+      expect(bs.liabilities.current.taxPayable).toBe(150);
+      expect(bs.assets.cash).toBe(1050);
+    });
+
+    it('floors an over-remittance at zero and says why', async () => {
+      const repos = createService();
+      stubBalanceSheet(repos, [
+        {
+          amount: 400,
+          category: 'TAX_REMITTANCE',
+          occurredAt: new Date('2026-08-05T00:00:00.000Z'),
+        },
+      ]);
+
+      const bs = await repos.service.getBalanceSheet(44, {
+        asOfAt: new Date('2026-08-09T18:00:00.000Z'),
+      });
+
+      expect(bs.liabilities.current.taxPayable).toBe(0);
+      expect(bs.notes).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining('remitted exceeds tax collected'),
+        ]),
+      );
+    });
+
+    it('keeps a remittance out of operating expenses in the P&L', async () => {
+      const repos = createService();
+      repos.checkoutsRepo.createQueryBuilder.mockReturnValue(
+        createBuilder([TAXED_SALE]),
+      );
+      repos.expensesRepo.createQueryBuilder.mockReturnValue(
+        createBuilder([
+          {
+            amount: 100,
+            category: 'TAX_REMITTANCE',
+            occurredAt: new Date('2026-08-05T00:00:00.000Z'),
+          },
+          {
+            amount: 40,
+            category: 'UTILITIES',
+            occurredAt: new Date('2026-08-05T00:00:00.000Z'),
+          },
+        ]),
+      );
+
+      const pl = await repos.service.getProfitAndLoss(44, {});
+
+      // Only the utilities bill is a cost. The remittance pays over tax that was
+      // already netted out of revenue, so charging it here would deduct it twice.
+      expect(pl.totalExpenses).toBe(40);
+      expect(pl.expensesByCategory.TAX_REMITTANCE).toBeUndefined();
+      expect(pl.expensesByCategory.UTILITIES).toBe(40);
+      expect(pl.revenue.net).toBe(1000);
+      expect(pl.netProfit).toBe(960);
+      expect(pl.notes).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining('not an operating expense'),
+        ]),
+      );
+    });
+  });
 });

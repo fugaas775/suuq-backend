@@ -328,5 +328,35 @@ describe('BranchBillingService', () => {
         expect.objectContaining({ idempotencyKey: 'reverse-expense-9' }),
       );
     });
+
+    it('posts a tax remittance against the liability, not as an expense', async () => {
+      // Handing collected VAT to the authority discharges TAX_PAYABLE. Debiting
+      // an expense account instead would deduct the same tax from profit twice
+      // and leave the payable standing forever.
+      const { service, generalLedger } = createService();
+      await service.createBranchExpense(44, 7, {
+        category: 'TAX_REMITTANCE',
+        amount: 1200,
+        occurredAt: new Date('2026-08-05T00:00:00.000Z'),
+      });
+      const entry = generalLedger.post.mock.calls[0][0];
+      expect(lineFor(entry, '2100').debit).toBe(1200); // TAX_PAYABLE
+      expect(lineFor(entry, '1000').credit).toBe(1200); // CASH
+      expect(lineFor(entry, '6060')).toBeUndefined(); // never EXPENSE_TAXES
+      expect(entry.memo).toBe('Sales tax remitted to the authority');
+    });
+
+    it('still books a genuine tax cost as an expense', async () => {
+      // TAXES stays what it was — a licence or municipal levy really is a cost.
+      const { service, generalLedger } = createService();
+      await service.createBranchExpense(44, 7, {
+        category: 'TAXES',
+        amount: 300,
+        occurredAt: new Date('2026-08-05T00:00:00.000Z'),
+      });
+      const entry = generalLedger.post.mock.calls[0][0];
+      expect(lineFor(entry, '6060').debit).toBe(300); // EXPENSE_TAXES
+      expect(lineFor(entry, '2100')).toBeUndefined(); // not the liability
+    });
   });
 });

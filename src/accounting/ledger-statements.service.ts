@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { GeneralLedgerService } from './general-ledger.service';
 import { GlAccountCode, GL_ACCOUNT_SEED } from './gl-accounts.constant';
+import { GlJournalSourceType } from './entities/gl-journal-entry.entity';
 
 export interface LedgerProfitAndLoss {
   revenueNet: number;
@@ -96,15 +97,17 @@ export class LedgerStatementsService {
     for (const code of COGS_ACCOUNTS) {
       cogs += await this.ledger.balance(branchId, code, period);
     }
-    // Net tax arising in the period (sales credits minus return debits). This
-    // matches the legacy signed tax figure today; when tax remittance is added
-    // it MUST post to a separate settlement path (not net here) or this will
-    // understate period tax — the reconciliation harness guards that.
-    const tax = await this.ledger.balance(
-      branchId,
-      GlAccountCode.TAX_PAYABLE,
-      period,
-    );
+    // Net tax ARISING in the period (sales credits minus return debits) — not
+    // the balance of the account, which also carries what has been paid over.
+    // A remittance debits TAX_PAYABLE from the EXPENSE source, so it is excluded
+    // here; leaving it in would net a payment against the period's own sales and
+    // understate the tax a return has to declare. (The earlier note here called
+    // for a separate settlement path; excluding the source achieves the same
+    // separation without a second account for the reconciler to keep in step.)
+    const tax = await this.ledger.balance(branchId, GlAccountCode.TAX_PAYABLE, {
+      ...period,
+      excludeSourceTypes: [GlJournalSourceType.EXPENSE],
+    });
 
     const expensesByCategory: Record<string, number> = {};
     let totalExpenses = 0;

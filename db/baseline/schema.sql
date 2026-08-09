@@ -82,7 +82,8 @@ CREATE TYPE public.branch_expenses_category_enum AS ENUM (
     'MARKETING',
     'MAINTENANCE',
     'TAXES',
-    'OTHER'
+    'OTHER',
+    'TAX_REMITTANCE'
 );
 
 

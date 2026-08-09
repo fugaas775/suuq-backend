@@ -23,8 +23,37 @@ export enum BranchExpenseCategory {
   SUPPLIES = 'SUPPLIES',
   MARKETING = 'MARKETING',
   MAINTENANCE = 'MAINTENANCE',
+  /** A tax that is a real cost of trading — a licence, a municipal levy. */
   TAXES = 'TAXES',
   OTHER = 'OTHER',
+  /**
+   * Paying collected sales tax (VAT) over to the authority.
+   *
+   * NOT an expense, despite living in this table: the money was never revenue,
+   * so it debits TAX_PAYABLE rather than an expense account and stays out of the
+   * P&L. It shares the table because the cash leg — money leaving the branch on
+   * a date — is identical to an expense's, and every cash and CRUD path here
+   * already handles that. See {@link isLiabilitySettlementCategory}.
+   */
+  TAX_REMITTANCE = 'TAX_REMITTANCE',
+}
+
+/**
+ * True for rows in this table that settle a liability rather than incur a cost.
+ *
+ * Every reader of branch_expenses has to make the same call — the ledger posting
+ * picks the debit account from it, the P&L leaves these out of operating
+ * expenses, and the balance sheet nets them off tax payable — so the test lives
+ * in one place. Cash is the exception that needs no test: the money left the
+ * branch either way, so every cash path treats all rows alike.
+ */
+export function isLiabilitySettlementCategory(
+  category?: string | null,
+): boolean {
+  return (
+    String(category || '').toUpperCase() ===
+    BranchExpenseCategory.TAX_REMITTANCE
+  );
 }
 
 @Entity('branch_expenses')

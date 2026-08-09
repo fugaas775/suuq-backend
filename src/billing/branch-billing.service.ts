@@ -28,7 +28,10 @@ import {
   BranchAccruedLiabilityStatus,
 } from './entities/branch-accrued-liability.entity';
 import { BranchDepreciationEntry } from './entities/branch-depreciation-entry.entity';
-import { BranchExpense } from './entities/branch-expense.entity';
+import {
+  BranchExpense,
+  isLiabilitySettlementCategory,
+} from './entities/branch-expense.entity';
 import {
   BranchFixedAsset,
   BranchFixedAssetStatus,
@@ -100,6 +103,24 @@ export class BranchBillingService {
   ) {}
 
   private readonly logger = new Logger(BranchBillingService.name);
+
+  /**
+   * The account a branch_expenses row debits.
+   *
+   * Normally an expense account. A TAX_REMITTANCE debits TAX_PAYABLE instead:
+   * handing collected VAT to the authority discharges the liability the sale
+   * created, it does not buy anything. Posting it as an expense would understate
+   * profit by the whole remittance AND leave the liability outstanding, so the
+   * branch would look like it still owed money it had already paid.
+   *
+   * Kept separate from {@link expenseAccountFor} because that one is also the
+   * accrued-liability mapping, where a settlement category has no meaning.
+   */
+  private expenseDebitAccountFor(category: string): GlAccountCode {
+    return isLiabilitySettlementCategory(category)
+      ? GlAccountCode.TAX_PAYABLE
+      : this.expenseAccountFor(category);
+  }
 
   /** Map an expense / accrued-liability category to its GL expense account. */
   private expenseAccountFor(category: string): GlAccountCode {
@@ -496,8 +517,10 @@ export class BranchBillingService {
       sourceId: `expense-${saved.id}`,
       idempotencyKey: `expense-${saved.id}`,
       currency: saved.currency,
-      memo: `Expense — ${saved.category}`,
-      debit: this.expenseAccountFor(saved.category),
+      memo: isLiabilitySettlementCategory(saved.category)
+        ? 'Sales tax remitted to the authority'
+        : `Expense — ${saved.category}`,
+      debit: this.expenseDebitAccountFor(saved.category),
       credit: GlAccountCode.CASH,
       amount: Number(saved.amount),
     });
