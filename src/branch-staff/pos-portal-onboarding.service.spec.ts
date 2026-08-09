@@ -208,14 +208,15 @@ describe('PosPortalOnboardingService', () => {
     });
   });
 
-  // A new branch starts with tax ON via the branches.taxEnabled column default.
-  // The way that silently breaks is a creation site passing the field itself —
-  // `create({ ..., taxEnabled: false })` omits nothing from the INSERT, so
-  // Postgres never applies its default and every new branch quietly charges
-  // nothing. Assert the field is absent rather than that it is true: at this
-  // layer the repository is mocked, so `true` would only ever be asserting the
-  // mock back to itself.
-  it('leaves taxEnabled to the column default so a new branch charges tax', async () => {
+  // Self-serve signup collects no tax identification number, and a business
+  // that is not tax-registered may not legally charge VAT — so a branch created
+  // this way starts untaxed rather than at the column's 15% default. It is not a
+  // block: Seller HQ prompts for the TIN and the toggle together, and an owner
+  // who is registered switches it on there.
+  //
+  // taxRate and taxInclusive are still left to the column defaults, so switching
+  // the toggle on is one click at the Ethiopian 15%, added on top.
+  it('starts a signup branch untaxed, since no tax id was collected', async () => {
     branchStaffService.getPosBranchSummariesForUser.mockResolvedValue([]);
     branchStaffService.getPosWorkspaceActivationCandidatesForUser
       .mockResolvedValueOnce([])
@@ -239,7 +240,7 @@ describe('PosPortalOnboardingService', () => {
     );
 
     const created = branchesRepository.create.mock.calls.at(-1)?.[0] ?? {};
-    expect(created).not.toHaveProperty('taxEnabled');
+    expect(created.taxEnabled).toBe(false);
     expect(created).not.toHaveProperty('taxRate');
     expect(created).not.toHaveProperty('taxInclusive');
   });

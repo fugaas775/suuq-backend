@@ -117,9 +117,9 @@ export class Branch {
    * else's tax registration. Only ever flip an existing branch through Seller HQ,
    * by its own owner.
    *
-   * No creation site sets this explicitly — they all let the column default
-   * apply. Passing it into `branchesRepository.create()` would silently defeat
-   * the default.
+   * Creation sites now set this explicitly, from
+   * {@link shouldEnableTaxForNewBranch} — the column default only still applies
+   * to rows inserted by a path that predates that call.
    */
   @Column({ type: 'boolean', default: true })
   taxEnabled!: boolean;
@@ -173,6 +173,21 @@ export class Branch {
   taxInclusive!: boolean;
 
   /**
+   * What this branch's tax is CALLED on a receipt — "VAT", "TOT", "Sales Tax".
+   * Null means VAT, which is what every receipt printed before this existed.
+   *
+   * A name, not a regime. The system has no input-credit concept, so an
+   * Ethiopian business on Turnover Tax differs from one on VAT in exactly two
+   * ways a till can see: the rate, and the word on the slip. Modelling TOT as a
+   * second regime would add machinery that computes the same numbers.
+   *
+   * It matters because printing "VAT" on the receipt of a business that is not
+   * VAT-registered misstates its tax status to its own customers.
+   */
+  @Column({ type: 'varchar', length: 32, nullable: true })
+  taxName?: string | null;
+
+  /**
    * Per-branch layout for the branch-customizable Home page (POS `/home`) — which
    * widgets show and in what order, custom quick-links, a welcome note and
    * branding. Null = never customized; the client renders a per-format default.
@@ -203,4 +218,25 @@ export class Branch {
 
   @UpdateDateColumn()
   updatedAt!: Date;
+}
+
+/**
+ * Whether a BRAND-NEW branch should start charging tax.
+ *
+ * Only if it has a tax identification number. A TIN is the closest thing the
+ * signup flow has to proof of tax registration, and a business that is not
+ * registered may not legally charge VAT — so defaulting an unidentified branch
+ * to 15% points it at an offence on its very first sale. It also has nowhere to
+ * print a TIN on the receipt, which a tax invoice requires.
+ *
+ * Deliberately not a hard block: an owner who is registered but has not typed
+ * their number in yet can still switch tax on in Seller HQ, which prompts for
+ * the TIN. This only decides where a new branch STARTS.
+ *
+ * Existing branches are untouched — this is consulted at creation only.
+ */
+export function shouldEnableTaxForNewBranch(
+  tinNumber?: string | null,
+): boolean {
+  return Boolean(String(tinNumber ?? '').trim());
 }

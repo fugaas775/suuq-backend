@@ -128,6 +128,14 @@ export class PosPortalBranchSummaryDto {
   taxInclusive!: boolean;
 
   @ApiPropertyOptional({
+    description:
+      'What this branch calls its tax on a receipt — VAT, TOT, Sales Tax. ' +
+      'Null means VAT.',
+    nullable: true,
+  })
+  taxName!: string | null;
+
+  @ApiPropertyOptional({
     nullable: true,
     description:
       'Per-branch layout for the customizable Home page (widgets, order, ' +

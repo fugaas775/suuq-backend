@@ -14,7 +14,10 @@ import {
   BranchStaffAssignment,
   BranchStaffRole,
 } from '../branch-staff/entities/branch-staff-assignment.entity';
-import { Branch } from '../branches/entities/branch.entity';
+import {
+  Branch,
+  shouldEnableTaxForNewBranch,
+} from '../branches/entities/branch.entity';
 import { linkBranchToVendorStore } from '../branches/branch-store-link';
 import { BranchHomeConfig } from '../branches/entities/branch-home-config.type';
 import { BranchInventory } from '../branches/entities/branch-inventory.entity';
@@ -455,6 +458,7 @@ export class SellerWorkspaceService {
           taxEnabled: Boolean(branch.taxEnabled),
           taxRate: Number(branch.taxRate ?? 0.15),
           taxInclusive: Boolean(branch.taxInclusive),
+          taxName: branch.taxName ?? null,
           homeConfig: branch.homeConfig ?? null,
           vendorStoreId:
             vendorStoresByBranchId.get(branch.branchId)?.id ?? null,
@@ -528,6 +532,7 @@ export class SellerWorkspaceService {
           taxEnabled: Boolean(candidate.taxEnabled),
           taxRate: Number(candidate.taxRate ?? 0.15),
           taxInclusive: Boolean(candidate.taxInclusive),
+          taxName: candidate.taxName ?? null,
           homeConfig: candidate.homeConfig ?? null,
           vendorStoreId:
             vendorStoresByBranchId.get(candidate.branchId)?.id ?? null,
@@ -741,6 +746,9 @@ export class SellerWorkspaceService {
           country: normalizedCountry,
           phone: dto.phone?.trim() || null,
           tinNumber: dto.tinNumber?.trim() || null,
+          // A branch with no tax id starts untaxed — it cannot legally charge
+          // VAT unregistered, and has no TIN to print on the invoice.
+          taxEnabled: shouldEnableTaxForNewBranch(dto.tinNumber),
           isActive: true,
         });
 
@@ -2387,6 +2395,10 @@ export class SellerWorkspaceService {
     if (dto.taxEnabled !== undefined) updates.taxEnabled = dto.taxEnabled;
     if (dto.taxRate !== undefined) updates.taxRate = dto.taxRate;
     if (dto.taxInclusive !== undefined) updates.taxInclusive = dto.taxInclusive;
+    // Empty string clears it back to the default label rather than printing a
+    // blank tax row.
+    if (dto.taxName !== undefined)
+      updates.taxName = dto.taxName ? dto.taxName.trim() || null : null;
     if (dto.homeConfig !== undefined) {
       // firstRun is server-owned, and the client's Home normalizer only carries
       // the layout — so a layout save must not erase the milestones.

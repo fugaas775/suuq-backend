@@ -21,7 +21,10 @@ import {
   BranchStaffAssignment,
   BranchStaffRole,
 } from './entities/branch-staff-assignment.entity';
-import { Branch } from '../branches/entities/branch.entity';
+import {
+  Branch,
+  shouldEnableTaxForNewBranch,
+} from '../branches/entities/branch.entity';
 import { User } from '../users/entities/user.entity';
 import {
   TenantBillingInterval,
@@ -720,6 +723,8 @@ export class PosWorkspaceActivationService {
       country: pending.country ?? null,
       phone: (pending as any).phone ?? null,
       tinNumber: (pending as any).tinNumber ?? null,
+      // See shouldEnableTaxForNewBranch: no tax id, no tax.
+      taxEnabled: shouldEnableTaxForNewBranch((pending as any).tinNumber),
       isActive: true,
     });
     const savedBranch = await this.branchesRepository.save(branch);

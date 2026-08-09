@@ -77,6 +77,7 @@ export interface PosBranchSummary {
   taxEnabled: boolean;
   taxRate: number;
   taxInclusive: boolean;
+  taxName: string | null;
   homeConfig: BranchHomeConfig | null;
   posExperienceProfileCode: string | null;
 }
@@ -98,6 +99,7 @@ export interface PosWorkspaceActivationCandidate {
   taxEnabled: boolean;
   taxRate: number;
   taxInclusive: boolean;
+  taxName: string | null;
   homeConfig: BranchHomeConfig | null;
   role: BranchStaffRole;
   permissions: string[];
@@ -668,6 +670,7 @@ export class BranchStaffService {
           taxEnabled: Boolean(summary.taxEnabled),
           taxRate: Number(summary.taxRate ?? 0.15),
           taxInclusive: Boolean(summary.taxInclusive),
+          taxName: summary.taxName ?? null,
           homeConfig: summary.homeConfig ?? null,
           role: summary.role,
           isOwner: summary.isOwner,
@@ -1073,6 +1076,7 @@ export class BranchStaffService {
         taxEnabled: Boolean(branch.taxEnabled),
         taxRate: Number(branch.taxRate ?? 0.15),
         taxInclusive: Boolean(branch.taxInclusive),
+        taxName: branch.taxName ?? null,
         homeConfig: branch.homeConfig ?? null,
         role: BranchStaffRole.MANAGER,
         permissions: [],
@@ -1129,6 +1133,7 @@ export class BranchStaffService {
           taxEnabled: Boolean(branch.taxEnabled),
           taxRate: Number(branch.taxRate ?? 0.15),
           taxInclusive: Boolean(branch.taxInclusive),
+          taxName: branch.taxName ?? null,
           homeConfig: branch.homeConfig ?? null,
           role: BranchStaffRole.MANAGER,
           permissions: [],
@@ -1198,6 +1203,7 @@ export class BranchStaffService {
         taxInclusive: Boolean(
           existing?.taxInclusive ?? assignment.branch.taxInclusive ?? false,
         ),
+        taxName: existing?.taxName ?? assignment.branch.taxName ?? null,
         homeConfig:
           existing?.homeConfig ?? assignment.branch.homeConfig ?? null,
         role: assignment.role ?? existing?.role ?? BranchStaffRole.OPERATOR,

@@ -273,6 +273,19 @@ export class UpdateBranchWorkspaceDto {
 
   @ApiPropertyOptional({
     description:
+      'What the tax is CALLED on receipts and invoices — "VAT", "TOT", ' +
+      '"Sales Tax". Null or empty means VAT. A name, not a regime: the rate ' +
+      'is what changes the money.',
+    example: 'TOT',
+    nullable: true,
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(32)
+  taxName?: string | null;
+
+  @ApiPropertyOptional({
+    description:
       'Per-branch layout for the customizable Home page (widgets, order, ' +
       'quick-links, welcome note, branding). Send null to reset to the ' +
       'per-format default.',

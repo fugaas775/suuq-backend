@@ -162,6 +162,9 @@ export class PosPortalOnboardingService {
         city: dto.city?.trim() || null,
         country: dto.country?.trim() || null,
         phone: dto.phone?.trim() || null,
+        // Self-serve signup collects no tax id, so a new branch starts
+        // untaxed. Seller HQ prompts for the TIN and the toggle together.
+        taxEnabled: false,
         isActive: true,
         // Picking the format on the way in IS the business-type confirmation —
         // the owner was asked and answered. Without this the Seller HQ first-run
@@ -348,6 +351,8 @@ export class PosPortalOnboardingService {
         ownerId: user.id,
         retailTenantId: tenant.id,
         serviceFormat: POS_SELF_SERVE_TRIAL_SERVICE_FORMAT,
+        // Trial workspace, no tax id collected — starts untaxed.
+        taxEnabled: false,
         isActive: true,
       }),
     );
