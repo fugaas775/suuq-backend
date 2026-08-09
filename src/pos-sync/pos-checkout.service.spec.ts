@@ -2218,4 +2218,213 @@ describe('PosCheckoutService', () => {
       expect(savedCheckout()?.status).toBe(PosCheckoutStatus.PROCESSED);
     });
   });
+
+  describe('getTaxSummary', () => {
+    const stubCheckouts = (rows: any[]) => {
+      posCheckoutsRepository.createQueryBuilder.mockReturnValue({
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue(rows),
+      });
+    };
+
+    const sale = (over: Record<string, any> = {}) => ({
+      currency: 'ETB',
+      transactionType: PosCheckoutTransactionType.SALE,
+      registerSessionId: 21,
+      registerId: 'pos-s-web',
+      items: [],
+      ...over,
+    });
+
+    it('takes the header as the authority when a manual discount was stripped from items', async () => {
+      // The register's RETAIL manual discount rides the cart as a negative line
+      // and is stripped from items[] on the wire; its negative tax survives only
+      // in the header. Summing items alone reports 150 on a 1,000 base, when the
+      // customer paid 135 on 900.
+      stubCheckouts([
+        sale({
+          taxAmount: 135,
+          total: 1035,
+          items: [
+            {
+              taxRate: 0.15,
+              taxableBase: 1000,
+              taxAmount: 150,
+              lineTotal: 1150,
+            },
+          ],
+        }),
+      ]);
+
+      const result = await service.getTaxSummary({ branchId: 3 });
+
+      expect(result.taxAmount).toBe(135);
+      expect(result.taxableBase).toBe(900);
+      expect(result.breakdown).toEqual([
+        expect.objectContaining({
+          rate: 0.15,
+          taxableBase: 900,
+          taxAmount: 135,
+        }),
+      ]);
+      expect(result.shifts[0]).toEqual(
+        expect.objectContaining({ taxableBase: 900, taxAmount: 135 }),
+      );
+    });
+
+    it('leaves an undiscounted sale exactly as its lines report it', async () => {
+      stubCheckouts([
+        sale({
+          taxAmount: 150,
+          total: 1150,
+          items: [
+            {
+              taxRate: 0.15,
+              taxableBase: 1000,
+              taxAmount: 150,
+              lineTotal: 1150,
+            },
+          ],
+        }),
+      ]);
+
+      const result = await service.getTaxSummary({ branchId: 3 });
+
+      expect(result.taxAmount).toBe(150);
+      expect(result.taxableBase).toBe(1000);
+      expect(result.effectiveRate).toBeCloseTo(0.15, 6);
+    });
+
+    it('spreads the residual across rates in proportion to their base', async () => {
+      // 1,000 at 15% + 1,000 at 5%, then 200 off. Tax charged = 150 + 50 − 20 = 180
+      // on a base of 1,800, and each rate absorbs half the discount.
+      stubCheckouts([
+        sale({
+          taxAmount: 180,
+          total: 1980,
+          items: [
+            {
+              taxRate: 0.15,
+              taxableBase: 1000,
+              taxAmount: 150,
+              lineTotal: 1150,
+            },
+            {
+              taxRate: 0.05,
+              taxableBase: 1000,
+              taxAmount: 50,
+              lineTotal: 1050,
+            },
+          ],
+        }),
+      ]);
+
+      const result = await service.getTaxSummary({ branchId: 3 });
+
+      expect(result.taxAmount).toBe(180);
+      expect(result.taxableBase).toBe(1800);
+      const sum = result.breakdown.reduce((s, b) => s + b.taxAmount, 0);
+      expect(Math.round(sum * 100) / 100).toBe(180);
+    });
+
+    it('charges the residual to the taxed rate, never to zero-rated turnover', async () => {
+      stubCheckouts([
+        sale({
+          taxAmount: 135,
+          total: 1535,
+          items: [
+            {
+              taxRate: 0.15,
+              taxableBase: 1000,
+              taxAmount: 150,
+              lineTotal: 1150,
+            },
+            { taxRate: 0, taxableBase: 500, taxAmount: 0, lineTotal: 500 },
+          ],
+        }),
+      ]);
+
+      const result = await service.getTaxSummary({ branchId: 3 });
+
+      expect(result.zeroRatedBase).toBe(500);
+      expect(result.taxableBase).toBe(900);
+      expect(result.taxAmount).toBe(135);
+    });
+
+    it('nets a return out of the period', async () => {
+      stubCheckouts([
+        sale({
+          taxAmount: 150,
+          total: 1150,
+          items: [
+            {
+              taxRate: 0.15,
+              taxableBase: 1000,
+              taxAmount: 150,
+              lineTotal: 1150,
+            },
+          ],
+        }),
+        sale({
+          transactionType: PosCheckoutTransactionType.RETURN,
+          taxAmount: 15,
+          total: 115,
+          items: [
+            { taxRate: 0.15, taxableBase: 100, taxAmount: 15, lineTotal: 115 },
+          ],
+        }),
+      ]);
+
+      const result = await service.getTaxSummary({ branchId: 3 });
+
+      expect(result.taxAmount).toBe(135);
+      expect(result.taxableBase).toBe(900);
+      expect(result.settledCount).toBe(1);
+      expect(result.returnCount).toBe(1);
+    });
+
+    it('derives a bucket from the header when a legacy row carries no items', async () => {
+      stubCheckouts([sale({ taxAmount: 150, total: 1150, items: [] })]);
+
+      const result = await service.getTaxSummary({ branchId: 3 });
+
+      expect(result.taxableBase).toBe(1000);
+      expect(result.taxAmount).toBe(150);
+      expect(result.breakdown[0].rate).toBe(0.15);
+    });
+
+    it('counts untaxed turnover as zero-rated base rather than dropping it', async () => {
+      stubCheckouts([sale({ taxAmount: 0, total: 800, items: [] })]);
+
+      const result = await service.getTaxSummary({ branchId: 3 });
+
+      expect(result.zeroRatedBase).toBe(800);
+      expect(result.taxableBase).toBe(0);
+      expect(result.taxAmount).toBe(0);
+    });
+
+    it('does not bucket a taxed legacy line as zero-rated when its rate is null', async () => {
+      stubCheckouts([
+        sale({
+          taxAmount: 150,
+          total: 1150,
+          items: [
+            {
+              taxRate: null,
+              taxableBase: 1000,
+              taxAmount: 150,
+              lineTotal: 1150,
+            },
+          ],
+        }),
+      ]);
+
+      const result = await service.getTaxSummary({ branchId: 3 });
+
+      expect(result.breakdown[0].rate).toBe(0.15);
+      expect(result.zeroRatedBase).toBe(0);
+      expect(result.taxableBase).toBe(1000);
+    });
+  });
 });

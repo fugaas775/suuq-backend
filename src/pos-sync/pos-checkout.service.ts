@@ -2445,6 +2445,169 @@ export class PosCheckoutService {
     return checkout.metadata?.loyaltySummary ?? null;
   }
 
+  /**
+   * One checkout → its taxable base and tax, split per rate, for the VAT return.
+   *
+   * The CHECKOUT HEADER is the authority for how much tax was charged, and
+   * `items[]` only decides how that figure is split across rates. That order
+   * matters: the register carries a RETAIL manual discount as a negative cart
+   * line, and `buildCheckoutSyncPayload` strips that line from `items[]`
+   * (the ingest DTO rejects `unitPrice < 0`) while keeping the discount in the
+   * header's `discountAmount`/`taxAmount`/`total`. Summing the lines therefore
+   * counts the tax on money the customer never paid — a 1,000 basket with a 100
+   * discount at 15% reports 150 tax on a 1,000 base instead of 135 on 900, so
+   * the return over-declares by `rate × discount` on every discounted sale.
+   *
+   * Any gap between the lines and the header is pushed back onto the rate
+   * buckets in proportion to their base, so the bucket totals always add up to
+   * the header exactly. With a single rate — every branch today, since the rate
+   * is one branch-level scalar — the whole residual lands on that rate and the
+   * split is exact, not approximate.
+   *
+   * A checkout with no line detail at all (legacy ingests) derives a single
+   * bucket from the header. Untaxed turnover still contributes its base at rate
+   * 0, so `taxableBase + zeroRatedBase` is the period's net turnover whether or
+   * not the branch charges tax.
+   */
+  private splitCheckoutForTaxSummary(checkout: PosCheckout): Array<{
+    rate: number;
+    taxableBase: number;
+    taxAmount: number;
+    lineCount: number;
+  }> {
+    const headerTax = this.roundMoney(Number(checkout.taxAmount ?? 0) || 0);
+    const headerTotal = this.roundMoney(Number(checkout.total ?? 0) || 0);
+    const headerBase = this.roundMoney(headerTotal - headerTax);
+
+    const lines = Array.isArray(checkout.items) ? checkout.items : [];
+    const byRate = new Map<
+      number,
+      {
+        rate: number;
+        taxableBase: number;
+        taxAmount: number;
+        lineCount: number;
+      }
+    >();
+    let lineTax = 0;
+    let lineBase = 0;
+
+    for (const line of lines) {
+      const lineTaxAmount = Number(line.taxAmount ?? 0) || 0;
+      const lineTaxableBase =
+        Number(
+          line.taxableBase ?? Number(line.lineTotal ?? 0) - lineTaxAmount,
+        ) || 0;
+      // `taxRate` is stored as null when the client did not stamp one, and
+      // `Number(null)` is 0 — a finite value that would silently bucket a taxed
+      // legacy line as zero-rated. Only an explicitly numeric rate is trusted.
+      const rawRate =
+        line.taxRate === null || line.taxRate === undefined
+          ? Number.NaN
+          : Number(line.taxRate);
+      const rate = Number.isFinite(rawRate)
+        ? rawRate
+        : lineTaxableBase > 0
+          ? lineTaxAmount / lineTaxableBase
+          : 0;
+      const rateKey = Math.round(rate * 10000) / 10000;
+
+      if (!byRate.has(rateKey)) {
+        byRate.set(rateKey, {
+          rate: rateKey,
+          taxableBase: 0,
+          taxAmount: 0,
+          lineCount: 0,
+        });
+      }
+      const bucket = byRate.get(rateKey);
+      bucket.taxableBase = this.roundMoney(
+        bucket.taxableBase + lineTaxableBase,
+      );
+      bucket.taxAmount = this.roundMoney(bucket.taxAmount + lineTaxAmount);
+      bucket.lineCount += 1;
+      lineBase = this.roundMoney(lineBase + lineTaxableBase);
+      lineTax = this.roundMoney(lineTax + lineTaxAmount);
+    }
+
+    const contributions = Array.from(byRate.values());
+    if (!contributions.length) {
+      if (headerTax === 0 && headerBase === 0) {
+        return [];
+      }
+      const derived = headerBase > 0 ? headerTax / headerBase : 0;
+      return [
+        {
+          rate: Math.round(derived * 10000) / 10000,
+          taxableBase: headerBase,
+          taxAmount: headerTax,
+          lineCount: 1,
+        },
+      ];
+    }
+
+    this.reconcileTaxContributions(
+      contributions,
+      this.roundMoney(headerBase - lineBase),
+      this.roundMoney(headerTax - lineTax),
+    );
+    return contributions;
+  }
+
+  /**
+   * Spreads a base/tax residual across rate buckets in proportion to their
+   * base, so the buckets sum to the checkout header to the cent. Charges it to
+   * the taxed buckets when there are any — a discount that was taxed came off a
+   * taxed line, never off a zero-rated one — and the last bucket absorbs the
+   * rounding remainder so nothing is lost or invented.
+   */
+  private reconcileTaxContributions(
+    contributions: Array<{
+      rate: number;
+      taxableBase: number;
+      taxAmount: number;
+    }>,
+    baseResidual: number,
+    taxResidual: number,
+  ): void {
+    if (Math.abs(baseResidual) < 0.005 && Math.abs(taxResidual) < 0.005) {
+      return;
+    }
+    const taxed = contributions.filter((bucket) => bucket.rate > 0);
+    const targets = taxed.length ? taxed : contributions;
+    const totalWeight = targets.reduce(
+      (sum, bucket) => sum + Math.abs(bucket.taxableBase),
+      0,
+    );
+
+    if (totalWeight <= 0) {
+      targets[0].taxableBase = this.roundMoney(
+        targets[0].taxableBase + baseResidual,
+      );
+      targets[0].taxAmount = this.roundMoney(
+        targets[0].taxAmount + taxResidual,
+      );
+      return;
+    }
+
+    let allocatedBase = 0;
+    let allocatedTax = 0;
+    targets.forEach((bucket, index) => {
+      const last = index === targets.length - 1;
+      const weight = Math.abs(bucket.taxableBase) / totalWeight;
+      const baseShare = last
+        ? this.roundMoney(baseResidual - allocatedBase)
+        : this.roundMoney(baseResidual * weight);
+      const taxShare = last
+        ? this.roundMoney(taxResidual - allocatedTax)
+        : this.roundMoney(taxResidual * weight);
+      bucket.taxableBase = this.roundMoney(bucket.taxableBase + baseShare);
+      bucket.taxAmount = this.roundMoney(bucket.taxAmount + taxShare);
+      allocatedBase = this.roundMoney(allocatedBase + baseShare);
+      allocatedTax = this.roundMoney(allocatedTax + taxShare);
+    });
+  }
+
   async getTaxSummary(
     query: TaxSummaryQueryDto,
   ): Promise<TaxSummaryResponseDto> {
@@ -2528,23 +2691,8 @@ export class PosCheckoutService {
       }
       const shift = shiftMap.get(shiftKey);
 
-      const lines = Array.isArray(checkout.items) ? checkout.items : [];
-      let lineLevelTax = false;
-
-      for (const line of lines) {
-        const lineTaxAmount = Number(line.taxAmount ?? 0) || 0;
-        const lineTaxableBase =
-          Number(
-            line.taxableBase ?? Number(line.lineTotal ?? 0) - lineTaxAmount,
-          ) || 0;
-        const rawRate = line.taxRate;
-        const rate = Number.isFinite(Number(rawRate))
-          ? Number(rawRate)
-          : lineTaxableBase > 0
-            ? lineTaxAmount / lineTaxableBase
-            : 0;
-        const rateKey = Math.round(rate * 10000) / 10000;
-
+      for (const part of this.splitCheckoutForTaxSummary(checkout)) {
+        const rateKey = part.rate;
         if (!rateMap.has(rateKey)) {
           rateMap.set(rateKey, {
             rate: rateKey,
@@ -2554,53 +2702,19 @@ export class PosCheckoutService {
           });
         }
         const bucket = rateMap.get(rateKey);
-        bucket.taxableBase += sign * lineTaxableBase;
-        bucket.taxAmount += sign * lineTaxAmount;
-        bucket.lineCount += 1;
+        bucket.taxableBase += sign * part.taxableBase;
+        bucket.taxAmount += sign * part.taxAmount;
+        bucket.lineCount += part.lineCount;
 
-        taxAmount += sign * lineTaxAmount;
+        taxAmount += sign * part.taxAmount;
         if (rateKey === 0) {
-          zeroRatedBase += sign * lineTaxableBase;
-          shift.zeroRatedBase += sign * lineTaxableBase;
+          zeroRatedBase += sign * part.taxableBase;
+          shift.zeroRatedBase += sign * part.taxableBase;
         } else {
-          taxableBase += sign * lineTaxableBase;
-          shift.taxableBase += sign * lineTaxableBase;
+          taxableBase += sign * part.taxableBase;
+          shift.taxableBase += sign * part.taxableBase;
         }
-        shift.taxAmount += sign * lineTaxAmount;
-        lineLevelTax = true;
-      }
-
-      // Fall back to checkout-level totals when lines were not recorded
-      // (e.g. legacy ingests).
-      if (!lineLevelTax) {
-        const checkoutTax = Number(checkout.taxAmount ?? 0) || 0;
-        if (checkoutTax !== 0) {
-          const checkoutTotal = Number(checkout.total ?? 0) || 0;
-          const checkoutTaxable = Math.max(0, checkoutTotal - checkoutTax);
-          const rate = checkoutTaxable > 0 ? checkoutTax / checkoutTaxable : 0;
-          const rateKey = Math.round(rate * 10000) / 10000;
-          if (!rateMap.has(rateKey)) {
-            rateMap.set(rateKey, {
-              rate: rateKey,
-              taxableBase: 0,
-              taxAmount: 0,
-              lineCount: 0,
-            });
-          }
-          const bucket = rateMap.get(rateKey);
-          bucket.taxableBase += sign * checkoutTaxable;
-          bucket.taxAmount += sign * checkoutTax;
-          bucket.lineCount += 1;
-          taxAmount += sign * checkoutTax;
-          if (rateKey === 0) {
-            zeroRatedBase += sign * checkoutTaxable;
-            shift.zeroRatedBase += sign * checkoutTaxable;
-          } else {
-            taxableBase += sign * checkoutTaxable;
-            shift.taxableBase += sign * checkoutTaxable;
-          }
-          shift.taxAmount += sign * checkoutTax;
-        }
+        shift.taxAmount += sign * part.taxAmount;
       }
     }
 
