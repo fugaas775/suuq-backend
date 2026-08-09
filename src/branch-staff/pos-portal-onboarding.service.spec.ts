@@ -208,6 +208,42 @@ describe('PosPortalOnboardingService', () => {
     });
   });
 
+  // A new branch starts with tax ON via the branches.taxEnabled column default.
+  // The way that silently breaks is a creation site passing the field itself —
+  // `create({ ..., taxEnabled: false })` omits nothing from the INSERT, so
+  // Postgres never applies its default and every new branch quietly charges
+  // nothing. Assert the field is absent rather than that it is true: at this
+  // layer the repository is mocked, so `true` would only ever be asserting the
+  // mock back to itself.
+  it('leaves taxEnabled to the column default so a new branch charges tax', async () => {
+    branchStaffService.getPosBranchSummariesForUser.mockResolvedValue([]);
+    branchStaffService.getPosWorkspaceActivationCandidatesForUser
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        {
+          branchId: 21,
+          branchName: 'Main Branch',
+          branchCode: 'BL-21',
+          workspaceStatus: 'PAYMENT_REQUIRED',
+        },
+      ]);
+
+    await service.createWorkspaceForUser(
+      { id: 9, email: 'seller@suuq.test', roles: ['VENDOR'] } as User,
+      {
+        businessName: 'Bole Bites',
+        branchName: 'Main Branch',
+        categoryId: 14,
+        defaultCurrency: 'ETB',
+      },
+    );
+
+    const created = branchesRepository.create.mock.calls.at(-1)?.[0] ?? {};
+    expect(created).not.toHaveProperty('taxEnabled');
+    expect(created).not.toHaveProperty('taxRate');
+    expect(created).not.toHaveProperty('taxInclusive');
+  });
+
   it('rejects hospitality-first onboarding until rollout is enabled', async () => {
     const oldVal = process.env.POS_HOSPITALITY_SERVICE_FORMATS_ENABLED;
     process.env.POS_HOSPITALITY_SERVICE_FORMATS_ENABLED = 'false';

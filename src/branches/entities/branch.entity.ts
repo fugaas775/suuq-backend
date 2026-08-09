@@ -104,11 +104,24 @@ export class Branch {
   logoUrl?: string | null;
 
   /**
-   * Whether this branch charges tax (VAT) on sales. Off by default so every
-   * existing branch keeps trading exactly as before until its owner opts in
-   * from Seller HQ. All service formats honour it.
+   * Whether this branch charges tax (VAT) on sales. All service formats honour it.
+   *
+   * Defaults to TRUE (2026-08-07): a branch created from here on starts charging
+   * tax at {@link taxRate}, added on top of the price ({@link taxInclusive} is
+   * false). Owners who should not be charging it turn it off in Seller HQ.
+   *
+   * Changing this default deliberately did NOT touch the branches that already
+   * existed — they were created under `false` and keep it, because switching tax
+   * on for a trading business raises every price it charges by the rate, and on
+   * a multi-tenant platform that is somebody else's customers and somebody
+   * else's tax registration. Only ever flip an existing branch through Seller HQ,
+   * by its own owner.
+   *
+   * No creation site sets this explicitly — they all let the column default
+   * apply. Passing it into `branchesRepository.create()` would silently defeat
+   * the default.
    */
-  @Column({ type: 'boolean', default: false })
+  @Column({ type: 'boolean', default: true })
   taxEnabled!: boolean;
 
   /**
