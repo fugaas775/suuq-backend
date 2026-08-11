@@ -5,6 +5,7 @@ import {
   BranchStaffRole,
 } from '../entities/branch-staff-assignment.entity';
 import { RetailModule } from '../../retail/entities/tenant-module-entitlement.entity';
+import { BranchHomeConfig } from '../../branches/entities/branch-home-config.type';
 import {
   TenantBillingInterval,
   TenantSubscriptionStatus,
@@ -87,6 +88,60 @@ export class PosPortalBranchSummaryDto {
 
   @ApiPropertyOptional({ nullable: true })
   posExperienceProfileCode!: string | null;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    example: '11:00',
+    description:
+      'HOTEL standard checkout time "HH:MM" 24h. Seeds the folio default time ' +
+      'and the early/late fee boundary on the register. Null = 11:00 default.',
+  })
+  checkoutPolicyTime!: string | null;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description:
+      'Brand logo URL for this branch, shown in the register badge and on receipts.',
+  })
+  logoUrl!: string | null;
+
+  @ApiPropertyOptional({
+    description:
+      'Whether this branch charges tax (VAT) on sales. Drives the register ' +
+      'cart math and the VAT row on receipts. Applies to all service formats.',
+  })
+  taxEnabled!: boolean;
+
+  @ApiPropertyOptional({
+    description:
+      'Tax (VAT) rate as a FRACTION — 0.15 is 15%. Ignored while taxEnabled ' +
+      'is false. Tax is exclusive: added on top of the discounted subtotal.',
+    example: 0.15,
+  })
+  taxRate!: number;
+
+  @ApiPropertyOptional({
+    description:
+      'Whether catalog prices already contain the tax. false = exclusive (tax ' +
+      'added at checkout); true = inclusive (extracted out of the shelf price).',
+  })
+  taxInclusive!: boolean;
+
+  @ApiPropertyOptional({
+    description:
+      'What this branch calls its tax on a receipt — VAT, TOT, Sales Tax. ' +
+      'Null means VAT.',
+    nullable: true,
+  })
+  taxName!: string | null;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description:
+      'Per-branch layout for the customizable Home page (widgets, order, ' +
+      'quick-links, welcome note, branding). Null = per-format default.',
+  })
+  homeConfig!: BranchHomeConfig | null;
 }
 
 export class PosPortalSessionResponseDto {
@@ -121,7 +176,7 @@ export class PosPortalSubscriptionOptionDto {
   @ApiProperty({ example: 1 })
   months!: number;
 
-  @ApiProperty({ example: 1900 })
+  @ApiProperty({ example: 3900 })
   amount!: number;
 
   @ApiProperty({ example: 'ETB' })
@@ -135,7 +190,7 @@ export class PosPortalSubscriptionOptionDto {
 }
 
 export class PosPortalWorkspacePricingDto {
-  @ApiProperty({ example: 1900 })
+  @ApiProperty({ example: 3900 })
   amount!: number;
 
   @ApiProperty({ example: 'ETB' })

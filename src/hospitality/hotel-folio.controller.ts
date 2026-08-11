@@ -25,6 +25,7 @@ import {
   ListHotelFoliosQueryDto,
   OpenFolioDto,
   PostFolioChargeDto,
+  RecordFolioPaymentDto,
   SettleFolioDto,
   TransferFolioRoomDto,
   VoidFolioDto,
@@ -69,6 +70,25 @@ export class HotelFolioController {
     @Body() dto: PostFolioChargeDto,
   ) {
     return this.hotelFolioService.postCharge(folioId, dto);
+  }
+
+  /**
+   * Records an instalment against an OPEN folio, leaving it OPEN.
+   *
+   * Separate from /settle because settling is terminal — that is why the POS
+   * could not report partial payments to the backend at all until now.
+   */
+  @Post(':folioId/payments')
+  @RetailBranchContext('body.branchId')
+  @RequirePosPermissions(
+    PosHospitalityPermission.SETTLE_ROOM_FOLIO,
+    PosHospitalityPermission.SETTLE_TABLE_FOLIO,
+  )
+  recordPayment(
+    @Param('folioId', ParseIntPipe) folioId: number,
+    @Body() dto: RecordFolioPaymentDto,
+  ) {
+    return this.hotelFolioService.recordPayment(folioId, dto);
   }
 
   @Post(':folioId/settle')

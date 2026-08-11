@@ -62,11 +62,25 @@ export class GlobalExceptionFilter implements ExceptionFilter {
         : (responseBody as any)?.message || 'Unknown error';
     let details: any = undefined;
     if (typeof responseBody === 'object' && responseBody) {
-      code = (responseBody as any).code || code;
-      details = (responseBody as any).details;
+      // Some throwers nest the payload under `error`
+      // (e.g. ConflictException({ error: { code, message, details } })). Without
+      // unwrapping it the top-level lookup misses and we fall back to the useless
+      // "Unknown error". Surface the nested code/message/details instead.
+      const nested =
+        (responseBody as any).error &&
+        typeof (responseBody as any).error === 'object'
+          ? (responseBody as any).error
+          : null;
+      code = (responseBody as any).code || nested?.code || code;
+      details = (responseBody as any).details ?? nested?.details;
       if (Array.isArray((responseBody as any).message)) {
         // Nest validation often returns an array of messages
         message = (responseBody as any).message.join('; ');
+      } else if (
+        (message === 'Unknown error' || message == null) &&
+        typeof nested?.message === 'string'
+      ) {
+        message = nested.message;
       }
     }
 

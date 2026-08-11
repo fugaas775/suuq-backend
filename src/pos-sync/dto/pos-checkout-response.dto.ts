@@ -97,6 +97,10 @@ export class PosCheckoutListItemResponseDto {
   @ApiPropertyOptional()
   receiptNumber?: string | null;
 
+  /** Token behind the receipt QR; resolves on the public verify page. */
+  @ApiPropertyOptional()
+  verificationCode?: string | null;
+
   @ApiProperty({ enum: PosCheckoutTransactionType })
   transactionType!: PosCheckoutTransactionType;
 

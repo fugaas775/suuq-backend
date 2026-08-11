@@ -18,6 +18,7 @@ describe('PropertyRentalBookingService', () => {
   let service: PropertyRentalBookingService;
   let bookingRepo: RepoMock;
   let chargeRepo: RepoMock;
+  let branchRepo: RepoMock;
   let generalLedger: {
     post: jest.Mock;
     reverse: jest.Mock;
@@ -53,9 +54,19 @@ describe('PropertyRentalBookingService', () => {
       reverse: jest.fn().mockResolvedValue(null),
       findEntryByIdempotencyKey: jest.fn().mockResolvedValue(null),
     };
+    // Tax off by default so the existing gross-figure expectations still read as
+    // they always did; the tax tests below open a booking on a taxed branch.
+    branchRepo = {
+      findOne: jest.fn(async () => ({
+        id: 3,
+        taxEnabled: false,
+        taxRate: 0.15,
+      })),
+    } as never;
     service = new PropertyRentalBookingService(
       bookingRepo as never,
       chargeRepo as never,
+      branchRepo as never,
       generalLedger as never,
     );
   });
@@ -482,6 +493,158 @@ describe('PropertyRentalBookingService', () => {
       expect(findLine(settle, '4100').credit).toBe(500);
       expect(findLine(settle, '2400')).toBeUndefined(); // no deferred reclassification
       expect(findLine(settle, '1000').debit).toBe(500);
+    });
+  });
+
+  describe('tax on rent', () => {
+    const findEntry = (sourceType: string) =>
+      generalLedger.post.mock.calls
+        .map((c) => c[0])
+        .find((e) => e.sourceType === sourceType);
+    const findLine = (entry: any, code: string) =>
+      entry.lines.find((l: any) => l.accountCode === code);
+    const sum = (entry: any, side: 'debit' | 'credit') =>
+      Math.round(
+        entry.lines.reduce(
+          (total: number, line: any) => total + Number(line[side] || 0),
+          0,
+        ) * 100,
+      ) / 100;
+
+    const taxedBranch = () => {
+      branchRepo.findOne = jest.fn(async () => ({
+        id: 4,
+        taxEnabled: true,
+        taxRate: 0.15,
+      })) as never;
+    };
+
+    it('stamps the branch rate on the lease when it is opened', async () => {
+      taxedBranch();
+      await service.openBooking({
+        branchId: 4,
+        propertyCode: 'APT-3B',
+        currency: 'ETB',
+      });
+      expect(bookingRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({ taxRate: 0.15 }),
+      );
+    });
+
+    it('stamps zero when the branch is not charging tax', async () => {
+      await service.openBooking({
+        branchId: 4,
+        propertyCode: 'APT-3B',
+        currency: 'ETB',
+      });
+      expect(bookingRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({ taxRate: 0 }),
+      );
+    });
+
+    it('credits the tax on an instalment straight to tax payable, not to deferred rent', async () => {
+      bookingRepo.findOne.mockResolvedValueOnce({
+        id: 501,
+        branchId: 4,
+        status: PropertyRentalBookingStatus.OPEN,
+        currency: 'ETB',
+        paidAmount: 0,
+        payments: [],
+        leaseStartAt: '2026-06-01',
+        taxRate: 0.15,
+      });
+
+      await service.recordPayment(501, {
+        payments: [{ method: 'CASH', amount: 1150 }],
+      });
+
+      const entry = findEntry('HOSPITALITY_PAYMENT');
+      expect(findLine(entry, '1000').debit).toBe(1150); // CASH — gross, as taken
+      expect(findLine(entry, '2100').credit).toBe(150); // TAX_PAYABLE
+      expect(findLine(entry, '2400').credit).toBe(1000); // DEFERRED_REVENUE — net
+      expect(sum(entry, 'debit')).toBe(sum(entry, 'credit'));
+    });
+
+    it('taxes only the final payment at settlement — the deferred half was taxed when collected', async () => {
+      bookingRepo.findOne.mockResolvedValueOnce({
+        id: 501,
+        branchId: 4,
+        status: PropertyRentalBookingStatus.OPEN,
+        currency: 'ETB',
+        paidAmount: 1150, // a prior instalment: 1000 net + 150 tax, already deferred
+        payments: [{ method: 'CASH', amount: 1150 }],
+        leaseStartAt: '2026-06-01',
+        taxRate: 0.15,
+      });
+
+      await service.settleBooking(501, {
+        payments: [{ method: 'CASH', amount: 575 }], // 500 net + 75 tax
+      });
+
+      const settle = findEntry('HOSPITALITY_SETTLEMENT');
+      expect(findLine(settle, '1000').debit).toBe(575); // CASH — gross
+      expect(findLine(settle, '2400').debit).toBe(1000); // DEFERRED drawn down NET
+      expect(findLine(settle, '2100').credit).toBe(75); // only the final payment's tax
+      expect(findLine(settle, '4100').credit).toBe(1500); // RENTAL_REVENUE — net of both
+      expect(sum(settle, 'debit')).toBe(sum(settle, 'credit'));
+    });
+
+    it('leaves deferred revenue at exactly zero across collect → recognize → settle', async () => {
+      // The invariant that matters: every birr credited to deferred revenue when
+      // rent was collected must be debited back out by recognition and
+      // settlement. Netting one side but not the other strands the tax there
+      // permanently, which is what posting gross recognition against a net
+      // deferral would do.
+      const rate = 0.15;
+      const instalment = 1150;
+      const finalPayment = 575;
+
+      bookingRepo.findOne.mockResolvedValueOnce({
+        id: 700,
+        branchId: 4,
+        status: PropertyRentalBookingStatus.OPEN,
+        currency: 'ETB',
+        paidAmount: 0,
+        payments: [],
+        leaseStartAt: '2026-06-01',
+        taxRate: rate,
+      });
+      await service.recordPayment(700, {
+        payments: [{ method: 'CASH', amount: instalment }],
+      });
+      const deferredIn = findLine(
+        findEntry('HOSPITALITY_PAYMENT'),
+        '2400',
+      ).credit;
+
+      // The accrual job recognizes part of it, then move-out clears the rest.
+      const recognizedGross = 400;
+      const recognizedNet =
+        Math.round((recognizedGross / (1 + rate)) * 100) / 100;
+
+      bookingRepo.findOne.mockResolvedValueOnce({
+        id: 700,
+        branchId: 4,
+        status: PropertyRentalBookingStatus.OPEN,
+        currency: 'ETB',
+        paidAmount: instalment,
+        recognizedAmount: recognizedGross,
+        payments: [{ method: 'CASH', amount: instalment }],
+        leaseStartAt: '2026-06-01',
+        taxRate: rate,
+      });
+      await service.settleBooking(700, {
+        payments: [{ method: 'CASH', amount: finalPayment }],
+      });
+      const deferredOutAtSettle = findLine(
+        findEntry('HOSPITALITY_SETTLEMENT'),
+        '2400',
+      ).debit;
+
+      // recognition (net) + settlement (net) === everything ever deferred
+      expect(
+        Math.round((recognizedNet + deferredOutAtSettle) * 100) / 100,
+      ).toBe(deferredIn);
     });
   });
 });

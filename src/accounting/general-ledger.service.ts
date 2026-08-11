@@ -30,6 +30,16 @@ export interface PostJournalEntryInput {
 export interface BalanceRange {
   from?: Date | null;
   to?: Date | null;
+  /**
+   * Journal sources to leave out of the sum.
+   *
+   * For questions of the form "how much arose in this period" as opposed to
+   * "what is the balance": the tax-payable account is both credited by sales and
+   * debited by remittances, so a plain balance answers the second question when
+   * the P&L wants the first. Excluding the settlement source keeps the two
+   * apart without a second account to reconcile.
+   */
+  excludeSourceTypes?: GlJournalSourceType[];
 }
 
 /** Debit/credit must net to within half a cent to count as balanced. */
@@ -275,6 +285,16 @@ export class GeneralLedgerService {
     }
     if (range?.to) {
       qb.andWhere('l.occurredAt <= :to', { to: range.to });
+    }
+    if (range?.excludeSourceTypes?.length) {
+      // sourceType lives on the entry, not the denormalized line, so this is the
+      // one balance query that has to join. Kept opt-in for that reason.
+      qb.andWhere(
+        `l.entryId NOT IN (
+           SELECT e.id FROM gl_journal_entries e WHERE e."sourceType" IN (:...excludedSources)
+         )`,
+        { excludedSources: range.excludeSourceTypes },
+      );
     }
     const row = await qb.getRawOne<{ debit: string; credit: string }>();
     const debit = Number(row?.debit || 0);

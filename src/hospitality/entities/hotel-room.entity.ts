@@ -10,6 +10,10 @@ import {
 export enum HotelRoomStatus {
   ACTIVE = 'ACTIVE',
   INACTIVE = 'INACTIVE',
+  // Temporarily out of service for repairs/cleaning. Distinct from INACTIVE
+  // (decommissioned): a MAINTENANCE room is excluded from availability/booking
+  // but is expected to return to ACTIVE. Stored in status (varchar) — no migration.
+  MAINTENANCE = 'MAINTENANCE',
 }
 
 @Entity('pos_hotel_rooms')

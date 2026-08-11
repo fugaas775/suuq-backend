@@ -552,7 +552,7 @@ describe('BranchStaffService', () => {
         canStartActivation: true,
         canOpenNow: false,
         pricing: {
-          amount: 1900,
+          amount: 3900,
           currency: 'ETB',
           billingInterval: TenantBillingInterval.MONTHLY,
           paymentMethod: 'EBIRR',
@@ -560,7 +560,7 @@ describe('BranchStaffService', () => {
             {
               period: 'MONTHLY',
               months: 1,
-              amount: 1900,
+              amount: 3900,
               currency: 'ETB',
               label: '1 month',
               planCode: 'POS_BRANCH_1M',
@@ -568,7 +568,7 @@ describe('BranchStaffService', () => {
             {
               period: 'ONE_YEAR',
               months: 12,
-              amount: 22800,
+              amount: 42120,
               currency: 'ETB',
               label: '1 year',
               planCode: 'POS_BRANCH_1Y',
@@ -577,5 +577,97 @@ describe('BranchStaffService', () => {
         },
       }),
     ]);
+  });
+  describe('canPayNow (early trial conversion)', () => {
+    function stubTrialBranch(
+      workspaceOverrides: Record<string, any> = {},
+      branchOverrides: Record<string, any> = {},
+    ) {
+      branchesRepository.find.mockResolvedValue([
+        {
+          id: 5,
+          name: 'Bole Bites',
+          code: 'BB-5',
+          createdAt: new Date('2026-07-01T00:00:00.000Z'),
+          ...branchOverrides,
+        },
+      ]);
+      assignmentsRepository.find.mockResolvedValue([]);
+      retailEntitlementsService.getBranchWorkspaceStatus.mockResolvedValue({
+        tenant: { id: 21, name: 'Bole Retail' },
+        subscription: {
+          status: TenantSubscriptionStatus.TRIAL,
+          planCode: 'POS_BRANCH_TRIAL_14D',
+          endsAt: new Date(Date.now() + 9 * 86_400_000),
+        },
+        entitlements: [{ module: RetailModule.POS_CORE }],
+        hasPosModule: true,
+        workspaceStatus: 'ACTIVE',
+        ...workspaceOverrides,
+      });
+    }
+
+    it('lets the owner of a live trial branch pay early, without making it an activation candidate', async () => {
+      stubTrialBranch();
+
+      const [summary] = await service.getPosBranchSummariesForUser({ id: 7 });
+
+      expect(summary).toMatchObject({
+        branchId: 5,
+        isTrialWorkspace: true,
+        canPayNow: true,
+        // The workspace is open, so it is NOT awaiting activation.
+        canStartActivation: false,
+        canOpenNow: true,
+      });
+    });
+
+    it('does not offer early payment on a paid branch', async () => {
+      stubTrialBranch({
+        subscription: {
+          status: TenantSubscriptionStatus.ACTIVE,
+          planCode: 'POS_BRANCH_1M',
+          endsAt: new Date(Date.now() + 20 * 86_400_000),
+        },
+      });
+
+      const [summary] = await service.getPosBranchSummariesForUser({ id: 7 });
+
+      expect(summary).toMatchObject({
+        isTrialWorkspace: false,
+        canPayNow: false,
+      });
+    });
+
+    it('does not let an operator pay for the branch they work in', async () => {
+      branchesRepository.find.mockResolvedValue([]);
+      assignmentsRepository.find.mockResolvedValue([
+        {
+          branchId: 5,
+          role: BranchStaffRole.OPERATOR,
+          permissions: ['OPEN_REGISTER'],
+          createdAt: new Date('2026-07-01T00:00:00.000Z'),
+          branch: { id: 5, name: 'Bole Bites', code: 'BB-5', isActive: true },
+        },
+      ]);
+      retailEntitlementsService.getBranchWorkspaceStatus.mockResolvedValue({
+        tenant: { id: 21, name: 'Bole Retail' },
+        subscription: {
+          status: TenantSubscriptionStatus.TRIAL,
+          planCode: 'POS_BRANCH_TRIAL_14D',
+          endsAt: new Date(Date.now() + 9 * 86_400_000),
+        },
+        entitlements: [{ module: RetailModule.POS_CORE }],
+        hasPosModule: true,
+        workspaceStatus: 'ACTIVE',
+      });
+
+      const [summary] = await service.getPosBranchSummariesForUser({ id: 7 });
+
+      expect(summary).toMatchObject({
+        isTrialWorkspace: true,
+        canPayNow: false,
+      });
+    });
   });
 });

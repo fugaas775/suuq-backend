@@ -14,7 +14,7 @@ import {
   SupplierOffer,
   SupplierOfferStatus,
 } from '../supplier-offers/entities/supplier-offer.entity';
-import { SupplierOnboardingStatus } from '../suppliers/entities/supplier-profile.entity';
+import { SupplierActivationStatus } from '../suppliers/entities/supplier-profile.entity';
 import { RetailEntitlementsService } from '../retail/retail-entitlements.service';
 import {
   RetailModule,
@@ -97,8 +97,8 @@ export class ReplenishmentService {
       .andWhere('offer.availabilityStatus != :outOfStock', {
         outOfStock: SupplierAvailabilityStatus.OUT_OF_STOCK,
       })
-      .andWhere('supplierProfile.onboardingStatus = :supplierStatus', {
-        supplierStatus: SupplierOnboardingStatus.APPROVED,
+      .andWhere('supplierProfile.activationStatus = :supplierStatus', {
+        supplierStatus: SupplierActivationStatus.ACTIVE,
       })
       .andWhere('supplierProfile.isActive = true')
       .orderBy('offer.unitWholesalePrice', 'ASC')
@@ -227,7 +227,7 @@ export class ReplenishmentService {
           orderedQuantity,
           unitPrice: bestOffer.unitWholesalePrice,
           note: itemNote,
-        } as PurchaseOrderItem,
+        },
       ],
     });
 

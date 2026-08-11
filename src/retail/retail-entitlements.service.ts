@@ -5,7 +5,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { randomUUID } from 'crypto';
+import { DeepPartial, IsNull, Repository } from 'typeorm';
 import { Branch } from '../branches/entities/branch.entity';
 import { BranchStaffAssignment } from '../branch-staff/entities/branch-staff-assignment.entity';
 import {
@@ -42,6 +43,15 @@ import {
   RETAIL_PLAN_PRESETS,
   RetailPlanPreset,
 } from './retail-plan-presets';
+import {
+  getPosSelfServeTrialEndsAt,
+  isLapsedPosSelfServeTrial,
+  isLivePosSelfServeTrial,
+  isPosSelfServeTrialPlan,
+  isPosSelfServeTrialSubscription,
+  POS_SELF_SERVE_TRIAL_MONTHS,
+  POS_SELF_SERVE_TRIAL_PLAN_CODE,
+} from './pos-self-serve-trial.policy';
 
 type PosWorkspaceStatus =
   | 'ACTIVE'
@@ -55,9 +65,42 @@ type PosWorkspaceStatus =
 
 const MILLISECONDS_PER_DAY = 86_400_000;
 
+/** How many numbered variants of a taken tenant name to try before giving up. */
+const MAX_TENANT_NAME_ATTEMPTS = 20;
+
+/** The unique index behind `retail_tenants.name` (@Index(['name'], {unique:true})). */
+const TENANT_NAME_UNIQUE_INDEX = 'IDX_a554b4063de337d98a28c992e0';
+
+/**
+ * A Postgres unique violation on the tenant NAME specifically.
+ *
+ * `retail_tenants` also has UQ_retail_tenants_code, and a caller passing a
+ * duplicate code has a real error to hear about — retrying under a different
+ * name would silently paper over it. So match the constraint, not just 23505.
+ */
+function isTenantNameConflict(error: unknown): boolean {
+  const driverError = (error as { driverError?: Record<string, unknown> })
+    ?.driverError;
+  const detail = (driverError ?? error) as Record<string, unknown> | undefined;
+
+  if (String(detail?.code || '') !== '23505') {
+    return false;
+  }
+
+  const constraint = String(detail?.constraint || '');
+  return (
+    constraint === TENANT_NAME_UNIQUE_INDEX ||
+    // Defensive: a renamed index still reports the column in its detail text.
+    /\bname\b/i.test(String(detail?.detail || ''))
+  );
+}
+
 type RetailTenantWithPosWorkspaceAudit = RetailTenant & {
   posWorkspaceAudit: {
-    provisioningSource: 'POS_SELF_SERVE' | 'ADMIN_OR_BACKOFFICE';
+    provisioningSource:
+      | 'POS_SELF_SERVE'
+      | 'POS_SELF_SERVE_AUTO_TRIAL'
+      | 'ADMIN_OR_BACKOFFICE';
     onboardingStatus:
       | 'ACTIVE'
       | 'BILLING_ACTIVATION_REQUIRED'
@@ -67,6 +110,8 @@ type RetailTenantWithPosWorkspaceAudit = RetailTenant & {
       | 'NO_BRANCH_WORKSPACE';
     activationStatus:
       | 'ACTIVATED'
+      | 'TRIAL'
+      | 'TRIAL_EXPIRED'
       | 'PENDING_MONTHLY_BILLING'
       | 'PAST_DUE'
       | 'EXPIRED'
@@ -79,6 +124,8 @@ type RetailTenantWithPosWorkspaceAudit = RetailTenant & {
     billingEmail: string | null;
     latestSubscriptionStatus: TenantSubscriptionStatus | null;
     latestPlanCode: string | null;
+    /** Earliest live free-trial end across this tenant's branches. */
+    trialEndsAt: Date | null;
     workspaceCount: number;
     activeWorkspaceCount: number;
     activationRequiredCount: number;
@@ -89,6 +136,9 @@ type RetailTenantWithPosWorkspaceAudit = RetailTenant & {
       workspaceStatus: PosWorkspaceStatus;
       subscriptionStatus: TenantSubscriptionStatus | null;
       planCode: string | null;
+      subscriptionEndsAt: Date | null;
+      isTrialWorkspace: boolean;
+      isTrialExpired: boolean;
       isSelfServeProvisioned: boolean;
     }>;
   };
@@ -147,7 +197,7 @@ export class RetailEntitlementsService {
       }
     }
 
-    const tenant = this.retailTenantsRepository.create({
+    const tenant = await this.saveTenantWithUniqueName({
       name: dto.name,
       code: dto.code?.trim() || null,
       billingEmail: dto.billingEmail?.trim() || null,
@@ -156,8 +206,54 @@ export class RetailEntitlementsService {
       status: RetailTenantStatus.ACTIVE,
     });
 
-    await this.retailTenantsRepository.save(tenant);
     return this.findTenantOrThrow(tenant.id);
+  }
+
+  /**
+   * Insert the tenant, disambiguating its name if that name is taken.
+   *
+   * `retail_tenants.name` is UNIQUE, and self-serve signup derives the name from
+   * the owner's account (display name → email local-part → 'My Business'). Two
+   * owners called Ahmed, or two who fall through to the generic default,
+   * therefore collide — and the sign-in path swallows the throw, so the second
+   * one is dropped at the onboarding gate with nothing but a log line to explain
+   * it. As signups grow, so does the chance of hitting it.
+   *
+   * Insert-and-retry rather than "does this name exist?" first: a pre-flight
+   * SELECT races two simultaneous signups, which is the exact case that fails.
+   *
+   * Only the TENANT name is suffixed. The tenant is an internal billing
+   * container; the branch name is what the owner sees on receipts, and callers
+   * name the branch separately.
+   */
+  private async saveTenantWithUniqueName(
+    attributes: DeepPartial<RetailTenant>,
+  ): Promise<RetailTenant> {
+    // Leave room for the suffix inside the column's 255 chars.
+    const base = String(attributes.name || '').slice(0, 240);
+
+    for (let attempt = 1; attempt <= MAX_TENANT_NAME_ATTEMPTS; attempt += 1) {
+      const name = attempt === 1 ? base : `${base} (${attempt})`;
+
+      try {
+        return await this.retailTenantsRepository.save(
+          this.retailTenantsRepository.create({ ...attributes, name }),
+        );
+      } catch (error) {
+        if (!isTenantNameConflict(error)) {
+          throw error;
+        }
+      }
+    }
+
+    // Every numbered name was taken too. Fall back to something that cannot
+    // collide rather than failing a signup outright.
+    return this.retailTenantsRepository.save(
+      this.retailTenantsRepository.create({
+        ...attributes,
+        name: `${base} (${randomUUID().slice(0, 8)})`,
+      }),
+    );
   }
 
   async listTenants(
@@ -247,6 +343,105 @@ export class RetailEntitlementsService {
     });
 
     return this.tenantSubscriptionsRepository.save(subscription);
+  }
+
+  /**
+   * The subscription that governs ONE branch.
+   *
+   * Subscriptions are per-branch, but rows created before that change carry
+   * `branchId = null` and govern the whole tenant. So: the branch's own latest
+   * row wins, else the latest legacy tenant-wide row. The fallback is
+   * deliberately `branchId: IsNull()` and NOT "any row on this tenant" — a
+   * plain `{ tenantId }` lookup lets a sibling branch's newer row govern this
+   * one, which silently extends (or ends) a branch's subscription for reasons
+   * that have nothing to do with it.
+   */
+  private async findSubscriptionForBranch(
+    tenantId: number,
+    branchId: number,
+  ): Promise<TenantSubscription | null> {
+    const branchScoped = await this.tenantSubscriptionsRepository.findOne({
+      where: { tenantId, branchId },
+      order: { createdAt: 'DESC' },
+    });
+
+    if (branchScoped) {
+      return branchScoped;
+    }
+
+    return this.tenantSubscriptionsRepository.findOne({
+      where: { tenantId, branchId: IsNull() },
+      order: { createdAt: 'DESC' },
+    });
+  }
+
+  /**
+   * In-memory twin of findSubscriptionForBranch, for callers that already
+   * eager-loaded `tenant.subscriptions` (the admin audit path) and must not
+   * issue a query per branch. Same precedence rule.
+   */
+  private pickSubscriptionForBranch(
+    subscriptions: TenantSubscription[] = [],
+    branchId: number | null,
+  ): TenantSubscription | null {
+    const byRecency = [...subscriptions].sort((left, right) => {
+      const leftTime = new Date(left.startsAt ?? left.createdAt ?? 0).getTime();
+      const rightTime = new Date(
+        right.startsAt ?? right.createdAt ?? 0,
+      ).getTime();
+      return rightTime - leftTime;
+    });
+
+    return (
+      (branchId != null
+        ? byRecency.find((entry) => entry.branchId === branchId)
+        : null) ??
+      byRecency.find((entry) => entry.branchId == null) ??
+      null
+    );
+  }
+
+  /**
+   * Starts the free trial that lets an auto-provisioned branch open before it
+   * is paid for. Branch-scoped, so a later paid subscription supersedes it, and
+   * idempotent per branch — a second call returns the existing trial rather
+   * than extending it.
+   */
+  async startPosSelfServeTrial(
+    tenantId: number,
+    branchId: number,
+  ): Promise<TenantSubscription> {
+    const existing = await this.tenantSubscriptionsRepository.findOne({
+      where: { tenantId, branchId },
+      order: { createdAt: 'DESC' },
+    });
+
+    if (existing) {
+      return existing;
+    }
+
+    const startsAt = new Date();
+
+    return this.tenantSubscriptionsRepository.save(
+      this.tenantSubscriptionsRepository.create({
+        tenantId,
+        branchId,
+        planCode: POS_SELF_SERVE_TRIAL_PLAN_CODE,
+        status: TenantSubscriptionStatus.TRIAL,
+        billingInterval: TenantBillingInterval.MONTHLY,
+        amount: 0,
+        amountTotal: 0,
+        currency: 'ETB',
+        startsAt,
+        endsAt: getPosSelfServeTrialEndsAt(startsAt),
+        autoRenew: false,
+        metadata: {
+          source: 'POS_SELF_SERVE_AUTO_TRIAL',
+          trialMonths: POS_SELF_SERVE_TRIAL_MONTHS,
+          branchId,
+        },
+      }),
+    );
   }
 
   async updateOnboardingProfile(
@@ -436,10 +631,10 @@ export class RetailEntitlementsService {
     }
 
     const tenant = await this.findTenantOrThrow(branch.retailTenantId);
-    const subscription = await this.tenantSubscriptionsRepository.findOne({
-      where: { tenantId: tenant.id },
-      order: { createdAt: 'DESC' },
-    });
+    const subscription = await this.findSubscriptionForBranch(
+      tenant.id,
+      branchId,
+    );
     const now = Date.now();
     const effectiveSubscriptionStatus = this.resolveEffectiveSubscriptionStatus(
       subscription,
@@ -525,7 +720,11 @@ export class RetailEntitlementsService {
       subscription: nextSubscription,
       entitlements,
       hasPosModule,
-      workspaceStatus: subscriptionStatusMap[effectiveSubscriptionStatus],
+      // A live self-serve trial opens the branch; a lapsed one was already
+      // rewritten to EXPIRED above, so it falls through to the paywall.
+      workspaceStatus: isLivePosSelfServeTrial(subscription, now)
+        ? 'ACTIVE'
+        : subscriptionStatusMap[effectiveSubscriptionStatus],
     };
   }
 
@@ -663,12 +862,17 @@ export class RetailEntitlementsService {
       return null;
     }
 
-    const endsAt = subscription.endsAt?.getTime() ?? null;
+    const endsAt = subscription.endsAt
+      ? new Date(subscription.endsAt).getTime()
+      : null;
 
     if (
       endsAt != null &&
       endsAt < now &&
-      subscription.status === TenantSubscriptionStatus.ACTIVE
+      (subscription.status === TenantSubscriptionStatus.ACTIVE ||
+        // A lapsed self-serve trial expires the same way a paid period does, so
+        // the owner is routed to the Ebirr paywall instead of staying open.
+        isPosSelfServeTrialSubscription(subscription))
     ) {
       return TenantSubscriptionStatus.EXPIRED;
     }
@@ -680,23 +884,31 @@ export class RetailEntitlementsService {
     tenant: RetailTenant,
   ): RetailTenantWithPosWorkspaceAudit {
     const latestSubscription = this.getLatestTenantSubscription(tenant);
-    const provisioningSource: 'POS_SELF_SERVE' | 'ADMIN_OR_BACKOFFICE' =
-      this.isSelfServeProvisioned(tenant)
-        ? 'POS_SELF_SERVE'
-        : 'ADMIN_OR_BACKOFFICE';
+    const provisioningSource = this.resolveProvisioningSource(tenant);
     const branchWorkspaces = (tenant.branches ?? []).map((branch) => {
+      // Each branch is governed by ITS OWN subscription (legacy tenant-wide rows
+      // still cover branches that have none) — stamping the tenant's newest row
+      // onto every branch reported a paid branch's status for a trialing one.
+      const branchSubscription = this.pickSubscriptionForBranch(
+        tenant.subscriptions ?? [],
+        branch.id,
+      );
       const workspaceStatus = this.resolveTenantWorkspaceStatus(
         tenant,
-        latestSubscription,
+        branchSubscription,
       );
       return {
         branchId: branch.id,
         branchName: branch.name,
         branchCode: branch.code ?? null,
         workspaceStatus,
-        subscriptionStatus: latestSubscription?.status ?? null,
-        planCode: latestSubscription?.planCode ?? null,
-        isSelfServeProvisioned: provisioningSource === 'POS_SELF_SERVE',
+        subscriptionStatus: branchSubscription?.status ?? null,
+        planCode: branchSubscription?.planCode ?? null,
+        subscriptionEndsAt: branchSubscription?.endsAt ?? null,
+        isTrialWorkspace: isLivePosSelfServeTrial(branchSubscription),
+        isTrialExpired: isLapsedPosSelfServeTrial(branchSubscription),
+        isSelfServeProvisioned: provisioningSource !== 'ADMIN_OR_BACKOFFICE',
+        subscription: branchSubscription,
       };
     });
     const activationRequiredCount = branchWorkspaces.filter(
@@ -705,9 +917,21 @@ export class RetailEntitlementsService {
     const activeWorkspaceCount = branchWorkspaces.filter(
       (workspace) => workspace.workspaceStatus === 'ACTIVE',
     ).length;
+    const primaryWorkspace = branchWorkspaces[0] ?? null;
     const primaryWorkspaceStatus =
-      branchWorkspaces[0]?.workspaceStatus ?? 'TENANT_SETUP_REQUIRED';
-    const auditStatus = this.mapAuditStatus(primaryWorkspaceStatus);
+      primaryWorkspace?.workspaceStatus ?? 'TENANT_SETUP_REQUIRED';
+    const auditStatus = this.mapAuditStatus(
+      primaryWorkspaceStatus,
+      primaryWorkspace?.subscription ?? null,
+    );
+    // Earliest live trial across the tenant's branches — what an operator wants
+    // to sort a trial cohort by.
+    const trialEndsAt =
+      branchWorkspaces
+        .filter((workspace) => workspace.isTrialWorkspace)
+        .map((workspace) => workspace.subscriptionEndsAt)
+        .filter((value): value is Date => value != null)
+        .sort((left, right) => left.getTime() - right.getTime())[0] ?? null;
 
     return Object.assign(tenant, {
       posWorkspaceAudit: {
@@ -716,16 +940,19 @@ export class RetailEntitlementsService {
         activationStatus: auditStatus.activationStatus,
         nextBillingStep: this.describeNextBillingStep(
           primaryWorkspaceStatus,
-          latestSubscription,
+          primaryWorkspace?.subscription ?? latestSubscription,
         ),
         ownerEmail: tenant.owner?.email ?? tenant.billingEmail ?? null,
         billingEmail: tenant.billingEmail ?? null,
         latestSubscriptionStatus: latestSubscription?.status ?? null,
         latestPlanCode: latestSubscription?.planCode ?? null,
+        trialEndsAt,
         workspaceCount: branchWorkspaces.length,
         activeWorkspaceCount,
         activationRequiredCount,
-        branchWorkspaces,
+        branchWorkspaces: branchWorkspaces.map(
+          ({ subscription, ...workspace }) => workspace,
+        ),
       },
     });
   }
@@ -750,12 +977,41 @@ export class RetailEntitlementsService {
     })[0];
   }
 
-  private isSelfServeProvisioned(tenant: RetailTenant): boolean {
-    return (tenant.entitlements ?? []).some((entitlement) =>
+  /**
+   * How this tenant came to exist. Resolved from explicit markers first — the
+   * entitlement's provisioningSource, then the auto-trial subscription's — and
+   * only then from the legacy free-text reason sniff, which cannot tell an
+   * auto-trial signup apart from a manually self-served one.
+   */
+  private resolveProvisioningSource(
+    tenant: RetailTenant,
+  ): RetailTenantWithPosWorkspaceAudit['posWorkspaceAudit']['provisioningSource'] {
+    const marked = (tenant.entitlements ?? []).find((entitlement) =>
+      Boolean(entitlement.metadata?.provisioningSource),
+    );
+    if (marked?.metadata?.provisioningSource === 'POS_SELF_SERVE_AUTO_TRIAL') {
+      return 'POS_SELF_SERVE_AUTO_TRIAL';
+    }
+    if (marked) {
+      return 'POS_SELF_SERVE';
+    }
+
+    const hasAutoTrial = (tenant.subscriptions ?? []).some(
+      (subscription) =>
+        subscription.metadata?.source === 'POS_SELF_SERVE_AUTO_TRIAL' ||
+        isPosSelfServeTrialPlan(subscription),
+    );
+    if (hasAutoTrial) {
+      return 'POS_SELF_SERVE_AUTO_TRIAL';
+    }
+
+    const legacySelfServe = (tenant.entitlements ?? []).some((entitlement) =>
       String(entitlement.reason ?? '')
         .toLowerCase()
         .includes('self-serve onboarding'),
     );
+
+    return legacySelfServe ? 'POS_SELF_SERVE' : 'ADMIN_OR_BACKOFFICE';
   }
 
   private resolveTenantWorkspaceStatus(
@@ -802,7 +1058,11 @@ export class RetailEntitlementsService {
       case TenantSubscriptionStatus.ACTIVE:
         return 'ACTIVE';
       case TenantSubscriptionStatus.TRIAL:
-        return 'PAYMENT_REQUIRED';
+        // Only the auto-provisioned trial opens a workspace, and only until it
+        // lapses; every other TRIAL row keeps its pay-first meaning.
+        return isLivePosSelfServeTrial(latestSubscription)
+          ? 'ACTIVE'
+          : 'PAYMENT_REQUIRED';
       case TenantSubscriptionStatus.PAST_DUE:
         return 'PAST_DUE';
       case TenantSubscriptionStatus.EXPIRED:
@@ -814,10 +1074,26 @@ export class RetailEntitlementsService {
     }
   }
 
-  private mapAuditStatus(workspaceStatus: PosWorkspaceStatus): {
+  private mapAuditStatus(
+    workspaceStatus: PosWorkspaceStatus,
+    subscription?: TenantSubscription | null,
+  ): {
     onboardingStatus: RetailTenantWithPosWorkspaceAudit['posWorkspaceAudit']['onboardingStatus'];
     activationStatus: RetailTenantWithPosWorkspaceAudit['posWorkspaceAudit']['activationStatus'];
   } {
+    // Checked before the status switch: a tenant on the free trial reports
+    // ACTIVE / EXPIRED like everyone else, which made a trialing tenant
+    // indistinguishable from a paying one in every admin filter.
+    if (isLivePosSelfServeTrial(subscription)) {
+      return { onboardingStatus: 'ACTIVE', activationStatus: 'TRIAL' };
+    }
+    if (isLapsedPosSelfServeTrial(subscription)) {
+      return {
+        onboardingStatus: 'BILLING_ACTIVATION_REQUIRED',
+        activationStatus: 'TRIAL_EXPIRED',
+      };
+    }
+
     switch (workspaceStatus) {
       case 'ACTIVE':
         return {
@@ -866,6 +1142,16 @@ export class RetailEntitlementsService {
     workspaceStatus: PosWorkspaceStatus,
     latestSubscription: TenantSubscription | null,
   ): string {
+    if (isLivePosSelfServeTrial(latestSubscription)) {
+      const endsAt = latestSubscription?.endsAt;
+      return endsAt
+        ? `Free trial ends ${this.formatAuditDate(new Date(endsAt))}; collect the first Ebirr payment before then.`
+        : 'Collect the first Ebirr payment before the free trial ends.';
+    }
+    if (isLapsedPosSelfServeTrial(latestSubscription)) {
+      return 'The free trial has ended — collect the first Ebirr payment to reopen this workspace.';
+    }
+
     switch (workspaceStatus) {
       case 'ACTIVE':
         return 'No immediate billing action is required.';

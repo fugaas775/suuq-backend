@@ -29,6 +29,7 @@ import {
   ListPropertyRatePlansQueryDto,
   ListPropertyReservationsQueryDto,
   ListPropertyUnitsQueryDto,
+  SetPropertyMaintenanceDto,
   UpdatePropertyReservationDto,
   UpdatePropertyUnitDto,
 } from './dto/property-inventory.dto';
@@ -79,6 +80,13 @@ export class PropertyRentalInventoryController {
     @Body() dto: UpdatePropertyUnitDto,
   ) {
     return this.svc.updateUnit(id, dto);
+  }
+
+  @Patch('unit-maintenance')
+  @RetailBranchContext('body.branchId')
+  @RequirePosPermissions(PosPropertyRentalPermission.SET_PROPERTY_MAINTENANCE)
+  setUnitMaintenance(@Body() dto: SetPropertyMaintenanceDto) {
+    return this.svc.setUnitMaintenance(dto);
   }
 
   // ── Rate plans ────────────────────────────────────────────────────────────

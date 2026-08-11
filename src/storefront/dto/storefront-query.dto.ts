@@ -1,14 +1,15 @@
-import { IsEnum, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
+import { IsIn, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
 import { Transform } from 'class-transformer';
+import { ALL_SERVICE_FORMAT_CODES } from '../../common/service-formats';
 
-export enum PublicServiceFormat {
-  RETAIL = 'RETAIL',
-  HOTEL = 'HOTEL',
-  CAFETERIA = 'CAFETERIA',
-  QSR = 'QSR',
-  FSR = 'FSR',
-  BARBER = 'BARBER',
-}
+/**
+ * Store discovery accepts every known service format.
+ *
+ * This filter used to allow only six codes, so filtering stores by GROCERY,
+ * PHARMACY, BAKERY or any other live format returned a 400 rather than results.
+ * It now derives from the shared registry in `src/common/service-formats.ts`.
+ */
+export const PUBLIC_SERVICE_FORMAT_CODES = ALL_SERVICE_FORMAT_CODES;
 
 export class StorefrontListQueryDto {
   @IsOptional()
@@ -20,7 +21,7 @@ export class StorefrontListQueryDto {
   country?: string;
 
   @IsOptional()
-  @IsEnum(PublicServiceFormat)
+  @IsIn(PUBLIC_SERVICE_FORMAT_CODES)
   serviceFormat?: string;
 
   @IsOptional()

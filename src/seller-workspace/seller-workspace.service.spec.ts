@@ -1,7 +1,6 @@
 import { ForbiddenException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { In } from 'typeorm';
 import { BranchStaffService } from '../branch-staff/branch-staff.service';
 import {
   BranchStaffAssignment,
@@ -63,15 +62,22 @@ describe('SellerWorkspaceService', () => {
   let usersRepository: { findOne: jest.Mock };
   let ordersRepository: { createQueryBuilder: jest.Mock };
   let purchaseOrdersRepository: { find: jest.Mock };
-  let posCheckoutsRepository: { createQueryBuilder: jest.Mock };
+  let posCheckoutsRepository: {
+    createQueryBuilder: jest.Mock;
+    query: jest.Mock;
+  };
   let posSyncJobsRepository: { createQueryBuilder: jest.Mock };
   let retailTenantsRepository: { find: jest.Mock };
   let tenantModuleEntitlementsRepository: { findOne: jest.Mock };
   let tenantSubscriptionsRepository: { find: jest.Mock };
-  let productsRepository: { createQueryBuilder: jest.Mock };
+  let productsRepository: { createQueryBuilder: jest.Mock; query: jest.Mock };
   let branchInventoryRepository: { delete: jest.Mock };
   let branchCatalogProductLinksRepository: { delete: jest.Mock };
-  let branchCatalogVendorLinksRepository: { delete: jest.Mock };
+  let branchCatalogVendorLinksRepository: {
+    delete: jest.Mock;
+    findOne: jest.Mock;
+    update: jest.Mock;
+  };
   let posRegisterSessionsRepository: { count: jest.Mock };
   let sellerWorkspacesRepository: {
     findOne: jest.Mock;
@@ -104,21 +110,27 @@ describe('SellerWorkspaceService', () => {
     create: jest.Mock;
     save: jest.Mock;
   };
-  let vendorStoresRepository: { find: jest.Mock };
+  let vendorStoresRepository: { find: jest.Mock; update: jest.Mock };
 
   beforeEach(async () => {
     delete process.env.POS_HOSPITALITY_SERVICE_FORMATS_ENABLED;
     usersRepository = { findOne: jest.fn() };
     ordersRepository = { createQueryBuilder: jest.fn() };
     purchaseOrdersRepository = { find: jest.fn() };
-    posCheckoutsRepository = { createQueryBuilder: jest.fn() };
+    posCheckoutsRepository = {
+      createQueryBuilder: jest.fn(),
+      query: jest.fn().mockResolvedValue([]),
+    };
     posSyncJobsRepository = { createQueryBuilder: jest.fn() };
     retailTenantsRepository = { find: jest.fn().mockResolvedValue([]) };
     tenantModuleEntitlementsRepository = {
       findOne: jest.fn().mockResolvedValue(null),
     };
     tenantSubscriptionsRepository = { find: jest.fn() };
-    productsRepository = { createQueryBuilder: jest.fn() };
+    productsRepository = {
+      createQueryBuilder: jest.fn(),
+      query: jest.fn().mockResolvedValue(undefined),
+    };
     branchInventoryRepository = {
       delete: jest.fn().mockResolvedValue(undefined),
     };
@@ -127,6 +139,8 @@ describe('SellerWorkspaceService', () => {
     };
     branchCatalogVendorLinksRepository = {
       delete: jest.fn().mockResolvedValue(undefined),
+      findOne: jest.fn().mockResolvedValue(null),
+      update: jest.fn().mockResolvedValue(undefined),
     };
     posRegisterSessionsRepository = { count: jest.fn() };
     sellerWorkspacesRepository = {
@@ -187,7 +201,10 @@ describe('SellerWorkspaceService', () => {
       create: jest.fn((v) => v),
       save: jest.fn().mockResolvedValue(undefined),
     };
-    vendorStoresRepository = { find: jest.fn().mockResolvedValue([]) };
+    vendorStoresRepository = {
+      find: jest.fn().mockResolvedValue([]),
+      update: jest.fn().mockResolvedValue(undefined),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -688,6 +705,8 @@ describe('SellerWorkspaceService', () => {
         createdAt: new Date('2026-03-08T00:00:00.000Z'),
         ...value,
       })),
+      // linkBranchToVendorStore writes both halves of the 1:1.
+      update: jest.fn().mockResolvedValue(undefined),
     };
     const assignmentsRepository = {
       create: jest.fn((value) => value),
@@ -729,6 +748,8 @@ describe('SellerWorkspaceService', () => {
               return {
                 create: jest.fn((value) => value),
                 save: jest.fn(async (value) => ({ id: 99, ...value })),
+                // linkBranchToVendorStore writes both halves of the 1:1.
+                update: jest.fn().mockResolvedValue(undefined),
               };
             }
             throw new Error(`Unexpected repository request: ${entity?.name}`);
@@ -892,7 +913,7 @@ describe('SellerWorkspaceService', () => {
     });
   });
 
-  it('removes previous-owner catalog attachments during branch ownership transfer', async () => {
+  it('transfers the branch products to the new owner and keeps their catalog links on ownership transfer', async () => {
     equityPartnerService.getSellerProfile.mockResolvedValue({
       id: 91,
       status: EquityPartnerStatus.ACTIVE,
@@ -916,10 +937,13 @@ describe('SellerWorkspaceService', () => {
       });
     productsRepository.createQueryBuilder.mockReturnValue({
       select: jest.fn().mockReturnThis(),
-      innerJoin: jest.fn().mockReturnThis(),
+      leftJoin: jest.fn().mockReturnThis(),
       where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
       getRawMany: jest.fn().mockResolvedValue([{ id: 401 }, { id: '402' }]),
     });
+    // No pre-existing vendor-catalog link for the new owner on this branch.
+    branchCatalogVendorLinksRepository.findOne.mockResolvedValue(null);
 
     const result = await service.transferBranchOwnership(
       41,
@@ -932,18 +956,59 @@ describe('SellerWorkspaceService', () => {
       { id: 11 },
       { ownerId: 77 },
     );
-    expect(branchInventoryRepository.delete).toHaveBeenCalledWith({
-      branchId: 11,
-      productId: In([401, 402]),
+    // The branch's products are reassigned to the new owner...
+    expect(productsRepository.query).toHaveBeenCalledWith(
+      expect.stringContaining('UPDATE product SET "vendorId"'),
+      [77, [401, 402]],
+    );
+    // ...and the previous owner's vendor-catalog link is re-pointed (not dropped)
+    // so those products keep surfacing for the branch under the new owner.
+    expect(branchCatalogVendorLinksRepository.update).toHaveBeenCalledWith(
+      { branchId: 11, vendorId: 41 },
+      { vendorId: 77 },
+    );
+    // The branch must NEVER be detached from its catalog/inventory on transfer.
+    expect(branchInventoryRepository.delete).not.toHaveBeenCalled();
+    expect(branchCatalogProductLinksRepository.delete).not.toHaveBeenCalled();
+    expect(branchCatalogVendorLinksRepository.delete).not.toHaveBeenCalled();
+    // The transferred branch is reconciled so it always arrives with financials:
+    // any paid leases lacking backing checkouts get their accrual rent checkouts.
+    expect(posCheckoutsRepository.query).toHaveBeenCalledWith(
+      expect.stringContaining('rental-revenue-reconcile'),
+      [11],
+    );
+  });
+
+  it('does not fail the transfer when rental-revenue reconciliation throws', async () => {
+    equityPartnerService.getSellerProfile.mockResolvedValue({
+      id: 91,
+      status: EquityPartnerStatus.ACTIVE,
     });
-    expect(branchCatalogProductLinksRepository.delete).toHaveBeenCalledWith({
-      branchId: 11,
-      productId: In([401, 402]),
+    branchesRepository.findOne.mockResolvedValue({
+      id: 11,
+      name: 'Smart Barber',
+      ownerId: 41,
+      retailTenantId: 13,
     });
-    expect(branchCatalogVendorLinksRepository.delete).toHaveBeenCalledWith({
-      branchId: 11,
-      vendorId: 41,
+    usersRepository.findOne
+      .mockResolvedValueOnce({ id: 77, email: 'newowner@example.com' })
+      .mockResolvedValueOnce({ id: 41, email: 'owner@example.com' });
+    branchStaffAssignmentsRepository.findOne
+      .mockResolvedValueOnce({ branchId: 11, userId: 41, isActive: true })
+      .mockResolvedValueOnce(null);
+    productsRepository.createQueryBuilder.mockReturnValue({
+      select: jest.fn().mockReturnThis(),
+      leftJoin: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      getRawMany: jest.fn().mockResolvedValue([]),
     });
+    branchCatalogVendorLinksRepository.findOne.mockResolvedValue(null);
+    posCheckoutsRepository.query.mockRejectedValueOnce(new Error('boom'));
+
+    await expect(
+      service.transferBranchOwnership(41, 11, 'newowner@example.com'),
+    ).resolves.toEqual({ success: true });
   });
 
   it('allows retail branch creation for tenants with retail in allow-list', async () => {
@@ -965,6 +1030,8 @@ describe('SellerWorkspaceService', () => {
       ]),
       findOne: jest.fn().mockResolvedValue(null),
       save: jest.fn(async (value) => ({ id: 8, code: 'BB-8', ...value })),
+      // linkBranchToVendorStore writes both halves of the 1:1.
+      update: jest.fn().mockResolvedValue(undefined),
     };
     const assignmentsRepository = {
       create: jest.fn((value) => value),
@@ -1009,6 +1076,8 @@ describe('SellerWorkspaceService', () => {
               return {
                 create: jest.fn((value) => value),
                 save: jest.fn(async (value) => ({ id: 99, ...value })),
+                // linkBranchToVendorStore writes both halves of the 1:1.
+                update: jest.fn().mockResolvedValue(undefined),
               };
             }
             throw new Error(`Unexpected repository request: ${entity?.name}`);
@@ -1240,5 +1309,337 @@ describe('SellerWorkspaceService', () => {
     ).rejects.toThrow(
       'Seller HQ branch creation only supports RETAIL until hospitality rollout is enabled for this tenant.',
     );
+  });
+  describe('updateBranchWorkspaceServiceFormat', () => {
+    function stubBranchRepo(branch) {
+      const branchRepo = {
+        findOne: jest.fn().mockResolvedValue(branch),
+        update: jest.fn().mockResolvedValue(undefined),
+      };
+      sellerWorkspacesRepository.manager.getRepository.mockImplementation(
+        (entity) => (entity === Branch ? branchRepo : {}),
+      );
+      return branchRepo;
+    }
+
+    it('refuses a caller who neither owns the branch nor administers the platform, without writing', async () => {
+      const branchRepo = stubBranchRepo({
+        id: 11,
+        ownerId: 41,
+        retailTenantId: 13,
+        serviceFormat: 'QSR',
+        retailTenant: { owner: { id: 41 } },
+      });
+
+      await expect(
+        service.updateBranchWorkspaceServiceFormat(
+          999,
+          11,
+          { serviceFormat: 'RETAIL' } as any,
+          ['POS_MANAGER'],
+        ),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+
+      // The write must never land: it used to persist before the response
+      // builder 404'd, so a rejected caller still changed the branch.
+      expect(branchRepo.update).not.toHaveBeenCalled();
+      expect(vendorStoresRepository.update).not.toHaveBeenCalled();
+    });
+
+    it('lets a platform admin change a branch they do not own and resolves the DTO via the owner', async () => {
+      const branchRepo = stubBranchRepo({
+        id: 11,
+        ownerId: 41,
+        retailTenantId: 13,
+        serviceFormat: 'QSR',
+        retailTenant: { owner: { id: 41 } },
+      });
+      const workspaceItem = { branchId: 11, branchName: 'Bole Bites' };
+      const getBranchWorkspaces = jest
+        .spyOn(service, 'getBranchWorkspaces')
+        .mockImplementation(async (userId: number) =>
+          userId === 41 ? ({ items: [workspaceItem] } as any) : { items: [] },
+        );
+
+      const result = await service.updateBranchWorkspaceServiceFormat(
+        999,
+        11,
+        { serviceFormat: 'RETAIL' },
+        ['SUPER_ADMIN'],
+      );
+
+      expect(branchRepo.update).toHaveBeenCalledWith(
+        11,
+        expect.objectContaining({ serviceFormat: 'RETAIL' }),
+      );
+      // The saved Home layout is per-format, so a real change drops it (see the
+      // milestone tests below for what survives).
+      const [, updates] = branchRepo.update.mock.calls[0];
+      expect(updates.homeConfig.widgets).toBeUndefined();
+      expect(result).toBe(workspaceItem);
+      // The admin's own workspace list has no such branch — the owner's does.
+      expect(getBranchWorkspaces).toHaveBeenCalledWith(999);
+      expect(getBranchWorkspaces).toHaveBeenCalledWith(41);
+      getBranchWorkspaces.mockRestore();
+    });
+
+    it('lets the branch owner change their own service format', async () => {
+      const branchRepo = stubBranchRepo({
+        id: 11,
+        ownerId: 41,
+        retailTenantId: 13,
+        serviceFormat: 'QSR',
+        retailTenant: { owner: { id: 41 } },
+      });
+      const getBranchWorkspaces = jest
+        .spyOn(service, 'getBranchWorkspaces')
+        .mockResolvedValue({ items: [{ branchId: 11 }] } as any);
+
+      await service.updateBranchWorkspaceServiceFormat(
+        41,
+        11,
+        { serviceFormat: 'RETAIL' },
+        [],
+      );
+
+      expect(branchRepo.update).toHaveBeenCalledWith(
+        11,
+        expect.objectContaining({ serviceFormat: 'RETAIL' }),
+      );
+      // The saved Home layout is per-format, so a real change drops it (see the
+      // milestone tests below for what survives).
+      const [, updates] = branchRepo.update.mock.calls[0];
+      expect(updates.homeConfig.widgets).toBeUndefined();
+      getBranchWorkspaces.mockRestore();
+    });
+
+    it('keeps the saved Home layout when the format is re-submitted unchanged', async () => {
+      const branchRepo = stubBranchRepo({
+        id: 11,
+        ownerId: 41,
+        retailTenantId: 13,
+        serviceFormat: 'QSR',
+        retailTenant: { owner: { id: 41 } },
+      });
+      const getBranchWorkspaces = jest
+        .spyOn(service, 'getBranchWorkspaces')
+        .mockResolvedValue({ items: [{ branchId: 11 }] } as any);
+
+      await service.updateBranchWorkspaceServiceFormat(
+        41,
+        11,
+        { serviceFormat: 'QSR' },
+        [],
+      );
+
+      expect(branchRepo.update).toHaveBeenCalledWith(
+        11,
+        expect.objectContaining({ serviceFormat: 'QSR' }),
+      );
+      // An unchanged format keeps the layout it already had.
+      const [, updates] = branchRepo.update.mock.calls[0];
+      expect(updates.homeConfig.widgets).toBeUndefined();
+      getBranchWorkspaces.mockRestore();
+    });
+
+    it("always accepts the branch's current format, even outside the allow-list", async () => {
+      // PROPERTY_RENTAL is only self-servable while the hospitality rollout is
+      // on; a branch already running it must still be able to re-submit it.
+      delete process.env.POS_HOSPITALITY_SERVICE_FORMATS_ENABLED;
+      stubBranchRepo({
+        id: 11,
+        ownerId: 41,
+        retailTenantId: 13,
+        serviceFormat: 'PROPERTY_RENTAL',
+        retailTenant: { owner: { id: 41 } },
+      });
+      const getBranchWorkspaces = jest
+        .spyOn(service, 'getBranchWorkspaces')
+        .mockResolvedValue({ items: [{ branchId: 11 }] } as any);
+
+      await expect(
+        service.updateBranchWorkspaceServiceFormat(
+          41,
+          11,
+          { serviceFormat: 'PROPERTY_RENTAL' } as any,
+          [],
+        ),
+      ).resolves.toBeDefined();
+      getBranchWorkspaces.mockRestore();
+    });
+
+    it('records the confirmation server-side, even when the format is unchanged', async () => {
+      const branchRepo = stubBranchRepo({
+        id: 11,
+        ownerId: 41,
+        retailTenantId: 13,
+        serviceFormat: 'QSR',
+        homeConfig: null,
+        retailTenant: { owner: { id: 41 } },
+      });
+      const getBranchWorkspaces = jest
+        .spyOn(service, 'getBranchWorkspaces')
+        .mockResolvedValue({ items: [{ branchId: 11 }] } as any);
+
+      await service.updateBranchWorkspaceServiceFormat(
+        41,
+        11,
+        { serviceFormat: 'QSR' },
+        [],
+      );
+
+      const [, updates] = branchRepo.update.mock.calls[0];
+      expect(updates.homeConfig.firstRun.businessTypeConfirmedAt).toEqual(
+        expect.any(String),
+      );
+      // No layout was invented for a branch that never customized Home: without
+      // a `widgets` key the client still renders the per-format default.
+      expect(updates.homeConfig.widgets).toBeUndefined();
+    });
+
+    it('keeps the milestone when a format change resets the Home layout', async () => {
+      const branchRepo = stubBranchRepo({
+        id: 11,
+        ownerId: 41,
+        retailTenantId: 13,
+        serviceFormat: 'QSR',
+        homeConfig: {
+          version: 1,
+          widgets: [{ id: 'sales', enabled: true }],
+          quickLinks: [],
+          firstRun: { businessTypeConfirmedAt: '2026-07-01T00:00:00.000Z' },
+        },
+        retailTenant: { owner: { id: 41 } },
+      });
+      const getBranchWorkspaces = jest
+        .spyOn(service, 'getBranchWorkspaces')
+        .mockResolvedValue({ items: [{ branchId: 11 }] } as any);
+
+      await service.updateBranchWorkspaceServiceFormat(
+        41,
+        11,
+        { serviceFormat: 'RETAIL' },
+        [],
+      );
+
+      const [, updates] = branchRepo.update.mock.calls[0];
+      // The QSR layout is dropped...
+      expect(updates.homeConfig.widgets).toBeUndefined();
+      // ...but the first-run history survives, re-stamped with this confirmation.
+      expect(updates.homeConfig.firstRun.businessTypeConfirmedAt).not.toBe(
+        '2026-07-01T00:00:00.000Z',
+      );
+      getBranchWorkspaces.mockRestore();
+    });
+
+    it('does not let a Home layout save erase the milestone', async () => {
+      const branchRepo = {
+        findOne: jest.fn().mockResolvedValue({
+          id: 11,
+          ownerId: 41,
+          retailTenantId: 13,
+          serviceFormat: 'QSR',
+          homeConfig: {
+            version: 1,
+            widgets: [],
+            quickLinks: [],
+            firstRun: { businessTypeConfirmedAt: '2026-07-01T00:00:00.000Z' },
+          },
+          retailTenant: { owner: { id: 41 } },
+        }),
+        update: jest.fn().mockResolvedValue(undefined),
+      };
+      sellerWorkspacesRepository.manager.getRepository.mockImplementation(
+        (entity: any) => (entity === Branch ? branchRepo : {}),
+      );
+      const getBranchWorkspaces = jest
+        .spyOn(service, 'getBranchWorkspaces')
+        .mockResolvedValue({ items: [{ branchId: 11 }] } as any);
+
+      // The client's Home normalizer only carries the layout.
+      await service.updateBranchWorkspace(
+        41,
+        11,
+        {
+          homeConfig: {
+            version: 1,
+            widgets: [{ id: 'sales', enabled: true }],
+            quickLinks: [],
+          },
+        },
+        [],
+      );
+
+      const [, updates] = branchRepo.update.mock.calls[0];
+      expect(updates.homeConfig.widgets).toEqual([
+        { id: 'sales', enabled: true },
+      ]);
+      expect(updates.homeConfig.firstRun).toEqual({
+        businessTypeConfirmedAt: '2026-07-01T00:00:00.000Z',
+      });
+      getBranchWorkspaces.mockRestore();
+    });
+  });
+  it('lists a trialing branch exactly once, with early payment offered', async () => {
+    // Regression lock: a live trial is ACTIVE-but-unpaid. If it were ever also
+    // emitted as an activation candidate, getBranchWorkspaces would return TWO
+    // rows for the same branchId — duplicate cards and duplicate React keys.
+    usersRepository.findOne.mockResolvedValue({
+      id: 41,
+      email: 'seller@suuq.test',
+      roles: ['VENDOR', 'POS_MANAGER'],
+      subscriptionTier: SubscriptionTier.PRO,
+    });
+    const trialEndsAt = new Date('2026-08-12T00:00:00.000Z');
+    branchStaffService.getPosBranchSummariesForUser.mockResolvedValue([
+      {
+        branchId: 7,
+        branchName: 'Bole Bites',
+        branchCode: 'BB-7',
+        role: 'MANAGER',
+        permissions: ['OPEN_REGISTER'],
+        isOwner: true,
+        retailTenantId: 13,
+        retailTenantName: 'Seller Tenant',
+        modules: ['POS_CORE'],
+        workspaceStatus: 'ACTIVE',
+        subscriptionStatus: TenantSubscriptionStatus.TRIAL,
+        planCode: 'POS_BRANCH_TRIAL_14D',
+        subscriptionEndsAt: trialEndsAt,
+        isTrialWorkspace: true,
+        canStartActivation: false,
+        canPayNow: true,
+        canOpenNow: true,
+        joinedAt: new Date('2026-07-29T00:00:00.000Z'),
+      },
+    ]);
+    branchStaffService.getPosWorkspaceActivationCandidatesForUser.mockResolvedValue(
+      [],
+    );
+    tenantSubscriptionsRepository.find.mockResolvedValue([
+      {
+        tenantId: 13,
+        branchId: 7,
+        planCode: 'POS_BRANCH_TRIAL_14D',
+        status: TenantSubscriptionStatus.TRIAL,
+        billingInterval: TenantBillingInterval.MONTHLY,
+        startsAt: new Date('2026-07-29T00:00:00.000Z'),
+        endsAt: trialEndsAt,
+        autoRenew: false,
+      },
+    ]);
+
+    const result = await service.getBranchWorkspaces(41);
+
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]).toMatchObject({
+      branchId: 7,
+      workspaceStatus: 'ACTIVE',
+      isTrialWorkspace: true,
+      canPayNow: true,
+      canStartActivation: false,
+      canOpenNow: true,
+      subscriptionEndsAt: trialEndsAt,
+    });
   });
 });

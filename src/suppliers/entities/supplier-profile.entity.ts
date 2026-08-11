@@ -16,6 +16,20 @@ export enum SupplierOnboardingStatus {
   REJECTED = 'REJECTED',
 }
 
+/**
+ * Billing/go-live lifecycle of a supplier account. Independent of the
+ * onboardingStatus KYC track: payment (not admin review) is the go-live gate,
+ * so a supplier can publish offers and receive purchase orders only once
+ * activationStatus === ACTIVE. Mirrors the POS-workspace activation model.
+ */
+export enum SupplierActivationStatus {
+  PENDING_PAYMENT = 'PENDING_PAYMENT',
+  ACTIVE = 'ACTIVE',
+  PAST_DUE = 'PAST_DUE',
+  EXPIRED = 'EXPIRED',
+  CANCELLED = 'CANCELLED',
+}
+
 @Entity('supplier_profiles')
 export class SupplierProfile {
   @PrimaryGeneratedColumn()
@@ -46,6 +60,16 @@ export class SupplierProfile {
     default: SupplierOnboardingStatus.DRAFT,
   })
   onboardingStatus!: SupplierOnboardingStatus;
+
+  @Column({
+    type: 'enum',
+    enum: SupplierActivationStatus,
+    default: SupplierActivationStatus.PENDING_PAYMENT,
+  })
+  activationStatus!: SupplierActivationStatus;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  lastActivatedAt?: Date | null;
 
   @Column({ type: 'varchar', length: 255, nullable: true })
   payoutDetails?: string | null;

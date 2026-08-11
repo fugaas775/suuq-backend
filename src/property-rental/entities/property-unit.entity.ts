@@ -10,6 +10,11 @@ import {
 export enum PropertyUnitStatus {
   ACTIVE = 'ACTIVE',
   INACTIVE = 'INACTIVE',
+  // Vacant unit taken out of service (e.g. renovation between tenants). Stored in
+  // the existing varchar(16) status column, so no migration is required — the same
+  // approach HOTEL uses for pos_hotel_rooms.status. The reason lives in
+  // metadata.maintenanceReason.
+  MAINTENANCE = 'MAINTENANCE',
 }
 
 export enum PropertyUnitType {

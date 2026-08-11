@@ -13,13 +13,24 @@ import {
 } from '../accounting/general-ledger.service';
 import { GlAccountCode } from '../accounting/gl-accounts.constant';
 import { GlJournalSourceType } from '../accounting/entities/gl-journal-entry.entity';
-import { splitTenders } from '../accounting/tender-split.util';
-import { HotelFolio, HotelFolioStatus } from './entities/hotel-folio.entity';
+import { splitTenders, extractBadDebt } from '../accounting/tender-split.util';
+import {
+  resolveBranchTaxRate,
+  splitGrossTax,
+} from '../accounting/tax-split.util';
+import { Branch } from '../branches/entities/branch.entity';
+import {
+  HotelFolio,
+  HotelFolioPaymentRecord,
+  HotelFolioStatus,
+} from './entities/hotel-folio.entity';
 import { HotelFolioCharge } from './entities/hotel-folio-charge.entity';
+import { HotelRoom, HotelRoomStatus } from './entities/hotel-room.entity';
 import {
   ListHotelFoliosQueryDto,
   OpenFolioDto,
   PostFolioChargeDto,
+  RecordFolioPaymentDto,
   SettleFolioDto,
   TransferFolioRoomDto,
   VoidFolioDto,
@@ -36,8 +47,38 @@ export class HotelFolioService {
     private readonly folioRepo: Repository<HotelFolio>,
     @InjectRepository(HotelFolioCharge)
     private readonly chargeRepo: Repository<HotelFolioCharge>,
+    @InjectRepository(HotelRoom)
+    private readonly roomRepo: Repository<HotelRoom>,
+    @InjectRepository(Branch)
+    private readonly branchRepo: Repository<Branch>,
     private readonly generalLedger: GeneralLedgerService,
   ) {}
+
+  /**
+   * The branch's tax rate, read live at settlement.
+   *
+   * A folio, unlike a lease, hits the ledger exactly once — cash in and revenue
+   * out in the same entry — so there is no second posting for a later rate
+   * change to contradict. The live rate is also the one the register grossed the
+   * folio up with, which is what the guest was charged. Falls back to 0 rather
+   * than guessing, so an unreadable branch posts as it always did.
+   */
+  private async resolveSettlementTaxRate(branchId: number): Promise<number> {
+    try {
+      const branch = await this.branchRepo.findOne({
+        where: { id: branchId },
+        select: { id: true, taxEnabled: true, taxRate: true },
+      });
+      return resolveBranchTaxRate(branch);
+    } catch (error) {
+      this.logger.warn(
+        `Could not read tax settings for branch ${branchId}; settling folio untaxed: ${
+          error instanceof Error ? error.message : error
+        }`,
+      );
+      return 0;
+    }
+  }
 
   private toFolioResponse(folio: HotelFolio, charges: HotelFolioCharge[] = []) {
     return {
@@ -109,6 +150,20 @@ export class HotelFolioService {
       });
       if (existing) {
         return this.toFolioResponse(existing);
+      }
+    }
+
+    // Don't check a guest into a room that's out of service. The board already
+    // blocks this, but guard it here so no offline-sync/non-board path can.
+    const roomNumber = String(dto.roomNumber || '').trim();
+    if (roomNumber) {
+      const room = await this.roomRepo.findOne({
+        where: { branchId: dto.branchId, roomNumber },
+      });
+      if (room?.status === HotelRoomStatus.MAINTENANCE) {
+        throw new BadRequestException(
+          `Room ${roomNumber} is out of service (maintenance).`,
+        );
       }
     }
 
@@ -216,6 +271,119 @@ export class HotelFolioService {
     };
   }
 
+  private normalizeFolioPaymentRows(
+    rows: {
+      method?: string;
+      amount?: number;
+      currency?: string;
+      reference?: string;
+    }[],
+    fallbackCurrency: string,
+    meta: {
+      checkoutId?: string | null;
+      idempotencyKey?: string | null;
+      paidAt: string;
+    },
+  ): { records: HotelFolioPaymentRecord[]; total: number } {
+    const records: HotelFolioPaymentRecord[] = (rows || [])
+      .filter((p) => Number(p.amount || 0) > 0)
+      .map((p) => ({
+        amount:
+          Math.round((Number(p.amount || 0) + Number.EPSILON) * 100) / 100,
+        method: String(p.method || 'CASH')
+          .trim()
+          .toUpperCase(),
+        currency: p.currency
+          ? String(p.currency).trim().toUpperCase()
+          : fallbackCurrency,
+        reference: p.reference ? String(p.reference).trim() : null,
+        checkoutId: meta.checkoutId ?? null,
+        idempotencyKey: meta.idempotencyKey ?? null,
+        paidAt: meta.paidAt,
+      }));
+    const total =
+      Math.round(
+        (records.reduce((s, p) => s + p.amount, 0) + Number.EPSILON) * 100,
+      ) / 100;
+    return { records, total };
+  }
+
+  /**
+   * Records a partial (instalment) payment against an OPEN folio.
+   *
+   * Appends to the `payments` ledger and ACCRUES `paidAmount`; the folio stays
+   * OPEN until check-out. This exists because settleFolio is terminal — it flips
+   * the folio to SETTLED unconditionally, so the POS could never call it for an
+   * instalment (the Muntaha Room 210 incident) and simply skipped the backend
+   * entirely. The result was a folio.paidAmount that only ever reflected the LAST
+   * payment.
+   *
+   * Deliberately posts NO general-ledger entry. A HOTEL instalment's cash is
+   * already recognised through the POS checkout ingestion path, and settleFolio
+   * separately credits SERVICE_REVENUE for the folio's charges — a third posting
+   * here would double-book. (This is where it differs from the property-rental
+   * analogue, whose rent is deferred and does post on payment.)
+   */
+  async recordPayment(folioId: number, dto: RecordFolioPaymentDto) {
+    const folio = await this.folioRepo.findOne({ where: { id: folioId } });
+    if (!folio) {
+      throw new NotFoundException(`Hotel folio ${folioId} not found.`);
+    }
+    if (folio.status !== HotelFolioStatus.OPEN) {
+      throw new BadRequestException(
+        `Folio ${folioId} cannot take a payment from status ${folio.status}.`,
+      );
+    }
+
+    const idempotencyKey = String(dto.idempotencyKey || '').trim() || null;
+    const ledger: HotelFolioPaymentRecord[] = Array.isArray(folio.payments)
+      ? folio.payments
+      : [];
+    if (
+      idempotencyKey &&
+      ledger.some((p) => p.idempotencyKey === idempotencyKey)
+    ) {
+      // Idempotent retry — this instalment is already on the ledger. Returning
+      // the folio unchanged matters: the mirror call retries on failure, and a
+      // retry that lands after a slow success must not double the paidAmount.
+      return this.toFolioResponse(folio);
+    }
+
+    const rows =
+      dto.payments && dto.payments.length > 0
+        ? dto.payments
+        : dto.amount !== undefined
+          ? [
+              {
+                method: dto.paymentMethod,
+                amount: dto.amount,
+                currency: dto.currency,
+              },
+            ]
+          : [];
+    const paidAt = dto.paidAt
+      ? new Date(dto.paidAt).toISOString()
+      : new Date().toISOString();
+    const { records, total } = this.normalizeFolioPaymentRows(
+      rows,
+      folio.currency,
+      { checkoutId: dto.checkoutId ?? null, idempotencyKey, paidAt },
+    );
+    if (total <= 0) {
+      throw new BadRequestException(
+        'Payment amount must be greater than zero.',
+      );
+    }
+
+    folio.payments = [...ledger, ...records];
+    folio.paidAmount =
+      Math.round(
+        ((Number(folio.paidAmount) || 0) + total + Number.EPSILON) * 100,
+      ) / 100;
+    const saved = await this.folioRepo.save(folio);
+    return this.toFolioResponse(saved);
+  }
+
   async settleFolio(folioId: number, dto: SettleFolioDto) {
     const folio = await this.folioRepo.findOne({ where: { id: folioId } });
 
@@ -237,12 +405,24 @@ export class HotelFolioService {
     folio.status = HotelFolioStatus.SETTLED;
     folio.settledCheckoutId = dto.checkoutId ?? null;
     // If multi-payment array is provided, sum it; otherwise fall back to legacy flat field.
-    folio.paidAmount =
+    const settleTender =
       dto.payments && dto.payments.length > 0
         ? dto.payments.reduce((sum, p) => sum + Number(p.amount || 0), 0)
         : dto.paidAmount !== undefined
           ? dto.paidAmount
           : null;
+    // ADD the closing tender to what recordPayment already accrued. This used to
+    // OVERWRITE, so a folio paid 7,500 + 10,000 settled reading 10,000 — and
+    // because the GL below books `receivable = recognised - paid`, every
+    // instalment-settled folio posted phantom accounts receivable equal to the
+    // earlier instalments.
+    const priorPaid = Number(folio.paidAmount) || 0;
+    folio.paidAmount =
+      settleTender === null && priorPaid === 0
+        ? null
+        : Math.round(
+            (priorPaid + Number(settleTender || 0) + Number.EPSILON) * 100,
+          ) / 100;
     folio.settledAt = dto.settledAt ? new Date(dto.settledAt) : new Date();
 
     const saved = await this.folioRepo.save(folio);
@@ -261,7 +441,16 @@ export class HotelFolioService {
       // (any excess stays on the folio, the source of truth); the shortfall on a
       // partially-paid folio becomes a receivable.
       const settledCash = Math.min(paid, recognised);
-      const { cash, clearing } = splitTenders(dto.payments, settledCash);
+      // A BAD_DEBT payment is a manager-approved write-off, not cash collected:
+      // carve it out (capped at settledCash) and post it to BAD_DEBT_EXPENSE so
+      // the room revenue is still recognized while the loss offsets it, instead
+      // of parking the write-off in tender-clearing as a collectable asset.
+      const { badDebt: rawBadDebt, collected } = extractBadDebt(dto.payments);
+      const badDebt = Math.min(rawBadDebt, settledCash);
+      const { cash, clearing } = splitTenders(
+        collected,
+        round2(settledCash - badDebt),
+      );
       const receivable = Math.max(0, round2(recognised - paid));
       const lines: JournalLineInput[] = [];
       if (cash > 0)
@@ -271,14 +460,31 @@ export class HotelFolioService {
           accountCode: GlAccountCode.TENDER_CLEARING,
           debit: clearing,
         });
+      if (badDebt > 0)
+        lines.push({
+          accountCode: GlAccountCode.BAD_DEBT_EXPENSE,
+          debit: badDebt,
+        });
       if (receivable > 0)
         lines.push({
           accountCode: GlAccountCode.ACCOUNTS_RECEIVABLE,
           debit: receivable,
         });
+      // The folio total is gross — the register grossed it up (or the price
+      // already contained the tax) before it was ever stored. Splitting it here
+      // is the only point at which a hotel's VAT reaches the ledger: the POS
+      // checkout path skips accrual formats entirely to avoid double-counting
+      // this very entry, so without this leg a hotel shows zero tax owed no
+      // matter how much it collected.
+      const { net, tax } = splitGrossTax(
+        recognised,
+        await this.resolveSettlementTaxRate(saved.branchId),
+      );
+      if (tax > 0)
+        lines.push({ accountCode: GlAccountCode.TAX_PAYABLE, credit: tax });
       lines.push({
         accountCode: GlAccountCode.SERVICE_REVENUE,
-        credit: recognised,
+        credit: net,
       });
       await this.generalLedger
         .post({

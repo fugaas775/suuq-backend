@@ -82,7 +82,8 @@ CREATE TYPE public.branch_expenses_category_enum AS ENUM (
     'MARKETING',
     'MAINTENANCE',
     'TAXES',
-    'OTHER'
+    'OTHER',
+    'TAX_REMITTANCE'
 );
 
 
@@ -613,10 +614,13 @@ CREATE TYPE public.product_request_urgency_enum AS ENUM (
 CREATE TYPE public.purchase_orders_status_enum AS ENUM (
     'DRAFT',
     'SUBMITTED',
+    'CHANGES_PROPOSED',
     'ACKNOWLEDGED',
+    'PARTIALLY_SHIPPED',
     'SHIPPED',
     'RECEIVED',
     'RECONCILED',
+    'DECLINED',
     'CANCELLED'
 );
 
@@ -3449,7 +3453,8 @@ CREATE TABLE public.pos_property_rental_bookings (
     "voidedAt" timestamp with time zone,
     payments jsonb,
     "depositForfeit" numeric(14,2),
-    "recognizedAmount" numeric(14,2) DEFAULT '0'::numeric NOT NULL
+    "recognizedAmount" numeric(14,2) DEFAULT '0'::numeric NOT NULL,
+    "taxRate" numeric(5,4) DEFAULT '0'::numeric NOT NULL
 );
 
 
@@ -4204,6 +4209,7 @@ CREATE TABLE public.purchase_order_items (
     "unitPrice" numeric(12,2) NOT NULL,
     "shortageQuantity" integer DEFAULT 0 NOT NULL,
     "damagedQuantity" integer DEFAULT 0 NOT NULL,
+    "shippedQuantity" integer DEFAULT 0 NOT NULL,
     note text
 );
 

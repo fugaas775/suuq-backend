@@ -58,6 +58,7 @@ import { ProductVariant } from '../products/entities/product-variant.entity';
 import { computeVariantKey } from '../products/variant-key.util';
 import { VendorProductVariantInputDto } from './dto/create-vendor-product.dto';
 import { Branch } from '../branches/entities/branch.entity';
+import { linkBranchToVendorStore } from '../branches/branch-store-link';
 import { StockMovementType } from '../branches/entities/stock-movement.entity';
 import { PosPortalOnboardingService } from '../branch-staff/pos-portal-onboarding.service';
 import { SellerWorkspace } from '../seller-workspace/entities/seller-workspace.entity';
@@ -69,9 +70,10 @@ export class VendorService {
   private static readonly BULK_CREATE_MAX_ROWS = 1000;
 
   private static generateProductPlaceholderImageUrl(name: string): string {
-    const apiBase = (
-      process.env.API_URL || 'https://api.suuq.ugasfuad.com'
-    ).replace(/\/+$/, '');
+    const apiBase = (process.env.API_URL || 'https://api.suuq-s.com').replace(
+      /\/+$/,
+      '',
+    );
     return `${apiBase}/api/img/initials?name=${encodeURIComponent((name || 'PR').trim())}`;
   }
 
@@ -2900,7 +2902,7 @@ export class VendorService {
     const savedUser = await this.userRepository.save(user);
 
     // Auto-provision a POS workspace (tenant + branch) whenever a vendor is
-    // approved so they can immediately use pos.ugasfuad.com without a separate
+    // approved so they can immediately use pos.suuq-s.com without a separate
     // sign-up flow.  Errors are non-fatal — the approval still completes.
     if (status === VerificationStatus.APPROVED) {
       void this.provisionPosWorkspaceForVendor(savedUser).catch((err: any) =>
@@ -4117,6 +4119,56 @@ export class VendorService {
       vendorId: store.ownerUserId,
       permissions: ['MANAGE_PRODUCTS'],
     }));
+  }
+
+  /**
+   * Provisions the consumer storefront for a branch that has none.
+   *
+   * Branches created through seller onboarding get a storefront automatically,
+   * but branches predating that — or ones whose link drifted — have no way to
+   * reach the Consumer app at all, and the owner's only recourse today is a
+   * backend script.
+   *
+   * Only the branch owner may do this. Both halves of the branch↔store 1:1 go
+   * through `linkBranchToVendorStore`, and a retry repairs rather than fails.
+   */
+  async createStoreForBranch(
+    userId: number,
+    branchId: number,
+  ): Promise<VendorStore> {
+    const manager = this.vendorStoreRepository.manager;
+    const branch = await manager
+      .getRepository(Branch)
+      .findOne({ where: { id: branchId } });
+    if (!branch) {
+      throw new NotFoundException(`Branch #${branchId} not found`);
+    }
+    if (Number(branch.ownerId) !== Number(userId)) {
+      throw new ForbiddenException(
+        'Only the branch owner can create its consumer storefront',
+      );
+    }
+
+    const existing = await this.vendorStoreRepository.findOne({
+      where: { branchId },
+    });
+    if (existing) {
+      await linkBranchToVendorStore(manager, branchId, existing.id);
+      return existing;
+    }
+
+    const store = await this.vendorStoreRepository.save(
+      this.vendorStoreRepository.create({
+        ownerUserId: userId,
+        branchId,
+        storeName: branch.name,
+        // Hidden until the owner has set a cover image and checked the shelf.
+        isConsumerVisible: false,
+        serviceFormat: branch.serviceFormat ?? null,
+      }),
+    );
+    await linkBranchToVendorStore(manager, branchId, store.id);
+    return store;
   }
 
   async updateStorefrontProfile(

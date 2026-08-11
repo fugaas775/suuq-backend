@@ -54,6 +54,12 @@ import {
 } from './dto/create-pos-workspace.dto';
 import { PosWorkspaceActivationService } from './pos-workspace-activation.service';
 import { PosPortalOnboardingService } from './pos-portal-onboarding.service';
+import { SupplierStaffService } from '../suppliers/supplier-staff.service';
+import { SupplierOnboardingService } from '../suppliers/supplier-onboarding.service';
+import { SupplierActivationService } from '../suppliers/supplier-activation.service';
+import { CreateSupplierWorkspaceDto } from '../suppliers/dto/create-supplier-workspace.dto';
+import { StartSupplierActivationDto } from '../suppliers/dto/start-supplier-activation.dto';
+import { extractActiveSupplierId } from '../suppliers/active-supplier.util';
 import {
   PosPortalAccessDeniedResponseDto,
   PosPortalAuthResponseDto,
@@ -81,6 +87,19 @@ type IdentifierLikeDto = {
   resolveIdentifier?: () => string;
 };
 
+/**
+ * Rollback switch for the old "silently provision a QSR branch at sign-in"
+ * behaviour. Default OFF — the gate's signup screen replaced it. See the call
+ * site in buildPortalSession for why.
+ */
+function isSignInAutoProvisionEnabled(): boolean {
+  return ['1', 'true', 'yes', 'on'].includes(
+    String(process.env.POS_SELF_SERVE_AUTO_PROVISION_ON_SIGNIN || '')
+      .trim()
+      .toLowerCase(),
+  );
+}
+
 const PORTAL_AUTH_WRITE_THROTTLE = { default: { ttl: 60_000, limit: 10 } };
 const PORTAL_AUTH_SESSION_THROTTLE = { default: { ttl: 60_000, limit: 30 } };
 
@@ -97,8 +116,6 @@ const GOOGLE_OAUTH_SCOPE = 'openid email profile';
 const GOOGLE_OAUTH_DEFAULT_RETURN_ORIGINS = [
   'https://pos.suuq-s.com',
   'https://www.pos.suuq-s.com',
-  'https://pos.ugasfuad.com',
-  'https://www.pos.ugasfuad.com',
   'http://localhost:4174',
   'http://localhost:5173',
 ];
@@ -114,6 +131,9 @@ export class PosPortalAuthController {
     private readonly branchShiftService: BranchShiftService,
     private readonly posPortalOnboardingService: PosPortalOnboardingService,
     private readonly posWorkspaceActivationService: PosWorkspaceActivationService,
+    private readonly supplierStaffService: SupplierStaffService,
+    private readonly supplierOnboardingService: SupplierOnboardingService,
+    private readonly supplierActivationService: SupplierActivationService,
     private readonly auditService: AuditService,
     private readonly configService: ConfigService,
     private readonly redisService: RedisService,
@@ -713,7 +733,88 @@ export class PosPortalAuthController {
   ) {
     const user = await this.authService.getUsersService().findById(req.user.id);
 
-    return this.posPortalOnboardingService.createWorkspaceForUser(user, dto);
+    const created =
+      await this.posPortalOnboardingService.createWorkspaceForUser(user, dto);
+
+    // The second half of the signup funnel. Removing the sign-in auto-provision
+    // took away `pos_portal.auth.trial_workspace_provisioned`, which was the
+    // only count of new POS businesses — this replaces it, and carries the
+    // chosen format so we can see what people actually run.
+    await this.recordPortalAuthEvent({
+      action: 'pos_portal.workspace.self_serve_created',
+      event: 'pos_portal_workspace_self_serve_created',
+      level: 'log',
+      req,
+      user,
+      meta: {
+        branchId: created.workspace.branchId,
+        tenantId: created.workspace.tenantId,
+        serviceFormat: dto.serviceFormat ?? null,
+        trial: Boolean(created.trial),
+        onboardingState: created.onboardingState,
+      },
+    });
+
+    return created;
+  }
+
+  @Post('supplier-workspace')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.CREATED)
+  @Throttle(PORTAL_AUTH_WRITE_THROTTLE)
+  @ApiOperation({
+    summary:
+      'Create a first-class supplier (wholesaler) account for an authenticated user',
+  })
+  @ApiBody({ type: CreateSupplierWorkspaceDto })
+  @ApiUnauthorizedResponse({ description: 'Missing or invalid access token' })
+  async createSupplierWorkspace(
+    @Body() dto: CreateSupplierWorkspaceDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const user = await this.authService.getUsersService().findById(req.user.id);
+    return this.supplierOnboardingService.createSupplierAccountForUser(
+      user,
+      dto,
+    );
+  }
+
+  @Post('supplier-activation/ebirr')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.OK)
+  @Throttle(PORTAL_AUTH_WRITE_THROTTLE)
+  @ApiOperation({
+    summary: 'Initiate an Ebirr payment to activate a supplier subscription',
+  })
+  @ApiBody({ type: StartSupplierActivationDto })
+  @ApiUnauthorizedResponse({ description: 'Missing or invalid access token' })
+  async activateSupplierWithEbirr(
+    @Body() dto: StartSupplierActivationDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.supplierActivationService.startEbirrActivationPayment(
+      {
+        id: req.user.id,
+        roles: req.user.roles,
+        supplierId: extractActiveSupplierId(req),
+      },
+      dto,
+    );
+  }
+
+  @Get('supplier-activation')
+  @UseGuards(JwtAuthGuard)
+  @Throttle(PORTAL_AUTH_SESSION_THROTTLE)
+  @ApiOperation({
+    summary: 'Resolve the supplier subscription / activation state',
+  })
+  @ApiUnauthorizedResponse({ description: 'Missing or invalid access token' })
+  async supplierActivationState(@Req() req: AuthenticatedRequest) {
+    return this.supplierActivationService.getActivationState({
+      id: req.user.id,
+      roles: req.user.roles,
+      supplierId: extractActiveSupplierId(req),
+    });
   }
 
   @Post('link-google')
@@ -787,11 +888,36 @@ export class PosPortalAuthController {
     source: PortalAuthSource,
     isNewUser = false,
   ) {
-    const allBranches =
-      await this.branchStaffService.getPosBranchSummariesForUser({
+    // Multi-supplier: an account may own several supplier profiles. Resolve the
+    // full set for the switcher, and pick the active one from the caller's
+    // `x-supplier-id` selection (falling back to the primary supplier).
+    const preferredSupplierId = extractActiveSupplierId(req);
+    const [allBranches, resolvedSuppliers] = await Promise.all([
+      this.branchStaffService.getPosBranchSummariesForUser({
         id: user.id,
         roles: user.roles,
-      });
+      }),
+      this.supplierStaffService.getSupplierContextsForUser({
+        id: user.id,
+        roles: user.roles,
+      }),
+    ]);
+    const availableSuppliers = Array.isArray(resolvedSuppliers)
+      ? resolvedSuppliers
+      : [];
+    const supplier =
+      (preferredSupplierId &&
+        availableSuppliers.find(
+          (s) => s.supplierProfileId === preferredSupplierId,
+        )) ||
+      availableSuppliers[0] ||
+      null;
+    const supplierSelection = {
+      supplier,
+      availableSuppliers,
+      activeSupplierId: supplier?.supplierProfileId ?? null,
+      requiresSupplierSelection: availableSuppliers.length > 1,
+    };
 
     // Shift-window enforcement: operators with shift assignments may only
     // log in during their active shift window. Managers/owners are exempt.
@@ -825,6 +951,84 @@ export class PosPortalAuthController {
     }
 
     if (!branches.length) {
+      // Superseded by the signup screen, and off by default.
+      //
+      // This used to hand a brand-new Google signup a QSR branch on the spot.
+      // It got them into a working POS in zero screens, but roughly three in
+      // four owners do not run a QSR — so most arrived in the wrong lane and had
+      // to find the re-lane step in Seller HQ to fix it. It also only ever fired
+      // for Google (`isNewUser` is set by googleLogin alone), leaving Apple and
+      // username/password signups to the paywall.
+      //
+      // Now every branchless sign-in gets the same 403 + onboardingAccessToken,
+      // and the gate asks one question before creating anything. Kept behind a
+      // flag purely as an instant rollback if that extra screen costs more
+      // signups than the right lane is worth.
+      if (isNewUser && !supplier && isSignInAutoProvisionEnabled()) {
+        let provisioned: { tenantId: number; branchId: number } | null = null;
+
+        try {
+          provisioned =
+            await this.posPortalOnboardingService.createTrialWorkspaceForNewUser(
+              user,
+            );
+        } catch (error) {
+          // Never break sign-in over this — fall through to the onboarding
+          // gates, which can still create the workspace by hand.
+          this.logger.error(
+            `Auto-provisioning a trial workspace for new user #${user.id} failed: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+        }
+
+        if (provisioned) {
+          const provisionedBranches =
+            await this.branchStaffService.getPosBranchSummariesForUser({
+              id: user.id,
+              roles: user.roles,
+            });
+
+          if (provisionedBranches.length) {
+            await this.recordPortalAuthEvent({
+              action: 'pos_portal.auth.trial_workspace_provisioned',
+              event: 'pos_portal_auth_trial_workspace_provisioned',
+              level: 'log',
+              req,
+              user,
+              meta: {
+                source,
+                branchId: provisioned.branchId,
+                tenantId: provisioned.tenantId,
+              },
+            });
+
+            return {
+              branches: provisionedBranches,
+              ...supplierSelection,
+              defaultBranchId: provisionedBranches[0].branchId,
+              requiresBranchSelection: false,
+              portalKey: 'pos',
+            };
+          }
+        }
+      }
+
+      // A first-class supplier account is branch-independent: if the user has a
+      // supplier identity, return a valid branchless supplier session instead of
+      // denying POS access. The supplier portal surfaces its own activation gate
+      // (when activationStatus !== ACTIVE), and dual-account users still reach
+      // their POS branches once they have any.
+      if (supplier) {
+        return {
+          branches: [],
+          ...supplierSelection,
+          defaultBranchId: null,
+          requiresBranchSelection: false,
+          portalKey: 'pos',
+        };
+      }
+
       const activationCandidates =
         await this.branchStaffService.getPosWorkspaceActivationCandidatesForUser(
           {
@@ -864,16 +1068,24 @@ export class PosPortalAuthController {
         });
       }
 
+      // Every branchless sign-in reaches here now that the gate asks before
+      // provisioning — this is the first half of the signup funnel, not an
+      // incident, so it logs rather than warns. Genuine access problems (outside
+      // shift hours, a deactivated branch) throw earlier and keep their levels.
+      //
+      // Pair with `pos_portal.workspace.self_serve_created`: the ratio between
+      // the two is the signup conversion rate.
       await this.recordPortalAuthEvent({
         action: 'pos_portal.auth.access_denied',
         event: 'pos_portal_auth_access_denied',
-        level: 'warn',
+        level: 'log',
         req,
         user,
         meta: {
           source,
           branchCount: 0,
           accountCreated: isNewUser,
+          funnelStage: 'AWAITING_BUSINESS_SETUP',
         },
       });
 
@@ -900,6 +1112,7 @@ export class PosPortalAuthController {
 
     return {
       branches,
+      ...supplierSelection,
       defaultBranchId: branches.length === 1 ? branches[0].branchId : null,
       requiresBranchSelection: branches.length > 1,
       portalKey: 'pos',

@@ -10,6 +10,7 @@ import {
   IsString,
   Length,
   MaxLength,
+  Max,
   Min,
   ValidateNested,
 } from 'class-validator';
@@ -43,6 +44,11 @@ export class PosCheckoutTenderDto {
 
 export class PosCheckoutItemDto {
   @IsOptional()
+  @IsString()
+  @MaxLength(128)
+  lineId?: string;
+
+  @IsOptional()
   @Type(() => Number)
   @IsNumber()
   productId?: number;
@@ -60,6 +66,26 @@ export class PosCheckoutItemDto {
   @IsString()
   @MaxLength(128)
   sku?: string;
+
+  /**
+   * RETAIL variant identity. Declared here on purpose: the global ValidationPipe
+   * runs with `whitelist: true`, so a top-level property the DTO does not know
+   * about is stripped in silence. Until now the only channel was `metadata`,
+   * which survives merely because it is an untyped @IsObject — a fragile place
+   * for the value that decides which variant's stock gets decremented.
+   *
+   * The metadata fallback stays supported forever: outbox records captured on a
+   * device before the client change carry the ids only there.
+   */
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  variantId?: number;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  variantKey?: string;
 
   @IsOptional()
   @IsString()
@@ -86,6 +112,9 @@ export class PosCheckoutItemDto {
   @Type(() => Number)
   @IsNumber()
   @Min(0)
+  // A rate is a FRACTION — 0.15 is 15%. Unbounded, a client sending 15 for
+  // "15%" prices a 1500% tax, and nothing downstream would question it.
+  @Max(1)
   taxRate?: number;
 
   @IsOptional()
@@ -226,6 +255,12 @@ export class IngestPosCheckoutDto {
   @IsString()
   @MaxLength(128)
   receiptNumber?: string;
+
+  /** Opaque token printed as the receipt QR; resolves on the public verify page. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(16)
+  verificationCode?: string;
 
   @IsString()
   @Length(3, 3)

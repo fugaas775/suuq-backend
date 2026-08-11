@@ -12,11 +12,14 @@ import { RolesGuard } from '../auth/roles.guard';
 import { BranchStaffAssignment } from '../branch-staff/entities/branch-staff-assignment.entity';
 import { EbirrModule } from '../ebirr/ebirr.module';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { EmailModule } from '../email/email.module';
 import { PosSyncJob } from '../pos-sync/entities/pos-sync-job.entity';
 import { PurchaseOrder } from '../purchase-orders/entities/purchase-order.entity';
 import { PurchaseOrderReceiptEvent } from '../purchase-orders/entities/purchase-order-receipt-event.entity';
 import { PurchaseOrdersModule } from '../purchase-orders/purchase-orders.module';
 import { RedisModule } from '../redis/redis.module';
+import { SuppliersModule } from '../suppliers/suppliers.module';
+import { SupplierProfile } from '../suppliers/entities/supplier-profile.entity';
 import { Order } from '../orders/entities/order.entity';
 import { Product } from '../products/entities/product.entity';
 import { User } from '../users/entities/user.entity';
@@ -37,6 +40,10 @@ import { EquityPartnerBnplActivation } from './entities/equity-partner-bnpl-acti
 import { EquityPartnerBnplCreditLedgerEntry } from './entities/equity-partner-bnpl-credit-ledger.entity';
 import { BranchCatalogProductLink } from './entities/branch-catalog-product-link.entity';
 import { BranchCatalogVendorLink } from './entities/branch-catalog-vendor-link.entity';
+import { StockCount } from './entities/stock-count.entity';
+import { InventoryLedgerService } from '../branches/inventory-ledger.service';
+import { RetailInventoryOpsController } from './retail-inventory-ops.controller';
+import { RetailInventoryOpsService } from './retail-inventory-ops.service';
 import { EquityPartnerService } from './equity-partner.service';
 import { EquityPartnerBnplService } from './equity-partner-bnpl.service';
 import { RetailSubscriptionLifecycleService } from './retail-subscription-lifecycle.service';
@@ -51,6 +58,9 @@ import { AdminEquityPartnersController } from './admin-equity-partners.controlle
     RedisModule,
     EbirrModule,
     NotificationsModule,
+    // The subscription lifecycle emails trial owners off-app.
+    EmailModule,
+    SuppliersModule,
     TypeOrmModule.forFeature([
       RetailTenant,
       Category,
@@ -70,6 +80,7 @@ import { AdminEquityPartnersController } from './admin-equity-partners.controlle
       Product,
       BranchCatalogProductLink,
       BranchCatalogVendorLink,
+      StockCount,
       User,
       PayoutLog,
       EquityPartner,
@@ -77,11 +88,13 @@ import { AdminEquityPartnersController } from './admin-equity-partners.controlle
       EquityPayout,
       EquityPartnerBnplActivation,
       EquityPartnerBnplCreditLedgerEntry,
+      SupplierProfile,
     ]),
   ],
   controllers: [
     RetailAdminController,
     RetailOpsController,
+    RetailInventoryOpsController,
     SellerEquityController,
     SellerEquityBnplController,
     AdminEquityPartnersController,
@@ -90,6 +103,8 @@ import { AdminEquityPartnersController } from './admin-equity-partners.controlle
     RetailEntitlementsService,
     RetailModulesGuard,
     RetailOpsService,
+    RetailInventoryOpsService,
+    InventoryLedgerService,
     RetailCommandCenterReportingService,
     EquityPartnerService,
     EquityPartnerBnplService,

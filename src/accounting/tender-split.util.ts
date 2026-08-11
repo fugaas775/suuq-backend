@@ -45,3 +45,33 @@ export function splitTenders(
   }
   return { cash: round2(cash), clearing: round2(clearing) };
 }
+
+export interface BadDebtExtraction {
+  /** Sum of BAD_DEBT tender amounts — the manager-approved write-off. */
+  badDebt: number;
+  /** The collectable tenders (everything that is not BAD_DEBT). */
+  collected: TenderRow[];
+}
+
+/**
+ * Pull BAD_DEBT (manager-approved write-off) tenders out of a tender set. A
+ * bad-debt tender is neither cash nor a clearing asset — it is a loss the caller
+ * posts to BAD_DEBT_EXPENSE — so it must be separated BEFORE `splitTenders`, and
+ * the split target reduced by the bad-debt amount. The caller then adds a single
+ * Dr BAD_DEBT_EXPENSE line for `badDebt`, keeping the entry balanced (the loss
+ * leg replaces the cash/clearing leg it would otherwise have inflated).
+ */
+export function extractBadDebt(
+  rows: TenderRow[] | undefined | null,
+): BadDebtExtraction {
+  let badDebt = 0;
+  const collected: TenderRow[] = [];
+  for (const row of rows || []) {
+    if (String(row?.method || '').toUpperCase() === 'BAD_DEBT') {
+      badDebt += Number(row?.amount || 0);
+    } else {
+      collected.push(row);
+    }
+  }
+  return { badDebt: round2(Math.max(0, badDebt)), collected };
+}

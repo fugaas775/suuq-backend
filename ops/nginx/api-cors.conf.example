@@ -1,13 +1,13 @@
 # Nginx config snippet to fix CORS preflight (OPTIONS 503) for the API
 
 # Usage:
-# - Include this location block in the server {} that serves api.suuq.ugasfuad.com
+# - Include this location block in the server {} that serves api.suuq-s.com
 # - Adjust upstream as needed (here it proxies to NestJS on localhost:3000)
 # - Reload Nginx after applying
 
 # Optional: if you prefer to reflect only specific origins
 set $cors_origin "";
-if ($http_origin ~* ^https://(admin\.)?suuq\.ugasfuad\.com$) {
+if ($http_origin ~* ^https://(admin\.)?suuq-s\.com$) {
     set $cors_origin $http_origin;
 }
 

@@ -3,7 +3,7 @@
 
 server {
     listen 80;
-    server_name admin.suuq.ugasfuad.com;
+    server_name admin.suuq-s.com;
 
     root /var/www/suuq-admin; # Ensure this points to the folder you rsynced
     index index.html;

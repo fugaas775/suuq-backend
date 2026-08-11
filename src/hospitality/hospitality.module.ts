@@ -8,6 +8,7 @@ import { HospitalityIdempotencyKey } from './entities/hospitality-idempotency-ke
 import { HospitalityKitchenTicket } from './entities/hospitality-kitchen-ticket.entity';
 import { HospitalityTableBoard } from './entities/hospitality-table-board.entity';
 import { KitchenProductAvailability } from './entities/kitchen-product-availability.entity';
+import { Branch } from '../branches/entities/branch.entity';
 import { HotelFolio } from './entities/hotel-folio.entity';
 import { HotelFolioCharge } from './entities/hotel-folio-charge.entity';
 import { HotelRoom } from './entities/hotel-room.entity';
@@ -47,6 +48,9 @@ import { StarpayModule } from '../starpay/starpay.module';
       HotelNightAuditLog,
       VendorStore,
       User,
+      // Read-only: the folio service reads the branch's tax rate at settlement
+      // to split the folio total into revenue and tax payable.
+      Branch,
     ]),
     AuditModule,
     RetailModule,

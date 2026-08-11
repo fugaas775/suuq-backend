@@ -19,6 +19,7 @@ import {
 } from './entities/branch-staff-assignment.entity';
 import { BranchStaffInvite } from './entities/branch-staff-invite.entity';
 import { Branch } from '../branches/entities/branch.entity';
+import { BranchHomeConfig } from '../branches/entities/branch-home-config.type';
 import { EmailService } from '../email/email.service';
 import { RetailEntitlementsService } from '../retail/retail-entitlements.service';
 import { RetailTenant } from '../retail/entities/retail-tenant.entity';
@@ -28,6 +29,7 @@ import {
   TenantSubscription,
   TenantSubscriptionStatus,
 } from '../retail/entities/tenant-subscription.entity';
+import { isPosSelfServeTrialSubscription } from '../retail/pos-self-serve-trial.policy';
 import { PosSessionRevocationService } from '../auth/pos-session-revocation.service';
 import { User } from '../users/entities/user.entity';
 import { POS_BRANCH_SUBSCRIPTION_OPTIONS } from './pos-workspace-pricing';
@@ -53,12 +55,30 @@ export interface PosBranchSummary {
   workspaceStatus: 'ACTIVE';
   subscriptionStatus: TenantSubscriptionStatus | null;
   planCode: string | null;
+  /** End of the current subscription period; drives the free-trial countdown. */
+  subscriptionEndsAt: Date | null;
+  /** True while this branch is open on the auto-provisioned free trial. */
+  isTrialWorkspace: boolean;
   canStartActivation: boolean;
+  /**
+   * The platform will accept a payment for this branch right now. True wherever
+   * canStartActivation is (the workspace is closed until paid), PLUS a live free
+   * trial — which is open, so it is NOT an activation candidate, but its owner
+   * may still convert early instead of waiting to be locked out.
+   */
+  canPayNow: boolean;
   canOpenNow: boolean;
   joinedAt: Date;
   phone: string | null;
   tinNumber: string | null;
   defaultCategoryId: number | null;
+  checkoutPolicyTime: string | null;
+  logoUrl: string | null;
+  taxEnabled: boolean;
+  taxRate: number;
+  taxInclusive: boolean;
+  taxName: string | null;
+  homeConfig: BranchHomeConfig | null;
   posExperienceProfileCode: string | null;
 }
 
@@ -74,6 +94,13 @@ export interface PosWorkspaceActivationCandidate {
   phone: string | null;
   tinNumber: string | null;
   defaultCategoryId: number | null;
+  checkoutPolicyTime: string | null;
+  logoUrl: string | null;
+  taxEnabled: boolean;
+  taxRate: number;
+  taxInclusive: boolean;
+  taxName: string | null;
+  homeConfig: BranchHomeConfig | null;
   role: BranchStaffRole;
   permissions: string[];
   assignedSurfaces: string[] | null;
@@ -93,6 +120,8 @@ export interface PosWorkspaceActivationCandidate {
   subscriptionStatus: TenantSubscriptionStatus | null;
   planCode: string | null;
   canStartActivation: boolean;
+  /** Mirrors canStartActivation here — a candidate is closed until it is paid. */
+  canPayNow: boolean;
   canOpenNow: boolean;
   activationBlockers: string[];
   pricing: {
@@ -150,7 +179,7 @@ export interface PosPortalSupportDiagnostic {
   };
 }
 
-const POS_WORKSPACE_MONTHLY_PRICE = 1900;
+const POS_WORKSPACE_MONTHLY_PRICE = 3900;
 const POS_WORKSPACE_CURRENCY = 'ETB';
 const POS_WORKSPACE_PAYMENT_METHOD = 'EBIRR';
 @Injectable()
@@ -557,7 +586,22 @@ export class BranchStaffService {
             workspaceStatus: workspace.workspaceStatus,
             subscriptionStatus: workspace.subscription?.status ?? null,
             planCode: workspace.subscription?.planCode ?? null,
+            // Lets POS-S count down a free trial (see pos-self-serve-trial.policy)
+            // instead of the branch silently locking out when it lapses.
+            subscriptionEndsAt: workspace.subscription?.endsAt ?? null,
+            isTrialWorkspace: isPosSelfServeTrialSubscription(
+              workspace.subscription,
+            ),
             canStartActivation: false,
+            // Only ACTIVE workspaces reach here, and a self-serve trial reports
+            // ACTIVE only while it is still live — so a trial row here is by
+            // construction a convertible one. Owners and managers may pay for it
+            // early; operators may not.
+            canPayNow:
+              isPosSelfServeTrialSubscription(workspace.subscription) &&
+              (summary.isOwner ||
+                summary.isTenantOwner ||
+                summary.role === BranchStaffRole.MANAGER),
             canOpenNow: true,
           };
         } catch (error) {
@@ -599,6 +643,12 @@ export class BranchStaffService {
             workspace.workspaceStatus,
           );
 
+        // An ACTIVE workspace is NOT an activation candidate, and this drop must
+        // stay even though a live trial is ACTIVE-but-unpaid. Seller HQ builds
+        // its branch list as [...activeBranches, ...activationCandidates], so a
+        // branch appearing in both returns two DTO rows for one branchId.
+        // Early payment for a trial rides `canPayNow` on the branch summary
+        // instead — see getPayableActivationCandidate.
         if (workspace.workspaceStatus === 'ACTIVE') {
           return null;
         }
@@ -615,6 +665,13 @@ export class BranchStaffService {
           phone: summary.phone ?? null,
           tinNumber: summary.tinNumber ?? null,
           defaultCategoryId: summary.defaultCategoryId ?? null,
+          checkoutPolicyTime: summary.checkoutPolicyTime ?? null,
+          logoUrl: summary.logoUrl ?? null,
+          taxEnabled: Boolean(summary.taxEnabled),
+          taxRate: Number(summary.taxRate ?? 0.15),
+          taxInclusive: Boolean(summary.taxInclusive),
+          taxName: summary.taxName ?? null,
+          homeConfig: summary.homeConfig ?? null,
           role: summary.role,
           isOwner: summary.isOwner,
           isTenantOwner: summary.isTenantOwner,
@@ -624,6 +681,7 @@ export class BranchStaffService {
           subscriptionStatus: workspace.subscription?.status ?? null,
           planCode: workspace.subscription?.planCode ?? null,
           canStartActivation,
+          canPayNow: canStartActivation,
           canOpenNow: false,
           activationBlockers: this.describeActivationBlockers(workspace),
           pricing: this.getPosWorkspacePricing(),
@@ -843,8 +901,8 @@ export class BranchStaffService {
   }
 
   getPosWorkspacePricing(): PosWorkspaceActivationCandidate['pricing'] {
-    // Effective monthly price is preserved (1,900 ETB) so derived metrics
-    // such as equity-partner payouts keep working unchanged. The activation
+    // Effective monthly price is 3,900 ETB; derived metrics such as
+    // equity-partner payouts (1/2 = 1,950 ETB) scale with it. The activation
     // surface should additionally show the per-period totals from
     // `subscriptionOptions` and let the user pick 6 months or 1 year.
     return {
@@ -995,6 +1053,12 @@ export class BranchStaffService {
     const byBranchId = new Map<number, PosBranchSummary>();
 
     for (const branch of ownedBranches) {
+      // A supplier's backing cash & carry outlet is owned by the supplier user
+      // but is NOT a normal POS branch — it is surfaced via the supplier context
+      // (outletBranchId), so keep it out of the branch list / switcher.
+      if (branch.supplierOutletProfileId) {
+        continue;
+      }
       byBranchId.set(branch.id, {
         branchId: branch.id,
         branchName: branch.name,
@@ -1007,6 +1071,13 @@ export class BranchStaffService {
         phone: branch.phone ?? null,
         tinNumber: branch.tinNumber ?? null,
         defaultCategoryId: branch.defaultCategoryId ?? null,
+        checkoutPolicyTime: branch.checkoutPolicyTime ?? null,
+        logoUrl: branch.logoUrl ?? null,
+        taxEnabled: Boolean(branch.taxEnabled),
+        taxRate: Number(branch.taxRate ?? 0.15),
+        taxInclusive: Boolean(branch.taxInclusive),
+        taxName: branch.taxName ?? null,
+        homeConfig: branch.homeConfig ?? null,
         role: BranchStaffRole.MANAGER,
         permissions: [],
         assignedSurfaces: null,
@@ -1019,7 +1090,10 @@ export class BranchStaffService {
         workspaceStatus: 'ACTIVE',
         subscriptionStatus: null,
         planCode: null,
+        subscriptionEndsAt: null,
+        isTrialWorkspace: false,
         canStartActivation: false,
+        canPayNow: false,
         canOpenNow: false,
         joinedAt: branch.createdAt,
         posExperienceProfileCode: null,
@@ -1029,6 +1103,10 @@ export class BranchStaffService {
     for (const tenant of tenantOwnedTenants) {
       for (const branch of tenant.branches ?? []) {
         if (!branch?.isActive || byBranchId.has(branch.id)) {
+          continue;
+        }
+        // Supplier outlet branches never surface in the normal branch list.
+        if (branch.supplierOutletProfileId) {
           continue;
         }
         // Skip branches explicitly transferred to another owner.
@@ -1050,6 +1128,13 @@ export class BranchStaffService {
           phone: branch.phone ?? null,
           tinNumber: branch.tinNumber ?? null,
           defaultCategoryId: branch.defaultCategoryId ?? null,
+          checkoutPolicyTime: branch.checkoutPolicyTime ?? null,
+          logoUrl: branch.logoUrl ?? null,
+          taxEnabled: Boolean(branch.taxEnabled),
+          taxRate: Number(branch.taxRate ?? 0.15),
+          taxInclusive: Boolean(branch.taxInclusive),
+          taxName: branch.taxName ?? null,
+          homeConfig: branch.homeConfig ?? null,
           role: BranchStaffRole.MANAGER,
           permissions: [],
           assignedSurfaces: null,
@@ -1062,7 +1147,10 @@ export class BranchStaffService {
           workspaceStatus: 'ACTIVE',
           subscriptionStatus: null,
           planCode: null,
+          subscriptionEndsAt: null,
+          isTrialWorkspace: false,
           canStartActivation: false,
+          canPayNow: false,
           canOpenNow: false,
           joinedAt: branch.createdAt,
           posExperienceProfileCode: null,
@@ -1072,6 +1160,10 @@ export class BranchStaffService {
 
     for (const assignment of assignments) {
       if (!assignment.branch?.isActive) {
+        continue;
+      }
+      // Supplier outlet branches never surface in the normal branch list.
+      if (assignment.branch.supplierOutletProfileId) {
         continue;
       }
 
@@ -1099,6 +1191,21 @@ export class BranchStaffService {
           existing?.defaultCategoryId ??
           assignment.branch.defaultCategoryId ??
           null,
+        checkoutPolicyTime:
+          existing?.checkoutPolicyTime ??
+          assignment.branch.checkoutPolicyTime ??
+          null,
+        logoUrl: existing?.logoUrl ?? assignment.branch.logoUrl ?? null,
+        taxEnabled: Boolean(
+          existing?.taxEnabled ?? assignment.branch.taxEnabled ?? false,
+        ),
+        taxRate: Number(existing?.taxRate ?? assignment.branch.taxRate ?? 0.15),
+        taxInclusive: Boolean(
+          existing?.taxInclusive ?? assignment.branch.taxInclusive ?? false,
+        ),
+        taxName: existing?.taxName ?? assignment.branch.taxName ?? null,
+        homeConfig:
+          existing?.homeConfig ?? assignment.branch.homeConfig ?? null,
         role: assignment.role ?? existing?.role ?? BranchStaffRole.OPERATOR,
         permissions: mergedPermissions,
         assignedSurfaces:
@@ -1120,7 +1227,10 @@ export class BranchStaffService {
         workspaceStatus: existing?.workspaceStatus ?? 'ACTIVE',
         subscriptionStatus: existing?.subscriptionStatus ?? null,
         planCode: existing?.planCode ?? null,
+        subscriptionEndsAt: existing?.subscriptionEndsAt ?? null,
+        isTrialWorkspace: existing?.isTrialWorkspace ?? false,
         canStartActivation: existing?.canStartActivation ?? false,
+        canPayNow: existing?.canPayNow ?? false,
         canOpenNow: existing?.canOpenNow ?? false,
         joinedAt: existing?.joinedAt ?? assignment.createdAt,
         posExperienceProfileCode:
@@ -1250,7 +1360,7 @@ export class BranchStaffService {
     branchName: string;
     isExistingUser: boolean;
   }) {
-    const portalUrl = process.env.POS_PORTAL_URL || 'https://pos.ugasfuad.com';
+    const portalUrl = process.env.POS_PORTAL_URL || 'https://pos.suuq-s.com';
     const subject = params.isExistingUser
       ? `POS access granted for ${params.branchName}`
       : `You've been invited to ${params.branchName} on POS`;

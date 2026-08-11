@@ -36,6 +36,21 @@ describe('LedgerStatementsService', () => {
     expect(pl.netProfit).toBe(4500);
   });
 
+  it("asks for tax ARISING, so a remittance cannot net against the period's own sales", async () => {
+    // A remittance debits TAX_PAYABLE from the EXPENSE source. Reading the plain
+    // account balance would subtract the payment from the tax the period's sales
+    // generated, and the branch would declare less than it charged.
+    const ledgerSpy = jest.fn(async () => 0);
+    const svc = new LedgerStatementsService({ balance: ledgerSpy } as never);
+
+    await svc.getProfitAndLoss(7, {});
+
+    const taxCall = ledgerSpy.mock.calls.find(
+      (call: any[]) => call[1] === GlAccountCode.TAX_PAYABLE,
+    ) as any[];
+    expect(taxCall[2].excludeSourceTypes).toEqual(['EXPENSE']);
+  });
+
   it('computes a balanced balance sheet (assets = liabilities + equity)', async () => {
     balances = {
       [GlAccountCode.CASH]: 5000,

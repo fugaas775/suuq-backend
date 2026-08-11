@@ -132,6 +132,83 @@ describe('RetailEntitlementsService', () => {
     expect(result.id).toBe(41);
   });
 
+  describe('when the tenant name is already taken', () => {
+    // Self-serve signup derives the tenant name from the owner's account, so
+    // two owners called Ahmed — or two who fall through to 'My Business' —
+    // collide on the UNIQUE index. Sign-in swallowed the throw, so the second
+    // one was silently dropped at the onboarding gate.
+    function uniqueViolation(constraint: string) {
+      return Object.assign(new Error('duplicate key value'), {
+        code: '23505',
+        constraint,
+      });
+    }
+
+    const NAME_INDEX = 'IDX_a554b4063de337d98a28c992e0';
+
+    beforeEach(() => {
+      retailTenantsRepository.findOne.mockResolvedValue({
+        id: 41,
+        status: RetailTenantStatus.ACTIVE,
+        branches: [],
+        subscriptions: [],
+        entitlements: [],
+      });
+    });
+
+    it('numbers the name instead of failing the signup', async () => {
+      retailTenantsRepository.save
+        .mockRejectedValueOnce(uniqueViolation(NAME_INDEX))
+        .mockRejectedValueOnce(uniqueViolation(NAME_INDEX))
+        .mockImplementation(async (value: any) => value);
+
+      await service.createTenant({ name: 'Ahmed' });
+
+      expect(retailTenantsRepository.save).toHaveBeenNthCalledWith(
+        3,
+        expect.objectContaining({ name: 'Ahmed (3)' }),
+      );
+    });
+
+    it('gives up on a name it can never win and uses a unique one', async () => {
+      retailTenantsRepository.save.mockImplementation(async (value: any) => {
+        if (/^Ahmed( \(\d+\))?$/.test(value.name)) {
+          throw uniqueViolation(NAME_INDEX);
+        }
+        return value;
+      });
+
+      await service.createTenant({ name: 'Ahmed' });
+
+      const saved = retailTenantsRepository.save.mock.calls.at(-1)[0];
+      expect(saved.name).toMatch(/^Ahmed \([0-9a-f]{8}\)$/);
+    });
+
+    it('rethrows a duplicate CODE — that is a real error, not a name clash', async () => {
+      retailTenantsRepository.save.mockRejectedValue(
+        uniqueViolation('UQ_retail_tenants_code'),
+      );
+
+      await expect(
+        service.createTenant({ name: 'Ahmed', code: 'TAKEN' }),
+      ).rejects.toThrow('duplicate key value');
+      expect(retailTenantsRepository.save).toHaveBeenCalledTimes(1);
+    });
+
+    it('reads the violation through TypeORM driverError too', async () => {
+      retailTenantsRepository.save
+        .mockRejectedValueOnce({ driverError: uniqueViolation(NAME_INDEX) })
+        .mockImplementation(async (value: any) => value);
+
+      await service.createTenant({ name: 'Ahmed' });
+
+      expect(retailTenantsRepository.save).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({ name: 'Ahmed (2)' }),
+      );
+    });
+  });
+
   it('assigns a branch to a retail tenant', async () => {
     branchesRepository.findOne
       .mockResolvedValueOnce({ id: 8, name: 'Branch 8' })
@@ -383,7 +460,7 @@ describe('RetailEntitlementsService', () => {
     ]);
 
     const result = await service.listTenants({
-      activationStatus: 'TRIAL' as any,
+      activationStatus: 'TRIAL',
     });
 
     expect(result).toHaveLength(1);
@@ -620,5 +697,231 @@ describe('RetailEntitlementsService', () => {
     await expect(
       service.createTenant({ name: 'Retail HQ', ownerUserId: 99 }),
     ).rejects.toThrow(NotFoundException);
+  });
+  describe('branch-scoped subscription resolution', () => {
+    function stubTenantAndBranch(branchId: number) {
+      branchesRepository.findOne.mockResolvedValue({
+        id: branchId,
+        retailTenantId: 5,
+        retailTenant: { id: 5 },
+      });
+      retailTenantsRepository.findOne.mockResolvedValue({
+        id: 5,
+        status: RetailTenantStatus.ACTIVE,
+        branches: [],
+        subscriptions: [],
+        entitlements: [],
+      });
+      tenantModuleEntitlementsRepository.find.mockResolvedValue([
+        { tenantId: 5, module: RetailModule.POS_CORE, enabled: true },
+      ]);
+    }
+
+    it("resolves each branch's own subscription on a multi-branch tenant", async () => {
+      stubTenantAndBranch(8);
+      // Branch 8 is trialing; branch 9's newer paid row must not govern it.
+      tenantSubscriptionsRepository.findOne.mockImplementation(
+        async ({ where }: any) =>
+          where.branchId === 8
+            ? {
+                id: 71,
+                tenantId: 5,
+                branchId: 8,
+                status: TenantSubscriptionStatus.TRIAL,
+                planCode: 'POS_BRANCH_TRIAL_14D',
+                endsAt: new Date(Date.now() + 5 * 86_400_000),
+              }
+            : null,
+      );
+
+      const result = await service.getBranchWorkspaceStatus(8);
+
+      expect(result.subscription?.branchId).toBe(8);
+      expect(result.workspaceStatus).toBe('ACTIVE'); // live trial opens the branch
+      // The lookup is never issued without a branch scope.
+      for (const call of tenantSubscriptionsRepository.findOne.mock.calls) {
+        expect(call[0].where).toHaveProperty('branchId');
+      }
+    });
+
+    it('falls back to a legacy tenant-wide row for a branch that has none', async () => {
+      stubTenantAndBranch(8);
+      const legacyRow = {
+        id: 60,
+        tenantId: 5,
+        branchId: null,
+        status: TenantSubscriptionStatus.ACTIVE,
+        billingInterval: TenantBillingInterval.MONTHLY,
+      };
+      tenantSubscriptionsRepository.findOne.mockImplementation(
+        async ({ where }: any) => (where.branchId === 8 ? null : legacyRow),
+      );
+
+      const result = await service.getBranchWorkspaceStatus(8);
+
+      expect(result.subscription).toMatchObject({ id: 60 });
+      expect(result.workspaceStatus).toBe('ACTIVE');
+    });
+
+    it('reports PAYMENT_REQUIRED rather than borrowing a sibling row', async () => {
+      stubTenantAndBranch(8);
+      // Only branch 9 has a row. Neither query matches, so branch 8 has none.
+      tenantSubscriptionsRepository.findOne.mockResolvedValue(null);
+
+      const result = await service.getBranchWorkspaceStatus(8);
+
+      expect(result.subscription).toBeNull();
+      expect(result.workspaceStatus).toBe('PAYMENT_REQUIRED');
+    });
+  });
+  describe('admin trial visibility', () => {
+    const TRIAL_PLAN = 'POS_BRANCH_TRIAL_14D';
+
+    function buildTenant(
+      subscriptions: any[],
+      branches = [{ id: 8, name: 'Bole Bites', code: 'BB-8' }],
+    ) {
+      return {
+        id: 5,
+        name: 'Bole Retail',
+        status: RetailTenantStatus.ACTIVE,
+        branches,
+        subscriptions,
+        entitlements: [
+          {
+            module: RetailModule.POS_CORE,
+            enabled: true,
+            reason: 'Enabled during POS-S self-serve onboarding',
+            metadata: { provisioningSource: 'POS_SELF_SERVE_AUTO_TRIAL' },
+          },
+        ],
+      } as any;
+    }
+
+    it('reports a trialing tenant as TRIAL, not as a paying ACTIVATED one', async () => {
+      const endsAt = new Date(Date.now() + 6 * 86_400_000);
+      retailTenantsRepository.find.mockResolvedValue([
+        buildTenant([
+          {
+            id: 71,
+            tenantId: 5,
+            branchId: 8,
+            planCode: TRIAL_PLAN,
+            status: TenantSubscriptionStatus.TRIAL,
+            startsAt: new Date(),
+            endsAt,
+          },
+        ]),
+      ]);
+
+      const [tenant] = await service.listTenants({});
+
+      expect(tenant.posWorkspaceAudit).toMatchObject({
+        activationStatus: 'TRIAL',
+        provisioningSource: 'POS_SELF_SERVE_AUTO_TRIAL',
+        trialEndsAt: endsAt,
+      });
+      expect(tenant.posWorkspaceAudit.nextBillingStep).toMatch(
+        /Free trial ends/,
+      );
+      expect(tenant.posWorkspaceAudit.branchWorkspaces[0]).toMatchObject({
+        isTrialWorkspace: true,
+        isTrialExpired: false,
+      });
+    });
+
+    it('is excluded by an ACTIVATED filter and matched by a TRIAL one', async () => {
+      retailTenantsRepository.find.mockResolvedValue([
+        buildTenant([
+          {
+            id: 71,
+            tenantId: 5,
+            branchId: 8,
+            planCode: TRIAL_PLAN,
+            status: TenantSubscriptionStatus.TRIAL,
+            startsAt: new Date(),
+            endsAt: new Date(Date.now() + 6 * 86_400_000),
+          },
+        ]),
+      ]);
+
+      expect(
+        await service.listTenants({ activationStatus: 'ACTIVATED' }),
+      ).toHaveLength(0);
+      expect(
+        await service.listTenants({ activationStatus: 'TRIAL' }),
+      ).toHaveLength(1);
+    });
+
+    it('reports a lapsed trial as TRIAL_EXPIRED, matching the sign-in gate', async () => {
+      retailTenantsRepository.find.mockResolvedValue([
+        buildTenant([
+          {
+            id: 71,
+            tenantId: 5,
+            branchId: 8,
+            planCode: TRIAL_PLAN,
+            // Post-sweep the row is EXPIRED; pre-sweep it is still TRIAL. Both
+            // must read the same here, or admin and the gate disagree.
+            status: TenantSubscriptionStatus.EXPIRED,
+            startsAt: new Date(Date.now() - 20 * 86_400_000),
+            endsAt: new Date(Date.now() - 6 * 86_400_000),
+          },
+        ]),
+      ]);
+
+      const [tenant] = await service.listTenants({});
+
+      expect(tenant.posWorkspaceAudit.activationStatus).toBe('TRIAL_EXPIRED');
+      expect(tenant.posWorkspaceAudit.branchWorkspaces[0].isTrialExpired).toBe(
+        true,
+      );
+      expect(tenant.posWorkspaceAudit.trialEndsAt).toBeNull();
+    });
+
+    it('describes each branch by its own subscription on a mixed tenant', async () => {
+      retailTenantsRepository.find.mockResolvedValue([
+        buildTenant(
+          [
+            {
+              id: 71,
+              tenantId: 5,
+              branchId: 8,
+              planCode: TRIAL_PLAN,
+              status: TenantSubscriptionStatus.TRIAL,
+              startsAt: new Date(Date.now() - 86_400_000),
+              endsAt: new Date(Date.now() + 6 * 86_400_000),
+            },
+            {
+              id: 72,
+              tenantId: 5,
+              branchId: 9,
+              planCode: 'POS_BRANCH_1M',
+              status: TenantSubscriptionStatus.ACTIVE,
+              startsAt: new Date(),
+              endsAt: new Date(Date.now() + 25 * 86_400_000),
+            },
+          ],
+          [
+            { id: 8, name: 'Bole Bites', code: 'BB-8' },
+            { id: 9, name: 'Piassa Bites', code: 'PB-9' },
+          ],
+        ),
+      ]);
+
+      const [tenant] = await service.listTenants({});
+      const [trialBranch, paidBranch] =
+        tenant.posWorkspaceAudit.branchWorkspaces;
+
+      expect(trialBranch).toMatchObject({
+        branchId: 8,
+        isTrialWorkspace: true,
+      });
+      expect(paidBranch).toMatchObject({
+        branchId: 9,
+        isTrialWorkspace: false,
+        planCode: 'POS_BRANCH_1M',
+      });
+    });
   });
 });

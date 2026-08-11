@@ -6,6 +6,7 @@ import {
   Param,
   ParseIntPipe,
   Post,
+  Query,
   Req,
   UseGuards,
 } from '@nestjs/common';
@@ -13,31 +14,53 @@ import { ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { AuthenticatedRequest } from '../common/interfaces/authenticated-request.interface';
 import {
+  ArrayMaxSize,
+  IsArray,
   IsEmail,
   IsIn,
   IsNotEmpty,
   IsOptional,
   IsString,
+  ValidateIf,
 } from 'class-validator';
+import { EquityPartnerBnplAccountKind } from './entities/equity-partner-bnpl-activation.entity';
 import {
   EquityPartnerBnplService,
   StartBnplActivationInput,
 } from './equity-partner-bnpl.service';
 
 class StartEquityBnplActivationDto implements StartBnplActivationInput {
-  @IsString()
-  @IsNotEmpty()
-  branchName!: string;
+  @IsOptional()
+  @IsIn(['BRANCH', 'SUPPLIER'])
+  accountKind?: EquityPartnerBnplAccountKind;
 
+  // 'BNPL' (default) draws equity credit + a slot; 'DIRECT_EBIRR' pays now.
+  @IsOptional()
+  @IsIn(['BNPL', 'DIRECT_EBIRR'])
+  fundingType?: 'BNPL' | 'DIRECT_EBIRR';
+
+  // Ebirr line to charge — required for direct payment.
+  @ValidateIf((o) => o.fundingType === 'DIRECT_EBIRR')
   @IsString()
   @IsNotEmpty()
-  serviceFormat!: string;
+  paymentPhone?: string;
 
   @IsEmail()
   targetOwnerEmail!: string;
 
   @IsIn(['ONE_YEAR'])
   period!: 'ONE_YEAR';
+
+  // Branch-only — required unless funding a supplier account.
+  @ValidateIf((o) => o.accountKind !== 'SUPPLIER')
+  @IsString()
+  @IsNotEmpty()
+  branchName?: string;
+
+  @ValidateIf((o) => o.accountKind !== 'SUPPLIER')
+  @IsString()
+  @IsNotEmpty()
+  serviceFormat?: string;
 
   @IsOptional()
   @IsString()
@@ -58,6 +81,26 @@ class StartEquityBnplActivationDto implements StartBnplActivationInput {
   @IsOptional()
   @IsString()
   tinNumber?: string | null;
+
+  // Supplier-only — required when funding a supplier account.
+  @ValidateIf((o) => o.accountKind === 'SUPPLIER')
+  @IsString()
+  @IsNotEmpty()
+  supplierCompanyName?: string;
+
+  @IsOptional()
+  @IsString()
+  legalName?: string | null;
+
+  @IsOptional()
+  @IsString()
+  taxId?: string | null;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(50)
+  @IsString({ each: true })
+  countriesServed?: string[];
 }
 
 class SettleEquityBnplActivationDto {
@@ -72,10 +115,12 @@ class SettleEquityBnplActivationDto {
 export class SellerEquityBnplController {
   constructor(private readonly bnplService: EquityPartnerBnplService) {}
 
-  /** Pricing + period options to populate the partner UI. */
+  /** Pricing + period options to populate the partner UI (branch or supplier). */
   @Get('options')
-  options() {
-    return { options: this.bnplService.getSubscriptionOptions() };
+  options(@Query('kind') kind?: string) {
+    const accountKind: EquityPartnerBnplAccountKind =
+      String(kind || '').toUpperCase() === 'SUPPLIER' ? 'SUPPLIER' : 'BRANCH';
+    return { options: this.bnplService.getSubscriptionOptions(accountKind) };
   }
 
   /** List the partner's BNPL activations (all statuses). */
@@ -90,13 +135,17 @@ export class SellerEquityBnplController {
     return this.bnplService.listCreditLedgerForPartner(req.user.id);
   }
 
-  /** Create a new BNPL-funded branch on behalf of an end-user. */
+  /** Create a new equity-funded branch/supplier on behalf of an end-user. */
   @Post('activate')
   activate(
     @Req() req: AuthenticatedRequest,
     @Body() dto: StartEquityBnplActivationDto,
   ) {
-    return this.bnplService.startBnplActivation(req.user.id, dto);
+    return this.bnplService.startBnplActivation(
+      req.user.id,
+      dto,
+      req.user.roles,
+    );
   }
 
   /** Initiate Ebirr settlement for an outstanding activation. */

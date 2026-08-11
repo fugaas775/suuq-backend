@@ -41,11 +41,11 @@ export class EquityPayout {
   billingPeriodEnd!: Date;
 
   /** Full monthly subscription amount (stored for audit trail). */
-  @Column({ type: 'decimal', precision: 12, scale: 2, default: 1900 })
+  @Column({ type: 'decimal', precision: 12, scale: 2, default: 3900 })
   grossAmount!: number;
 
-  /** Partner's share: floor(grossAmount * numerator / denominator). Default 950 (1/2). */
-  @Column({ type: 'decimal', precision: 12, scale: 2, default: 950 })
+  /** Partner's share: floor(grossAmount * numerator / denominator). Default 1950 (1/2). */
+  @Column({ type: 'decimal', precision: 12, scale: 2, default: 1950 })
   splitAmount!: number;
 
   @Column({ type: 'varchar', length: 8, default: 'ETB' })

@@ -14,6 +14,8 @@ import { OrdersService } from '../orders/orders.service';
 import { ProductsService } from '../products/products.service';
 import { EbirrService } from '../ebirr/ebirr.service';
 import { PosWorkspaceActivationService } from '../branch-staff/pos-workspace-activation.service';
+import { SupplierActivationService } from '../suppliers/supplier-activation.service';
+import { EquityPartnerBnplService } from '../retail/equity-partner-bnpl.service';
 import { BoostTier } from '../products/boost-pricing.service';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { Response } from 'express';
@@ -30,7 +32,7 @@ export class EbirrCallbackController {
     referenceId?: string | null;
     reason?: string | null;
   }): string {
-    const portalUrl = process.env.POS_PORTAL_URL || 'https://pos.ugasfuad.com';
+    const portalUrl = process.env.POS_PORTAL_URL || 'https://pos.suuq-s.com';
     const query = new URLSearchParams();
     query.set('activationStatus', params.status);
 
@@ -193,6 +195,8 @@ export class EbirrCallbackController {
     private readonly productsService: ProductsService,
     private readonly ebirrService: EbirrService,
     private readonly posWorkspaceActivationService: PosWorkspaceActivationService,
+    private readonly supplierActivationService: SupplierActivationService,
+    private readonly equityPartnerBnplService: EquityPartnerBnplService,
   ) {}
 
   @Post('webhook')
@@ -227,6 +231,28 @@ export class EbirrCallbackController {
       );
     }
 
+    if (
+      result?.status === 'COMPLETED' &&
+      this.supplierActivationService.isSupplierActivationReference(
+        result.referenceId,
+      )
+    ) {
+      await this.supplierActivationService.completeEbirrActivationPayment(
+        result.referenceId,
+      );
+    }
+
+    if (
+      result?.status === 'COMPLETED' &&
+      this.equityPartnerBnplService.isBnplActivationReference(
+        result.referenceId,
+      )
+    ) {
+      await this.equityPartnerBnplService.completeEbirrSettlement(
+        result.referenceId,
+      );
+    }
+
     return { status: 'OK' };
   }
 
@@ -251,6 +277,12 @@ export class EbirrCallbackController {
         if (
           this.posWorkspaceActivationService.isPosWorkspaceActivationReference(
             verifiedReturn.referenceId,
+          ) ||
+          this.supplierActivationService.isSupplierActivationReference(
+            verifiedReturn.referenceId,
+          ) ||
+          this.equityPartnerBnplService.isBnplActivationReference(
+            verifiedReturn.referenceId,
           )
         ) {
           return res.redirect(
@@ -261,7 +293,7 @@ export class EbirrCallbackController {
             }),
           );
         }
-        const siteUrl = process.env.SITE_URL || 'https://suuq.ugasfuad.com';
+        const siteUrl = process.env.SITE_URL || 'https://suuq-s.com';
         return res.redirect(
           `${siteUrl}/payment/ebirr/finish?status=failed&reason=${encodeURIComponent(String(verifiedReturn.reason || 'invalid_return'))}`,
         );
@@ -289,6 +321,38 @@ export class EbirrCallbackController {
         )
       ) {
         await this.posWorkspaceActivationService.completeBranchCreationPayment(
+          verifiedReturn.referenceId,
+        );
+        return res.redirect(
+          this.buildPosActivationRedirect({
+            status: 'success',
+            referenceId: verifiedReturn.referenceId,
+          }),
+        );
+      }
+
+      if (
+        this.supplierActivationService.isSupplierActivationReference(
+          verifiedReturn.referenceId,
+        )
+      ) {
+        await this.supplierActivationService.completeEbirrActivationPayment(
+          verifiedReturn.referenceId,
+        );
+        return res.redirect(
+          this.buildPosActivationRedirect({
+            status: 'success',
+            referenceId: verifiedReturn.referenceId,
+          }),
+        );
+      }
+
+      if (
+        this.equityPartnerBnplService.isBnplActivationReference(
+          verifiedReturn.referenceId,
+        )
+      ) {
+        await this.equityPartnerBnplService.completeEbirrSettlement(
           verifiedReturn.referenceId,
         );
         return res.redirect(
@@ -351,7 +415,7 @@ export class EbirrCallbackController {
 
             const successUrl = process.env.SITE_URL
               ? `${process.env.SITE_URL}/payment/ebirr/finish`
-              : 'https://suuq.ugasfuad.com/payment/ebirr/finish';
+              : 'https://suuq-s.com/payment/ebirr/finish';
             return res.redirect(`${successUrl}?status=success&ref=${refId}`);
           } catch (e: any) {
             this.logger.error(`Ebirr Boost failed: ${e.message}`);
@@ -366,7 +430,7 @@ export class EbirrCallbackController {
 
       const successUrl = process.env.SITE_URL
         ? `${process.env.SITE_URL}/payment/ebirr/finish`
-        : 'https://suuq.ugasfuad.com/payment/ebirr/finish';
+        : 'https://suuq-s.com/payment/ebirr/finish';
 
       if (
         order &&
@@ -389,7 +453,11 @@ export class EbirrCallbackController {
       if (
         this.posWorkspaceActivationService.isPosWorkspaceActivationReference(
           failedRefId,
-        )
+        ) ||
+        this.supplierActivationService.isSupplierActivationReference(
+          failedRefId,
+        ) ||
+        this.equityPartnerBnplService.isBnplActivationReference(failedRefId)
       ) {
         return res.redirect(
           this.buildPosActivationRedirect({
@@ -400,7 +468,7 @@ export class EbirrCallbackController {
         );
       }
       // Redirect to failure page
-      const siteUrl = process.env.SITE_URL || 'https://suuq.ugasfuad.com';
+      const siteUrl = process.env.SITE_URL || 'https://suuq-s.com';
       return res.redirect(`${siteUrl}/payment/ebirr/finish?status=error`);
     }
   }

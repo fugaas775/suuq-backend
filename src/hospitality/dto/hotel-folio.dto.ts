@@ -250,6 +250,73 @@ export class SettleFolioDto {
   idempotencyKey?: string;
 }
 
+/**
+ * Records a partial (instalment) payment against an OPEN folio.
+ *
+ * Distinct from SettleFolioDto because settling is terminal: settleFolio flips the
+ * folio to SETTLED, which is why the POS could never call it for an instalment
+ * (the Muntaha Room 210 incident) and why folio.paidAmount was wrong across every
+ * instalment-paid stay. This endpoint accrues `paidAmount` and leaves the folio
+ * OPEN.
+ */
+export class RecordFolioPaymentDto {
+  @ApiPropertyOptional({ example: 4 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  branchId?: number;
+
+  /** Preferred: payment rows supporting split tender. */
+  @ApiPropertyOptional({ type: [FolioPaymentRowDto] })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => FolioPaymentRowDto)
+  payments?: FolioPaymentRowDto[];
+
+  /** Legacy flat amount, used only when `payments` is absent. */
+  @ApiPropertyOptional({ example: 7500 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  amount?: number;
+
+  @ApiPropertyOptional({ example: 'CASH' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(32)
+  paymentMethod?: string;
+
+  @ApiPropertyOptional({ example: 'ETB' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(8)
+  currency?: string;
+
+  /** POS receipt number for this instalment. */
+  @ApiPropertyOptional({ example: 'POS-1-482' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(128)
+  checkoutId?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsDateString()
+  paidAt?: string;
+
+  /**
+   * Required in practice: this is what makes a retried instalment idempotent. The
+   * key is matched against the folio's existing `payments` ledger.
+   */
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  idempotencyKey?: string;
+}
+
 export class VoidFolioDto {
   @ApiPropertyOptional({ example: 4 })
   @IsOptional()

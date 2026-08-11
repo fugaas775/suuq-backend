@@ -109,7 +109,7 @@ export class OwnerBillingController {
     @Query('to') to?: string,
   ) {
     const userId = (req.user as any).id;
-    await this.billingService.assertBranchOwnedBy(
+    await this.billingService.assertBranchAccountingAccess(
       branchId,
       userId,
       (req.user as any).roles,
@@ -127,7 +127,7 @@ export class OwnerBillingController {
     @Body() dto: CreateBranchExpenseDto,
   ) {
     const userId = (req.user as any).id;
-    await this.billingService.assertBranchOwnedBy(
+    await this.billingService.assertBranchAccountingAccess(
       branchId,
       userId,
       (req.user as any).roles,
@@ -148,7 +148,7 @@ export class OwnerBillingController {
     @Param('expenseId', ParseIntPipe) expenseId: number,
   ) {
     const userId = (req.user as any).id;
-    await this.billingService.assertBranchOwnedBy(
+    await this.billingService.assertBranchAccountingAccess(
       branchId,
       userId,
       (req.user as any).roles,
@@ -163,7 +163,7 @@ export class OwnerBillingController {
     @Param('branchId', ParseIntPipe) branchId: number,
   ) {
     const userId = (req.user as any).id;
-    await this.billingService.assertBranchOwnedBy(
+    await this.billingService.assertBranchAccountingAccess(
       branchId,
       userId,
       (req.user as any).roles,
@@ -178,7 +178,7 @@ export class OwnerBillingController {
     @Body() dto: CreateBranchFixedAssetDto,
   ) {
     const userId = (req.user as any).id;
-    await this.billingService.assertBranchOwnedBy(
+    await this.billingService.assertBranchAccountingAccess(
       branchId,
       userId,
       (req.user as any).roles,
@@ -203,7 +203,7 @@ export class OwnerBillingController {
     @Param('assetId', ParseIntPipe) assetId: number,
   ) {
     const userId = (req.user as any).id;
-    await this.billingService.assertBranchOwnedBy(
+    await this.billingService.assertBranchAccountingAccess(
       branchId,
       userId,
       (req.user as any).roles,
@@ -218,7 +218,7 @@ export class OwnerBillingController {
     @Param('branchId', ParseIntPipe) branchId: number,
   ) {
     const userId = (req.user as any).id;
-    await this.billingService.assertBranchOwnedBy(
+    await this.billingService.assertBranchAccountingAccess(
       branchId,
       userId,
       (req.user as any).roles,
@@ -233,7 +233,7 @@ export class OwnerBillingController {
     @Body() dto: CreateBranchDepreciationEntryDto,
   ) {
     const userId = (req.user as any).id;
-    await this.billingService.assertBranchOwnedBy(
+    await this.billingService.assertBranchAccountingAccess(
       branchId,
       userId,
       (req.user as any).roles,
@@ -253,7 +253,7 @@ export class OwnerBillingController {
     @Param('entryId', ParseIntPipe) entryId: number,
   ) {
     const userId = (req.user as any).id;
-    await this.billingService.assertBranchOwnedBy(
+    await this.billingService.assertBranchAccountingAccess(
       branchId,
       userId,
       (req.user as any).roles,
@@ -268,7 +268,7 @@ export class OwnerBillingController {
     @Param('branchId', ParseIntPipe) branchId: number,
   ) {
     const userId = (req.user as any).id;
-    await this.billingService.assertBranchOwnedBy(
+    await this.billingService.assertBranchAccountingAccess(
       branchId,
       userId,
       (req.user as any).roles,
@@ -283,7 +283,7 @@ export class OwnerBillingController {
     @Body() dto: CreateBranchAccruedLiabilityDto,
   ) {
     const userId = (req.user as any).id;
-    await this.billingService.assertBranchOwnedBy(
+    await this.billingService.assertBranchAccountingAccess(
       branchId,
       userId,
       (req.user as any).roles,
@@ -307,7 +307,7 @@ export class OwnerBillingController {
     @Param('liabilityId', ParseIntPipe) liabilityId: number,
   ) {
     const userId = (req.user as any).id;
-    await this.billingService.assertBranchOwnedBy(
+    await this.billingService.assertBranchAccountingAccess(
       branchId,
       userId,
       (req.user as any).roles,
@@ -327,7 +327,7 @@ export class OwnerBillingController {
     @Body() dto: SettleBranchAccruedLiabilityDto,
   ) {
     const userId = (req.user as any).id;
-    await this.billingService.assertBranchOwnedBy(
+    await this.billingService.assertBranchAccountingAccess(
       branchId,
       userId,
       (req.user as any).roles,
@@ -345,7 +345,7 @@ export class OwnerBillingController {
     @Param('branchId', ParseIntPipe) branchId: number,
   ) {
     const userId = (req.user as any).id;
-    await this.billingService.assertBranchOwnedBy(
+    await this.billingService.assertBranchAccountingAccess(
       branchId,
       userId,
       (req.user as any).roles,
@@ -360,7 +360,7 @@ export class OwnerBillingController {
     @Body() dto: CreateBranchLongTermDebtDto,
   ) {
     const userId = (req.user as any).id;
-    await this.billingService.assertBranchOwnedBy(
+    await this.billingService.assertBranchAccountingAccess(
       branchId,
       userId,
       (req.user as any).roles,
@@ -386,7 +386,7 @@ export class OwnerBillingController {
     @Param('debtId', ParseIntPipe) debtId: number,
   ) {
     const userId = (req.user as any).id;
-    await this.billingService.assertBranchOwnedBy(
+    await this.billingService.assertBranchAccountingAccess(
       branchId,
       userId,
       (req.user as any).roles,

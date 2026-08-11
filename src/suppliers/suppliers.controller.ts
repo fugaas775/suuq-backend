@@ -16,18 +16,42 @@ import { RolesGuard } from '../auth/roles.guard';
 import { UserRole } from '../auth/roles.enum';
 import { Roles } from '../common/decorators/roles.decorator';
 import { SuppliersService } from './suppliers.service';
+import { SupplierStaffService } from './supplier-staff.service';
+import { SupplierOutletService } from './supplier-outlet.service';
 import { CreateSupplierProfileDto } from './dto/create-supplier-profile.dto';
 import { UpdateSupplierProfileDto } from './dto/update-supplier-profile.dto';
 import { RejectSupplierProfileDto } from './dto/reject-supplier-profile.dto';
 import { ListSupplierProfilesQueryDto } from './dto/list-supplier-profiles-query.dto';
+import { extractActiveSupplierId } from './active-supplier.util';
 
 @ApiTags('B2B Suppliers')
 @Controller('hub/v1/suppliers')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class SuppliersController {
-  constructor(private readonly suppliersService: SuppliersService) {}
+  constructor(
+    private readonly suppliersService: SuppliersService,
+    private readonly supplierStaffService: SupplierStaffService,
+    private readonly supplierOutletService: SupplierOutletService,
+  ) {}
 
   // ---- Self-service: any authenticated user can apply to become a supplier --
+
+  /**
+   * Every supplier account the signed-in user can operate (owned + manager/
+   * operator assignments). Powers the Seller Hub workspace switcher so a user
+   * can jump into any of their supplier accounts — the supplier mirror of the
+   * branch list. Independent of the (sometimes stale) cached portal session.
+   */
+  @Get('me/accounts')
+  @ApiOperation({
+    summary: 'List every supplier account the signed-in user can operate',
+  })
+  listMyAccounts(@Req() req) {
+    return this.supplierStaffService.getSupplierContextsForUser({
+      id: req.user?.id,
+      roles: req.user?.roles,
+    });
+  }
 
   @Post('me')
   @ApiOperation({
@@ -40,7 +64,11 @@ export class SuppliersController {
   @Get('me')
   @ApiOperation({ summary: 'Get the signed-in user’s supplier profile' })
   getMine(@Req() req) {
-    return this.suppliersService.getForUser(req.user?.id);
+    return this.suppliersService.getForUser(
+      req.user?.id,
+      extractActiveSupplierId(req),
+      req.user?.roles,
+    );
   }
 
   @Patch('me')
@@ -49,13 +77,22 @@ export class SuppliersController {
       'Update the signed-in user’s supplier profile (draft / rejected only)',
   })
   updateMine(@Body() dto: UpdateSupplierProfileDto, @Req() req) {
-    return this.suppliersService.updateForUser(req.user?.id, dto);
+    return this.suppliersService.updateForUser(
+      req.user?.id,
+      dto,
+      extractActiveSupplierId(req),
+      req.user?.roles,
+    );
   }
 
   @Post('me/submit')
   @ApiOperation({ summary: 'Submit the supplier profile for admin review' })
   submitMine(@Req() req) {
-    return this.suppliersService.submitForReview(req.user?.id);
+    return this.suppliersService.submitForReview(
+      req.user?.id,
+      extractActiveSupplierId(req),
+      req.user?.roles,
+    );
   }
 
   // ---- Admin review --------------------------------------------------------
@@ -77,6 +114,16 @@ export class SuppliersController {
       id: req.user?.id ?? null,
       email: req.user?.email ?? null,
     });
+  }
+
+  @Post('admin/backfill-outlets')
+  @ApiOperation({
+    summary:
+      'Provision Suuq POS cash & carry outlets for all already-active suppliers (admin, one-off backfill)',
+  })
+  @Roles(UserRole.SUPER_ADMIN)
+  backfillOutlets() {
+    return this.supplierOutletService.ensureOutletsForAllActiveSuppliers();
   }
 
   @Patch(':id/reject')

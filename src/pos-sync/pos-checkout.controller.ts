@@ -25,6 +25,7 @@ import { IngestPosCheckoutDto } from './dto/ingest-pos-checkout.dto';
 import { SettleReceivableDto } from './dto/settle-receivable.dto';
 import { PosCheckoutQuoteResponseDto } from './dto/pos-checkout-quote-response.dto';
 import { ListPosCheckoutsQueryDto } from './dto/list-pos-checkouts-query.dto';
+import { FindReturnSourceQueryDto } from './dto/find-return-source-query.dto';
 import { SearchPosCustomersQueryDto } from './dto/search-pos-customers-query.dto';
 import { PosCustomerSearchResponseDto } from './dto/pos-customer-search-response.dto';
 import { QuotePosCheckoutDto } from './dto/quote-pos-checkout.dto';
@@ -155,6 +156,20 @@ export class PosCheckoutController {
   @ApiOkResponse({ type: PosCustomerSearchResponseDto })
   searchCustomers(@Query() query: SearchPosCustomersQueryDto) {
     return this.posCheckoutService.searchCustomers(query);
+  }
+
+  @Get('return-source')
+  @UseGuards(JwtAuthGuard, RolesGuard, RetailModulesGuard, PosBranchAccessGuard)
+  @Roles(
+    UserRole.SUPER_ADMIN,
+    UserRole.ADMIN,
+    UserRole.POS_MANAGER,
+    UserRole.POS_OPERATOR,
+  )
+  @RequireRetailModules(RetailOsModule.POS_CORE)
+  @RetailBranchContext('query.branchId')
+  findReturnSource(@Query() query: FindReturnSourceQueryDto) {
+    return this.posCheckoutService.findReturnSource(query);
   }
 
   @Get(':id')

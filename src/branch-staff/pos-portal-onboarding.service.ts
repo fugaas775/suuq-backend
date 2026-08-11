@@ -4,12 +4,44 @@ import { Repository } from 'typeorm';
 import { Branch } from '../branches/entities/branch.entity';
 import { PosUserFitCategory } from '../categories/entities/category.entity';
 import { RetailEntitlementsService } from '../retail/retail-entitlements.service';
+import { EquityPartnerService } from '../retail/equity-partner.service';
 import { RetailModule } from '../retail/entities/tenant-module-entitlement.entity';
 import {
   assertAllowedSelfServeServiceFormat,
-  buildSelfServeServiceFormatMetadata,
   getDefaultAllowedSelfServeServiceFormats,
 } from '../retail/self-serve-service-format.policy';
+import {
+  POS_SELF_SERVE_TRIAL_MONTHS,
+  POS_SELF_SERVE_TRIAL_SERVICE_FORMAT,
+} from '../retail/pos-self-serve-trial.policy';
+
+/**
+ * Stamped on the POS_CORE entitlement so admin reporting can tell a self-served
+ * tenant from an admin-provisioned one without sniffing the free-text reason.
+ */
+export const POS_SELF_SERVE_PROVISIONING_SOURCE = 'POS_SELF_SERVE_AUTO_TRIAL';
+
+/**
+ * Whether creating a first branch by hand also starts the free trial.
+ *
+ * Until this, the six free months were reachable only by a first-ever Google
+ * sign-in (the silent auto-provision). Everyone else — Apple, username/password,
+ * or any account that already existed — was sent to the gate's create form,
+ * which demanded an Ebirr number and 3,900 ETB before the branch existed. That
+ * is the paywall this flag removes.
+ *
+ * Flagged because an older cached frontend, seeing a workspace it believes is
+ * unpaid, would follow the create call with an activation charge — billing the
+ * owner for what they were just promised free. Flip it only once clients that
+ * check the returned status are live everywhere.
+ */
+function isFirstBranchTrialEnabled(): boolean {
+  return ['1', 'true', 'yes', 'on'].includes(
+    String(process.env.POS_FIRST_BRANCH_TRIAL_ENABLED || '')
+      .trim()
+      .toLowerCase(),
+  );
+}
 import { User } from '../users/entities/user.entity';
 import { UserRole } from '../auth/roles.enum';
 import { BranchStaffService } from './branch-staff.service';
@@ -38,7 +70,48 @@ export class PosPortalOnboardingService {
     private readonly usersRepository: Repository<User>,
     private readonly retailEntitlementsService: RetailEntitlementsService,
     private readonly branchStaffService: BranchStaffService,
+    private readonly equityPartnerService: EquityPartnerService,
   ) {}
+
+  /**
+   * Link the new branch to the equity partner who referred it, if any.
+   *
+   * Best-effort and fire-and-forget: a bad or retired referral code must never
+   * cost someone their workspace. The assignment generates no payout on its own
+   * — payouts are still created when the subscription is actually paid — so
+   * recording it now simply means the partner is still on record six months
+   * later, when the trial converts.
+   */
+  private async linkEquityReferral(
+    referralCode: string | null | undefined,
+    branchId: number,
+    tenantId: number,
+  ): Promise<void> {
+    const code = String(referralCode || '')
+      .trim()
+      .toUpperCase();
+    if (!code) {
+      return;
+    }
+
+    try {
+      const partner =
+        await this.equityPartnerService.findActivePartnerByReferralCode(code);
+      if (partner) {
+        await this.equityPartnerService.recordReferralFromActivation(
+          partner.id,
+          branchId,
+          tenantId,
+        );
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Equity referral "${code}" for branch #${branchId} failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
 
   async createWorkspaceForUser(
     user: User,
@@ -79,7 +152,9 @@ export class PosPortalOnboardingService {
 
     const branch = await this.branchesRepository.save(
       this.branchesRepository.create({
-        name: dto.branchName.trim(),
+        // The branch name is what appears on receipts, so it falls back to the
+        // business name rather than making the owner type the same thing twice.
+        name: dto.branchName?.trim() || dto.businessName.trim(),
         ownerId: user.id,
         retailTenantId: tenant.id,
         serviceFormat,
@@ -87,7 +162,19 @@ export class PosPortalOnboardingService {
         city: dto.city?.trim() || null,
         country: dto.country?.trim() || null,
         phone: dto.phone?.trim() || null,
+        // Self-serve signup collects no tax id, so a new branch starts
+        // untaxed. Seller HQ prompts for the TIN and the toggle together.
+        taxEnabled: false,
         isActive: true,
+        // Picking the format on the way in IS the business-type confirmation —
+        // the owner was asked and answered. Without this the Seller HQ first-run
+        // checklist would open by asking the same question again.
+        //
+        // `firstRun` with no `widgets` key means "never chose a Home layout",
+        // which is the correct state for a branch this new. Do not add one.
+        homeConfig: {
+          firstRun: { businessTypeConfirmedAt: new Date().toISOString() },
+        },
       }),
     );
 
@@ -102,11 +189,12 @@ export class PosPortalOnboardingService {
     );
 
     // Ensure user.roles includes POS_MANAGER so admin dashboards can detect
-    // their POS trial/subscription status via sellerWorkspaceSummary.
+    // their POS trial/subscription status via sellerWorkspaceSummary. Mirror it
+    // onto the in-memory user too — the branch lookups below read from it.
     if (!user.roles.includes(UserRole.POS_MANAGER)) {
-      await this.usersRepository.update(user.id, {
-        roles: [...user.roles, UserRole.POS_MANAGER],
-      });
+      const nextRoles = [...user.roles, UserRole.POS_MANAGER];
+      await this.usersRepository.update(user.id, { roles: nextRoles });
+      user.roles = nextRoles;
     }
 
     await Promise.all([
@@ -116,7 +204,12 @@ export class PosPortalOnboardingService {
         {
           enabled: true,
           reason: 'Enabled during POS-S self-serve onboarding',
-          metadata: buildSelfServeServiceFormatMetadata(),
+          // Deliberately NOT buildSelfServeServiceFormatMetadata(): pinning the
+          // allow-list as it stood at signup froze tenants provisioned before a
+          // rollout flag flipped (resolveAllowedSelfServeServiceFormats prefers
+          // stored metadata over the live defaults), so they could never pick a
+          // newly-enabled format — including the one they were provisioned with.
+          metadata: { provisioningSource: POS_SELF_SERVE_PROVISIONING_SOURCE },
         },
       ),
       this.retailEntitlementsService.upsertModuleEntitlement(
@@ -146,11 +239,34 @@ export class PosPortalOnboardingService {
           )
         : null;
 
+    // The guard at the top of this method already rejected anyone who has a
+    // branch or a pending activation, so reaching here means this is the
+    // account's FIRST branch — no extra query needed to establish that.
+    const trial = isFirstBranchTrialEnabled()
+      ? await this.retailEntitlementsService.startPosSelfServeTrial(
+          tenant.id,
+          branch.id,
+        )
+      : null;
+
     const createdCandidates =
       await this.branchStaffService.getPosWorkspaceActivationCandidatesForUser({
         id: user.id,
         roles: user.roles,
       });
+    // A branch on a live trial reports ACTIVE, and the activation-candidate
+    // query only returns branches that still owe money — so once the trial is
+    // granted this list is empty by design, and reading the status out of it
+    // would report PAYMENT_REQUIRED for a workspace that is already open. Take
+    // the status from the branch summaries, which describe every open branch.
+    const createdSummary = trial
+      ? (
+          await this.branchStaffService.getPosBranchSummariesForUser({
+            id: user.id,
+            roles: user.roles,
+          })
+        ).find((summary) => summary.branchId === branch.id)
+      : null;
     const createdWorkspace = createdCandidates.find(
       (candidate) => candidate.branchId === branch.id,
     );
@@ -158,11 +274,15 @@ export class PosPortalOnboardingService {
     // Link SellerWorkspace.primaryRetailTenantId so the vendor and POS tenant
     // are unified from the moment the workspace is created.
     void this.linkSellerWorkspaceTenant(user.id, tenant.id);
+    void this.linkEquityReferral(dto.referralCode, branch.id, tenant.id);
 
     return {
-      onboardingState: 'BRANCH_WORKSPACE_ACTIVATION_REQUIRED',
-      message:
-        'Your POS-S workspace was created. Complete billing activation to open it.',
+      onboardingState: trial
+        ? 'BRANCH_WORKSPACE_TRIAL_ACTIVE'
+        : 'BRANCH_WORKSPACE_ACTIVATION_REQUIRED',
+      message: trial
+        ? `Your POS-S workspace is open and free for ${POS_SELF_SERVE_TRIAL_MONTHS} months.`
+        : 'Your POS-S workspace was created. Complete billing activation to open it.',
       workspace: {
         tenantId: tenant.id,
         tenantName: tenant.name,
@@ -170,12 +290,155 @@ export class PosPortalOnboardingService {
         branchName: branch.name,
         branchCode: branch.code ?? null,
         workspaceStatus:
-          createdWorkspace?.workspaceStatus ?? 'PAYMENT_REQUIRED',
+          createdSummary?.workspaceStatus ??
+          createdWorkspace?.workspaceStatus ??
+          (trial ? 'ACTIVE' : 'PAYMENT_REQUIRED'),
       },
+      // A date the owner can plan around beats a duration they have to compute.
+      trial: trial
+        ? {
+            planCode: trial.planCode,
+            months: POS_SELF_SERVE_TRIAL_MONTHS,
+            endsAt: trial.endsAt ? new Date(trial.endsAt).toISOString() : null,
+          }
+        : null,
       pricing: this.branchStaffService.getPosWorkspacePricing(),
       activationCandidates: createdCandidates,
       onboardingProfile: updatedTenant?.onboardingProfile ?? null,
     };
+  }
+
+  /**
+   * Auto-provisions the workspace a brand-new signup lands in: a QSR branch on
+   * a free trial, openable immediately (see pos-self-serve-trial.policy.ts).
+   * Called from the portal sign-in path for a first-time signup that has no
+   * branch, no supplier and no pending activation — so the owner reaches a
+   * working POS instead of a setup wall. Paying converts the same branch.
+   *
+   * Returns null when the account already has (or is mid-) a workspace, so the
+   * caller falls back to the normal onboarding / activation gates.
+   */
+  async createTrialWorkspaceForNewUser(
+    user: User,
+  ): Promise<{ tenantId: number; branchId: number } | null> {
+    const [existingBranches, activationCandidates] = await Promise.all([
+      this.branchStaffService.getPosBranchSummariesForUser({
+        id: user.id,
+        roles: user.roles,
+      }),
+      this.branchStaffService.getPosWorkspaceActivationCandidatesForUser({
+        id: user.id,
+        roles: user.roles,
+      }),
+    ]);
+
+    if (existingBranches.length || activationCandidates.length) {
+      return null;
+    }
+
+    const workspaceName = this.resolveDefaultWorkspaceName(user);
+
+    const tenant = await this.retailEntitlementsService.createTenant({
+      name: workspaceName,
+      billingEmail: user.email,
+      defaultCurrency: 'ETB',
+      ownerUserId: user.id,
+    });
+
+    const branch = await this.branchesRepository.save(
+      this.branchesRepository.create({
+        name: workspaceName,
+        ownerId: user.id,
+        retailTenantId: tenant.id,
+        serviceFormat: POS_SELF_SERVE_TRIAL_SERVICE_FORMAT,
+        // Trial workspace, no tax id collected — starts untaxed.
+        taxEnabled: false,
+        isActive: true,
+      }),
+    );
+
+    await this.assignmentsRepository.save(
+      this.assignmentsRepository.create({
+        branchId: branch.id,
+        userId: user.id,
+        role: BranchStaffRole.MANAGER,
+        permissions: [],
+        isActive: true,
+      }),
+    );
+
+    if (!user.roles.includes(UserRole.POS_MANAGER)) {
+      const roles = [...user.roles, UserRole.POS_MANAGER];
+      await this.usersRepository.update(user.id, { roles });
+      // Keep the in-memory user in step: the caller resolves branch access from
+      // it immediately after this returns.
+      user.roles = roles;
+    }
+
+    await Promise.all([
+      this.retailEntitlementsService.upsertModuleEntitlement(
+        tenant.id,
+        RetailModule.POS_CORE,
+        {
+          enabled: true,
+          reason: 'Enabled during POS-S self-serve onboarding',
+          // Deliberately NOT buildSelfServeServiceFormatMetadata(): pinning the
+          // allow-list as it stood at signup froze tenants provisioned before a
+          // rollout flag flipped (resolveAllowedSelfServeServiceFormats prefers
+          // stored metadata over the live defaults), so they could never pick a
+          // newly-enabled format — including the one they were provisioned with.
+          metadata: { provisioningSource: POS_SELF_SERVE_PROVISIONING_SOURCE },
+        },
+      ),
+      this.retailEntitlementsService.upsertModuleEntitlement(
+        tenant.id,
+        RetailModule.INVENTORY_CORE,
+        {
+          enabled: true,
+          reason: 'Enabled during POS-S self-serve onboarding',
+        },
+      ),
+    ]);
+
+    // The trial is what makes the branch openable — without it the workspace
+    // resolves to PAYMENT_REQUIRED and drops straight back out of the session.
+    await this.retailEntitlementsService.startPosSelfServeTrial(
+      tenant.id,
+      branch.id,
+    );
+
+    void this.linkSellerWorkspaceTenant(user.id, tenant.id);
+
+    this.logger.log(
+      `Auto-provisioned trial ${POS_SELF_SERVE_TRIAL_SERVICE_FORMAT} workspace ` +
+        `(tenant #${tenant.id}, branch #${branch.id}) for new user #${user.id}`,
+    );
+
+    return { tenantId: tenant.id, branchId: branch.id };
+  }
+
+  /**
+   * Names the auto-provisioned workspace after the account, and nothing else.
+   *
+   * This deliberately carries NO business-type flavour. The branch is created as
+   * QSR only because the provisioner has to pick something before the owner has
+   * told us anything (they re-lane it from the first-run checklist), so baking
+   * the guess into the name misdescribes every non-food signup. A printing press
+   * owner once landed in "Asal Printing's Kitchen" and reasonably read it as
+   * being in the wrong account — the name was the only thing that looked wrong,
+   * which sent the diagnosis down the wrong path entirely.
+   */
+  private resolveDefaultWorkspaceName(user: User): string {
+    const candidates = [
+      (user as { displayName?: string | null }).displayName,
+      (user as { fullName?: string | null }).fullName,
+      user.email ? user.email.split('@')[0] : null,
+    ];
+    const base = candidates
+      .map((value) => String(value || '').trim())
+      .find((value) => value.length > 0);
+
+    return base ? base.slice(0, 120) : 'My Business';
   }
 
   private async linkSellerWorkspaceTenant(

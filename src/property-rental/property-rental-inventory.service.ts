@@ -22,6 +22,7 @@ import {
   ListPropertyRatePlansQueryDto,
   ListPropertyReservationsQueryDto,
   ListPropertyUnitsQueryDto,
+  SetPropertyMaintenanceDto,
   UpdatePropertyReservationDto,
   UpdatePropertyUnitDto,
 } from './dto/property-inventory.dto';
@@ -145,6 +146,44 @@ export class PropertyRentalInventoryService {
         unit.status = status as PropertyUnitStatus;
       }
     }
+    const saved = await this.unitRepo.save(unit);
+    return this.toUnitResponse(saved);
+  }
+
+  // Flip a unit in/out of service, keyed by (branchId, propertyCode). Upserts the
+  // registry row so a catalog unit with no pos_property_units row yet can still be
+  // flagged — mirrors the HOTEL room-maintenance upsert. The reason is stored in
+  // metadata.maintenanceReason and cleared when returning to service.
+  async setUnitMaintenance(dto: SetPropertyMaintenanceDto) {
+    const propertyCode = String(dto.propertyCode || '').trim();
+    const nextStatus =
+      String(dto.status || '')
+        .trim()
+        .toUpperCase() === 'MAINTENANCE'
+        ? PropertyUnitStatus.MAINTENANCE
+        : PropertyUnitStatus.ACTIVE;
+    let unit = await this.unitRepo.findOne({
+      where: { branchId: dto.branchId, propertyCode },
+    });
+    if (!unit) {
+      unit = this.unitRepo.create({
+        branchId: dto.branchId,
+        propertyCode,
+        name: propertyCode,
+        unitType: PropertyUnitType.OTHER,
+        status: nextStatus,
+      });
+    } else {
+      unit.status = nextStatus;
+    }
+    const reason =
+      nextStatus === PropertyUnitStatus.MAINTENANCE
+        ? String(dto.reason || '').trim()
+        : '';
+    const metadata = { ...(unit.metadata ?? {}) };
+    if (reason) metadata.maintenanceReason = reason;
+    else delete metadata.maintenanceReason;
+    unit.metadata = Object.keys(metadata).length ? metadata : null;
     const saved = await this.unitRepo.save(unit);
     return this.toUnitResponse(saved);
   }

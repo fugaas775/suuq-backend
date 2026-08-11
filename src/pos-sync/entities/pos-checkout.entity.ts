@@ -33,6 +33,7 @@ export enum PosCheckoutStatus {
 }
 
 export type PosCheckoutItem = {
+  lineId?: string | null;
   productId?: number | null;
   aliasType?: ProductAliasType | null;
   aliasValue?: string | null;
@@ -104,6 +105,16 @@ export class PosCheckout {
 
   @Column({ type: 'varchar', length: 128, nullable: true })
   receiptNumber?: string | null;
+
+  /**
+   * Opaque public token printed as the QR code on the receipt. Minted by the
+   * register at receipt time (offline included) and resolved, unauthenticated,
+   * by the public verify endpoint. Unique where present — enforced by the
+   * partial index in AddPosCheckoutVerificationCode20260804000000. NULL on
+   * every receipt issued before that shipped.
+   */
+  @Column({ type: 'varchar', length: 16, nullable: true })
+  verificationCode?: string | null;
 
   @Column({ type: 'enum', enum: PosCheckoutTransactionType })
   transactionType!: PosCheckoutTransactionType;

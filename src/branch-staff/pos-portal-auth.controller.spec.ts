@@ -14,6 +14,11 @@ import {
 } from './dto/pos-operator-unlock.dto';
 import { PosWorkspaceActivationService } from './pos-workspace-activation.service';
 import { PosPortalOnboardingService } from './pos-portal-onboarding.service';
+import { ConfigService } from '@nestjs/config';
+import { RedisService } from '../redis/redis.service';
+import { SupplierStaffService } from '../suppliers/supplier-staff.service';
+import { SupplierOnboardingService } from '../suppliers/supplier-onboarding.service';
+import { SupplierActivationService } from '../suppliers/supplier-activation.service';
 
 describe('PosPortalAuthController', () => {
   let controller: PosPortalAuthController;
@@ -44,6 +49,32 @@ describe('PosPortalAuthController', () => {
 
   const posPortalOnboardingServiceMock = {
     createWorkspaceForUser: jest.fn(),
+    createTrialWorkspaceForNewUser: jest.fn(),
+  };
+
+  const supplierStaffServiceMock = {
+    getSupplierContextForUser: jest.fn(),
+    getSupplierContextsForUser: jest.fn().mockResolvedValue([]),
+  };
+
+  const supplierOnboardingServiceMock = {
+    createSupplierAccountForUser: jest.fn(),
+  };
+
+  const supplierActivationServiceMock = {
+    startEbirrActivationPayment: jest.fn(),
+    getActivationState: jest.fn(),
+  };
+
+  const configServiceMock = {
+    get: jest.fn(),
+  };
+
+  const redisServiceMock = {
+    getClient: jest.fn(),
+    get: jest.fn(),
+    set: jest.fn(),
+    del: jest.fn(),
   };
 
   const user = {
@@ -100,7 +131,21 @@ describe('PosPortalAuthController', () => {
           provide: PosWorkspaceActivationService,
           useValue: posWorkspaceActivationServiceMock,
         },
+        {
+          provide: SupplierStaffService,
+          useValue: supplierStaffServiceMock,
+        },
+        {
+          provide: SupplierOnboardingService,
+          useValue: supplierOnboardingServiceMock,
+        },
+        {
+          provide: SupplierActivationService,
+          useValue: supplierActivationServiceMock,
+        },
         { provide: AuditService, useValue: auditServiceMock },
+        { provide: ConfigService, useValue: configServiceMock },
+        { provide: RedisService, useValue: redisServiceMock },
       ],
     }).compile();
 
@@ -455,7 +500,10 @@ describe('PosPortalAuthController', () => {
     });
   });
 
-  it('returns onboarding-aware denial when Google creates a new account without POS access', async () => {
+  it('asks a brand-new Google account what it sells instead of guessing QSR', async () => {
+    // The silent auto-provision handed everyone a QSR branch. Roughly three in
+    // four owners do not run one, so most landed in the wrong lane. Now the gate
+    // asks first, and sign-in provisions nothing.
     authServiceMock.googleLogin.mockResolvedValue({
       accessToken: 'access-token',
       refreshToken: 'refresh-token',
@@ -465,6 +513,117 @@ describe('PosPortalAuthController', () => {
     branchStaffServiceMock.getPosBranchSummariesForUser.mockResolvedValue([]);
     branchStaffServiceMock.getPosWorkspaceActivationCandidatesForUser.mockResolvedValue(
       [],
+    );
+
+    await expect(
+      controller.google({ idToken: 'google-id-token' }, {
+        headers: { 'user-agent': 'jest' },
+        method: 'POST',
+        route: { path: '/pos-portal/auth/google' },
+      } as any),
+    ).rejects.toMatchObject({
+      response: expect.objectContaining({ code: 'POS_PORTAL_ACCESS_DENIED' }),
+    });
+
+    expect(
+      posPortalOnboardingServiceMock.createTrialWorkspaceForNewUser,
+    ).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      'apple',
+      () => authServiceMock.appleLogin,
+      (c: any) =>
+        c.apple(
+          { identityToken: 'apple-token' } as any,
+          {
+            headers: { 'user-agent': 'jest' },
+            method: 'POST',
+            route: { path: '/pos-portal/auth/apple' },
+          } as any,
+        ),
+    ],
+    [
+      'username/password',
+      () => authServiceMock.loginWithIdentifier,
+      (c: any) =>
+        c.login(
+          { identifier: 'pos@suuq.test', password: 'pw' } as any,
+          {
+            headers: { 'user-agent': 'jest' },
+            method: 'POST',
+            route: { path: '/pos-portal/auth/login' },
+          } as any,
+        ),
+    ],
+  ])(
+    'gives a branchless %s sign-in the same self-serve route as Google',
+    async (_label, getAuthMock, callController) => {
+      // Parity is the point: isNewUser was only ever set by googleLogin, so
+      // Apple and password signups could never reach the trial at all.
+      const authMock = getAuthMock();
+      if (!authMock) return;
+      authMock.mockResolvedValue({
+        accessToken: 'access-token',
+        refreshToken: 'refresh-token',
+        user,
+        isNewUser: false,
+      });
+      branchStaffServiceMock.getPosBranchSummariesForUser.mockResolvedValue([]);
+      branchStaffServiceMock.getPosWorkspaceActivationCandidatesForUser.mockResolvedValue(
+        [],
+      );
+
+      await expect(callController(controller)).rejects.toMatchObject({
+        response: expect.objectContaining({ code: 'POS_PORTAL_ACCESS_DENIED' }),
+      });
+    },
+  );
+
+  it('does not auto-provision a workspace for an existing branchless account', async () => {
+    authServiceMock.loginWithIdentifier.mockResolvedValue({
+      accessToken: 'access-token',
+      refreshToken: 'refresh-token',
+      user,
+      isNewUser: false,
+    });
+    branchStaffServiceMock.getPosBranchSummariesForUser.mockResolvedValue([]);
+    branchStaffServiceMock.getPosWorkspaceActivationCandidatesForUser.mockResolvedValue(
+      [],
+    );
+
+    await expect(
+      controller.login(
+        { identifier: 'pos@suuq.test', password: 'pw' } as any,
+        {
+          headers: { 'user-agent': 'jest' },
+          method: 'POST',
+          route: { path: '/pos-portal/auth/login' },
+        } as any,
+      ),
+    ).rejects.toMatchObject({
+      response: expect.objectContaining({ code: 'POS_PORTAL_ACCESS_DENIED' }),
+    });
+
+    expect(
+      posPortalOnboardingServiceMock.createTrialWorkspaceForNewUser,
+    ).not.toHaveBeenCalled();
+  });
+
+  it('falls back to onboarding-aware denial when auto-provisioning cannot run', async () => {
+    authServiceMock.googleLogin.mockResolvedValue({
+      accessToken: 'access-token',
+      refreshToken: 'refresh-token',
+      user,
+      isNewUser: true,
+    });
+    branchStaffServiceMock.getPosBranchSummariesForUser.mockResolvedValue([]);
+    branchStaffServiceMock.getPosWorkspaceActivationCandidatesForUser.mockResolvedValue(
+      [],
+    );
+    posPortalOnboardingServiceMock.createTrialWorkspaceForNewUser.mockRejectedValue(
+      new Error('tenant insert failed'),
     );
 
     await expect(

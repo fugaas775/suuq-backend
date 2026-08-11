@@ -1,17 +1,17 @@
 import {
   BadRequestException,
-  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { ILike, Repository } from 'typeorm';
 import { AuditService } from '../audit/audit.service';
 import {
   SupplierOnboardingStatus,
   SupplierProfile,
 } from './entities/supplier-profile.entity';
+import { resolveActiveOwnedProfile } from './active-supplier.util';
 import { CreateSupplierProfileDto } from './dto/create-supplier-profile.dto';
 import { UpdateSupplierProfileDto } from './dto/update-supplier-profile.dto';
 import { RejectSupplierProfileDto } from './dto/reject-supplier-profile.dto';
@@ -20,6 +20,13 @@ type AdminActor = {
   id?: number | null;
   email?: string | null;
 };
+
+export interface AdminSearchSuppliersQuery {
+  search?: string;
+  status?: SupplierOnboardingStatus;
+  page?: number;
+  limit?: number;
+}
 
 // States a supplier may edit / (re)submit from.
 const EDITABLE_STATES: SupplierOnboardingStatus[] = [
@@ -44,14 +51,8 @@ export class SuppliersService {
     if (!userId) {
       throw new ForbiddenException('Authentication required');
     }
-    const existing = await this.profilesRepository.findOne({
-      where: { userId },
-    });
-    if (existing) {
-      throw new ConflictException(
-        'A supplier profile already exists for this account',
-      );
-    }
+    // Multi-supplier: an account may own several supplier profiles, so creating
+    // another is allowed. Each is independent and selectable via the switcher.
     const profile = this.profilesRepository.create({
       userId,
       companyName: dto.companyName,
@@ -67,13 +68,18 @@ export class SuppliersService {
 
   async getForUser(
     userId: number | null | undefined,
+    activeSupplierId?: number | null,
+    actingRoles?: string[] | null,
   ): Promise<SupplierProfile> {
     if (!userId) {
       throw new ForbiddenException('Authentication required');
     }
-    const profile = await this.profilesRepository.findOne({
-      where: { userId },
-    });
+    const profile = await resolveActiveOwnedProfile(
+      this.profilesRepository,
+      userId,
+      activeSupplierId,
+      actingRoles,
+    );
     if (!profile) {
       throw new NotFoundException(
         'No supplier profile exists for this account',
@@ -85,8 +91,14 @@ export class SuppliersService {
   async updateForUser(
     userId: number | null | undefined,
     dto: UpdateSupplierProfileDto,
+    activeSupplierId?: number | null,
+    actingRoles?: string[] | null,
   ): Promise<SupplierProfile> {
-    const profile = await this.getForUser(userId);
+    const profile = await this.getForUser(
+      userId,
+      activeSupplierId,
+      actingRoles,
+    );
     this.assertEditable(profile);
 
     if (dto.companyName !== undefined) profile.companyName = dto.companyName;
@@ -102,8 +114,14 @@ export class SuppliersService {
 
   async submitForReview(
     userId: number | null | undefined,
+    activeSupplierId?: number | null,
+    actingRoles?: string[] | null,
   ): Promise<SupplierProfile> {
-    const profile = await this.getForUser(userId);
+    const profile = await this.getForUser(
+      userId,
+      activeSupplierId,
+      actingRoles,
+    );
     if (!EDITABLE_STATES.includes(profile.onboardingStatus)) {
       throw new BadRequestException(
         'Only a draft or rejected profile can be submitted for review',
@@ -120,6 +138,94 @@ export class SuppliersService {
       where: status ? { onboardingStatus: status } : undefined,
       order: { createdAt: 'DESC' },
     });
+  }
+
+  /**
+   * SUPER_ADMIN / ADMIN supplier search — the supplier-side mirror of
+   * BranchesService.adminListBranches. Powers the Seller Hub "act as owner" bar
+   * so the platform operator can locate and enter any supplier account.
+   * Matches on companyName (case-insensitive), joins the owner for display.
+   */
+  async adminSearchSuppliers(query: AdminSearchSuppliersQuery = {}) {
+    const { search, status, page = 1, limit = 25 } = query;
+    const where: Record<string, unknown> = {};
+    if (search) {
+      where.companyName = ILike(`%${search}%`);
+    }
+    if (status) {
+      where.onboardingStatus = status;
+    }
+
+    const [profiles, total] = await this.profilesRepository.findAndCount({
+      where,
+      order: { createdAt: 'DESC' },
+      relations: { user: true },
+      skip: (page - 1) * limit,
+      take: limit,
+    });
+
+    return {
+      items: profiles.map((p) => ({
+        id: p.id,
+        companyName: p.companyName,
+        legalName: p.legalName ?? null,
+        ownerId: p.userId,
+        ownerEmail: p.user?.email ?? null,
+        onboardingStatus: p.onboardingStatus,
+        activationStatus: p.activationStatus,
+        isActive: p.isActive,
+      })),
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
+  }
+
+  /**
+   * SUPER_ADMIN / ADMIN deactivate / reactivate — the supplier-side mirror of
+   * BranchesService.patchAdminBranch. Flips `isActive` WITHOUT deleting any data:
+   * a deactivated supplier is blocked from sign-in (SupplierStaffService throws
+   * "This supplier account is deactivated.") and excluded from replenishment, but
+   * its profile, catalog and history are preserved and the change is reversible.
+   * Returns the same item shape as adminSearchSuppliers so the caller can update
+   * its list in place.
+   */
+  async patchAdminSupplier(
+    id: number,
+    patch: { isActive?: boolean },
+    actor: AdminActor = {},
+  ) {
+    const profile = await this.profilesRepository.findOne({
+      where: { id },
+      relations: { user: true },
+    });
+    if (!profile) {
+      throw new NotFoundException(`Supplier profile ${id} not found`);
+    }
+    if (patch.isActive !== undefined && patch.isActive !== profile.isActive) {
+      profile.isActive = patch.isActive;
+      await this.profilesRepository.save(profile);
+      await this.auditService.log({
+        action: patch.isActive
+          ? 'supplier_profile.reactivated'
+          : 'supplier_profile.deactivated',
+        targetType: 'SUPPLIER_PROFILE',
+        targetId: id,
+        actorId: actor.id ?? null,
+        actorEmail: actor.email ?? null,
+      });
+    }
+    return {
+      id: profile.id,
+      companyName: profile.companyName,
+      legalName: profile.legalName ?? null,
+      ownerId: profile.userId,
+      ownerEmail: profile.user?.email ?? null,
+      onboardingStatus: profile.onboardingStatus,
+      activationStatus: profile.activationStatus,
+      isActive: profile.isActive,
+    };
   }
 
   async approve(id: number, actor: AdminActor = {}): Promise<SupplierProfile> {

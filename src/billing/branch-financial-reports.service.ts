@@ -27,7 +27,10 @@ import {
   BranchAccruedLiabilityStatus,
 } from './entities/branch-accrued-liability.entity';
 import { BranchDepreciationEntry } from './entities/branch-depreciation-entry.entity';
-import { BranchExpense } from '../billing/entities/branch-expense.entity';
+import {
+  BranchExpense,
+  isLiabilitySettlementCategory,
+} from '../billing/entities/branch-expense.entity';
 import {
   BranchFixedAsset,
   BranchFixedAssetStatus,
@@ -359,8 +362,17 @@ export class BranchFinancialReportsService {
     const expenses = await this.findExpenses(branchId, from, to);
     const expensesByCategory: Record<string, number> = {};
     let totalExpenses = 0;
+    let taxRemitted = 0;
     for (const exp of expenses) {
       const amount = Number(exp.amount) || 0;
+      // A tax remittance shares this table but is not a cost: the money it pays
+      // over was collected on the authority's behalf and was already excluded
+      // from revenue, so charging it here would deduct the same tax from profit
+      // a second time. It belongs on the balance sheet, against the liability.
+      if (isLiabilitySettlementCategory(exp.category)) {
+        taxRemitted += amount;
+        continue;
+      }
       expensesByCategory[exp.category] =
         (expensesByCategory[exp.category] || 0) + amount;
       totalExpenses += amount;
@@ -381,6 +393,11 @@ export class BranchFinancialReportsService {
     if (Math.abs(tax) >= 0.01) {
       notes.push(
         'Sales tax is shown separately from sales revenue so the branch can distinguish tax collected on behalf of the government from earned revenue.',
+      );
+    }
+    if (taxRemitted >= 0.01) {
+      notes.push(
+        `Sales tax of ${this.round2(taxRemitted)} was remitted to the authority in this range. It is not an operating expense — it settles tax collected on the authority's behalf, and is shown against tax payable on the balance sheet.`,
       );
     }
 
@@ -434,11 +451,24 @@ export class BranchFinancialReportsService {
     } = await this.computeLiquidAssetBalances(branchId, asOfAt, checkouts);
 
     const expenses = await this.findExpenses(branchId, null, asOfAt);
+    // Every row reduces cash — a remittance is money out of the drawer like any
+    // other. Only the liability side distinguishes them.
     const cashOut = expenses.reduce(
       (sum, exp) => sum + (Number(exp.amount) || 0),
       0,
     );
     const cash = Math.max(0, cashOnHand - cashOut);
+    // Tax already handed to the authority is no longer owed. Without this the
+    // liability only ever grew: cash fell when the branch paid, the payable
+    // stayed, and equity absorbed the same tax twice.
+    const taxRemitted = expenses.reduce(
+      (sum, exp) =>
+        isLiabilitySettlementCategory(exp.category)
+          ? sum + (Number(exp.amount) || 0)
+          : sum,
+      0,
+    );
+    taxPayable -= taxRemitted;
 
     // Inventory value: sum(quantityOnHand × WAC) for current branch_inventory.
     const inventory = await this.inventoryRepo.find({
@@ -504,7 +534,18 @@ export class BranchFinancialReportsService {
     );
     if (normalizedTaxPayable > 0) {
       notes.push(
-        'Tax payable reflects checkout tax collected up to the snapshot date and is kept separate from sales revenue.',
+        'Tax payable reflects checkout tax collected up to the snapshot date, less any remitted to the authority, and is kept separate from sales revenue.',
+      );
+    }
+    // Remitting more than the POS ever recorded as collected is not an error to
+    // hide: it means tax was owed on trade this branch did not ring up here, or
+    // a remittance was entered twice. The liability floors at zero so the sheet
+    // still balances, and the note says why rather than leaving it unexplained.
+    if (taxPayable < -0.01) {
+      notes.push(
+        `Sales tax remitted exceeds tax collected through the POS by ${this.round2(
+          Math.abs(taxPayable),
+        )}. Tax payable is shown as zero; check for a duplicate remittance, or for tax owed on sales recorded outside this branch's register.`,
       );
     }
     if (fixedAssetSnapshot.fixedAssetsNet > 0) {

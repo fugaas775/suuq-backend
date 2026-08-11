@@ -84,7 +84,7 @@ export class VendorController {
         role,
         withProductsOnly: true,
         minPublishedProducts: 3,
-      } as any);
+      });
 
     return {
       items,
@@ -491,6 +491,24 @@ export class VendorController {
   async getMyStores(@Req() req: AuthenticatedRequest) {
     const userId: number = (req.user as any)?.id ?? (req.user as any)?.userId;
     return this.vendorService.getMyStores(userId);
+  }
+
+  /**
+   * Provisions the consumer storefront for a branch that has none, so an owner
+   * whose branch predates auto-provisioning (or whose link drifted) can put it
+   * on the Consumer app without a backend script.
+   */
+  @UseGuards(JwtAuthGuard)
+  @Post('vendor/me/stores')
+  async createStoreForBranch(
+    @Req() req: AuthenticatedRequest,
+    @Body() dto: { branchId: number },
+  ) {
+    const userId: number = (req.user as any)?.id ?? (req.user as any)?.userId;
+    return this.vendorService.createStoreForBranch(
+      userId,
+      Number(dto.branchId),
+    );
   }
 
   @UseGuards(JwtAuthGuard)

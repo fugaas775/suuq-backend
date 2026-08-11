@@ -22,10 +22,17 @@ const decimalTransformer = {
 export enum PurchaseOrderStatus {
   DRAFT = 'DRAFT',
   SUBMITTED = 'SUBMITTED',
+  // Supplier counter-offered amended quantities/prices/delivery; awaiting the
+  // buyer's accept (→ ACKNOWLEDGED) or reject (→ CANCELLED).
+  CHANGES_PROPOSED = 'CHANGES_PROPOSED',
   ACKNOWLEDGED = 'ACKNOWLEDGED',
+  // Supplier shipped part of the order; the rest is still outstanding.
+  PARTIALLY_SHIPPED = 'PARTIALLY_SHIPPED',
   SHIPPED = 'SHIPPED',
   RECEIVED = 'RECEIVED',
   RECONCILED = 'RECONCILED',
+  // Supplier rejected the order outright (terminal, parallel to CANCELLED).
+  DECLINED = 'DECLINED',
   CANCELLED = 'CANCELLED',
 }
 
@@ -149,6 +156,12 @@ export class PurchaseOrderItem {
 
   @Column({ type: 'int', default: 0 })
   receivedQuantity!: number;
+
+  // Cumulative quantity the supplier has marked shipped across one or more
+  // (partial) dispatches. Drives PARTIALLY_SHIPPED vs SHIPPED and the buyer's
+  // per-line shipped progress.
+  @Column({ type: 'int', default: 0 })
+  shippedQuantity!: number;
 
   @Column({ type: 'int', default: 0 })
   shortageQuantity!: number;

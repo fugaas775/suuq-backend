@@ -23,6 +23,7 @@ import {
   ListHotelReservationsQueryDto,
   ListHotelRoomsQueryDto,
   ListNightAuditLogsQueryDto,
+  SetRoomMaintenanceDto,
   TriggerNightAuditDto,
   UpdateHotelReservationDto,
   UpdateHotelRoomDto,
@@ -123,6 +124,63 @@ export class HotelInventoryService {
     return this.toRoomResponse(saved);
   }
 
+  // Put a room in/out of service, keyed by roomNumber (not id) so it works for the
+  // many HOTEL branches whose rooms live only as product attributes with no
+  // pos_hotel_rooms registry row yet. Marking out of service upserts a MAINTENANCE
+  // row (auto-created ones are tagged); returning to service deletes an auto-created
+  // row so the registry never gains a stray ACTIVE row — Reports/Home fall back to
+  // product attributes only while the registry is empty, and a partial ACTIVE set
+  // would collapse their room totals. A pre-existing (real) row is set ACTIVE instead.
+  async setRoomMaintenance(dto: SetRoomMaintenanceDto) {
+    const roomNumber = String(dto.roomNumber || '').trim();
+    let room = await this.roomRepo.findOne({
+      where: { branchId: dto.branchId, roomNumber },
+    });
+
+    if (dto.status === HotelRoomStatus.MAINTENANCE) {
+      if (!room) {
+        room = this.roomRepo.create({
+          branchId: dto.branchId,
+          roomNumber,
+          status: HotelRoomStatus.MAINTENANCE,
+          metadata: { autoCreatedForMaintenance: true },
+        });
+      } else {
+        room.status = HotelRoomStatus.MAINTENANCE;
+      }
+      room.metadata = {
+        ...(room.metadata ?? {}),
+        maintenance: {
+          reason: dto.reason ?? null,
+          setAt: new Date().toISOString(),
+        },
+      };
+      const saved = await this.roomRepo.save(room);
+      return this.toRoomResponse(saved);
+    }
+
+    // Return to service.
+    if (!room) {
+      return {
+        branchId: dto.branchId,
+        roomNumber,
+        status: HotelRoomStatus.ACTIVE,
+      };
+    }
+    if (room.metadata?.autoCreatedForMaintenance === true) {
+      await this.roomRepo.remove(room);
+      return {
+        branchId: dto.branchId,
+        roomNumber,
+        status: HotelRoomStatus.ACTIVE,
+      };
+    }
+    room.status = HotelRoomStatus.ACTIVE;
+    room.metadata = { ...(room.metadata ?? {}), maintenance: null };
+    const saved = await this.roomRepo.save(room);
+    return this.toRoomResponse(saved);
+  }
+
   // ── Rate plans ───────────────────────────────────────────────────────────
 
   private toRatePlanResponse(p: HotelRatePlan) {
@@ -207,8 +265,19 @@ export class HotelInventoryService {
       .createQueryBuilder('res')
       .where('res.branchId = :branchId', { branchId: query.branchId });
 
-    if (query.status)
+    const validStatuses = new Set<string>(
+      Object.values(HotelReservationStatus),
+    );
+    const multiStatuses = (query.statuses ?? '')
+      .split(',')
+      .map((s) => s.trim().toUpperCase())
+      .filter((s) => validStatuses.has(s));
+
+    if (multiStatuses.length) {
+      qb.andWhere('res.status IN (:...statuses)', { statuses: multiStatuses });
+    } else if (query.status) {
       qb.andWhere('res.status = :status', { status: query.status });
+    }
 
     if (query.checkInDate)
       qb.andWhere('res.checkInAt = :checkInDate', {

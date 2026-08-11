@@ -30,6 +30,7 @@ import {
   ListHotelReservationsQueryDto,
   ListHotelRoomsQueryDto,
   ListNightAuditLogsQueryDto,
+  SetRoomMaintenanceDto,
   TriggerNightAuditDto,
   UpdateHotelReservationDto,
   UpdateHotelRoomDto,
@@ -81,6 +82,16 @@ export class HotelInventoryController {
     @Body() dto: UpdateHotelRoomDto,
   ) {
     return this.svc.updateRoom(id, dto);
+  }
+
+  // Keyed by roomNumber in the body (not a path id) so it works for branches whose
+  // rooms exist only as product attributes with no registry row yet. Distinct path
+  // (not rooms/:id/...) to avoid colliding with the numeric :id route above.
+  @Patch('room-maintenance')
+  @RetailBranchContext('body.branchId')
+  @RequirePosPermissions(PosHospitalityPermission.SET_ROOM_MAINTENANCE)
+  setRoomMaintenance(@Body() dto: SetRoomMaintenanceDto) {
+    return this.svc.setRoomMaintenance(dto);
   }
 
   // ── Rate plans ──────────────────────────────────────────────────────────

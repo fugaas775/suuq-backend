@@ -61,6 +61,11 @@ describe('EbirrService', () => {
     orderRepo.findOne.mockResolvedValue(null);
     ordersService.completeOrderFromPaymentCallback.mockResolvedValue(undefined);
     mockedAxios.post.mockReset();
+    // Default the reachability probe that guards initiatePayment to "gateway is
+    // up", so these cases still exercise the charge itself. Unreachability is
+    // covered on its own below.
+    mockedAxios.get.mockReset();
+    mockedAxios.get.mockResolvedValue({ status: 405, data: {} });
   });
 
   it('marks APPROVED callback payloads as completed', async () => {
@@ -180,6 +185,30 @@ describe('EbirrService', () => {
         merch_order_id: 'POSBRANCH-11-1863-1777472475351',
         status: 'PENDING',
         response_code: 'ECONNRESET',
+      }),
+    );
+  });
+
+  it('fails fast without charging when the gateway is unreachable', async () => {
+    mockedAxios.get.mockRejectedValueOnce(new Error('connect ETIMEDOUT'));
+
+    await expect(
+      service.initiatePayment({
+        phoneNumber: '0915333513',
+        amount: '1900.00',
+        referenceId: 'POSBRANCH-12-unreachable',
+        invoiceId: 'POSBRANCHINV-12-unreachable',
+        description: 'Printing press branch',
+      }),
+    ).rejects.toThrow(/no money has been taken/i);
+
+    // The charge must never leave the building when the gateway was out of
+    // reach — that is what turns "nothing was taken" into a guarantee.
+    expect(mockedAxios.post).not.toHaveBeenCalled();
+    expect(ebirrTransactionRepo.save).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        merch_order_id: 'POSBRANCH-12-unreachable',
+        status: 'FAILED',
       }),
     );
   });

@@ -10,6 +10,7 @@ import {
   HotelReservation,
   HotelReservationStatus,
 } from './entities/hotel-reservation.entity';
+import { HotelRatePlan } from './entities/hotel-rate-plan.entity';
 import { VendorStore } from '../vendor/entities/vendor-store.entity';
 import { EbirrService } from '../ebirr/ebirr.service';
 import { TelebirrService } from '../telebirr/telebirr.service';
@@ -31,6 +32,8 @@ export class HotelPrepaymentService {
   constructor(
     @InjectRepository(HotelReservation)
     private readonly reservationRepo: Repository<HotelReservation>,
+    @InjectRepository(HotelRatePlan)
+    private readonly ratePlanRepo: Repository<HotelRatePlan>,
     @InjectRepository(VendorStore)
     private readonly vendorStoreRepo: Repository<VendorStore>,
     private readonly ebirrService: EbirrService,
@@ -64,7 +67,7 @@ export class HotelPrepaymentService {
     }
 
     // Calculate amount — derive from ratePlan if available; fallback placeholder
-    const amount = this.resolveReservationAmount(reservation);
+    const amount = await this.resolveReservationAmount(reservation);
     const currency = dto.currency ?? 'ETB';
     const orderId = `RES-${reservation.id}-${Date.now()}`;
 
@@ -137,19 +140,63 @@ export class HotelPrepaymentService {
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
-  private resolveReservationAmount(reservation: HotelReservation): number {
-    // Simple night-count × placeholder rate (real rate plan lookup can be
-    // added when ratePlan is linked to a HotelRatePlan entity).
-    const checkIn = new Date(reservation.checkInAt);
-    const checkOut = new Date(reservation.checkOutAt);
-    const nights = Math.max(
-      1,
-      Math.round(
-        (checkOut.getTime() - checkIn.getTime()) / (1000 * 60 * 60 * 24),
-      ),
-    );
-    // Placeholder nightly rate of 1000 ETB — real implementation should
-    // join ratePlanId → pos_hotel_rate_plans.weekdayRate
-    return nights * 1000;
+  /**
+   * Compute the prepayment amount from the reservation's rate plan: sum of
+   * per-night rates across the stay (weekend = Fri/Sat), mirroring the night-audit
+   * billing so the consumer prepays what the folio will accrue. Resolves the plan
+   * by explicit ratePlanId, else by room type, else the branch's default plan.
+   * Falls back to a conservative 1000/night placeholder only when no rate plan is
+   * configured, so the payment flow still works (reconciled at the desk).
+   */
+  private async resolveReservationAmount(
+    reservation: HotelReservation,
+  ): Promise<number> {
+    let plan: HotelRatePlan | null = null;
+    if (reservation.ratePlanId) {
+      plan = await this.ratePlanRepo.findOne({
+        where: { id: reservation.ratePlanId },
+      });
+    }
+    if (!plan && reservation.roomType) {
+      plan = await this.ratePlanRepo.findOne({
+        where: {
+          branchId: reservation.branchId,
+          roomType: reservation.roomType.toUpperCase(),
+          isActive: true,
+        },
+      });
+    }
+    if (!plan) {
+      const plans = await this.ratePlanRepo.find({
+        where: { branchId: reservation.branchId, isActive: true },
+      });
+      plan = plans.find((p) => !p.roomType) ?? plans[0] ?? null;
+    }
+
+    const weekdayRate = plan ? Number(plan.weekdayRate) : 0;
+    const weekendRate =
+      plan && plan.weekendRate != null ? Number(plan.weekendRate) : weekdayRate;
+
+    // Walk each night [checkIn, checkOut) and apply the weekday/weekend rate.
+    let total = 0;
+    let nights = 0;
+    if (reservation.checkInAt && reservation.checkOutAt) {
+      let cur = new Date(`${reservation.checkInAt}T12:00:00Z`);
+      const end = new Date(`${reservation.checkOutAt}T12:00:00Z`);
+      while (cur < end) {
+        const dow = cur.getUTCDay(); // 0 Sun … 6 Sat
+        total += dow === 5 || dow === 6 ? weekendRate : weekdayRate;
+        nights += 1;
+        cur = new Date(cur.getTime() + 24 * 60 * 60_000);
+      }
+    }
+    if (nights === 0) nights = 1;
+
+    // No usable rate plan → conservative placeholder so payment still proceeds.
+    if (!plan || weekdayRate <= 0) {
+      return nights * 1000;
+    }
+    if (total <= 0) total = nights * weekdayRate;
+    return Math.round((total + Number.EPSILON) * 100) / 100;
   }
 }

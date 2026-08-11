@@ -10,6 +10,7 @@ import {
 } from 'typeorm';
 import { User } from '../../users/entities/user.entity';
 import { RetailTenant } from '../../retail/entities/retail-tenant.entity';
+import { BranchHomeConfig } from './branch-home-config.type';
 
 @Entity('branches')
 @Index(['ownerId', 'name'])
@@ -85,9 +86,157 @@ export class Branch {
   @Column({ type: 'int', nullable: true })
   defaultCategoryId?: number | null;
 
+  /**
+   * Standard checkout time policy for HOTEL branches, as "HH:MM" 24h EAT
+   * (e.g. "11:00", "11:30", "10:30"). Drives the seeded folio default
+   * check-in/checkout time and the early-check-in / late-checkout fee
+   * boundary on the register. Null = use the global 11:00 default.
+   * HOTEL-only; ignored by other service formats.
+   */
+  @Column({ type: 'varchar', length: 5, nullable: true })
+  checkoutPolicyTime?: string | null;
+
+  /**
+   * Brand logo URL for this branch (uploaded via /media). Shown in the register
+   * branch badge across all service formats and on receipts. Null = no logo.
+   */
+  @Column({ type: 'varchar', length: 512, nullable: true })
+  logoUrl?: string | null;
+
+  /**
+   * Whether this branch charges tax (VAT) on sales. All service formats honour it.
+   *
+   * Defaults to TRUE (2026-08-07): a branch created from here on starts charging
+   * tax at {@link taxRate}, added on top of the price ({@link taxInclusive} is
+   * false). Owners who should not be charging it turn it off in Seller HQ.
+   *
+   * Changing this default deliberately did NOT touch the branches that already
+   * existed — they were created under `false` and keep it, because switching tax
+   * on for a trading business raises every price it charges by the rate, and on
+   * a multi-tenant platform that is somebody else's customers and somebody
+   * else's tax registration. Only ever flip an existing branch through Seller HQ,
+   * by its own owner.
+   *
+   * Creation sites now set this explicitly, from
+   * {@link shouldEnableTaxForNewBranch} — the column default only still applies
+   * to rows inserted by a path that predates that call.
+   */
+  @Column({ type: 'boolean', default: true })
+  taxEnabled!: boolean;
+
+  /**
+   * Tax (VAT) rate as a FRACTION — 0.1500 is 15%. The fraction is the single
+   * unit used end to end: DB, wire (`items[].taxRate`), and the POS session.
+   * Percent exists only inside the Seller HQ input. Defaults to the Ethiopian
+   * 15% so enabling the toggle is a one-click action; ignored while
+   * {@link taxEnabled} is false.
+   *
+   * Tax is EXCLUSIVE (added on top): grandTotal = netSubtotal + tax.
+   *
+   * The transformer is required — pg returns `numeric` as a string, and a
+   * string would multiply fine but break every other numeric operation.
+   */
+  @Column('decimal', {
+    precision: 5,
+    scale: 4,
+    default: 0.15,
+    transformer: {
+      to: (value: number | null | undefined) => value,
+      from: (value: string | number | null | undefined) =>
+        value == null
+          ? 0
+          : typeof value === 'string'
+            ? parseFloat(value)
+            : value,
+    },
+  })
+  taxRate!: number;
+
+  /**
+   * Whether the branch's catalog prices ALREADY contain the tax.
+   *
+   * false (default) — EXCLUSIVE. The price is net; tax is added at checkout, so
+   * enabling tax raises what the customer pays by the rate.
+   *
+   * true — INCLUSIVE. The price on the shelf is what the customer pays; the tax
+   * is extracted out of it for the receipt and the ledger. Enabling tax changes
+   * no price at all, only how the takings are split between revenue and tax
+   * payable. This is what a branch that already priced its goods with VAT in
+   * them wants, and it is the only mode where turning tax on is free of any
+   * re-pricing.
+   *
+   * Both modes satisfy `grandTotal = netSubtotal + tax` and
+   * `tax = grandTotal − grandTotal / (1 + rate)`; they differ only in whether
+   * the discounted line amount is read as the net or as the gross.
+   */
+  @Column({ type: 'boolean', default: false })
+  taxInclusive!: boolean;
+
+  /**
+   * What this branch's tax is CALLED on a receipt — "VAT", "TOT", "Sales Tax".
+   * Null means VAT, which is what every receipt printed before this existed.
+   *
+   * A name, not a regime. The system has no input-credit concept, so an
+   * Ethiopian business on Turnover Tax differs from one on VAT in exactly two
+   * ways a till can see: the rate, and the word on the slip. Modelling TOT as a
+   * second regime would add machinery that computes the same numbers.
+   *
+   * It matters because printing "VAT" on the receipt of a business that is not
+   * VAT-registered misstates its tax status to its own customers.
+   */
+  @Column({ type: 'varchar', length: 32, nullable: true })
+  taxName?: string | null;
+
+  /**
+   * Per-branch layout for the branch-customizable Home page (POS `/home`) — which
+   * widgets show and in what order, custom quick-links, a welcome note and
+   * branding. Null = never customized; the client renders a per-format default.
+   * The fixed analytics Dashboard (`/dashboard`) ignores this. See
+   * {@link BranchHomeConfig}.
+   */
+  @Column({ type: 'jsonb', nullable: true })
+  homeConfig?: BranchHomeConfig | null;
+
+  /**
+   * When set, this branch is a wholesale Supplier's backing "cash & carry"
+   * outlet — the branch the supplier's Suuq POS counter runs against — rather
+   * than an ordinary retail branch. References supplier_profiles.id.
+   *
+   * Such outlets are deliberately EXCLUDED from a user's normal POS branch list
+   * (collectPosBranchAccessForUser) so the supplier stays branch-independent and
+   * no Retail⇄Wholesale switcher appears; they are surfaced to the client via the
+   * supplier context's outletBranchId instead. They are still owned by the
+   * supplier user, so the register/checkout guards authorize them normally, and
+   * effective-user-role still derives POS_MANAGER from them. Null = ordinary
+   * retail branch.
+   */
+  @Column({ type: 'int', nullable: true })
+  supplierOutletProfileId?: number | null;
+
   @CreateDateColumn()
   createdAt!: Date;
 
   @UpdateDateColumn()
   updatedAt!: Date;
+}
+
+/**
+ * Whether a BRAND-NEW branch should start charging tax.
+ *
+ * Only if it has a tax identification number. A TIN is the closest thing the
+ * signup flow has to proof of tax registration, and a business that is not
+ * registered may not legally charge VAT — so defaulting an unidentified branch
+ * to 15% points it at an offence on its very first sale. It also has nowhere to
+ * print a TIN on the receipt, which a tax invoice requires.
+ *
+ * Deliberately not a hard block: an owner who is registered but has not typed
+ * their number in yet can still switch tax on in Seller HQ, which prompts for
+ * the TIN. This only decides where a new branch STARTS.
+ *
+ * Existing branches are untouched — this is consulted at creation only.
+ */
+export function shouldEnableTaxForNewBranch(
+  tinNumber?: string | null,
+): boolean {
+  return Boolean(String(tinNumber ?? '').trim());
 }

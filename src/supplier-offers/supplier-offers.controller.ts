@@ -14,7 +14,11 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { SupplierOffersService } from './supplier-offers.service';
 import { CreateSupplierOfferDto } from './dto/create-supplier-offer.dto';
+import { CreateSupplierProductDto } from './dto/create-supplier-product.dto';
+import { BulkCreateSupplierProductsDto } from './dto/bulk-create-supplier-products.dto';
 import { UpdateSupplierOfferDto } from './dto/update-supplier-offer.dto';
+import { SetOfferConsumerListingDto } from './dto/set-offer-consumer-listing.dto';
+import { extractActiveSupplierId } from '../suppliers/active-supplier.util';
 
 /**
  * Supplier catalog management. All routes are scoped to the acting user's own
@@ -31,13 +35,53 @@ export class SupplierOffersController {
   @Get('me')
   @ApiOperation({ summary: 'List the signed-in supplier’s offers' })
   listMine(@Req() req) {
-    return this.supplierOffersService.listForUser(req.user?.id);
+    return this.supplierOffersService.listForUser(
+      req.user?.id,
+      extractActiveSupplierId(req),
+      req.user?.roles,
+    );
+  }
+
+  @Post('me/products')
+  @ApiOperation({
+    summary:
+      'Create a B2B-only product and its wholesale offer in one step (supplier)',
+  })
+  createProductMine(@Body() dto: CreateSupplierProductDto, @Req() req) {
+    return this.supplierOffersService.createProductWithOfferForUser(
+      req.user?.id,
+      dto,
+      extractActiveSupplierId(req),
+      req.user?.roles,
+    );
+  }
+
+  @Post('me/products/bulk')
+  @ApiOperation({
+    summary:
+      'Bulk-create products + offers for the signed-in supplier (row-level results)',
+  })
+  bulkCreateProductsMine(
+    @Body() dto: BulkCreateSupplierProductsDto,
+    @Req() req,
+  ) {
+    return this.supplierOffersService.bulkCreateProductsWithOffersForUser(
+      req.user?.id,
+      dto,
+      extractActiveSupplierId(req),
+      req.user?.roles,
+    );
   }
 
   @Post('me')
   @ApiOperation({ summary: 'Create a draft offer for the signed-in supplier' })
   createMine(@Body() dto: CreateSupplierOfferDto, @Req() req) {
-    return this.supplierOffersService.createForUser(req.user?.id, dto);
+    return this.supplierOffersService.createForUser(
+      req.user?.id,
+      dto,
+      extractActiveSupplierId(req),
+      req.user?.roles,
+    );
   }
 
   @Patch('me/:id')
@@ -47,7 +91,13 @@ export class SupplierOffersController {
     @Body() dto: UpdateSupplierOfferDto,
     @Req() req,
   ) {
-    return this.supplierOffersService.updateForUser(req.user?.id, id, dto);
+    return this.supplierOffersService.updateForUser(
+      req.user?.id,
+      id,
+      dto,
+      extractActiveSupplierId(req),
+      req.user?.roles,
+    );
   }
 
   @Patch('me/:id/publish')
@@ -55,7 +105,31 @@ export class SupplierOffersController {
     summary: 'Publish an offer (requires an approved supplier profile)',
   })
   publishMine(@Param('id', ParseIntPipe) id: number, @Req() req) {
-    return this.supplierOffersService.publishForUser(req.user?.id, id);
+    return this.supplierOffersService.publishForUser(
+      req.user?.id,
+      id,
+      extractActiveSupplierId(req),
+      req.user?.roles,
+    );
+  }
+
+  @Patch('me/:id/consumer-listing')
+  @ApiOperation({
+    summary:
+      'List/unlist an offer to shoppers on suuq-s.com at a consumer retail price',
+  })
+  setConsumerListingMine(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: SetOfferConsumerListingDto,
+    @Req() req,
+  ) {
+    return this.supplierOffersService.setConsumerListingForUser(
+      req.user?.id,
+      id,
+      dto,
+      extractActiveSupplierId(req),
+      req.user?.roles,
+    );
   }
 
   @Patch('me/:id/archive')
@@ -63,6 +137,11 @@ export class SupplierOffersController {
     summary: 'Archive an offer so it no longer surfaces to buyers',
   })
   archiveMine(@Param('id', ParseIntPipe) id: number, @Req() req) {
-    return this.supplierOffersService.archiveForUser(req.user?.id, id);
+    return this.supplierOffersService.archiveForUser(
+      req.user?.id,
+      id,
+      extractActiveSupplierId(req),
+      req.user?.roles,
+    );
   }
 }

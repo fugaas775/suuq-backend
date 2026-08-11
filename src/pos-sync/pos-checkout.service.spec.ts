@@ -6,6 +6,8 @@ import { VariantInventoryService } from '../branches/variant-inventory.service';
 import { GeneralLedgerService } from '../accounting/general-ledger.service';
 import { ProductCostService } from '../purchase-orders/product-cost.service';
 import { Branch } from '../branches/entities/branch.entity';
+import { BranchInventory } from '../branches/entities/branch-inventory.entity';
+import { BranchInventoryVariant } from '../branches/entities/branch-inventory-variant.entity';
 import { StockMovementType } from '../branches/entities/stock-movement.entity';
 import { PartnerCredential } from '../partner-credentials/entities/partner-credential.entity';
 import { EmailService } from '../email/email.service';
@@ -42,6 +44,9 @@ describe('PosCheckoutService', () => {
   let registerSessionsRepository: { findOne: jest.Mock; save: jest.Mock };
   let suspendedCartsRepository: { findOne: jest.Mock; save: jest.Mock };
   let inventoryLedgerService: { recordMovement: jest.Mock };
+  let branchInventoryRepository: { exists: jest.Mock; findOne: jest.Mock };
+  let branchInventoryVariantRepository: { findOne: jest.Mock };
+  let variantInventoryService: { recordVariantMovement: jest.Mock };
   let productAliasesService: { resolveProductIdForBranch: jest.Mock };
   let dataSource: { transaction: jest.Mock };
   let generalLedgerService: {
@@ -102,6 +107,21 @@ describe('PosCheckoutService', () => {
       recordMovement: jest.fn().mockResolvedValue({}),
     };
 
+    // No branch inventory row and no variant row by default, so every existing
+    // expectation keeps running through the manageStock path unchanged.
+    branchInventoryRepository = {
+      exists: jest.fn().mockResolvedValue(false),
+      findOne: jest.fn().mockResolvedValue(null),
+    };
+
+    branchInventoryVariantRepository = {
+      findOne: jest.fn().mockResolvedValue(null),
+    };
+
+    variantInventoryService = {
+      recordVariantMovement: jest.fn().mockResolvedValue({}),
+    };
+
     productAliasesService = {
       resolveProductIdForBranch: jest.fn().mockResolvedValue(55),
     };
@@ -109,6 +129,7 @@ describe('PosCheckoutService', () => {
     dataSource = {
       transaction: jest.fn(async (callback) =>
         callback({
+          query: jest.fn().mockResolvedValue([]),
           getRepository: jest.fn((entity) => {
             if (entity === PosCheckout) {
               return posCheckoutsRepository;
@@ -124,6 +145,12 @@ describe('PosCheckoutService', () => {
             }
             if (entity === Product) {
               return productsRepository;
+            }
+            if (entity === BranchInventory) {
+              return branchInventoryRepository;
+            }
+            if (entity === BranchInventoryVariant) {
+              return branchInventoryVariantRepository;
             }
 
             return null;
@@ -162,7 +189,7 @@ describe('PosCheckoutService', () => {
         { provide: EmailService, useValue: {} },
         {
           provide: VariantInventoryService,
-          useValue: { recordVariantMovement: jest.fn() },
+          useValue: variantInventoryService,
         },
         { provide: GeneralLedgerService, useValue: generalLedgerService },
         { provide: ProductCostService, useValue: productCostService },
@@ -195,6 +222,142 @@ describe('PosCheckoutService', () => {
     expect(result.promoCodeDiscount).toBeGreaterThan(0);
     expect(result.grandTotal).toBeGreaterThan(0);
     expect(result.lines[0]?.promotionLabels.length).toBeGreaterThan(0);
+  });
+
+  // Per-branch VAT. The precedence is deliberately "branch wins", not a nullish
+  // fallback: the register stamps an explicit taxRate: 0 on every product line,
+  // so `item.taxRate ?? branchRate` would never fire and the setting would look
+  // enabled while charging nothing.
+  describe('branch tax (VAT) policy', () => {
+    const taxQuote = () =>
+      service.quote({
+        branchId: 3,
+        transactionType: PosCheckoutTransactionType.SALE,
+        items: [
+          {
+            lineId: 'line-1',
+            productId: 55,
+            sku: 'WATER-600',
+            category: 'SNACK',
+            quantity: 1,
+            unitPrice: 15,
+            taxRate: 0,
+          },
+        ],
+      });
+
+    it('charges nothing when the branch has tax off, whatever the client sent', async () => {
+      branchesRepository.findOne.mockResolvedValue({
+        id: 3,
+        taxEnabled: false,
+        taxRate: 0.15,
+      });
+
+      const result = await taxQuote();
+
+      expect(result.taxTotal).toBe(0);
+      expect(result.grandTotal).toBe(result.netSubtotal);
+      expect(result.branchTaxEnabled).toBe(false);
+    });
+
+    it("overrides the client's explicit zero once the branch charges tax", async () => {
+      branchesRepository.findOne.mockResolvedValue({
+        id: 3,
+        taxEnabled: true,
+        taxRate: 0.15,
+      });
+
+      const result = await taxQuote();
+
+      expect(result.lines[0]?.taxRate).toBe(0.15);
+      expect(result.branchTaxRate).toBe(0.15);
+      // Exclusive: tax is added on top of the discounted subtotal.
+      expect(result.grandTotal).toBeCloseTo(
+        result.netSubtotal + result.taxTotal,
+        2,
+      );
+      expect(result.taxTotal).toBeGreaterThan(0);
+    });
+
+    it('leaves the price alone when the branch prices tax-inclusive', async () => {
+      branchesRepository.findOne.mockResolvedValue({
+        id: 3,
+        taxEnabled: true,
+        taxRate: 0.15,
+        taxInclusive: true,
+      });
+
+      const result = await taxQuote();
+
+      expect(result.branchTaxInclusive).toBe(true);
+      // The unit price was 15 and the customer still pays 15 — the tax came out
+      // of it rather than going on top.
+      expect(result.grandTotal).toBeCloseTo(15, 2);
+      expect(result.taxTotal).toBeCloseTo(15 - 15 / 1.15, 2);
+      // The identity the ledger posts on, in both modes.
+      expect(result.netSubtotal + result.taxTotal).toBeCloseTo(
+        result.grandTotal,
+        2,
+      );
+    });
+
+    it('charges more for the same price when exclusive, and that is the difference', async () => {
+      branchesRepository.findOne.mockResolvedValue({
+        id: 3,
+        taxEnabled: true,
+        taxRate: 0.15,
+        taxInclusive: false,
+      });
+
+      const result = await taxQuote();
+
+      expect(result.branchTaxInclusive).toBe(false);
+      expect(result.grandTotal).toBeCloseTo(15 * 1.15, 2);
+    });
+
+    it('ignores a rate the client sent when the branch charges no tax', async () => {
+      // This used to fall through to the caller's rate whenever the branch had
+      // tax off, which let any client put a tax line on the bill of a branch
+      // that is not registered to charge one — and price it itself.
+      branchesRepository.findOne.mockResolvedValue({
+        id: 3,
+        taxEnabled: false,
+        taxRate: 0.15,
+      });
+
+      const result = await service.quote({
+        branchId: 3,
+        transactionType: PosCheckoutTransactionType.SALE,
+        items: [
+          {
+            lineId: 'line-1',
+            productId: 55,
+            quantity: 1,
+            unitPrice: 100,
+            taxRate: 0.25,
+          },
+        ],
+      });
+
+      expect(result.branchTaxEnabled).toBe(false);
+      expect(result.lines[0]?.taxRate).toBe(0);
+      expect(result.taxTotal).toBe(0);
+      // Priced from the catalog, not from the client's unitPrice either.
+      expect(result.grandTotal).toBe(15);
+    });
+
+    it('reads a numeric column that pg hands back as a string', async () => {
+      branchesRepository.findOne.mockResolvedValue({
+        id: 3,
+        taxEnabled: true,
+        taxRate: '0.1500' as unknown as number,
+      });
+
+      const result = await taxQuote();
+
+      expect(result.branchTaxRate).toBe(0.15);
+      expect(result.lines[0]?.taxRate).toBe(0.15);
+    });
   });
 
   it('quotes customer-type discounts for food-service baskets', async () => {
@@ -938,12 +1101,20 @@ describe('PosCheckoutService', () => {
     );
   });
 
-  it('persists failed checkouts for business-rule errors', async () => {
-    posCheckoutsRepository.findOne.mockResolvedValueOnce({
+  // Retrying a FAILED sale used to be pointless: the idempotency lookup echoed
+  // the old failure straight back, so the row stayed dead on the server (reports
+  // read PROCESSED only) while the capturing device re-posted forever behind a
+  // "not yet synced" warning that could never clear. The retry now re-runs
+  // processing on the SAME row — no second revenue record.
+  it('re-processes a FAILED checkout on retry instead of echoing the failure back', async () => {
+    posCheckoutsRepository.findOne.mockResolvedValue({
       id: 71,
       branchId: 3,
+      externalCheckoutId: 'sale-001',
+      idempotencyKey: 'idem-1',
       transactionType: PosCheckoutTransactionType.SALE,
       status: PosCheckoutStatus.FAILED,
+      failureReason: 'Register session 405 is not open',
       currency: 'USD',
       subtotal: 15,
       discountAmount: 0,
@@ -954,7 +1125,227 @@ describe('PosCheckoutService', () => {
       itemCount: 1,
       occurredAt: new Date('2026-04-01T10:00:00.000Z'),
       processedAt: new Date('2026-04-01T10:01:00.000Z'),
-      failureReason: 'No product alias matched BARCODE:0001',
+      tenders: [],
+      items: [],
+      createdAt: new Date('2026-04-01T09:59:00.000Z'),
+      updatedAt: new Date('2026-04-01T10:01:00.000Z'),
+    });
+
+    await service.ingest({
+      branchId: 3,
+      transactionType: PosCheckoutTransactionType.SALE,
+      idempotencyKey: 'idem-1',
+      currency: 'USD',
+      subtotal: 15,
+      total: 15,
+      occurredAt: '2026-04-01T10:00:00.000Z',
+      items: [{ productId: 55, quantity: 1, unitPrice: 15, lineTotal: 15 }],
+    });
+
+    // Same row — the retry updates checkout 71 rather than inserting a second
+    // one, so the sale can never be counted twice.
+    expect(posCheckoutsRepository.save).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 71 }),
+    );
+    expect(posCheckoutsRepository.save).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        id: 71,
+        status: PosCheckoutStatus.PROCESSED,
+        failureReason: null,
+      }),
+    );
+  });
+
+  it('collapses a duplicate HOTEL folio settlement onto the original (folio-scoped dedupe)', async () => {
+    // Mirrors the prod Room 405 failure: the client idempotencyKey did NOT match
+    // (it was a random per-attempt key), so findExistingForIdempotency returns
+    // null and the folio-scoped guard is the only thing that can stop the dupe.
+    posCheckoutsRepository.findOne.mockResolvedValue(null);
+    const original = {
+      id: 501,
+      branchId: 3,
+      externalCheckoutId: null,
+      idempotencyKey: 'receipt-aaa-POS-3',
+      transactionType: PosCheckoutTransactionType.SALE,
+      status: PosCheckoutStatus.PROCESSED,
+      currency: 'USD',
+      subtotal: 14000,
+      discountAmount: 0,
+      taxAmount: 0,
+      total: 14000,
+      paidAmount: 14000,
+      changeDue: 0,
+      itemCount: 1,
+      occurredAt: new Date('2026-06-17T00:29:42.000Z'),
+      processedAt: new Date('2026-06-17T00:29:43.000Z'),
+      metadata: { backendFolioId: 731, roomNumber: '405' },
+      tenders: [],
+      items: [],
+      createdAt: new Date('2026-06-17T00:29:42.000Z'),
+      updatedAt: new Date('2026-06-17T00:29:43.000Z'),
+    };
+    const folioQb = {
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      getOne: jest.fn().mockResolvedValue(original),
+    };
+    posCheckoutsRepository.createQueryBuilder.mockReturnValue(folioQb);
+
+    const result = await service.ingest({
+      branchId: 3,
+      transactionType: PosCheckoutTransactionType.SALE,
+      // A fresh random key, like the real re-tap — it matches nothing.
+      idempotencyKey: 'receipt-ccc-POS-3',
+      currency: 'USD',
+      subtotal: 14000,
+      total: 14000,
+      occurredAt: '2026-06-17T00:30:32.000Z',
+      metadata: { backendFolioId: 731, roomNumber: '405' },
+      items: [
+        { productId: 55, quantity: 1, unitPrice: 14000, lineTotal: 14000 },
+      ],
+    });
+
+    expect(result.id).toBe(501);
+    expect(posCheckoutsRepository.save).not.toHaveBeenCalled();
+    expect(inventoryLedgerService.recordMovement).not.toHaveBeenCalled();
+  });
+
+  it('lets a distinct-amount payment on the same folio through (3,500 deposit then 14,000 balance)', async () => {
+    const folioQb = {
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      // No same-amount settlement for this folio in the window.
+      getOne: jest.fn().mockResolvedValue(null),
+    };
+    posCheckoutsRepository.createQueryBuilder.mockReturnValue(folioQb);
+
+    await service.ingest({
+      branchId: 3,
+      transactionType: PosCheckoutTransactionType.SALE,
+      currency: 'USD',
+      subtotal: 3500,
+      total: 3500,
+      occurredAt: '2026-06-17T00:29:15.000Z',
+      metadata: { backendFolioId: 731, roomNumber: '405' },
+      items: [{ productId: 55, quantity: 1, unitPrice: 3500, lineTotal: 3500 }],
+    });
+
+    expect(posCheckoutsRepository.save).toHaveBeenCalled();
+  });
+
+  it('collapses a re-collection on an already fully-paid folio (different amount, folioGrandTotal cap)', async () => {
+    // Prod Blue Hotel shape: a folio was fully settled (16,000), the board reverted
+    // to "unpaid" (the paid-flag strip), and the operator re-collected a DIFFERENT
+    // amount (14,000) outside the same-amount path. findExistingFolioSettlement (same
+    // amount) returns null; the cumulative cap (prior 16,000 >= folioGrandTotal) is
+    // what stops the duplicate revenue row.
+    posCheckoutsRepository.findOne.mockResolvedValue(null); // idempotency: no match
+    const original = {
+      id: 901,
+      branchId: 3,
+      transactionType: PosCheckoutTransactionType.SALE,
+      status: PosCheckoutStatus.PROCESSED,
+      total: 16000,
+      paidAmount: 16000,
+      metadata: { backendFolioId: 787, roomNumber: '9' },
+      items: [],
+    };
+    const folioQb = {
+      select: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      getOne: jest
+        .fn()
+        // 1) findExistingFolioSettlement — no same-amount settlement in the window
+        .mockResolvedValueOnce(null)
+        // 2) findFullyPaidFolioDuplicate — the original settlement to collapse onto
+        .mockResolvedValueOnce(original),
+      // findFullyPaidFolioDuplicate — folio already collected its full 16,000
+      getRawOne: jest.fn().mockResolvedValue({ collected: '16000' }),
+    };
+    posCheckoutsRepository.createQueryBuilder.mockReturnValue(folioQb);
+
+    const result = await service.ingest({
+      branchId: 3,
+      transactionType: PosCheckoutTransactionType.SALE,
+      idempotencyKey: 'receipt-restrike-POS-3',
+      currency: 'USD',
+      subtotal: 14000,
+      total: 14000,
+      paidAmount: 14000,
+      occurredAt: '2026-06-18T13:43:00.000Z',
+      metadata: {
+        backendFolioId: 787,
+        roomNumber: '9',
+        folioGrandTotal: 16000,
+      },
+      items: [
+        { productId: 55, quantity: 1, unitPrice: 14000, lineTotal: 14000 },
+      ],
+    });
+
+    expect(result.id).toBe(901);
+    expect(posCheckoutsRepository.save).not.toHaveBeenCalled();
+    expect(inventoryLedgerService.recordMovement).not.toHaveBeenCalled();
+  });
+
+  it('still lets an instalment through while the folio owes (cap not yet reached)', async () => {
+    // Same cap path, but only 4,000 collected of a 16,000 folio — a legitimate
+    // partial must NOT be collapsed.
+    const folioQb = {
+      select: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      getOne: jest.fn().mockResolvedValue(null), // no same-amount dup
+      getRawOne: jest.fn().mockResolvedValue({ collected: '4000' }),
+    };
+    posCheckoutsRepository.createQueryBuilder.mockReturnValue(folioQb);
+
+    await service.ingest({
+      branchId: 3,
+      transactionType: PosCheckoutTransactionType.SALE,
+      currency: 'USD',
+      subtotal: 2000,
+      total: 2000,
+      paidAmount: 2000,
+      occurredAt: '2026-06-18T13:43:00.000Z',
+      metadata: {
+        backendFolioId: 787,
+        roomNumber: '9',
+        folioGrandTotal: 16000,
+      },
+      items: [{ productId: 55, quantity: 1, unitPrice: 2000, lineTotal: 2000 }],
+    });
+
+    expect(posCheckoutsRepository.save).toHaveBeenCalled();
+  });
+
+  // A sale that already happened cannot be un-happened by refusing to record it.
+  // An unresolvable alias used to fail the whole checkout — losing the money for
+  // every OTHER line on the receipt too — so it now costs only the stock movement
+  // for that one line, which is recorded on the checkout for reconciliation.
+  it('records a checkout whose line matches no product, listing it as non-inventory', async () => {
+    posCheckoutsRepository.findOne.mockResolvedValueOnce({
+      id: 71,
+      branchId: 3,
+      transactionType: PosCheckoutTransactionType.SALE,
+      status: PosCheckoutStatus.PROCESSED,
+      currency: 'USD',
+      subtotal: 15,
+      discountAmount: 0,
+      taxAmount: 0,
+      total: 15,
+      paidAmount: 15,
+      changeDue: 0,
+      itemCount: 1,
+      occurredAt: new Date('2026-04-01T10:00:00.000Z'),
+      processedAt: new Date('2026-04-01T10:01:00.000Z'),
+      failureReason: null,
       tenders: [],
       items: [
         {
@@ -992,11 +1383,16 @@ describe('PosCheckoutService', () => {
 
     expect(posCheckoutsRepository.save).toHaveBeenLastCalledWith(
       expect.objectContaining({
-        status: PosCheckoutStatus.FAILED,
-        failureReason: 'No product alias matched BARCODE:0001',
+        status: PosCheckoutStatus.PROCESSED,
+        failureReason: null,
+        metadata: expect.objectContaining({
+          nonInventoryLines: [
+            expect.objectContaining({ alias: 'BARCODE:0001', quantity: 1 }),
+          ],
+        }),
       }),
     );
-    expect(result.status).toBe(PosCheckoutStatus.FAILED);
+    expect(result.status).toBe(PosCheckoutStatus.PROCESSED);
   });
 
   it('returns paginated branch-scoped checkout history', async () => {
@@ -1289,6 +1685,46 @@ describe('PosCheckoutService', () => {
       expect(findLine(entry.lines, '1100').debit).toBe(60); // ACCOUNTS_RECEIVABLE
     });
 
+    it('posts a BAD_DEBT write-off to Bad Debt Expense, not cash/clearing/AR', async () => {
+      await (service as any).postCheckoutToLedger(
+        cashSaleCheckout({
+          paidAmount: 100,
+          tenders: [{ method: 'BAD_DEBT', amount: 100 }],
+        }),
+      );
+
+      const entry = generalLedgerService.post.mock.calls[0][0];
+      const { debit, credit } = lineTotals(entry.lines);
+      expect(debit).toBe(100);
+      expect(credit).toBe(100);
+      expect(findLine(entry.lines, '6100').debit).toBe(100); // BAD_DEBT_EXPENSE
+      // The write-off is neither cash, a clearing asset, nor a receivable.
+      expect(findLine(entry.lines, '1000')).toBeUndefined(); // CASH
+      expect(findLine(entry.lines, '1010')).toBeUndefined(); // TENDER_CLEARING
+      expect(findLine(entry.lines, '1100')).toBeUndefined(); // ACCOUNTS_RECEIVABLE
+      expect(findLine(entry.lines, '4000').credit).toBe(100); // revenue still recognized
+    });
+
+    it('keeps a mixed cash + BAD_DEBT settle balanced', async () => {
+      await (service as any).postCheckoutToLedger(
+        cashSaleCheckout({
+          paidAmount: 100,
+          tenders: [
+            { method: 'CASH', amount: 60 },
+            { method: 'BAD_DEBT', amount: 40 },
+          ],
+        }),
+      );
+
+      const entry = generalLedgerService.post.mock.calls[0][0];
+      const { debit, credit } = lineTotals(entry.lines);
+      expect(debit).toBe(100);
+      expect(credit).toBe(100);
+      expect(findLine(entry.lines, '1000').debit).toBe(60); // CASH actually collected
+      expect(findLine(entry.lines, '6100').debit).toBe(40); // BAD_DEBT_EXPENSE
+      expect(findLine(entry.lines, '1010')).toBeUndefined(); // not parked in clearing
+    });
+
     it('splits tax out of revenue into the tax-payable account', async () => {
       await (service as any).postCheckoutToLedger(
         cashSaleCheckout({ taxAmount: 15 }),
@@ -1388,6 +1824,638 @@ describe('PosCheckoutService', () => {
       expect(findLine(entry.lines, '1100').credit).toBe(300); // ACCOUNTS_RECEIVABLE
       const { debit, credit } = lineTotals(entry.lines);
       expect(debit).toBe(credit);
+    });
+  });
+
+  describe('RETAIL stock decrement', () => {
+    // A RETAIL branch counts units of a SKU because it has a branch inventory
+    // row for it — not because the global product.manageStock flag happens to be
+    // true. In production it almost never is (82 of 83 RETAIL inventory rows sat
+    // on manageStock=false), so the flag alone left on-hand rising forever.
+    const ingestOneLine = async (quantity = 2) => {
+      posCheckoutsRepository.findOne
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({
+          id: 71,
+          branchId: 3,
+          transactionType: PosCheckoutTransactionType.SALE,
+          status: PosCheckoutStatus.PROCESSED,
+          currency: 'ETB',
+          subtotal: 15,
+          discountAmount: 0,
+          taxAmount: 0,
+          total: 15,
+          paidAmount: 15,
+          changeDue: 0,
+          itemCount: 1,
+          occurredAt: new Date('2026-08-01T10:00:00.000Z'),
+          processedAt: new Date('2026-08-01T10:00:01.000Z'),
+          tenders: [{ method: 'CASH', amount: 15 }],
+          items: [{ productId: 55, quantity, unitPrice: 7.5, lineTotal: 15 }],
+          createdAt: new Date('2026-08-01T10:00:00.000Z'),
+          updatedAt: new Date('2026-08-01T10:00:01.000Z'),
+        });
+
+      return service.ingest(
+        {
+          branchId: 3,
+          transactionType: PosCheckoutTransactionType.SALE,
+          externalCheckoutId: `retail-stock-${quantity}`,
+          currency: 'ETB',
+          subtotal: 15,
+          total: 15,
+          paidAmount: 15,
+          occurredAt: '2026-08-01T10:00:00.000Z',
+          items: [{ productId: 55, quantity, unitPrice: 7.5, lineTotal: 15 }],
+          tenders: [{ method: 'CASH', amount: 15 }],
+        },
+        { id: 9 },
+      );
+    };
+
+    const savedCheckout = () =>
+      posCheckoutsRepository.save.mock.calls
+        .map((call) => call[0])
+        .find((row) => row?.status === PosCheckoutStatus.PROCESSED);
+
+    beforeEach(() => {
+      productsRepository.findOne.mockResolvedValue({
+        id: 55,
+        name: 'Shelf Item',
+        manageStock: false,
+      });
+    });
+
+    it('decrements a RETAIL line with manageStock=false when a branch inventory row exists', async () => {
+      branchesRepository.findOne.mockResolvedValue({
+        id: 3,
+        serviceFormat: 'RETAIL',
+      });
+      branchInventoryRepository.exists.mockResolvedValue(true);
+      branchInventoryRepository.findOne.mockResolvedValue({
+        id: 1,
+        quantityOnHand: 10,
+      });
+
+      await ingestOneLine(2);
+
+      expect(inventoryLedgerService.recordMovement).toHaveBeenCalledWith(
+        expect.objectContaining({
+          branchId: 3,
+          productId: 55,
+          quantityDelta: -2,
+          movementType: StockMovementType.SALE,
+        }),
+        expect.anything(),
+      );
+    });
+
+    it('does NOT decrement the same product on a CAFETERIA branch', async () => {
+      // Isolation proof: CAFETERIA holds branch inventory rows for ingredients
+      // while relying on manageStock=false meaning "made to order, always
+      // available". The RETAIL escape hatch must never fire there.
+      branchesRepository.findOne.mockResolvedValue({
+        id: 3,
+        serviceFormat: 'CAFETERIA',
+      });
+      branchInventoryRepository.exists.mockResolvedValue(true);
+      branchInventoryRepository.findOne.mockResolvedValue({
+        id: 1,
+        quantityOnHand: 10,
+      });
+
+      await ingestOneLine(2);
+
+      expect(inventoryLedgerService.recordMovement).not.toHaveBeenCalled();
+    });
+
+    it('does NOT decrement a RETAIL product with no branch inventory row', async () => {
+      branchesRepository.findOne.mockResolvedValue({
+        id: 3,
+        serviceFormat: 'RETAIL',
+      });
+      branchInventoryRepository.exists.mockResolvedValue(false);
+
+      await ingestOneLine(2);
+
+      expect(inventoryLedgerService.recordMovement).not.toHaveBeenCalled();
+    });
+
+    it('clamps an oversold RETAIL line to on-hand and keeps the sale PROCESSED', async () => {
+      branchesRepository.findOne.mockResolvedValue({
+        id: 3,
+        serviceFormat: 'RETAIL',
+      });
+      branchInventoryRepository.exists.mockResolvedValue(true);
+      branchInventoryRepository.findOne.mockResolvedValue({
+        id: 1,
+        quantityOnHand: 2,
+      });
+
+      await ingestOneLine(5);
+
+      expect(inventoryLedgerService.recordMovement).toHaveBeenCalledWith(
+        expect.objectContaining({ quantityDelta: -2 }),
+        expect.anything(),
+      );
+      const saved = savedCheckout();
+      expect(saved?.status).toBe(PosCheckoutStatus.PROCESSED);
+      expect(saved?.metadata?.oversoldLines).toEqual([
+        expect.objectContaining({ requested: 5, applied: 2, shortfall: 3 }),
+      ]);
+    });
+
+    it('records an oversold line and stays PROCESSED when on-hand is zero', async () => {
+      branchesRepository.findOne.mockResolvedValue({
+        id: 3,
+        serviceFormat: 'RETAIL',
+      });
+      branchInventoryRepository.exists.mockResolvedValue(true);
+      branchInventoryRepository.findOne.mockResolvedValue({
+        id: 1,
+        quantityOnHand: 0,
+      });
+
+      await ingestOneLine(3);
+
+      // No movement at all — recordMovement would have thrown on a negative
+      // on-hand, failing the whole sale.
+      expect(inventoryLedgerService.recordMovement).not.toHaveBeenCalled();
+      const saved = savedCheckout();
+      expect(saved?.status).toBe(PosCheckoutStatus.PROCESSED);
+      expect(saved?.metadata?.oversoldLines).toEqual([
+        expect.objectContaining({ requested: 3, applied: 0, shortfall: 3 }),
+      ]);
+    });
+
+    it('resolves a variant from the top-level variantId', async () => {
+      branchesRepository.findOne.mockResolvedValue({
+        id: 3,
+        serviceFormat: 'RETAIL',
+      });
+      const variantRepo = {
+        findOne: jest.fn().mockResolvedValue({ id: 4004 }),
+      };
+      dataSource.transaction.mockImplementation(async (callback: any) =>
+        callback({
+          query: jest.fn().mockResolvedValue([]),
+          getRepository: jest.fn((entity: any) => {
+            if (entity === PosCheckout) return posCheckoutsRepository;
+            if (entity === PosRegisterSession)
+              return registerSessionsRepository;
+            if (entity === PosSuspendedCart) return suspendedCartsRepository;
+            if (entity === Branch) return branchesRepository;
+            if (entity === Product) return productsRepository;
+            if (entity === BranchInventory) return branchInventoryRepository;
+            if (entity === BranchInventoryVariant)
+              return branchInventoryVariantRepository;
+            return variantRepo;
+          }),
+        }),
+      );
+      branchInventoryVariantRepository.findOne.mockResolvedValue({
+        id: 7,
+        quantityOnHand: 9,
+      });
+
+      posCheckoutsRepository.findOne
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ id: 71, items: [], tenders: [] });
+
+      await service.ingest(
+        {
+          branchId: 3,
+          transactionType: PosCheckoutTransactionType.SALE,
+          externalCheckoutId: 'variant-top-level',
+          currency: 'ETB',
+          subtotal: 30,
+          total: 30,
+          paidAmount: 30,
+          occurredAt: '2026-08-01T10:00:00.000Z',
+          items: [
+            {
+              productId: 55,
+              quantity: 1,
+              unitPrice: 30,
+              lineTotal: 30,
+              variantId: 4004,
+            },
+          ],
+          tenders: [{ method: 'CASH', amount: 30 }],
+        },
+        { id: 9 },
+      );
+
+      expect(variantRepo.findOne).toHaveBeenCalledWith({
+        where: { id: 4004, productId: 55 },
+      });
+      expect(
+        variantInventoryService.recordVariantMovement,
+      ).toHaveBeenCalledWith(
+        expect.objectContaining({ variantId: 4004, quantityDelta: -1 }),
+        expect.anything(),
+      );
+    });
+
+    it('records unresolvedVariantLines instead of silently skipping the movement', async () => {
+      // A named variant that does not exist used to fall through to the product
+      // path, where manageStock=false meant no decrement at all — no error, no
+      // movement, no trace.
+      branchesRepository.findOne.mockResolvedValue({
+        id: 3,
+        serviceFormat: 'RETAIL',
+      });
+      dataSource.transaction.mockImplementation(async (callback: any) =>
+        callback({
+          query: jest.fn().mockResolvedValue([]),
+          getRepository: jest.fn((entity: any) => {
+            if (entity === PosCheckout) return posCheckoutsRepository;
+            if (entity === PosRegisterSession)
+              return registerSessionsRepository;
+            if (entity === PosSuspendedCart) return suspendedCartsRepository;
+            if (entity === Branch) return branchesRepository;
+            if (entity === Product) return productsRepository;
+            if (entity === BranchInventory) return branchInventoryRepository;
+            if (entity === BranchInventoryVariant)
+              return branchInventoryVariantRepository;
+            return { findOne: jest.fn().mockResolvedValue(null) };
+          }),
+        }),
+      );
+
+      posCheckoutsRepository.findOne
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ id: 71, items: [], tenders: [] });
+
+      await service.ingest(
+        {
+          branchId: 3,
+          transactionType: PosCheckoutTransactionType.SALE,
+          externalCheckoutId: 'variant-unresolved',
+          currency: 'ETB',
+          subtotal: 30,
+          total: 30,
+          paidAmount: 30,
+          occurredAt: '2026-08-01T10:00:00.000Z',
+          items: [
+            {
+              productId: 55,
+              quantity: 1,
+              unitPrice: 30,
+              lineTotal: 30,
+              metadata: { variantKey: 'size:xxl' },
+            },
+          ],
+          tenders: [{ method: 'CASH', amount: 30 }],
+        },
+        { id: 9 },
+      );
+
+      expect(
+        variantInventoryService.recordVariantMovement,
+      ).not.toHaveBeenCalled();
+      const saved = savedCheckout();
+      expect(saved?.status).toBe(PosCheckoutStatus.PROCESSED);
+      expect(saved?.metadata?.unresolvedVariantLines).toHaveLength(1);
+    });
+
+    it('restores stock when a RETAIL sale is voided', async () => {
+      // Voiding backed the money out but left the units gone forever.
+      branchesRepository.findOne.mockResolvedValue({
+        id: 3,
+        serviceFormat: 'RETAIL',
+      });
+      branchInventoryRepository.exists.mockResolvedValue(true);
+      posCheckoutsRepository.findOne.mockResolvedValue({
+        id: 71,
+        branchId: 3,
+        transactionType: PosCheckoutTransactionType.SALE,
+        status: PosCheckoutStatus.PROCESSED,
+        receiptNumber: 'POS-3-1',
+        items: [{ productId: 55, quantity: 2, unitPrice: 10, lineTotal: 20 }],
+      });
+      posCheckoutsRepository.update = jest.fn().mockResolvedValue({});
+
+      await service.voidCheckout(71, { reason: 'keyed twice' }, 9, 3);
+
+      expect(inventoryLedgerService.recordMovement).toHaveBeenCalledWith(
+        expect.objectContaining({
+          productId: 55,
+          quantityDelta: 2,
+          sourceType: 'POS_CHECKOUT_VOID',
+        }),
+        expect.anything(),
+      );
+    });
+
+    it('issues no stock movement when a CAFETERIA checkout is voided', async () => {
+      branchesRepository.findOne.mockResolvedValue({
+        id: 3,
+        serviceFormat: 'CAFETERIA',
+      });
+      branchInventoryRepository.exists.mockResolvedValue(true);
+      posCheckoutsRepository.findOne.mockResolvedValue({
+        id: 71,
+        branchId: 3,
+        transactionType: PosCheckoutTransactionType.SALE,
+        status: PosCheckoutStatus.PROCESSED,
+        receiptNumber: 'POS-3-1',
+        items: [{ productId: 55, quantity: 2, unitPrice: 10, lineTotal: 20 }],
+      });
+      posCheckoutsRepository.update = jest.fn().mockResolvedValue({});
+
+      await service.voidCheckout(71, { reason: 'keyed twice' }, 9, 3);
+
+      expect(inventoryLedgerService.recordMovement).not.toHaveBeenCalled();
+    });
+
+    it('clamps a RETAIL variant line the same way', async () => {
+      branchesRepository.findOne.mockResolvedValue({
+        id: 3,
+        serviceFormat: 'RETAIL',
+      });
+      // resolveCheckoutVariantId reads ProductVariant through the manager.
+      dataSource.transaction.mockImplementation(async (callback: any) =>
+        callback({
+          query: jest.fn().mockResolvedValue([]),
+          getRepository: jest.fn((entity: any) => {
+            if (entity === PosCheckout) return posCheckoutsRepository;
+            if (entity === PosRegisterSession)
+              return registerSessionsRepository;
+            if (entity === PosSuspendedCart) return suspendedCartsRepository;
+            if (entity === Branch) return branchesRepository;
+            if (entity === Product) return productsRepository;
+            if (entity === BranchInventory) return branchInventoryRepository;
+            if (entity === BranchInventoryVariant)
+              return branchInventoryVariantRepository;
+            return { findOne: jest.fn().mockResolvedValue({ id: 4004 }) };
+          }),
+        }),
+      );
+      branchInventoryVariantRepository.findOne.mockResolvedValue({
+        id: 7,
+        quantityOnHand: 1,
+      });
+
+      posCheckoutsRepository.findOne
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({
+          id: 71,
+          branchId: 3,
+          transactionType: PosCheckoutTransactionType.SALE,
+          status: PosCheckoutStatus.PROCESSED,
+          currency: 'ETB',
+          subtotal: 30,
+          total: 30,
+          paidAmount: 30,
+          itemCount: 1,
+          occurredAt: new Date('2026-08-01T10:00:00.000Z'),
+          tenders: [],
+          items: [],
+          createdAt: new Date('2026-08-01T10:00:00.000Z'),
+          updatedAt: new Date('2026-08-01T10:00:00.000Z'),
+        });
+
+      await service.ingest(
+        {
+          branchId: 3,
+          transactionType: PosCheckoutTransactionType.SALE,
+          externalCheckoutId: 'retail-variant-1',
+          currency: 'ETB',
+          subtotal: 30,
+          total: 30,
+          paidAmount: 30,
+          occurredAt: '2026-08-01T10:00:00.000Z',
+          items: [
+            {
+              productId: 55,
+              quantity: 4,
+              unitPrice: 7.5,
+              lineTotal: 30,
+              metadata: { variantId: 4004 },
+            },
+          ],
+          tenders: [{ method: 'CASH', amount: 30 }],
+        },
+        { id: 9 },
+      );
+
+      expect(
+        variantInventoryService.recordVariantMovement,
+      ).toHaveBeenCalledWith(
+        expect.objectContaining({ variantId: 4004, quantityDelta: -1 }),
+        expect.anything(),
+      );
+      expect(savedCheckout()?.status).toBe(PosCheckoutStatus.PROCESSED);
+    });
+  });
+
+  describe('getTaxSummary', () => {
+    const stubCheckouts = (rows: any[]) => {
+      posCheckoutsRepository.createQueryBuilder.mockReturnValue({
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue(rows),
+      });
+    };
+
+    const sale = (over: Record<string, any> = {}) => ({
+      currency: 'ETB',
+      transactionType: PosCheckoutTransactionType.SALE,
+      registerSessionId: 21,
+      registerId: 'pos-s-web',
+      items: [],
+      ...over,
+    });
+
+    it('takes the header as the authority when a manual discount was stripped from items', async () => {
+      // The register's RETAIL manual discount rides the cart as a negative line
+      // and is stripped from items[] on the wire; its negative tax survives only
+      // in the header. Summing items alone reports 150 on a 1,000 base, when the
+      // customer paid 135 on 900.
+      stubCheckouts([
+        sale({
+          taxAmount: 135,
+          total: 1035,
+          items: [
+            {
+              taxRate: 0.15,
+              taxableBase: 1000,
+              taxAmount: 150,
+              lineTotal: 1150,
+            },
+          ],
+        }),
+      ]);
+
+      const result = await service.getTaxSummary({ branchId: 3 });
+
+      expect(result.taxAmount).toBe(135);
+      expect(result.taxableBase).toBe(900);
+      expect(result.breakdown).toEqual([
+        expect.objectContaining({
+          rate: 0.15,
+          taxableBase: 900,
+          taxAmount: 135,
+        }),
+      ]);
+      expect(result.shifts[0]).toEqual(
+        expect.objectContaining({ taxableBase: 900, taxAmount: 135 }),
+      );
+    });
+
+    it('leaves an undiscounted sale exactly as its lines report it', async () => {
+      stubCheckouts([
+        sale({
+          taxAmount: 150,
+          total: 1150,
+          items: [
+            {
+              taxRate: 0.15,
+              taxableBase: 1000,
+              taxAmount: 150,
+              lineTotal: 1150,
+            },
+          ],
+        }),
+      ]);
+
+      const result = await service.getTaxSummary({ branchId: 3 });
+
+      expect(result.taxAmount).toBe(150);
+      expect(result.taxableBase).toBe(1000);
+      expect(result.effectiveRate).toBeCloseTo(0.15, 6);
+    });
+
+    it('spreads the residual across rates in proportion to their base', async () => {
+      // 1,000 at 15% + 1,000 at 5%, then 200 off. Tax charged = 150 + 50 − 20 = 180
+      // on a base of 1,800, and each rate absorbs half the discount.
+      stubCheckouts([
+        sale({
+          taxAmount: 180,
+          total: 1980,
+          items: [
+            {
+              taxRate: 0.15,
+              taxableBase: 1000,
+              taxAmount: 150,
+              lineTotal: 1150,
+            },
+            {
+              taxRate: 0.05,
+              taxableBase: 1000,
+              taxAmount: 50,
+              lineTotal: 1050,
+            },
+          ],
+        }),
+      ]);
+
+      const result = await service.getTaxSummary({ branchId: 3 });
+
+      expect(result.taxAmount).toBe(180);
+      expect(result.taxableBase).toBe(1800);
+      const sum = result.breakdown.reduce((s, b) => s + b.taxAmount, 0);
+      expect(Math.round(sum * 100) / 100).toBe(180);
+    });
+
+    it('charges the residual to the taxed rate, never to zero-rated turnover', async () => {
+      stubCheckouts([
+        sale({
+          taxAmount: 135,
+          total: 1535,
+          items: [
+            {
+              taxRate: 0.15,
+              taxableBase: 1000,
+              taxAmount: 150,
+              lineTotal: 1150,
+            },
+            { taxRate: 0, taxableBase: 500, taxAmount: 0, lineTotal: 500 },
+          ],
+        }),
+      ]);
+
+      const result = await service.getTaxSummary({ branchId: 3 });
+
+      expect(result.zeroRatedBase).toBe(500);
+      expect(result.taxableBase).toBe(900);
+      expect(result.taxAmount).toBe(135);
+    });
+
+    it('nets a return out of the period', async () => {
+      stubCheckouts([
+        sale({
+          taxAmount: 150,
+          total: 1150,
+          items: [
+            {
+              taxRate: 0.15,
+              taxableBase: 1000,
+              taxAmount: 150,
+              lineTotal: 1150,
+            },
+          ],
+        }),
+        sale({
+          transactionType: PosCheckoutTransactionType.RETURN,
+          taxAmount: 15,
+          total: 115,
+          items: [
+            { taxRate: 0.15, taxableBase: 100, taxAmount: 15, lineTotal: 115 },
+          ],
+        }),
+      ]);
+
+      const result = await service.getTaxSummary({ branchId: 3 });
+
+      expect(result.taxAmount).toBe(135);
+      expect(result.taxableBase).toBe(900);
+      expect(result.settledCount).toBe(1);
+      expect(result.returnCount).toBe(1);
+    });
+
+    it('derives a bucket from the header when a legacy row carries no items', async () => {
+      stubCheckouts([sale({ taxAmount: 150, total: 1150, items: [] })]);
+
+      const result = await service.getTaxSummary({ branchId: 3 });
+
+      expect(result.taxableBase).toBe(1000);
+      expect(result.taxAmount).toBe(150);
+      expect(result.breakdown[0].rate).toBe(0.15);
+    });
+
+    it('counts untaxed turnover as zero-rated base rather than dropping it', async () => {
+      stubCheckouts([sale({ taxAmount: 0, total: 800, items: [] })]);
+
+      const result = await service.getTaxSummary({ branchId: 3 });
+
+      expect(result.zeroRatedBase).toBe(800);
+      expect(result.taxableBase).toBe(0);
+      expect(result.taxAmount).toBe(0);
+    });
+
+    it('does not bucket a taxed legacy line as zero-rated when its rate is null', async () => {
+      stubCheckouts([
+        sale({
+          taxAmount: 150,
+          total: 1150,
+          items: [
+            {
+              taxRate: null,
+              taxableBase: 1000,
+              taxAmount: 150,
+              lineTotal: 1150,
+            },
+          ],
+        }),
+      ]);
+
+      const result = await service.getTaxSummary({ branchId: 3 });
+
+      expect(result.breakdown[0].rate).toBe(0.15);
+      expect(result.zeroRatedBase).toBe(0);
+      expect(result.taxableBase).toBe(1000);
     });
   });
 });

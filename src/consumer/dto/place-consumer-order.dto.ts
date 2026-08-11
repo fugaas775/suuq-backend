@@ -11,64 +11,30 @@ import {
   ValidateNested,
 } from 'class-validator';
 
-/** All 14 active service formats in suuq-backend */
-export const SERVICE_FORMAT_CODES = [
-  'RETAIL',
-  'GROCERY',
-  'PHARMACY',
-  'BAKERY',
-  'BUTCHERY',
-  'ELECTRONICS',
-  'GAS_STATION',
-  'QSR',
-  'CAFETERIA',
-  'BARBER',
-  'SALON_SPA',
-  'LAUNDRY',
-  'HOTEL',
-  'OTHER',
-] as const;
+import {
+  ALL_SERVICE_FORMAT_LABELS,
+  CONSUMER_FORMAT_ORDER_MODES,
+  CONSUMER_ORDERABLE_SERVICE_FORMAT_CODES,
+  ORDER_MODES,
+} from '../../common/service-formats';
 
-export type ServiceFormatCode = (typeof SERVICE_FORMAT_CODES)[number];
+/**
+ * Service formats a consumer may place an order against.
+ *
+ * Derived from the shared registry in `src/common/service-formats.ts` — do not
+ * add codes here. A format that POS-S can create is not automatically orderable:
+ * `PROPERTY_RENTAL` and `PRINTING_PRESS` have no consumer ordering surface, and
+ * giving them one would extend the frozen consumer→POS direction.
+ */
+export const SERVICE_FORMAT_CODES = CONSUMER_ORDERABLE_SERVICE_FORMAT_CODES;
 
-/** Maps each service format to its human-readable label */
-export const SERVICE_FORMAT_LABELS: Record<
-  ServiceFormatCode | 'OTHER',
-  string
-> = {
-  RETAIL: 'Retail Store',
-  GROCERY: 'Grocery',
-  PHARMACY: 'Pharmacy',
-  BAKERY: 'Bakery',
-  BUTCHERY: 'Butchery',
-  ELECTRONICS: 'Electronics',
-  GAS_STATION: 'Gas Station',
-  QSR: 'Restaurant / QSR',
-  CAFETERIA: 'Cafeteria',
-  BARBER: 'Barber',
-  SALON_SPA: 'Salon & Spa',
-  LAUNDRY: 'Laundry',
-  HOTEL: 'Hotel',
-  OTHER: 'Other',
-};
+export type ServiceFormatCode = string;
 
-/** Maps each service format to its allowed order modes */
-export const FORMAT_ORDER_MODES: Record<ServiceFormatCode, string[]> = {
-  RETAIL: ['TAKEAWAY'],
-  GROCERY: ['TAKEAWAY', 'DELIVERY'],
-  PHARMACY: ['TAKEAWAY', 'DELIVERY'],
-  BAKERY: ['TAKEAWAY', 'DINE_IN'],
-  BUTCHERY: ['TAKEAWAY'],
-  ELECTRONICS: ['TAKEAWAY'],
-  GAS_STATION: ['TAKEAWAY'],
-  QSR: ['TAKEAWAY', 'DINE_IN', 'DELIVERY'],
-  CAFETERIA: ['TAKEAWAY', 'DINE_IN'],
-  BARBER: ['APPOINTMENT'],
-  SALON_SPA: ['APPOINTMENT'],
-  LAUNDRY: ['SCHEDULED'],
-  HOTEL: ['BOOKING'],
-  OTHER: ['TAKEAWAY'],
-};
+/** Labels for every known format, orderable or not. */
+export const SERVICE_FORMAT_LABELS = ALL_SERVICE_FORMAT_LABELS;
+
+/** Allowed order modes per orderable format. */
+export const FORMAT_ORDER_MODES = CONSUMER_FORMAT_ORDER_MODES;
 
 export class ConsumerOrderLineDto {
   @IsString()
@@ -112,14 +78,7 @@ export class PlaceConsumerOrderDto {
    * The service validates this at runtime; the enum is for documentation.
    */
   @IsString()
-  @IsIn([
-    'TAKEAWAY',
-    'DINE_IN',
-    'DELIVERY',
-    'APPOINTMENT',
-    'BOOKING',
-    'SCHEDULED',
-  ])
+  @IsIn(ORDER_MODES)
   orderMode!: string;
 
   @IsArray()

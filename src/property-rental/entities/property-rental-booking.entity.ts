@@ -164,6 +164,21 @@ export class PropertyRentalBooking {
   @Column({ type: 'numeric', precision: 14, scale: 2, default: 0 })
   recognizedAmount!: number;
 
+  /**
+   * The branch's tax (VAT) rate as a fraction, captured when the lease was
+   * opened — 0.15 is 15%, 0 means this booking carries no tax.
+   *
+   * Stamped rather than read live because a lease posts to the ledger three
+   * times over its life (deferral, accrual recognition, settlement) and all
+   * three must split the same money the same way. A rate change mid-lease would
+   * otherwise leave a residue stuck in deferred revenue forever.
+   *
+   * Every booking that predates this column reads 0 and keeps posting exactly as
+   * it always did.
+   */
+  @Column({ type: 'numeric', precision: 5, scale: 4, default: 0 })
+  taxRate!: number;
+
   /** Instalment payment ledger (partial payments collected while OPEN). */
   @Column({ type: 'jsonb', nullable: true })
   payments!: PropertyBookingPaymentRecord[] | null;

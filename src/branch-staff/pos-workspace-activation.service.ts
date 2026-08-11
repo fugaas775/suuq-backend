@@ -5,8 +5,14 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
-import { BranchStaffService } from './branch-staff.service';
+import { In, IsNull, Repository } from 'typeorm';
+import { isLivePosSelfServeTrial } from '../retail/pos-self-serve-trial.policy';
+import {
+  BranchStaffService,
+  PosBranchSummary,
+  PosWorkspaceActivationCandidate,
+} from './branch-staff.service';
+
 import { RetailEntitlementsService } from '../retail/retail-entitlements.service';
 import { EbirrService } from '../ebirr/ebirr.service';
 import { EmailService } from '../email/email.service';
@@ -15,7 +21,10 @@ import {
   BranchStaffAssignment,
   BranchStaffRole,
 } from './entities/branch-staff-assignment.entity';
-import { Branch } from '../branches/entities/branch.entity';
+import {
+  Branch,
+  shouldEnableTaxForNewBranch,
+} from '../branches/entities/branch.entity';
 import { User } from '../users/entities/user.entity';
 import {
   TenantBillingInterval,
@@ -35,6 +44,21 @@ import {
   findPosBranchSubscriptionOption,
   requirePosBranchSubscriptionOption,
 } from './pos-workspace-pricing';
+
+/**
+ * What `getPayableActivationCandidate` needs from either source: a closed
+ * workspace awaiting activation, or an open branch on a convertible free trial.
+ */
+type PayableActivationTarget = Pick<
+  PosWorkspaceActivationCandidate | PosBranchSummary,
+  | 'branchId'
+  | 'branchName'
+  | 'serviceFormat'
+  | 'retailTenantId'
+  | 'isOwner'
+  | 'role'
+  | 'canPayNow'
+> & { workspaceStatus: string };
 
 const POS_WORKSPACE_REFERENCE_PREFIX = 'POSACT';
 export { POS_WORKSPACE_REFERENCE_PREFIX };
@@ -95,7 +119,11 @@ export class PosWorkspaceActivationService {
     const option =
       findPosBranchSubscriptionOption(params.subscriptionPeriod) ??
       requirePosBranchSubscriptionOption(DEFAULT_POS_BRANCH_PERIOD);
-    const referenceId = `${POS_WORKSPACE_REFERENCE_PREFIX}-${candidate.branchId}-${Date.now()}`;
+    // The period rides on the reference so completion can recover it even when
+    // the branch has no subscription row to stash `pendingActivation` on.
+    // parseBranchIdFromReference is anchored (/^POSACT-(\d+)-/), so appending a
+    // suffix stays compatible with every reference already in the Ebirr ledger.
+    const referenceId = `${POS_WORKSPACE_REFERENCE_PREFIX}-${candidate.branchId}-${Date.now()}-${option.period}`;
     const invoiceId = `${POS_WORKSPACE_REFERENCE_PREFIX}INV-${candidate.branchId}`;
     const paymentResponse = await this.ebirrService.initiatePayment({
       phoneNumber: params.phoneNumber,
@@ -180,10 +208,19 @@ export class PosWorkspaceActivationService {
       await this.retailEntitlementsService.getBranchWorkspaceStatus(branchId);
     if (!workspace.tenant) return;
 
-    const latest = await this.tenantSubscriptionsRepository.findOne({
-      where: { tenantId: workspace.tenant.id },
-      order: { createdAt: 'DESC' },
-    });
+    // Must use the SAME precedence as the reader in completeEbirrActivationPayment
+    // (branch row, else the legacy tenant-wide row) — a plain `{ tenantId }`
+    // lookup stamps the pending period onto a sibling branch's row, where the
+    // reader never looks, and the payment silently completes as MONTHLY.
+    const latest =
+      (await this.tenantSubscriptionsRepository.findOne({
+        where: { tenantId: workspace.tenant.id, branchId },
+        order: { createdAt: 'DESC' },
+      })) ??
+      (await this.tenantSubscriptionsRepository.findOne({
+        where: { tenantId: workspace.tenant.id, branchId: IsNull() },
+        order: { createdAt: 'DESC' },
+      }));
     if (!latest) return;
 
     latest.metadata = {
@@ -247,7 +284,9 @@ export class PosWorkspaceActivationService {
     const tenantWideFallback = branchSubscription
       ? null
       : await this.tenantSubscriptionsRepository.findOne({
-          where: { tenantId: workspace.tenant.id },
+          // Legacy tenant-wide rows only — a sibling branch's row must never
+          // stand in for this one.
+          where: { tenantId: workspace.tenant.id, branchId: IsNull() },
           order: { createdAt: 'DESC' },
         });
     const reference = branchSubscription ?? tenantWideFallback;
@@ -256,13 +295,20 @@ export class PosWorkspaceActivationService {
       return branchSubscription;
     }
 
-    // Resolve the subscription period: explicit caller > pendingActivation > default.
+    // Resolve the subscription period: explicit caller > pendingActivation >
+    // the period stamped on the reference id > default. The reference suffix is
+    // the safety net for a branch with NO subscription row at all — there,
+    // recordPendingPeriodOnSubscription has nothing to write to, and falling
+    // back to MONTHLY grants a month for a year that was already charged.
     const pendingMeta = reference?.metadata?.pendingActivation as
       | { period?: string; referenceId?: string }
       | undefined;
     const resolvedPeriod: PosBranchSubscriptionPeriod =
       explicitPeriod ??
       (findPosBranchSubscriptionOption(pendingMeta?.period)?.period ||
+        findPosBranchSubscriptionOption(
+          this.parsePeriodFromReference(referenceId),
+        )?.period ||
         DEFAULT_POS_BRANCH_PERIOD);
     const option = requirePosBranchSubscriptionOption(resolvedPeriod);
     const billingInterval =
@@ -271,6 +317,23 @@ export class PosWorkspaceActivationService {
         : TenantBillingInterval.MONTHLY;
 
     const now = new Date();
+    // Payment ends the trial there and then: the paid period starts today, not
+    // at the trial's tail. Stacking the two made sense at 14 days; at six free
+    // months it would park a paid year half a year out, and an owner who pays
+    // in month one would not see the subscription they just bought begin until
+    // month seven. The remaining free days are given up — the copy on both the
+    // pay screens and the reminder email says so.
+    const convertedFromLiveTrial = isLivePosSelfServeTrial(
+      branchSubscription,
+      now.getTime(),
+    );
+    // Read before the writes below: the trial row is converted IN PLACE, so
+    // `branchSubscription.endsAt` becomes the paid end date a few lines on.
+    const trialWouldHaveEndedAt =
+      convertedFromLiveTrial && branchSubscription?.endsAt
+        ? new Date(branchSubscription.endsAt).toISOString()
+        : null;
+    const paidPeriodStartsAt = now.getTime();
     const nextSubscription =
       branchSubscription ??
       this.tenantSubscriptionsRepository.create({
@@ -287,9 +350,10 @@ export class PosWorkspaceActivationService {
     nextSubscription.amountTotal = option.amount;
     nextSubscription.periodMonths = option.months;
     nextSubscription.currency = option.currency;
+    // startsAt records when they paid, which is also when the paid term begins.
     nextSubscription.startsAt = now;
     nextSubscription.endsAt = new Date(
-      now.getTime() + option.months * 30 * 86_400_000,
+      paidPeriodStartsAt + option.months * 30 * 86_400_000,
     );
     nextSubscription.autoRenew = true;
     nextSubscription.metadata = {
@@ -303,6 +367,15 @@ export class PosWorkspaceActivationService {
       amountTotal: option.amount,
       branchId,
       pendingActivation: undefined,
+      // Conversion overwrites planCode, so the row itself stops answering "did
+      // this start life on the free trial?". These two keep that answerable,
+      // and record the free time the owner chose to end early.
+      ...(convertedFromLiveTrial
+        ? {
+            convertedFromTrialAt: now.toISOString(),
+            trialWouldHaveEndedAt,
+          }
+        : {}),
     };
 
     const saved =
@@ -389,6 +462,7 @@ export class PosWorkspaceActivationService {
       tinNumber?: string;
       referralCode?: string;
       ownerEmail?: string;
+      subscriptionPeriod?: string;
     },
   ) {
     // Resolve the user's tenant via their branch assignments
@@ -414,7 +488,10 @@ export class PosWorkspaceActivationService {
       );
     }
 
-    // Verify the tenant has an active or trial subscription
+    // Verify the tenant has an active or trial subscription.
+    // Deliberately TENANT-WIDE, unlike the per-branch lookups elsewhere: the
+    // question here is "does this tenant pay for anything yet", not "what
+    // governs branch X". Do not branch-scope this.
     const subscription = await this.tenantSubscriptionsRepository.findOne({
       where: { tenantId },
       order: { createdAt: 'DESC' },
@@ -433,6 +510,13 @@ export class PosWorkspaceActivationService {
     const referenceId = `${BRANCH_CREATE_REFERENCE_PREFIX}-${tenantId}-${user.id}-${Date.now()}`;
     const invoiceId = `${BRANCH_CREATE_REFERENCE_PREFIX}INV-${tenantId}-${Date.now()}`;
 
+    // Resolve the billing period the caller chose (Monthly or 1-year −10%),
+    // defaulting to the monthly plan when omitted. The period is persisted in
+    // the pending metadata so completion charges/pays out the matching amount.
+    const additionalBranchOption =
+      findPosBranchSubscriptionOption(dto.subscriptionPeriod) ??
+      requirePosBranchSubscriptionOption(DEFAULT_POS_BRANCH_PERIOD);
+
     // Store pending creation params in subscription metadata
     subscription.metadata = {
       ...(subscription.metadata ?? {}),
@@ -449,6 +533,7 @@ export class PosWorkspaceActivationService {
         referralCode: dto.referralCode?.trim().toUpperCase() ?? null,
         userEmail: user.email?.trim() ?? null,
         ownerEmail: dto.ownerEmail?.trim().toLowerCase() ?? null,
+        period: additionalBranchOption.period,
         createdBranchId: null,
       },
     };
@@ -466,12 +551,6 @@ export class PosWorkspaceActivationService {
         ),
       );
 
-    // Additional-branch creation now uses the same per-branch pricing as
-    // first-branch activation. We default to the 6-month option here; the
-    // owner can later upgrade by paying the difference at renewal.
-    const additionalBranchOption = requirePosBranchSubscriptionOption(
-      DEFAULT_POS_BRANCH_PERIOD,
-    );
     let paymentResponse: any;
     try {
       paymentResponse = await this.ebirrService.initiatePayment({
@@ -571,10 +650,10 @@ export class PosWorkspaceActivationService {
       return { branchId: 0, created: false };
     }
     const { tenantId, userId } = parsed;
-    const additionalBranchOption = requirePosBranchSubscriptionOption(
-      DEFAULT_POS_BRANCH_PERIOD,
-    );
 
+    // Deliberately TENANT-WIDE: `pendingBranchCreation` is a tenant-level
+    // handshake (the branch does not exist yet, so it cannot be branch-scoped),
+    // and its writer uses the same tenant-latest row. Do not branch-scope this.
     const subscription = await this.tenantSubscriptionsRepository.findOne({
       where: { tenantId },
       order: { createdAt: 'DESC' },
@@ -589,6 +668,7 @@ export class PosWorkspaceActivationService {
           address?: string | null;
           userEmail?: string | null;
           ownerEmail?: string | null;
+          period?: string | null;
           createdBranchId?: number | null;
         }
       | undefined;
@@ -604,6 +684,12 @@ export class PosWorkspaceActivationService {
     if (pending.createdBranchId) {
       return { branchId: pending.createdBranchId, created: false };
     }
+
+    // Resolve the billing period chosen at initiation (persisted in metadata)
+    // so the equity-partner payout amount / description match what was charged.
+    const additionalBranchOption =
+      findPosBranchSubscriptionOption(pending.period) ??
+      requirePosBranchSubscriptionOption(DEFAULT_POS_BRANCH_PERIOD);
 
     const code = await this.generateBranchCode(
       this.branchesRepository,
@@ -637,6 +723,8 @@ export class PosWorkspaceActivationService {
       country: pending.country ?? null,
       phone: (pending as any).phone ?? null,
       tinNumber: (pending as any).tinNumber ?? null,
+      // See shouldEnableTaxForNewBranch: no tax id, no tax.
+      taxEnabled: shouldEnableTaxForNewBranch((pending as any).tinNumber),
       isActive: true,
     });
     const savedBranch = await this.branchesRepository.save(branch);
@@ -777,6 +865,14 @@ export class PosWorkspaceActivationService {
     return { branchId: savedBranch.id, created: true };
   }
 
+  /** Reads the period suffix off a `POSACT-<branchId>-<ts>-<PERIOD>` reference. */
+  private parsePeriodFromReference(referenceId: string): string | null {
+    const match = String(referenceId || '').match(
+      /^POSACT-\d+-\d+-([A-Z_]+)$/u,
+    );
+    return match?.[1] ?? null;
+  }
+
   private parseBranchIdFromReference(referenceId: string): number | null {
     const match = String(referenceId || '').match(/^POSACT-(\d+)-/u);
     if (!match?.[1]) {
@@ -795,7 +891,22 @@ export class PosWorkspaceActivationService {
       await this.branchStaffService.getPosWorkspaceActivationCandidatesForUser(
         user,
       );
-    const candidate = candidates.find((entry) => entry.branchId === branchId);
+    let candidate: PayableActivationTarget | null =
+      candidates.find((entry) => entry.branchId === branchId) ?? null;
+
+    if (!candidate) {
+      // A branch on a live free trial is OPEN, so it is not an activation
+      // candidate — but its owner may convert early rather than wait to be
+      // locked out. `canPayNow` on the branch summary is the signal.
+      const summaries =
+        await this.branchStaffService.getPosBranchSummariesForUser(user);
+      const convertibleTrial = summaries.find(
+        (entry) => entry.branchId === branchId && entry.canPayNow,
+      );
+      if (convertibleTrial) {
+        candidate = convertibleTrial;
+      }
+    }
 
     if (!candidate) {
       throw new NotFoundException(
@@ -809,14 +920,7 @@ export class PosWorkspaceActivationService {
       );
     }
 
-    const payableStatuses = new Set([
-      'PAYMENT_REQUIRED',
-      'PAST_DUE',
-      'EXPIRED',
-      'CANCELLED',
-    ]);
-
-    if (!payableStatuses.has(candidate.workspaceStatus)) {
+    if (!candidate.canPayNow) {
       throw new ForbiddenException(
         `Branch ${branchId} cannot start payment while workspace status is ${candidate.workspaceStatus}.`,
       );
@@ -873,6 +977,11 @@ export class PosWorkspaceActivationService {
         'GAS_STATION',
         'ELECTRONICS',
         'QSR',
+        'CAFETERIA',
+        'PROPERTY_RENTAL',
+        'BARBER',
+        'PRINTING_PRESS',
+        'SCHOOL',
       ].includes(normalized)
     ) {
       return null;

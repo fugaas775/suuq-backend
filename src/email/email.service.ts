@@ -192,6 +192,26 @@ export class EmailService {
       '"Suuq Marketplace" <admin@suuqsapp.com>';
     const mailToSend = { ...mail, from };
 
+    // Binary attachments travel through the BullMQ/Redis queue as JSON, so they
+    // are carried as a base64 string. Rehydrate to a real Buffer before handing
+    // it to nodemailer: the Postmark transport's getAttachments() ignores the
+    // `encoding` field, so a base64 string + encoding:'base64' gets base64
+    // encoded a SECOND time, producing a corrupt (unopenable) attachment.
+    if (Array.isArray(mailToSend.attachments)) {
+      mailToSend.attachments = mailToSend.attachments.map((att: any) => {
+        if (
+          att &&
+          att.encoding === 'base64' &&
+          typeof att.content === 'string'
+        ) {
+          const { encoding, ...rest } = att;
+          void encoding;
+          return { ...rest, content: Buffer.from(att.content, 'base64') };
+        }
+        return att;
+      });
+    }
+
     if (!this.transporter || !this.configOk) {
       this.logger.warn(
         `Email disabled or transporter not verified. Mail subject: ${mailToSend.subject} to: ${mailToSend.to}`,
@@ -267,10 +287,7 @@ export class EmailService {
   }
 
   private normalizeApiBaseUrl(url: string | null | undefined) {
-    const normalized = this.normalizeBaseUrl(
-      url,
-      'https://suuq.ugasfuad.com/api',
-    );
+    const normalized = this.normalizeBaseUrl(url, 'https://suuq-s.com/api');
     return normalized.endsWith('/api') ? normalized : `${normalized}/api`;
   }
 
@@ -679,7 +696,7 @@ export class EmailService {
     const trimmedNote = note?.trim();
     const siteUrl = this.normalizeBaseUrl(
       this.configService.get('SITE_URL') || this.configService.get('ADMIN_URL'),
-      'https://suuq.ugasfuad.com',
+      'https://suuq-s.com',
     );
     const apiUrl = this.normalizeApiBaseUrl(this.configService.get('API_URL'));
     const appScheme = this.normalizeAppScheme(
@@ -869,11 +886,10 @@ export class EmailService {
     isExistingUser: boolean,
   ) {
     const adminUrl =
-      this.configService.get('ADMIN_URL') || 'https://suuq.ugasfuad.com';
+      this.configService.get('ADMIN_URL') || 'https://suuq-s.com';
 
     // Ensure API Url has logic to map to correct backend endpoint
-    let apiUrl =
-      this.configService.get('API_URL') || 'https://suuq.ugasfuad.com/api';
+    let apiUrl = this.configService.get('API_URL') || 'https://suuq-s.com/api';
 
     // If it's a root domain without /api, append /api to match Controller prefix
     if (!apiUrl.endsWith('/api')) {
@@ -1235,6 +1251,90 @@ export class EmailService {
             <tr><td style="padding:6px 0;color:#555">New Owner</td><td style="padding:6px 0;font-weight:bold">${params.newOwnerEmail}</td></tr>
             <tr><td style="padding:6px 0;color:#555">Transferred By</td><td style="padding:6px 0">${params.transferredBy}</td></tr>
           </table>
+          <hr style="margin:16px 0"/>
+          <p style="font-size:0.8em;color:#999;text-align:center">Powered by Suuq S</p>
+        </div>
+      `,
+    };
+
+    await this.send(mail);
+  }
+
+  /**
+   * Free-trial countdown / expiry notice for a POS branch owner.
+   *
+   * The in-app notification and FCM push only reach someone who opens the app —
+   * exactly the wrong assumption for an owner whose trial is quietly running
+   * out. This is the channel that reaches them when they are not looking.
+   *
+   * `daysLeft === 0` (or omitted with `hasEnded`) sends the "trial has ended"
+   * variant instead of the countdown.
+   */
+  async sendPosTrialReminderEmail(params: {
+    to: string;
+    branchName: string;
+    branchId: number;
+    endsAt: Date | string;
+    daysLeft: number;
+    amount: number;
+    currency?: string;
+    hasEnded?: boolean;
+  }) {
+    if (!params.to) return;
+
+    const currency = params.currency || 'ETB';
+    const endsAtStr = new Date(params.endsAt).toLocaleDateString('en-ET', {
+      timeZone: 'Africa/Addis_Ababa',
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+    });
+    const hasEnded = Boolean(params.hasEnded) || params.daysLeft <= 0;
+    const dayLabel = `${params.daysLeft} day${params.daysLeft === 1 ? '' : 's'}`;
+
+    const subject = hasEnded
+      ? `Your POS free trial has ended — "${params.branchName}"`
+      : `${dayLabel} left on your POS free trial — "${params.branchName}"`;
+    const headline = hasEnded
+      ? 'Your free trial has ended'
+      : `${dayLabel} left on your free trial`;
+    const lead = hasEnded
+      ? `${params.branchName} is closed until the subscription is paid. Everything you set up is still there — paying reopens it exactly as you left it.`
+      : `${params.branchName} stays open until ${endsAtStr}. Paying starts your subscription that day and ends the trial, so there is no gap — and no need to pay before you are ready.`;
+    const action = hasEnded
+      ? 'Sign in to POS-S and pay with Ebirr to reopen this branch.'
+      : 'Pay with Ebirr from Seller HQ whenever you are ready.';
+
+    const mail = {
+      to: params.to,
+      subject,
+      text: [
+        headline,
+        '',
+        lead,
+        '',
+        `Branch    : ${params.branchName}`,
+        `Branch ID : ${params.branchId}`,
+        `Trial ends: ${endsAtStr}`,
+        `Subscription: ${params.amount.toFixed(2)} ${currency} per month`,
+        '',
+        action,
+        '',
+        'Powered by Suuq S',
+      ]
+        .filter((line) => line !== '')
+        .join('\n'),
+      html: `
+        <div style="font-family:sans-serif;max-width:520px;margin:auto;padding:24px;border:1px solid #eee;border-radius:8px">
+          <h2 style="margin:0 0 16px">${headline}</h2>
+          <p style="color:#555;margin:0 0 16px">${lead}</p>
+          <table style="width:100%;font-size:0.95em;border-collapse:collapse">
+            <tr><td style="padding:6px 0;color:#555;width:140px">Branch</td><td style="padding:6px 0;font-weight:bold">${params.branchName}</td></tr>
+            <tr><td style="padding:6px 0;color:#555">Branch ID</td><td style="padding:6px 0">${params.branchId}</td></tr>
+            <tr><td style="padding:6px 0;color:#555">Trial ends</td><td style="padding:6px 0;font-weight:bold">${endsAtStr}</td></tr>
+            <tr><td style="padding:6px 0;color:#555">Subscription</td><td style="padding:6px 0">${params.amount.toFixed(2)} ${currency} per month</td></tr>
+          </table>
+          <p style="color:#555;margin:16px 0 0">${action}</p>
           <hr style="margin:16px 0"/>
           <p style="font-size:0.8em;color:#999;text-align:center">Powered by Suuq S</p>
         </div>

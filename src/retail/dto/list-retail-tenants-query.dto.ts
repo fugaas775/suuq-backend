@@ -4,11 +4,17 @@ import { PosUserFitCategory } from '../../categories/entities/category.entity';
 
 export const RETAIL_TENANT_PROVISIONING_SOURCES = [
   'POS_SELF_SERVE',
+  /** Auto-provisioned on a first-time signup, on the free trial. */
+  'POS_SELF_SERVE_AUTO_TRIAL',
   'ADMIN_OR_BACKOFFICE',
 ] as const;
 
 export const RETAIL_TENANT_ACTIVATION_STATUSES = [
   'ACTIVATED',
+  /** Open on the free trial — NOT the same as a paying tenant. */
+  'TRIAL',
+  /** The free trial ran out and was never converted. */
+  'TRIAL_EXPIRED',
   'PENDING_MONTHLY_BILLING',
   'PAST_DUE',
   'EXPIRED',

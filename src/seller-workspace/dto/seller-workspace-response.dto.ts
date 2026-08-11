@@ -6,6 +6,7 @@ import {
 } from '../../retail/entities/tenant-subscription.entity';
 import { RetailModule } from '../../retail/entities/tenant-module-entitlement.entity';
 import { PosUserFitCategory } from '../../categories/entities/category.entity';
+import { BranchHomeConfig } from '../../branches/entities/branch-home-config.type';
 
 export enum SellerPlanCode {
   STARTER = 'STARTER',
@@ -223,7 +224,7 @@ export class SellerWorkspaceRetailContextDto {
 }
 
 export class SellerWorkspacePricingDto {
-  @ApiProperty({ example: 1900 })
+  @ApiProperty({ example: 3900 })
   amount!: number;
 
   @ApiProperty({ example: 'ETB' })
@@ -315,6 +316,18 @@ export class SellerWorkspaceBranchWorkspaceDto {
   @ApiProperty()
   canStartActivation!: boolean;
 
+  @ApiProperty({
+    description:
+      'The platform will accept a payment for this branch now — true for a closed workspace awaiting activation, and for an open branch on a live free trial.',
+  })
+  canPayNow!: boolean;
+
+  @ApiProperty({ description: 'Open on the auto-provisioned free trial.' })
+  isTrialWorkspace!: boolean;
+
+  @ApiPropertyOptional({ nullable: true, type: Date })
+  subscriptionEndsAt!: Date | null;
+
   @ApiProperty()
   canOpenNow!: boolean;
 
@@ -336,6 +349,55 @@ export class SellerWorkspaceBranchWorkspaceDto {
       'Default RETAIL marketplace category id pre-selected when adding products at this branch.',
   })
   defaultCategoryId?: number | null;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description:
+      'HOTEL standard checkout time as "HH:MM" 24h (e.g. "11:00", "11:30"). ' +
+      'Seeds the folio default time and the early/late fee boundary. Null = 11:00 default.',
+  })
+  checkoutPolicyTime?: string | null;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description:
+      'Brand logo URL for this branch, shown in the register and on receipts.',
+  })
+  logoUrl?: string | null;
+
+  @ApiPropertyOptional({
+    description: 'Whether this branch charges tax (VAT) on sales.',
+  })
+  taxEnabled?: boolean;
+
+  @ApiPropertyOptional({
+    description:
+      'Tax (VAT) rate as a FRACTION — 0.15 is 15%. Ignored while taxEnabled is false.',
+  })
+  taxRate?: number;
+
+  @ApiPropertyOptional({
+    description:
+      'Whether catalog prices already contain the tax (inclusive) rather than ' +
+      'having it added at checkout (exclusive, the default).',
+  })
+  taxInclusive?: boolean;
+
+  @ApiPropertyOptional({
+    description:
+      'What this branch calls its tax on a receipt — VAT, TOT, Sales Tax. ' +
+      'Null means VAT.',
+    nullable: true,
+  })
+  taxName?: string | null;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description:
+      'Per-branch layout for the customizable Home page (widgets, order, ' +
+      'quick-links, welcome note, branding). Null = per-format default.',
+  })
+  homeConfig?: BranchHomeConfig | null;
 
   @ApiPropertyOptional({
     nullable: true,

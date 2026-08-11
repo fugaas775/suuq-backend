@@ -8,7 +8,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, EntityManager, Not, Repository } from 'typeorm';
+import { DataSource, EntityManager, In, Not, Repository } from 'typeorm';
 import { AuditService } from '../audit/audit.service';
 import { UserRole } from '../auth/roles.enum';
 import { EmailService } from '../email/email.service';
@@ -19,6 +19,7 @@ import { InventoryLedgerService } from '../branches/inventory-ledger.service';
 import { ReplenishmentService } from '../branches/replenishment.service';
 import { Branch } from '../branches/entities/branch.entity';
 import { StockMovementType } from '../branches/entities/stock-movement.entity';
+import { BranchCatalogProductLink } from '../retail/entities/branch-catalog-product-link.entity';
 import { Product } from '../products/entities/product.entity';
 import { ProcurementWebhookEventType } from '../procurement-webhooks/entities/procurement-webhook-subscription.entity';
 import { ProcurementWebhooksService } from '../procurement-webhooks/procurement-webhooks.service';
@@ -29,9 +30,13 @@ import {
   SupplierAvailabilityStatus,
 } from '../supplier-offers/entities/supplier-offer.entity';
 import {
-  SupplierOnboardingStatus,
+  SupplierActivationStatus,
   SupplierProfile,
 } from '../suppliers/entities/supplier-profile.entity';
+import {
+  listOwnedSupplierProfileIds,
+  resolveActiveOwnedProfile,
+} from '../suppliers/active-supplier.util';
 import { BrowseAvailableOffersQueryDto } from './dto/browse-available-offers-query.dto';
 import { CreatePurchaseOrderDto } from './dto/create-purchase-order.dto';
 import { ApprovePurchaseOrderReceiptDiscrepancyDto } from './dto/approve-purchase-order-receipt-discrepancy.dto';
@@ -40,6 +45,10 @@ import { RecordPurchaseOrderReceiptDto } from './dto/record-purchase-order-recei
 import { ResolvePurchaseOrderReceiptDiscrepancyDto } from './dto/resolve-purchase-order-receipt-discrepancy.dto';
 import { UpdatePurchaseOrderStatusDto } from './dto/update-purchase-order-status.dto';
 import { SupplierStatusUpdateDto } from './dto/supplier-status-update.dto';
+import { DeclinePurchaseOrderDto } from './dto/decline-purchase-order.dto';
+import { ProposePurchaseOrderChangesDto } from './dto/propose-purchase-order-changes.dto';
+import { RespondPurchaseOrderChangesDto } from './dto/respond-purchase-order-changes.dto';
+import { DispatchPurchaseOrderDto } from './dto/dispatch-purchase-order.dto';
 import { ForceClosePurchaseOrderReceiptDiscrepancyDto } from '../admin/dto/force-close-purchase-order-receipt-discrepancy.dto';
 import {
   PurchaseOrder,
@@ -69,6 +78,8 @@ type PurchaseOrderActorContext = {
   email?: string | null;
   roles?: string[];
   branchId?: number;
+  /** Multi-supplier: the supplier profile the caller is currently operating. */
+  supplierId?: number | null;
 };
 
 const PURCHASE_ORDER_TRANSITIONS: Record<
@@ -81,15 +92,32 @@ const PURCHASE_ORDER_TRANSITIONS: Record<
   ],
   [PurchaseOrderStatus.SUBMITTED]: [
     PurchaseOrderStatus.ACKNOWLEDGED,
+    PurchaseOrderStatus.CHANGES_PROPOSED,
+    PurchaseOrderStatus.DECLINED,
+    PurchaseOrderStatus.CANCELLED,
+  ],
+  // Counter-offer: the buyer accepts (→ ACKNOWLEDGED) or rejects (→ CANCELLED).
+  [PurchaseOrderStatus.CHANGES_PROPOSED]: [
+    PurchaseOrderStatus.ACKNOWLEDGED,
     PurchaseOrderStatus.CANCELLED,
   ],
   [PurchaseOrderStatus.ACKNOWLEDGED]: [
     PurchaseOrderStatus.SHIPPED,
+    PurchaseOrderStatus.PARTIALLY_SHIPPED,
     PurchaseOrderStatus.CANCELLED,
+  ],
+  // The self-loop (next partial dispatch) is driven by the dedicated /dispatch
+  // endpoint, NOT the generic pipeline (updateLoadedStatus early-returns on a
+  // same-status transition); it stays here so the map documents the lifecycle.
+  [PurchaseOrderStatus.PARTIALLY_SHIPPED]: [
+    PurchaseOrderStatus.SHIPPED,
+    PurchaseOrderStatus.PARTIALLY_SHIPPED,
+    PurchaseOrderStatus.RECEIVED,
   ],
   [PurchaseOrderStatus.SHIPPED]: [PurchaseOrderStatus.RECEIVED],
   [PurchaseOrderStatus.RECEIVED]: [PurchaseOrderStatus.RECONCILED],
   [PurchaseOrderStatus.RECONCILED]: [],
+  [PurchaseOrderStatus.DECLINED]: [],
   [PurchaseOrderStatus.CANCELLED]: [],
 };
 
@@ -203,11 +231,9 @@ export class PurchaseOrdersService {
         `Supplier profile with ID ${dto.supplierProfileId} not found`,
       );
     }
-    if (
-      supplierProfile.onboardingStatus !== SupplierOnboardingStatus.APPROVED
-    ) {
+    if (supplierProfile.activationStatus !== SupplierActivationStatus.ACTIVE) {
       throw new BadRequestException(
-        'Purchase orders can only target approved supplier profiles',
+        'Purchase orders can only target active supplier profiles',
       );
     }
 
@@ -299,6 +325,8 @@ export class PurchaseOrdersService {
     const roles = actor.roles ?? [];
     const supplierProfileId = await this.resolveActorSupplierProfileId(
       actor.id,
+      actor.supplierId,
+      roles,
     );
 
     if (!supplierProfileId) {
@@ -344,8 +372,8 @@ export class PurchaseOrdersService {
       .andWhere('offer.availabilityStatus != :outOfStock', {
         outOfStock: SupplierAvailabilityStatus.OUT_OF_STOCK,
       })
-      .andWhere('supplierProfile.onboardingStatus = :supplierStatus', {
-        supplierStatus: SupplierOnboardingStatus.APPROVED,
+      .andWhere('supplierProfile.activationStatus = :supplierStatus', {
+        supplierStatus: SupplierActivationStatus.ACTIVE,
       })
       .andWhere('supplierProfile.isActive = true')
       .orderBy(orderColumn, 'ASC')
@@ -354,40 +382,141 @@ export class PurchaseOrdersService {
       .take(limit)
       .getMany();
 
-    return offers.map((offer) => {
-      const product = offer.product as any;
-      const sortedImages = Array.isArray(product?.images)
-        ? [...product.images].sort(
-            (a: any, b: any) =>
-              (a?.sortOrder ?? 0) - (b?.sortOrder ?? 0) ||
-              (a?.id ?? 0) - (b?.id ?? 0),
-          )
-        : [];
-      const primaryImage = sortedImages[0];
-      const thumbnailUrl =
-        primaryImage?.thumbnailSrc ||
-        primaryImage?.src ||
-        product?.imageUrl ||
-        null;
+    return offers.map((offer) => this.mapBrowseOffer(offer));
+  }
 
-      return {
-        id: offer.id,
-        supplierProfileId: offer.supplierProfileId,
-        supplierName:
-          offer.supplierProfile?.companyName ||
-          offer.supplierProfile?.legalName ||
-          `Supplier #${offer.supplierProfileId}`,
-        productId: offer.productId,
-        productName: product?.name || `Product #${offer.productId}`,
-        productImageUrl: thumbnailUrl,
-        unitWholesalePrice: Number(offer.unitWholesalePrice),
-        currency: offer.currency,
-        moq: offer.moq ?? 1,
-        leadTimeDays: offer.leadTimeDays ?? 0,
-        availabilityStatus: offer.availabilityStatus,
-        fulfillmentRegions: offer.fulfillmentRegions ?? [],
-      };
+  /** Shared offer → buyer-facing DTO mapping (browse + storefront). */
+  private mapBrowseOffer(offer: SupplierOffer) {
+    const product = offer.product as any;
+    const sortedImages = Array.isArray(product?.images)
+      ? [...product.images].sort(
+          (a: any, b: any) =>
+            (a?.sortOrder ?? 0) - (b?.sortOrder ?? 0) ||
+            (a?.id ?? 0) - (b?.id ?? 0),
+        )
+      : [];
+    const primaryImage = sortedImages[0];
+    const thumbnailUrl =
+      primaryImage?.thumbnailSrc ||
+      primaryImage?.src ||
+      product?.imageUrl ||
+      null;
+
+    return {
+      id: offer.id,
+      supplierProfileId: offer.supplierProfileId,
+      supplierName:
+        offer.supplierProfile?.companyName ||
+        offer.supplierProfile?.legalName ||
+        `Supplier #${offer.supplierProfileId}`,
+      productId: offer.productId,
+      productName: product?.name || `Product #${offer.productId}`,
+      productImageUrl: thumbnailUrl,
+      unitWholesalePrice: Number(offer.unitWholesalePrice),
+      currency: offer.currency,
+      moq: offer.moq ?? 1,
+      leadTimeDays: offer.leadTimeDays ?? 0,
+      availabilityStatus: offer.availabilityStatus,
+      fulfillmentRegions: offer.fulfillmentRegions ?? [],
+    };
+  }
+
+  /**
+   * Buyer-facing supplier storefront directory: active suppliers that have at
+   * least one published, in-stock offer, with their offer count. The B2B mirror
+   * of a "browse vendors" page — lets a business discover whole suppliers
+   * instead of only reverse-looking-up a single product via findAvailableOffers.
+   */
+  async listSupplierStorefronts(query: {
+    search?: string;
+    limit?: number;
+  }): Promise<
+    Array<{
+      supplierProfileId: number;
+      supplierName: string;
+      countriesServed: string[];
+      offerCount: number;
+    }>
+  > {
+    const limit = Math.max(1, Math.min(100, Number(query.limit ?? 50)));
+    const qb = this.supplierOffersRepository
+      .createQueryBuilder('offer')
+      .innerJoin('offer.supplierProfile', 'sp')
+      .select('sp.id', 'supplierProfileId')
+      .addSelect('sp.companyName', 'companyName')
+      .addSelect('sp.legalName', 'legalName')
+      .addSelect('sp.countriesServed', 'countriesServed')
+      .addSelect('COUNT(offer.id)', 'offerCount')
+      .where('offer.status = :status', {
+        status: SupplierOfferStatus.PUBLISHED,
+      })
+      .andWhere('offer.availabilityStatus != :oos', {
+        oos: SupplierAvailabilityStatus.OUT_OF_STOCK,
+      })
+      .andWhere('sp.activationStatus = :active', {
+        active: SupplierActivationStatus.ACTIVE,
+      })
+      .andWhere('sp.isActive = true')
+      .groupBy('sp.id')
+      .addGroupBy('sp.companyName')
+      .addGroupBy('sp.legalName')
+      .addGroupBy('sp.countriesServed')
+      .orderBy('sp.companyName', 'ASC')
+      .limit(limit);
+    if (query.search) {
+      qb.andWhere('sp.companyName ILIKE :search', {
+        search: `%${query.search}%`,
+      });
+    }
+    const rows = await qb.getRawMany();
+    return rows.map((r) => ({
+      supplierProfileId: Number(r.supplierProfileId),
+      supplierName:
+        r.companyName || r.legalName || `Supplier #${r.supplierProfileId}`,
+      countriesServed: Array.isArray(r.countriesServed)
+        ? r.countriesServed
+        : [],
+      offerCount: Number(r.offerCount) || 0,
+    }));
+  }
+
+  /**
+   * Buyer-facing per-supplier catalog: every published offer for one active
+   * supplier, in the same shape as findAvailableOffers so the buyer UI can
+   * reuse the offer card.
+   */
+  async findSupplierStorefront(supplierId: number) {
+    const profile = await this.supplierProfilesRepository.findOne({
+      where: { id: supplierId },
     });
+    if (
+      !profile ||
+      !profile.isActive ||
+      profile.activationStatus !== SupplierActivationStatus.ACTIVE
+    ) {
+      throw new NotFoundException(`Supplier ${supplierId} is not available`);
+    }
+    const offers = await this.supplierOffersRepository
+      .createQueryBuilder('offer')
+      .leftJoinAndSelect('offer.supplierProfile', 'supplierProfile')
+      .leftJoinAndSelect('offer.product', 'product')
+      .leftJoinAndSelect('product.images', 'productImages')
+      .where('offer.supplierProfileId = :supplierId', { supplierId })
+      .andWhere('offer.status = :status', {
+        status: SupplierOfferStatus.PUBLISHED,
+      })
+      .orderBy('offer.unitWholesalePrice', 'ASC')
+      .addOrderBy('offer.id', 'ASC')
+      .getMany();
+    return {
+      supplier: {
+        supplierProfileId: profile.id,
+        supplierName:
+          profile.companyName || profile.legalName || `Supplier #${profile.id}`,
+        countriesServed: profile.countriesServed ?? [],
+      },
+      offers: offers.map((offer) => this.mapBrowseOffer(offer)),
+    };
   }
 
   async listReceiptEvents(
@@ -415,16 +544,22 @@ export class PurchaseOrdersService {
     const roles = actor.roles ?? [];
 
     if (
-      ![PurchaseOrderStatus.SHIPPED, PurchaseOrderStatus.RECEIVED].includes(
-        purchaseOrder.status,
-      )
+      ![
+        PurchaseOrderStatus.PARTIALLY_SHIPPED,
+        PurchaseOrderStatus.SHIPPED,
+        PurchaseOrderStatus.RECEIVED,
+      ].includes(purchaseOrder.status)
     ) {
       throw new BadRequestException(
         'Receipt events can only be recorded for shipped or received purchase orders',
       );
     }
 
-    this.assertRoleAllowedForStatus(PurchaseOrderStatus.RECEIVED, roles);
+    this.assertRoleAllowedForStatus(
+      previousStatus,
+      PurchaseOrderStatus.RECEIVED,
+      roles,
+    );
 
     const now = new Date();
     const receiptSummary = this.applyReceiptSideEffects(
@@ -453,6 +588,11 @@ export class PurchaseOrdersService {
         receiptSummary,
         actor.id ?? null,
         dto.reason,
+        manager,
+      );
+      await this.stageReceivedProductsIntoCatalog(
+        purchaseOrder,
+        receiptSummary,
         manager,
       );
       await this.persistReceiptEvent(
@@ -813,33 +953,306 @@ export class PurchaseOrdersService {
       );
     }
 
-    const roles = actor.roles ?? [];
-    const isSupportAdmin = this.hasAnyRole(roles, [
-      UserRole.SUPER_ADMIN,
-      UserRole.ADMIN,
-    ]);
-
-    // Load without branch scope: suppliers don't own the buyer's branch, so the
-    // ownership boundary is the supplierProfileId, not branchId.
-    const purchaseOrder = await this.findOneById(id);
-
-    if (!isSupportAdmin) {
-      const supplierProfileId = await this.resolveActorSupplierProfileId(
-        actor.id,
-      );
-      if (
-        !supplierProfileId ||
-        purchaseOrder.supplierProfileId !== supplierProfileId
-      ) {
-        throw new ForbiddenException(
-          'You can only update purchase orders addressed to your supplier account',
-        );
-      }
-    }
+    await this.assertSupplierAuthorizedForOrder(id, actor);
 
     // Delegate to the shared status pipeline; clear branchId so the re-load
     // inside updateStatus is by id only (the supplier's branch ≠ the PO branch).
     return this.updateStatus(id, dto, { ...actor, branchId: undefined });
+  }
+
+  /**
+   * Loads a purchase order by id (no branch scope) and asserts the caller's
+   * supplier account is the one the order is addressed to. The ownership
+   * boundary for every supplier-driven action is supplierProfileId — never the
+   * branch (the PO's branch belongs to the buyer). SUPER_ADMIN / ADMIN bypass for
+   * support. Returns the loaded order so callers don't re-fetch.
+   */
+  private async assertSupplierAuthorizedForOrder(
+    id: number,
+    actor: PurchaseOrderActorContext,
+  ): Promise<PurchaseOrder> {
+    const roles = actor.roles ?? [];
+    const purchaseOrder = await this.findOneById(id);
+
+    if (this.hasAnyRole(roles, [UserRole.SUPER_ADMIN, UserRole.ADMIN])) {
+      return purchaseOrder;
+    }
+
+    // Multi-supplier: the user may own several supplier accounts, so authorize
+    // against ALL of them — the PO must be addressed to one the user owns.
+    const ownedSupplierProfileIds = actor.id
+      ? await listOwnedSupplierProfileIds(
+          this.supplierProfilesRepository,
+          actor.id,
+        )
+      : [];
+    if (
+      !purchaseOrder.supplierProfileId ||
+      !ownedSupplierProfileIds.includes(purchaseOrder.supplierProfileId)
+    ) {
+      throw new ForbiddenException(
+        'You can only update purchase orders addressed to your supplier account',
+      );
+    }
+
+    return purchaseOrder;
+  }
+
+  /**
+   * Supplier declines an incoming order (SUBMITTED → DECLINED). Terminal — the
+   * buyer can re-draft from the declined order. Runs through the shared status
+   * pipeline so fanout/webhook/audit/email all fire.
+   */
+  async declineOrder(
+    id: number,
+    dto: DeclinePurchaseOrderDto,
+    actor: PurchaseOrderActorContext = {},
+  ): Promise<PurchaseOrder> {
+    await this.assertSupplierAuthorizedForOrder(id, actor);
+    return this.updateStatus(
+      id,
+      {
+        status: PurchaseOrderStatus.DECLINED,
+        reason: dto.reason,
+        metadata: {
+          decline: {
+            reason: dto.reason,
+            byUserId: actor.id ?? null,
+            at: new Date().toISOString(),
+          },
+        },
+      },
+      { ...actor, branchId: undefined },
+    );
+  }
+
+  /**
+   * Supplier counter-offers amended quantities/prices/delivery (SUBMITTED →
+   * CHANGES_PROPOSED). The proposal is stored on statusMeta.proposedChanges and
+   * is only applied to the real line items if the buyer accepts (respondToChanges).
+   */
+  async proposeChanges(
+    id: number,
+    dto: ProposePurchaseOrderChangesDto,
+    actor: PurchaseOrderActorContext = {},
+  ): Promise<PurchaseOrder> {
+    await this.assertSupplierAuthorizedForOrder(id, actor);
+    return this.updateStatus(
+      id,
+      {
+        status: PurchaseOrderStatus.CHANGES_PROPOSED,
+        reason: dto.note,
+        metadata: {
+          proposedChanges: {
+            proposedLines: dto.proposedLines,
+            proposedDeliveryDate: dto.proposedDeliveryDate ?? null,
+            note: dto.note ?? null,
+            byUserId: actor.id ?? null,
+            at: new Date().toISOString(),
+          },
+        },
+      },
+      { ...actor, branchId: undefined },
+    );
+  }
+
+  /**
+   * Buyer responds to a supplier counter-offer (CHANGES_PROPOSED).
+   *  - REJECT → CANCELLED.
+   *  - ACCEPT → apply the proposed line changes + recompute totals (in a
+   *    projection-synced transaction so inbound open-PO stock tracks the new
+   *    quantities), then advance to ACKNOWLEDGED through the shared pipeline.
+   */
+  async respondToChanges(
+    id: number,
+    dto: RespondPurchaseOrderChangesDto,
+    actor: PurchaseOrderActorContext = {},
+  ): Promise<PurchaseOrder> {
+    if (dto.decision === 'REJECT') {
+      return this.updateStatus(
+        id,
+        {
+          status: PurchaseOrderStatus.CANCELLED,
+          reason: dto.note ?? 'Counter-offer rejected by buyer',
+        },
+        actor,
+      );
+    }
+
+    const purchaseOrder = await this.findOneById(id, {
+      branchId: actor.branchId,
+    });
+    if (purchaseOrder.status !== PurchaseOrderStatus.CHANGES_PROPOSED) {
+      throw new BadRequestException(
+        'Only a purchase order with proposed changes can be accepted',
+      );
+    }
+
+    // Apply the amended quantities/prices/date and recompute totals, syncing the
+    // inbound open-PO projection against the pre-change quantities (the status
+    // flip below is projection-neutral, so the quantity delta must register here).
+    const previousInboundProjection =
+      this.buildInboundOpenPoProjection(purchaseOrder);
+    this.applyProposedChangesToOrder(purchaseOrder);
+    await this.dataSource.transaction(async (manager) => {
+      await manager.getRepository(PurchaseOrder).save(purchaseOrder);
+      await this.syncInboundOpenPoProjection(
+        purchaseOrder,
+        previousInboundProjection,
+        manager,
+      );
+    });
+
+    return this.updateStatus(
+      id,
+      {
+        status: PurchaseOrderStatus.ACKNOWLEDGED,
+        reason: dto.note ?? 'Counter-offer accepted by buyer',
+      },
+      actor,
+    );
+  }
+
+  /**
+   * Supplier (partially) dispatches an acknowledged order. Each line's shipped
+   * quantity is incremented (capped at ordered); the order then becomes SHIPPED
+   * if every line is fully shipped, otherwise PARTIALLY_SHIPPED. Shipping does
+   * not touch the GL or the inbound projection (only receipt does) — it only
+   * records progress, so the item save + a status pass through the shared
+   * pipeline (which fires the realtime fanout / email even when the status is
+   * unchanged on a follow-up partial dispatch).
+   */
+  async dispatchOrder(
+    id: number,
+    dto: DispatchPurchaseOrderDto,
+    actor: PurchaseOrderActorContext = {},
+  ): Promise<PurchaseOrder> {
+    const purchaseOrder = await this.assertSupplierAuthorizedForOrder(id, actor);
+
+    if (
+      ![
+        PurchaseOrderStatus.ACKNOWLEDGED,
+        PurchaseOrderStatus.PARTIALLY_SHIPPED,
+      ].includes(purchaseOrder.status)
+    ) {
+      throw new BadRequestException(
+        'Only an acknowledged or partially shipped purchase order can be dispatched',
+      );
+    }
+
+    const itemById = new Map(purchaseOrder.items.map((it) => [it.id, it]));
+
+    // Validate every line before mutating any.
+    for (const line of dto.lines) {
+      const item = itemById.get(line.itemId);
+      if (!item) {
+        throw new BadRequestException(
+          `Line item ${line.itemId} is not on purchase order ${id}`,
+        );
+      }
+      const increment = Number(line.shippedQuantity) || 0;
+      if (increment < 0) {
+        throw new BadRequestException('Shipped quantity cannot be negative');
+      }
+      if ((item.shippedQuantity ?? 0) + increment > item.orderedQuantity) {
+        throw new BadRequestException(
+          `Shipped quantity exceeds the ${item.orderedQuantity} ordered for purchase order item ${line.itemId}`,
+        );
+      }
+    }
+
+    let shippedAnything = false;
+    for (const line of dto.lines) {
+      const increment = Number(line.shippedQuantity) || 0;
+      if (increment <= 0) continue;
+      const item = itemById.get(line.itemId)!;
+      item.shippedQuantity = (item.shippedQuantity ?? 0) + increment;
+      shippedAnything = true;
+    }
+    if (!shippedAnything) {
+      throw new BadRequestException('No quantities were shipped in this dispatch');
+    }
+
+    // Stamp the first-dispatch time + tracking; persist the per-line shipped
+    // quantities (the shared pipeline below reloads from this save).
+    if (!purchaseOrder.shippedAt) {
+      purchaseOrder.shippedAt = new Date();
+    }
+    purchaseOrder.statusMeta = {
+      ...(purchaseOrder.statusMeta ?? {}),
+      shipping: {
+        trackingReference:
+          dto.trackingReference ??
+          purchaseOrder.statusMeta?.shipping?.trackingReference ??
+          null,
+        shippedAt: purchaseOrder.shippedAt.toISOString(),
+      },
+    };
+    await this.purchaseOrdersRepository.save(purchaseOrder);
+
+    const fullyShipped = purchaseOrder.items.every(
+      (it) => (it.shippedQuantity ?? 0) >= it.orderedQuantity,
+    );
+    const nextStatus = fullyShipped
+      ? PurchaseOrderStatus.SHIPPED
+      : PurchaseOrderStatus.PARTIALLY_SHIPPED;
+
+    return this.updateStatus(
+      id,
+      {
+        status: nextStatus,
+        trackingReference: dto.trackingReference,
+        reason: dto.note,
+      },
+      { ...actor, branchId: undefined },
+    );
+  }
+
+  /**
+   * Applies statusMeta.proposedChanges onto the loaded order's line items and
+   * recomputes subtotal/total (total = subtotal; the model carries no tax/ship
+   * line). Throws if there is nothing to apply.
+   */
+  private applyProposedChangesToOrder(purchaseOrder: PurchaseOrder): void {
+    const proposed = (purchaseOrder.statusMeta?.proposedChanges ?? null) as {
+      proposedLines?: {
+        itemId: number;
+        proposedQuantity?: number;
+        proposedUnitPrice?: number;
+      }[];
+      proposedDeliveryDate?: string | null;
+    } | null;
+
+    if (!proposed?.proposedLines?.length) {
+      throw new BadRequestException(
+        'This purchase order has no proposed changes to accept',
+      );
+    }
+
+    const changeByItemId = new Map(
+      proposed.proposedLines.map((line) => [line.itemId, line]),
+    );
+    for (const item of purchaseOrder.items) {
+      const change = changeByItemId.get(item.id);
+      if (!change) continue;
+      if (change.proposedQuantity != null) {
+        item.orderedQuantity = change.proposedQuantity;
+      }
+      if (change.proposedUnitPrice != null) {
+        item.unitPrice = change.proposedUnitPrice;
+      }
+    }
+
+    if (proposed.proposedDeliveryDate) {
+      purchaseOrder.expectedDeliveryDate = proposed.proposedDeliveryDate;
+    }
+
+    const subtotal = purchaseOrder.items.reduce(
+      (sum, item) => sum + item.orderedQuantity * Number(item.unitPrice),
+      0,
+    );
+    purchaseOrder.subtotal = subtotal;
+    purchaseOrder.total = subtotal;
   }
 
   async updateStatusWithManager(
@@ -960,7 +1373,7 @@ export class PurchaseOrdersService {
       );
     }
 
-    this.assertRoleAllowedForStatus(nextStatus, roles);
+    this.assertRoleAllowedForStatus(previousStatus, nextStatus, roles);
 
     if (nextStatus === PurchaseOrderStatus.RECONCILED) {
       await this.assertReadyForReconciliation(purchaseOrder, manager);
@@ -1096,6 +1509,29 @@ export class PurchaseOrdersService {
     ) {
       purchaseOrder.cancelledAt = now;
     }
+
+    // Supplier decline: persist the reason at top-level statusMeta so the buyer
+    // can surface it (and re-draft). No dedicated timestamp column — the time
+    // rides inside statusMeta.decline.
+    if (status === PurchaseOrderStatus.DECLINED) {
+      purchaseOrder.statusMeta = {
+        ...(purchaseOrder.statusMeta ?? {}),
+        decline: (dto.metadata as any)?.decline ?? {
+          reason: dto.reason ?? null,
+          at: now.toISOString(),
+        },
+      };
+    }
+
+    // Supplier counter-offer: keep the proposed lines/date at top-level
+    // statusMeta (survives the next lastTransition overwrite) until the buyer
+    // accepts or rejects.
+    if (status === PurchaseOrderStatus.CHANGES_PROPOSED) {
+      purchaseOrder.statusMeta = {
+        ...(purchaseOrder.statusMeta ?? {}),
+        proposedChanges: (dto.metadata as any)?.proposedChanges ?? null,
+      };
+    }
   }
 
   private applyReceiptSideEffects(
@@ -1202,12 +1638,71 @@ export class PurchaseOrdersService {
     }
   }
 
+  /**
+   * Last mile of the supply chain: when a branch receives a PO, auto-stage every
+   * received product into the receiving branch's retail catalog so it becomes a
+   * sellable, listable branch product (operator confirms price + listing later).
+   * Stock is already posted by persistReceiptSideEffects; this only adds the shelf
+   * entry. Staged links are created with consumer_visible=false / retail_price=null
+   * (the "needs setup" state) and skipped for products already in the branch catalog,
+   * so a manual link is never overwritten.
+   */
+  private async stageReceivedProductsIntoCatalog(
+    purchaseOrder: PurchaseOrder,
+    receiptSummary: ReceiptLineSummary[],
+    manager: EntityManager,
+  ): Promise<void> {
+    const branchId = purchaseOrder.branchId;
+    if (!branchId) {
+      return;
+    }
+
+    const productIds = [
+      ...new Set(
+        receiptSummary
+          .filter((line) => line.receivedQuantity > 0 && line.productId)
+          .map((line) => line.productId),
+      ),
+    ];
+    if (!productIds.length) {
+      return;
+    }
+
+    const repo = manager.getRepository(BranchCatalogProductLink);
+    const existing = await repo.find({
+      where: { branchId, productId: In(productIds) },
+    });
+    const alreadyLinked = new Set(existing.map((link) => link.productId));
+
+    const toCreate = productIds.filter((id) => !alreadyLinked.has(id));
+    if (!toCreate.length) {
+      return;
+    }
+
+    await repo.save(
+      toCreate.map((productId) =>
+        repo.create({
+          branchId,
+          productId,
+          retailPrice: null,
+          retailSalePrice: null,
+          consumerVisible: false,
+          source: 'PURCHASE_ORDER',
+          sourceSupplierProfileId: purchaseOrder.supplierProfileId ?? null,
+          sourcePurchaseOrderId: purchaseOrder.id,
+        }),
+      ),
+    );
+  }
+
   private buildInboundOpenPoProjection(
     purchaseOrder: PurchaseOrder,
   ): Map<number, number> {
     const activeStatuses = new Set<PurchaseOrderStatus>([
       PurchaseOrderStatus.SUBMITTED,
+      PurchaseOrderStatus.CHANGES_PROPOSED,
       PurchaseOrderStatus.ACKNOWLEDGED,
+      PurchaseOrderStatus.PARTIALLY_SHIPPED,
       PurchaseOrderStatus.SHIPPED,
       PurchaseOrderStatus.RECEIVED,
     ]);
@@ -1312,14 +1807,18 @@ export class PurchaseOrdersService {
    */
   private async resolveActorSupplierProfileId(
     userId?: number | null,
+    preferredSupplierId?: number | null,
+    actingRoles?: string[] | null,
   ): Promise<number | null> {
     if (!userId) {
       return null;
     }
-    const profile = await this.supplierProfilesRepository.findOne({
-      where: { userId },
-      select: { id: true },
-    });
+    const profile = await resolveActiveOwnedProfile(
+      this.supplierProfilesRepository,
+      userId,
+      preferredSupplierId,
+      actingRoles,
+    );
     return profile?.id ?? null;
   }
 
@@ -1417,6 +1916,7 @@ export class PurchaseOrdersService {
   }
 
   private assertRoleAllowedForStatus(
+    previousStatus: PurchaseOrderStatus,
     targetStatus: PurchaseOrderStatus,
     roles: string[],
   ): void {
@@ -1427,21 +1927,39 @@ export class PurchaseOrdersService {
     const buyerRoles = [UserRole.POS_MANAGER, UserRole.B2B_BUYER];
     const supplierRoles = [UserRole.SUPPLIER_ACCOUNT];
 
+    // ACKNOWLEDGED is reachable two ways, disambiguated by the from-status:
+    // SUBMITTED→ACKNOWLEDGED is the supplier acknowledging; CHANGES_PROPOSED→
+    // ACKNOWLEDGED is the BUYER accepting the supplier's counter-offer.
+    const isBuyerAcceptOfCounterOffer =
+      previousStatus === PurchaseOrderStatus.CHANGES_PROPOSED &&
+      targetStatus === PurchaseOrderStatus.ACKNOWLEDGED;
+    const isSupplierAcknowledge =
+      previousStatus === PurchaseOrderStatus.SUBMITTED &&
+      targetStatus === PurchaseOrderStatus.ACKNOWLEDGED;
+
+    // Buyer lane: submit, accept a counter-offer, receive, reconcile.
     if (
-      [
+      ([
         PurchaseOrderStatus.SUBMITTED,
         PurchaseOrderStatus.RECEIVED,
         PurchaseOrderStatus.RECONCILED,
-      ].includes(targetStatus) &&
+      ].includes(targetStatus) ||
+        isBuyerAcceptOfCounterOffer) &&
       this.hasAnyRole(roles, buyerRoles)
     ) {
       return;
     }
 
+    // Supplier lane: acknowledge a fresh submit, counter-offer, decline,
+    // (partially) ship.
     if (
-      [PurchaseOrderStatus.ACKNOWLEDGED, PurchaseOrderStatus.SHIPPED].includes(
-        targetStatus,
-      ) &&
+      (isSupplierAcknowledge ||
+        [
+          PurchaseOrderStatus.CHANGES_PROPOSED,
+          PurchaseOrderStatus.DECLINED,
+          PurchaseOrderStatus.PARTIALLY_SHIPPED,
+          PurchaseOrderStatus.SHIPPED,
+        ].includes(targetStatus)) &&
       this.hasAnyRole(roles, supplierRoles)
     ) {
       return;

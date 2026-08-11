@@ -72,7 +72,7 @@ async function bootstrap() {
             }
             // Remove user info
             if (event.user) {
-              event.user = { id: event.user?.id } as any;
+              event.user = { id: event.user?.id };
             }
           } catch {
             // ignore
@@ -197,14 +197,15 @@ async function bootstrap() {
 
   // CORS configuration (supports env list + robust preflight handling)
   const defaultAllowedOrigins = [
-    'https://ugasfuad.com',
-    'https://www.ugasfuad.com',
+    'https://suuq-s.com',
+    'https://www.suuq-s.com',
+    'https://pos.suuq-s.com',
+    'https://admin.suuq-s.com',
+    'https://supplier.suuq-s.com',
+    'https://app.suuq-s.com',
+    'https://api.suuq-s.com',
+    // Legacy consumer hosts kept alive for already-installed mobile apps (transition):
     'https://suuq.ugasfuad.com',
-    'https://admin.suuq.ugasfuad.com',
-    'https://pos.ugasfuad.com',
-    'https://www.pos.ugasfuad.com',
-    'https://b2b.ugasfuad.com',
-    'https://www.b2b.ugasfuad.com',
     'https://api.suuq.ugasfuad.com',
     'http://localhost:5173',
     'http://localhost:3000',
@@ -272,6 +273,10 @@ async function bootstrap() {
       'X-Workspace-Id',
       'x-branch-id',
       'X-Branch-Id',
+      'x-supplier-id',
+      'X-Supplier-Id',
+      'x-active-supplier-id',
+      'X-Active-Supplier-Id',
       'x-vendor-id',
       'X-Vendor-Id',
       'x-portal-surface',
@@ -289,6 +294,12 @@ async function bootstrap() {
     ],
     preflightContinue: false,
     optionsSuccessStatus: 204,
+    // Without this every distinct URL pays a CORS preflight before its real
+    // request. The POS register opens by fetching one detail per product, so a
+    // 128-product branch spent 128 extra OPTIONS round-trips on load — the
+    // preflights alone were half of that traffic. Browsers cap what they honour
+    // (Chrome at 2h), so this is an upper bound, not a promise.
+    maxAge: 7200,
   });
 
   // JSON already configured above

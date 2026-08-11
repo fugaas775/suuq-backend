@@ -38,9 +38,10 @@ export class Product {
   @AfterLoad()
   computePlaceholder() {
     if (!this.imageUrl && !(this.images && this.images.length > 0)) {
-      const apiBase = (
-        process.env.API_URL || 'https://api.suuq.ugasfuad.com'
-      ).replace(/\/+$/, '');
+      const apiBase = (process.env.API_URL || 'https://api.suuq-s.com').replace(
+        /\/+$/,
+        '',
+      );
       const name = (this.name || 'PR').trim();
       this._placeholderImageUrl = `${apiBase}/api/img/initials?name=${encodeURIComponent(name)}`;
       // Populate imageUrl in-memory so ALL serialization paths (any client app) get the placeholder
@@ -118,6 +119,21 @@ export class Product {
   @Column({ type: 'varchar', length: 64, nullable: true, name: 'barcode' })
   barcode?: string | null;
 
+  /**
+   * NOT HONOURED. Nothing reads this to price anything.
+   *
+   * Tax is a single branch-level scalar (Branch.taxEnabled/taxRate): the quote
+   * sets every line to the branch rate, and the register stamps `chargeRate: 0`
+   * on every product before the branch rate is applied — so a value here is
+   * shadowed on both sides. The column is kept rather than dropped because
+   * dropping it would destroy whatever data is in it, but a per-product rate is
+   * a feature that does not exist.
+   *
+   * Making it real means more than reading it: `branchTax.js` grosses whole
+   * folio TOTALS by one rate, which is only valid while the rate is uniform.
+   * Per-product exemption would send every folio-total site back to per-line
+   * math. See the note at the top of that module.
+   */
   @Expose()
   @Column('decimal', {
     precision: 5,

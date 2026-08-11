@@ -134,8 +134,35 @@ export class UpdatePropertyUnitDto {
   @ApiPropertyOptional({ example: 'INACTIVE' })
   @IsOptional()
   @IsString()
-  @IsIn(['ACTIVE', 'INACTIVE'])
+  @IsIn(['ACTIVE', 'INACTIVE', 'MAINTENANCE'])
   status?: string;
+}
+
+// Mark a property unit out of service / back in service. Upserts by
+// (branchId, propertyCode) so a catalog unit not yet in the registry can still be
+// flagged — mirrors the HOTEL room-maintenance endpoint.
+export class SetPropertyMaintenanceDto {
+  @ApiProperty({ example: 4 })
+  @Type(() => Number)
+  @IsNumber()
+  branchId!: number;
+
+  @ApiProperty({ example: 'APT-3B' })
+  @IsString()
+  @MinLength(1)
+  @MaxLength(64)
+  propertyCode!: string;
+
+  @ApiProperty({ example: 'MAINTENANCE', description: 'ACTIVE | MAINTENANCE' })
+  @IsString()
+  @IsIn(['ACTIVE', 'MAINTENANCE'])
+  status!: string;
+
+  @ApiPropertyOptional({ example: 'Plumbing repair' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(140)
+  reason?: string;
 }
 
 // ── Rate plans ──────────────────────────────────────────────────────────────

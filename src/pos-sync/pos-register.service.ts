@@ -6,7 +6,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Branch } from '../branches/entities/branch.entity';
-import { EmailService } from '../email/email.service';
+import { PosRegisterReportService } from './pos-register-report.service';
 import { ClosePosRegisterSessionDto } from './dto/close-pos-register-session.dto';
 import { CreatePosRegisterSessionDto } from './dto/create-pos-register-session.dto';
 import { CreatePosSuspendedCartDto } from './dto/create-pos-suspended-cart.dto';
@@ -40,7 +40,7 @@ export class PosRegisterService {
     private readonly suspendedCartsRepository: Repository<PosSuspendedCart>,
     @InjectRepository(Branch)
     private readonly branchesRepository: Repository<Branch>,
-    private readonly emailService: EmailService,
+    private readonly reportService: PosRegisterReportService,
   ) {}
 
   async findSessions(
@@ -180,6 +180,17 @@ export class PosRegisterService {
 
     const saved = await this.registerSessionsRepository.save(session);
 
+    // Fire-and-forget: email an end-of-shift report (with PDF) to the branch
+    // owner. When the closing client sends its "Today"-tab session report we
+    // render that (exact match, incl. KDS data the server can't see); otherwise
+    // we fall back to a server-side aggregation. dispatchCloseReport never
+    // throws, so a report/email failure can't break the close, and it is not
+    // awaited so the close response stays snappy.
+    void this.reportService.dispatchCloseReport(saved, {
+      report: dto.report,
+      serviceFormat: dto.serviceFormat,
+    });
+
     return this.toSessionResponse(saved);
   }
 
@@ -262,7 +273,7 @@ export class PosRegisterService {
       }
     }
 
-    const cart = await this.suspendedCartsRepository.save(
+    const buildCart = () =>
       this.suspendedCartsRepository.create({
         branchId: dto.branchId,
         registerSessionId: dto.registerSessionId ?? null,
@@ -279,10 +290,78 @@ export class PosRegisterService {
         metadata: dto.metadata ?? null,
         suspendedByUserId: actor.id ?? null,
         suspendedByName: actor.email ?? null,
-      }),
+      });
+
+    // Single-live-row invariant for folio re-saves. Editing a folio (adding a
+    // charge, a discount, guest details) creates a FRESH suspended-cart row and
+    // the client then discards the old one. When that discard is lost — offline,
+    // a multi-device race, a failed mutation, or a rapid re-save loop — the old
+    // row survives. The room board SUMS every live row for a room, so duplicates
+    // MULTIPLY its charge (Blue Hotel Room 10 accumulated 8 live rows of 40,000
+    // and displayed ~320,000 until staff voided the extras by hand). Make the
+    // supersede atomic on the server so duplicates can never be written,
+    // whatever the client does: under an advisory lock keyed on the folio,
+    // discard any prior live row for the SAME folio+unit before inserting.
+    //
+    // Keyed on the room/table/seat unit too, NOT folio id alone: PROPERTY_RENTAL
+    // bookings can legitimately share a backendFolioId across DISTINCT units, and
+    // those must never be merged. Same-folio + same-unit is the exact "true
+    // duplicate" condition. Skipped when there is no backendFolioId (RETAIL/QSR
+    // baskets and not-yet-opened folios) — each of those is a distinct row.
+    const snapshot = (dto.cartSnapshot ?? {}) as Record<string, unknown>;
+    const backendFolioId =
+      snapshot.backendFolioId != null && String(snapshot.backendFolioId).trim()
+        ? String(snapshot.backendFolioId).trim()
+        : null;
+
+    if (!backendFolioId) {
+      return this.toSuspendedCartResponse(
+        await this.suspendedCartsRepository.save(buildCart()),
+      );
+    }
+
+    const folioUnitKey = String(
+      snapshot.hotelRoomNumber ??
+        snapshot.cafeteriaTableNumber ??
+        snapshot.barberSeatNumber ??
+        dto.label ??
+        '',
+    )
+      .trim()
+      .toLowerCase();
+
+    const saved = await this.suspendedCartsRepository.manager.transaction(
+      async (em) => {
+        // Serialize concurrent saves of the same folio so two devices can't both
+        // insert before seeing each other's row. Released at transaction end.
+        await em.query('SELECT pg_advisory_xact_lock(hashtext($1)::bigint)', [
+          `pos-folio:${dto.branchId}:${backendFolioId}`,
+        ]);
+        await em.query(
+          `UPDATE pos_suspended_carts
+              SET status = $1, "discardedAt" = now(), "discardedByName" = $2
+            WHERE "branchId" = $3
+              AND status = $4
+              AND "cartSnapshot" ->> 'backendFolioId' = $5
+              AND lower(btrim(coalesce(
+                    "cartSnapshot" ->> 'hotelRoomNumber',
+                    "cartSnapshot" ->> 'cafeteriaTableNumber',
+                    "cartSnapshot" ->> 'barberSeatNumber',
+                    label, ''))) = $6`,
+          [
+            PosSuspendedCartStatus.DISCARDED,
+            'superseded by folio re-save',
+            dto.branchId,
+            PosSuspendedCartStatus.SUSPENDED,
+            backendFolioId,
+            folioUnitKey,
+          ],
+        );
+        return em.getRepository(PosSuspendedCart).save(buildCart());
+      },
     );
 
-    return this.toSuspendedCartResponse(cart);
+    return this.toSuspendedCartResponse(saved);
   }
 
   async resumeSuspendedCart(
@@ -354,6 +433,28 @@ export class PosRegisterService {
         ...(cart.metadata ?? {}),
         ...dto.metadata,
       };
+    }
+
+    // Replaced wholesale, unlike metadata above: the snapshot is a self-contained
+    // document (guest context, line items, payment state), so a shallow merge
+    // would leave stale nested keys behind whenever the caller sends a shorter
+    // one. Callers send the whole snapshot they want persisted.
+    //
+    // Without this the endpoint accepted a cartSnapshot and silently discarded
+    // it — 200 OK, nothing written — so a board wanting to edit a parked folio
+    // had to create a replacement row and discard the original, churning the id
+    // (and with it every folioId reference) on each edit.
+    if (dto.cartSnapshot && typeof dto.cartSnapshot === 'object') {
+      cart.cartSnapshot = dto.cartSnapshot;
+    }
+    if (typeof dto.label === 'string' && dto.label.trim()) {
+      cart.label = dto.label.trim();
+    }
+    if (typeof dto.itemCount === 'number' && Number.isFinite(dto.itemCount)) {
+      cart.itemCount = dto.itemCount;
+    }
+    if (typeof dto.total === 'number' && Number.isFinite(dto.total)) {
+      cart.total = dto.total;
     }
 
     return this.toSuspendedCartResponse(

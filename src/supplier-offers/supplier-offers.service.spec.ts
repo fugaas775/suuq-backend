@@ -15,13 +15,14 @@ function makeService({
     offers as any,
     profiles as any,
     products as any,
+    { syncOutletCatalog: jest.fn().mockResolvedValue(undefined) } as any, // supplierOutletService
   );
 }
 
 describe('SupplierOffersService', () => {
   it('listForUser requires a supplier profile', async () => {
     const service = makeService({
-      profiles: { findOne: jest.fn().mockResolvedValue(null) },
+      profiles: { find: jest.fn().mockResolvedValue([]) },
     });
     await expect(service.listForUser(7)).rejects.toBeInstanceOf(
       ForbiddenException,
@@ -30,7 +31,7 @@ describe('SupplierOffersService', () => {
 
   it('createForUser validates the product exists', async () => {
     const service = makeService({
-      profiles: { findOne: jest.fn().mockResolvedValue({ id: 55 }) },
+      profiles: { find: jest.fn().mockResolvedValue([{ id: 55 }]) },
       products: { findOne: jest.fn().mockResolvedValue(null) },
     });
     await expect(
@@ -45,7 +46,7 @@ describe('SupplierOffersService', () => {
     };
     const service = makeService({
       offers,
-      profiles: { findOne: jest.fn().mockResolvedValue({ id: 55 }) },
+      profiles: { find: jest.fn().mockResolvedValue([{ id: 55 }]) },
       products: { findOne: jest.fn().mockResolvedValue({ id: 9 }) },
     });
     const result = await service.createForUser(7, {
@@ -61,32 +62,27 @@ describe('SupplierOffersService', () => {
       offers: {
         findOne: jest.fn().mockResolvedValue({ id: 1, supplierProfileId: 999 }),
       },
-      profiles: { findOne: jest.fn().mockResolvedValue({ id: 55 }) },
+      profiles: { find: jest.fn().mockResolvedValue([{ id: 55 }]) },
     });
     await expect(
       service.updateForUser(7, 1, { moq: 2 }),
     ).rejects.toBeInstanceOf(ForbiddenException);
   });
 
-  it('publish refuses a non-approved supplier', async () => {
+  it('publish refuses a supplier without an active subscription', async () => {
     const offers = {
       findOne: jest.fn().mockResolvedValue({ id: 1, supplierProfileId: 55 }),
       save: jest.fn(async (v: any) => v),
     };
     const profiles = {
-      findOne: jest
-        .fn()
-        // resolveProfileOrThrow (by userId), then the publish profile lookup (by id)
-        .mockResolvedValueOnce({
-          id: 55,
-          onboardingStatus: 'PENDING_REVIEW',
-          isActive: true,
-        })
-        .mockResolvedValueOnce({
-          id: 55,
-          onboardingStatus: 'PENDING_REVIEW',
-          isActive: true,
-        }),
+      // findOwnedOfferOrThrow checks ownership against all owned profiles…
+      find: jest.fn().mockResolvedValue([{ id: 55 }]),
+      // …then publishForUser re-reads the profile (by id) for its activation gate.
+      findOne: jest.fn().mockResolvedValue({
+        id: 55,
+        activationStatus: 'PENDING_PAYMENT',
+        isActive: true,
+      }),
     };
     const service = makeService({ offers, profiles });
     await expect(service.publishForUser(7, 1)).rejects.toBeInstanceOf(
@@ -94,24 +90,18 @@ describe('SupplierOffersService', () => {
     );
   });
 
-  it('publish flips an approved supplier’s offer to PUBLISHED', async () => {
+  it('publish flips an active supplier’s offer to PUBLISHED', async () => {
     const offers = {
       findOne: jest.fn().mockResolvedValue({ id: 1, supplierProfileId: 55 }),
       save: jest.fn(async (v: any) => v),
     };
     const profiles = {
-      findOne: jest
-        .fn()
-        .mockResolvedValueOnce({
-          id: 55,
-          onboardingStatus: 'APPROVED',
-          isActive: true,
-        })
-        .mockResolvedValueOnce({
-          id: 55,
-          onboardingStatus: 'APPROVED',
-          isActive: true,
-        }),
+      find: jest.fn().mockResolvedValue([{ id: 55 }]),
+      findOne: jest.fn().mockResolvedValue({
+        id: 55,
+        activationStatus: 'ACTIVE',
+        isActive: true,
+      }),
     };
     const service = makeService({ offers, profiles });
     const result = await service.publishForUser(7, 1);
@@ -127,7 +117,7 @@ describe('SupplierOffersService', () => {
       }),
       save: jest.fn(async (v: any) => v),
     };
-    const profiles = { findOne: jest.fn().mockResolvedValue({ id: 55 }) };
+    const profiles = { find: jest.fn().mockResolvedValue([{ id: 55 }]) };
     const service = makeService({ offers, profiles });
     const result = await service.archiveForUser(7, 1);
     expect(result.status).toBe(SupplierOfferStatus.ARCHIVED);

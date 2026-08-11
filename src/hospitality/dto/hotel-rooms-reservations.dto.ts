@@ -9,6 +9,7 @@ import {
   IsOptional,
   IsPositive,
   IsString,
+  MaxLength,
   Min,
 } from 'class-validator';
 import { HotelRoomStatus } from '../entities/hotel-room.entity';
@@ -85,6 +86,28 @@ export class UpdateHotelRoomDto {
   @IsIn(Object.values(HotelRoomStatus))
   @IsOptional()
   status?: HotelRoomStatus;
+}
+
+// Toggle a room in/out of service. Scoped to its own endpoint + permission so an
+// operator granted SET_ROOM_MAINTENANCE can flip maintenance without gaining
+// general room-config edit rights.
+export class SetRoomMaintenanceDto {
+  @IsInt()
+  branchId!: number;
+
+  @IsString()
+  @IsNotEmpty()
+  @Transform(({ value }) => String(value ?? '').trim())
+  roomNumber!: string;
+
+  @IsIn([HotelRoomStatus.ACTIVE, HotelRoomStatus.MAINTENANCE])
+  status!: HotelRoomStatus;
+
+  @IsString()
+  @IsOptional()
+  @MaxLength(140)
+  @Transform(({ value }) => String(value ?? '').trim() || undefined)
+  reason?: string;
 }
 
 export class ListHotelRoomsQueryDto {
@@ -328,6 +351,15 @@ export class ListHotelReservationsQueryDto {
   @IsIn(Object.values(HotelReservationStatus))
   @IsOptional()
   status?: HotelReservationStatus;
+
+  /**
+   * Filter by multiple statuses (comma-separated), e.g. `HOLD,CONFIRMED`.
+   * Used by the merchant "incoming bookings" inbox. Takes precedence over
+   * `status` when provided; unknown values are ignored.
+   */
+  @IsString()
+  @IsOptional()
+  statuses?: string;
 
   /** Filter by check-in date (YYYY-MM-DD) */
   @IsDateString()

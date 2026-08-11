@@ -2,6 +2,7 @@ import { Transform } from 'class-transformer';
 import {
   IsEmail,
   IsEnum,
+  IsIn,
   IsOptional,
   IsString,
   MaxLength,
@@ -63,6 +64,17 @@ export class InitiateAdditionalBranchCreationDto {
   @IsString()
   @MaxLength(64)
   tinNumber?: string;
+
+  /**
+   * Billing period for the new branch: 'MONTHLY' (1 month) or 'ONE_YEAR'
+   * (1 year, 10% discount). Defaults to MONTHLY in the service when omitted.
+   */
+  @Transform(({ value }) =>
+    typeof value === 'string' ? value.trim().toUpperCase() : value,
+  )
+  @IsOptional()
+  @IsIn(['MONTHLY', 'ONE_YEAR'])
+  subscriptionPeriod?: 'MONTHLY' | 'ONE_YEAR';
 
   /** Optional equity partner referral code (e.g. PART-X7K2). */
   @Transform(({ value }) =>

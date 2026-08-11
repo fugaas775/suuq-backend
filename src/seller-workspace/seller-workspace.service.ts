@@ -6,7 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { Brackets, In, Repository } from 'typeorm';
 import { User, SubscriptionTier } from '../users/entities/user.entity';
 import { VendorStaffService } from '../vendor/vendor-staff.service';
 import { BranchStaffService } from '../branch-staff/branch-staff.service';
@@ -14,7 +14,12 @@ import {
   BranchStaffAssignment,
   BranchStaffRole,
 } from '../branch-staff/entities/branch-staff-assignment.entity';
-import { Branch } from '../branches/entities/branch.entity';
+import {
+  Branch,
+  shouldEnableTaxForNewBranch,
+} from '../branches/entities/branch.entity';
+import { linkBranchToVendorStore } from '../branches/branch-store-link';
+import { BranchHomeConfig } from '../branches/entities/branch-home-config.type';
 import { BranchInventory } from '../branches/entities/branch-inventory.entity';
 import { Order, PaymentStatus } from '../orders/entities/order.entity';
 import {
@@ -25,6 +30,7 @@ import {
   PosCheckout,
   PosCheckoutStatus,
 } from '../pos-sync/entities/pos-checkout.entity';
+import { reconcileRentalRevenueCheckouts } from '../pos-sync/rental-revenue-reconciliation';
 import {
   PosSyncJob,
   PosSyncStatus,
@@ -357,17 +363,36 @@ export class SellerWorkspaceService {
         parseInt(cnt, 10),
       ]),
     );
+    // Per-branch first, with the legacy tenant-wide row (branchId null) as the
+    // fallback — keying only by tenant let one branch's subscription describe
+    // every other branch on the same tenant.
+    const latestSubscriptionByBranchId = new Map<number, TenantSubscription>();
     for (const subscription of subscriptions) {
-      if (!latestSubscriptionByTenantId.has(subscription.tenantId)) {
-        latestSubscriptionByTenantId.set(subscription.tenantId, subscription);
+      if (subscription.branchId == null) {
+        if (!latestSubscriptionByTenantId.has(subscription.tenantId)) {
+          latestSubscriptionByTenantId.set(subscription.tenantId, subscription);
+        }
+        continue;
+      }
+      if (!latestSubscriptionByBranchId.has(subscription.branchId)) {
+        latestSubscriptionByBranchId.set(subscription.branchId, subscription);
       }
     }
+    const resolveSubscription = (
+      branchId: number,
+      retailTenantId: number | null,
+    ) =>
+      latestSubscriptionByBranchId.get(branchId) ||
+      (retailTenantId
+        ? latestSubscriptionByTenantId.get(retailTenantId) || null
+        : null);
 
     const items: SellerWorkspaceBranchWorkspaceDto[] = [
       ...activeBranches.map((branch) => {
-        const subscription = branch.retailTenantId
-          ? latestSubscriptionByTenantId.get(branch.retailTenantId) || null
-          : null;
+        const subscription = resolveSubscription(
+          branch.branchId,
+          branch.retailTenantId,
+        );
         const roster = rosterByBranchId.get(branch.branchId);
         const tenant = branch.retailTenantId
           ? tenantById.get(branch.retailTenantId) || null
@@ -419,12 +444,22 @@ export class SellerWorkspaceService {
           modules: branch.modules,
           pricing,
           canStartActivation: false,
+          canPayNow: Boolean(branch.canPayNow),
+          isTrialWorkspace: Boolean(branch.isTrialWorkspace),
+          subscriptionEndsAt: branch.subscriptionEndsAt ?? null,
           canOpenNow: branch.canOpenNow,
           joinedAt: branch.joinedAt,
           productCount: productCountByBranchId.get(branch.branchId) ?? 0,
           phone: branch.phone ?? null,
           tinNumber: branch.tinNumber ?? null,
           defaultCategoryId: branch.defaultCategoryId ?? null,
+          checkoutPolicyTime: branch.checkoutPolicyTime ?? null,
+          logoUrl: branch.logoUrl ?? null,
+          taxEnabled: Boolean(branch.taxEnabled),
+          taxRate: Number(branch.taxRate ?? 0.15),
+          taxInclusive: Boolean(branch.taxInclusive),
+          taxName: branch.taxName ?? null,
+          homeConfig: branch.homeConfig ?? null,
           vendorStoreId:
             vendorStoresByBranchId.get(branch.branchId)?.id ?? null,
           consumerStoreName:
@@ -483,12 +518,22 @@ export class SellerWorkspaceService {
           modules: [],
           pricing: candidate.pricing,
           canStartActivation: candidate.canStartActivation,
+          canPayNow: Boolean(candidate.canPayNow),
+          isTrialWorkspace: false,
+          subscriptionEndsAt: null,
           canOpenNow: candidate.canOpenNow,
           joinedAt: new Date(0),
           productCount: productCountByBranchId.get(candidate.branchId) ?? 0,
           phone: candidate.phone ?? null,
           tinNumber: candidate.tinNumber ?? null,
           defaultCategoryId: candidate.defaultCategoryId ?? null,
+          checkoutPolicyTime: candidate.checkoutPolicyTime ?? null,
+          logoUrl: candidate.logoUrl ?? null,
+          taxEnabled: Boolean(candidate.taxEnabled),
+          taxRate: Number(candidate.taxRate ?? 0.15),
+          taxInclusive: Boolean(candidate.taxInclusive),
+          taxName: candidate.taxName ?? null,
+          homeConfig: candidate.homeConfig ?? null,
           vendorStoreId:
             vendorStoresByBranchId.get(candidate.branchId)?.id ?? null,
           consumerStoreName:
@@ -572,6 +617,9 @@ export class SellerWorkspaceService {
             subscriptionStatus: null,
             planCode: null,
             canStartActivation: false,
+            canPayNow: false,
+            isTrialWorkspace: false,
+            subscriptionEndsAt: null,
             canOpenNow: false,
           } as any,
         ];
@@ -698,6 +746,9 @@ export class SellerWorkspaceService {
           country: normalizedCountry,
           phone: dto.phone?.trim() || null,
           tinNumber: dto.tinNumber?.trim() || null,
+          // A branch with no tax id starts untaxed — it cannot legally charge
+          // VAT unregistered, and has no TIN to print on the invoice.
+          taxEnabled: shouldEnableTaxForNewBranch(dto.tinNumber),
           isActive: true,
         });
 
@@ -764,8 +815,14 @@ export class SellerWorkspaceService {
           serviceFormat: normalizedServiceFormat ?? null,
         });
         const savedVendorStore = await vendorStoresRepo.save(vendorStore);
+        // Both halves of the branch↔store 1:1 go through one writer so the link
+        // can never end up one-sided. See branch-store-link.ts.
+        await linkBranchToVendorStore(
+          manager,
+          savedBranch.id,
+          savedVendorStore.id,
+        );
         savedBranch.vendorStoreId = savedVendorStore.id;
-        await branchesRepository.save(savedBranch);
 
         createdBranchId = savedBranch.id;
       },
@@ -854,12 +911,16 @@ export class SellerWorkspaceService {
       throw new ForbiddenException('Cannot transfer ownership to yourself.');
     }
 
+    // The branch's products belong to its current owner (branch.ownerId), which
+    // can differ from the caller when a platform admin performs the transfer.
+    const previousOwnerId = branch.ownerId ?? callerId;
+
     // Get previous owner email for notification
     const prevOwner = await this.usersRepository.findOne({
-      where: { id: callerId },
+      where: { id: previousOwnerId },
       select: ['id', 'email'],
     });
-    const prevOwnerEmail = prevOwner?.email ?? `User #${callerId}`;
+    const prevOwnerEmail = prevOwner?.email ?? `User #${previousOwnerId}`;
 
     // Transfer ownership: update branch.ownerId
     await this.branchesRepository.update(
@@ -867,22 +928,22 @@ export class SellerWorkspaceService {
       { ownerId: newOwner.id },
     );
 
-    // Transfer the branch's vendor store and its products to the new owner
-    if (branch.vendorStoreId) {
-      await this.vendorStoresRepository.update(
-        { id: branch.vendorStoreId },
-        { ownerUserId: newOwner.id },
-      );
-      await this.productsRepository.query(
-        `UPDATE product SET "vendorId" = $1 WHERE vendor_store_id = $2`,
-        [newOwner.id, branch.vendorStoreId],
-      );
-    }
+    // Transfer the branch's products (and their catalog/inventory data) to the
+    // new owner. Products link to a branch through its vendor store, through
+    // per-product inventory/catalog links, or through a vendor-catalog link —
+    // reassign every such product and PRESERVE the links so the new owner
+    // inherits the full catalog (PROPERTY units, HOTEL rooms, RETAIL SKUs)
+    // instead of an empty branch.
+    await this.transferBranchOwnedProducts(
+      branch,
+      previousOwnerId,
+      newOwner.id,
+    );
 
     // Revoke previous owner's staff assignment on this branch
     const prevOwnerAssignment =
       await this.branchStaffAssignmentsRepository.findOne({
-        where: { branchId, userId: callerId },
+        where: { branchId, userId: previousOwnerId },
       });
     if (prevOwnerAssignment) {
       prevOwnerAssignment.isActive = false;
@@ -910,7 +971,28 @@ export class SellerWorkspaceService {
       );
     }
 
-    await this.detachTransferredCreatorCatalog(branchId, callerId);
+    // Guarantee the branch arrives with consistent financials. A branch onboarded
+    // by inserting its tenancies directly as paid suspended carts (no backing
+    // checkouts) would show full Tenancies data but ETB 0 revenue, because every
+    // financial report reads `pos_checkouts`. Reconciliation backfills the missing
+    // accrual rent checkouts. No-op unless this is a PROPERTY_RENTAL branch with
+    // paid leases and zero rent checkouts; idempotent; never fatal to the transfer.
+    try {
+      const reconciled = await reconcileRentalRevenueCheckouts(
+        (sql, params) => this.posCheckoutsRepository.query(sql, params),
+        branchId,
+      );
+      if (reconciled.checkoutsCreated > 0) {
+        console.log(
+          `[transferBranchOwnership] Backfilled ${reconciled.checkoutsCreated} rental-revenue checkout(s) for branch #${branchId}.`,
+        );
+      }
+    } catch (error) {
+      console.error(
+        `[transferBranchOwnership] Rental-revenue reconciliation failed for branch #${branchId} (non-fatal):`,
+        error,
+      );
+    }
 
     // Send email notifications (non-fatal)
     const notifyParams = {
@@ -945,44 +1027,106 @@ export class SellerWorkspaceService {
     return { success: true };
   }
 
-  private async detachTransferredCreatorCatalog(
-    branchId: number,
-    creatorId: number,
+  /**
+   * Reassign every product the branch owns to the new owner while keeping the
+   * branch's catalog/inventory links intact. A transferred branch must arrive
+   * with its full catalog (PROPERTY units, HOTEL rooms, RETAIL SKUs) and data —
+   * we never detach products, or the new owner inherits an empty branch.
+   */
+  private async transferBranchOwnedProducts(
+    branch: Pick<Branch, 'id' | 'vendorStoreId'>,
+    previousOwnerId: number,
+    newOwnerId: number,
   ): Promise<void> {
-    const creatorProductRows = await this.productsRepository
+    const branchId = branch.id;
+
+    // The branch's own consumer store (if any) moves to the new owner; every
+    // product scoped to it belongs to the branch.
+    if (branch.vendorStoreId) {
+      await this.vendorStoresRepository.update(
+        { id: branch.vendorStoreId },
+        { ownerUserId: newOwnerId },
+      );
+    }
+
+    // Collect every product that belongs to this branch: products scoped to the
+    // branch's vendor store, plus the previous owner's products linked to this
+    // branch through inventory or per-product catalog links.
+    const rows = await this.productsRepository
       .createQueryBuilder('product')
       .select('product.id', 'id')
-      .innerJoin(
+      .leftJoin(
         BranchInventory,
         'inventory',
         'inventory.productId = product.id AND inventory.branchId = :branchId',
         { branchId },
       )
-      .where(
-        '(product."vendorId" = :creatorId OR product.created_by_id = :creatorId)',
-        { creatorId },
+      .leftJoin(
+        BranchCatalogProductLink,
+        'catalogLink',
+        'catalogLink.productId = product.id AND catalogLink.branchId = :branchId',
+        { branchId },
       )
-      .getRawMany();
+      .where('product.deletedAt IS NULL')
+      .andWhere(
+        new Brackets((qb) => {
+          qb.where(
+            new Brackets((owned) => {
+              owned
+                .where('product.vendorId = :previousOwnerId', {
+                  previousOwnerId,
+                })
+                .andWhere(
+                  new Brackets((linked) => {
+                    linked
+                      .where('inventory.id IS NOT NULL')
+                      .orWhere('catalogLink.id IS NOT NULL');
+                  }),
+                );
+            }),
+          );
+          if (branch.vendorStoreId) {
+            qb.orWhere('product.vendor_store_id = :vendorStoreId', {
+              vendorStoreId: branch.vendorStoreId,
+            });
+          }
+        }),
+      )
+      .getRawMany<{ id: number }>();
 
-    const creatorProductIds = creatorProductRows
+    const productIds = rows
       .map((row) => Number(row.id))
       .filter((id) => Number.isFinite(id) && id > 0);
 
-    if (creatorProductIds.length > 0) {
-      await this.branchInventoryRepository.delete({
-        branchId,
-        productId: In(creatorProductIds),
-      });
-      await this.branchCatalogProductLinksRepository.delete({
-        branchId,
-        productId: In(creatorProductIds),
-      });
+    if (productIds.length > 0) {
+      // `vendorId` is an auto-generated relation FK (no standalone @Column), so
+      // it must be set via raw SQL rather than the typed repository update.
+      await this.productsRepository.query(
+        `UPDATE product SET "vendorId" = $1 WHERE id = ANY($2::int[])`,
+        [newOwnerId, productIds],
+      );
     }
 
-    await this.branchCatalogVendorLinksRepository.delete({
-      branchId,
-      vendorId: creatorId,
-    });
+    // Re-point any vendor-catalog link from the previous owner to the new owner
+    // so the branch keeps surfacing those products after their vendorId changed,
+    // honouring the (branchId, vendorId) unique constraint.
+    if (previousOwnerId !== newOwnerId) {
+      const newOwnerLinkExists =
+        await this.branchCatalogVendorLinksRepository.findOne({
+          where: { branchId, vendorId: newOwnerId },
+        });
+      if (newOwnerLinkExists) {
+        await this.branchCatalogVendorLinksRepository.delete({
+          branchId,
+          vendorId: previousOwnerId,
+        });
+      } else {
+        await this.branchCatalogVendorLinksRepository.update(
+          { branchId, vendorId: previousOwnerId },
+          { vendorId: newOwnerId },
+        );
+      }
+    }
   }
 
   async updatePlanSelection(
@@ -1822,13 +1966,17 @@ export class SellerWorkspaceService {
       where: { ownerUserId: user.id },
     });
 
+    // Requested and remembered are passed SEPARATELY, not coalesced: only the
+    // caller's explicit choice may 403. See resolvePrimaryVendorId.
     const primaryVendorId = this.resolvePrimaryVendorId(
       access.stores,
-      bootstrap?.primaryVendorId ?? existing?.primaryVendorId,
+      bootstrap?.primaryVendorId,
+      existing?.primaryVendorId,
     );
     const primaryRetailTenantId = this.resolvePrimaryRetailTenantId(
       access.branches,
-      bootstrap?.primaryRetailTenantId ?? existing?.primaryRetailTenantId,
+      bootstrap?.primaryRetailTenantId,
+      existing?.primaryRetailTenantId,
     );
 
     const workspace = this.sellerWorkspacesRepository.create({
@@ -1864,27 +2012,53 @@ export class SellerWorkspaceService {
     return this.sellerWorkspacesRepository.save(workspace);
   }
 
+  /**
+   * A REQUESTED primary (the caller naming one in the bootstrap DTO) must be one
+   * they can reach — asking for someone else's is a 403.
+   *
+   * A REMEMBERED primary (the value already persisted on the workspace row) is
+   * different: access legitimately changes underneath it. A branch is
+   * transferred, deleted, or its tenant is emptied, and the stored id quietly
+   * stops being reachable. Treating that as a 403 bricked the workspace — every
+   * read threw, so Seller HQ rendered permanent skeletons, and the page that
+   * could have corrected the stored value was itself the page failing. Prod hit
+   * exactly this: a workspace pinned to a tenant with zero branches left, which
+   * could never validate again.
+   *
+   * So a stale remembered value falls back to something available and is saved
+   * over by the caller, healing the row on the next read.
+   */
   private resolvePrimaryVendorId(
     stores: SellerWorkspaceStoreSummaryDto[],
     requestedVendorId?: number | null,
+    rememberedVendorId?: number | null,
   ): number | null {
-    if (requestedVendorId == null) {
-      return stores[0]?.vendorId ?? null;
-    }
-
-    const match = stores.find((store) => store.vendorId === requestedVendorId);
-    if (!match) {
-      throw new ForbiddenException(
-        `Seller workspace cannot select vendor ${requestedVendorId} without access`,
+    if (requestedVendorId != null) {
+      const match = stores.find(
+        (store) => store.vendorId === requestedVendorId,
       );
+      if (!match) {
+        throw new ForbiddenException(
+          `Seller workspace cannot select vendor ${requestedVendorId} without access`,
+        );
+      }
+      return match.vendorId;
     }
 
-    return match.vendorId;
+    if (
+      rememberedVendorId != null &&
+      stores.some((store) => store.vendorId === rememberedVendorId)
+    ) {
+      return rememberedVendorId;
+    }
+
+    return stores[0]?.vendorId ?? null;
   }
 
   private resolvePrimaryRetailTenantId(
     branches: SellerWorkspaceBranchSummaryDto[],
     requestedTenantId?: number | null,
+    rememberedTenantId?: number | null,
   ): number | null {
     const availableTenantIds = Array.from(
       new Set(
@@ -1894,17 +2068,23 @@ export class SellerWorkspaceService {
       ),
     );
 
-    if (requestedTenantId == null) {
-      return availableTenantIds[0] ?? null;
+    if (requestedTenantId != null) {
+      if (!availableTenantIds.includes(requestedTenantId)) {
+        throw new ForbiddenException(
+          `Seller workspace cannot select tenant ${requestedTenantId} without access`,
+        );
+      }
+      return requestedTenantId;
     }
 
-    if (!availableTenantIds.includes(requestedTenantId)) {
-      throw new ForbiddenException(
-        `Seller workspace cannot select tenant ${requestedTenantId} without access`,
-      );
+    if (
+      rememberedTenantId != null &&
+      availableTenantIds.includes(rememberedTenantId)
+    ) {
+      return rememberedTenantId;
     }
 
-    return requestedTenantId;
+    return availableTenantIds[0] ?? null;
   }
 
   private assertTenantAccess(
@@ -2173,6 +2353,7 @@ export class SellerWorkspaceService {
     userId: number,
     branchId: number,
     dto: UpdateBranchWorkspaceDto,
+    roles: string[] = [],
   ): Promise<SellerWorkspaceBranchWorkspaceDto> {
     const branchRepo =
       this.sellerWorkspacesRepository.manager.getRepository(Branch);
@@ -2185,9 +2366,15 @@ export class SellerWorkspaceService {
         `Branch workspace with ID ${branchId} not found.`,
       );
     }
+    // Platform admins (SUPER_ADMIN/ADMIN) may edit any branch's details — they
+    // act as the owner from the admin bar but keep their own user id, so the
+    // ownership check below would otherwise reject them.
+    const isPlatformAdmin =
+      Array.isArray(roles) &&
+      (roles.includes(UserRole.SUPER_ADMIN) || roles.includes(UserRole.ADMIN));
     const isOwner =
       branch.ownerId === userId || branch.retailTenant?.owner?.id === userId;
-    if (!isOwner) {
+    if (!isOwner && !isPlatformAdmin) {
       throw new ForbiddenException(
         'Only the branch or tenant owner can update branch details.',
       );
@@ -2202,20 +2389,52 @@ export class SellerWorkspaceService {
     if (dto.tinNumber !== undefined) updates.tinNumber = dto.tinNumber;
     if (dto.defaultCategoryId !== undefined)
       updates.defaultCategoryId = dto.defaultCategoryId;
+    if (dto.checkoutPolicyTime !== undefined)
+      updates.checkoutPolicyTime = dto.checkoutPolicyTime;
+    if (dto.logoUrl !== undefined) updates.logoUrl = dto.logoUrl;
+    if (dto.taxEnabled !== undefined) updates.taxEnabled = dto.taxEnabled;
+    if (dto.taxRate !== undefined) updates.taxRate = dto.taxRate;
+    if (dto.taxInclusive !== undefined) updates.taxInclusive = dto.taxInclusive;
+    // Empty string clears it back to the default label rather than printing a
+    // blank tax row.
+    if (dto.taxName !== undefined)
+      updates.taxName = dto.taxName ? dto.taxName.trim() || null : null;
+    if (dto.homeConfig !== undefined) {
+      // firstRun is server-owned, and the client's Home normalizer only carries
+      // the layout — so a layout save must not erase the milestones.
+      updates.homeConfig = dto.homeConfig
+        ? {
+            ...dto.homeConfig,
+            firstRun:
+              branch.homeConfig?.firstRun ?? dto.homeConfig.firstRun ?? null,
+          }
+        : dto.homeConfig;
+    }
     if (Object.keys(updates).length > 0) {
       await branchRepo.update(branchId, updates);
       // Sync storeName to VendorStore whenever the branch name changes.
       if (dto.name !== undefined) {
-        await this.vendorStoresRepository.update(
-          { branchId },
-          { storeName: dto.name },
-        );
+        await this.syncVendorStoreFromBranch(branchId, { storeName: dto.name });
       }
     }
     const refreshed = await this.getBranchWorkspaces(userId);
-    const updatedWorkspace = refreshed.items.find(
+    let updatedWorkspace = refreshed.items.find(
       (item) => item.branchId === branchId,
     );
+    if (!updatedWorkspace) {
+      // A platform admin can update a branch that is NOT in their own workspace list
+      // (getBranchWorkspaces is keyed to the caller's account), so the reload above
+      // won't contain it — the update already persisted, but we'd 404 building the
+      // response. Resolve the updated branch via its OWNER's workspaces instead so the
+      // full enriched DTO comes back.
+      const ownerId = branch.ownerId ?? branch.retailTenant?.owner?.id ?? null;
+      if (ownerId && ownerId !== userId) {
+        const ownerRefreshed = await this.getBranchWorkspaces(ownerId);
+        updatedWorkspace = ownerRefreshed.items.find(
+          (item) => item.branchId === branchId,
+        );
+      }
+    }
     if (!updatedWorkspace) {
       throw new NotFoundException(
         'Updated branch workspace could not be resolved.',
@@ -2224,10 +2443,26 @@ export class SellerWorkspaceService {
     return updatedWorkspace;
   }
 
+  /**
+   * Push branch fields the consumer storefront mirrors onto its VendorStore.
+   * Keep in step with BranchesService.syncVendorStore — that service is not
+   * available in SellerWorkspaceModule, so the two intentionally duplicate.
+   */
+  private async syncVendorStoreFromBranch(
+    branchId: number,
+    updates: { storeName?: string; serviceFormat?: string },
+  ): Promise<void> {
+    if (!Object.keys(updates).length) {
+      return;
+    }
+    await this.vendorStoresRepository.update({ branchId }, updates);
+  }
+
   async updateBranchWorkspaceServiceFormat(
     userId: number,
     branchId: number,
     dto: UpdateBranchServiceFormatDto,
+    roles: string[] = [],
   ): Promise<SellerWorkspaceBranchWorkspaceDto> {
     const branch = await this.sellerWorkspacesRepository.manager
       .getRepository(Branch)
@@ -2240,6 +2475,20 @@ export class SellerWorkspaceService {
         `Branch workspace with ID ${branchId} not found.`,
       );
     }
+    // Same ownership rule as updateBranchWorkspace: the service format decides
+    // the whole POS lane, so it must never be rewritable by a caller who merely
+    // knows the branch id. This has to run BEFORE the writes below — the update
+    // persists even when the response builder later fails to resolve the DTO.
+    const isPlatformAdmin =
+      Array.isArray(roles) &&
+      (roles.includes(UserRole.SUPER_ADMIN) || roles.includes(UserRole.ADMIN));
+    const isOwner =
+      branch.ownerId === userId || branch.retailTenant?.owner?.id === userId;
+    if (!isOwner && !isPlatformAdmin) {
+      throw new ForbiddenException(
+        'Only the branch or tenant owner can change the branch service format.',
+      );
+    }
     const tenantId = branch.retailTenantId;
     const posCoreEntitlement =
       await this.tenantModuleEntitlementsRepository.findOne({
@@ -2248,27 +2497,64 @@ export class SellerWorkspaceService {
           module: RetailModule.POS_CORE,
         },
       });
+    const previousServiceFormat = branch.serviceFormat ?? null;
     const normalizedServiceFormat = assertAllowedSelfServeServiceFormat(
       dto.serviceFormat,
       'Branch service format update',
-      resolveAllowedSelfServeServiceFormats(
-        getPosCoreEntitlement([posCoreEntitlement].filter(Boolean)),
-      ),
+      // The branch's CURRENT format is always allowed: re-submitting what a
+      // branch already runs on must never fail, even if the rollout that
+      // enabled it has since been narrowed.
+      [
+        ...resolveAllowedSelfServeServiceFormats(
+          getPosCoreEntitlement([posCoreEntitlement].filter(Boolean)),
+        ),
+        ...(previousServiceFormat ? [previousServiceFormat] : []),
+      ],
     );
+    const formatChanged = previousServiceFormat !== normalizedServiceFormat;
+    // Reaching this endpoint IS the owner confirming what the branch sells —
+    // including when they keep the format they were auto-provisioned with, which
+    // is why the client calls it even for a no-op. Durable and cross-device,
+    // unlike the localStorage flag it replaces.
+    const firstRun = {
+      ...(branch.homeConfig?.firstRun ?? {}),
+      businessTypeConfirmedAt: new Date().toISOString(),
+    };
     await this.sellerWorkspacesRepository.manager
       .getRepository(Branch)
-      .update(branchId, { serviceFormat: normalizedServiceFormat });
+      .update(branchId, {
+        serviceFormat: normalizedServiceFormat,
+        // The saved Home layout is per-format; keeping a QSR layout on a branch
+        // that just became a hotel leaves widgets that no longer apply. Reset the
+        // layout but carry the milestones over.
+        // A config carrying firstRun but NO `widgets` key still means "this branch
+        // has never chosen a layout" — the client falls back to the per-format
+        // default. That is what lets the milestone live here without pinning an
+        // empty Home on a branch that never customized one.
+        homeConfig: formatChanged
+          ? { firstRun }
+          : { ...(branch.homeConfig ?? {}), firstRun },
+      });
     branch.serviceFormat = normalizedServiceFormat;
-    // Keep the consumer-facing VendorStore in sync so storefront listings
-    // (/api/v2/stores) reflect the new service format.
-    await this.vendorStoresRepository.update(
-      { branchId },
-      { serviceFormat: normalizedServiceFormat },
-    );
+    await this.syncVendorStoreFromBranch(branchId, {
+      serviceFormat: normalizedServiceFormat,
+    });
     const refreshed = await this.getBranchWorkspaces(userId);
-    const updatedWorkspace = refreshed.items.find(
+    let updatedWorkspace = refreshed.items.find(
       (item) => item.branchId === branchId,
     );
+    if (!updatedWorkspace) {
+      // A platform admin's own workspace list won't contain this branch, and the
+      // write has already persisted — resolve the DTO via the owner instead of
+      // 404ing on a successful update (mirrors updateBranchWorkspace).
+      const ownerId = branch.ownerId ?? branch.retailTenant?.owner?.id ?? null;
+      if (ownerId && ownerId !== userId) {
+        const ownerRefreshed = await this.getBranchWorkspaces(ownerId);
+        updatedWorkspace = ownerRefreshed.items.find(
+          (item) => item.branchId === branchId,
+        );
+      }
+    }
     if (!updatedWorkspace) {
       throw new NotFoundException(
         'Updated branch workspace could not be resolved.',

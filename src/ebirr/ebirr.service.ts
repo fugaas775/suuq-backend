@@ -2,6 +2,7 @@ import {
   Injectable,
   Logger,
   BadRequestException,
+  ServiceUnavailableException,
   Inject,
   forwardRef,
 } from '@nestjs/common';
@@ -22,6 +23,11 @@ import { v4 as uuidv4 } from 'uuid';
 import { Cron, CronExpression } from '@nestjs/schedule';
 
 import { format, subMinutes, subHours } from 'date-fns';
+
+// Shown verbatim to the payer, so it has to settle the only question that
+// matters when a payment does not go through: whether money moved.
+const EBIRR_UNREACHABLE_MESSAGE =
+  'Ebirr payment gateway is unreachable right now — no payment request was sent, and no money has been taken. Please try again in a few minutes.';
 
 @Injectable()
 export class EbirrService {
@@ -782,6 +788,35 @@ export class EbirrService {
 
     try {
       await this.ebirrTransactionRepo.save(transaction);
+
+      // Reach the gateway before charging. The payment POST below waits 35s,
+      // which outlasts the caller's own request budget, so an unreachable
+      // gateway reaches the payer as a bare "request timed out" that cannot say
+      // whether money moved — and a blind retry then risks a double charge.
+      // Failing the connection first makes the answer certain: nothing was
+      // sent, so nothing was charged. Set EBIRR_PREFLIGHT=false to bypass.
+      if (process.env.EBIRR_PREFLIGHT !== 'false') {
+        const reachability = await this.checkConnectivity();
+
+        if (!reachability.success) {
+          transaction.status = 'FAILED';
+          transaction.response_msg = EBIRR_UNREACHABLE_MESSAGE;
+          transaction.raw_response_payload = { message: 'gateway_unreachable' };
+          await this.ebirrTransactionRepo.save(transaction);
+
+          this.logger.error(
+            `Ebirr gateway unreachable at ${ebirrConfig.baseUrl}; skipped payment ${referenceId} without charging.`,
+          );
+
+          const unreachableErr: any = new ServiceUnavailableException(
+            EBIRR_UNREACHABLE_MESSAGE,
+          );
+          // Marks it for the catch below, which re-throws handled errors as-is
+          // instead of downgrading them to a money-may-have-moved PENDING.
+          unreachableErr.isHandled = true;
+          throw unreachableErr;
+        }
+      }
 
       const response = await axios.post(ebirrConfig.baseUrl, payload, {
         headers: {

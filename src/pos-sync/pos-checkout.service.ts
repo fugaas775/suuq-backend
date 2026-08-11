@@ -6,11 +6,19 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Brackets, DataSource, EntityManager, Repository } from 'typeorm';
+import {
+  Brackets,
+  DataSource,
+  EntityManager,
+  Repository,
+  SelectQueryBuilder,
+} from 'typeorm';
 import { InventoryLedgerService } from '../branches/inventory-ledger.service';
 import { VariantInventoryService } from '../branches/variant-inventory.service';
 import { ProductVariant } from '../products/entities/product-variant.entity';
 import { Branch } from '../branches/entities/branch.entity';
+import { BranchInventory } from '../branches/entities/branch-inventory.entity';
+import { BranchInventoryVariant } from '../branches/entities/branch-inventory-variant.entity';
 import { StockMovementType } from '../branches/entities/stock-movement.entity';
 import { PartnerCredential } from '../partner-credentials/entities/partner-credential.entity';
 import { ProductAliasesService } from '../product-aliases/product-aliases.service';
@@ -22,15 +30,17 @@ import {
 } from '../accounting/general-ledger.service';
 import { GlAccountCode } from '../accounting/gl-accounts.constant';
 import { GlJournalSourceType } from '../accounting/entities/gl-journal-entry.entity';
-import { splitTenders } from '../accounting/tender-split.util';
+import { splitTenders, extractBadDebt } from '../accounting/tender-split.util';
 import { ProductCostService } from '../purchase-orders/product-cost.service';
 import {
   IngestPosCheckoutDto,
   PosCheckoutItemDto,
 } from './dto/ingest-pos-checkout.dto';
+import { normalizeReceiptVerificationCode } from './receipt-verification-code';
 import { SettleReceivableDto } from './dto/settle-receivable.dto';
 import { PosCheckoutQuoteResponseDto } from './dto/pos-checkout-quote-response.dto';
 import { ListPosCheckoutsQueryDto } from './dto/list-pos-checkouts-query.dto';
+import { FindReturnSourceQueryDto } from './dto/find-return-source-query.dto';
 import { SearchPosCustomersQueryDto } from './dto/search-pos-customers-query.dto';
 import { PosCustomerSearchResponseDto } from './dto/pos-customer-search-response.dto';
 import {
@@ -63,6 +73,20 @@ import {
   PosSuspendedCart,
   PosSuspendedCartStatus,
 } from './entities/pos-suspended-cart.entity';
+
+// Folio-scoped settlement dedupe window. HOTEL/hospitality folios accrue
+// duplicate settlement checkouts when an operator re-taps "Confirm", a page
+// reloads mid-settle, or a second device settles the same room — each mints a
+// fresh checkout that the board sums, inflating the room's recorded revenue
+// (prod: Room 405 settled the 14,000 balance 3x in 50s → ETB 45,500 for a
+// 17,500 stay). The client idempotencyKey can't be trusted to stop it: it
+// embeds a volatile amount and is only stamped on one code path, so the same
+// logical payment arrives under three different keys. We instead anchor on the
+// SERVER-SIDE invariant — at most one non-voided SALE settlement per
+// (branch, backendFolioId, amount) inside this window. Distinct amounts (a
+// 3,500 deposit vs a 14,000 balance) still post; two genuinely-separate equal
+// instalments on one folio spaced further apart than this window still post.
+const FOLIO_SETTLE_DEDUPE_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
 
 const POS_PROMO_CODES = {
   SAVE5: {
@@ -245,12 +269,23 @@ export class PosCheckoutService {
       );
     }
 
-    await this.assertScope(dto.branchId, undefined);
+    const branch = await this.assertScope(dto.branchId, undefined);
+    const branchTaxRate = this.resolveBranchTaxRate(branch);
     const resolvedLines = await Promise.all(
-      dto.items.map((item) => this.resolveQuoteLine(dto.branchId, item)),
+      dto.items.map((item) =>
+        this.resolveQuoteLine(dto.branchId, item, branchTaxRate),
+      ),
     );
 
-    return this.buildQuoteResponse(dto, resolvedLines);
+    const branchTaxInclusive =
+      branchTaxRate > 0 && Boolean(branch?.taxInclusive);
+
+    return {
+      ...this.buildQuoteResponse(dto, resolvedLines, branchTaxInclusive),
+      branchTaxEnabled: branchTaxRate > 0,
+      branchTaxRate,
+      branchTaxInclusive,
+    };
   }
 
   async findAll(
@@ -427,64 +462,150 @@ export class PosCheckoutService {
     this.assertPricingSummary(dto.pricingSummary, dto);
 
     const existing = await this.findExistingForIdempotency(dto);
-    if (existing) {
+    if (existing && existing.status !== PosCheckoutStatus.FAILED) {
       return this.toResponse(existing);
     }
+    // A FAILED row is a captured sale the device still holds and keeps retrying.
+    // Echoing the old failure straight back made every retry a no-op: the row
+    // stayed dead on the server (excluded from revenue, since reports read
+    // PROCESSED only) while the device's "not yet synced" banner never cleared —
+    // it re-posted, got FAILED back, and showed the warning again, forever.
+    // Re-run processing on the SAME row instead. Safe against double-counting:
+    // all stock/ledger work happens inside the processing transaction below, so a
+    // row that reached FAILED committed no movements to repeat, and reusing its
+    // id updates that row rather than minting a second revenue record.
+    const retryOf = existing ?? null;
 
-    await this.assertScope(dto.branchId, dto.partnerCredentialId);
+    const branch = await this.assertScope(
+      dto.branchId,
+      dto.partnerCredentialId,
+    );
+    // RETAIL stock semantics differ from every other format (see the stock loop
+    // below): a branch inventory row — not the global product.manageStock flag —
+    // is what says "this branch counts units of this SKU", and a sale must never
+    // be destroyed by an oversell. Resolved once, here, so the loop stays cheap.
+    const isRetailBranch = this.isRetailServiceFormat(branch);
+
+    // Tax is deliberately NOT enforced here. assertPricingSummary already checks
+    // the client's own summary against its own totals, which is the right guard;
+    // asserting taxAmount against the CURRENT branch rate would permanently
+    // strand every offline receipt captured before the owner flipped the VAT
+    // toggle and synced after it — real money stuck in the outbox with no way
+    // through. Warn so a genuine client/server drift is visible in the logs, and
+    // revisit enforcement only once the rate carries an effective-from date.
+    this.warnOnTaxDrift(branch, dto);
 
     // Authoritative sale time — independent of the device clock (server time for
     // online captures; clamped device time for offline captures).
     const occurredAt = this.resolveOccurredAt(dto.occurredAt, dto.captureState);
 
-    const checkout = await this.posCheckoutsRepository.save(
-      this.posCheckoutsRepository.create({
-        branchId: dto.branchId,
-        partnerCredentialId: dto.partnerCredentialId ?? null,
-        externalCheckoutId: this.normalizeOptionalString(
-          dto.externalCheckoutId,
-        ),
-        idempotencyKey: this.normalizeOptionalString(dto.idempotencyKey),
-        registerId: this.normalizeOptionalString(dto.registerId),
-        registerSessionId: dto.registerSessionId ?? null,
-        suspendedCartId: dto.suspendedCartId ?? null,
-        receiptNumber: this.normalizeOptionalString(dto.receiptNumber),
-        transactionType: dto.transactionType,
-        status: PosCheckoutStatus.RECEIVED,
-        currency: dto.currency.trim().toUpperCase(),
-        subtotal: dto.subtotal,
-        discountAmount: dto.discountAmount ?? 0,
-        taxAmount: dto.taxAmount ?? 0,
-        total: dto.total,
-        paidAmount: dto.paidAmount ?? 0,
-        changeDue: dto.changeDue ?? 0,
-        tipAmount: dto.tipAmount ?? 0,
-        itemCount: dto.items.length,
-        occurredAt,
-        cashierUserId: dto.cashierUserId ?? actor.id ?? null,
-        cashierName: this.normalizeOptionalString(dto.cashierName),
-        note: this.normalizeOptionalString(dto.note),
-        failureReason: null,
-        metadata: this.buildCheckoutMetadata(dto),
-        tenders: dto.tenders ?? [],
-        items: dto.items.map((item) => ({
-          ...item,
-          aliasValue: this.normalizeOptionalString(item.aliasValue),
-          sku: this.normalizeOptionalString(item.sku),
-          title: this.normalizeOptionalString(item.title),
-          note: this.normalizeOptionalString(item.note),
-          reasonCode: this.normalizeOptionalString(item.reasonCode),
-          discountAmount: item.discountAmount ?? 0,
-          taxRate: item.taxRate ?? null,
-          taxableBase: item.taxableBase ?? null,
-          taxAmount: item.taxAmount ?? 0,
-          metadata: this.normalizeCheckoutItemMetadata(item.metadata),
-        })),
-      }),
-    );
+    const checkoutDraft = this.posCheckoutsRepository.create({
+      branchId: dto.branchId,
+      partnerCredentialId: dto.partnerCredentialId ?? null,
+      externalCheckoutId: this.normalizeOptionalString(dto.externalCheckoutId),
+      idempotencyKey: this.normalizeOptionalString(dto.idempotencyKey),
+      registerId: this.normalizeOptionalString(dto.registerId),
+      registerSessionId: dto.registerSessionId ?? null,
+      suspendedCartId: dto.suspendedCartId ?? null,
+      receiptNumber: this.normalizeOptionalString(dto.receiptNumber),
+      verificationCode: this.normalizeVerificationCode(dto.verificationCode),
+      transactionType: dto.transactionType,
+      status: PosCheckoutStatus.RECEIVED,
+      currency: dto.currency.trim().toUpperCase(),
+      subtotal: dto.subtotal,
+      discountAmount: dto.discountAmount ?? 0,
+      taxAmount: dto.taxAmount ?? 0,
+      total: dto.total,
+      paidAmount: dto.paidAmount ?? 0,
+      changeDue: dto.changeDue ?? 0,
+      tipAmount: dto.tipAmount ?? 0,
+      itemCount: dto.items.length,
+      occurredAt,
+      cashierUserId: dto.cashierUserId ?? actor.id ?? null,
+      cashierName: this.normalizeOptionalString(dto.cashierName),
+      note: this.normalizeOptionalString(dto.note),
+      failureReason: null,
+      metadata: this.buildCheckoutMetadata(dto),
+      tenders: dto.tenders ?? [],
+      items: dto.items.map((item) => ({
+        ...item,
+        aliasValue: this.normalizeOptionalString(item.aliasValue),
+        sku: this.normalizeOptionalString(item.sku),
+        title: this.normalizeOptionalString(item.title),
+        note: this.normalizeOptionalString(item.note),
+        reasonCode: this.normalizeOptionalString(item.reasonCode),
+        discountAmount: item.discountAmount ?? 0,
+        taxRate: item.taxRate ?? null,
+        taxableBase: item.taxableBase ?? null,
+        taxAmount: item.taxAmount ?? 0,
+        metadata: this.normalizeCheckoutItemMetadata(item.metadata),
+      })),
+    });
+
+    // On a retry, carry the dead row's identity so the save below UPDATES it
+    // instead of inserting a second row for the same sale.
+    if (retryOf) {
+      checkoutDraft.id = retryOf.id;
+      checkoutDraft.createdAt = retryOf.createdAt;
+    }
+
+    // Folio-scoped settlement dedupe (see FOLIO_SETTLE_DEDUPE_WINDOW_MS). When
+    // this checkout settles a hospitality folio, serialise concurrent taps on
+    // the same folio with a transaction-scoped advisory lock, re-check for a
+    // recent non-voided settlement of the same amount, and collapse a duplicate
+    // to the original instead of minting a second revenue row.
+    const folioLockId = this.resolveFolioSettlementLockId(dto);
+    let checkout: PosCheckout;
+    if (folioLockId != null) {
+      const result = await this.dataSource.transaction(async (manager) => {
+        await manager.query('SELECT pg_advisory_xact_lock($1::int, $2::int)', [
+          dto.branchId,
+          folioLockId,
+        ]);
+        const duplicate =
+          (await this.findExistingFolioSettlement(dto, manager)) ??
+          (await this.findFullyPaidFolioDuplicate(dto, manager));
+        if (duplicate) {
+          return { duplicate };
+        }
+        const saved = await manager
+          .getRepository(PosCheckout)
+          .save(checkoutDraft);
+        return { saved };
+      });
+      if (result.duplicate) {
+        this.logger.warn(
+          `Collapsed duplicate folio settlement for branch ${dto.branchId} folio ${folioLockId} (amount ${dto.total}) onto checkout ${result.duplicate.id}`,
+        );
+        return this.toResponse(result.duplicate);
+      }
+      checkout = result.saved!;
+    } else {
+      checkout = await this.posCheckoutsRepository.save(checkoutDraft);
+    }
+
+    // Lines that carried no catalogue product, collected as the stock loop runs
+    // and stamped onto the checkout so an unmapped barcode stays traceable.
+    const nonInventoryLines: ReturnType<
+      PosCheckoutService['describeNonInventoryLine']
+    >[] = [];
+    // RETAIL lines that asked for more units than the branch had on hand. The
+    // sale still completes (see the clamp in the stock loop); the shortfall is
+    // recorded here so an oversell is visible rather than silently swallowed.
+    const oversoldLines: ReturnType<
+      PosCheckoutService['describeOversoldLine']
+    >[] = [];
+    // Lines that named a variant which does not exist on the product. Recorded
+    // rather than thrown: the sale is still real money.
+    const unresolvedVariantLines: ReturnType<
+      PosCheckoutService['describeNonInventoryLine']
+    >[] = [];
 
     try {
       await this.dataSource.transaction(async (manager) => {
+        nonInventoryLines.length = 0;
+        oversoldLines.length = 0;
+        unresolvedVariantLines.length = 0;
         const registerSession = await this.assertRegisterSession(dto, manager);
         const suspendedCart = await this.assertSuspendedCart(
           dto,
@@ -492,7 +613,11 @@ export class PosCheckoutService {
           manager,
         );
 
-        await this.assertReturnSourceSaleProcessed(dto, manager);
+        await this.assertReturnSourceSaleProcessed(
+          dto,
+          manager,
+          isRetailBranch,
+        );
 
         if (registerSession && !checkout.registerId) {
           checkout.registerId = registerSession.registerId;
@@ -510,6 +635,19 @@ export class PosCheckoutService {
             dto.partnerCredentialId,
             item,
           );
+          // No product behind this line — it is an ad-hoc charge, not stock.
+          // Packaging charges, manager discounts, late fees, printing presets and
+          // typed custom quote lines all post with productId null, and a line
+          // that isn't in the catalogue has no inventory to move. Rejecting the
+          // whole sale over one of them lost the money for every OTHER line on
+          // the receipt too (prod: a 295k rent collection, packaging-charge cafe
+          // sales, printing jobs). Record the line, skip the movement, keep the
+          // sale. Non-catalogue lines are listed on the checkout metadata so a
+          // genuinely mis-mapped barcode is still traceable rather than silent.
+          if (productId == null) {
+            nonInventoryLines.push(this.describeNonInventoryLine(item));
+            continue;
+          }
           const quantity = Math.abs(item.quantity);
           const movementType =
             dto.transactionType === PosCheckoutTransactionType.SALE
@@ -524,27 +662,41 @@ export class PosCheckoutService {
           // cascades to the product-level rollup. Runs BEFORE the manageStock
           // gate because variant products are stock-tracked at the variant level
           // even when the product-level manageStock flag is false.
-          const variantId = await this.resolveCheckoutVariantId(
-            productId,
-            item.metadata,
-            manager,
-          );
+          const { variantId, requested: variantRequested } =
+            await this.resolveCheckoutVariantId(productId, item, manager);
+          if (variantRequested && !variantId) {
+            // The line named a variant that does not exist on this product.
+            // Falling through to the product path would decrement the wrong
+            // thing (or, on manageStock=false, nothing) without a word.
+            unresolvedVariantLines.push(this.describeNonInventoryLine(item));
+          }
           if (variantId) {
-            await this.variantInventoryService.recordVariantMovement(
-              {
-                branchId: dto.branchId,
-                productId,
-                variantId,
-                quantityDelta,
-                movementType,
-                sourceType: 'POS_CHECKOUT',
-                sourceReferenceId: checkout.id,
-                actorUserId: actor.id ?? null,
-                note: this.buildMovementNote(dto, item),
-                occurredAt,
-              },
-              manager,
-            );
+            const variantDelta = isRetailBranch
+              ? await this.clampRetailSaleDelta(
+                  quantityDelta,
+                  () =>
+                    this.readVariantOnHand(dto.branchId, variantId, manager),
+                  item,
+                  oversoldLines,
+                )
+              : quantityDelta;
+            if (variantDelta !== 0) {
+              await this.variantInventoryService.recordVariantMovement(
+                {
+                  branchId: dto.branchId,
+                  productId,
+                  variantId,
+                  quantityDelta: variantDelta,
+                  movementType,
+                  sourceType: 'POS_CHECKOUT',
+                  sourceReferenceId: checkout.id,
+                  actorUserId: actor.id ?? null,
+                  note: this.buildMovementNote(dto, item),
+                  occurredAt,
+                },
+                manager,
+              );
+            }
             continue;
           }
 
@@ -553,12 +705,49 @@ export class PosCheckoutService {
           // treated as always-available (e.g. made-to-order food items) and
           // must not be deducted — doing so would immediately fail because they
           // have no inventory record (onHand starts at 0).
+          //
+          // RETAIL is the exception, and deliberately so: manageStock is a
+          // GLOBAL product flag, but whether a branch counts units of a SKU is a
+          // PER-BRANCH fact, and the branch inventory row is exactly that fact.
+          // Every RETAIL branch in production carries inventory rows on products
+          // whose manageStock is false (they are created by PO receipts, counts
+          // and adjustments, none of which set the flag), so the flag alone left
+          // on-hand rising forever and never falling on a sale. Gated on RETAIL
+          // so QSR/CAFETERIA keep "made-to-order, always available" — those
+          // formats hold inventory rows for ingredients and must not decrement.
           const product = await manager.getRepository(Product).findOne({
             where: { id: productId },
             select: ['id', 'manageStock'],
           });
 
-          if (!product?.manageStock) {
+          let shouldDecrement = Boolean(product?.manageStock);
+          if (!shouldDecrement && isRetailBranch) {
+            shouldDecrement = await manager
+              .getRepository(BranchInventory)
+              .exists({ where: { branchId: dto.branchId, productId } });
+          }
+
+          if (!shouldDecrement) {
+            continue;
+          }
+
+          // Clamp instead of throwing. recordMovement rejects a movement that
+          // would drive on-hand negative, and that rejection aborts the whole
+          // checkout transaction — the sale lands FAILED and drops out of every
+          // report (production already holds such rows). Losing the revenue is
+          // strictly worse than an imprecise stock count, so an oversold RETAIL
+          // line records what it could and reports the shortfall on the
+          // checkout instead of failing the sale.
+          const appliedDelta = isRetailBranch
+            ? await this.clampRetailSaleDelta(
+                quantityDelta,
+                () => this.readProductOnHand(dto.branchId, productId, manager),
+                item,
+                oversoldLines,
+              )
+            : quantityDelta;
+
+          if (appliedDelta === 0) {
             continue;
           }
 
@@ -567,7 +756,7 @@ export class PosCheckoutService {
               branchId: dto.branchId,
               productId,
               movementType,
-              quantityDelta,
+              quantityDelta: appliedDelta,
               sourceType: 'POS_CHECKOUT',
               sourceReferenceId: checkout.id,
               actorUserId: actor.id ?? null,
@@ -581,6 +770,16 @@ export class PosCheckoutService {
         checkout.status = PosCheckoutStatus.PROCESSED;
         checkout.processedAt = new Date();
         checkout.failureReason = null;
+        checkout.metadata = {
+          ...(checkout.metadata ?? {}),
+          nonInventoryLines: nonInventoryLines.length
+            ? nonInventoryLines
+            : null,
+          oversoldLines: oversoldLines.length ? oversoldLines : null,
+          unresolvedVariantLines: unresolvedVariantLines.length
+            ? unresolvedVariantLines
+            : null,
+        };
 
         if (suspendedCart) {
           suspendedCart.status = PosSuspendedCartStatus.RESUMED;
@@ -679,68 +878,241 @@ export class PosCheckoutService {
    * variantKey), scoped to the line's product. Returns null for non-variant
    * lines so checkout falls through to the product-level decrement.
    */
+  /**
+   * The variant a checkout line moves stock for.
+   *
+   * Reads the top-level `variantId`/`variantKey` first and falls back to the
+   * same keys inside `metadata` — the only channel that existed before the DTO
+   * carried them, and still the only one an offline outbox record captured on an
+   * older client will have. The fallback is permanent, not transitional.
+   *
+   * Returns `{ variantId, requested }`: `requested` says the line NAMED a
+   * variant, so a null id means the reference did not resolve. That case used to
+   * fall through to the product-level path in silence, where a manageStock=false
+   * product then decremented nothing at all — a typo'd key lost the movement
+   * with no trace. The caller records it on the checkout instead.
+   */
   private async resolveCheckoutVariantId(
     productId: number,
-    metadata: Record<string, any> | null | undefined,
+    item: PosCheckoutItemDto,
     manager: EntityManager,
-  ): Promise<number | null> {
-    if (!metadata || typeof metadata !== 'object') {
-      return null;
+  ): Promise<{ variantId: number | null; requested: boolean }> {
+    const metadata =
+      item.metadata && typeof item.metadata === 'object' ? item.metadata : {};
+    const rawId = Number(item.variantId ?? metadata.variantId);
+    const rawKeySource = item.variantKey ?? metadata.variantKey;
+    const variantKey =
+      typeof rawKeySource === 'string' ? rawKeySource.trim() : '';
+    const requested = (Number.isFinite(rawId) && rawId > 0) || !!variantKey;
+
+    if (!requested) {
+      return { variantId: null, requested: false };
     }
+
     const repo = manager.getRepository(ProductVariant);
-    const rawId = Number(metadata.variantId);
     if (Number.isFinite(rawId) && rawId > 0) {
       const byId = await repo.findOne({ where: { id: rawId, productId } });
       if (byId) {
-        return byId.id;
+        return { variantId: byId.id, requested: true };
       }
     }
-    const variantKey =
-      typeof metadata.variantKey === 'string' ? metadata.variantKey.trim() : '';
     if (variantKey) {
       const byKey = await repo.findOne({ where: { productId, variantKey } });
       if (byKey) {
-        return byKey.id;
+        return { variantId: byKey.id, requested: true };
       }
     }
-    return null;
+    return { variantId: null, requested: true };
   }
 
+  /**
+   * The catalogue product a checkout line moves stock for, or `null` when the
+   * line has none.
+   *
+   * This used to throw — and because the throw happened inside the processing
+   * transaction, one non-catalogue line failed the ENTIRE checkout: the row was
+   * saved FAILED, excluded from every report (they read PROCESSED only), and the
+   * capturing device retried it forever behind a "not yet synced" warning.
+   *
+   * A sale that already happened cannot be un-happened by refusing to record it,
+   * so a missing product now costs only its stock movement, never the receipt.
+   * Callers record what was skipped (see describeNonInventoryLine).
+   */
   private async resolveProductId(
     branchId: number,
     partnerCredentialId: number | undefined,
     item: PosCheckoutItemDto,
-  ): Promise<number> {
+  ): Promise<number | null> {
     if (item.productId != null) {
       return item.productId;
     }
 
     if (!item.aliasType || !item.aliasValue?.trim()) {
-      throw new BadRequestException(
-        'Each POS checkout item requires productId or aliasType plus aliasValue',
-      );
+      return null;
     }
 
-    const productId =
-      await this.productAliasesService.resolveProductIdForBranch(
-        branchId,
-        partnerCredentialId,
-        item.aliasType,
-        item.aliasValue,
-      );
+    return this.productAliasesService.resolveProductIdForBranch(
+      branchId,
+      partnerCredentialId,
+      item.aliasType,
+      item.aliasValue,
+    );
+  }
 
-    if (productId == null) {
-      throw new BadRequestException(
-        `No product alias matched ${item.aliasType}:${item.aliasValue}`,
-      );
+  /** Audit descriptor for a line that carried no catalogue product. */
+  private describeNonInventoryLine(item: PosCheckoutItemDto): {
+    lineId: string | null;
+    sku: string | null;
+    title: string | null;
+    alias: string | null;
+    quantity: number;
+  } {
+    return {
+      lineId: this.normalizeOptionalString(item.lineId),
+      sku: this.normalizeOptionalString(item.sku),
+      title: this.normalizeOptionalString(item.title),
+      alias:
+        item.aliasType && item.aliasValue?.trim()
+          ? `${item.aliasType}:${item.aliasValue.trim()}`
+          : null,
+      quantity: Number(item.quantity ?? 0),
+    };
+  }
+
+  /** True only for the RETAIL service format (see the stock loop in ingest). */
+  private isRetailServiceFormat(branch: Branch | null | undefined): boolean {
+    return (
+      String(branch?.serviceFormat ?? '')
+        .trim()
+        .toUpperCase() === 'RETAIL'
+    );
+  }
+
+  private describeOversoldLine(
+    item: PosCheckoutItemDto,
+    requested: number,
+    applied: number,
+  ): {
+    lineId: string | null;
+    sku: string | null;
+    title: string | null;
+    requested: number;
+    applied: number;
+    shortfall: number;
+  } {
+    return {
+      lineId: this.normalizeOptionalString(item.lineId),
+      sku: this.normalizeOptionalString(item.sku),
+      title: this.normalizeOptionalString(item.title),
+      requested,
+      applied,
+      shortfall: this.roundMoney(requested - applied),
+    };
+  }
+
+  private async readProductOnHand(
+    branchId: number,
+    productId: number,
+    manager: EntityManager,
+  ): Promise<number> {
+    const row = await manager.getRepository(BranchInventory).findOne({
+      where: { branchId, productId },
+      select: ['id', 'quantityOnHand'],
+    });
+    return Number(row?.quantityOnHand ?? 0);
+  }
+
+  private async readVariantOnHand(
+    branchId: number,
+    variantId: number,
+    manager: EntityManager,
+  ): Promise<number> {
+    const row = await manager.getRepository(BranchInventoryVariant).findOne({
+      where: { branchId, variantId },
+      select: ['id', 'quantityOnHand'],
+    });
+    return Number(row?.quantityOnHand ?? 0);
+  }
+
+  /**
+   * Clamp a RETAIL sale movement to the units the branch actually holds.
+   *
+   * Returning 0 means "record no movement" — the caller skips the ledger write
+   * entirely. Anything clamped (including to 0) is appended to `oversoldLines`
+   * so the shortfall reaches the checkout metadata. Returns positive deltas
+   * (returns/refunds) untouched: those add stock back and can never go negative.
+   */
+  private async clampRetailSaleDelta(
+    quantityDelta: number,
+    readOnHand: () => Promise<number>,
+    item: PosCheckoutItemDto,
+    oversoldLines: ReturnType<PosCheckoutService['describeOversoldLine']>[],
+  ): Promise<number> {
+    if (quantityDelta >= 0) {
+      return quantityDelta;
     }
 
-    return productId;
+    const requested = Math.abs(quantityDelta);
+    const onHand = await readOnHand();
+    const applied = Math.min(requested, Math.max(0, onHand));
+
+    if (applied < requested) {
+      oversoldLines.push(this.describeOversoldLine(item, requested, applied));
+    }
+
+    return -applied;
+  }
+
+  /**
+   * The branch's tax (VAT) rate as a fraction, or 0 when the branch does not
+   * charge tax. Owners set both from Seller HQ; every service format honours
+   * it. Kept as a fraction end to end — the percent form exists only in the
+   * Seller HQ input.
+   */
+  private resolveBranchTaxRate(branch: Branch | undefined | null): number {
+    if (!branch?.taxEnabled) {
+      return 0;
+    }
+    const rate = Number(branch.taxRate ?? 0);
+    return Number.isFinite(rate) && rate > 0 ? rate : 0;
+  }
+
+  /**
+   * Splits a discounted line amount into its ex-tax base and its tax.
+   *
+   * Exclusive: the amount IS the base and the tax sits on top.
+   * Inclusive: the amount is the gross the customer pays and the tax comes out
+   * of it.
+   *
+   * Either way the caller's `base + tax` is what the line is worth, so every
+   * downstream total, ledger split and receipt row is written once.
+   */
+  private splitLineTax(
+    discounted: number,
+    rate: number,
+    inclusive: boolean,
+  ): { taxableBase: number; taxAmount: number } {
+    const r = Number(rate) || 0;
+    if (r <= 0) {
+      return { taxableBase: discounted, taxAmount: 0 };
+    }
+    if (!inclusive) {
+      return {
+        taxableBase: discounted,
+        taxAmount: this.roundMoney(discounted * r),
+      };
+    }
+    const taxableBase = this.roundMoney(discounted / (1 + r));
+    return {
+      taxableBase,
+      taxAmount: this.roundMoney(discounted - taxableBase),
+    };
   }
 
   private async resolveQuoteLine(
     branchId: number,
     item: QuotePosCheckoutItemDto,
+    branchTaxRate = 0,
   ): Promise<ResolvedQuoteLineInput> {
     let resolvedProductId = item.productId ?? null;
 
@@ -788,7 +1160,17 @@ export class PosCheckoutService {
         this.normalizeOptionalString(item.currency ?? product?.currency) ??
         'ETB',
       metadata: this.normalizeCheckoutItemMetadata(item.metadata),
-      taxRate: Number(item.taxRate ?? 0),
+      // Branch VAT policy is the ONLY answer, in both directions. A branch that
+      // charges no tax quotes no tax — this used to fall through to whatever
+      // rate the caller sent, which let any client put a tax line on the bill of
+      // a branch that is not registered to charge one, and price it itself.
+      //
+      // Deliberately not `item.taxRate ?? branchTaxRate`: the register stamps an
+      // explicit chargeRate: 0 on every product line, so a nullish fallback
+      // would never fire. Not `Math.max` either — that would let a client
+      // inflate the tax. Per-product rates are not honoured here; see
+      // product.taxRate, which nothing reads.
+      taxRate: branchTaxRate,
       unitPrice,
       quantity: Math.max(0.000001, Number(item.quantity || 0)),
     };
@@ -797,7 +1179,7 @@ export class PosCheckoutService {
   private async assertScope(
     branchId: number,
     partnerCredentialId?: number,
-  ): Promise<void> {
+  ): Promise<Branch> {
     const branch = await this.branchesRepository.findOne({
       where: { id: branchId },
     });
@@ -806,7 +1188,7 @@ export class PosCheckoutService {
     }
 
     if (partnerCredentialId == null) {
-      return;
+      return branch;
     }
 
     const partnerCredential = await this.partnerCredentialsRepository.findOne({
@@ -831,6 +1213,7 @@ export class PosCheckoutService {
   private buildQuoteResponse(
     dto: QuotePosCheckoutDto,
     resolvedLines: ResolvedQuoteLineInput[],
+    taxInclusive = false,
   ): PosCheckoutQuoteResponseDto {
     const customerPricingRule = this.getCustomerPricingRule(
       dto.customerProfile?.customerType,
@@ -930,19 +1313,25 @@ export class PosCheckoutService {
         }
       }
 
-      const taxableBase = this.roundMoney(
+      const discounted = this.roundMoney(
         line.grossSubtotal -
           line.customerTypeDiscount -
           line.automaticDiscount -
           promoCodeDiscount,
       );
-      const taxAmount = this.roundMoney(taxableBase * line.taxRate);
+      const { taxableBase, taxAmount } = this.splitLineTax(
+        discounted,
+        line.taxRate,
+        taxInclusive,
+      );
 
       return {
         ...line,
         promoCodeDiscount,
         taxableBase,
         taxAmount,
+        // Holds in BOTH modes: exclusive adds the tax to the base, inclusive
+        // splits the same discounted amount into base + tax.
         total: this.roundMoney(taxableBase + taxAmount),
       };
     });
@@ -950,10 +1339,17 @@ export class PosCheckoutService {
     const discountTotal = this.roundMoney(
       customerTypeDiscount + automaticDiscount + promoCodeDiscountTotal,
     );
-    const netSubtotal = this.roundMoney(subtotal - discountTotal);
     const taxTotal = this.roundMoney(
       lines.reduce((sum, line) => sum + line.taxAmount, 0),
     );
+    // netSubtotal is always the EX-TAX figure, so `grandTotal = netSubtotal +
+    // taxTotal` holds in both modes. Exclusive: the discounted subtotal is
+    // already ex-tax and the grand total rises by the tax. Inclusive: the
+    // discounted subtotal is the gross the customer pays, so the tax comes out
+    // of it and the grand total is unchanged by enabling tax at all.
+    const netSubtotal = taxInclusive
+      ? this.roundMoney(subtotal - discountTotal - taxTotal)
+      : this.roundMoney(subtotal - discountTotal);
     const grandTotal = this.roundMoney(netSubtotal + taxTotal);
 
     return {
@@ -1185,6 +1581,134 @@ export class PosCheckoutService {
     return null;
   }
 
+  /**
+   * Returns a stable int4 lock key (the backend folio id) when this checkout is
+   * a hospitality-folio settlement that should be guarded against duplicates,
+   * or null when the folio-scoped dedupe does not apply (no folio link, not a
+   * forward SALE, or a folio id outside int4 range for the advisory lock).
+   */
+  private resolveFolioSettlementLockId(
+    dto: IngestPosCheckoutDto,
+  ): number | null {
+    if (dto.transactionType !== PosCheckoutTransactionType.SALE) {
+      return null;
+    }
+    const raw = dto.metadata?.backendFolioId;
+    if (raw == null) {
+      return null;
+    }
+    const folioId = Number(raw);
+    // pg_advisory_xact_lock(int, int) needs an int4; folio ids are well within
+    // that range. Skip the lock (and the dedupe) for anything that isn't.
+    if (!Number.isInteger(folioId) || folioId <= 0 || folioId > 2147483647) {
+      return null;
+    }
+    return folioId;
+  }
+
+  /**
+   * Finds a recent non-voided, non-failed SALE settlement for the same folio and
+   * the same amount inside the dedupe window — i.e. a duplicate of the incoming
+   * settlement. Must run inside the advisory-locked transaction so concurrent
+   * taps on one folio are serialised. Anchors on metadata.backendFolioId (which
+   * the client stamps reliably), never on the fragile client idempotencyKey.
+   */
+  private async findExistingFolioSettlement(
+    dto: IngestPosCheckoutDto,
+    manager: EntityManager,
+  ): Promise<PosCheckout | null> {
+    const folioId = this.resolveFolioSettlementLockId(dto);
+    if (folioId == null) {
+      return null;
+    }
+    const amountCents = Math.round(Number(dto.total || 0) * 100);
+    const windowStart = new Date(Date.now() - FOLIO_SETTLE_DEDUPE_WINDOW_MS);
+    return manager
+      .getRepository(PosCheckout)
+      .createQueryBuilder('c')
+      .where('c.branchId = :branchId', { branchId: dto.branchId })
+      .andWhere("(c.metadata->>'backendFolioId') = :folioId", {
+        folioId: String(folioId),
+      })
+      .andWhere('c.transactionType = :tt', {
+        tt: PosCheckoutTransactionType.SALE,
+      })
+      .andWhere('c.status NOT IN (:...excluded)', {
+        excluded: [PosCheckoutStatus.VOIDED, PosCheckoutStatus.FAILED],
+      })
+      .andWhere('ROUND(c.total * 100) = :amountCents', { amountCents })
+      .andWhere('c.createdAt >= :windowStart', { windowStart })
+      .orderBy('c.id', 'ASC')
+      .getOne();
+  }
+
+  /**
+   * Guards against re-collecting a hospitality folio that is ALREADY fully paid.
+   * The same-amount/10-minute window in findExistingFolioSettlement only catches
+   * rapid identical re-taps; it cannot catch a second, DIFFERENT-amount collection
+   * landing minutes-to-hours later because a stale board showed the room "unpaid"
+   * (prod: Blue Hotel folios collected well past their stay total). The client
+   * stamps `metadata.folioGrandTotal` — the folio's full billed total at settle
+   * time — so once the folio's cumulative non-voided SALE collection meets that
+   * total, an incoming settlement is a duplicate and is collapsed onto the original.
+   *
+   * Additive and safe:
+   *  - Skipped when the client omits folioGrandTotal (legacy bundles) — behaviour
+   *    is then exactly as before.
+   *  - Legitimate instalments accrue toward the total and are allowed while the
+   *    folio still owes; ONLY collection beyond the full total is collapsed.
+   *  - Never drops revenue without a target: collapses only when a prior settlement
+   *    exists to fold the duplicate onto.
+   * Anchors on metadata.backendFolioId; must run inside the advisory-locked txn.
+   */
+  private async findFullyPaidFolioDuplicate(
+    dto: IngestPosCheckoutDto,
+    manager: EntityManager,
+  ): Promise<PosCheckout | null> {
+    const folioId = this.resolveFolioSettlementLockId(dto);
+    if (folioId == null) {
+      return null;
+    }
+    const declaredTotal = Number(dto.metadata?.folioGrandTotal);
+    if (!Number.isFinite(declaredTotal) || declaredTotal <= 0) {
+      return null;
+    }
+    // Common predicate: this folio's non-voided forward SALEs.
+    const scopeFolioSales = <T>(
+      qb: SelectQueryBuilder<T>,
+    ): SelectQueryBuilder<T> =>
+      qb
+        .where('c.branchId = :branchId', { branchId: dto.branchId })
+        .andWhere("(c.metadata->>'backendFolioId') = :folioId", {
+          folioId: String(folioId),
+        })
+        .andWhere('c.transactionType = :tt', {
+          tt: PosCheckoutTransactionType.SALE,
+        })
+        .andWhere('c.status NOT IN (:...excluded)', {
+          excluded: [PosCheckoutStatus.VOIDED, PosCheckoutStatus.FAILED],
+        });
+
+    const sumRow = await scopeFolioSales(
+      manager
+        .getRepository(PosCheckout)
+        .createQueryBuilder('c')
+        .select('COALESCE(SUM(c.paidAmount), 0)', 'collected'),
+    ).getRawOne<{ collected: string }>();
+    const priorCollected = Number(sumRow?.collected ?? 0);
+    // 1-unit tolerance for rounding. Still owes → legitimate instalment, allow it.
+    if (priorCollected < declaredTotal - 1) {
+      return null;
+    }
+    // Folio already fully collected — this is a re-collection. Collapse onto the
+    // earliest prior settlement (a target always exists when priorCollected > 0).
+    return scopeFolioSales(
+      manager.getRepository(PosCheckout).createQueryBuilder('c'),
+    )
+      .orderBy('c.id', 'ASC')
+      .getOne();
+  }
+
   private async findOneById(id: number): Promise<PosCheckout> {
     const checkout = await this.posCheckoutsRepository.findOne({
       where: { id },
@@ -1209,9 +1733,9 @@ export class PosCheckoutService {
   }
 
   private resolveRevenueAccount(account?: string): GlAccountCode {
-    return account === 'RENTAL_REVENUE'
-      ? GlAccountCode.RENTAL_REVENUE
-      : GlAccountCode.SERVICE_REVENUE;
+    if (account === 'RENTAL_REVENUE') return GlAccountCode.RENTAL_REVENUE;
+    if (account === 'TUITION_REVENUE') return GlAccountCode.TUITION_REVENUE;
+    return GlAccountCode.SERVICE_REVENUE;
   }
 
   /**
@@ -1259,11 +1783,19 @@ export class PosCheckoutService {
       return;
     }
 
-    // Split the retained tender between cash on hand and clearing (cards/mobile/
-    // bank), reconciled to netCash, via the shared helper.
-    const { cash, clearing } = splitTenders(
+    // A BAD_DEBT tender is a manager-approved write-off, not money received: it
+    // must NOT inflate cash or tender-clearing. Pull it out (capped at netCash so
+    // the split target never goes negative), split only the collectable tenders
+    // against the reduced target, and post the write-off to BAD_DEBT_EXPENSE
+    // below. Debits stay reconciled to `total`: cash + clearing now sum to
+    // (netCash − badDebt), and the badDebt + receivable legs restore the rest.
+    const { badDebt: rawBadDebt, collected } = extractBadDebt(
       Array.isArray(checkout.tenders) ? checkout.tenders : [],
-      netCash,
+    );
+    const badDebt = Math.min(rawBadDebt, netCash);
+    const { cash, clearing } = splitTenders(
+      collected,
+      this.round2(netCash - badDebt),
     );
 
     const debits: JournalLineInput[] = [];
@@ -1273,6 +1805,11 @@ export class PosCheckoutService {
       debits.push({
         accountCode: GlAccountCode.TENDER_CLEARING,
         debit: clearing,
+      });
+    if (badDebt > 0)
+      debits.push({
+        accountCode: GlAccountCode.BAD_DEBT_EXPENSE,
+        debit: badDebt,
       });
     if (receivable > 0)
       debits.push({
@@ -1487,6 +2024,7 @@ export class PosCheckoutService {
   private async assertReturnSourceSaleProcessed(
     dto: IngestPosCheckoutDto,
     manager: EntityManager,
+    isRetailBranch = false,
   ): Promise<void> {
     if (dto.transactionType !== PosCheckoutTransactionType.RETURN) {
       return;
@@ -1512,6 +2050,20 @@ export class PosCheckoutService {
     });
 
     if (processedSourceSale) {
+      // Server-side over-return guard. Previously the only protection against
+      // returning more than was sold (or returning an item twice) was client-side,
+      // computed from the device's LOCAL return history — so a receipt fetched from
+      // the server on a device with no local history could be over-refunded. Reject
+      // any return whose per-line quantity, plus everything already returned against
+      // this source, exceeds what was sold. Additive: only lines that exist on the
+      // source sale (have a lineId and a sold qty) are checked, so it can never
+      // block a return that worked before.
+      await this.assertReturnQuantitiesWithinRemaining(
+        dto,
+        processedSourceSale,
+        checkoutRepository,
+        isRetailBranch,
+      );
       return;
     }
 
@@ -1532,6 +2084,205 @@ export class PosCheckoutService {
     throw new BadRequestException(
       `Return source sale ${sourceReceiptNumber} is ${sourceSale.status} and cannot be returned until it is PROCESSED`,
     );
+  }
+
+  // Sum already-returned quantity per source line, across every PROCESSED RETURN
+  // that references this source receipt number. Returns are linked via
+  // metadata.returnContext.sourceReceiptNumber and carry the source line's lineId.
+  private async sumReturnedByLineId(
+    repo: Repository<PosCheckout>,
+    branchId: number,
+    sourceReceiptNumber: string,
+    allowFallbackKey = false,
+  ): Promise<Map<string, { quantity: number; amount: number }>> {
+    const priorReturns = await repo
+      .createQueryBuilder('c')
+      .where('c.branchId = :branchId', { branchId })
+      .andWhere('c.transactionType = :t', {
+        t: PosCheckoutTransactionType.RETURN,
+      })
+      .andWhere('c.status = :s', { s: PosCheckoutStatus.PROCESSED })
+      .andWhere(
+        "c.metadata -> 'returnContext' ->> 'sourceReceiptNumber' = :rn",
+        { rn: sourceReceiptNumber },
+      )
+      .getMany();
+
+    const returnedByLineId = new Map<
+      string,
+      { quantity: number; amount: number }
+    >();
+    for (const ret of priorReturns) {
+      for (const item of ret.items ?? []) {
+        const key = this.resolveReturnLineKey(item, allowFallbackKey);
+        if (!key) continue;
+        const current = returnedByLineId.get(key) ?? { quantity: 0, amount: 0 };
+        returnedByLineId.set(key, {
+          quantity: current.quantity + Number(item.quantity || 0),
+          amount: current.amount + Number(item.lineTotal || 0),
+        });
+      }
+    }
+    return returnedByLineId;
+  }
+
+  /**
+   * Key a return line against the sale line it came from.
+   *
+   * `lineId` is the anchor when present. RETAIL additionally falls back to
+   * (productId, sku): three separate holes in this guard all came from lines
+   * with no lineId — a legacy sale disabled the check entirely, and individual
+   * unanchored lines were skipped — which is exactly the shape of receipt a
+   * refund gets run against twice.
+   */
+  private resolveReturnLineKey(
+    item: { lineId?: string; productId?: number; sku?: string },
+    allowFallback: boolean,
+  ): string | null {
+    const lineId = this.normalizeOptionalString(item.lineId);
+    if (lineId) {
+      return lineId;
+    }
+    if (!allowFallback) {
+      return null;
+    }
+    const productId = Number(item.productId);
+    const sku = this.normalizeOptionalString(item.sku);
+    if (Number.isFinite(productId) && productId > 0) {
+      return `p:${productId}`;
+    }
+    return sku ? `s:${sku.toUpperCase()}` : null;
+  }
+
+  private async assertReturnQuantitiesWithinRemaining(
+    dto: IngestPosCheckoutDto,
+    sourceSale: PosCheckout,
+    repo: Repository<PosCheckout>,
+    isRetailBranch = false,
+  ): Promise<void> {
+    const soldByLineId = new Map<string, number>();
+    const soldAmountByLineId = new Map<string, number>();
+    for (const item of sourceSale.items ?? []) {
+      const key = this.resolveReturnLineKey(item, isRetailBranch);
+      if (!key) continue;
+      soldByLineId.set(
+        key,
+        (soldByLineId.get(key) ?? 0) + Number(item.quantity || 0),
+      );
+      soldAmountByLineId.set(
+        key,
+        (soldAmountByLineId.get(key) ?? 0) + Number(item.lineTotal || 0),
+      );
+    }
+    if (soldByLineId.size === 0) {
+      return; // legacy sale with nothing to anchor the check on
+    }
+
+    const returnedByLineId = await this.sumReturnedByLineId(
+      repo,
+      sourceSale.branchId,
+      sourceSale.receiptNumber,
+      isRetailBranch,
+    );
+
+    for (const item of dto.items ?? []) {
+      const key = this.resolveReturnLineKey(item, isRetailBranch);
+      const requested = Number(item.quantity || 0);
+      if (requested <= 0) continue;
+
+      if (!key) {
+        if (!isRetailBranch) continue;
+        throw new BadRequestException(
+          `Return line "${item.title ?? item.sku ?? 'unknown'}" cannot be matched to the original sale.`,
+        );
+      }
+
+      const sold = soldByLineId.get(key) ?? 0;
+      if (sold <= 0) {
+        // A line that is not on the source sale is not returnable. Skipping it
+        // (the old behaviour) let a refund be issued for goods this receipt
+        // never sold.
+        if (!isRetailBranch) continue;
+        throw new BadRequestException(
+          `Return for "${item.title ?? key}" does not appear on sale ${sourceSale.receiptNumber}.`,
+        );
+      }
+
+      const already = returnedByLineId.get(key)?.quantity ?? 0;
+      if (already + requested > sold + 1e-6) {
+        const remaining = Math.max(0, sold - already);
+        throw new BadRequestException(
+          `Return for "${item.title ?? key}" exceeds the remaining returnable quantity ` +
+            `(sold ${sold}, already returned ${already}, only ${remaining} left).`,
+        );
+      }
+
+      // Quantities alone let a discounted unit be refunded at full price. Cap
+      // the money too. RETAIL-only so no other format's returns start failing.
+      if (isRetailBranch) {
+        const soldAmount = soldAmountByLineId.get(key) ?? 0;
+        const alreadyAmount = returnedByLineId.get(key)?.amount ?? 0;
+        const requestedAmount = Number(item.lineTotal || 0);
+        if (
+          soldAmount > 0 &&
+          alreadyAmount + requestedAmount > soldAmount + 0.01
+        ) {
+          const remainingAmount = Math.max(0, soldAmount - alreadyAmount);
+          throw new BadRequestException(
+            `Refund for "${item.title ?? key}" exceeds what was paid for it ` +
+              `(sold ${soldAmount}, already refunded ${alreadyAmount}, only ${remainingAmount} left).`,
+          );
+        }
+      }
+    }
+  }
+
+  // Look up a PROCESSED source SALE by receipt number for the returns workflow,
+  // together with how much of each line has already been returned — so a cashier
+  // can pull up and return a sale that is no longer in the device's local cache
+  // (older than the recent window, or rung up on another device).
+  async findReturnSource(query: FindReturnSourceQueryDto): Promise<{
+    found: boolean;
+    sale: ReturnType<PosCheckoutService['toListItem']> | null;
+    returnedByLineId: Record<string, number>;
+  }> {
+    const receiptNumber = this.normalizeOptionalString(query.receiptNumber);
+    if (!receiptNumber) {
+      throw new BadRequestException('receiptNumber is required');
+    }
+
+    const sale = await this.posCheckoutsRepository.findOne({
+      where: {
+        branchId: query.branchId,
+        receiptNumber,
+        transactionType: PosCheckoutTransactionType.SALE,
+        status: PosCheckoutStatus.PROCESSED,
+      },
+      order: { id: 'DESC' },
+    });
+
+    if (!sale) {
+      return { found: false, sale: null, returnedByLineId: {} };
+    }
+
+    const returnedMap = await this.sumReturnedByLineId(
+      this.posCheckoutsRepository,
+      query.branchId,
+      receiptNumber,
+    );
+
+    return {
+      found: true,
+      sale: this.toListItem(sale),
+      // The wire contract stays lineId -> quantity; the amount tally is used
+      // server-side only (the refund-value cap in the over-return guard).
+      returnedByLineId: Object.fromEntries(
+        Array.from(returnedMap.entries()).map(([key, value]) => [
+          key,
+          value.quantity,
+        ]),
+      ),
+    };
   }
 
   private normalizeCheckoutItemMetadata(
@@ -1561,6 +2312,36 @@ export class PosCheckoutService {
     return Object.keys(normalized).some((key) => normalized[key] != null)
       ? normalized
       : null;
+  }
+
+  /**
+   * Logs when an ingested checkout's taxAmount does not look like the branch's
+   * current VAT rate. Never throws — see the call site for why enforcement here
+   * would strand offline receipts. Tax is exclusive, so for a taxed sale
+   * `total = net × (1 + rate)` and the VAT is `total − total / (1 + rate)`.
+   */
+  private warnOnTaxDrift(
+    branch: Branch | undefined | null,
+    dto: IngestPosCheckoutDto,
+  ): void {
+    const rate = this.resolveBranchTaxRate(branch);
+    if (rate <= 0) {
+      return;
+    }
+    const total = Number(dto.total);
+    if (!Number.isFinite(total) || total === 0) {
+      return;
+    }
+    const expected = this.roundMoney(total - total / (1 + rate));
+    const actual = this.roundMoney(Number(dto.taxAmount ?? 0));
+    if (Math.abs(expected - actual) > 0.5) {
+      this.logger.warn(
+        `Branch ${dto.branchId} charges VAT at ${rate} but checkout ` +
+          `${dto.externalCheckoutId ?? dto.idempotencyKey ?? '(no ref)'} ` +
+          `reported taxAmount ${actual} on total ${total} (expected ~${expected}). ` +
+          `Accepted as sent — the device is authoritative for captured money.`,
+      );
+    }
   }
 
   private assertPricingSummary(
@@ -1641,6 +2422,13 @@ export class PosCheckoutService {
     return trimmed ? trimmed : null;
   }
 
+  // A malformed token is dropped rather than rejected: the sale is the thing
+  // that matters, and a receipt that simply can't be verified beats a checkout
+  // that 400s at the counter over its QR.
+  private normalizeVerificationCode(value?: string | null): string | null {
+    return normalizeReceiptVerificationCode(value);
+  }
+
   private roundMoney(value: number): number {
     return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
   }
@@ -1659,6 +2447,169 @@ export class PosCheckoutService {
 
   private extractLoyaltySummary(checkout: PosCheckout) {
     return checkout.metadata?.loyaltySummary ?? null;
+  }
+
+  /**
+   * One checkout → its taxable base and tax, split per rate, for the VAT return.
+   *
+   * The CHECKOUT HEADER is the authority for how much tax was charged, and
+   * `items[]` only decides how that figure is split across rates. That order
+   * matters: the register carries a RETAIL manual discount as a negative cart
+   * line, and `buildCheckoutSyncPayload` strips that line from `items[]`
+   * (the ingest DTO rejects `unitPrice < 0`) while keeping the discount in the
+   * header's `discountAmount`/`taxAmount`/`total`. Summing the lines therefore
+   * counts the tax on money the customer never paid — a 1,000 basket with a 100
+   * discount at 15% reports 150 tax on a 1,000 base instead of 135 on 900, so
+   * the return over-declares by `rate × discount` on every discounted sale.
+   *
+   * Any gap between the lines and the header is pushed back onto the rate
+   * buckets in proportion to their base, so the bucket totals always add up to
+   * the header exactly. With a single rate — every branch today, since the rate
+   * is one branch-level scalar — the whole residual lands on that rate and the
+   * split is exact, not approximate.
+   *
+   * A checkout with no line detail at all (legacy ingests) derives a single
+   * bucket from the header. Untaxed turnover still contributes its base at rate
+   * 0, so `taxableBase + zeroRatedBase` is the period's net turnover whether or
+   * not the branch charges tax.
+   */
+  private splitCheckoutForTaxSummary(checkout: PosCheckout): Array<{
+    rate: number;
+    taxableBase: number;
+    taxAmount: number;
+    lineCount: number;
+  }> {
+    const headerTax = this.roundMoney(Number(checkout.taxAmount ?? 0) || 0);
+    const headerTotal = this.roundMoney(Number(checkout.total ?? 0) || 0);
+    const headerBase = this.roundMoney(headerTotal - headerTax);
+
+    const lines = Array.isArray(checkout.items) ? checkout.items : [];
+    const byRate = new Map<
+      number,
+      {
+        rate: number;
+        taxableBase: number;
+        taxAmount: number;
+        lineCount: number;
+      }
+    >();
+    let lineTax = 0;
+    let lineBase = 0;
+
+    for (const line of lines) {
+      const lineTaxAmount = Number(line.taxAmount ?? 0) || 0;
+      const lineTaxableBase =
+        Number(
+          line.taxableBase ?? Number(line.lineTotal ?? 0) - lineTaxAmount,
+        ) || 0;
+      // `taxRate` is stored as null when the client did not stamp one, and
+      // `Number(null)` is 0 — a finite value that would silently bucket a taxed
+      // legacy line as zero-rated. Only an explicitly numeric rate is trusted.
+      const rawRate =
+        line.taxRate === null || line.taxRate === undefined
+          ? Number.NaN
+          : Number(line.taxRate);
+      const rate = Number.isFinite(rawRate)
+        ? rawRate
+        : lineTaxableBase > 0
+          ? lineTaxAmount / lineTaxableBase
+          : 0;
+      const rateKey = Math.round(rate * 10000) / 10000;
+
+      if (!byRate.has(rateKey)) {
+        byRate.set(rateKey, {
+          rate: rateKey,
+          taxableBase: 0,
+          taxAmount: 0,
+          lineCount: 0,
+        });
+      }
+      const bucket = byRate.get(rateKey);
+      bucket.taxableBase = this.roundMoney(
+        bucket.taxableBase + lineTaxableBase,
+      );
+      bucket.taxAmount = this.roundMoney(bucket.taxAmount + lineTaxAmount);
+      bucket.lineCount += 1;
+      lineBase = this.roundMoney(lineBase + lineTaxableBase);
+      lineTax = this.roundMoney(lineTax + lineTaxAmount);
+    }
+
+    const contributions = Array.from(byRate.values());
+    if (!contributions.length) {
+      if (headerTax === 0 && headerBase === 0) {
+        return [];
+      }
+      const derived = headerBase > 0 ? headerTax / headerBase : 0;
+      return [
+        {
+          rate: Math.round(derived * 10000) / 10000,
+          taxableBase: headerBase,
+          taxAmount: headerTax,
+          lineCount: 1,
+        },
+      ];
+    }
+
+    this.reconcileTaxContributions(
+      contributions,
+      this.roundMoney(headerBase - lineBase),
+      this.roundMoney(headerTax - lineTax),
+    );
+    return contributions;
+  }
+
+  /**
+   * Spreads a base/tax residual across rate buckets in proportion to their
+   * base, so the buckets sum to the checkout header to the cent. Charges it to
+   * the taxed buckets when there are any — a discount that was taxed came off a
+   * taxed line, never off a zero-rated one — and the last bucket absorbs the
+   * rounding remainder so nothing is lost or invented.
+   */
+  private reconcileTaxContributions(
+    contributions: Array<{
+      rate: number;
+      taxableBase: number;
+      taxAmount: number;
+    }>,
+    baseResidual: number,
+    taxResidual: number,
+  ): void {
+    if (Math.abs(baseResidual) < 0.005 && Math.abs(taxResidual) < 0.005) {
+      return;
+    }
+    const taxed = contributions.filter((bucket) => bucket.rate > 0);
+    const targets = taxed.length ? taxed : contributions;
+    const totalWeight = targets.reduce(
+      (sum, bucket) => sum + Math.abs(bucket.taxableBase),
+      0,
+    );
+
+    if (totalWeight <= 0) {
+      targets[0].taxableBase = this.roundMoney(
+        targets[0].taxableBase + baseResidual,
+      );
+      targets[0].taxAmount = this.roundMoney(
+        targets[0].taxAmount + taxResidual,
+      );
+      return;
+    }
+
+    let allocatedBase = 0;
+    let allocatedTax = 0;
+    targets.forEach((bucket, index) => {
+      const last = index === targets.length - 1;
+      const weight = Math.abs(bucket.taxableBase) / totalWeight;
+      const baseShare = last
+        ? this.roundMoney(baseResidual - allocatedBase)
+        : this.roundMoney(baseResidual * weight);
+      const taxShare = last
+        ? this.roundMoney(taxResidual - allocatedTax)
+        : this.roundMoney(taxResidual * weight);
+      bucket.taxableBase = this.roundMoney(bucket.taxableBase + baseShare);
+      bucket.taxAmount = this.roundMoney(bucket.taxAmount + taxShare);
+      allocatedBase = this.roundMoney(allocatedBase + baseShare);
+      allocatedTax = this.roundMoney(allocatedTax + taxShare);
+    });
   }
 
   async getTaxSummary(
@@ -1744,23 +2695,8 @@ export class PosCheckoutService {
       }
       const shift = shiftMap.get(shiftKey);
 
-      const lines = Array.isArray(checkout.items) ? checkout.items : [];
-      let lineLevelTax = false;
-
-      for (const line of lines) {
-        const lineTaxAmount = Number(line.taxAmount ?? 0) || 0;
-        const lineTaxableBase =
-          Number(
-            line.taxableBase ?? Number(line.lineTotal ?? 0) - lineTaxAmount,
-          ) || 0;
-        const rawRate = line.taxRate;
-        const rate = Number.isFinite(Number(rawRate))
-          ? Number(rawRate)
-          : lineTaxableBase > 0
-            ? lineTaxAmount / lineTaxableBase
-            : 0;
-        const rateKey = Math.round(rate * 10000) / 10000;
-
+      for (const part of this.splitCheckoutForTaxSummary(checkout)) {
+        const rateKey = part.rate;
         if (!rateMap.has(rateKey)) {
           rateMap.set(rateKey, {
             rate: rateKey,
@@ -1770,53 +2706,19 @@ export class PosCheckoutService {
           });
         }
         const bucket = rateMap.get(rateKey);
-        bucket.taxableBase += sign * lineTaxableBase;
-        bucket.taxAmount += sign * lineTaxAmount;
-        bucket.lineCount += 1;
+        bucket.taxableBase += sign * part.taxableBase;
+        bucket.taxAmount += sign * part.taxAmount;
+        bucket.lineCount += part.lineCount;
 
-        taxAmount += sign * lineTaxAmount;
+        taxAmount += sign * part.taxAmount;
         if (rateKey === 0) {
-          zeroRatedBase += sign * lineTaxableBase;
-          shift.zeroRatedBase += sign * lineTaxableBase;
+          zeroRatedBase += sign * part.taxableBase;
+          shift.zeroRatedBase += sign * part.taxableBase;
         } else {
-          taxableBase += sign * lineTaxableBase;
-          shift.taxableBase += sign * lineTaxableBase;
+          taxableBase += sign * part.taxableBase;
+          shift.taxableBase += sign * part.taxableBase;
         }
-        shift.taxAmount += sign * lineTaxAmount;
-        lineLevelTax = true;
-      }
-
-      // Fall back to checkout-level totals when lines were not recorded
-      // (e.g. legacy ingests).
-      if (!lineLevelTax) {
-        const checkoutTax = Number(checkout.taxAmount ?? 0) || 0;
-        if (checkoutTax !== 0) {
-          const checkoutTotal = Number(checkout.total ?? 0) || 0;
-          const checkoutTaxable = Math.max(0, checkoutTotal - checkoutTax);
-          const rate = checkoutTaxable > 0 ? checkoutTax / checkoutTaxable : 0;
-          const rateKey = Math.round(rate * 10000) / 10000;
-          if (!rateMap.has(rateKey)) {
-            rateMap.set(rateKey, {
-              rate: rateKey,
-              taxableBase: 0,
-              taxAmount: 0,
-              lineCount: 0,
-            });
-          }
-          const bucket = rateMap.get(rateKey);
-          bucket.taxableBase += sign * checkoutTaxable;
-          bucket.taxAmount += sign * checkoutTax;
-          bucket.lineCount += 1;
-          taxAmount += sign * checkoutTax;
-          if (rateKey === 0) {
-            zeroRatedBase += sign * checkoutTaxable;
-            shift.zeroRatedBase += sign * checkoutTaxable;
-          } else {
-            taxableBase += sign * checkoutTaxable;
-            shift.taxableBase += sign * checkoutTaxable;
-          }
-          shift.taxAmount += sign * checkoutTax;
-        }
+        shift.taxAmount += sign * part.taxAmount;
       }
     }
 
@@ -1877,6 +2779,7 @@ export class PosCheckoutService {
       registerSessionId: checkout.registerSessionId ?? null,
       suspendedCartId: checkout.suspendedCartId ?? null,
       receiptNumber: checkout.receiptNumber ?? null,
+      verificationCode: checkout.verificationCode ?? null,
       transactionType: checkout.transactionType,
       status: checkout.status,
       currency: checkout.currency,
@@ -1911,6 +2814,7 @@ export class PosCheckoutService {
         metadata: tender.metadata ?? null,
       })),
       items: (checkout.items ?? []).map((item) => ({
+        lineId: item.lineId ?? null,
         productId: item.productId ?? null,
         aliasType: item.aliasType ?? null,
         aliasValue: item.aliasValue ?? null,
@@ -2103,12 +3007,123 @@ export class PosCheckoutService {
       );
     }
 
+    // Voiding backed the money out of the books but left the stock gone: the
+    // units were decremented at sale time and nothing ever put them back, so a
+    // voided RETAIL sale permanently understated on-hand. Reverse the movements
+    // too. Best-effort and RETAIL-scoped — no other format decremented for a
+    // manageStock=false product, so none has anything to give back.
+    if (checkout.status === PosCheckoutStatus.PROCESSED) {
+      try {
+        await this.restoreVoidedCheckoutStock(
+          checkout,
+          voidedByUserId,
+          voidedAt,
+        );
+      } catch (error) {
+        this.logger.warn(
+          `Stock restore failed for void of checkout ${checkoutId}: ${
+            error instanceof Error ? error.message : error
+          }`,
+        );
+      }
+    }
+
     return {
       id: checkoutId,
       status: 'VOIDED',
       voidedAt: voidedAt.toISOString(),
       voidedByUserId,
     };
+  }
+
+  /**
+   * Put back the units a now-voided RETAIL sale took off the shelf.
+   *
+   * Mirrors the ingest stock loop: variant lines go back through the variant
+   * ledger, product lines through the product ledger, and a line the sale never
+   * moved (no product, or a product the branch does not stock) is skipped. A
+   * RETURN is not reversed — its movement added stock, and voiding a refund is
+   * out of scope here.
+   */
+  private async restoreVoidedCheckoutStock(
+    checkout: PosCheckout,
+    actorUserId: number,
+    occurredAt: Date,
+  ): Promise<void> {
+    if (checkout.transactionType !== PosCheckoutTransactionType.SALE) {
+      return;
+    }
+
+    const branch = await this.branchesRepository.findOne({
+      where: { id: checkout.branchId },
+    });
+    if (!this.isRetailServiceFormat(branch)) {
+      return;
+    }
+
+    const items = Array.isArray(checkout.items) ? checkout.items : [];
+    if (!items.length) {
+      return;
+    }
+
+    await this.dataSource.transaction(async (manager) => {
+      for (const item of items as PosCheckoutItemDto[]) {
+        const productId = Number(item.productId);
+        if (!Number.isFinite(productId) || productId <= 0) {
+          continue;
+        }
+        const quantity = Math.abs(Number(item.quantity ?? 0));
+        if (!quantity) {
+          continue;
+        }
+
+        const { variantId } = await this.resolveCheckoutVariantId(
+          productId,
+          item,
+          manager,
+        );
+        if (variantId) {
+          await this.variantInventoryService.recordVariantMovement(
+            {
+              branchId: checkout.branchId,
+              productId,
+              variantId,
+              quantityDelta: quantity,
+              movementType: StockMovementType.ADJUSTMENT,
+              sourceType: 'POS_CHECKOUT_VOID',
+              sourceReferenceId: checkout.id,
+              actorUserId,
+              note: `Void of checkout ${checkout.receiptNumber ?? checkout.id}`,
+              occurredAt,
+            },
+            manager,
+          );
+          continue;
+        }
+
+        const hasInventoryRow = await manager
+          .getRepository(BranchInventory)
+          .exists({ where: { branchId: checkout.branchId, productId } });
+        if (!hasInventoryRow) {
+          continue;
+        }
+
+        await this.inventoryLedgerService.recordMovement(
+          {
+            branchId: checkout.branchId,
+            productId,
+            movementType: StockMovementType.ADJUSTMENT,
+            quantityDelta: quantity,
+            sourceType: 'POS_CHECKOUT_VOID',
+            sourceReferenceId: checkout.id,
+            actorUserId,
+            note: `Void of checkout ${checkout.receiptNumber ?? checkout.id}`,
+            occurredAt,
+          },
+          manager,
+        );
+      }
+    });
   }
 
   private toResponse(checkout: PosCheckout): PosCheckoutResponseDto {
