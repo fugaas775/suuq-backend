@@ -30,6 +30,7 @@ export enum SelfServePosWorkspaceServiceFormat {
   PROPERTY_RENTAL = 'PROPERTY_RENTAL',
   BARBER = 'BARBER',
   PRINTING_PRESS = 'PRINTING_PRESS',
+  SCHOOL = 'SCHOOL',
 }
 
 export class CreatePosWorkspaceDto {

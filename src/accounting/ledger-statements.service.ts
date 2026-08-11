@@ -66,6 +66,7 @@ const EXPENSE_ACCOUNTS: ReadonlyArray<[GlAccountCode, string]> = [
 const REVENUE_ACCOUNTS = [
   GlAccountCode.SERVICE_REVENUE,
   GlAccountCode.RENTAL_REVENUE,
+  GlAccountCode.TUITION_REVENUE,
 ];
 const COGS_ACCOUNTS = [GlAccountCode.COGS, GlAccountCode.COST_OF_SERVICES];
 

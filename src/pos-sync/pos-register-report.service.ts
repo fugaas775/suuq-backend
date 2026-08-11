@@ -487,6 +487,9 @@ export class PosRegisterReportService {
         return 'Settled chairs';
       case 'PROPERTY_RENTAL':
         return 'Settled units';
+      case 'SCHOOL':
+        // The settled unit is a student's fee folio, not the class it sits in.
+        return 'Settled student fees';
       default:
         return 'Settled units';
     }

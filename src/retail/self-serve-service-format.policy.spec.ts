@@ -21,6 +21,7 @@ const POS_S_SELF_SERVE_PICKER_FORMATS = [
   'PROPERTY_RENTAL',
   'BARBER',
   'PRINTING_PRESS',
+  'SCHOOL',
 ];
 
 describe('self-serve service format policy', () => {

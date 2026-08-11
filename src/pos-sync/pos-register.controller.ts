@@ -117,7 +117,16 @@ export class PosRegisterController {
 
   @Post('suspended-carts')
   @UseGuards(JwtAuthGuard, RolesGuard, RetailModulesGuard, PosBranchAccessGuard)
-  @RequirePosPermissions('SUSPEND_SALE', 'OPEN_ROOM_FOLIO', 'VIEW_FOLIO_BOARD')
+  // ENROL_STUDENT is the SCHOOL fee-desk equivalent: a school operator holding
+  // only the school permissions holds none of the three above, and every
+  // student folio is created and re-saved through this route. OR-semantics, so
+  // this is additive for every other format.
+  @RequirePosPermissions(
+    'SUSPEND_SALE',
+    'OPEN_ROOM_FOLIO',
+    'VIEW_FOLIO_BOARD',
+    'ENROL_STUDENT',
+  )
   @Roles(
     UserRole.SUPER_ADMIN,
     UserRole.ADMIN,
@@ -136,7 +145,23 @@ export class PosRegisterController {
 
   @Patch('suspended-carts/:id')
   @UseGuards(JwtAuthGuard, RolesGuard, RetailModulesGuard, PosBranchAccessGuard)
-  @RequirePosPermissions('SUSPEND_SALE', 'OPEN_ROOM_FOLIO', 'VIEW_FOLIO_BOARD')
+  // ENROL_STUDENT is the SCHOOL fee-desk equivalent: a school operator holding
+  // only the school permissions holds none of the three above, and every
+  // student folio is created and re-saved through this route. OR-semantics, so
+  // this is additive for every other format.
+  //
+  // POST_FEE_CHARGE rides here too, and only here. SCHOOL edits a folio IN PLACE
+  // (the format is in the frontend's _editInPlace list), so posting next term's
+  // tuition is a PATCH of this row rather than a POST of a new one. Without it,
+  // granting a clerk POST_FEE_CHARGE alone renders the "Charge next term" button
+  // and then 403s the save — a permission that hands out a button it cannot use.
+  @RequirePosPermissions(
+    'SUSPEND_SALE',
+    'OPEN_ROOM_FOLIO',
+    'VIEW_FOLIO_BOARD',
+    'ENROL_STUDENT',
+    'POST_FEE_CHARGE',
+  )
   @Roles(
     UserRole.SUPER_ADMIN,
     UserRole.ADMIN,
@@ -159,6 +184,7 @@ export class PosRegisterController {
     'RESUME_SUSPENDED_SALE',
     'OPEN_ROOM_FOLIO',
     'VIEW_FOLIO_BOARD',
+    'VIEW_CLASS_BOARD',
   )
   @Roles(
     UserRole.SUPER_ADMIN,
@@ -206,6 +232,8 @@ export class PosRegisterController {
     'SETTLE_TABLE_FOLIO',
     'SETTLE_ROOM_FOLIO',
     'SUSPEND_SALE',
+    'SETTLE_FEE_PAYMENT',
+    'VOID_STUDENT_FOLIO',
   )
   @Roles(
     UserRole.SUPER_ADMIN,

@@ -1733,9 +1733,9 @@ export class PosCheckoutService {
   }
 
   private resolveRevenueAccount(account?: string): GlAccountCode {
-    return account === 'RENTAL_REVENUE'
-      ? GlAccountCode.RENTAL_REVENUE
-      : GlAccountCode.SERVICE_REVENUE;
+    if (account === 'RENTAL_REVENUE') return GlAccountCode.RENTAL_REVENUE;
+    if (account === 'TUITION_REVENUE') return GlAccountCode.TUITION_REVENUE;
+    return GlAccountCode.SERVICE_REVENUE;
   }
 
   /**

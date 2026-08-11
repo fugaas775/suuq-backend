@@ -78,6 +78,7 @@ describe('service format registry', () => {
     expect(serviceFormatLabel('PROPERTY_RENTAL')).toBe('Property Rental');
     expect(serviceFormatLabel('PRINTING_PRESS')).toBe('Printing Press');
     expect(serviceFormatLabel('FSR')).toBe('Restaurant');
+    expect(serviceFormatLabel('SCHOOL')).toBe('School');
   });
 
   it('resolves codes case-insensitively and falls back readably', () => {

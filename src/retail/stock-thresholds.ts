@@ -40,6 +40,11 @@ export const STOCK_THRESHOLD_DEFAULTS: Record<string, StockThresholdDefaults> =
     // SKU at 8 units read HEALTHY from the backend estimate (Home dashboard,
     // Network summary) and LOW_STOCK once Stock Health re-derived it.
     PRINTING_PRESS: { safetyStock: 6, reorderPoint: 12, parLevel: 24 },
+    // A school's stock is uniforms, exercise books and stationery — ordinary
+    // goods on a retail-shaped cadence, not the deep consumable cover a print
+    // shop needs. Same numbers as RETAIL, stated explicitly rather than left to
+    // FALLBACK so the frontend mirror has something to match.
+    SCHOOL: { safetyStock: 3, reorderPoint: 6, parLevel: 12 },
   };
 
 export const FALLBACK_STOCK_THRESHOLDS: StockThresholdDefaults = {

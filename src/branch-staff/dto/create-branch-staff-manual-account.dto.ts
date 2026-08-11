@@ -50,6 +50,16 @@ export enum PosRegisterPermission {
   VOID_PROPERTY_BOOKING = 'VOID_PROPERTY_BOOKING',
   TRANSFER_PROPERTY_UNIT = 'TRANSFER_PROPERTY_UNIT',
   SET_PROPERTY_MAINTENANCE = 'SET_PROPERTY_MAINTENANCE',
+  // School fee-desk permissions. This enum is the load-bearing allow-list — it
+  // is what `@IsEnum(PosRegisterPermission, { each: true })` below validates
+  // against, so a permission missing here can never reach a staff account or a
+  // token, however it is declared elsewhere.
+  VIEW_CLASS_BOARD = 'VIEW_CLASS_BOARD',
+  ENROL_STUDENT = 'ENROL_STUDENT',
+  POST_FEE_CHARGE = 'POST_FEE_CHARGE',
+  SETTLE_FEE_PAYMENT = 'SETTLE_FEE_PAYMENT',
+  VOID_STUDENT_FOLIO = 'VOID_STUDENT_FOLIO',
+  IMPORT_STUDENT_ROSTER = 'IMPORT_STUDENT_ROSTER',
 }
 
 function trimString(value: unknown) {

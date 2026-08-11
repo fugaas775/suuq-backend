@@ -44,6 +44,7 @@ export enum GlAccountCode {
   OWNER_EQUITY = '3000',
   SERVICE_REVENUE = '4000',
   RENTAL_REVENUE = '4100',
+  TUITION_REVENUE = '4200',
   COGS = '5000',
   COST_OF_SERVICES = '5100',
   EXPENSE_RENT = '6000',
@@ -198,6 +199,14 @@ export const GL_ACCOUNT_SEED: readonly GlAccountSeed[] = Object.freeze([
   {
     code: GlAccountCode.RENTAL_REVENUE,
     name: 'Rental revenue',
+    type: A.REVENUE,
+    normalBalance: C,
+    isCurrent: null,
+    contra: false,
+  },
+  {
+    code: GlAccountCode.TUITION_REVENUE,
+    name: 'Tuition & fee revenue',
     type: A.REVENUE,
     normalBalance: C,
     isCurrent: null,

@@ -75,6 +75,7 @@ describe('stock threshold defaults mirror the frontend SSOT', () => {
       BARBER: { safetyStock: 3, reorderPoint: 6, parLevel: 12 },
       PROPERTY_RENTAL: { safetyStock: 2, reorderPoint: 4, parLevel: 8 },
       PRINTING_PRESS: { safetyStock: 6, reorderPoint: 12, parLevel: 24 },
+      SCHOOL: { safetyStock: 3, reorderPoint: 6, parLevel: 12 },
     });
   });
 

@@ -171,6 +171,12 @@ export const SERVICE_FORMATS: readonly ServiceFormatDefinition[] = [
   def('PROPERTY_RENTAL', 'Property Rental', { selfServeCreatable: true }),
   def('PRINTING_PRESS', 'Printing Press', { selfServeCreatable: true }),
 
+  // ── Education ───────────────────────────────────────────────────────────
+  // Tuition billed per student, by class, on a term or monthly cycle. Not
+  // consumer-orderable for the same reason as the two above: fees are settled
+  // at the school office against a student's folio, not ordered from a shelf.
+  def('SCHOOL', 'School', { selfServeCreatable: true }),
+
   // ── Fallback ────────────────────────────────────────────────────────────
   def('OTHER', 'Other', { orderModes: ['TAKEAWAY'] }),
 ];
