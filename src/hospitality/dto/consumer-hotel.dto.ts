@@ -56,6 +56,26 @@ export class CreateConsumerReservationDto {
   @IsString()
   @MaxLength(32)
   guestPhone?: string;
+
+  /**
+   * Who is coming, when there is no account to read it from.
+   *
+   * A guest scanning the hotel's printed card has no user record, so the name
+   * and phone are the only way the desk can hold a room for anybody. Required
+   * for an anonymous booking and ignored for a signed-in one, which still reads
+   * the account.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(128)
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  guestName?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(160)
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  guestEmail?: string;
 }
 
 export class PayConsumerReservationDto {
