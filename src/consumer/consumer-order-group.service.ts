@@ -36,7 +36,14 @@ export interface ConsumerOrderGroupSellerView {
   branchName: string | null;
   orderId: number;
   orderNumber: string;
-  status: 'RECEIVED' | 'IN_PREPARATION' | 'COMPLETED' | 'CANCELLED';
+  status:
+    | 'RECEIVED'
+    | 'IN_PREPARATION'
+    | 'COMPLETED'
+    | 'DECLINED'
+    | 'CANCELLED';
+  /** Why this shop could not take its share. Present only on DECLINED. */
+  declineReason?: string;
   subtotal: number;
 }
 
@@ -361,12 +368,14 @@ export class ConsumerOrderGroupService {
     for (const item of items) {
       const orderId = Number(item.suspendedCartId);
       let status: ConsumerOrderGroupSellerView['status'] = 'RECEIVED';
+      let declineReason: string | undefined;
       try {
         const read = await this.consumerOrderService.getOrderStatus(
           orderId,
           item.orderRef,
         );
         status = read.status;
+        declineReason = read.declineReason;
       } catch {
         // The cart is gone from under us (a hard delete, a purge). Nothing
         // useful left to say about it, and one unreadable seller must not take
@@ -379,6 +388,7 @@ export class ConsumerOrderGroupService {
         orderId,
         orderNumber: item.orderRef,
         status,
+        ...(declineReason ? { declineReason } : {}),
         subtotal: Number(item.subtotal),
       });
     }

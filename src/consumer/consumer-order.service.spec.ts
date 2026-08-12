@@ -362,3 +362,68 @@ describe('ConsumerOrderService tells the shop', () => {
     expect(createAndDispatch).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * A refusal must read as a refusal.
+ *
+ * Settling and rejecting both leave the row DISCARDED, so for a long time every
+ * guest whose order was turned down — and briefly, every guest whose order was
+ * settled — read "This order was cancelled. Talk to the staff.", which is a
+ * journey to find out something the shop already knew.
+ */
+describe('ConsumerOrderService tells a guest which ending they got', () => {
+  function serviceReading(cart: Record<string, unknown>) {
+    return new ConsumerOrderService(
+      { suspendCart: jest.fn() } as never,
+      { findOne: jest.fn() } as never,
+      { findOne: jest.fn().mockResolvedValue(cart) } as never,
+      { createAndDispatch: jest.fn() } as never,
+    );
+  }
+
+  const discarded = (metadata: Record<string, unknown>) => ({
+    id: 4242,
+    branchId: 7,
+    status: PosSuspendedCartStatus.DISCARDED,
+    createdAt: new Date('2026-08-12T09:00:00Z'),
+    updatedAt: new Date('2026-08-12T10:00:00Z'),
+    metadata: { consumerSource: 'SUUQS', ...metadata },
+  });
+
+  it('reads a refusal as DECLINED, and passes on what the shop said', async () => {
+    const service = serviceReading(
+      discarded({
+        consumerDeclinedAt: '2026-08-12T10:00:00Z',
+        consumerDeclineReason: 'We close at 8pm — collect tomorrow?',
+      }),
+    );
+
+    const status = await service.getOrderStatus(4242);
+
+    expect(status.status).toBe('DECLINED');
+    expect(status.declineReason).toBe('We close at 8pm — collect tomorrow?');
+  });
+
+  it('lets a settled order win over a decline stamp', async () => {
+    // Both can be present if a row was refused and later reconciled; being paid
+    // and collected is the truth the guest cares about.
+    const service = serviceReading(
+      discarded({
+        consumerDeclinedAt: '2026-08-12T10:00:00Z',
+        consumerCompletedAt: '2026-08-12T10:05:00Z',
+      }),
+    );
+
+    expect((await service.getOrderStatus(4242)).status).toBe('COMPLETED');
+  });
+
+  it('still says CANCELLED when the row went away with no outcome recorded', async () => {
+    // A duplicate sweep or a stale cleanup is not the shop refusing anyone, so
+    // nothing stamps those and they keep exactly the meaning they had.
+    const service = serviceReading(discarded({}));
+
+    const status = await service.getOrderStatus(4242);
+    expect(status.status).toBe('CANCELLED');
+    expect(status.declineReason).toBeUndefined();
+  });
+});

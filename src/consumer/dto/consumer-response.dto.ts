@@ -29,11 +29,25 @@ export class ConsumerOrderStatusDto {
 
   /**
    * Lifecycle statuses:
-   *  - RECEIVED      — placed, pending staff acknowledgement
-   *  - IN_PREPARATION — staff has picked up the order (resumed the cart)
-   *  - CANCELLED     — order was discarded by staff
+   *  - RECEIVED       — placed, pending staff acknowledgement
+   *  - IN_PREPARATION — staff has picked up the request
+   *  - COMPLETED      — settled and collected
+   *  - DECLINED       — the shop turned it down, with a reason where given
+   *  - CANCELLED      — the row went away without either outcome recorded
+   *
+   * DECLINED is additive: every value that existed keeps its meaning, so a
+   * released client that has never heard of it simply never receives it for an
+   * order it placed before this shipped.
    */
-  status!: 'RECEIVED' | 'IN_PREPARATION' | 'COMPLETED' | 'CANCELLED';
+  status!:
+    | 'RECEIVED'
+    | 'IN_PREPARATION'
+    | 'COMPLETED'
+    | 'DECLINED'
+    | 'CANCELLED';
+
+  /** Why the shop could not take it. Present only on DECLINED, and only if given. */
+  declineReason?: string;
 
   placedAt!: string;
   updatedAt!: string;

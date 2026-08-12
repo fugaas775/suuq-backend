@@ -273,6 +273,9 @@ export class ConsumerOrderService {
       serviceFormat: cart.metadata?.serviceFormat ?? '',
       orderMode: cart.metadata?.orderMode ?? '',
       status,
+      ...(status === 'DECLINED' && cart.metadata?.consumerDeclineReason
+        ? { declineReason: String(cart.metadata.consumerDeclineReason) }
+        : {}),
       placedAt: cart.createdAt.toISOString(),
       updatedAt: cart.updatedAt.toISOString(),
     };
@@ -290,16 +293,28 @@ export class ConsumerOrderService {
   private mapCartStatus(
     cartStatus: PosSuspendedCartStatus,
     metadata?: Record<string, unknown> | null,
-  ): 'RECEIVED' | 'IN_PREPARATION' | 'COMPLETED' | 'CANCELLED' {
+  ): 'RECEIVED' | 'IN_PREPARATION' | 'COMPLETED' | 'DECLINED' | 'CANCELLED' {
     // Settling discards the row — that is how the order leaves the board — so a
     // guest who had just paid and collected was told "this order was cancelled".
     // The register stamps a settled order; a discard without that stamp really
     // was a rejection.
+    //
+    // Order matters: a declined row is also a discarded one, and a completed
+    // row must win over both.
     if (
       cartStatus === PosSuspendedCartStatus.DISCARDED &&
       metadata?.consumerCompletedAt
     ) {
       return 'COMPLETED';
+    }
+
+    // The shop turned it down. Saying so, rather than "cancelled", is the
+    // difference between a guest who knows and a guest who makes the journey.
+    if (
+      cartStatus === PosSuspendedCartStatus.DISCARDED &&
+      metadata?.consumerDeclinedAt
+    ) {
+      return 'DECLINED';
     }
 
     if (

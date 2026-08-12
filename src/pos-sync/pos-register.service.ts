@@ -407,6 +407,33 @@ export class PosRegisterService {
     cart.discardedAt = new Date();
     cart.discardedByUserId = actor.id ?? null;
     cart.discardedByName = actor.email ?? null;
+
+    // A guest is watching this row, and discarding is how BOTH outcomes look:
+    // a settled order and a refused one are the same DISCARDED row. Stamping
+    // which one it was in the SAME save is the point — the register used to
+    // PATCH a completion stamp just before the discard, fire-and-forget, and
+    // when that lost the race a guest who had just paid and collected was told
+    // their order was cancelled.
+    //
+    // Only an EXPLICIT outcome stamps anything. A consumer row is discarded from
+    // roughly thirty places — folio voids, check-outs, duplicate sweeps, stale
+    // cleanups — and none of those is the shop refusing a guest. Inferring
+    // "declined" from the absence of a completion would relabel every one of
+    // them, so silence keeps exactly the behaviour it had.
+    if (cart.metadata?.consumerSource === 'SUUQS' && dto.outcome) {
+      const now = new Date().toISOString();
+      const stamped = { ...(cart.metadata ?? {}) };
+      if (dto.outcome === 'COMPLETED') {
+        stamped.consumerCompletedAt = stamped.consumerCompletedAt ?? now;
+      } else if (!stamped.consumerCompletedAt) {
+        stamped.consumerDeclinedAt = stamped.consumerDeclinedAt ?? now;
+        if (dto.declineReason)
+          stamped.consumerDeclineReason = dto.declineReason;
+        stamped.consumerDeclinedByName = actor.email ?? null;
+      }
+      cart.metadata = stamped;
+    }
+
     return this.toSuspendedCartResponse(
       await this.suspendedCartsRepository.save(cart),
     );
