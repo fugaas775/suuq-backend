@@ -1,10 +1,14 @@
 import {
   ALL_SERVICE_FORMAT_CODES,
+  CATALOG_LISTABLE_SERVICE_FORMAT_CODES,
   CONSUMER_FORMAT_ORDER_MODES,
   CONSUMER_ORDERABLE_SERVICE_FORMAT_CODES,
   SELF_SERVE_SERVICE_FORMAT_CODES,
   SERVICE_FORMATS,
   getServiceFormat,
+  modeNeedsBrief,
+  modeNeedsCart,
+  modeNeedsTime,
   serviceFormatLabel,
 } from './service-formats';
 import { SellerBranchServiceFormat } from '../seller-workspace/dto/create-seller-branch-workspace.dto';
@@ -37,39 +41,72 @@ describe('service format registry', () => {
     );
   });
 
-  it('keeps the consumer-orderable set frozen to what shipped', () => {
-    // Consumer→POS ordering is frozen. Widening this set opens a new ordering
-    // surface, which this roadmap explicitly does not do. If this fails, someone
-    // gave a format order modes without meaning to.
-    expect([...CONSUMER_ORDERABLE_SERVICE_FORMAT_CODES]).toEqual([
-      'RETAIL',
-      'GROCERY',
-      'PHARMACY',
-      'BAKERY',
-      'BUTCHERY',
-      'ELECTRONICS',
-      'GAS_STATION',
-      'QSR',
-      'CAFETERIA',
-      'BARBER',
-      'SALON_SPA',
-      'LAUNDRY',
-      'HOTEL',
-      'OTHER',
-    ]);
+  it('lets a guest send every known format a request', () => {
+    // The point of the platform-wide inbox: a branch POS-S can create must not
+    // render a store page that dead-ends. If this fails, a format was added
+    // without deciding what a guest may ask it for.
+    expect([...CONSUMER_ORDERABLE_SERVICE_FORMAT_CODES].sort()).toEqual(
+      [...ALL_SERVICE_FORMAT_CODES].sort(),
+    );
   });
 
-  it('gives every orderable format at least one order mode, and none to the rest', () => {
+  it('gives every orderable format at least one order mode', () => {
     for (const format of SERVICE_FORMATS) {
-      if (format.consumerOrderable) {
-        expect(CONSUMER_FORMAT_ORDER_MODES[format.code].length).toBeGreaterThan(
-          0,
-        );
-      } else {
-        expect(CONSUMER_FORMAT_ORDER_MODES[format.code]).toBeUndefined();
-        expect(format.orderModes).toEqual([]);
-      }
+      expect(format.consumerOrderable).toBe(true);
+      expect(CONSUMER_FORMAT_ORDER_MODES[format.code].length).toBeGreaterThan(
+        0,
+      );
     }
+  });
+
+  it('keeps non-shoppable formats out of the cross-shop catalog', () => {
+    // A room, a rented unit, a print job and a school place are asked about,
+    // not bought from a grid. This set used to be inferred from "accepts orders
+    // in some mode other than BOOKING", which silently admitted the print shop
+    // and the school the moment they became orderable.
+    expect([...CATALOG_LISTABLE_SERVICE_FORMAT_CODES].sort()).toEqual(
+      [
+        'BAKERY',
+        'BARBER',
+        'BUTCHERY',
+        'CAFETERIA',
+        'ELECTRONICS',
+        'FSR',
+        'GAS_STATION',
+        'GROCERY',
+        'LAUNDRY',
+        'OTHER',
+        'PHARMACY',
+        'QSR',
+        'RETAIL',
+        'SALON_SPA',
+      ].sort(),
+    );
+    for (const code of [
+      'HOTEL',
+      'PROPERTY_RENTAL',
+      'PRINTING_PRESS',
+      'SCHOOL',
+    ]) {
+      expect(getServiceFormat(code)?.catalogListable).toBe(false);
+      expect(getServiceFormat(code)?.consumerOrderable).toBe(true);
+    }
+  });
+
+  it('knows which modes carry a basket, a brief and a time', () => {
+    // A barber's haircut is a priced shelf item, so an appointment still fills
+    // a cart. The two that do not are the ones that cannot be picked off a list.
+    expect(modeNeedsCart('TAKEAWAY')).toBe(true);
+    expect(modeNeedsCart('APPOINTMENT')).toBe(true);
+    expect(modeNeedsCart('SCHEDULED')).toBe(true);
+    expect(modeNeedsCart('QUOTE')).toBe(false);
+    expect(modeNeedsCart('BOOKING')).toBe(false);
+
+    expect(modeNeedsBrief('QUOTE')).toBe(true);
+    expect(modeNeedsBrief('TAKEAWAY')).toBe(false);
+
+    expect(modeNeedsTime('BOOKING')).toBe(true);
+    expect(modeNeedsTime('QUOTE')).toBe(false);
   });
 
   it('labels the formats that used to have none', () => {

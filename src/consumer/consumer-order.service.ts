@@ -17,6 +17,7 @@ import {
   PlaceConsumerOrderDto,
   ServiceFormatCode,
 } from './dto/place-consumer-order.dto';
+import { modeNeedsBrief } from '../common/service-formats';
 import {
   ConsumerOrderResponseDto,
   ConsumerOrderStatusDto,
@@ -86,6 +87,24 @@ export class ConsumerOrderService {
     if (branch.serviceFormat && branch.serviceFormat !== dto.serviceFormat) {
       throw new BadRequestException(
         `Branch ${dto.branchId} uses service format "${branch.serviceFormat}", not "${dto.serviceFormat}"`,
+      );
+    }
+
+    // 4. A quote is nothing without the brief.
+    //
+    // "Print something" is not a job a shop can price, so the description IS the
+    // order — the same argument `modeNeedsTime` makes about an appointment for
+    // no particular moment.
+    //
+    // Deliberately the ONLY rule added here, and only because QUOTE is a new
+    // mode no shipped client can already be sending. This method backs the
+    // frozen `/consumer/v1/orders` surface the Flutter app calls, so tightening
+    // it for an existing mode would reject orders a released app still sends —
+    // which is why `assertModeRequirements` in the group service exists instead
+    // of these checks living here. New modes are the one safe exception.
+    if (modeNeedsBrief(dto.orderMode) && !dto.consumerNote?.trim()) {
+      throw new BadRequestException(
+        `Order mode "${dto.orderMode}" needs a description of the job.`,
       );
     }
 

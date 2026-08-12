@@ -6,7 +6,7 @@ import { KitchenProductAvailability } from '../hospitality/entities/kitchen-prod
 import { Product } from '../products/entities/product.entity';
 import { BranchCatalogProductLink } from '../retail/entities/branch-catalog-product-link.entity';
 import { ConsumerStockState } from './dto/consumer-response.dto';
-import { CONSUMER_FORMAT_ORDER_MODES } from '../common/service-formats';
+import { CATALOG_LISTABLE_SERVICE_FORMAT_CODES } from '../common/service-formats';
 
 /**
  * The rules a shelf obeys, wherever it is read from.
@@ -29,19 +29,16 @@ const DEFAULT_LOW_STOCK_THRESHOLD = 5;
 /**
  * Formats whose shelves belong in a product catalog.
  *
- * Derived from the service-format registry rather than listed here, so a format
- * that stops (or starts) accepting consumer orders needs no edit in this file.
- * Two exclusions fall out of that: formats that accept no consumer order at all
- * (FSR, PROPERTY_RENTAL, PRINTING_PRESS), and booking-only formats like HOTEL —
- * a room is not a cart line, it is an availability search against dates, and
- * putting "Standard Room — 1 Night" in a shopping grid sells a night that may
- * already be occupied.
+ * Read straight off the registry's own `catalogListable` flag. It used to be
+ * inferred here — "accepts a mode other than BOOKING" — which held only while
+ * every orderable format sold items from a grid. Once a print shop could take a
+ * QUOTE and a school an APPOINTMENT, that inference would have published job
+ * tickets and tuition as buyable products. Whether a shop takes guest requests
+ * and whether its shelf is shoppable are two questions now, so the registry
+ * answers them separately.
  */
-export const CATALOG_SERVICE_FORMATS: readonly string[] = Object.entries(
-  CONSUMER_FORMAT_ORDER_MODES,
-)
-  .filter(([, modes]) => modes.some((mode) => mode !== 'BOOKING'))
-  .map(([code]) => code);
+export const CATALOG_SERVICE_FORMATS: readonly string[] =
+  CATALOG_LISTABLE_SERVICE_FORMAT_CODES;
 
 /** Composite key for a shelf entry, which is per (branch, product). */
 function pairKey(branchId: number, productId: number): string {

@@ -185,3 +185,87 @@ describe('ConsumerOrderService order reference', () => {
     );
   });
 });
+
+/**
+ * A cartless request carries its meaning somewhere other than the basket.
+ *
+ * A print shop and a school are reached by QUOTE: nothing on their shelf is
+ * what the guest is asking for, so the brief IS the order. "Print something" is
+ * not a job anyone can price, which is the same argument `modeNeedsTime` makes
+ * about an appointment for no particular moment.
+ */
+describe('ConsumerOrderService cartless requests', () => {
+  function buildService(serviceFormat: string) {
+    const suspendCart = jest.fn(async (input: Record<string, unknown>) => ({
+      id: 90,
+      branchId: input.branchId,
+      metadata: input.metadata,
+    }));
+    const service = new ConsumerOrderService(
+      { suspendCart } as never,
+      {
+        findOne: jest.fn().mockResolvedValue({ id: 9, serviceFormat }),
+      } as never,
+      { findOne: jest.fn() } as never,
+    );
+    return { service, suspendCart };
+  }
+
+  const quoteDto = {
+    branchId: 9,
+    serviceFormat: 'PRINTING_PRESS',
+    orderMode: 'QUOTE',
+    lines: [],
+    consumerNote: '200 A5 flyers, double sided, matte',
+  } as never;
+
+  it('lands a QUOTE with no lines as an empty-basket request', async () => {
+    const { service, suspendCart } = buildService('PRINTING_PRESS');
+
+    const placed = await service.placeOrder(quoteDto);
+
+    expect(placed.status).toBe('RECEIVED');
+    // Nothing was picked off a shelf, so the till sees a zero basket and reads
+    // the brief instead — that is the request, not a mistake.
+    expect(suspendCart.mock.calls[0][0].itemCount).toBe(0);
+    expect(suspendCart.mock.calls[0][0].total).toBe(0);
+  });
+
+  it('refuses a QUOTE with no brief', async () => {
+    const { service } = buildService('PRINTING_PRESS');
+
+    await expect(
+      service.placeOrder({
+        ...(quoteDto as object),
+        consumerNote: '  ',
+      } as never),
+    ).rejects.toThrow(/description of the job/i);
+  });
+
+  it('reaches a school the same way', async () => {
+    const { service } = buildService('SCHOOL');
+
+    const placed = await service.placeOrder({
+      ...(quoteDto as object),
+      serviceFormat: 'SCHOOL',
+      consumerNote: 'Grade 5 place for September',
+    } as never);
+
+    expect(placed.orderMode).toBe('QUOTE');
+  });
+
+  it('leaves every existing mode alone', async () => {
+    // validatePlacement backs the frozen surface a released app posts to, so a
+    // basket order with no note must keep working exactly as it did.
+    const { service } = buildService('QSR');
+
+    const placed = await service.placeOrder({
+      branchId: 9,
+      serviceFormat: 'QSR',
+      orderMode: 'TAKEAWAY',
+      lines: [{ name: 'Tea', quantity: 1, unitPrice: 25 }],
+    } as never);
+
+    expect(placed.status).toBe('RECEIVED');
+  });
+});

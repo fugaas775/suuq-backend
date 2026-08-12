@@ -49,7 +49,17 @@ free merchant text, not the `Category` relation, and `null` means "render a flat
 
 That document also records which consumer→POS surfaces are frozen — `POST /api/consumer/v1/orders`,
 `GET /api/consumer/v1/orders/:orderId/status`, and the parked-order pair — and the known defects in
-them that are deliberately left unfixed. DTO changes on that seam land there first.
+them that are deliberately left unfixed. DTO changes on that seam land there first. The freeze is on
+their _shape_: no field removed or redefined, and no existing rule tightened, because a released app
+cannot be updated to satisfy it. New formats, new order modes and new status values are additive and
+are allowed.
+
+Every known service format now accepts some kind of guest request, and what a request must carry
+comes from its `orderMode`, not its format — `modeNeedsCart`, `modeNeedsBrief`, `modeNeedsTime` and
+`modeNeedsTable` in `src/common/service-formats.ts` are the only place those rules live. A third
+capability, `catalogListable`, says whether a shop's shelf belongs in the cross-shop marketplace
+grid. It is an explicit opt-in and is deliberately **not** derived from `consumerOrderable`: a room,
+a rented unit, a print job and a school place are asked about rather than bought from a grid.
 
 POS portal auth/session routes:
 

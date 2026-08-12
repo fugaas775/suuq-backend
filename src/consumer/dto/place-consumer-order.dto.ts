@@ -19,12 +19,13 @@ import {
 } from '../../common/service-formats';
 
 /**
- * Service formats a consumer may place an order against.
+ * Service formats a guest may send a request to.
  *
  * Derived from the shared registry in `src/common/service-formats.ts` — do not
- * add codes here. A format that POS-S can create is not automatically orderable:
- * `PROPERTY_RENTAL` and `PRINTING_PRESS` have no consumer ordering surface, and
- * giving them one would extend the frozen consumer→POS direction.
+ * add codes here. Every format now accepts something, but what it accepts
+ * differs by mode: a shop takes a basket, a print shop takes a described job,
+ * a hotel takes dates. `ConsumerOrderService.validatePlacement` is what holds
+ * a request to the shape its mode promises.
  */
 export const SERVICE_FORMAT_CODES = CONSUMER_ORDERABLE_SERVICE_FORMAT_CODES;
 
