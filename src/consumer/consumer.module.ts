@@ -8,6 +8,7 @@ import { VendorStore } from '../vendor/entities/vendor-store.entity';
 import { Product } from '../products/entities/product.entity';
 import { BranchCatalogProductLink } from '../retail/entities/branch-catalog-product-link.entity';
 import { PosSyncModule } from '../pos-sync/pos-sync.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 import {
   ConsumerOrderGroup,
   ConsumerOrderGroupItem,
@@ -24,6 +25,7 @@ import { ConsumerShelfService } from './consumer-shelf.service';
 @Module({
   imports: [
     PosSyncModule,
+    NotificationsModule,
     TypeOrmModule.forFeature([
       Branch,
       BranchInventory,

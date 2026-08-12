@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { randomBytes } from 'crypto';
@@ -18,6 +19,8 @@ import {
   ServiceFormatCode,
 } from './dto/place-consumer-order.dto';
 import { modeNeedsBrief } from '../common/service-formats';
+import { NotificationsService } from '../notifications/notifications.service';
+import { NotificationType } from '../notifications/entities/notification.entity';
 import {
   ConsumerOrderResponseDto,
   ConsumerOrderStatusDto,
@@ -54,7 +57,10 @@ export class ConsumerOrderService {
     private readonly branchesRepository: Repository<Branch>,
     @InjectRepository(PosSuspendedCart)
     private readonly suspendedCartsRepository: Repository<PosSuspendedCart>,
+    private readonly notifications: NotificationsService,
   ) {}
+
+  private readonly logger = new Logger(ConsumerOrderService.name);
 
   /**
    * Everything that can be checked before anything is written.
@@ -111,10 +117,54 @@ export class ConsumerOrderService {
     return branch;
   }
 
+  /**
+   * Tell the shop's owner that somebody outside is waiting on them.
+   *
+   * Fire-and-forget, and never allowed to fail a placement: a guest's order is
+   * already on the till by the time this runs, and refusing it because a push
+   * token was stale would be absurd.
+   *
+   * Reaches the OWNER'S PHONE, not the counter. Device tokens are registered by
+   * the Suuq app against a user account; POS-S is a web till that registers
+   * none. The counter's own signal is the drawer badge and the chime the
+   * register plays — this is for the times nobody is standing at it.
+   */
+  private async notifyBranchOfRequest(
+    branch: Branch,
+    dto: PlaceConsumerOrderDto,
+    orderNumber: string,
+  ): Promise<void> {
+    const ownerId = branch.ownerId;
+    if (!ownerId) return;
+
+    const who = dto.consumerName?.trim() || 'Someone';
+    const what =
+      dto.orderMode === 'QUOTE'
+        ? 'asked for a quote'
+        : dto.orderMode === 'BOOKING'
+          ? 'wants to book'
+          : dto.orderMode === 'APPOINTMENT'
+            ? 'booked an appointment'
+            : 'placed an order';
+
+    await this.notifications.createAndDispatch({
+      userId: ownerId,
+      title: `New request at ${branch.name ?? 'your branch'}`,
+      body: `${who} ${what} — ${orderNumber}.`,
+      type: NotificationType.ORDER,
+      data: {
+        type: 'consumer_request',
+        branchId: String(branch.id),
+        orderNumber,
+        click_action: 'FLUTTER_NOTIFICATION_CLICK',
+      },
+    });
+  }
+
   async placeOrder(
     dto: PlaceConsumerOrderDto,
   ): Promise<ConsumerOrderResponseDto> {
-    await this.validatePlacement(dto);
+    const branch = await this.validatePlacement(dto);
 
     // 4. Resolve currency: use dto-provided value, defaulting to ETB
     const currency = (dto.currency ?? 'ETB').trim().toUpperCase();
@@ -167,9 +217,19 @@ export class ConsumerOrderService {
       {}, // anonymous actor — no staff user session
     );
 
+    const orderNumber = composeOrderNumber(cart.id, orderRef);
+
+    void this.notifyBranchOfRequest(branch, dto, orderNumber).catch((err) => {
+      this.logger.error(
+        `Could not notify branch ${branch.id} of guest request ${orderNumber}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    });
+
     return {
       orderId: cart.id,
-      orderNumber: composeOrderNumber(cart.id, orderRef),
+      orderNumber,
       branchId: cart.branchId,
       serviceFormat: dto.serviceFormat,
       orderMode: dto.orderMode,

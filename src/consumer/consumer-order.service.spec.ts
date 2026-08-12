@@ -24,12 +24,14 @@ describe('ConsumerOrderService order reference', () => {
       findOne: jest.fn().mockResolvedValue(cart ?? null),
     };
 
+    const createAndDispatch = jest.fn().mockResolvedValue(undefined);
     const service = new ConsumerOrderService(
       posRegisterService as never,
       branchesRepository as never,
       suspendedCartsRepository as never,
+      { createAndDispatch } as never,
     );
-    return { service, suspendCart };
+    return { service, suspendCart, createAndDispatch };
   }
 
   const placeDto = {
@@ -207,6 +209,7 @@ describe('ConsumerOrderService cartless requests', () => {
         findOne: jest.fn().mockResolvedValue({ id: 9, serviceFormat }),
       } as never,
       { findOne: jest.fn() } as never,
+      { createAndDispatch: jest.fn().mockResolvedValue(undefined) } as never,
     );
     return { service, suspendCart };
   }
@@ -267,5 +270,95 @@ describe('ConsumerOrderService cartless requests', () => {
     } as never);
 
     expect(placed.status).toBe('RECEIVED');
+  });
+});
+
+/**
+ * Somebody has to be told. A guest order used to land on a till and make no
+ * sound anywhere — if the drawer was shut and the owner was out, it waited.
+ */
+describe('ConsumerOrderService tells the shop', () => {
+  function buildService(
+    serviceFormat = 'QSR',
+    branch: Record<string, unknown> = {},
+  ) {
+    const createAndDispatch = jest.fn().mockResolvedValue(undefined);
+    const service = new ConsumerOrderService(
+      { suspendCart: jest.fn(async () => ({ id: 12, branchId: 9 })) } as never,
+      {
+        findOne: jest.fn().mockResolvedValue({
+          id: 9,
+          name: 'Hoobaan Cafe',
+          ownerId: 3,
+          serviceFormat,
+          ...branch,
+        }),
+      } as never,
+      { findOne: jest.fn() } as never,
+      { createAndDispatch } as never,
+    );
+    return { service, createAndDispatch };
+  }
+
+  const order = {
+    branchId: 9,
+    serviceFormat: 'QSR',
+    orderMode: 'TAKEAWAY',
+    lines: [{ name: 'Tea', quantity: 1, unitPrice: 25 }],
+    consumerName: 'Amina',
+  } as never;
+
+  it('notifies the branch owner, naming the shop and the order', async () => {
+    const { service, createAndDispatch } = buildService();
+
+    const placed = await service.placeOrder(order);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(createAndDispatch).toHaveBeenCalledTimes(1);
+    const sent = createAndDispatch.mock.calls[0][0];
+    expect(sent.userId).toBe(3);
+    expect(sent.title).toContain('Hoobaan Cafe');
+    expect(sent.body).toContain('Amina');
+    expect(sent.body).toContain(placed.orderNumber);
+  });
+
+  it('says what was actually asked for, not always "an order"', async () => {
+    const { service, createAndDispatch } = buildService('PRINTING_PRESS');
+
+    await service.placeOrder({
+      ...(order as object),
+      serviceFormat: 'PRINTING_PRESS',
+      orderMode: 'QUOTE',
+      lines: [],
+      consumerNote: '200 A5 flyers',
+    } as never);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(createAndDispatch.mock.calls[0][0].body).toContain(
+      'asked for a quote',
+    );
+  });
+
+  it('still places the order when the notification fails', async () => {
+    // The cart is already on the till by then. Refusing a guest's order
+    // because a push token went stale would be absurd.
+    const { service, createAndDispatch } = buildService();
+    createAndDispatch.mockRejectedValue(new Error('stale token'));
+
+    await expect(service.placeOrder(order)).resolves.toMatchObject({
+      status: 'RECEIVED',
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+  });
+
+  it('says nothing when the branch has no owner to tell', async () => {
+    const { service, createAndDispatch } = buildService('QSR', {
+      ownerId: null,
+    });
+
+    await service.placeOrder(order);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(createAndDispatch).not.toHaveBeenCalled();
   });
 });
