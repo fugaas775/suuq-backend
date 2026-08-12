@@ -1310,6 +1310,99 @@ describe('SellerWorkspaceService', () => {
       'Seller HQ branch creation only supports RETAIL until hospitality rollout is enabled for this tenant.',
     );
   });
+  // Tax is a trading setting a branch MANAGER may set; the rest of the branch —
+  // its name, address, tax ID, logo — stays the owner's. The split is enforced
+  // on the shape of the patch, so widening it by accident is a visible change.
+  describe('updateBranchWorkspace tax authority', () => {
+    function stubBranchRepo() {
+      const branchRepo = {
+        findOne: jest.fn().mockResolvedValue({
+          id: 11,
+          ownerId: 41,
+          retailTenantId: 13,
+          retailTenant: { owner: { id: 41 } },
+        }),
+        update: jest.fn().mockResolvedValue(undefined),
+      };
+      sellerWorkspacesRepository.manager.getRepository.mockImplementation(
+        (entity) => (entity === Branch ? branchRepo : {}),
+      );
+      return branchRepo;
+    }
+
+    function asManager() {
+      branchStaffAssignmentsRepository.findOne.mockResolvedValue({
+        id: 7,
+        branchId: 11,
+        userId: 77,
+        role: BranchStaffRole.MANAGER,
+        isActive: true,
+      });
+    }
+
+    it('lets an active branch manager turn tax on', async () => {
+      const branchRepo = stubBranchRepo();
+      asManager();
+      const workspaceItem = { branchId: 11, branchName: 'Bole Bites' };
+      const getBranchWorkspaces = jest
+        .spyOn(service, 'getBranchWorkspaces')
+        .mockResolvedValue({ items: [workspaceItem] } as any);
+
+      const result = await service.updateBranchWorkspace(
+        77,
+        11,
+        {
+          taxEnabled: true,
+          taxRate: 0.15,
+          taxInclusive: false,
+          taxName: 'TOT',
+        },
+        ['POS_MANAGER'],
+      );
+
+      expect(branchRepo.update).toHaveBeenCalledWith(
+        11,
+        expect.objectContaining({
+          taxEnabled: true,
+          taxRate: 0.15,
+          taxName: 'TOT',
+        }),
+      );
+      expect(result).toBe(workspaceItem);
+      getBranchWorkspaces.mockRestore();
+    });
+
+    it('refuses a manager who reaches past tax into the branch itself', async () => {
+      const branchRepo = stubBranchRepo();
+      asManager();
+
+      await expect(
+        service.updateBranchWorkspace(
+          77,
+          11,
+          { taxEnabled: true, name: 'Renamed by the manager' },
+          ['POS_MANAGER'],
+        ),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+
+      // Not even the tax half of the patch may land.
+      expect(branchRepo.update).not.toHaveBeenCalled();
+    });
+
+    it('refuses a tax patch from someone with no manager assignment', async () => {
+      const branchRepo = stubBranchRepo();
+      branchStaffAssignmentsRepository.findOne.mockResolvedValue(null);
+
+      await expect(
+        service.updateBranchWorkspace(77, 11, { taxEnabled: true }, [
+          'POS_OPERATOR',
+        ]),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+
+      expect(branchRepo.update).not.toHaveBeenCalled();
+    });
+  });
+
   describe('updateBranchWorkspaceServiceFormat', () => {
     function stubBranchRepo(branch) {
       const branchRepo = {

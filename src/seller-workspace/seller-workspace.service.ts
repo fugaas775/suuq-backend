@@ -2349,6 +2349,42 @@ export class SellerWorkspaceService {
       updatedAt: workspace.updatedAt,
     };
   }
+
+  /**
+   * True when a branch patch touches the tax settings and NOTHING else — the
+   * only shape of this request a branch manager is allowed to send.
+   *
+   * An empty patch is not tax-only: it writes nothing, so there is no reason to
+   * widen who may send it.
+   */
+  private isTaxOnlyBranchWorkspacePatch(
+    dto: UpdateBranchWorkspaceDto,
+  ): boolean {
+    const taxFields = ['taxEnabled', 'taxRate', 'taxInclusive', 'taxName'];
+    const touched = Object.keys(dto).filter(
+      (field) => (dto as Record<string, unknown>)[field] !== undefined,
+    );
+    return (
+      touched.length > 0 && touched.every((field) => taxFields.includes(field))
+    );
+  }
+
+  /** An active MANAGER assignment on this branch — not an operator, not stale. */
+  private async isActiveBranchManager(
+    branchId: number,
+    userId: number,
+  ): Promise<boolean> {
+    const assignment = await this.branchStaffAssignmentsRepository.findOne({
+      where: {
+        branchId,
+        userId,
+        role: BranchStaffRole.MANAGER,
+        isActive: true,
+      },
+    });
+    return Boolean(assignment);
+  }
+
   async updateBranchWorkspace(
     userId: number,
     branchId: number,
@@ -2375,9 +2411,26 @@ export class SellerWorkspaceService {
     const isOwner =
       branch.ownerId === userId || branch.retailTenant?.owner?.id === userId;
     if (!isOwner && !isPlatformAdmin) {
-      throw new ForbiddenException(
-        'Only the branch or tenant owner can update branch details.',
-      );
+      // Tax is a trading setting, not part of the branch's identity — the
+      // manager running the floor is the one there on the day the branch
+      // registers for VAT, and Seller HQ now shows them the Tax card. This
+      // mirrors `assertBranchAccountingAccess`, which already grants
+      // owner-OR-manager authority over the branch's own books.
+      //
+      // Everything else this endpoint writes — name, address, tax ID, logo,
+      // default category, Home layout — stays owner-only, so a manager's patch
+      // must touch tax and nothing else. Otherwise "let managers set the rate"
+      // would quietly hand them the branch's whole identity.
+      const isTaxOnlyPatch = this.isTaxOnlyBranchWorkspacePatch(dto);
+      const isBranchManager =
+        isTaxOnlyPatch && (await this.isActiveBranchManager(branchId, userId));
+      if (!isBranchManager) {
+        throw new ForbiddenException(
+          isTaxOnlyPatch
+            ? 'Only the branch owner, the tenant owner or a branch manager can update tax settings.'
+            : 'Only the branch or tenant owner can update branch details.',
+        );
+      }
     }
     const updates: Partial<Branch> = {};
     if (dto.name !== undefined) updates.name = dto.name;
