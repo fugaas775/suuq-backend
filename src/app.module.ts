@@ -78,6 +78,7 @@ import { BillingModule } from './billing/billing.module';
 import { AccountingModule } from './accounting/accounting.module';
 import { HospitalityModule } from './hospitality/hospitality.module';
 import { PropertyRentalModule } from './property-rental/property-rental.module';
+import { SchoolModule } from './school/school.module';
 import { StorefrontModule } from './storefront/storefront.module';
 import { ConsumerModule } from './consumer/consumer.module';
 import { ParkedOrdersModule } from './parked-orders/parked-orders.module';
@@ -266,6 +267,7 @@ import { ParkedOrdersModule } from './parked-orders/parked-orders.module';
     MarketingLeadsModule,
     HospitalityModule,
     PropertyRentalModule,
+    SchoolModule,
     SellerWorkspaceModule,
     BillingModule,
     AccountingModule,
