@@ -79,6 +79,7 @@ import { AccountingModule } from './accounting/accounting.module';
 import { HospitalityModule } from './hospitality/hospitality.module';
 import { PropertyRentalModule } from './property-rental/property-rental.module';
 import { SchoolModule } from './school/school.module';
+import { PayrollModule } from './payroll/payroll.module';
 import { StorefrontModule } from './storefront/storefront.module';
 import { ConsumerModule } from './consumer/consumer.module';
 import { ParkedOrdersModule } from './parked-orders/parked-orders.module';
@@ -270,6 +271,7 @@ import { ParkedOrdersModule } from './parked-orders/parked-orders.module';
     SchoolModule,
     SellerWorkspaceModule,
     BillingModule,
+    PayrollModule,
     AccountingModule,
     StorefrontModule,
     ConsumerModule,
