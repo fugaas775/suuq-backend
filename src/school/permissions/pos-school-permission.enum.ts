@@ -26,6 +26,15 @@ export enum PosSchoolPermission {
   SETTLE_FEE_PAYMENT = 'SETTLE_FEE_PAYMENT',
   VOID_STUDENT_FOLIO = 'VOID_STUDENT_FOLIO',
   IMPORT_STUDENT_ROSTER = 'IMPORT_STUDENT_ROSTER',
+  /**
+   * Take a class register. The one permission here held by a TEACHER rather than
+   * by the fee desk, which is why it is its own member and not folded into
+   * ENROL_STUDENT: marking a child present should not carry the power to enrol
+   * one. AttendanceController names it first and ENROL_STUDENT second, and the
+   * guard ORs them, so every clerk already enrolling could mark from the day it
+   * shipped without 22 staff accounts being edited first.
+   */
+  MARK_ATTENDANCE = 'MARK_ATTENDANCE',
 }
 
 export const POS_SCHOOL_PERMISSION_VALUES = Object.values(PosSchoolPermission);
