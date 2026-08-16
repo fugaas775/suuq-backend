@@ -60,6 +60,9 @@ export enum PosRegisterPermission {
   SETTLE_FEE_PAYMENT = 'SETTLE_FEE_PAYMENT',
   VOID_STUDENT_FOLIO = 'VOID_STUDENT_FOLIO',
   IMPORT_STUDENT_ROSTER = 'IMPORT_STUDENT_ROSTER',
+  // Take a class register. A teacher's permission, not the fee desk's — which
+  // is the whole reason it is separate from ENROL_STUDENT.
+  MARK_ATTENDANCE = 'MARK_ATTENDANCE',
 }
 
 function trimString(value: unknown) {

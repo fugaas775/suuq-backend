@@ -67,6 +67,11 @@ describe('PosRegisterController — SCHOOL route permissions', () => {
     // IMPORT_STUDENT_ROSTER is deliberately absent: it gates the bulk UI, and
     // the folios it creates go through the ordinary ENROL_STUDENT route, so a
     // clerk needs both. Everything else must appear somewhere.
+    //
+    // MARK_ATTENDANCE is absent for a different reason: its route is real, but
+    // it lives on AttendanceController (`pos/v1/attendance/students/mark`), not
+    // on this controller. A register touches no suspended cart.
+    const EXEMPT = new Set(['IMPORT_STUDENT_ROSTER', 'MARK_ATTENDANCE']);
     const routed = new Set([
       ...permissionsOn('suspendCart'),
       ...permissionsOn('updateSuspendedCart'),
@@ -74,7 +79,7 @@ describe('PosRegisterController — SCHOOL route permissions', () => {
       ...permissionsOn('discardSuspendedCart'),
     ]);
     const unrouted = POS_SCHOOL_PERMISSION_VALUES.filter(
-      (p) => p !== 'IMPORT_STUDENT_ROSTER' && !routed.has(p),
+      (p) => !EXEMPT.has(p) && !routed.has(p),
     );
     expect(unrouted).toEqual([]);
   });
