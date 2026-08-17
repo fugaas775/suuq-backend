@@ -314,6 +314,61 @@ describe('ConsumerBranchController.getBranch storeId', () => {
     );
   });
 
+  /**
+   * The header of a school's public enrolment page was a photograph of its
+   * owner — this read predates `Branch.logoUrl` and had only the account avatar
+   * to reach for, which for anyone who signed up with Google is their Google
+   * profile photo. A parent reads that picture as the school.
+   */
+  it('shows the branch’s own logo, not the owner’s account picture', async () => {
+    const { controller } = buildController({
+      branch: {
+        ...branch,
+        logoUrl: 'https://cdn/smag-godey-logo.webp',
+        owner: {
+          id: 1863,
+          avatarUrl: 'https://lh3.googleusercontent.com/a/selfie',
+        },
+      },
+      stores: [],
+    });
+
+    const res = await controller.getBranch(44);
+
+    expect(res.logoUrl).toBe('https://cdn/smag-godey-logo.webp');
+  });
+
+  /* Kept rather than dropped: plenty of merchants set their account picture TO
+     their shop's logo, it is the only image those branches have, and the
+     released consumer app reads this one field with no way to be told. */
+  it('falls back to the owner’s picture only when the branch has no logo', async () => {
+    const { controller } = buildController({
+      branch: {
+        ...branch,
+        logoUrl: null,
+        owner: { id: 1863, avatarUrl: 'https://cdn/avatar.webp' },
+      },
+      stores: [],
+    });
+    await expect(controller.getBranch(44)).resolves.toMatchObject({
+      logoUrl: 'https://cdn/avatar.webp',
+    });
+  });
+
+  it('shows no image at all when there is neither', async () => {
+    const { controller } = buildController({
+      branch: {
+        ...branch,
+        logoUrl: null,
+        owner: { id: 1863, avatarUrl: null },
+      },
+      stores: [],
+    });
+    await expect(controller.getBranch(44)).resolves.toMatchObject({
+      logoUrl: null,
+    });
+  });
+
   it('reports null when no consumer-visible store points at the branch', async () => {
     const { controller } = buildController({ branch, stores: [] });
 

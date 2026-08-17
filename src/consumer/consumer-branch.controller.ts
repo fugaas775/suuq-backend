@@ -62,7 +62,25 @@ function toBranchItem(
     isActive: branch.isActive,
     ownerId: owner?.id ?? branch.ownerId ?? null,
     ownerName: owner ? (owner.storeName ?? owner.displayName ?? null) : null,
-    logoUrl: owner?.avatarUrl ?? null,
+    /**
+     * The BRANCH's own logo first.
+     *
+     * This read predates `Branch.logoUrl` and had only one image to reach for —
+     * the owner's account avatar. That is the picture a merchant chose for
+     * THEMSELVES, and for anyone who signed up with Google it is their Google
+     * profile photo: a school's public enrolment page was headed by a
+     * photograph of a man, which a parent reads as the school. The branch has
+     * carried its own brand mark since `Branch.logoUrl` shipped, and every
+     * other surface — the register badge, the receipt header — already prefers
+     * it (see `BranchBadge`); this was the one place still asking the owner.
+     *
+     * The avatar stays as the fallback rather than being dropped: plenty of
+     * merchants set their account picture TO their shop's logo, it is the only
+     * image those branches have, and the released consumer app reads this field
+     * with no way to be told otherwise. A branch with neither shows no image,
+     * which the clients already handle.
+     */
+    logoUrl: branch.logoUrl ?? owner?.avatarUrl ?? null,
   };
 }
 
