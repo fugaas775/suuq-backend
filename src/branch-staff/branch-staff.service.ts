@@ -84,6 +84,7 @@ export interface PosBranchSummary {
   defaultCategoryId: number | null;
   checkoutPolicyTime: string | null;
   logoUrl: string | null;
+  notificationEmail: string | null;
   taxEnabled: boolean;
   taxRate: number;
   taxInclusive: boolean;
@@ -106,6 +107,7 @@ export interface PosWorkspaceActivationCandidate {
   defaultCategoryId: number | null;
   checkoutPolicyTime: string | null;
   logoUrl: string | null;
+  notificationEmail: string | null;
   taxEnabled: boolean;
   taxRate: number;
   taxInclusive: boolean;
@@ -686,6 +688,7 @@ export class BranchStaffService {
           defaultCategoryId: summary.defaultCategoryId ?? null,
           checkoutPolicyTime: summary.checkoutPolicyTime ?? null,
           logoUrl: summary.logoUrl ?? null,
+          notificationEmail: summary.notificationEmail ?? null,
           taxEnabled: Boolean(summary.taxEnabled),
           taxRate: Number(summary.taxRate ?? 0.15),
           taxInclusive: Boolean(summary.taxInclusive),
@@ -1092,6 +1095,7 @@ export class BranchStaffService {
         defaultCategoryId: branch.defaultCategoryId ?? null,
         checkoutPolicyTime: branch.checkoutPolicyTime ?? null,
         logoUrl: branch.logoUrl ?? null,
+        notificationEmail: branch.notificationEmail ?? null,
         taxEnabled: Boolean(branch.taxEnabled),
         taxRate: Number(branch.taxRate ?? 0.15),
         taxInclusive: Boolean(branch.taxInclusive),
@@ -1149,6 +1153,7 @@ export class BranchStaffService {
           defaultCategoryId: branch.defaultCategoryId ?? null,
           checkoutPolicyTime: branch.checkoutPolicyTime ?? null,
           logoUrl: branch.logoUrl ?? null,
+          notificationEmail: branch.notificationEmail ?? null,
           taxEnabled: Boolean(branch.taxEnabled),
           taxRate: Number(branch.taxRate ?? 0.15),
           taxInclusive: Boolean(branch.taxInclusive),
@@ -1215,6 +1220,10 @@ export class BranchStaffService {
           assignment.branch.checkoutPolicyTime ??
           null,
         logoUrl: existing?.logoUrl ?? assignment.branch.logoUrl ?? null,
+        notificationEmail:
+          existing?.notificationEmail ??
+          assignment.branch.notificationEmail ??
+          null,
         taxEnabled: Boolean(
           existing?.taxEnabled ?? assignment.branch.taxEnabled ?? false,
         ),

@@ -458,6 +458,7 @@ export class SellerWorkspaceService {
           defaultCategoryId: branch.defaultCategoryId ?? null,
           checkoutPolicyTime: branch.checkoutPolicyTime ?? null,
           logoUrl: branch.logoUrl ?? null,
+          notificationEmail: branch.notificationEmail ?? null,
           taxEnabled: Boolean(branch.taxEnabled),
           taxRate: Number(branch.taxRate ?? 0.15),
           taxInclusive: Boolean(branch.taxInclusive),
@@ -532,6 +533,7 @@ export class SellerWorkspaceService {
           defaultCategoryId: candidate.defaultCategoryId ?? null,
           checkoutPolicyTime: candidate.checkoutPolicyTime ?? null,
           logoUrl: candidate.logoUrl ?? null,
+          notificationEmail: candidate.notificationEmail ?? null,
           taxEnabled: Boolean(candidate.taxEnabled),
           taxRate: Number(candidate.taxRate ?? 0.15),
           taxInclusive: Boolean(candidate.taxInclusive),
@@ -2448,6 +2450,11 @@ export class SellerWorkspaceService {
     if (dto.checkoutPolicyTime !== undefined)
       updates.checkoutPolicyTime = dto.checkoutPolicyTime;
     if (dto.logoUrl !== undefined) updates.logoUrl = dto.logoUrl;
+    // Empty string clears it back to "email the owner's account" rather than
+    // storing an address nothing can deliver to.
+    if (dto.notificationEmail !== undefined) {
+      updates.notificationEmail = dto.notificationEmail?.trim() || null;
+    }
     if (dto.taxEnabled !== undefined) updates.taxEnabled = dto.taxEnabled;
     if (dto.taxRate !== undefined) updates.taxRate = dto.taxRate;
     if (dto.taxInclusive !== undefined) updates.taxInclusive = dto.taxInclusive;

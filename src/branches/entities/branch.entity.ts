@@ -104,6 +104,23 @@ export class Branch {
   logoUrl?: string | null;
 
   /**
+   * Where this branch's own operational email goes. Null = the owner's account.
+   *
+   * The owner's account address was the only one there was, and it cannot tell
+   * two branches apart: one person owning a school in Godey and a school in
+   * Qalaafe gets both schools' enrolment applications in one inbox, and neither
+   * school's office gets any. This is the address of the DESK — the head
+   * teacher, the bursar, whoever actually answers — and it is per branch
+   * because that is the grain the question has.
+   *
+   * ⚠ Not a public contact address. It is never returned on any consumer route
+   * and must not become the "email the shop" link: it is where the platform
+   * writes TO a branch, not an address published on its behalf.
+   */
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  notificationEmail?: string | null;
+
+  /**
    * Whether this branch charges tax (VAT) on sales. All service formats honour it.
    *
    * Defaults to TRUE (2026-08-07): a branch created from here on starts charging

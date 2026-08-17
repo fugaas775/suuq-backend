@@ -4,6 +4,7 @@ import {
   ArrayMaxSize,
   IsArray,
   IsBoolean,
+  IsEmail,
   IsInt,
   IsNumber,
   IsOptional,
@@ -233,6 +234,21 @@ export class UpdateBranchWorkspaceDto {
   @IsString()
   @MaxLength(512)
   logoUrl?: string | null;
+
+  @ApiPropertyOptional({
+    description:
+      "Where this branch's own operational email goes — enrolment applications " +
+      'today. Null clears it and the owner’s account address is used instead. ' +
+      'Not published anywhere: this is where the platform writes TO the branch.',
+    nullable: true,
+    example: 'office@school.example',
+  })
+  @Transform(({ value }) => trimString(value))
+  @IsOptional()
+  @ValidateIf((_, value) => value !== null && value !== '')
+  @IsEmail({}, { message: 'notificationEmail must be a valid email address' })
+  @MaxLength(255)
+  notificationEmail?: string | null;
 
   @ApiPropertyOptional({
     description:

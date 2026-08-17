@@ -218,10 +218,26 @@ export class ConsumerOrderService {
         where: { id: branch.id },
         relations: ['owner'],
       });
-      const to = withOwner?.owner?.email?.trim();
-      if (!to) {
+
+      /* The school's own desk AND the owner.
+       *
+       * Additive rather than a replacement: setting an office address is a
+       * school saying "tell us too", not an owner saying "stop telling me", and
+       * silently dropping the owner off a notification they already receive is
+       * how an application goes unanswered while everyone assumes someone else
+       * was told. Deduped case-insensitively so one address set to the other is
+       * one email rather than two identical ones.
+       */
+      const recipients = [withOwner?.notificationEmail, withOwner?.owner?.email]
+        .map((address) => String(address ?? '').trim())
+        .filter(Boolean);
+      const to = [
+        ...new Map(recipients.map((a) => [a.toLowerCase(), a])).values(),
+      ];
+
+      if (!to.length) {
         this.logger.warn(
-          `Application ${orderNumber} at branch ${branch.id} has no owner email; skipping the email.`,
+          `Application ${orderNumber} at branch ${branch.id} has nobody to email; skipping.`,
         );
         return;
       }
@@ -290,7 +306,7 @@ export class ConsumerOrderService {
       });
 
       this.logger.log(
-        `Queued application email for ${orderNumber} to branch ${branch.id} owner.`,
+        `Queued application email for ${orderNumber} to ${to.length} recipient(s) at branch ${branch.id}.`,
       );
     } catch (err: any) {
       this.logger.error(

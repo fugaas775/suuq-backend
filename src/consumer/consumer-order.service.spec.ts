@@ -509,7 +509,7 @@ describe('emailing a school about an application', () => {
 
     expect(send).toHaveBeenCalledTimes(1);
     const mail = send.mock.calls[0][0];
-    expect(mail.to).toBe('head@smag.example');
+    expect(mail.to).toEqual(['head@smag.example']);
     // The child is the subject, because that is what the office is deciding about.
     expect(mail.subject).toBe('New application — Amina Yusuf — SMAG School');
     expect(mail.text).toContain('Student: Amina Yusuf');
@@ -591,7 +591,45 @@ describe('emailing a school about an application', () => {
     expect(send).not.toHaveBeenCalled();
   });
 
-  it('places the application anyway when the school has no owner email', async () => {
+  /**
+   * ⚠ The owner's account address cannot tell two branches apart: one person
+   * owning a school in Godey and a school in Qalaafe got both schools'
+   * applications in one inbox, and neither school's office got any.
+   */
+  it('tells the school’s own desk as well as the owner', async () => {
+    const { service, send } = buildService({
+      notificationEmail: 'office@smag.example',
+    });
+
+    await service.placeOrder(APPLICATION);
+    await settle();
+
+    expect(send.mock.calls[0][0].to).toEqual([
+      'office@smag.example',
+      'head@smag.example',
+    ]);
+  });
+
+  it('sends one email when the desk address IS the owner’s', async () => {
+    const { service, send } = buildService({
+      notificationEmail: 'HEAD@smag.example',
+    });
+    await service.placeOrder(APPLICATION);
+    await settle();
+    expect(send.mock.calls[0][0].to).toHaveLength(1);
+  });
+
+  it('reaches the desk even when the branch has no owner email', async () => {
+    const { service, send } = buildService({
+      owner: { id: 1863, email: null },
+      notificationEmail: 'office@smag.example',
+    });
+    await service.placeOrder(APPLICATION);
+    await settle();
+    expect(send.mock.calls[0][0].to).toEqual(['office@smag.example']);
+  });
+
+  it('places the application anyway when there is nobody to email', async () => {
     const { service, send } = buildService({
       owner: { id: 1863, email: null },
     });

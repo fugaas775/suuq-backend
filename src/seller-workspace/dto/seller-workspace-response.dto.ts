@@ -366,6 +366,14 @@ export class SellerWorkspaceBranchWorkspaceDto {
   logoUrl?: string | null;
 
   @ApiPropertyOptional({
+    nullable: true,
+    description:
+      "Where this branch's own operational email goes — enrolment applications " +
+      'today. Null means the owner’s account address is used. Never published.',
+  })
+  notificationEmail?: string | null;
+
+  @ApiPropertyOptional({
     description: 'Whether this branch charges tax (VAT) on sales.',
   })
   taxEnabled?: boolean;
