@@ -573,65 +573,59 @@ export class BranchStaffService {
   }): Promise<PosBranchSummary[]> {
     const byBranchId = await this.collectPosBranchAccessForUser(user);
 
-    const scopedBranches = await Promise.all(
-      Array.from(byBranchId.values()).map(async (summary) => {
-        try {
-          const workspace =
-            await this.retailEntitlementsService.getBranchWorkspaceStatus(
-              summary.branchId,
-            );
+    // Batched deliberately. This used to call getBranchWorkspaceStatus (four
+    // queries) once per branch inside an unbounded Promise.all — at 57 live
+    // branches that drained the worker's ten-connection pg pool and timed out
+    // whatever else it was serving. A branch missing from the map is one the
+    // per-branch version would have thrown NotFoundException for, which this
+    // path has always treated as "skip".
+    const workspaceByBranchId =
+      await this.retailEntitlementsService.getBranchWorkspaceStatusMany(
+        Array.from(byBranchId.keys()),
+      );
 
-          if (workspace.workspaceStatus !== 'ACTIVE') {
-            return null;
-          }
+    const scopedBranches = Array.from(byBranchId.values()).map((summary) => {
+      const workspace = workspaceByBranchId.get(summary.branchId);
 
-          const modules = workspace.entitlements
-            .map((entry) => entry.module)
-            .sort((left, right) => left.localeCompare(right));
+      if (!workspace || workspace.workspaceStatus !== 'ACTIVE') {
+        return null;
+      }
 
-          if (!modules.includes(RetailModule.POS_CORE)) {
-            return null;
-          }
+      const modules = workspace.entitlements
+        .map((entry) => entry.module)
+        .sort((left, right) => left.localeCompare(right));
 
-          return {
-            ...summary,
-            retailTenantId: workspace.tenant?.id ?? summary.retailTenantId,
-            retailTenantName:
-              workspace.tenant?.name ?? summary.retailTenantName,
-            modules,
-            workspaceStatus: workspace.workspaceStatus,
-            subscriptionStatus: workspace.subscription?.status ?? null,
-            planCode: workspace.subscription?.planCode ?? null,
-            // Lets POS-S count down a free trial (see pos-self-serve-trial.policy)
-            // instead of the branch silently locking out when it lapses.
-            subscriptionEndsAt: workspace.subscription?.endsAt ?? null,
-            isTrialWorkspace: isPosSelfServeTrialSubscription(
-              workspace.subscription,
-            ),
-            canStartActivation: false,
-            // Only ACTIVE workspaces reach here, and a self-serve trial reports
-            // ACTIVE only while it is still live — so a trial row here is by
-            // construction a convertible one. Owners and managers may pay for it
-            // early; operators may not.
-            canPayNow:
-              isPosSelfServeTrialSubscription(workspace.subscription) &&
-              (summary.isOwner ||
-                summary.isTenantOwner ||
-                summary.role === BranchStaffRole.MANAGER),
-            canOpenNow: true,
-          };
-        } catch (error) {
-          if (
-            error instanceof ForbiddenException ||
-            error instanceof NotFoundException
-          ) {
-            return null;
-          }
+      if (!modules.includes(RetailModule.POS_CORE)) {
+        return null;
+      }
 
-          throw error;
-        }
-      }),
-    );
+      return {
+        ...summary,
+        retailTenantId: workspace.tenant?.id ?? summary.retailTenantId,
+        retailTenantName: workspace.tenant?.name ?? summary.retailTenantName,
+        modules,
+        workspaceStatus: workspace.workspaceStatus,
+        subscriptionStatus: workspace.subscription?.status ?? null,
+        planCode: workspace.subscription?.planCode ?? null,
+        // Lets POS-S count down a free trial (see pos-self-serve-trial.policy)
+        // instead of the branch silently locking out when it lapses.
+        subscriptionEndsAt: workspace.subscription?.endsAt ?? null,
+        isTrialWorkspace: isPosSelfServeTrialSubscription(
+          workspace.subscription,
+        ),
+        canStartActivation: false,
+        // Only ACTIVE workspaces reach here, and a self-serve trial reports
+        // ACTIVE only while it is still live — so a trial row here is by
+        // construction a convertible one. Owners and managers may pay for it
+        // early; operators may not.
+        canPayNow:
+          isPosSelfServeTrialSubscription(workspace.subscription) &&
+          (summary.isOwner ||
+            summary.isTenantOwner ||
+            summary.role === BranchStaffRole.MANAGER),
+        canOpenNow: true,
+      };
+    });
 
     return scopedBranches.filter((summary): summary is PosBranchSummary => {
       return summary != null;
@@ -643,12 +637,21 @@ export class BranchStaffService {
     roles?: string[];
   }): Promise<PosWorkspaceActivationCandidate[]> {
     const byBranchId = await this.collectPosBranchAccessForUser(user);
-    const activationCandidates = await Promise.all(
-      Array.from(byBranchId.values()).map(async (summary) => {
-        const workspace =
-          await this.retailEntitlementsService.getBranchWorkspaceStatus(
-            summary.branchId,
-          );
+    // Batched for the same reason as getPosBranchSummariesForUser — the two ran
+    // back to back on every Seller HQ load, so this was the second half of the
+    // ~450-query fan-out that starved the pool. A branch absent from the map
+    // had no resolvable branch or tenant row; skipping it beats failing the
+    // whole list, which is what the per-branch NotFoundException used to do.
+    const workspaceByBranchId =
+      await this.retailEntitlementsService.getBranchWorkspaceStatusMany(
+        Array.from(byBranchId.keys()),
+      );
+    const activationCandidates = Array.from(byBranchId.values()).map(
+      (summary) => {
+        const workspace = workspaceByBranchId.get(summary.branchId);
+        if (!workspace) {
+          return null;
+        }
         const canManageWorkspace =
           summary.isOwner ||
           summary.isTenantOwner ||
@@ -702,7 +705,7 @@ export class BranchStaffService {
           activationBlockers: this.describeActivationBlockers(workspace),
           pricing: this.getPosWorkspacePricing(),
         };
-      }),
+      },
     );
 
     return activationCandidates.filter(

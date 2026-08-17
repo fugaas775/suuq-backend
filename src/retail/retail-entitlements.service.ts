@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { randomUUID } from 'crypto';
-import { DeepPartial, IsNull, Repository } from 'typeorm';
+import { DeepPartial, In, IsNull, Repository } from 'typeorm';
 import { Branch } from '../branches/entities/branch.entity';
 import { BranchStaffAssignment } from '../branch-staff/entities/branch-staff-assignment.entity';
 import {
@@ -62,6 +62,15 @@ type PosWorkspaceStatus =
   | 'PAST_DUE'
   | 'EXPIRED'
   | 'CANCELLED';
+
+type BranchWorkspaceStatus = {
+  branch: Branch;
+  tenant: RetailTenant | null;
+  subscription: TenantSubscription | null;
+  entitlements: TenantModuleEntitlement[];
+  hasPosModule: boolean;
+  workspaceStatus: PosWorkspaceStatus;
+};
 
 const MILLISECONDS_PER_DAY = 86_400_000;
 
@@ -609,14 +618,9 @@ export class RetailEntitlementsService {
     };
   }
 
-  async getBranchWorkspaceStatus(branchId: number): Promise<{
-    branch: Branch;
-    tenant: RetailTenant | null;
-    subscription: TenantSubscription | null;
-    entitlements: TenantModuleEntitlement[];
-    hasPosModule: boolean;
-    workspaceStatus: PosWorkspaceStatus;
-  }> {
+  async getBranchWorkspaceStatus(
+    branchId: number,
+  ): Promise<BranchWorkspaceStatus> {
     const branch = await this.findBranchOrThrow(branchId);
 
     if (!branch.retailTenantId) {
@@ -635,16 +639,171 @@ export class RetailEntitlementsService {
       tenant.id,
       branchId,
     );
+    const entitlements = await this.tenantModuleEntitlementsRepository.find({
+      where: { tenantId: tenant.id },
+    });
+
+    return this.resolveBranchWorkspaceStatus({
+      branch,
+      tenant,
+      subscription,
+      entitlements,
+      now: Date.now(),
+    });
+  }
+
+  /**
+   * Batched twin of getBranchWorkspaceStatus, for callers that need a status
+   * for EVERY branch a user can reach.
+   *
+   * The per-branch version costs four sequential queries, and the seller
+   * workspace endpoints used to run it inside an unbounded `Promise.all` over
+   * the caller's whole branch list — twice per request, since the active-branch
+   * and activation-candidate passes each did their own fan-out. At 57 live
+   * branches that is ~450 connection acquisitions for one page load, against a
+   * pg pool of ten per worker. The pool starved and every other request on that
+   * worker died on `timeout exceeded when trying to connect` — seller saves,
+   * portal sessions and till checkout ingests alike. This resolves the same
+   * four tables in four queries regardless of how many branches are asked for.
+   *
+   * Two contract differences from the per-branch version, both deliberate:
+   *
+   * - `tenant` is loaded SHALLOW. The per-branch version eager-loads
+   *   owner/branches/subscriptions/entitlements via findTenantOrThrow; joining
+   *   those four for every tenant at once is exactly the cost this method
+   *   exists to avoid, and no caller reads them off the result. Read only
+   *   scalar tenant columns from here.
+   * - A branch the per-branch version would have thrown NotFoundException for
+   *   (no branch row, or a retailTenantId pointing at a deleted tenant) is
+   *   absent from the map rather than throwing, so one broken row cannot fail
+   *   the whole list.
+   */
+  async getBranchWorkspaceStatusMany(
+    branchIds: number[],
+  ): Promise<Map<number, BranchWorkspaceStatus>> {
+    const byBranchId = new Map<number, BranchWorkspaceStatus>();
+    const uniqueBranchIds = Array.from(
+      new Set(branchIds.filter((branchId) => Number.isInteger(branchId))),
+    );
+
+    if (!uniqueBranchIds.length) {
+      return byBranchId;
+    }
+
+    const branches = await this.branchesRepository.find({
+      where: { id: In(uniqueBranchIds) },
+      relations: { retailTenant: true },
+    });
+
+    const tenantIds = Array.from(
+      new Set(
+        branches
+          .map((branch) => branch.retailTenantId)
+          .filter((tenantId): tenantId is number => Number.isInteger(tenantId)),
+      ),
+    );
+
+    const [tenants, subscriptions, entitlements] = tenantIds.length
+      ? await Promise.all([
+          this.retailTenantsRepository.find({ where: { id: In(tenantIds) } }),
+          // Same ordering as findSubscriptionForBranch, so the per-branch pick
+          // below can mirror its precedence rule exactly.
+          this.tenantSubscriptionsRepository.find({
+            where: { tenantId: In(tenantIds) },
+            order: { createdAt: 'DESC' },
+          }),
+          this.tenantModuleEntitlementsRepository.find({
+            where: { tenantId: In(tenantIds) },
+          }),
+        ])
+      : [[], [], []];
+
+    const tenantById = new Map(tenants.map((tenant) => [tenant.id, tenant]));
+    const subscriptionsByTenantId = new Map<number, TenantSubscription[]>();
+    for (const subscription of subscriptions) {
+      const bucket = subscriptionsByTenantId.get(subscription.tenantId) ?? [];
+      bucket.push(subscription);
+      subscriptionsByTenantId.set(subscription.tenantId, bucket);
+    }
+    const entitlementsByTenantId = new Map<number, TenantModuleEntitlement[]>();
+    for (const entitlement of entitlements) {
+      const bucket = entitlementsByTenantId.get(entitlement.tenantId) ?? [];
+      bucket.push(entitlement);
+      entitlementsByTenantId.set(entitlement.tenantId, bucket);
+    }
+
     const now = Date.now();
+    for (const branch of branches) {
+      if (!branch.retailTenantId) {
+        byBranchId.set(branch.id, {
+          branch,
+          tenant: null,
+          subscription: null,
+          entitlements: [],
+          hasPosModule: false,
+          workspaceStatus: 'TENANT_SETUP_REQUIRED',
+        });
+        continue;
+      }
+
+      const tenant = tenantById.get(branch.retailTenantId);
+      if (!tenant) {
+        // findTenantOrThrow would have thrown NotFoundException here; every
+        // caller of the per-branch version catches that and skips the branch.
+        continue;
+      }
+
+      byBranchId.set(
+        branch.id,
+        this.resolveBranchWorkspaceStatus({
+          branch,
+          tenant,
+          subscription: this.pickBranchScopedSubscription(
+            subscriptionsByTenantId.get(tenant.id) ?? [],
+            branch.id,
+          ),
+          entitlements: entitlementsByTenantId.get(tenant.id) ?? [],
+          now,
+        }),
+      );
+    }
+
+    return byBranchId;
+  }
+
+  /**
+   * In-memory twin of findSubscriptionForBranch for a pre-loaded, createdAt
+   * DESC ordered list. Branch-scoped rows win; the legacy tenant-wide row
+   * (branchId null) is the fallback.
+   */
+  private pickBranchScopedSubscription(
+    orderedByCreatedAtDesc: TenantSubscription[],
+    branchId: number,
+  ): TenantSubscription | null {
+    return (
+      orderedByCreatedAtDesc.find((entry) => entry.branchId === branchId) ??
+      orderedByCreatedAtDesc.find((entry) => entry.branchId == null) ??
+      null
+    );
+  }
+
+  /**
+   * The status rules themselves, over already-loaded rows. Both the per-branch
+   * and batched loaders funnel through here so they cannot drift apart.
+   */
+  private resolveBranchWorkspaceStatus(input: {
+    branch: Branch;
+    tenant: RetailTenant;
+    subscription: TenantSubscription | null;
+    entitlements: TenantModuleEntitlement[];
+    now: number;
+  }): BranchWorkspaceStatus {
+    const { branch, tenant, subscription, now } = input;
     const effectiveSubscriptionStatus = this.resolveEffectiveSubscriptionStatus(
       subscription,
       now,
     );
-    const entitlements = (
-      await this.tenantModuleEntitlementsRepository.find({
-        where: { tenantId: tenant.id },
-      })
-    ).filter((entitlement) => {
+    const entitlements = input.entitlements.filter((entitlement) => {
       if (!entitlement.enabled) {
         return false;
       }

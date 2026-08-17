@@ -51,6 +51,7 @@ describe('BranchStaffService', () => {
   let retailEntitlementsService: {
     getActiveBranchRetailAccess: jest.Mock;
     getBranchWorkspaceStatus: jest.Mock;
+    getBranchWorkspaceStatusMany: jest.Mock;
   };
 
   beforeEach(async () => {
@@ -87,6 +88,27 @@ describe('BranchStaffService', () => {
     retailEntitlementsService = {
       getActiveBranchRetailAccess: jest.fn(),
       getBranchWorkspaceStatus: jest.fn(),
+      // The service batches its workspace lookups, but a test's intent is far
+      // easier to read one branch at a time. Default the batch call to fanning
+      // out over the per-branch mock — including its skip-on-NotFound rule —
+      // so tests keep stubbing getBranchWorkspaceStatus. Tests that care about
+      // batching specifically override this.
+      getBranchWorkspaceStatusMany: jest.fn(async (branchIds: number[]) => {
+        const byBranchId = new Map<number, unknown>();
+        for (const branchId of branchIds ?? []) {
+          try {
+            byBranchId.set(
+              branchId,
+              await retailEntitlementsService.getBranchWorkspaceStatus(
+                branchId,
+              ),
+            );
+          } catch {
+            // Absent from the map, exactly as the real batch loader leaves it.
+          }
+        }
+        return byBranchId;
+      }),
     };
 
     const module: TestingModule = await Test.createTestingModule({
