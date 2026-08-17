@@ -30,6 +30,7 @@ describe('ConsumerOrderService order reference', () => {
       branchesRepository as never,
       suspendedCartsRepository as never,
       { createAndDispatch } as never,
+      { send: jest.fn().mockResolvedValue(undefined) } as never,
     );
     return { service, suspendCart, createAndDispatch };
   }
@@ -210,6 +211,7 @@ describe('ConsumerOrderService cartless requests', () => {
       } as never,
       { findOne: jest.fn() } as never,
       { createAndDispatch: jest.fn().mockResolvedValue(undefined) } as never,
+      { send: jest.fn().mockResolvedValue(undefined) } as never,
     );
     return { service, suspendCart };
   }
@@ -283,6 +285,7 @@ describe('ConsumerOrderService tells the shop', () => {
     branch: Record<string, unknown> = {},
   ) {
     const createAndDispatch = jest.fn().mockResolvedValue(undefined);
+    const send = jest.fn().mockResolvedValue(undefined);
     const service = new ConsumerOrderService(
       { suspendCart: jest.fn(async () => ({ id: 12, branchId: 9 })) } as never,
       {
@@ -296,8 +299,9 @@ describe('ConsumerOrderService tells the shop', () => {
       } as never,
       { findOne: jest.fn() } as never,
       { createAndDispatch } as never,
+      { send } as never,
     );
-    return { service, createAndDispatch };
+    return { service, createAndDispatch, send };
   }
 
   const order = {
@@ -402,6 +406,7 @@ describe('ConsumerOrderService tells a guest which ending they got', () => {
       { findOne: jest.fn() } as never,
       { findOne: jest.fn().mockResolvedValue(cart) } as never,
       { createAndDispatch: jest.fn() } as never,
+      { send: jest.fn() } as never,
     );
   }
 
@@ -449,5 +454,163 @@ describe('ConsumerOrderService tells a guest which ending they got', () => {
     const status = await service.getOrderStatus(4242);
     expect(status.status).toBe('CANCELLED');
     expect(status.declineReason).toBeUndefined();
+  });
+});
+
+/**
+ * A family applying for a school place is EMAILED to the head teacher.
+ *
+ * The push and the till's inbox both assume somebody is holding the device. A
+ * school office is not a till: the person who decides about places is not the
+ * person on the counter, and an application waits days rather than minutes. An
+ * unread push is gone by the afternoon; an email is still there on Monday.
+ */
+describe('emailing a school about an application', () => {
+  const APPLICATION = {
+    branchId: 128,
+    serviceFormat: 'SCHOOL',
+    orderMode: 'QUOTE',
+    lines: [],
+    consumerName: 'Yusuf Ali',
+    consumerPhone: '0911234567',
+    consumerNote: 'Student: Amina Yusuf\nClass: 5aad\nBorn: 2016-03-04',
+  } as never;
+
+  function buildService(over: Record<string, unknown> = {}) {
+    const send = jest.fn().mockResolvedValue(undefined);
+    const branch = {
+      id: 128,
+      name: 'SMAG School',
+      ownerId: 1863,
+      serviceFormat: 'SCHOOL',
+      owner: { id: 1863, email: 'head@smag.example' },
+      ...over,
+    };
+    const service = new ConsumerOrderService(
+      {
+        suspendCart: jest.fn(async () => ({ id: 12, branchId: 128 })),
+      } as never,
+      { findOne: jest.fn().mockResolvedValue(branch) } as never,
+      { findOne: jest.fn() } as never,
+      { createAndDispatch: jest.fn().mockResolvedValue(undefined) } as never,
+      { send } as never,
+    );
+    return { service, send };
+  }
+
+  /** The notification path is fire-and-forget; let it run. */
+  const settle = () => new Promise((resolve) => setImmediate(resolve));
+
+  it('sends the family’s own answers to the owner', async () => {
+    const { service, send } = buildService();
+
+    const placed = await service.placeOrder(APPLICATION);
+    await settle();
+
+    expect(send).toHaveBeenCalledTimes(1);
+    const mail = send.mock.calls[0][0];
+    expect(mail.to).toBe('head@smag.example');
+    // The child is the subject, because that is what the office is deciding about.
+    expect(mail.subject).toBe('New application — Amina Yusuf — SMAG School');
+    expect(mail.text).toContain('Student: Amina Yusuf');
+    expect(mail.text).toContain('Class: 5aad');
+    expect(mail.text).toContain('Yusuf Ali');
+    expect(mail.text).toContain('0911234567');
+    expect(mail.text).toContain(placed.orderNumber);
+    // And where to answer it.
+    expect(mail.text).toContain('/seller/hq?focus=students');
+    expect(mail.html).toContain('5aad');
+  });
+
+  it('never tells a school its application was priced', async () => {
+    // "asked for a quote" is the one sentence a parent — or a head teacher —
+    // must never read: nobody quotes a family for a child's place.
+    const { service, send } = buildService();
+    await service.placeOrder(APPLICATION);
+    await settle();
+
+    const mail = send.mock.calls[0][0];
+    expect(`${mail.subject} ${mail.text}`).not.toMatch(/quote|price/i);
+    expect(mail.text).toContain('Nothing is enrolled yet');
+  });
+
+  it('says the family’s name when the note has no student line', async () => {
+    // An enquiry sent through the OLD free-text form parses to no labels at all.
+    const { service, send } = buildService();
+    await service.placeOrder({
+      ...(APPLICATION as Record<string, unknown>),
+      consumerNote: 'Do you have space in grade 4?',
+    } as never);
+    await settle();
+
+    expect(send.mock.calls[0][0].subject).toBe(
+      'New application at SMAG School',
+    );
+    expect(send.mock.calls[0][0].text).toContain(
+      'Do you have space in grade 4?',
+    );
+  });
+
+  /* Deliberately NOT every guest request: a QSR order needs a till, not an
+     inbox, and mailing an owner about every burger is how a shop learns to
+     filter the sender. */
+  it('does not email a café about an ordinary order', async () => {
+    const { service, send } = buildService({
+      name: 'Hoobaan Cafe',
+      serviceFormat: 'QSR',
+    });
+
+    await service.placeOrder({
+      branchId: 128,
+      serviceFormat: 'QSR',
+      orderMode: 'TAKEAWAY',
+      lines: [{ name: 'Tea', quantity: 1, unitPrice: 25 }],
+      consumerName: 'Amina',
+    } as never);
+    await settle();
+
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('does not email a print shop about a quote', async () => {
+    const { service, send } = buildService({
+      name: 'Godey Press',
+      serviceFormat: 'PRINTING_PRESS',
+    });
+
+    await service.placeOrder({
+      branchId: 128,
+      serviceFormat: 'PRINTING_PRESS',
+      orderMode: 'QUOTE',
+      lines: [],
+      consumerName: 'Amina',
+      consumerNote: '200 A5 flyers',
+    });
+    await settle();
+
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('places the application anyway when the school has no owner email', async () => {
+    const { service, send } = buildService({
+      owner: { id: 1863, email: null },
+    });
+
+    const placed = await service.placeOrder(APPLICATION);
+    await settle();
+
+    expect(placed.orderNumber).toBeTruthy();
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  /* An application that reached the school must never be reported as failed
+     because a mail queue was down. */
+  it('places the application anyway when the mail queue refuses', async () => {
+    const { service, send } = buildService();
+    send.mockRejectedValue(new Error('redis down'));
+
+    await expect(service.placeOrder(APPLICATION)).resolves.toMatchObject({
+      status: 'RECEIVED',
+    });
   });
 });

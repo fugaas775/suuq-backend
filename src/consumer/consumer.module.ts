@@ -10,6 +10,9 @@ import { BranchCatalogProductLink } from '../retail/entities/branch-catalog-prod
 import { SchoolClass } from '../school/entities/school-class.entity';
 import { PosSyncModule } from '../pos-sync/pos-sync.module';
 import { NotificationsModule } from '../notifications/notifications.module';
+// A family applying for a school place is emailed to the head teacher: a
+// school office is not a till, and an unread push is gone by the afternoon.
+import { EmailModule } from '../email/email.module';
 import {
   ConsumerOrderGroup,
   ConsumerOrderGroupItem,
@@ -27,6 +30,7 @@ import { ConsumerShelfService } from './consumer-shelf.service';
   imports: [
     PosSyncModule,
     NotificationsModule,
+    EmailModule,
     TypeOrmModule.forFeature([
       Branch,
       BranchInventory,

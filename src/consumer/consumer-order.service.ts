@@ -21,6 +21,7 @@ import {
 import { modeNeedsBrief } from '../common/service-formats';
 import { NotificationsService } from '../notifications/notifications.service';
 import { NotificationType } from '../notifications/entities/notification.entity';
+import { EmailService } from '../email/email.service';
 import {
   ConsumerOrderResponseDto,
   ConsumerOrderStatusDto,
@@ -58,6 +59,7 @@ export class ConsumerOrderService {
     @InjectRepository(PosSuspendedCart)
     private readonly suspendedCartsRepository: Repository<PosSuspendedCart>,
     private readonly notifications: NotificationsService,
+    private readonly email: EmailService,
   ) {}
 
   private readonly logger = new Logger(ConsumerOrderService.name);
@@ -172,6 +174,131 @@ export class ConsumerOrderService {
         click_action: 'FLUTTER_NOTIFICATION_CLICK',
       },
     });
+
+    if (isApplication) {
+      await this.emailOwnerOfApplication(branch, dto, orderNumber);
+    }
+  }
+
+  /**
+   * Emails the head teacher when a family applies.
+   *
+   * ── Why an email, when a push already goes out ───────────────────────────
+   * The push above lands in the Suuq app, and the request card lands in the
+   * till's inbox. Both assume somebody is holding the device. A school office
+   * is not a till: it opens in the morning, the person who decides about places
+   * is not the person on the counter, and an application waits DAYS rather than
+   * minutes. An unread push is gone by the afternoon; an email is still in the
+   * inbox on Monday, and it is forwardable to whoever actually decides.
+   *
+   * ── Why only an application ──────────────────────────────────────────────
+   * Deliberately NOT sent for every guest request. A QSR order needs a till,
+   * not an inbox, and mailing an owner on every burger is how a shop learns to
+   * filter the sender. An application is rare, high-stakes, and needs a human
+   * decision — that is what earns a place in someone's mail.
+   *
+   * The body carries the family's answers verbatim, because `consumerNote` is
+   * already labelled lines a person reads (`Student: …`, `Class: …`) — the same
+   * artefact the request card and the office queue render. One encoding, and no
+   * second parser here to drift from `schoolApplication.js`.
+   *
+   * Never throws: the caller is fire-and-forget, and an application that
+   * reached the school must not be reported as failed because a mail queue was
+   * down.
+   */
+  private async emailOwnerOfApplication(
+    branch: Branch,
+    dto: PlaceConsumerOrderDto,
+    orderNumber: string,
+  ): Promise<void> {
+    try {
+      // The owner is not loaded on the placement path — that query runs for
+      // every order on the platform and has no reason to join a user.
+      const withOwner = await this.branchesRepository.findOne({
+        where: { id: branch.id },
+        relations: ['owner'],
+      });
+      const to = withOwner?.owner?.email?.trim();
+      if (!to) {
+        this.logger.warn(
+          `Application ${orderNumber} at branch ${branch.id} has no owner email; skipping the email.`,
+        );
+        return;
+      }
+
+      const school = branch.name ?? 'your school';
+      const guardian = dto.consumerName?.trim() || 'A parent';
+      const phone = dto.consumerPhone?.trim() || '';
+      const answers = (dto.consumerNote ?? '')
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean);
+      // The child's name is the first labelled line the form composes. Used for
+      // the subject only, and falling back to the guardian rather than guessing
+      // — an application sent through the old free-text form has no such line.
+      const pupil =
+        answers
+          .find((line) => /^student:/i.test(line))
+          ?.replace(/^student:\s*/i, '')
+          .trim() || '';
+
+      const portal = process.env.POS_PORTAL_URL || 'https://pos.suuq-s.com';
+      const link = `${portal.replace(/\/+$/, '')}/seller/hq?focus=students`;
+
+      const escape = (value: string) =>
+        value
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;');
+
+      await this.email.send({
+        to,
+        subject: pupil
+          ? `New application — ${pupil} — ${school}`
+          : `New application at ${school}`,
+        text: [
+          `${guardian} has applied for a place at ${school}.`,
+          '',
+          ...answers,
+          phone ? `Phone: ${phone}` : '',
+          `Reference: ${orderNumber}`,
+          '',
+          'Nothing is enrolled yet. Accept or decline it in Seller HQ → Students:',
+          link,
+        ]
+          .filter((line) => line !== '')
+          .join('\n'),
+        html: [
+          `<p><strong>${escape(guardian)}</strong> has applied for a place at ${escape(school)}.</p>`,
+          '<table cellpadding="6" style="border-collapse:collapse;font-size:14px">',
+          ...answers.map((line) => {
+            const at = line.indexOf(':');
+            const label = at > 0 ? line.slice(0, at) : 'Note';
+            const value = at > 0 ? line.slice(at + 1).trim() : line;
+            return `<tr><td style="color:#6b7280">${escape(label)}</td><td><strong>${escape(value)}</strong></td></tr>`;
+          }),
+          phone
+            ? `<tr><td style="color:#6b7280">Phone</td><td><strong>${escape(phone)}</strong></td></tr>`
+            : '',
+          `<tr><td style="color:#6b7280">Reference</td><td><code>${escape(orderNumber)}</code></td></tr>`,
+          '</table>',
+          `<p>Nothing is enrolled yet — the family has been told the office will decide.<br>`,
+          `<a href="${link}">Accept or decline it in Seller HQ → Students</a></p>`,
+        ]
+          .filter(Boolean)
+          .join('\n'),
+      });
+
+      this.logger.log(
+        `Queued application email for ${orderNumber} to branch ${branch.id} owner.`,
+      );
+    } catch (err: any) {
+      this.logger.error(
+        `Could not email branch ${branch.id} about application ${orderNumber}: ${
+          err?.message || err
+        }`,
+      );
+    }
   }
 
   async placeOrder(
