@@ -3,6 +3,7 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -168,6 +169,8 @@ type SellerWorkspaceSnapshot = {
 
 @Injectable()
 export class SellerWorkspaceService {
+  private readonly logger = new Logger(SellerWorkspaceService.name);
+
   constructor(
     @InjectRepository(User)
     private readonly usersRepository: Repository<User>,
@@ -2511,6 +2514,75 @@ export class SellerWorkspaceService {
     await this.vendorStoresRepository.update({ branchId }, updates);
   }
 
+  /**
+   * Re-tag every product this branch sells with the branch's service format.
+   *
+   * A product's format lives in `attributes.serviceFormat`, stamped from the
+   * branch's format AT SAVE TIME (pos-s `applyBranchServiceFormatToProductPayload`).
+   * The register then hides any product whose tag names a different format
+   * (`productMatchesBranchServiceFormat`) — products with NO tag are always
+   * shown, so this only ever concerns products that carry a stale one.
+   *
+   * Nothing used to revisit that tag when the format changed, so switching a
+   * branch's format silently orphaned its ENTIRE catalog from its own register:
+   * the tiles vanished, the search found nothing, and the branch looked empty
+   * while every row was still in the database. Signups are auto-provisioned as
+   * QSR and confirm their real format afterwards, so this hit every branch that
+   * built a catalog before switching — SMAG School (128) reached us that way.
+   *
+   * The branch's products are the same three link tables `getBranchProducts`
+   * reads (inventory rows, explicit catalog links, and this branch's own vendor
+   * store), so a product shared with another branch through some other link is
+   * left alone.
+   *
+   * Deliberately only `serviceFormat`. `browseCategory` is also format-shaped,
+   * but a wrong category merely files a product under the wrong chip — it is
+   * still sellable from the "All" rail, and guessing a new one could scatter a
+   * catalog somebody organised by hand. Invisibility is the bug; filing is not.
+   */
+  private async retagBranchProductsToServiceFormat(
+    branchId: number,
+    serviceFormat: string,
+    vendorStoreId: number | null,
+  ): Promise<number> {
+    // RETURNING, not rowCount: TypeORM's postgres driver hands back `result.rows`
+    // from query(), so a bare UPDATE would report zero however many it wrote.
+    const result: unknown = await this.sellerWorkspacesRepository.manager.query(
+      `
+        UPDATE product p
+        SET attributes = jsonb_set(
+              COALESCE(p.attributes, '{}'::jsonb),
+              '{serviceFormat}',
+              to_jsonb($2::text),
+              true
+            )
+        WHERE p.deleted_at IS NULL
+          AND COALESCE(p.attributes->>'serviceFormat', '') <> $2
+          AND (
+            EXISTS (
+              SELECT 1 FROM branch_inventory bi
+              WHERE bi."productId" = p.id AND bi."branchId" = $1
+            )
+            OR EXISTS (
+              SELECT 1 FROM branch_catalog_product_links bcl
+              WHERE bcl."productId" = p.id AND bcl."branchId" = $1
+            )
+            OR EXISTS (
+              SELECT 1 FROM branch_catalog_vendor_links bcv
+              WHERE bcv."vendorId" = p."vendorId"
+                AND bcv."branchId" = $1
+                AND $3::int IS NOT NULL
+                AND p.vendor_store_id = $3::int
+            )
+          )
+        RETURNING p.id
+        `,
+      [branchId, serviceFormat, vendorStoreId],
+    );
+
+    return Array.isArray(result) ? result.length : 0;
+  }
+
   async updateBranchWorkspaceServiceFormat(
     userId: number,
     branchId: number,
@@ -2592,6 +2664,22 @@ export class SellerWorkspaceService {
     await this.syncVendorStoreFromBranch(branchId, {
       serviceFormat: normalizedServiceFormat,
     });
+    // Carry the catalog across with the branch. Only on a real change — a
+    // no-op confirmation of the current format must not rewrite every product
+    // row — and the statement is a no-op again for products already tagged
+    // correctly, so a branch whose catalog is in order writes nothing.
+    if (formatChanged) {
+      const retagged = await this.retagBranchProductsToServiceFormat(
+        branchId,
+        normalizedServiceFormat,
+        branch.vendorStoreId ?? null,
+      );
+      if (retagged > 0) {
+        this.logger.log(
+          `Branch ${branchId} switched ${previousServiceFormat ?? 'NONE'} → ${normalizedServiceFormat}; re-tagged ${retagged} product(s) so they stay visible on the register.`,
+        );
+      }
+    }
     const refreshed = await this.getBranchWorkspaces(userId);
     let updatedWorkspace = refreshed.items.find(
       (item) => item.branchId === branchId,

@@ -86,6 +86,7 @@ describe('SellerWorkspaceService', () => {
     manager: {
       getRepository: jest.Mock;
       transaction: jest.Mock;
+      query: jest.Mock;
     };
   };
   let vendorStaffService: { getStoreSummariesForUser: jest.Mock };
@@ -169,6 +170,9 @@ describe('SellerWorkspaceService', () => {
           return {};
         }),
         transaction: jest.fn(),
+        // Raw SQL escape hatch. Used by the product re-tag that runs on a
+        // service-format change; defaults to "nothing needed re-tagging".
+        query: jest.fn().mockResolvedValue([]),
       },
     };
     vendorStaffService = { getStoreSummariesForUser: jest.fn() };
@@ -1532,6 +1536,80 @@ describe('SellerWorkspaceService', () => {
       // An unchanged format keeps the layout it already had.
       const [, updates] = branchRepo.update.mock.calls[0];
       expect(updates.homeConfig.widgets).toBeUndefined();
+      getBranchWorkspaces.mockRestore();
+    });
+
+    /**
+     * A product's format is stamped into attributes.serviceFormat when it is
+     * saved, and the register hides anything tagged for a different format.
+     * Nothing used to revisit that tag, so switching a branch's format
+     * silently orphaned its whole catalog from its own register — SMAG School
+     * confirmed SCHOOL and every product stayed tagged for the format it was
+     * auto-provisioned with, leaving a fee desk with an empty grid.
+     */
+    it('carries the catalog across when the format actually changes', async () => {
+      stubBranchRepo({
+        id: 11,
+        ownerId: 41,
+        retailTenantId: 13,
+        serviceFormat: 'QSR',
+        vendorStoreId: 77,
+        retailTenant: { owner: { id: 41 } },
+      });
+      const getBranchWorkspaces = jest
+        .spyOn(service, 'getBranchWorkspaces')
+        .mockResolvedValue({ items: [{ branchId: 11 }] } as any);
+      sellerWorkspacesRepository.manager.query.mockResolvedValue([
+        { id: 1 },
+        { id: 2 },
+        { id: 3 },
+        { id: 4 },
+      ]);
+
+      // RETAIL rather than SCHOOL only because the self-serve allow-list is
+      // narrowed to RETAIL/QSR without the hospitality rollout — what is under
+      // test is that a REAL change re-tags, whatever the two formats are.
+      await service.updateBranchWorkspaceServiceFormat(
+        41,
+        11,
+        { serviceFormat: 'RETAIL' },
+        [],
+      );
+
+      expect(sellerWorkspacesRepository.manager.query).toHaveBeenCalledTimes(1);
+      const [sql, params] =
+        sellerWorkspacesRepository.manager.query.mock.calls[0];
+      expect(sql).toMatch(/UPDATE product/);
+      expect(sql).toMatch(/serviceFormat/);
+      // Scoped to this branch, stamped with the new format, and aware of the
+      // branch's own vendor store for the third link table.
+      expect(params).toEqual([11, 'RETAIL', 77]);
+      getBranchWorkspaces.mockRestore();
+    });
+
+    it('rewrites no product row when the format is re-submitted unchanged', async () => {
+      stubBranchRepo({
+        id: 11,
+        ownerId: 41,
+        retailTenantId: 13,
+        serviceFormat: 'QSR',
+        vendorStoreId: 77,
+        retailTenant: { owner: { id: 41 } },
+      });
+      const getBranchWorkspaces = jest
+        .spyOn(service, 'getBranchWorkspaces')
+        .mockResolvedValue({ items: [{ branchId: 11 }] } as any);
+
+      await service.updateBranchWorkspaceServiceFormat(
+        41,
+        11,
+        { serviceFormat: 'QSR' },
+        [],
+      );
+
+      // Confirming the format you already run is the common case — the client
+      // calls this endpoint even for a no-op — and it must not touch a catalog.
+      expect(sellerWorkspacesRepository.manager.query).not.toHaveBeenCalled();
       getBranchWorkspaces.mockRestore();
     });
 
