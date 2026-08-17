@@ -339,6 +339,30 @@ describe('ConsumerOrderService tells the shop', () => {
     );
   });
 
+  it('tells a school somebody applied, never that they asked for a quote', async () => {
+    // A school and a print shop send the identical QUOTE row. Nobody quotes a
+    // family for a child's place, and this notification is the first thing —
+    // often the only thing — the head teacher sees about the application.
+    const { service, createAndDispatch } = buildService('SCHOOL', {
+      name: 'SMAK School',
+    });
+
+    await service.placeOrder({
+      ...(order as object),
+      serviceFormat: 'SCHOOL',
+      orderMode: 'QUOTE',
+      lines: [],
+      consumerName: 'Yusuf Ali',
+      consumerNote: 'Student: Amina Yusuf\nClass: 3A',
+    } as never);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    const sent = createAndDispatch.mock.calls[0][0];
+    expect(sent.title).toBe('New application at SMAK School');
+    expect(sent.body).toContain('Yusuf Ali applied for a place');
+    expect(sent.body).not.toContain('quote');
+  });
+
   it('still places the order when the notification fails', async () => {
     // The cart is already on the till by then. Refusing a guest's order
     // because a push token went stale would be absurd.

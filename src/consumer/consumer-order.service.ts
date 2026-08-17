@@ -138,8 +138,19 @@ export class ConsumerOrderService {
     if (!ownerId) return;
 
     const who = dto.consumerName?.trim() || 'Someone';
-    const what =
-      dto.orderMode === 'QUOTE'
+
+    /* A school and a print shop send the identical QUOTE row, and the mode's own
+       sentence — "asked for a quote" — is the one thing a school must never be
+       told, because nobody quotes a family for a child's place. The POS says so
+       everywhere else already (the storefront's status copy, the mode label the
+       parent reads, the ENROLMENT card at the till); this notification, which is
+       the FIRST thing the head teacher sees and often the only one, was still
+       reading the mode rather than the format. */
+    const isApplication =
+      dto.serviceFormat === 'SCHOOL' && dto.orderMode === 'QUOTE';
+    const what = isApplication
+      ? 'applied for a place'
+      : dto.orderMode === 'QUOTE'
         ? 'asked for a quote'
         : dto.orderMode === 'BOOKING'
           ? 'wants to book'
@@ -149,7 +160,9 @@ export class ConsumerOrderService {
 
     await this.notifications.createAndDispatch({
       userId: ownerId,
-      title: `New request at ${branch.name ?? 'your branch'}`,
+      title: isApplication
+        ? `New application at ${branch.name ?? 'your school'}`
+        : `New request at ${branch.name ?? 'your branch'}`,
       body: `${who} ${what} — ${orderNumber}.`,
       type: NotificationType.ORDER,
       data: {
