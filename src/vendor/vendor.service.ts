@@ -1266,6 +1266,43 @@ export class VendorService {
     };
   }
 
+  /**
+   * Explain why an owned-product lookup missed.
+   *
+   * "Product not found or you do not own it." covers two very different
+   * situations and names neither. A branch catalog can list rows belonging to a
+   * different vendor account (products reach a branch through its vendor store
+   * or through a catalog link, neither of which rewrites `vendorId`), so an
+   * owner editing a product plainly on screen was told it did not exist. Say
+   * which store actually holds it — that is the difference between a dead end
+   * and a fixable one.
+   */
+  private async productOwnershipMissError(
+    productId: number,
+    userId: number,
+  ): Promise<NotFoundException | ForbiddenException> {
+    const existing = await this.productRepository.findOne({
+      where: { id: productId },
+      relations: ['vendor'],
+    });
+    if (!existing) {
+      return new NotFoundException(`Product #${productId} not found.`);
+    }
+    const ownerId = existing.vendor?.id ?? null;
+    if (!ownerId || ownerId === userId) {
+      // Owned after all (or ownerless): the first lookup missed for some other
+      // reason — soft-deleted, most likely. Keep the not-found shape.
+      return new NotFoundException(`Product #${productId} not found.`);
+    }
+    const ownerLabel =
+      String(existing.vendor?.storeName || '').trim() ||
+      String(existing.vendor?.displayName || '').trim() ||
+      `store #${ownerId}`;
+    return new ForbiddenException(
+      `"${existing.name}" belongs to ${ownerLabel}, not the store you are managing. Switch to that store to edit it.`,
+    );
+  }
+
   // ✅ FIX: This function is now type-safe and handles image updates
   async updateMyProduct(
     userId: number,
@@ -1279,7 +1316,7 @@ export class VendorService {
       relations: ['category'],
     });
     if (!product) {
-      throw new NotFoundException('Product not found or you do not own it.');
+      throw await this.productOwnershipMissError(productId, userId);
     }
 
     const {
@@ -1713,7 +1750,7 @@ export class VendorService {
       where: { id: productId, vendor: { id: userId } },
     });
     if (!product) {
-      throw new NotFoundException('Product not found or not owned by user');
+      throw await this.productOwnershipMissError(productId, userId);
     }
     // Soft delete to preserve integrity
     await this.productRepository.update(productId, { deletedAt: new Date() });
