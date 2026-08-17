@@ -49,6 +49,15 @@ export class BranchStaffAssignmentResponseDto {
   @ApiProperty()
   isActive!: boolean;
 
+  @ApiPropertyOptional({
+    description:
+      'True when a register quick-unlock PIN is set. The PIN itself is never returned.',
+  })
+  hasUnlockPin?: boolean;
+
+  @ApiPropertyOptional({ nullable: true })
+  unlockPinSetAt?: Date | null;
+
   @ApiProperty()
   createdAt!: Date;
 

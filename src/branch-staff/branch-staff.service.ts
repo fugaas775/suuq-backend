@@ -1,10 +1,12 @@
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
 import { AuditService } from '../audit/audit.service';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -33,6 +35,14 @@ import { isPosSelfServeTrialSubscription } from '../retail/pos-self-serve-trial.
 import { PosSessionRevocationService } from '../auth/pos-session-revocation.service';
 import { User } from '../users/entities/user.entity';
 import { POS_BRANCH_SUBSCRIPTION_OPTIONS } from './pos-workspace-pricing';
+import {
+  buildUnlockPinFingerprint,
+  isPinEligibleLane,
+  isWeakUnlockPin,
+  normalizeUnlockPin,
+  OPERATOR_UNLOCK_PIN_LENGTH,
+  OPERATOR_UNLOCK_PIN_PEPPER_ENV,
+} from './pos-operator-pin.util';
 
 export interface PosBranchSummary {
   branchId: number;
@@ -203,6 +213,7 @@ export class BranchStaffService {
     private readonly retailEntitlementsService: RetailEntitlementsService,
     private readonly auditService: AuditService,
     private readonly revocationService: PosSessionRevocationService,
+    private readonly configService: ConfigService,
   ) {}
 
   async assertCanManageBranchStaff(
@@ -304,7 +315,7 @@ export class BranchStaffService {
   async findStylistRoster(
     branchId: number,
     laneCodes: string[],
-  ): Promise<{ userId: number; displayName: string }[]> {
+  ): Promise<{ userId: number; displayName: string; hasPin: boolean }[]> {
     const normalizedCodes = laneCodes.map((c) => c.trim().toUpperCase());
     const assignments = await this.assignmentsRepository.find({
       where: { branchId, isActive: true },
@@ -313,6 +324,7 @@ export class BranchStaffService {
         id: true,
         userId: true,
         posExperienceProfileCode: true,
+        unlockPinHash: true,
         user: { id: true, displayName: true, posUsername: true },
       },
     });
@@ -327,6 +339,10 @@ export class BranchStaffService {
         displayName:
           a.user?.displayName?.trim() || a.user?.posUsername?.trim() || '',
         username: a.user?.posUsername?.trim() || '',
+        // Lets the register lock screen show a waiter who has not been given a
+        // PIN yet as a disabled tile, rather than hiding them and leaving the
+        // manager wondering who is still unset. Never exposes the PIN itself.
+        hasPin: Boolean(a.unlockPinHash),
       }))
       .filter((s) => s.displayName);
   }
@@ -1512,6 +1528,7 @@ export class BranchStaffService {
     }
 
     const previousRole = assignment.role;
+    const previousLaneCode = assignment.posExperienceProfileCode;
 
     if (dto.role) {
       assignment.role = dto.role;
@@ -1546,6 +1563,21 @@ export class BranchStaffService {
       assignment.isActive = dto.isActive;
     }
 
+    // A quick-unlock PIN belongs to the waiter lane, not to the person. Moving
+    // someone off QSR_WAITER — or deactivating them — must drop the PIN with
+    // them, so a demotion can never leave fast register access behind.
+    const laneChangedAwayFromWaiter =
+      dto.posExperienceProfileCode !== undefined &&
+      assignment.posExperienceProfileCode !== previousLaneCode;
+    if (
+      assignment.unlockPinHash &&
+      (laneChangedAwayFromWaiter || !assignment.isActive)
+    ) {
+      assignment.unlockPinHash = null;
+      assignment.unlockPinFingerprint = null;
+      assignment.unlockPinSetAt = null;
+    }
+
     // Use update() instead of save() to avoid TypeORM nulling the userId FK
     // column when saving an entity that was loaded with a joined relation.
     await this.assignmentsRepository.update(
@@ -1558,6 +1590,9 @@ export class BranchStaffService {
         posExperienceProfileCode: assignment.posExperienceProfileCode,
         serviceSharePct: assignment.serviceSharePct,
         isActive: assignment.isActive,
+        unlockPinHash: assignment.unlockPinHash,
+        unlockPinFingerprint: assignment.unlockPinFingerprint,
+        unlockPinSetAt: assignment.unlockPinSetAt,
       },
     );
     const saved = assignment;
@@ -1574,6 +1609,198 @@ export class BranchStaffService {
     }
 
     return saved;
+  }
+
+  // --- Register quick-unlock PIN (QSR waiter lanes only) -------------------
+
+  private resolveUnlockPinPepper(): string {
+    const pepper = String(
+      this.configService.get<string>(OPERATOR_UNLOCK_PIN_PEPPER_ENV) || '',
+    ).trim();
+    if (!pepper) {
+      // Fail closed. Without the pepper we cannot enforce branch-wide PIN
+      // uniqueness, and a PIN that two waiters can share is worse than none.
+      throw new ForbiddenException({
+        code: 'POS_PIN_NOT_CONFIGURED',
+        message:
+          'Quick unlock is not configured on this server. Contact support.',
+      });
+    }
+    return pepper;
+  }
+
+  /**
+   * Loads the assignment and confirms it is a QSR waiter, which is the only
+   * lane allowed to hold a PIN. Shared by the set and clear paths.
+   */
+  private async loadPinEligibleAssignment(branchId: number, userId: number) {
+    const assignment = await this.assignmentsRepository.findOne({
+      where: { branchId, userId, isActive: true },
+      relations: { branch: true },
+    });
+    if (!assignment) {
+      throw new NotFoundException('Branch staff assignment not found.');
+    }
+
+    if (
+      !isPinEligibleLane(
+        assignment.branch?.serviceFormat,
+        assignment.posExperienceProfileCode,
+      )
+    ) {
+      throw new ForbiddenException({
+        code: 'POS_PIN_NOT_ELIGIBLE',
+        message:
+          'A quick-unlock PIN is only available to waiters at a QSR branch.',
+      });
+    }
+
+    return assignment;
+  }
+
+  async setUnlockPin(
+    branchId: number,
+    userId: number,
+    rawPin: unknown,
+    actor: { id?: number | null; email?: string | null; roles?: string[] },
+  ) {
+    await this.assertCanManageBranchStaff(actor, branchId);
+    const pepper = this.resolveUnlockPinPepper();
+    const assignment = await this.loadPinEligibleAssignment(branchId, userId);
+
+    const pin = normalizeUnlockPin(rawPin);
+    if (!pin) {
+      throw new BadRequestException({
+        code: 'POS_PIN_INVALID',
+        message: `The PIN must be exactly ${OPERATOR_UNLOCK_PIN_LENGTH} digits.`,
+      });
+    }
+    if (isWeakUnlockPin(pin)) {
+      throw new BadRequestException({
+        code: 'POS_PIN_WEAK',
+        message:
+          'Choose a less predictable PIN — repeated digits and runs like 1234 are not allowed.',
+      });
+    }
+
+    const fingerprint = buildUnlockPinFingerprint(pepper, branchId, pin);
+    const collision = await this.assignmentsRepository.findOne({
+      where: { branchId, unlockPinFingerprint: fingerprint },
+      select: { id: true, userId: true },
+    });
+    if (collision && collision.userId !== userId) {
+      // Deliberately does not say who holds it. In QSR the operator identity
+      // stamps waiterUserId onto every order, so two waiters sharing digits
+      // would silently misattribute sales — but the manager does not need to
+      // learn another waiter's PIN to fix it.
+      throw new ConflictException({
+        code: 'POS_PIN_IN_USE',
+        message:
+          'That PIN is already used by another waiter at this branch. Pick different digits.',
+      });
+    }
+
+    const setAt = new Date();
+    await this.assignmentsRepository.update(
+      { id: assignment.id },
+      {
+        unlockPinHash: await bcrypt.hash(pin, 10),
+        unlockPinFingerprint: fingerprint,
+        unlockPinSetAt: setAt,
+      },
+    );
+
+    await this.auditService
+      .log({
+        action: 'pos.branch_staff.unlock_pin.set',
+        targetType: 'BRANCH',
+        targetId: branchId,
+        actorId: actor?.id ?? null,
+        actorEmail: actor?.email ?? null,
+        meta: { branchId, userId },
+      })
+      .catch(() => undefined);
+
+    return { userId, hasPin: true, unlockPinSetAt: setAt.toISOString() };
+  }
+
+  async clearUnlockPin(
+    branchId: number,
+    userId: number,
+    actor: { id?: number | null; email?: string | null; roles?: string[] },
+  ) {
+    await this.assertCanManageBranchStaff(actor, branchId);
+
+    // Clearing intentionally skips the eligibility check — a PIN left behind by
+    // a lane change must always be removable.
+    const assignment = await this.assignmentsRepository.findOne({
+      where: { branchId, userId },
+      select: { id: true },
+    });
+    if (!assignment) {
+      throw new NotFoundException('Branch staff assignment not found.');
+    }
+
+    await this.assignmentsRepository.update(
+      { id: assignment.id },
+      {
+        unlockPinHash: null,
+        unlockPinFingerprint: null,
+        unlockPinSetAt: null,
+      },
+    );
+
+    await this.auditService
+      .log({
+        action: 'pos.branch_staff.unlock_pin.cleared',
+        targetType: 'BRANCH',
+        targetId: branchId,
+        actorId: actor?.id ?? null,
+        actorEmail: actor?.email ?? null,
+        meta: { branchId, userId },
+      })
+      .catch(() => undefined);
+
+    return { userId, hasPin: false, unlockPinSetAt: null };
+  }
+
+  /**
+   * Verifies a PIN against one named staff member and returns the assignment
+   * (with its user) on success, or null on any failure.
+   *
+   * Eligibility is re-checked here, not just at set time, so that changing a
+   * waiter's lane or flipping the branch off QSR disables every stored PIN
+   * immediately without a data migration.
+   */
+  async verifyUnlockPin(
+    branchId: number,
+    userId: number,
+    rawPin: unknown,
+  ): Promise<BranchStaffAssignment | null> {
+    const pin = normalizeUnlockPin(rawPin);
+    if (!pin) {
+      return null;
+    }
+
+    const assignment = await this.assignmentsRepository.findOne({
+      where: { branchId, userId, isActive: true },
+      relations: { branch: true, user: true },
+    });
+    if (!assignment?.unlockPinHash) {
+      return null;
+    }
+
+    if (
+      !isPinEligibleLane(
+        assignment.branch?.serviceFormat,
+        assignment.posExperienceProfileCode,
+      )
+    ) {
+      return null;
+    }
+
+    const matches = await bcrypt.compare(pin, assignment.unlockPinHash);
+    return matches ? assignment : null;
   }
 
   async deleteStaffAccount(

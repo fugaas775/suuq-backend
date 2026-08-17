@@ -22,6 +22,7 @@ import {
 import { BranchStaffInvite } from './entities/branch-staff-invite.entity';
 import { PosSessionRevocationService } from '../auth/pos-session-revocation.service';
 import { ForbiddenException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 
 describe('BranchStaffService', () => {
   let service: BranchStaffService;
@@ -124,6 +125,14 @@ describe('BranchStaffService', () => {
           useValue: retailEntitlementsService,
         },
         { provide: PosSessionRevocationService, useValue: {} },
+        {
+          provide: ConfigService,
+          useValue: {
+            get: jest.fn((key: string) =>
+              key === 'POS_PIN_PEPPER' ? 'test-pepper' : undefined,
+            ),
+          },
+        },
       ],
     }).compile();
 

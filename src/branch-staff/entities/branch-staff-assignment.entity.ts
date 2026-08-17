@@ -83,6 +83,26 @@ export class BranchStaffAssignment {
   @Column({ type: 'timestamptz', nullable: true, default: null })
   sessionRevokedAt!: Date | null;
 
+  /**
+   * bcrypt hash of this staff member's 4-digit register quick-unlock PIN.
+   * Only ever populated for a QSR branch's QSR_WAITER lane. NULL means "no
+   * quick unlock" — that staff member types their password like everyone else.
+   */
+  @Column({ type: 'varchar', nullable: true, default: null })
+  unlockPinHash!: string | null;
+
+  /**
+   * Deterministic peppered HMAC of the same PIN, used *only* to enforce that
+   * no two staff members in one branch hold the same digits (unique index on
+   * branchId + unlockPinFingerprint). bcrypt is salted and unsearchable, so
+   * uniqueness cannot be enforced against the hash itself.
+   */
+  @Column({ type: 'varchar', nullable: true, default: null })
+  unlockPinFingerprint!: string | null;
+
+  @Column({ type: 'timestamptz', nullable: true, default: null })
+  unlockPinSetAt!: Date | null;
+
   @CreateDateColumn()
   createdAt!: Date;
 

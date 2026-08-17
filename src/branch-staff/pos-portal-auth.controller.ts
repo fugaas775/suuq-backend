@@ -38,6 +38,11 @@ import {
   PosManagerApprovalType,
   PosOperatorUnlockDto,
 } from './dto/pos-operator-unlock.dto';
+import { PosOperatorUnlockPinDto } from './dto/pos-operator-unlock-pin.dto';
+import {
+  PinLockoutState,
+  PosOperatorPinThrottleService,
+} from './pos-operator-pin-throttle.service';
 import { GoogleAuthDto } from '../auth/dto/google-auth.dto';
 import { GoogleCompleteDto } from '../auth/dto/google-complete.dto';
 import { AppleAuthDto } from '../auth/dto/apple-auth.dto';
@@ -137,6 +142,7 @@ export class PosPortalAuthController {
     private readonly auditService: AuditService,
     private readonly configService: ConfigService,
     private readonly redisService: RedisService,
+    private readonly pinThrottleService: PosOperatorPinThrottleService,
   ) {}
 
   private resolveIdentifier(dto: IdentifierLikeDto): string {
@@ -227,6 +233,136 @@ export class PosPortalAuthController {
       user: this.serializeUser(authenticatedUser),
       branch: branchAccess,
     };
+  }
+
+  /**
+   * Quick unlock for a QSR waiter at the register lock screen.
+   *
+   * Unlike every other route on this controller this one is guarded: the till
+   * is already signed in when it locks, so requiring the portal session token
+   * means a 4-digit PIN can only be attacked from inside an authenticated
+   * branch session, never from the open internet.
+   *
+   * `userId` comes from the tile the waiter tapped — the PIN is verified
+   * against that one person and is never used to look anyone up. On success
+   * this mints exactly the same 8h pos_operator token as the password path, so
+   * guards, permissions and revocation behave identically.
+   */
+  @Post('operator-unlock-pin')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard)
+  @Throttle(PORTAL_AUTH_WRITE_THROTTLE)
+  @ApiOperation({ summary: 'Unlock the register with a QSR waiter quick PIN.' })
+  @ApiTooManyRequestsResponse({ description: 'Too many failed PIN attempts.' })
+  async operatorUnlockPin(
+    @Body() dto: PosOperatorUnlockPinDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    // The caller must already hold a portal session on this branch.
+    await this.branchStaffService.assertIsBranchMember(req.user, dto.branchId);
+
+    const existingLock = await this.pinThrottleService.getLockoutState(
+      dto.branchId,
+      dto.userId,
+    );
+    if (existingLock.locked) {
+      throw this.buildPinLockoutError(existingLock);
+    }
+
+    const assignment = await this.branchStaffService.verifyUnlockPin(
+      dto.branchId,
+      dto.userId,
+      dto.pin,
+    );
+
+    if (!assignment?.user) {
+      const lock = await this.pinThrottleService.recordFailure(
+        dto.branchId,
+        dto.userId,
+      );
+      if (lock.locked) {
+        throw this.buildPinLockoutError(lock);
+      }
+      // Same message whether the PIN was wrong, the waiter has no PIN, or the
+      // lane is no longer eligible — none of that is worth leaking.
+      throw new UnauthorizedException({
+        code: 'POS_OPERATOR_PIN_INVALID',
+        message: 'That PIN did not match. Try again or use your password.',
+      });
+    }
+
+    const branchAccess = await this.resolveBranchAccess(
+      assignment.user,
+      dto.branchId,
+    );
+
+    // Same shift gate as the password path — a PIN must not become a way to
+    // sign in outside an assigned shift.
+    const isOperatorOnly =
+      !branchAccess.isOwner &&
+      !branchAccess.isTenantOwner &&
+      branchAccess.role === 'OPERATOR';
+    if (isOperatorOnly) {
+      const allowed = await this.branchShiftService.isUserAllowedNow(
+        branchAccess.branchId,
+        assignment.user.id,
+        new Date(),
+        branchAccess.timezone ?? null,
+      );
+      if (!allowed) {
+        throw new ForbiddenException({
+          code: 'POS_OPERATOR_NO_ACTIVE_SHIFT',
+          message:
+            'Your shift has not started yet or has already ended. Contact your manager.',
+        });
+      }
+    }
+
+    await this.pinThrottleService.clearFailures(dto.branchId, dto.userId);
+
+    const authenticatedUser = await this.authService.buildAuthenticatedUser(
+      assignment.user,
+    );
+    const operatorAccessToken =
+      await this.authService.generateScopedAccessToken(
+        this.buildScopedPosClaims(
+          authenticatedUser,
+          branchAccess,
+          'pos_operator',
+        ),
+        '8h',
+      );
+
+    await this.recordPortalAuthEvent({
+      action: 'pos_portal.auth.operator_unlock_pin.success',
+      event: 'pos_portal_operator_unlock_pin_success',
+      level: 'log',
+      req,
+      user: assignment.user,
+      meta: { branchId: dto.branchId, method: 'PIN' },
+    });
+
+    return {
+      operatorAccessToken,
+      user: this.serializeUser(authenticatedUser),
+      branch: branchAccess,
+    };
+  }
+
+  private buildPinLockoutError(lock: PinLockoutState): HttpException {
+    const isBranch = lock.scope === 'BRANCH';
+    return new HttpException(
+      {
+        code: isBranch
+          ? 'POS_OPERATOR_PIN_DISABLED'
+          : 'POS_OPERATOR_PIN_LOCKED',
+        message: isBranch
+          ? 'Quick unlock is temporarily disabled at this branch after too many failed attempts. Sign in with a username and password.'
+          : 'Too many incorrect PIN attempts. Sign in with your username and password, or try again later.',
+        retryAfterSeconds: lock.retryAfterSeconds,
+      },
+      HttpStatus.TOO_MANY_REQUESTS,
+    );
   }
 
   @Post('manager-approval')

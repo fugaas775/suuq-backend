@@ -18,6 +18,7 @@ import { BranchStaffInvite } from './entities/branch-staff-invite.entity';
 import { BranchShift } from './entities/branch-shift.entity';
 import { BranchShiftStaff } from './entities/branch-shift-staff.entity';
 import { BranchShiftService } from './branch-shift.service';
+import { PosOperatorPinThrottleService } from './pos-operator-pin-throttle.service';
 import { BranchShiftController } from './branch-shift.controller';
 import { PosPortalAuthController } from './pos-portal-auth.controller';
 import { PosPortalOnboardingService } from './pos-portal-onboarding.service';
@@ -57,12 +58,14 @@ import { SuppliersModule } from '../suppliers/suppliers.module';
   providers: [
     BranchStaffService,
     BranchShiftService,
+    PosOperatorPinThrottleService,
     PosWorkspaceActivationService,
     PosPortalOnboardingService,
   ],
   exports: [
     BranchStaffService,
     BranchShiftService,
+    PosOperatorPinThrottleService,
     PosWorkspaceActivationService,
     PosPortalOnboardingService,
   ],

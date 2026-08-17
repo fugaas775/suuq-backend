@@ -7,6 +7,7 @@ import {
   ParseIntPipe,
   Patch,
   Post,
+  Put,
   Query,
   Req,
   UseGuards,
@@ -29,6 +30,7 @@ import {
 import { ChangeStaffPasswordDto } from './dto/change-staff-password.dto';
 import { CreateBranchStaffManualAccountDto } from './dto/create-branch-staff-manual-account.dto';
 import { InviteBranchStaffDto } from './dto/invite-branch-staff.dto';
+import { SetStaffUnlockPinDto } from './dto/set-staff-unlock-pin.dto';
 import { UpdateBranchStaffAssignmentDto } from './dto/update-branch-staff-assignment.dto';
 import { BranchStaffAssignment } from './entities/branch-staff-assignment.entity';
 import { BranchStaffInvite } from './entities/branch-staff-invite.entity';
@@ -62,6 +64,9 @@ export class BranchStaffController {
       posExperienceProfileCode: assignment.posExperienceProfileCode ?? null,
       serviceSharePct: assignment.serviceSharePct ?? null,
       isActive: assignment.isActive,
+      // Whether a register quick-unlock PIN exists, never the PIN itself.
+      hasUnlockPin: Boolean(assignment.unlockPinHash),
+      unlockPinSetAt: assignment.unlockPinSetAt ?? null,
       createdAt: assignment.createdAt,
       updatedAt: assignment.updatedAt,
       user: assignment.user
@@ -366,5 +371,43 @@ export class BranchStaffController {
       dto.newPassword,
       req.user,
     );
+  }
+
+  /**
+   * Register quick-unlock PIN. Manager-set only, and only for a QSR branch's
+   * waiter lane — every other format and lane keeps the password-only lock
+   * screen. Returns 409 POS_PIN_IN_USE when another waiter at this branch
+   * already holds the same digits.
+   */
+  @ApiOkResponse({ description: 'Quick-unlock PIN set.' })
+  @ApiForbiddenResponse({
+    description: 'Branch staff management access was denied.',
+  })
+  @Put(':userId/unlock-pin')
+  async setUnlockPin(
+    @Param('branchId', ParseIntPipe) branchId: number,
+    @Param('userId', ParseIntPipe) userId: number,
+    @Body() dto: SetStaffUnlockPinDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.branchStaffService.setUnlockPin(
+      branchId,
+      userId,
+      dto.pin,
+      req.user,
+    );
+  }
+
+  @ApiOkResponse({ description: 'Quick-unlock PIN removed.' })
+  @ApiForbiddenResponse({
+    description: 'Branch staff management access was denied.',
+  })
+  @Delete(':userId/unlock-pin')
+  async clearUnlockPin(
+    @Param('branchId', ParseIntPipe) branchId: number,
+    @Param('userId', ParseIntPipe) userId: number,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.branchStaffService.clearUnlockPin(branchId, userId, req.user);
   }
 }

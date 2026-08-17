@@ -19,6 +19,7 @@ import { RedisService } from '../redis/redis.service';
 import { SupplierStaffService } from '../suppliers/supplier-staff.service';
 import { SupplierOnboardingService } from '../suppliers/supplier-onboarding.service';
 import { SupplierActivationService } from '../suppliers/supplier-activation.service';
+import { PosOperatorPinThrottleService } from './pos-operator-pin-throttle.service';
 
 describe('PosPortalAuthController', () => {
   let controller: PosPortalAuthController;
@@ -37,6 +38,8 @@ describe('PosPortalAuthController', () => {
     getPosBranchSummariesForUser: jest.fn(),
     getPosWorkspaceActivationCandidatesForUser: jest.fn(),
     getPosWorkspacePricing: jest.fn(),
+    assertIsBranchMember: jest.fn().mockResolvedValue(undefined),
+    verifyUnlockPin: jest.fn(),
   };
 
   const auditServiceMock = {
@@ -77,6 +80,20 @@ describe('PosPortalAuthController', () => {
     del: jest.fn(),
   };
 
+  const branchShiftServiceMock = {
+    isUserAllowedNow: jest.fn(),
+  };
+
+  const pinThrottleServiceMock = {
+    getLockoutState: jest
+      .fn()
+      .mockResolvedValue({ locked: false, scope: null, retryAfterSeconds: 0 }),
+    recordFailure: jest
+      .fn()
+      .mockResolvedValue({ locked: false, scope: null, retryAfterSeconds: 0 }),
+    clearFailures: jest.fn().mockResolvedValue(undefined),
+  };
+
   const user = {
     id: 51,
     email: 'pos@suuq.test',
@@ -89,6 +106,19 @@ describe('PosPortalAuthController', () => {
     authServiceMock.buildAuthenticatedUser.mockImplementation(
       async (value) => value,
     );
+    branchStaffServiceMock.assertIsBranchMember.mockResolvedValue(undefined);
+    branchShiftServiceMock.isUserAllowedNow.mockResolvedValue(true);
+    pinThrottleServiceMock.getLockoutState.mockResolvedValue({
+      locked: false,
+      scope: null,
+      retryAfterSeconds: 0,
+    });
+    pinThrottleServiceMock.recordFailure.mockResolvedValue({
+      locked: false,
+      scope: null,
+      retryAfterSeconds: 0,
+    });
+    pinThrottleServiceMock.clearFailures.mockResolvedValue(undefined);
     branchStaffServiceMock.getPosWorkspacePricing.mockReturnValue({
       amount: 1900,
       currency: 'ETB',
@@ -119,10 +149,7 @@ describe('PosPortalAuthController', () => {
       providers: [
         { provide: AuthService, useValue: authServiceMock },
         { provide: BranchStaffService, useValue: branchStaffServiceMock },
-        {
-          provide: BranchShiftService,
-          useValue: { isUserAllowedNow: jest.fn().mockResolvedValue(true) },
-        },
+        { provide: BranchShiftService, useValue: branchShiftServiceMock },
         {
           provide: PosPortalOnboardingService,
           useValue: posPortalOnboardingServiceMock,
@@ -146,6 +173,10 @@ describe('PosPortalAuthController', () => {
         { provide: AuditService, useValue: auditServiceMock },
         { provide: ConfigService, useValue: configServiceMock },
         { provide: RedisService, useValue: redisServiceMock },
+        {
+          provide: PosOperatorPinThrottleService,
+          useValue: pinThrottleServiceMock,
+        },
       ],
     }).compile();
 
@@ -914,6 +945,151 @@ describe('PosPortalAuthController', () => {
         branchId: 9,
         tenantId: 31,
       },
+    });
+  });
+
+  describe('operatorUnlockPin', () => {
+    const waiter = {
+      id: 77,
+      email: 'pos.m.amina@sys.internal',
+      roles: [],
+      displayName: 'Amina',
+    } as any;
+
+    const tillRequest = { user: { id: 51, roles: [] } } as any;
+
+    function armWaiterBranch() {
+      branchStaffServiceMock.getPosBranchSummariesForUser.mockResolvedValue([
+        {
+          branchId: 9,
+          branchName: 'Cafe Blue',
+          branchCode: 'CB-9',
+          serviceFormat: 'QSR',
+          role: 'OPERATOR',
+          permissions: ['OPEN_REGISTER'],
+          assignedSurfaces: null,
+          capabilities: [],
+          isOwner: false,
+          isTenantOwner: false,
+          posExperienceProfileCode: 'QSR_WAITER',
+          timezone: 'Africa/Addis_Ababa',
+          workspaceStatus: 'ACTIVE',
+        },
+      ]);
+      authServiceMock.generateScopedAccessToken.mockResolvedValue(
+        'operator-token',
+      );
+    }
+
+    it('mints an operator token for the tapped waiter when the PIN matches', async () => {
+      armWaiterBranch();
+      branchStaffServiceMock.verifyUnlockPin.mockResolvedValue({
+        userId: 77,
+        user: waiter,
+      });
+
+      const result = await controller.operatorUnlockPin(
+        { branchId: 9, userId: 77, pin: '4827' },
+        tillRequest,
+      );
+
+      expect(branchStaffServiceMock.verifyUnlockPin).toHaveBeenCalledWith(
+        9,
+        77,
+        '4827',
+      );
+      expect(result).toMatchObject({
+        operatorAccessToken: 'operator-token',
+        branch: { branchId: 9, posExperienceProfileCode: 'QSR_WAITER' },
+      });
+      expect(pinThrottleServiceMock.clearFailures).toHaveBeenCalledWith(9, 77);
+    });
+
+    it('requires the till to already hold a session on that branch', async () => {
+      branchStaffServiceMock.assertIsBranchMember.mockRejectedValue(
+        new ForbiddenException('nope'),
+      );
+
+      await expect(
+        controller.operatorUnlockPin(
+          { branchId: 9, userId: 77, pin: '4827' } as any,
+          tillRequest,
+        ),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+
+      expect(branchStaffServiceMock.verifyUnlockPin).not.toHaveBeenCalled();
+    });
+
+    it('records a failure and gives nothing away when the PIN is wrong', async () => {
+      branchStaffServiceMock.verifyUnlockPin.mockResolvedValue(null);
+
+      await expect(
+        controller.operatorUnlockPin(
+          { branchId: 9, userId: 77, pin: '1111' } as any,
+          tillRequest,
+        ),
+      ).rejects.toMatchObject({
+        response: { code: 'POS_OPERATOR_PIN_INVALID' },
+      });
+
+      expect(pinThrottleServiceMock.recordFailure).toHaveBeenCalledWith(9, 77);
+    });
+
+    it('refuses without touching the PIN once the waiter is locked out', async () => {
+      pinThrottleServiceMock.getLockoutState.mockResolvedValue({
+        locked: true,
+        scope: 'USER',
+        retryAfterSeconds: 600,
+      });
+
+      await expect(
+        controller.operatorUnlockPin(
+          { branchId: 9, userId: 77, pin: '4827' } as any,
+          tillRequest,
+        ),
+      ).rejects.toMatchObject({
+        response: {
+          code: 'POS_OPERATOR_PIN_LOCKED',
+          retryAfterSeconds: 600,
+        },
+      });
+
+      expect(branchStaffServiceMock.verifyUnlockPin).not.toHaveBeenCalled();
+    });
+
+    it('reports the branch-wide block distinctly so the screen can fall back to passwords', async () => {
+      pinThrottleServiceMock.getLockoutState.mockResolvedValue({
+        locked: true,
+        scope: 'BRANCH',
+        retryAfterSeconds: 900,
+      });
+
+      await expect(
+        controller.operatorUnlockPin(
+          { branchId: 9, userId: 77, pin: '4827' } as any,
+          tillRequest,
+        ),
+      ).rejects.toMatchObject({
+        response: { code: 'POS_OPERATOR_PIN_DISABLED' },
+      });
+    });
+
+    it('still enforces the shift window', async () => {
+      armWaiterBranch();
+      branchStaffServiceMock.verifyUnlockPin.mockResolvedValue({
+        userId: 77,
+        user: waiter,
+      });
+      branchShiftServiceMock.isUserAllowedNow.mockResolvedValue(false);
+
+      await expect(
+        controller.operatorUnlockPin(
+          { branchId: 9, userId: 77, pin: '4827' } as any,
+          tillRequest,
+        ),
+      ).rejects.toMatchObject({
+        response: { code: 'POS_OPERATOR_NO_ACTIVE_SHIFT' },
+      });
     });
   });
 });
