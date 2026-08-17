@@ -7,6 +7,7 @@ import { PosSuspendedCart } from '../pos-sync/entities/pos-suspended-cart.entity
 import { VendorStore } from '../vendor/entities/vendor-store.entity';
 import { Product } from '../products/entities/product.entity';
 import { BranchCatalogProductLink } from '../retail/entities/branch-catalog-product-link.entity';
+import { SchoolClass } from '../school/entities/school-class.entity';
 import { PosSyncModule } from '../pos-sync/pos-sync.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import {
@@ -34,6 +35,11 @@ import { ConsumerShelfService } from './consumer-shelf.service';
       VendorStore,
       Product,
       BranchCatalogProductLink,
+      // Read-only, and only for a SCHOOL: the public form offers a family the
+      // school's real classes to pick from instead of a box to describe one in.
+      // The repository, not `SchoolModule` — see the note on the controller's
+      // constructor for why this module stays guardless and self-contained.
+      SchoolClass,
       ConsumerOrderGroup,
       ConsumerOrderGroupItem,
     ]),

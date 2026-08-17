@@ -57,6 +57,7 @@ describe('ConsumerBranchController.getBranchProducts', () => {
       vendorStoreRepo as never,
       productRepo as never,
       catalogLinkRepo as never,
+      { find: jest.fn().mockResolvedValue([]) } as never,
       new ConsumerShelfService(
         productRepo as never,
         branchInventoryRepo as never,
@@ -277,6 +278,7 @@ describe('ConsumerBranchController.getBranch storeId', () => {
       vendorStoreRepo as never,
       { createQueryBuilder: jest.fn() } as never,
       { count: jest.fn() } as never,
+      { find: jest.fn().mockResolvedValue([]) } as never,
       new ConsumerShelfService(
         { find: jest.fn() } as never,
         { find: jest.fn() } as never,
@@ -378,6 +380,7 @@ describe('ConsumerBranchController shelf truth', () => {
         count: jest.fn().mockResolvedValue(opts.products.length),
         find: jest.fn().mockResolvedValue(opts.links ?? []),
       } as never,
+      { find: jest.fn().mockResolvedValue([]) } as never,
       shelf,
     );
     return { controller };
@@ -497,5 +500,147 @@ describe('ConsumerBranchController shelf truth', () => {
     // Version moves with the newest shelf change, so a client can skip a
     // re-render cheaply.
     expect(res.version).toBe(`1-${Date.parse('2026-08-01T10:00:00.000Z')}`);
+  });
+});
+
+/**
+ * The classes a school will take an application for.
+ *
+ * The public form used to ask for the class as free text, because the registry
+ * was not published anywhere — so a parent typed "grade 5", "5aad" or "the
+ * class after KG" and a clerk translated it by hand on the way to enrolling the
+ * child. Every spelling is a chance to put a child in the wrong room.
+ */
+describe('ConsumerBranchController.getBranchSchoolClasses', () => {
+  function buildController(opts: { branch: unknown; classes?: unknown[] }) {
+    const branchesRepository = {
+      findOne: jest.fn().mockResolvedValue(opts.branch),
+    };
+    const schoolClassRepo = {
+      find: jest.fn().mockResolvedValue(opts.classes ?? []),
+    };
+    const controller = new ConsumerBranchController(
+      branchesRepository as never,
+      { findOne: jest.fn() } as never,
+      { createQueryBuilder: jest.fn() } as never,
+      { count: jest.fn() } as never,
+      schoolClassRepo as never,
+      new ConsumerShelfService(
+        { find: jest.fn() } as never,
+        { find: jest.fn() } as never,
+        { find: jest.fn() } as never,
+        { createQueryBuilder: jest.fn() } as never,
+      ),
+    );
+    return { controller, schoolClassRepo, branchesRepository };
+  }
+
+  it('gives a family the school’s own word for each class', async () => {
+    const { controller } = buildController({
+      branch: { id: 128, serviceFormat: 'SCHOOL' },
+      classes: [
+        { code: 'KG II', name: 'Kindergarten II', sortOrder: 10 },
+        { code: '1aad', name: null, sortOrder: 20 },
+      ],
+    });
+
+    const res = await controller.getBranchSchoolClasses(128);
+
+    expect(res).toEqual({
+      branchId: 128,
+      items: [
+        { code: 'KG II', label: 'Kindergarten II', sortOrder: 10 },
+        // No display name: the code IS the label, which is how a school that
+        // never filled that column still reads.
+        { code: '1aad', label: '1aad', sortOrder: 20 },
+      ],
+    });
+  });
+
+  it('asks only for ACTIVE classes, in teaching order', async () => {
+    const { controller, schoolClassRepo } = buildController({
+      branch: { id: 128, serviceFormat: 'SCHOOL' },
+    });
+
+    await controller.getBranchSchoolClasses(128);
+
+    expect(schoolClassRepo.find).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { branchId: 128, status: 'ACTIVE' },
+        order: { sortOrder: 'ASC', code: 'ASC' },
+      }),
+    );
+  });
+
+  /**
+   * The registry was seeded from `attributes.hotelRooms` — the field HOTEL,
+   * PROPERTY_RENTAL and BARBER also declare their board units in. That backfill
+   * was scoped to schools, but a branch can change format afterwards, and
+   * publishing a hotel's room numbers to anyone holding a link is not a mistake
+   * worth leaving one condition away.
+   */
+  it('answers nothing for a branch that is not a school', async () => {
+    const { controller, schoolClassRepo } = buildController({
+      branch: { id: 49, serviceFormat: 'HOTEL' },
+      classes: [{ code: '301', name: null, sortOrder: 10 }],
+    });
+
+    await expect(controller.getBranchSchoolClasses(49)).resolves.toEqual({
+      branchId: 49,
+      items: [],
+    });
+    // And does not even ask, so a leak cannot come back through a later edit.
+    expect(schoolClassRepo.find).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Empty, not 404: the form falls back to asking the family to type the class,
+   * which is exactly where it started. A school with no registry has not
+   * stopped teaching.
+   */
+  it('is empty rather than absent for a school with no registry', async () => {
+    const { controller } = buildController({
+      branch: { id: 115, serviceFormat: 'SCHOOL' },
+      classes: [],
+    });
+    await expect(controller.getBranchSchoolClasses(115)).resolves.toEqual({
+      branchId: 115,
+      items: [],
+    });
+  });
+
+  it('refuses a branch that does not exist or is switched off', async () => {
+    const { controller } = buildController({ branch: null });
+    await expect(controller.getBranchSchoolClasses(999)).rejects.toThrow(
+      /not found/i,
+    );
+  });
+
+  it('never hands out what the class costs or how full it is', async () => {
+    const { controller, schoolClassRepo } = buildController({
+      branch: { id: 128, serviceFormat: 'SCHOOL' },
+      classes: [
+        {
+          code: '5aad',
+          name: null,
+          sortOrder: 50,
+          capacity: 30,
+          feeProductId: 3277,
+          metadata: { note: 'internal' },
+        },
+      ],
+    });
+
+    const res = await controller.getBranchSchoolClasses(128);
+
+    expect(Object.keys(res.items[0]).sort()).toEqual([
+      'code',
+      'label',
+      'sortOrder',
+    ]);
+    // And the columns are never even read off the row.
+    expect(schoolClassRepo.find).toHaveBeenCalledWith(
+      expect.objectContaining({ select: ['code', 'name', 'sortOrder'] }),
+    );
   });
 });

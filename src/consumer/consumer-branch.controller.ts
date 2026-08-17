@@ -14,11 +14,16 @@ import { VendorStore } from '../vendor/entities/vendor-store.entity';
 import { Product } from '../products/entities/product.entity';
 import { BranchCatalogProductLink } from '../retail/entities/branch-catalog-product-link.entity';
 import {
+  SchoolClass,
+  SchoolClassStatus,
+} from '../school/entities/school-class.entity';
+import {
   ConsumerBranchItemDto,
   ConsumerBranchListDto,
   ConsumerBranchProductItemDto,
   ConsumerBranchProductsDto,
   ConsumerBranchQrDto,
+  ConsumerSchoolClassesDto,
 } from './dto/consumer-response.dto';
 import { ConsumerBranchQueryDto } from './dto/consumer-branch-query.dto';
 import { ConsumerShelfService } from './consumer-shelf.service';
@@ -72,6 +77,13 @@ export class ConsumerBranchController {
     private readonly productRepo: Repository<Product>,
     @InjectRepository(BranchCatalogProductLink)
     private readonly catalogLinkRepo: Repository<BranchCatalogProductLink>,
+    // The registry, read directly rather than through `SchoolClassService`.
+    // That service is the AUTHENTICATED registry — every one of its callers is
+    // behind `PosBranchAccessGuard`, and importing `SchoolModule` here to reach
+    // it would pull `RetailModule` and two guards into the one module that is
+    // deliberately guardless. Reading three columns is the smaller thing.
+    @InjectRepository(SchoolClass)
+    private readonly schoolClassRepo: Repository<SchoolClass>,
     private readonly shelf: ConsumerShelfService,
   ) {}
 
@@ -225,6 +237,75 @@ export class ConsumerBranchController {
       branchId: branch.id,
       name: branch.name,
       url: `${publicBaseUrl()}/s/b/${branch.id}`,
+    };
+  }
+
+  /**
+   * GET /consumer/v1/branches/:branchId/classes
+   *
+   * The classes a school will take an application for, so the family can PICK
+   * one instead of describing it.
+   *
+   * Until this existed the public form asked for the class as free text — the
+   * school's classes were not published anywhere, so a parent typed "grade 5",
+   * "5aad" or "the class after KG" and a clerk translated it into a real class
+   * by hand on the way to enrolling the child. Every one of those spellings is
+   * a chance to put a child in the wrong room, and the school already knows the
+   * answer: it is sitting in `pos_school_classes`.
+   *
+   * ── The two things this must not do ──────────────────────────────────────
+   *
+   * 1. **Answer for a branch that is not a school.** The registry was seeded
+   *    from `attributes.hotelRooms`, the field HOTEL, PROPERTY_RENTAL and
+   *    BARBER also declare their board units in. That backfill was scoped to
+   *    SCHOOL and so is this read — but a branch can change format after the
+   *    fact, and publishing a hotel's room numbers to anyone holding a link is
+   *    not a mistake worth leaving one condition away.
+   * 2. **Publish the school's own numbers.** `capacity` and `feeProductId` stay
+   *    on the server. A place is offered or refused by the office, not by
+   *    arithmetic on a public page, and a family that reads "Grade 5: full"
+   *    before applying has been turned down by a cache.
+   *
+   * Empty rather than 404 when a school has no registry: the form falls back to
+   * asking the family to type it, which is exactly where it started.
+   */
+  // A registry changes when a school opens a class — once or twice a year. Five
+  // minutes at the edge costs a family nothing and takes the read off the
+  // database for every scan of the same printed poster.
+  @Header('Cache-Control', 'public, s-maxage=300, stale-while-revalidate=3600')
+  @Get(':branchId/classes')
+  async getBranchSchoolClasses(
+    @Param('branchId', ParseIntPipe) branchId: number,
+  ): Promise<ConsumerSchoolClassesDto> {
+    const branch = await this.branchesRepository.findOne({
+      where: { id: branchId, isActive: true },
+      select: ['id', 'serviceFormat'],
+    });
+    if (!branch) {
+      throw new NotFoundException(`Branch ${branchId} not found`);
+    }
+    if (String(branch.serviceFormat ?? '').toUpperCase() !== 'SCHOOL') {
+      return { branchId, items: [] };
+    }
+
+    const rows = await this.schoolClassRepo.find({
+      where: { branchId, status: SchoolClassStatus.ACTIVE },
+      select: ['code', 'name', 'sortOrder'],
+      // Teaching order first, then code — a school reads KG before Grade 1, and
+      // sorting by code alone puts '10th' before '1aad' before '2aad'. Same
+      // order `SchoolClassService.list` gives the office, so the family and the
+      // clerk read the same list in the same sequence.
+      order: { sortOrder: 'ASC', code: 'ASC' },
+      take: 200,
+    });
+
+    return {
+      branchId,
+      items: rows.map((row) => ({
+        code: row.code,
+        label: (row.name ?? '').trim() || row.code,
+        sortOrder: row.sortOrder ?? 0,
+      })),
     };
   }
 

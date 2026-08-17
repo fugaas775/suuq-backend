@@ -249,3 +249,35 @@ export class ConsumerBranchQrDto {
   /** Universal link encoded in the QR, e.g. https://suuq-s.com/s/b/123 */
   url!: string;
 }
+
+/**
+ * One class a school will take an application for.
+ *
+ * Deliberately three fields. The registry row also carries `capacity`,
+ * `feeProductId` and `metadata`, and none of them are a guest's business: how
+ * full a class is and what prices it are the school's own numbers, and a place
+ * is offered or refused by the office rather than by arithmetic on a public
+ * page. What a family needs is the school's own word for the class, spelled the
+ * way the office spells it — which is exactly what stops the office having to
+ * translate "the class after KG" into a real class by hand.
+ */
+export class ConsumerSchoolClassDto {
+  /** The registry's identity, as the school writes it: `3A`, `KG II`, `1aad`. */
+  code!: string;
+  /** What to show. The registry's optional display name, or the code itself. */
+  label!: string;
+  /** Teaching order — KG before Grade 1, which sorting by code cannot give. */
+  sortOrder!: number;
+}
+
+/**
+ * A school's classes, open to anyone holding the link.
+ *
+ * Empty for every branch that is not a SCHOOL, and for a school that has not
+ * filled its registry in — both of which the public form must treat as "ask the
+ * family to type it", never as "this school teaches nothing".
+ */
+export class ConsumerSchoolClassesDto {
+  branchId!: number;
+  items!: ConsumerSchoolClassDto[];
+}
