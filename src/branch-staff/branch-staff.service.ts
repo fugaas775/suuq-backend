@@ -1634,8 +1634,12 @@ export class BranchStaffService {
       // uniqueness, and a PIN that two waiters can share is worse than none.
       throw new ForbiddenException({
         code: 'POS_PIN_NOT_CONFIGURED',
+        // Names the missing setting rather than saying "contact support" — the
+        // person hitting this owns the server, and the vaguer wording sent one
+        // operator to the lock screen expecting a PIN that was never written.
         message:
-          'Quick unlock is not configured on this server. Contact support.',
+          `Quick unlock is not set up on this server: ${OPERATOR_UNLOCK_PIN_PEPPER_ENV} ` +
+          'is missing from the API environment. Add it and reload the API, then set the PIN again.',
       });
     }
     return pepper;
