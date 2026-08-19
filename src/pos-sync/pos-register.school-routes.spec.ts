@@ -44,6 +44,20 @@ describe('PosRegisterController — SCHOOL route permissions', () => {
     expect(discard).toContain('VOID_STUDENT_FOLIO');
   });
 
+  it('lets the fee settle WRITE the payment onto the pupil', () => {
+    /* The settle that matters is not the discard.
+       SCHOOL edits its folio in place, so taking fees is POST /checkouts/ingest
+       (role-gated only — no permission required to bank the money) followed by a
+       PATCH of this row to record it. SETTLE_FEE_PAYMENT sat on the discard
+       route alone, which a school settle never calls, so a clerk holding exactly
+       the fee-desk verb could take a payment and be refused the record of it:
+       receipt printed, cash counted, folio still reading the whole term as owed.
+       SMAK lost an ETB 2,000 payment that way on 2026-08-19. */
+    expect(permissionsOn('updateSuspendedCart')).toContain(
+      'SETTLE_FEE_PAYMENT',
+    );
+  });
+
   it("leaves the other formats' grants untouched", () => {
     // The school members are additive. Dropping one of these would lock out the
     // formats that have been shipping on them.

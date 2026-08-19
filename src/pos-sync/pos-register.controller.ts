@@ -155,12 +155,23 @@ export class PosRegisterController {
   // tuition is a PATCH of this row rather than a POST of a new one. Without it,
   // granting a clerk POST_FEE_CHARGE alone renders the "Charge next term" button
   // and then 403s the save — a permission that hands out a button it cannot use.
+  //
+  // SETTLE_FEE_PAYMENT for the same reason, and with money at stake. Taking a
+  // fee is TWO calls: POST /checkouts/ingest books it (role-gated only, no
+  // permission required), then this route writes it onto the pupil. A clerk
+  // holding exactly the fee-desk verb could therefore bank a payment and be
+  // refused the record of it — the receipt prints, the cash is counted, and the
+  // folio still reads the full term as owed. SMAK lost an ETB 2,000 payment that
+  // way on 2026-08-19 (three 403s against folio 16867, on a stale operator token
+  // whose roster grant had since been widened) and the till reported the child
+  // paid up. Settling a fee has to imply the right to write it down.
   @RequirePosPermissions(
     'SUSPEND_SALE',
     'OPEN_ROOM_FOLIO',
     'VIEW_FOLIO_BOARD',
     'ENROL_STUDENT',
     'POST_FEE_CHARGE',
+    'SETTLE_FEE_PAYMENT',
   )
   @Roles(
     UserRole.SUPER_ADMIN,
