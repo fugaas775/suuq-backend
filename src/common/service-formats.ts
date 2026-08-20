@@ -259,6 +259,18 @@ export const SERVICE_FORMATS: readonly ServiceFormatDefinition[] = [
     orderModes: ['QUOTE'],
   }),
 
+  // ── Government ──────────────────────────────────────────────────────────
+  // A regional transport bureau registering vehicles. Deliberately NOT
+  // self-serve creatable: a registry office carries statutory authority, its
+  // branches are provisioned by an admin against the bureau's own tenant, and
+  // a format anyone could pick from the signup grid would let a stranger stand
+  // up something that looks like a government office.
+  //
+  // QUOTE, like SCHOOL: an owner describes a vehicle and asks to register it.
+  // Not a cart — nobody puts a statutory fee in a basket and checks out with
+  // it, and the fee is priced by class at the office window.
+  def('VEHICLE_REGISTRY', 'Vehicle registry', { orderModes: ['QUOTE'] }),
+
   // ── Fallback ────────────────────────────────────────────────────────────
   def('OTHER', 'Other', { orderModes: ['TAKEAWAY'], catalogListable: true }),
 ];

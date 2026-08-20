@@ -63,6 +63,28 @@ export enum PosRegisterPermission {
   // Take a class register. A teacher's permission, not the fee desk's — which
   // is the whole reason it is separate from ENROL_STUDENT.
   MARK_ATTENDANCE = 'MARK_ATTENDANCE',
+  // Vehicle-registry permissions (Somali Region Bureau of Trade and Transport).
+  //
+  // Split finely on purpose: a registry office separates the clerk who takes
+  // the details, the inspector who passes the vehicle, the cashier who takes
+  // the fee and the registrar who may override any of them. Collapsing those
+  // into one VEHICLE_ADMIN would mean the only way to let a clerk renew a
+  // licence is to also let them clear a stolen flag.
+  VEHICLE_ISSUE = 'VEHICLE_ISSUE',
+  VEHICLE_RENEW = 'VEHICLE_RENEW',
+  VEHICLE_TRANSFER = 'VEHICLE_TRANSFER',
+  VEHICLE_INSPECT = 'VEHICLE_INSPECT',
+  VEHICLE_FLAG = 'VEHICLE_FLAG',
+  // Raising a stolen flag and clearing one are not the same authority. Any
+  // officer may report a vehicle; releasing it is a supervisor's signature.
+  VEHICLE_FLAG_CLEAR = 'VEHICLE_FLAG_CLEAR',
+  VEHICLE_DEREGISTER = 'VEHICLE_DEREGISTER',
+  VEHICLE_PLATE_STOCK = 'VEHICLE_PLATE_STOCK',
+  VEHICLE_APPLICATION_REVIEW = 'VEHICLE_APPLICATION_REVIEW',
+  // Issue against a failed or missing inspection, or waive a late penalty.
+  // Overrides happen in a real office; this makes them recorded rather than
+  // impossible, and every use writes a VEHICLE_EVENT row with a reason.
+  VEHICLE_OVERRIDE = 'VEHICLE_OVERRIDE',
 }
 
 function trimString(value: unknown) {

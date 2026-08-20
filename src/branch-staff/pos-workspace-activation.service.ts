@@ -982,6 +982,7 @@ export class PosWorkspaceActivationService {
         'BARBER',
         'PRINTING_PRESS',
         'SCHOOL',
+        'VEHICLE_REGISTRY',
       ].includes(normalized)
     ) {
       return null;
