@@ -42,9 +42,9 @@
  * ROLLBACK (psql, in this order)
  *   DELETE FROM pos_vehicle_plates       WHERE "branchId" = <id>;
  *   DELETE FROM pos_vehicle_plate_series WHERE "branchId" = <id>;
- *   DELETE FROM branch_inventory bi USING products p
+ *   DELETE FROM branch_inventory bi USING product p
  *     WHERE bi."productId" = p.id AND bi."branchId" = <id> AND p.sku LIKE 'VR-%';
- *   DELETE FROM products WHERE sku LIKE 'VR-%';
+ *   DELETE FROM product WHERE sku LIKE 'VR-%';
  *   DELETE FROM pos_vehicle_classes WHERE "tenantId" = <tenant>;
  *   -- classes last: vehicles reference them, so a tenant with live vehicles
  *   -- will refuse this and should.
@@ -115,7 +115,7 @@ async function upsertProduct(
   category: string,
 ): Promise<{ id: number; created: boolean }> {
   const existing = await dataSource.query(
-    `SELECT id FROM products WHERE UPPER(sku) = UPPER($1) LIMIT 1`,
+    `SELECT id FROM product WHERE UPPER(sku) = UPPER($1) LIMIT 1`,
     [sku],
   );
   if (existing?.[0]) {
@@ -124,7 +124,7 @@ async function upsertProduct(
   }
 
   const inserted = await dataSource.query(
-    `INSERT INTO products (name, sku, price, currency, "productType", attributes, "createdAt", "updatedAt")
+    `INSERT INTO product (name, sku, price, currency, "productType", attributes, "createdAt", "updatedAt")
      VALUES ($1, $2, $3, $4, 'service', $5, now(), now())
      RETURNING id`,
     [name, sku, price, ctx.currency, JSON.stringify({ browseCategory: category })],

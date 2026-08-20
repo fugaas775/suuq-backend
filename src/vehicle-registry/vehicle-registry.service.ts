@@ -475,7 +475,10 @@ export class VehicleRegistryService {
              -- sale_price, NOT "salePrice": the entity property is camelCase but
              -- the column is snake, and raw SQL does not get the mapping.
              COALESCE(p."sale_price", p."price", 0) AS "unitPrice"
-        FROM "products" p
+        -- "product", singular. The entity is @Entity() with no argument, so
+        -- TypeORM names the table after the lowercased class — and raw SQL has
+        -- to say what the database says, not what the property is called.
+        FROM "product" p
        WHERE UPPER(p."sku") IN (${wanted.map((_, i) => `$${i + 2}`).join(', ')})
          AND (
            EXISTS (
