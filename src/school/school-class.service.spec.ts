@@ -1,4 +1,8 @@
-import { ConflictException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  NotFoundException,
+} from '@nestjs/common';
 import { SchoolClassService } from './school-class.service';
 import { SchoolClassStatus } from './entities/school-class.entity';
 
@@ -9,27 +13,53 @@ import { SchoolClassStatus } from './entities/school-class.entity';
 
 const stamp = new Date('2026-08-15T08:00:00.000Z');
 
-function makeService({ existingByCode = null, rows = [], enrolled = 0 } = {}) {
+function makeService({
+  existingByCode = null,
+  rows = [],
+  enrolled = 0,
+  // The registry answers three different single-row questions now — "is this
+  // code taken?", "how does this branch spell this grade?" and "is this section
+  // taken?" — so one blanket getOne can no longer stand in for all of them.
+  // Each builder remembers its own conditions and the reply is chosen from
+  // them, which keeps every test that only cares about codes arranging nothing.
+  gradeSibling = null,
+  sectionClash = null,
+  sortOrderTaken = 0,
+}: any = {}) {
   const saved: any[] = [];
   const deleted: any[] = [];
 
-  // One query builder stands in for every call the service makes; each test
-  // arranges only what it needs.
-  const qb: any = {
-    where: () => qb,
-    andWhere: () => qb,
-    select: () => qb,
-    orderBy: () => qb,
-    addOrderBy: () => qb,
-    take: () => qb,
-    getOne: async () => existingByCode,
-    getMany: async () => rows,
-    getCount: async () => enrolled,
-    getRawOne: async () => ({ max: rows.length ? 20 : null }),
+  const makeQb = () => {
+    const conds: string[] = [];
+    const qb: any = {
+      where: (c: string) => {
+        conds.push(String(c));
+        return qb;
+      },
+      andWhere: (c: string) => {
+        conds.push(String(c));
+        return qb;
+      },
+      select: () => qb,
+      orderBy: () => qb,
+      addOrderBy: () => qb,
+      take: () => qb,
+      getOne: async () => {
+        const sql = conds.join(' ');
+        if (sql.includes('"section"')) return sectionClash;
+        if (sql.includes('"gradeCode"')) return gradeSibling;
+        return existingByCode;
+      },
+      getMany: async () => rows,
+      getCount: async () =>
+        conds.join(' ').includes('"sortOrder"') ? sortOrderTaken : enrolled,
+      getRawOne: async () => ({ max: rows.length ? 20 : null }),
+    };
+    return qb;
   };
 
   const repo: any = {
-    createQueryBuilder: () => qb,
+    createQueryBuilder: () => makeQb(),
     findOne: async ({ where }: any) =>
       rows.find(
         (r: any) =>
@@ -52,7 +82,7 @@ function makeService({ existingByCode = null, rows = [], enrolled = 0 } = {}) {
     },
   };
 
-  const cartRepo: any = { createQueryBuilder: () => qb };
+  const cartRepo: any = { createQueryBuilder: () => makeQb() };
   return {
     service: new SchoolClassService(repo, cartRepo),
     saved,
@@ -65,6 +95,8 @@ const row = (over: any = {}) => ({
   branchId: 115,
   code: '3a',
   name: null,
+  gradeCode: null,
+  section: null,
   sortOrder: 10,
   feeProductId: null,
   capacity: null,
@@ -195,6 +227,126 @@ describe('SchoolClassService — removing a class', () => {
       code: '3a',
     });
     expect(deleted).toHaveLength(1);
+  });
+});
+
+describe('SchoolClassService — sections of a grade', () => {
+  it('refuses a section that names no grade — it could not be grouped', async () => {
+    // A stray 'A' has no card to sit under on the board and rolls up to nothing
+    // in the fee report, so it is refused at the write rather than rendered.
+    const { service } = makeService();
+    await expect(
+      service.create({ branchId: 115, code: '3aad A', section: 'A' } as any),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('files a section under the grade, and beside its siblings in teaching order', async () => {
+    // 20 is the last sortOrder in the grade; the next section takes 21, inside
+    // the gap the ten-spacing leaves, so the next GRADE still starts at 30.
+    const { service, saved } = makeService({
+      rows: [
+        row({ code: '3aad A', gradeCode: '3aad', section: 'A', sortOrder: 20 }),
+      ],
+      gradeSibling: row({
+        code: '3aad A',
+        gradeCode: '3aad',
+        section: 'A',
+        sortOrder: 20,
+      }),
+    });
+    await service.create({
+      branchId: 115,
+      code: '3aad B',
+      gradeCode: '3aad',
+      section: 'B',
+    });
+    expect(saved[0]).toMatchObject({
+      code: '3aad B',
+      gradeCode: '3aad',
+      section: 'B',
+      sortOrder: 21,
+    });
+  });
+
+  it('spells the grade the way the school already spells it', async () => {
+    // Sections are added one at a time, days apart, by whoever is at the desk.
+    // 'grade 3' typed the second time must not open a second grade holding one
+    // section, which is what the board and the fee roll would then show.
+    const { service, saved } = makeService({
+      gradeSibling: row({ code: '3aad A', gradeCode: 'Grade 3', section: 'A' }),
+    });
+    await service.create({
+      branchId: 115,
+      code: '3aad B',
+      gradeCode: 'grade 3',
+      section: 'B',
+    });
+    expect(saved[0].gradeCode).toBe('Grade 3');
+  });
+
+  it('refuses a second section A in one grade, and says which class already is it', async () => {
+    const { service } = makeService({
+      sectionClash: row({ code: '3aad A', gradeCode: '3aad', section: 'A' }),
+    });
+    await expect(
+      service.create({
+        branchId: 115,
+        code: '3aad Alpha',
+        gradeCode: '3aad',
+        section: 'A',
+      } as any),
+    ).rejects.toThrow(/already exists — it is "3aad A"/);
+  });
+
+  it('leaves a class sectioned when a PATCH only re-points its fee', async () => {
+    // The one way this shape can silently lose data: a fee edit that carries no
+    // grade field must not read as "this class has no grade".
+    const target = row({
+      id: 4,
+      code: '3aad A',
+      gradeCode: '3aad',
+      section: 'A',
+    });
+    const { service, saved } = makeService({ rows: [target] });
+    await service.update(4, { branchId: 115, feeProductId: 3269 });
+    expect(saved[0]).toMatchObject({ gradeCode: '3aad', section: 'A' });
+  });
+
+  it('un-sections a class when the grade is explicitly cleared', async () => {
+    const target = row({
+      id: 4,
+      code: '3aad',
+      gradeCode: '3aad',
+      section: 'A',
+    });
+    const { service, saved } = makeService({ rows: [target] });
+    await service.update(4, {
+      branchId: 115,
+      gradeCode: null,
+      section: null,
+    });
+    expect(saved[0]).toMatchObject({ gradeCode: null, section: null });
+  });
+
+  it('lets a class keep its own section letter when it is re-saved', async () => {
+    // The clash check must exempt the row being written, or a school could
+    // never edit the section it already holds.
+    const target = row({
+      id: 4,
+      code: '3aad A',
+      gradeCode: '3aad',
+      section: 'A',
+    });
+    const { service, saved } = makeService({
+      rows: [target],
+      sectionClash: target,
+    });
+    await service.update(4, {
+      branchId: 115,
+      gradeCode: '3aad',
+      section: 'A',
+    });
+    expect(saved[0]).toMatchObject({ gradeCode: '3aad', section: 'A' });
   });
 });
 

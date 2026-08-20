@@ -49,6 +49,7 @@ export enum SchoolClassStatus {
 @Index('uq_pos_school_classes_branch_code', ['branchId', 'code'], {
   unique: true,
 })
+@Index('idx_pos_school_classes_branch_grade', ['branchId', 'gradeCode'])
 export class SchoolClass {
   @PrimaryGeneratedColumn('increment', { type: 'bigint' })
   id!: number;
@@ -63,6 +64,44 @@ export class SchoolClass {
   /** Display name when the code alone is not one, e.g. 'Grade 3 — Section A'. */
   @Column({ type: 'varchar', length: 255, nullable: true })
   name!: string | null;
+
+  /**
+   * The grade this row is a SECTION of — '3aad' for '3aad A' and '3aad B'.
+   *
+   * A section is a class row, not a second dimension on the pupil. That is the
+   * whole design: a pupil's folio carries ONE class string, and every reader
+   * keys on it — the attendance register, the mark sheet, rank in class, the
+   * tuition line's tag, the roster importer's dedupe. All of those are per
+   * TEACHING GROUP, which is precisely what a section is; a school that splits
+   * 47 children into 3aad A and 3aad B wants two registers and two mark sheets,
+   * not one of each filtered two ways. Making the section a class row hands
+   * them all of it and changes nothing about how a pupil is tagged.
+   *
+   * What the grade IS for is the roll-up a section cannot answer alone: the fee
+   * is a grade's, not a section's, and the office reads "Grade 3" on the board
+   * and in its reports. So the grade is a grouping KEY, not a row of its own —
+   * a grade row would be a class with no pupils in it, showing up empty on the
+   * board, in the enrol picker and in the delete guard.
+   *
+   * Null on both this and {@link section} is a class that is not sectioned,
+   * which is every row that existed before this column and every school that
+   * never splits a grade. Nothing about them changes.
+   *
+   * Compared case-insensitively per branch, like `code`, and stored in the
+   * spelling the first section of the grade used.
+   */
+  @Column({ type: 'varchar', length: 64, nullable: true })
+  gradeCode!: string | null;
+
+  /**
+   * The section label within the grade — 'A', 'B', 'Blue'.
+   *
+   * Meaningless without {@link gradeCode} and refused without it: a section
+   * that names no grade cannot be grouped, so it would render as a stray letter
+   * on the board. Unique per grade per branch, case-insensitively.
+   */
+  @Column({ type: 'varchar', length: 32, nullable: true })
+  section!: string | null;
 
   /**
    * Teaching order, because a school's classes are not alphabetical.

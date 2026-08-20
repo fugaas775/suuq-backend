@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   NotFoundException,
@@ -43,6 +44,8 @@ export class SchoolClassService {
       branchId: row.branchId,
       code: row.code,
       name: row.name ?? null,
+      gradeCode: row.gradeCode ?? null,
+      section: row.section ?? null,
       sortOrder: row.sortOrder ?? 0,
       feeProductId: row.feeProductId ?? null,
       capacity: row.capacity ?? null,
@@ -64,6 +67,102 @@ export class SchoolClassService {
       .getOne();
   }
 
+  /**
+   * The spelling this branch already uses for a grade.
+   *
+   * A grade is a grouping key typed by hand, once per section, so the second
+   * section of Grade 3 is as likely to be entered as "grade 3" as "Grade 3".
+   * Left alone, the board would show two grades holding one section each and
+   * the fee roll would report them separately. Matched case-insensitively and
+   * stored in whatever spelling the FIRST section of the grade used, which is
+   * the same rule `code` follows and the reason `gradeCode` has its own
+   * lowercased index.
+   */
+  private async canonicalGradeCode(branchId: number, gradeCode: string) {
+    const wanted = String(gradeCode || '').trim();
+    if (!wanted) return null;
+    const sibling = await this.repo
+      .createQueryBuilder('c')
+      .where('c."branchId" = :branchId', { branchId })
+      .andWhere('LOWER(c."gradeCode") = LOWER(:grade)', { grade: wanted })
+      .orderBy('c."sortOrder"', 'ASC')
+      .getOne();
+    if (sibling?.gradeCode) return sibling.gradeCode;
+
+    // A grade taking its first section usually already exists as an
+    // UNSECTIONED class of that name — splitting 3aad is how sections normally
+    // arrive — so its own spelling is the school's.
+    const asClass = await this.findByCode(branchId, wanted);
+    return asClass?.code || wanted;
+  }
+
+  /**
+   * Refuse a second section 'A' in one grade.
+   *
+   * The database refuses it too (a partial unique index), but a 500 from a
+   * constraint is not an answer a school can act on, and this is a typo an
+   * office makes routinely: the sections of a grade are added one at a time,
+   * days apart, by whoever is at the desk.
+   */
+  private async assertSectionFree(
+    branchId: number,
+    gradeCode: string,
+    section: string,
+    exceptId?: number,
+  ) {
+    const clash = await this.repo
+      .createQueryBuilder('c')
+      .where('c."branchId" = :branchId', { branchId })
+      .andWhere('LOWER(c."gradeCode") = LOWER(:grade)', { grade: gradeCode })
+      .andWhere('LOWER(c."section") = LOWER(:section)', { section })
+      .getOne();
+    if (clash && Number(clash.id) !== Number(exceptId)) {
+      throw new ConflictException(
+        `Section "${clash.section}" of ${clash.gradeCode} already exists — it is "${clash.code}".`,
+      );
+    }
+  }
+
+  /**
+   * Resolve the grade/section pair a write is asking for, or throw.
+   *
+   * Returns `undefined` for a field the caller did not mention, so a PATCH that
+   * only moves a class's fee product does not silently un-section it.
+   */
+  private async resolvePlacement(
+    branchId: number,
+    dto: { gradeCode?: string | null; section?: string | null },
+    current: { gradeCode: string | null; section: string | null },
+    exceptId?: number,
+  ) {
+    const touchesGrade = dto.gradeCode !== undefined;
+    const touchesSection = dto.section !== undefined;
+    if (!touchesGrade && !touchesSection) return {};
+
+    const nextGradeRaw = touchesGrade
+      ? String(dto.gradeCode ?? '').trim()
+      : String(current.gradeCode ?? '').trim();
+    const nextSection = touchesSection
+      ? String(dto.section ?? '').trim()
+      : String(current.section ?? '').trim();
+
+    // A section that names no grade cannot be grouped — it would render as a
+    // stray letter on the board and roll up to nothing in the fee report.
+    if (nextSection && !nextGradeRaw) {
+      throw new BadRequestException(
+        'A section must say which grade it belongs to.',
+      );
+    }
+
+    const gradeCode = nextGradeRaw
+      ? await this.canonicalGradeCode(branchId, nextGradeRaw)
+      : null;
+    if (gradeCode && nextSection) {
+      await this.assertSectionFree(branchId, gradeCode, nextSection, exceptId);
+    }
+    return { gradeCode, section: nextSection || null };
+  }
+
   async list(query: ListSchoolClassesQueryDto) {
     const qb = this.repo
       .createQueryBuilder('c')
@@ -77,6 +176,11 @@ export class SchoolClassService {
       Object.values(SchoolClassStatus).includes(status as SchoolClassStatus)
     ) {
       qb.andWhere('c.status = :status', { status });
+    }
+
+    const gradeCode = String(query.gradeCode || '').trim();
+    if (gradeCode) {
+      qb.andWhere('LOWER(c."gradeCode") = LOWER(:gradeCode)', { gradeCode });
     }
 
     // Teaching order first, then code — a school reads KG before Grade 1, and
@@ -101,13 +205,22 @@ export class SchoolClassService {
     const status = String(dto.status || '')
       .trim()
       .toUpperCase();
+    const placement = await this.resolvePlacement(dto.branchId, dto, {
+      gradeCode: null,
+      section: null,
+    });
     const row = this.repo.create({
       branchId: dto.branchId,
       code,
       name: dto.name ? String(dto.name).trim() : null,
+      gradeCode: placement.gradeCode ?? null,
+      section: placement.section ?? null,
       // Appended to the end when unstated, so classes created one at a time
-      // arrive in the order they were typed rather than all at 0.
-      sortOrder: dto.sortOrder ?? (await this.nextSortOrder(dto.branchId)),
+      // arrive in the order they were typed rather than all at 0. A SECTION
+      // lands beside the sections it belongs to instead — see below.
+      sortOrder:
+        dto.sortOrder ??
+        (await this.nextSortOrder(dto.branchId, placement.gradeCode ?? null)),
       feeProductId: dto.feeProductId ?? null,
       capacity: dto.capacity ?? null,
       status:
@@ -118,7 +231,42 @@ export class SchoolClassService {
     return this.toResponse(await this.repo.save(row));
   }
 
-  private async nextSortOrder(branchId: number) {
+  /**
+   * Where a new class sorts.
+   *
+   * Plain classes go on the end, spaced by ten. A SECTION goes immediately
+   * after the last section of its own grade, in the gap that spacing leaves —
+   * which is why the spacing is ten and not one. Grade 3's sections sort
+   * 30, 31, 32 and Grade 4 still starts at 40, so the teaching order a school
+   * dragged into place survives it splitting a grade three years later.
+   *
+   * Nine sections fill the gap. A tenth would land on the next grade's number,
+   * so it falls back to the end of the list rather than interleaving — the
+   * frontend groups by grade regardless of sort order, so the worst case is one
+   * grade's sections shown last, not a scrambled board.
+   */
+  private async nextSortOrder(branchId: number, gradeCode?: string | null) {
+    const grade = String(gradeCode || '').trim();
+    if (grade) {
+      const siblings = await this.repo
+        .createQueryBuilder('c')
+        .select('MAX(c."sortOrder")', 'max')
+        .where('c."branchId" = :branchId', { branchId })
+        .andWhere(
+          '(LOWER(c."gradeCode") = LOWER(:grade) OR LOWER(c.code) = LOWER(:grade))',
+          { grade },
+        )
+        .getRawOne<{ max: number | null }>();
+      const after = Number(siblings?.max ?? NaN);
+      if (Number.isFinite(after)) {
+        const taken = await this.repo
+          .createQueryBuilder('c')
+          .where('c."branchId" = :branchId', { branchId })
+          .andWhere('c."sortOrder" = :sortOrder', { sortOrder: after + 1 })
+          .getCount();
+        if (!taken) return after + 1;
+      }
+    }
     const last = await this.repo
       .createQueryBuilder('c')
       .select('MAX(c."sortOrder")', 'max')
@@ -147,6 +295,17 @@ export class SchoolClassService {
     if (dto.name !== undefined) {
       row.name = dto.name ? String(dto.name).trim() : null;
     }
+
+    // Only when the caller mentioned one of them: a PATCH that merely re-points
+    // a class's fee product must not un-section it.
+    const placement = await this.resolvePlacement(
+      dto.branchId,
+      dto,
+      { gradeCode: row.gradeCode ?? null, section: row.section ?? null },
+      Number(row.id),
+    );
+    if (placement.gradeCode !== undefined) row.gradeCode = placement.gradeCode;
+    if (placement.section !== undefined) row.section = placement.section;
     if (dto.sortOrder !== undefined) row.sortOrder = dto.sortOrder;
     // Explicit null clears the link — a class can be un-priced again, which is
     // what happens when the fee product it named is retired.

@@ -296,6 +296,13 @@ export class AttendanceService {
    * under the name on the board. Promotion is the opposite case and must not
    * call this: a child moving up does not change which class took last year's
    * register.
+   *
+   * `subjectRefs` narrows it to named pupils, for the SPLIT: half of 3aad
+   * becomes 3aad B, and their days marked have to follow them or the new
+   * section opens with an empty register while its pupils' attendance sits
+   * under a class they are no longer in. An EMPTY array is not "everyone" —
+   * it is a split that moved nobody, and updating the whole class on it would
+   * be the opposite of what was asked.
    */
   async reclass(dto: ReclassAttendanceDto) {
     const from = classKey(dto.from);
@@ -305,7 +312,12 @@ export class AttendanceService {
     }
     if (from === to) return { updated: 0 };
 
-    const result = await this.repo
+    const refs = Array.isArray(dto.subjectRefs)
+      ? dto.subjectRefs.map((ref) => String(ref).trim()).filter(Boolean)
+      : null;
+    if (refs && !refs.length) return { updated: 0 };
+
+    const qb = this.repo
       .createQueryBuilder()
       .update(AttendanceMark)
       .set({ classCode: to })
@@ -313,9 +325,11 @@ export class AttendanceService {
       .andWhere('"subjectType" = :subjectType', {
         subjectType: AttendanceSubjectType.STUDENT,
       })
-      .andWhere('"classCode" = :from', { from })
-      .execute();
+      .andWhere('"classCode" = :from', { from });
 
+    if (refs) qb.andWhere('"subjectRef" IN (:...refs)', { refs });
+
+    const result = await qb.execute();
     return { updated: result.affected ?? 0 };
   }
 }

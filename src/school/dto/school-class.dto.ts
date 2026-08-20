@@ -21,6 +21,15 @@ export class ListSchoolClassesQueryDto {
   @IsOptional()
   @IsString()
   status?: string;
+
+  @ApiPropertyOptional({
+    example: '3aad',
+    description: 'Only the sections of this grade. Matched case-insensitively.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  gradeCode?: string;
 }
 
 export class CreateSchoolClassDto {
@@ -40,6 +49,25 @@ export class CreateSchoolClassDto {
   @IsString()
   @MaxLength(255)
   name?: string;
+
+  @ApiPropertyOptional({
+    example: '3aad',
+    description:
+      'The grade this class is a section of. Required whenever `section` is given.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  gradeCode?: string | null;
+
+  @ApiPropertyOptional({
+    example: 'A',
+    description: 'Section within the grade. Unique per grade, per branch.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(32)
+  section?: string | null;
 
   @ApiPropertyOptional({ example: 10 })
   @IsOptional()
@@ -89,6 +117,25 @@ export class UpdateSchoolClassDto {
   @IsString()
   @MaxLength(255)
   name?: string | null;
+
+  @ApiPropertyOptional({
+    example: '3aad',
+    description:
+      'The grade this class is a section of. Required whenever `section` is given.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  gradeCode?: string | null;
+
+  @ApiPropertyOptional({
+    example: 'A',
+    description: 'Section within the grade. Unique per grade, per branch.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(32)
+  section?: string | null;
 
   @ApiPropertyOptional({ example: 10 })
   @IsOptional()

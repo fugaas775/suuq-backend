@@ -159,4 +159,21 @@ export class ReclassAttendanceDto {
   @IsString()
   @MaxLength(64)
   to!: string;
+
+  /**
+   * Move only these pupils' register, rather than the whole class's.
+   *
+   * A RENAME moves everything, which is why this is optional and absent there:
+   * the class is now called something else and its history is all one class's.
+   * A SPLIT is the other case — half of 3aad becomes 3aad B, and their days
+   * marked have to follow them or the new section opens with an empty register
+   * while its pupils' attendance sits under a class they are no longer in.
+   *
+   * Refs are folio ids, the same `subjectRef` a mark is filed under.
+   */
+  @ApiPropertyOptional({ type: [String], example: ['4821', '4822'] })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  subjectRefs?: string[];
 }

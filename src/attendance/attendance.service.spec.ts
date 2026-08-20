@@ -340,5 +340,34 @@ describe('AttendanceService', () => {
         ),
       ).toBe(true);
     });
+
+    it('moves only the named pupils when a split says which', async () => {
+      // Half of 3aad becomes 3aad B; the other half's register must stay put.
+      const { svc, captured } = makeService({ updateAffected: 24 });
+      await svc.reclass({
+        branchId: 115,
+        from: '3aad A',
+        to: '3aad B',
+        subjectRefs: ['4821', '4822'],
+      });
+      expect(
+        captured.where.some(
+          ([, p]: [string, any]) =>
+            Array.isArray(p?.refs) && p.refs.join() === '4821,4822',
+        ),
+      ).toBe(true);
+    });
+
+    it('treats an empty ref list as "nobody moved", not as "everybody"', async () => {
+      const { svc, captured } = makeService({ updateAffected: 812 });
+      const out = await svc.reclass({
+        branchId: 115,
+        from: '3aad A',
+        to: '3aad B',
+        subjectRefs: [],
+      });
+      expect(out.updated).toBe(0);
+      expect(captured.updated).toBeNull();
+    });
   });
 });
