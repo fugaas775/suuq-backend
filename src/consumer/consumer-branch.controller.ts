@@ -283,6 +283,12 @@ export class ConsumerBranchController {
    *    on the server. A place is offered or refused by the office, not by
    *    arithmetic on a public page, and a family that reads "Grade 5: full"
    *    before applying has been turned down by a cache.
+   * 3. **Ask a family which ROOM their child should sit in.** A school that
+   *    teaches 3aad as two sections holds two class rows, and publishing both
+   *    puts "3aad A" and "3aad B" in front of a parent as though the choice
+   *    were theirs. It is not: which section a child joins is the office's,
+   *    made against the roll on the day they are enrolled. Sections collapse to
+   *    their grade here — the family picks 3aad, and the desk places them.
    *
    * Empty rather than 404 when a school has no registry: the form falls back to
    * asking the family to type it, which is exactly where it started.
@@ -308,7 +314,7 @@ export class ConsumerBranchController {
 
     const rows = await this.schoolClassRepo.find({
       where: { branchId, status: SchoolClassStatus.ACTIVE },
-      select: ['code', 'name', 'sortOrder'],
+      select: ['code', 'name', 'sortOrder', 'gradeCode'],
       // Teaching order first, then code — a school reads KG before Grade 1, and
       // sorting by code alone puts '10th' before '1aad' before '2aad'. Same
       // order `SchoolClassService.list` gives the office, so the family and the
@@ -317,14 +323,29 @@ export class ConsumerBranchController {
       take: 200,
     });
 
-    return {
-      branchId,
-      items: rows.map((row) => ({
-        code: row.code,
-        label: (row.name ?? '').trim() || row.code,
+    /* One entry per GRADE. A grade's sections are one choice to a family, and
+       the first of them to arrive names it — rows come back in teaching order,
+       so that is the section the school itself lists first.
+
+       The code published for a sectioned grade is the `gradeCode`, which is
+       what the office matches an application against; for an unsectioned class
+       it is the class code, exactly as before. */
+    const byGrade = new Map<
+      string,
+      { code: string; label: string; sortOrder: number }
+    >();
+    for (const row of rows) {
+      const grade = (row.gradeCode ?? '').trim();
+      const key = (grade || row.code).toLowerCase();
+      if (byGrade.has(key)) continue;
+      byGrade.set(key, {
+        code: grade || row.code,
+        label: grade || (row.name ?? '').trim() || row.code,
         sortOrder: row.sortOrder ?? 0,
-      })),
-    };
+      });
+    }
+
+    return { branchId, items: [...byGrade.values()] };
   }
 
   /**

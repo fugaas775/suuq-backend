@@ -693,9 +693,62 @@ describe('ConsumerBranchController.getBranchSchoolClasses', () => {
       'label',
       'sortOrder',
     ]);
-    // And the columns are never even read off the row.
+    // And the columns are never even read off the row. `gradeCode` joined the
+    // select when sections arrived — it is what collapses a grade's rooms into
+    // one choice below, and it is the school's own word for the grade, not a
+    // number about it.
     expect(schoolClassRepo.find).toHaveBeenCalledWith(
-      expect.objectContaining({ select: ['code', 'name', 'sortOrder'] }),
+      expect.objectContaining({
+        select: ['code', 'name', 'sortOrder', 'gradeCode'],
+      }),
     );
+  });
+
+  it('offers a family the GRADE, never which of its rooms to sit in', async () => {
+    /* Which section a child joins is the office's decision, made against the
+       roll on the day they are enrolled. Publishing both put "3aad A" and
+       "3aad B" in front of a parent as though the choice were theirs. */
+    const { controller } = buildController({
+      branch: { id: 115, serviceFormat: 'SCHOOL' },
+      classes: [
+        { code: '3aad A', name: null, sortOrder: 30, gradeCode: '3aad' },
+        { code: '3aad B', name: null, sortOrder: 31, gradeCode: '3aad' },
+        { code: '4aad', name: null, sortOrder: 40, gradeCode: null },
+      ],
+    });
+
+    const res = await controller.getBranchSchoolClasses(115);
+
+    expect(res.items).toEqual([
+      { code: '3aad', label: '3aad', sortOrder: 30 },
+      { code: '4aad', label: '4aad', sortOrder: 40 },
+    ]);
+  });
+
+  it('publishes an unsectioned class exactly as it always did', async () => {
+    const { controller } = buildController({
+      branch: { id: 115, serviceFormat: 'SCHOOL' },
+      classes: [
+        { code: '5aad', name: 'Grade 5', sortOrder: 50, gradeCode: null },
+      ],
+    });
+    await expect(controller.getBranchSchoolClasses(115)).resolves.toEqual({
+      branchId: 115,
+      items: [{ code: '5aad', label: 'Grade 5', sortOrder: 50 }],
+    });
+  });
+
+  it('keeps the school’s teaching order across the collapse', async () => {
+    const { controller } = buildController({
+      branch: { id: 115, serviceFormat: 'SCHOOL' },
+      classes: [
+        { code: 'KG II', name: null, sortOrder: 10, gradeCode: 'KG II' },
+        { code: '1aad A', name: null, sortOrder: 20, gradeCode: '1aad' },
+        { code: '1aad B', name: null, sortOrder: 21, gradeCode: '1aad' },
+        { code: '10th', name: null, sortOrder: 110, gradeCode: '10th' },
+      ],
+    });
+    const res = await controller.getBranchSchoolClasses(115);
+    expect(res.items.map((i) => i.code)).toEqual(['KG II', '1aad', '10th']);
   });
 });
