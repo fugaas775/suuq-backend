@@ -55,8 +55,22 @@ const arg = (n: string) => {
 const TENANT_NAME = arg('tenant') || 'TEST — Somali Region Bureau of Trade and Transport';
 const OFFICE_NAME = arg('office') || 'TEST — Jigjiga Zone Office';
 const OFFICE_CODE = (arg('code') || 'TEST-VR-JIGJIGA').toUpperCase();
+/**
+ * Who owns the bureau and its offices.
+ *
+ * Required, and not defaulted: without an owner nobody can reach the office at
+ * all — branch access is the union of branches you own, branches of tenants you
+ * own, and staff assignments, so an ownerless office is invisible to every user
+ * on the platform. It is also the vendor the fee products hang off.
+ */
+const OWNER_USER_ID = Number(arg('owner') || 0);
 
 async function main() {
+  if (!OWNER_USER_ID) {
+    throw new Error(
+      'Pass --owner=<userId>. An office with no owner is invisible to every user on the platform.',
+    );
+  }
   await dataSource.initialize();
   console.log(`\n[provision] ${EXECUTE ? 'EXECUTING' : 'DRY RUN — pass --execute to write'}`);
   console.log(`[provision] tenant : ${TENANT_NAME}`);
@@ -72,9 +86,9 @@ async function main() {
   } else if (EXECUTE) {
     tenant = (
       await dataSource.query(
-        `INSERT INTO retail_tenants (name, status, "defaultCurrency", "createdAt", "updatedAt")
-         VALUES ($1, 'ACTIVE', 'ETB', now(), now()) RETURNING id, name`,
-        [TENANT_NAME],
+        `INSERT INTO retail_tenants (name, status, "defaultCurrency", "ownerUserId", "createdAt", "updatedAt")
+         VALUES ($1, 'ACTIVE', 'ETB', $2, now(), now()) RETURNING id, name`,
+        [TENANT_NAME, OWNER_USER_ID],
       )
     )[0];
     console.log(`  tenant created           id=${tenant.id}`);
@@ -136,12 +150,12 @@ async function main() {
   } else if (EXECUTE) {
     branch = (
       await dataSource.query(
-        `INSERT INTO branches (name, code, "serviceFormat", "retailTenantId", "isActive",
+        `INSERT INTO branches (name, code, "serviceFormat", "retailTenantId", "ownerId", "isActive",
                                country, timezone, "taxEnabled", "taxRate", "taxInclusive",
                                "createdAt", "updatedAt")
-         VALUES ($1, $2, 'VEHICLE_REGISTRY', $3, true, 'ET', 'Africa/Addis_Ababa', false, 0, false, now(), now())
+         VALUES ($1, $2, 'VEHICLE_REGISTRY', $3, $4, true, 'ET', 'Africa/Addis_Ababa', false, 0, false, now(), now())
          RETURNING id`,
-        [OFFICE_NAME, OFFICE_CODE, tenantId],
+        [OFFICE_NAME, OFFICE_CODE, tenantId, OWNER_USER_ID],
       )
     )[0];
     console.log(`  office created           id=${branch.id}`);

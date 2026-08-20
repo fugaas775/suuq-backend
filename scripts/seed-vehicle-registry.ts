@@ -83,11 +83,11 @@ const SHARED_FEES = [
   { kind: 'PENALTY', sku: 'VR-PENALTY-LATE', name: 'Late renewal penalty', price: 300, category: 'PENALTIES' },
 ];
 
-type Ctx = { tenantId: number; branchName: string; currency: string };
+type Ctx = { tenantId: number; branchName: string; currency: string; vendorId: number };
 
 async function resolveBranch(branchId: number): Promise<Ctx> {
   const rows = await dataSource.query(
-    `SELECT id, name, "serviceFormat", "retailTenantId" FROM branches WHERE id = $1`,
+    `SELECT id, name, "serviceFormat", "retailTenantId", "ownerId" FROM branches WHERE id = $1`,
     [branchId],
   );
   const branch = rows?.[0];
@@ -103,7 +103,20 @@ async function resolveBranch(branchId: number): Promise<Ctx> {
       `Branch ${branchId} has no retailTenantId. Without a tenant the registry cannot enforce region-wide chassis uniqueness, which is the whole point of it.`,
     );
   }
-  return { tenantId: branch.retailTenantId, branchName: branch.name, currency: 'ETB' };
+  // A product must name a vendor — it is NOT NULL on the table and has no
+  // default. The office's own owner is the only defensible answer: a fee
+  // product vended by somebody else would show up in their catalogue.
+  if (!branch.ownerId) {
+    throw new Error(
+      `Branch ${branchId} has no ownerId, and a product cannot be created without a vendor. Give the office an owner first.`,
+    );
+  }
+  return {
+    tenantId: branch.retailTenantId,
+    branchName: branch.name,
+    currency: 'ETB',
+    vendorId: branch.ownerId,
+  };
 }
 
 async function upsertProduct(
@@ -123,11 +136,24 @@ async function upsertProduct(
     return { id: existing[0].id, created: false };
   }
 
+  // Columns read off the live schema rather than assumed: there is no
+  // productType and no updatedAt on this table, description and vendorId are
+  // NOT NULL with no default, and manage_stock must be false — a statutory fee
+  // is not stock, and the only thing a registry office counts is blank plates.
   const inserted = await dataSource.query(
-    `INSERT INTO product (name, sku, price, currency, "productType", attributes, "createdAt", "updatedAt")
-     VALUES ($1, $2, $3, $4, 'service', $5, now(), now())
+    `INSERT INTO product (name, sku, price, currency, description, "vendorId",
+                          attributes, manage_stock, "createdAt")
+     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, false, now())
      RETURNING id`,
-    [name, sku, price, ctx.currency, JSON.stringify({ browseCategory: category })],
+    [
+      name,
+      sku,
+      price,
+      ctx.currency,
+      `${name} — statutory fee collected at the registry counter.`,
+      ctx.vendorId,
+      JSON.stringify({ browseCategory: category }),
+    ],
   );
   const id = inserted[0].id;
   await linkToBranch(branchId, id);
