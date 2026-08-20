@@ -194,6 +194,41 @@ export interface PosPortalSupportDiagnostic {
 const POS_WORKSPACE_MONTHLY_PRICE = 3900;
 const POS_WORKSPACE_CURRENCY = 'ETB';
 const POS_WORKSPACE_PAYMENT_METHOD = 'EBIRR';
+
+/**
+ * Clean a staff row's permission codes before anything is decided on them.
+ *
+ * `permissions` is a `simple-array` — one TEXT column split on commas — and a
+ * value written as a Postgres array literal survives the write intact and then
+ * splits into rubbish: `{"OPEN_REGISTER,…,SETTLE_FEE_PAYMENT",VIEW_FOLIO,
+ * VIEW_FOLIO_BOARD}` becomes `{"OPEN_REGISTER`, the middle codes, and
+ * `VIEW_FOLIO_BOARD}`. The first and last codes in the list are silently lost:
+ * they no longer equal-match anything the guard requires. Three SMAG School
+ * (#128) cashier rows are stored that way — their operator could not open a
+ * register session all week, because OPEN_REGISTER happened to be first.
+ *
+ * This is deliberately the single place both halves of the decision read
+ * through: the token's `permissions` claim and the roster the register renders
+ * its buttons from are built from this same summary. Sanitising anywhere else
+ * would fix one and leave the other, which is the exact failure this class of
+ * bug is made of — a till showing a button the server will refuse.
+ *
+ * Codes are `A-Z0-9_` by construction (see PosRegisterPermission), so anything
+ * outside that is damage rather than a permission we do not know about yet.
+ */
+function sanitizePermissionCodes(codes: Iterable<string>): string[] {
+  const cleaned = new Set<string>();
+  for (const raw of codes) {
+    const code = String(raw ?? '')
+      .replace(/[^A-Za-z0-9_]/g, '')
+      .trim()
+      .toUpperCase();
+    if (code) {
+      cleaned.add(code);
+    }
+  }
+  return Array.from(cleaned).sort();
+}
 @Injectable()
 export class BranchStaffService {
   private readonly logger = new Logger(BranchStaffService.name);
@@ -1192,12 +1227,10 @@ export class BranchStaffService {
       }
 
       const existing = byBranchId.get(assignment.branchId);
-      const mergedPermissions = Array.from(
-        new Set([
-          ...(existing?.permissions ?? []),
-          ...(assignment.permissions ?? []),
-        ]),
-      ).sort();
+      const mergedPermissions = sanitizePermissionCodes([
+        ...(existing?.permissions ?? []),
+        ...(assignment.permissions ?? []),
+      ]);
 
       byBranchId.set(assignment.branchId, {
         branchId: assignment.branchId,

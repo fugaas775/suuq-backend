@@ -670,6 +670,61 @@ describe('BranchStaffService', () => {
       });
     });
 
+    it('reads a cashier’s permissions through array-literal punctuation', async () => {
+      /* `permissions` is a simple-array — ONE text column split on commas — so a
+         row written as a Postgres array literal survives the write and then
+         splits into rubbish at both ends. Three SMAG School (#128) cashier rows
+         are stored exactly like this, and because OPEN_REGISTER happened to be
+         first, their operator could not open a register session all week while
+         the roster screen showed the permission plainly granted.
+
+         Sanitising HERE is deliberate: this summary is the single source for
+         both the token's permissions claim and the roster the register renders
+         its buttons from. Cleaning either one alone would leave a till showing
+         a button the server refuses — which is the whole shape of this bug. */
+      branchesRepository.find.mockResolvedValue([]);
+      assignmentsRepository.find.mockResolvedValue([
+        {
+          branchId: 5,
+          role: BranchStaffRole.OPERATOR,
+          permissions: [
+            '{"OPEN_REGISTER,CLOSE_REGISTER,SETTLE_FEE_PAYMENT"',
+            'VIEW_FOLIO',
+            'VIEW_FOLIO_BOARD}',
+          ],
+          createdAt: new Date('2026-08-17T07:21:01.000Z'),
+          branch: {
+            id: 5,
+            name: 'SMAG School',
+            code: 'SMAG-5',
+            isActive: true,
+          },
+        },
+      ]);
+      retailEntitlementsService.getBranchWorkspaceStatus.mockResolvedValue({
+        tenant: { id: 21, name: 'SMAG Retail' },
+        subscription: {
+          status: TenantSubscriptionStatus.ACTIVE,
+          planCode: 'POS_BRANCH_1M',
+        },
+        entitlements: [{ module: RetailModule.POS_CORE }],
+        hasPosModule: true,
+        workspaceStatus: 'ACTIVE',
+      });
+
+      const [summary] = await service.getPosBranchSummariesForUser({ id: 7 });
+
+      // The whole first element is one code as far as the column is concerned —
+      // it is quoted BECAUSE it contains commas, so the split cannot recover the
+      // three codes inside it. What must not happen is the punctuation silently
+      // eating the codes at the edges of the list.
+      expect(summary.permissions).toContain('VIEW_FOLIO');
+      expect(summary.permissions).toContain('VIEW_FOLIO_BOARD');
+      expect(summary.permissions.some((code) => /[^A-Z0-9_]/.test(code))).toBe(
+        false,
+      );
+    });
+
     it('does not let an operator pay for the branch they work in', async () => {
       branchesRepository.find.mockResolvedValue([]);
       assignmentsRepository.find.mockResolvedValue([

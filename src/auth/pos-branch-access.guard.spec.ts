@@ -59,6 +59,57 @@ describe('PosBranchAccessGuard', () => {
     );
   });
 
+  it('honours a permission whose code arrived wrapped in array-literal punctuation', async () => {
+    /* `permissions` is a simple-array — ONE text column split on commas — so a
+       row written as a Postgres array literal splits into rubbish at both ends:
+       `{"OPEN_REGISTER` and `VIEW_FOLIO_BOARD}`. The first and last permission a
+       cashier was granted then match nothing, silently. Three SMAG School
+       cashier rows are stored that way and their operator could not open a
+       register session all week. The rows are being repaired, but a token lives
+       8h, so the guard has to hold for the ones already in tills. */
+    const context = createExecutionContext(
+      PosCheckoutController.prototype.voidCheckout,
+      PosCheckoutController,
+      {
+        query: { branchId: '9' },
+        user: {
+          id: 53,
+          tokenType: 'pos_operator',
+          branchId: 9,
+          branchRole: 'OPERATOR',
+          permissions: ['{"VOID_SETTLED_BILL', 'VIEW_FOLIO_BOARD}'],
+          roles: ['POS_OPERATOR'],
+        },
+      },
+    );
+
+    await expect(guard.canActivate(context)).resolves.toBe(true);
+  });
+
+  it('still refuses a token whose codes are damaged into something else', async () => {
+    // Sanitising must not turn a near-miss into a match: stripping punctuation
+    // is not the same as guessing what was meant.
+    const context = createExecutionContext(
+      PosCheckoutController.prototype.voidCheckout,
+      PosCheckoutController,
+      {
+        query: { branchId: '9' },
+        user: {
+          id: 54,
+          tokenType: 'pos_operator',
+          branchId: 9,
+          branchRole: 'OPERATOR',
+          permissions: ['VOID SETTLED BILL', '{"OPEN_REGISTER'],
+          roles: ['POS_OPERATOR'],
+        },
+      },
+    );
+
+    await expect(guard.canActivate(context)).rejects.toThrow(
+      ForbiddenException,
+    );
+  });
+
   it('rejects hospitality reopen for an operator token without REOPEN_SETTLED_BILL permission', async () => {
     const context = createExecutionContext(
       HospitalityWorkflowsController.prototype.reopenSettledBill,

@@ -94,11 +94,19 @@ export class PosBranchAccessGuard implements CanActivate {
       return true;
     }
 
+    // Strip anything that is not part of a permission code before comparing.
+    // Codes are A-Z0-9_ by construction, and a staff row written as a Postgres
+    // array literal into the comma-separated `permissions` column mints tokens
+    // carrying `{"OPEN_REGISTER` and `VIEW_FOLIO_BOARD}` — codes that match
+    // nothing, so the FIRST and LAST permission a cashier was granted quietly
+    // do not exist. The rows are being repaired, but a token lives 8h and this
+    // has to hold for the ones already in tills.
     const normalizedPermissions = new Set(
       Array.isArray(user.permissions)
         ? user.permissions
             .map((permission) =>
               String(permission || '')
+                .replace(/[^A-Za-z0-9_]/g, '')
                 .trim()
                 .toUpperCase(),
             )
