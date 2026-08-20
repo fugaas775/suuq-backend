@@ -112,11 +112,22 @@ export class AddVehicleRegistry20260820120000 implements MigrationInterface {
     `);
     // The counter searches by name constantly and an owner's name is rarely
     // typed the same way twice; trigram beats LIKE for "Cabdi" vs "Abdi".
-    await queryRunner.query(`CREATE EXTENSION IF NOT EXISTS pg_trgm`);
-    await queryRunner.query(`
-      CREATE INDEX IF NOT EXISTS "idx_pos_vehicle_owners_name_trgm"
-        ON "pos_vehicle_owners" USING gin (LOWER("fullName") gin_trgm_ops)
-    `);
+    //
+    // Both statements are optional and deliberately swallowed. CREATE EXTENSION
+    // needs rights the application role does not have on some managed Postgres
+    // instances, and an index that only makes a search FASTER must never be the
+    // reason a registry fails to deploy. Without it the name search still works
+    // — it falls back to a sequential LIKE, which is fine at the scale a bureau
+    // reaches before somebody grants the extension.
+    try {
+      await queryRunner.query(`CREATE EXTENSION IF NOT EXISTS pg_trgm`);
+      await queryRunner.query(`
+        CREATE INDEX IF NOT EXISTS "idx_pos_vehicle_owners_name_trgm"
+          ON "pos_vehicle_owners" USING gin (LOWER("fullName") gin_trgm_ops)
+      `);
+    } catch {
+      // Left without the trigram index. See above: correctness is unaffected.
+    }
 
     // ── Vehicles ───────────────────────────────────────────────────────────
     await queryRunner.query(`
