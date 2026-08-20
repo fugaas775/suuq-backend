@@ -83,6 +83,16 @@ async function main() {
 
   if (tenant) {
     console.log(`  tenant exists            id=${tenant.id}`);
+    // Backfill the owner onto a row created before --owner was required. An
+    // idempotent script that only creates, and never corrects, leaves the exact
+    // half-finished state it was meant to make impossible.
+    if (EXECUTE) {
+      await dataSource.query(
+        `UPDATE retail_tenants SET "ownerUserId" = $2, "updatedAt" = now()
+          WHERE id = $1 AND ("ownerUserId" IS DISTINCT FROM $2)`,
+        [tenant.id, OWNER_USER_ID],
+      );
+    }
   } else if (EXECUTE) {
     tenant = (
       await dataSource.query(
@@ -140,12 +150,17 @@ async function main() {
 
   if (branch) {
     console.log(`  office exists            id=${branch.id} (${branch.serviceFormat})`);
-    if (EXECUTE && (branch.serviceFormat !== 'VEHICLE_REGISTRY' || branch.retailTenantId !== tenantId)) {
+    if (EXECUTE) {
       await dataSource.query(
-        `UPDATE branches SET "serviceFormat"='VEHICLE_REGISTRY', "retailTenantId"=$2, "updatedAt"=now() WHERE id=$1`,
-        [branch.id, tenantId],
+        `UPDATE branches
+            SET "serviceFormat" = 'VEHICLE_REGISTRY',
+                "retailTenantId" = $2,
+                "ownerId" = COALESCE("ownerId", $3),
+                "updatedAt" = now()
+          WHERE id = $1`,
+        [branch.id, tenantId, OWNER_USER_ID],
       );
-      console.log('  office corrected         → VEHICLE_REGISTRY');
+      console.log(`  office corrected         → VEHICLE_REGISTRY, owner ${OWNER_USER_ID}`);
     }
   } else if (EXECUTE) {
     branch = (
