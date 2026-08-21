@@ -13,6 +13,7 @@ import {
 } from 'class-validator';
 import { VehicleClassStatus } from '../entities/vehicle-class.entity';
 import { VehicleOwnerKind } from '../entities/vehicle-owner.entity';
+import { VehicleFlagType } from '../entities/vehicle-flag.entity';
 
 function trimString(value: unknown) {
   return typeof value === 'string' ? value.trim() : value;
@@ -387,4 +388,37 @@ export class ListPlateStockDto extends VehicleBranchScopeDto {
   @IsOptional()
   @IsInt()
   seriesId?: number;
+}
+
+// ── Flags ───────────────────────────────────────────────────────────────────
+
+export class RaiseVehicleFlagDto extends VehicleBranchScopeDto {
+  @IsEnum(VehicleFlagType)
+  type!: VehicleFlagType;
+
+  /** The police case or court reference. Optional: a roadside report is fast. */
+  @Transform(({ value }) => trimString(value))
+  @IsOptional()
+  @IsString()
+  @MaxLength(128)
+  reference?: string;
+
+  @Transform(({ value }) => trimString(value))
+  @IsOptional()
+  @IsString()
+  @MaxLength(1024)
+  note?: string;
+}
+
+export class ClearVehicleFlagDto extends VehicleBranchScopeDto {
+  /**
+   * Required, unlike raising a flag. A cleared report is how a stolen car
+   * becomes sellable, so the record has to say why — the question a buyer's
+   * lawyer asks a year later.
+   */
+  @Transform(({ value }) => trimString(value))
+  @IsString()
+  @MinLength(3)
+  @MaxLength(1024)
+  reason!: string;
 }

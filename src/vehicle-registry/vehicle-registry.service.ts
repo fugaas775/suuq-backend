@@ -6,7 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, EntityManager, Repository } from 'typeorm';
+import { DataSource, EntityManager, IsNull, Repository } from 'typeorm';
 import { Branch } from '../branches/entities/branch.entity';
 import {
   PosCheckout,
@@ -33,11 +33,13 @@ import {
   VehicleRegistrationStatus,
 } from './entities/vehicle-registration.entity';
 import { VehicleEvent, VehicleEventType } from './entities/vehicle-event.entity';
+import { VehicleFlag, VehicleFlagType } from './entities/vehicle-flag.entity';
 import {
   DEFAULT_PLATE_SERIAL_WIDTH,
   formatPlateNumber,
   SOMALI_REGION_CODE,
 } from './ethiopian-plates';
+import { signCertificate } from './certificate-signing';
 import {
   CreatePlateSeriesDto,
   CreateVehicleClassDto,
@@ -102,6 +104,8 @@ export class VehicleRegistryService {
     private readonly registrationsRepository: Repository<VehicleRegistration>,
     @InjectRepository(VehicleEvent)
     private readonly eventsRepository: Repository<VehicleEvent>,
+    @InjectRepository(VehicleFlag)
+    private readonly flagsRepository: Repository<VehicleFlag>,
     @InjectRepository(Branch)
     private readonly branchesRepository: Repository<Branch>,
     private readonly dataSource: DataSource,
@@ -877,6 +881,24 @@ export class VehicleRegistryService {
         registration.id,
       ).padStart(8, '0')}`;
 
+      // Sign for offline verification, once, now. A reprint years later reads
+      // this column rather than re-signing, so the original certificate and its
+      // duplicate carry an identical QR. Null when no key is configured, which
+      // makes the certificate online-only rather than making issuance fail.
+      const plateRow = registration.plateId
+        ? await manager.findOne(VehiclePlate, {
+            where: { id: registration.plateId },
+          })
+        : null;
+      registration.offlineSignature = signCertificate({
+        issuedAt,
+        expiresAt,
+        plateCode: plateRow?.plateCode ?? vehicleClass.plateCode ?? '?',
+        regionCode: plateRow?.regionCode ?? SOMALI_REGION_CODE,
+        serial: plateRow?.serial ?? 0,
+        vin: vehicle.vin,
+      });
+
       await manager.save(registration);
 
       if (registration.plateId) {
@@ -1059,7 +1081,142 @@ export class VehicleRegistryService {
       ? await this.classesRepository.findOne({ where: { id: vehicle.classId } })
       : null;
 
-    return { registration, vehicle, owner, plate, class: vehicleClass };
+    // Flags come with the record, not on a second request. An officer looking
+    // at a vehicle needs to see it is reported stolen in the same glance that
+    // shows them the plate — a detail they have to click for is a detail that
+    // gets missed at a roadside.
+    const flags = vehicle
+      ? await this.flagsRepository.find({
+          where: { vehicleId: vehicle.id },
+          order: { raisedAt: 'DESC' },
+        })
+      : [];
+
+    return {
+      registration,
+      vehicle,
+      owner,
+      plate,
+      class: vehicleClass,
+      flags,
+      openFlags: flags.filter((f) => !f.clearedAt),
+    };
+  }
+
+  // ── Flags ────────────────────────────────────────────────────────────────
+
+  /**
+   * Report a vehicle — stolen, impounded, wanted, held.
+   *
+   * Deliberately cheap to do: an officer at a checkpoint has seconds and no
+   * supervisor. The expensive, supervised action is CLEARING one.
+   */
+  async raiseFlag(
+    params: {
+      branchId: number;
+      vehicleId: number;
+      type: VehicleFlagType;
+      reference?: string | null;
+      note?: string | null;
+    },
+    actorUserId?: number,
+  ) {
+    const tenantId = await this.resolveTenantId(params.branchId);
+
+    const vehicle = await this.vehiclesRepository.findOne({
+      where: { id: params.vehicleId, tenantId },
+    });
+    if (!vehicle) {
+      throw new NotFoundException(`Vehicle ${params.vehicleId} not found`);
+    }
+
+    // One open flag of a kind is enough. A second STOLEN report on an already
+    // stolen vehicle adds nothing a checkpoint can act on and buries the first.
+    const existing = await this.flagsRepository.findOne({
+      where: { vehicleId: params.vehicleId, type: params.type, clearedAt: IsNull() },
+    });
+    if (existing) return existing;
+
+    const raisedAt = new Date();
+
+    return this.dataSource.transaction(async (manager) => {
+      const flag = await manager.save(
+        manager.create(VehicleFlag, {
+          tenantId,
+          vehicleId: params.vehicleId,
+          type: params.type,
+          reference: params.reference ?? null,
+          note: params.note ?? null,
+          raisedByUserId: actorUserId ?? null,
+          raisedAtBranchId: params.branchId,
+          raisedAt,
+        }),
+      );
+
+      await this.recordEvent(manager, {
+        tenantId,
+        branchId: params.branchId,
+        vehicleId: params.vehicleId,
+        type: VehicleEventType.FLAGGED,
+        actorUserId,
+        reason: params.reference ?? params.type,
+        meta: { type: params.type, reference: params.reference ?? null },
+        occurredAt: raisedAt,
+      });
+
+      return flag;
+    });
+  }
+
+  /**
+   * Release a vehicle.
+   *
+   * A reason is REQUIRED, unlike raising. A cleared flag is how a stolen car
+   * becomes sellable, so the record has to say who released it and why — the
+   * question a buyer's lawyer asks a year later.
+   */
+  async clearFlag(
+    params: { branchId: number; flagId: number; reason: string },
+    actorUserId?: number,
+  ) {
+    const tenantId = await this.resolveTenantId(params.branchId);
+
+    const reason = String(params.reason || '').trim();
+    if (!reason) {
+      throw new BadRequestException(
+        'Releasing a reported vehicle needs a reason — it is what the record is for.',
+      );
+    }
+
+    const flag = await this.flagsRepository.findOne({
+      where: { id: params.flagId, tenantId },
+    });
+    if (!flag) {
+      throw new NotFoundException(`Flag ${params.flagId} not found`);
+    }
+    if (flag.clearedAt) return flag;
+
+    const clearedAt = new Date();
+
+    return this.dataSource.transaction(async (manager) => {
+      flag.clearedAt = clearedAt;
+      flag.clearedByUserId = actorUserId ?? null;
+      flag.clearReason = reason;
+      await manager.save(flag);
+
+      await this.recordEvent(manager, {
+        tenantId,
+        branchId: params.branchId,
+        vehicleId: Number(flag.vehicleId),
+        type: VehicleEventType.FLAG_CLEARED,
+        actorUserId,
+        reason,
+        meta: { type: flag.type, flagId: flag.id },
+        occurredAt: clearedAt,
+      });
+
+      return flag;
+    });
   }
 
   /** Everything that ever happened to a vehicle, oldest first. */

@@ -7,6 +7,7 @@ import {
   renderVehicleResultPage,
 } from './public-vehicle-verification.page';
 import { PublicVehicleVerificationService } from './public-vehicle-verification.service';
+import { resolvePublicKeyPem } from './certificate-signing';
 
 /**
  * What the QR on a registration certificate points at.
@@ -71,6 +72,36 @@ export class PublicVehicleVerificationController {
     return renderVehicleResultPage(
       await this.verification.verifyByCode(code),
     );
+  }
+
+  /**
+   * The Bureau's public signing key, so an officer's device can verify a
+   * certificate with no network.
+   *
+   * Public by definition — a verification key is worthless as a secret, and the
+   * whole point is that anyone can check the Bureau's signature. Cached hard:
+   * it changes only on key rotation, and a device that fetched it once should
+   * keep working through the outage it is meant to survive.
+   */
+  @Public()
+  @Get('keys')
+  @Header('Cache-Control', 'public, max-age=86400')
+  async publicKeys() {
+    const pem = resolvePublicKeyPem();
+    return {
+      keys: pem
+        ? [
+            {
+              kid: Number(process.env.VEHICLE_REGISTRY_SIGNING_KID || 1) || 1,
+              alg: 'Ed25519',
+              publicKeyPem: pem,
+            },
+          ]
+        : [],
+      // Said plainly rather than implied by an empty array: offline
+      // verification is simply unavailable until a key is configured.
+      offlineVerificationAvailable: Boolean(pem),
+    };
   }
 
   /** The same answer as JSON, for anything programmatic. */

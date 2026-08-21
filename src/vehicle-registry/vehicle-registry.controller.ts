@@ -26,8 +26,10 @@ import {
   CreatePlateSeriesDto,
   CreateVehicleClassDto,
   DraftRegistrationDto,
+  ClearVehicleFlagDto,
   IssueRegistrationDto,
   ListPlateStockDto,
+  RaiseVehicleFlagDto,
   ListVehicleClassesDto,
   SearchVehiclesDto,
   UpdateVehicleClassDto,
@@ -169,6 +171,51 @@ export class VehicleRegistryController {
     @Query('branchId', ParseIntPipe) branchId: number,
   ) {
     return this.svc.getVehicleHistory(id, branchId);
+  }
+
+  // ── Flags ────────────────────────────────────────────────────────────────
+
+  /**
+   * Report a vehicle. VEHICLE_FLAG — the one permission a traffic officer's
+   * lane carries, so a checkpoint can act without a supervisor present.
+   */
+  @Post('vehicles/:id/flags')
+  @RetailBranchContext('body.branchId')
+  @RequirePosPermissions(PosVehiclePermission.VEHICLE_FLAG)
+  raiseFlag(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: RaiseVehicleFlagDto,
+    @Req() req: any,
+  ) {
+    return this.svc.raiseFlag(
+      {
+        branchId: dto.branchId,
+        vehicleId: id,
+        type: dto.type,
+        reference: dto.reference,
+        note: dto.note,
+      },
+      req?.user?.id,
+    );
+  }
+
+  /**
+   * Release one. A DIFFERENT permission, deliberately: any officer may report a
+   * vehicle, but a cleared flag is how a stolen car becomes sellable, so
+   * releasing is a registrar's signature.
+   */
+  @Post('flags/:id/clear')
+  @RetailBranchContext('body.branchId')
+  @RequirePosPermissions(PosVehiclePermission.VEHICLE_FLAG_CLEAR)
+  clearFlag(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: ClearVehicleFlagDto,
+    @Req() req: any,
+  ) {
+    return this.svc.clearFlag(
+      { branchId: dto.branchId, flagId: id, reason: dto.reason },
+      req?.user?.id,
+    );
   }
 
   // ── Registration ─────────────────────────────────────────────────────────

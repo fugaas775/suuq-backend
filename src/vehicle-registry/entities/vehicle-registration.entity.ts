@@ -87,6 +87,18 @@ export class VehicleRegistration {
   @Column({ type: 'varchar', length: 16, nullable: true })
   verificationCode!: string | null;
 
+  /**
+   * The Ed25519 blob carried in the certificate QR's `#d=` fragment, letting an
+   * officer verify with no network.
+   *
+   * Signed ONCE at issuance and stored, never recomputed per print: a reprint
+   * must produce the same QR as the original, or two papers disagree and a
+   * checkpoint cannot tell which is the forgery. Null when no signing key is
+   * configured — those certificates resolve online only.
+   */
+  @Column({ type: 'varchar', length: 256, nullable: true })
+  offlineSignature!: string | null;
+
   @Column({
     type: 'varchar',
     length: 24,

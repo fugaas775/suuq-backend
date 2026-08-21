@@ -118,6 +118,7 @@ function makeService({
     plates as any,
     registrations as any,
     repo() as any,
+    repo() as any,
     { findOne: jest.fn().mockResolvedValue(branch) } as any,
     dataSource,
   );
@@ -257,6 +258,86 @@ describe('VehicleRegistryService — plate series', () => {
         rangeEnd: 10,
       } as any),
     ).rejects.toBeInstanceOf(ConflictException);
+  });
+});
+
+describe('VehicleRegistryService — flags', () => {
+  function flagService({ vehicle = { id: 5, tenantId: 42 }, openFlag = null as any } = {}) {
+    const saved: any[] = [];
+    const manager: any = {
+      create: (_e: any, row: any) => row,
+      save: jest.fn(async (row: any) => { saved.push(row); return { ...row, id: row.id ?? 900 }; }),
+      query: jest.fn(),
+    };
+    const dataSource: any = { transaction: jest.fn(async (fn: any) => fn(manager)) };
+    const flags = {
+      find: jest.fn().mockResolvedValue([]),
+      findOne: jest.fn().mockResolvedValue(openFlag),
+      save: jest.fn(async (r: any) => r),
+      create: jest.fn((r: any) => r),
+      createQueryBuilder: jest.fn(() => qb()),
+    };
+    const svc = new VehicleRegistryService(
+      repo() as any, repo() as any,
+      { ...repo(), findOne: jest.fn().mockResolvedValue(vehicle) } as any,
+      repo() as any, repo() as any, repo() as any, repo() as any,
+      flags as any,
+      { findOne: jest.fn().mockResolvedValue({ id: 7, retailTenantId: 42 }) } as any,
+      dataSource,
+    );
+    return { svc, saved, flags };
+  }
+
+  it('records who reported it, from where, and when', async () => {
+    const { svc, saved } = flagService();
+    await svc.raiseFlag(
+      { branchId: 7, vehicleId: 5, type: 'STOLEN' as any, reference: 'CASE-77' },
+      11,
+    );
+    const flag = saved.find((r) => r.type === 'STOLEN');
+    expect(flag.raisedByUserId).toBe(11);
+    expect(flag.raisedAtBranchId).toBe(7);
+    expect(flag.reference).toBe('CASE-77');
+    // And an event, so the vehicle's history shows it.
+    expect(saved.some((r) => r.type === 'FLAGGED')).toBe(true);
+  });
+
+  it('does not stack a second report of the same kind', async () => {
+    // A second STOLEN report on an already stolen vehicle adds nothing a
+    // checkpoint can act on, and buries the first.
+    const existing = { id: 1, type: 'STOLEN', clearedAt: null };
+    const { svc, saved } = flagService({ openFlag: existing });
+    const result: any = await svc.raiseFlag(
+      { branchId: 7, vehicleId: 5, type: 'STOLEN' as any },
+      11,
+    );
+    expect(result).toBe(existing);
+    expect(saved).toEqual([]);
+  });
+
+  it('refuses to release a vehicle without a reason', async () => {
+    // A cleared flag is how a stolen car becomes sellable.
+    const { svc } = flagService({ openFlag: { id: 1, type: 'STOLEN', clearedAt: null } });
+    await expect(
+      svc.clearFlag({ branchId: 7, flagId: 1, reason: '   ' }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('records who released it and why', async () => {
+    const flag: any = { id: 1, vehicleId: 5, type: 'STOLEN', clearedAt: null };
+    const { svc, saved } = flagService({ openFlag: flag });
+    await svc.clearFlag({ branchId: 7, flagId: 1, reason: 'Recovered by police' }, 22);
+    expect(flag.clearedByUserId).toBe(22);
+    expect(flag.clearReason).toBe('Recovered by police');
+    expect(flag.clearedAt).toBeInstanceOf(Date);
+    expect(saved.some((r) => r.type === 'FLAG_CLEARED')).toBe(true);
+  });
+
+  it('refuses an unknown vehicle', async () => {
+    const { svc } = flagService({ vehicle: null as any });
+    await expect(
+      svc.raiseFlag({ branchId: 7, vehicleId: 999, type: 'STOLEN' as any }),
+    ).rejects.toBeInstanceOf(NotFoundException);
   });
 });
 
