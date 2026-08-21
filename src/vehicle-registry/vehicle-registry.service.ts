@@ -34,6 +34,11 @@ import {
 } from './entities/vehicle-registration.entity';
 import { VehicleEvent, VehicleEventType } from './entities/vehicle-event.entity';
 import {
+  DEFAULT_PLATE_SERIAL_WIDTH,
+  formatPlateNumber,
+  SOMALI_REGION_CODE,
+} from './ethiopian-plates';
+import {
   CreatePlateSeriesDto,
   CreateVehicleClassDto,
   DraftRegistrationDto,
@@ -257,10 +262,25 @@ export class VehicleRegistryService {
       );
     }
 
-    const width = dto.numberWidth ?? 5;
+    const width = dto.numberWidth ?? DEFAULT_PLATE_SERIAL_WIDTH;
+
+    // An Ethiopian plate carries a CLASS code and a REGION code, two
+    // independent identifiers. The original single `prefix` conflated them and
+    // seeded the Somali Region with '5' — which is the class code for religious
+    // and civic bodies, not a region at all. The class supplies the code; the
+    // region defaults to the bureau's own, since an office issues its own.
+    const seriesClass = dto.classId
+      ? await this.classesRepository.findOne({
+          where: { id: dto.classId, tenantId },
+        })
+      : null;
+
+    const plateCode = dto.plateCode ?? seriesClass?.plateCode ?? dto.prefix;
+    const regionCode = (dto.regionCode ?? SOMALI_REGION_CODE).toUpperCase();
+
     const numbers = Array.from({ length: count }, (_, i) => dto.rangeStart + i);
-    const formatted = numbers.map(
-      (n) => `${dto.prefix}-${String(n).padStart(width, '0')}`,
+    const formatted = numbers.map((n) =>
+      formatPlateNumber(plateCode, regionCode, n, width),
     );
 
     // Refuse the whole series if ANY number in it already exists anywhere in
@@ -292,6 +312,8 @@ export class VehicleRegistryService {
           tenantId,
           branchId: dto.branchId,
           classId: dto.classId ?? null,
+          plateCode,
+          regionCode,
           prefix: dto.prefix,
           rangeStart: dto.rangeStart,
           rangeEnd: dto.rangeEnd,
@@ -312,6 +334,11 @@ export class VehicleRegistryService {
               branchId: dto.branchId,
               seriesId: series.id,
               plateNumber,
+              // Stored apart as well as composed, so the printed arrangement
+              // can be corrected without anything having to parse it back.
+              plateCode,
+              regionCode,
+              serial: numbers[i + offset],
               // The numeric part, so plates go out in the order the office has
               // them stacked. Sorting on the printed string would put 5-01000
               // before 5-0999 and hand out the drawer backwards.

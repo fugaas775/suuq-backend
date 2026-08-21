@@ -133,6 +133,29 @@ export class UpdateVehicleClassDto extends CreateVehicleClassDto {
 // ── Plate series ────────────────────────────────────────────────────────────
 
 export class CreatePlateSeriesDto extends VehicleBranchScopeDto {
+  /**
+   * The Ethiopian CLASS code every plate in this block carries — 1 taxi,
+   * 2 private, 3 commercial, 4 government, 5 religious & civic. Omitted, it is
+   * taken from the class the series is restricted to.
+   */
+  @Transform(({ value }) => upperString(value))
+  @IsOptional()
+  @IsString()
+  @MaxLength(16)
+  plateCode?: string;
+
+  /**
+   * The issuing region. Defaults to the Somali Region ('SM'), since an office
+   * issues its own region's plates — an office allotting another region's
+   * numbers is a mistake, not a feature.
+   */
+  @Transform(({ value }) => upperString(value))
+  @IsOptional()
+  @IsString()
+  @MaxLength(16)
+  regionCode?: string;
+
+  /** @deprecated Superseded by plateCode + regionCode; kept for older callers. */
   @Transform(({ value }) => upperString(value))
   @IsString()
   @MinLength(1)

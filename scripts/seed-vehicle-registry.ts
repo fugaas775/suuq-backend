@@ -12,7 +12,7 @@
  *   2. A fee product per class per fee kind, in the BRANCH's catalogue, with a
  *      `branch_inventory` row so the SKU actually resolves. Products are
  *      branch-scoped, which is why classes name SKUs rather than product ids.
- *   3. One plate series for the branch, materialised as one row per blank.
+ *   3. One plate series PER CLASS CODE, materialised as one row per blank.
  *
  * WHY branch_inventory MATTERS: a product with no link row is invisible to the
  * branch — that is the orphaning that left Burji #106 with an empty board — and
@@ -37,7 +37,13 @@
  *   Apply:
  *     ... scripts/seed-vehicle-registry.ts --branch=<id> --execute
  *   Custom plate block:
- *     ... --branch=<id> --prefix=5 --from=1 --to=500 --execute
+ *     ... --branch=<id> --region=SM --from=1 --per-code=100 --execute
+ *
+ * PLATE CODES follow the Ethiopian system: the CLASS code (1 taxi, 2 private,
+ * 3 commercial, 4 government, 5 religious & civic) and the REGION code (SM /
+ * ሶማ for the Somali Region) are two independent identifiers. One block of
+ * blanks is allotted per class code, because a red taxi plate and a white
+ * private plate are different physical stock.
  *
  * ROLLBACK (psql, in this order)
  *   DELETE FROM pos_vehicle_plates       WHERE "branchId" = <id>;
@@ -50,6 +56,11 @@
  *   -- will refuse this and should.
  */
 import dataSource from '../src/data-source';
+import {
+  formatPlateNumber,
+  plateColoursFor,
+  SOMALI_REGION_CODE,
+} from '../src/vehicle-registry/ethiopian-plates';
 
 const EXECUTE = process.argv.includes('--execute');
 const arg = (name: string) => {
@@ -58,9 +69,10 @@ const arg = (name: string) => {
 };
 
 const BRANCH_ID = Number(arg('branch') || 0);
-const PREFIX = (arg('prefix') || '5').toUpperCase();
+const REGION = (arg('region') || SOMALI_REGION_CODE).toUpperCase();
 const FROM = Number(arg('from') || 1);
-const TO = Number(arg('to') || 500);
+/** Blanks allotted per class code. Each code is its own physical stock. */
+const PER_CODE = Number(arg('per-code') || arg('to') || 100);
 
 /**
  * The classes a regional bureau licenses, with the fee schedule the plan's
@@ -69,12 +81,20 @@ const TO = Number(arg('to') || 500);
  * charge in a test, not because they are right.
  */
 const CLASSES = [
-  { code: 'PRIVATE_CAR', en: 'Private car', so: 'Gaari gaar loo leeyahay', am: 'የግል መኪና', reg: 1500, renew: 800, plate: 700, inspect: 400 },
-  { code: 'MINIBUS', en: 'Minibus / taxi', so: 'Bas yar / tagsi', am: 'ሚኒባስ / ታክሲ', reg: 3000, renew: 1600, plate: 700, inspect: 600 },
-  { code: 'TRUCK', en: 'Goods truck', so: 'Gaadhi xamuul', am: 'የጭነት መኪና', reg: 4000, renew: 2200, plate: 900, inspect: 800 },
-  { code: 'BUS', en: 'Bus', so: 'Bas', am: 'አውቶቡስ', reg: 4500, renew: 2400, plate: 900, inspect: 800 },
-  { code: 'MOTORCYCLE', en: 'Motorcycle / bajaj', so: 'Mooto / bajaaj', am: 'ሞተር ሳይክል / ባጃጅ', reg: 600, renew: 350, plate: 300, inspect: 200 },
-  { code: 'TRAILER', en: 'Trailer', so: 'Taraayle', am: 'ተጎታች', reg: 1200, renew: 700, plate: 700, inspect: 300, noInspection: true },
+  // plateCode is the ETHIOPIAN CLASS CODE, which is about USE and ownership,
+  // not body shape: a minibus driven as a taxi is code 1, the same minibus
+  // owned privately is code 2, and a truck on hire is code 3. The body-type
+  // split is kept because a bureau's FEES vary by it — a truck pays more than a
+  // car — but the plate it gets is decided by the code.
+  { code: 'PRIVATE_CAR', plateCode: '2', en: 'Private car', so: 'Gaari gaar loo leeyahay', am: 'የግል መኪና', reg: 1500, renew: 800, plate: 700, inspect: 400 },
+  { code: 'PRIVATE_MOTORCYCLE', plateCode: '2', en: 'Private motorcycle', so: 'Mooto gaar ah', am: 'የግል ሞተር ሳይክል', reg: 600, renew: 350, plate: 300, inspect: 200 },
+  { code: 'TAXI_MINIBUS', plateCode: '1', en: 'Minibus taxi', so: 'Bas yar oo tagsi ah', am: 'ሚኒባስ ታክሲ', reg: 3000, renew: 1600, plate: 700, inspect: 600 },
+  { code: 'TAXI_BAJAJ', plateCode: '1', en: 'Bajaj taxi', so: 'Bajaaj tagsi', am: 'ባጃጅ ታክሲ', reg: 800, renew: 450, plate: 300, inspect: 250 },
+  { code: 'COMMERCIAL_TRUCK', plateCode: '3', en: 'Goods truck', so: 'Gaadhi xamuul', am: 'የጭነት መኪና', reg: 4000, renew: 2200, plate: 900, inspect: 800 },
+  { code: 'COMMERCIAL_BUS', plateCode: '3', en: 'Bus', so: 'Bas', am: 'አውቶቡስ', reg: 4500, renew: 2400, plate: 900, inspect: 800 },
+  { code: 'COMMERCIAL_TRAILER', plateCode: '3', en: 'Trailer', so: 'Taraayle', am: 'ተጎታች', reg: 1200, renew: 700, plate: 700, inspect: 300, noInspection: true },
+  { code: 'GOVERNMENT', plateCode: '4', en: 'Government vehicle', so: 'Gaadiidka dowladda', am: 'የመንግስት ተሽከርካሪ', reg: 0, renew: 0, plate: 700, inspect: 400 },
+  { code: 'CIVIC_NGO', plateCode: '5', en: 'Religious or civic body', so: 'Hay\u2019ad diini ama bulsho', am: 'ሃይማኖታዊ ወይም ማህበራዊ', reg: 900, renew: 500, plate: 700, inspect: 400 },
 ];
 
 /** Fees every class shares, priced once rather than per class. */
@@ -209,13 +229,18 @@ async function main() {
            ("tenantId", code, "nameEn", "nameSo", "nameAm", "renewalMonths",
             "inspectionRequired", "plateFollowsVehicle",
             "registrationFeeSku", "renewalFeeSku", "plateFeeSku", "inspectionFeeSku",
-            "transferFeeSku", "penaltyFeeSku", "sortOrder", status)
-         VALUES ($1,$2,$3,$4,$5,12,$6,true,$7,$8,$9,$10,'VR-TRANSFER','VR-PENALTY-LATE',$11,'ACTIVE')`,
+            "transferFeeSku", "penaltyFeeSku", "sortOrder", status,
+            "plateCode", "plateBackgroundColour", "plateTextColour")
+         VALUES ($1,$2,$3,$4,$5,12,$6,true,$7,$8,$9,$10,'VR-TRANSFER','VR-PENALTY-LATE',$11,'ACTIVE',
+                 $12,$13,$14)`,
         [
           ctx.tenantId, c.code, c.en, c.so, c.am,
           c.noInspection ? false : true,
           `VR-${c.code}-REG`, `VR-${c.code}-RENEW`, `VR-${c.code}-PLATE`, `VR-${c.code}-INSPECT`,
           CLASSES.indexOf(c) * 10,
+          c.plateCode,
+          plateColoursFor(c.plateCode).background,
+          plateColoursFor(c.plateCode).text,
         ],
       );
     }
@@ -227,47 +252,63 @@ async function main() {
     if (EXECUTE) await upsertProduct(ctx, BRANCH_ID, f.sku, f.name, f.price, f.category);
   }
 
-  // ── 3. Plate series ─────────────────────────────────────────────────────
-  const blanks = TO - FROM + 1;
-  const seriesExists = await dataSource.query(
-    `SELECT id FROM pos_vehicle_plate_series
-      WHERE "branchId" = $1 AND UPPER(prefix) = UPPER($2) AND "rangeStart" = $3 AND "rangeEnd" = $4`,
-    [BRANCH_ID, PREFIX, FROM, TO],
-  );
+  // ── 3. Plate series, one block per class code ───────────────────────────
+  //
+  // A bureau is allotted separate blocks per CLASS code, not one shared block:
+  // taxi plates and private plates are physically different stock, and code 1
+  // is a red plate while code 2 is white with blue lettering. Seeding one
+  // series per distinct code is what the office actually holds in its drawer.
+  const plateCodes = [...new Set(CLASSES.map((c) => c.plateCode))].sort();
 
-  console.log(
-    `\n  plate series ${PREFIX}-${String(FROM).padStart(5, '0')} … ${PREFIX}-${String(TO).padStart(5, '0')}` +
-      ` (${blanks} blanks) ${seriesExists?.[0] ? '— already allotted, skipping' : ''}`,
-  );
+  console.log(`\n  plate series — region ${REGION}, ${PER_CODE} blanks per class code`);
 
-  if (EXECUTE && !seriesExists?.[0]) {
+  for (const plateCode of plateCodes) {
+    const existing = await dataSource.query(
+      `SELECT id FROM pos_vehicle_plate_series
+        WHERE "branchId" = $1 AND "plateCode" = $2 AND "regionCode" = $3`,
+      [BRANCH_ID, plateCode, REGION],
+    );
+
+    const first = formatPlateNumber(plateCode, REGION, FROM);
+    const last = formatPlateNumber(plateCode, REGION, FROM + PER_CODE - 1);
+    console.log(
+      `      ${String(plateCode).padEnd(3)} ${first} … ${last}` +
+        (existing?.[0] ? '  — already allotted' : ''),
+    );
+
+    if (!EXECUTE || existing?.[0]) continue;
+
+    const numbers = Array.from({ length: PER_CODE }, (_, i) => FROM + i);
+    const wanted = numbers.map((n) => formatPlateNumber(plateCode, REGION, n));
+
+    // Refuse the WHOLE block if any number is already in the region. A partial
+    // allotment leaves an office holding blanks the system believes belong to
+    // another woreda.
     const clash = await dataSource.query(
       `SELECT "plateNumber" FROM pos_vehicle_plates
         WHERE "tenantId" = $1 AND "plateNumber" = ANY($2::text[]) LIMIT 5`,
-      [
-        ctx.tenantId,
-        Array.from({ length: blanks }, (_, i) => `${PREFIX}-${String(FROM + i).padStart(5, '0')}`),
-      ],
+      [ctx.tenantId, wanted],
     );
     if (clash.length) {
       throw new Error(
         `These plate numbers already exist in the region: ${clash
           .map((c: any) => c.plateNumber)
-          .join(', ')}. Refusing the whole series — a partial allotment would leave this office holding blanks the system thinks belong elsewhere.`,
+          .join(', ')}. Refusing the whole series.`,
       );
     }
 
     const series = await dataSource.query(
       `INSERT INTO pos_vehicle_plate_series
-         ("tenantId","branchId",prefix,"rangeStart","rangeEnd","numberWidth",status)
-       VALUES ($1,$2,$3,$4,$5,5,'ACTIVE') RETURNING id`,
-      [ctx.tenantId, BRANCH_ID, PREFIX, FROM, TO],
+         ("tenantId","branchId","plateCode","regionCode",prefix,"rangeStart","rangeEnd","numberWidth",status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,5,'ACTIVE') RETURNING id`,
+      [ctx.tenantId, BRANCH_ID, plateCode, REGION, plateCode, FROM, FROM + PER_CODE - 1],
     );
+
     await dataSource.query(
-      `INSERT INTO pos_vehicle_plates ("tenantId","branchId","seriesId","plateNumber","sortKey",status)
-       SELECT $1, $2, $3, $4 || '-' || lpad(g::text, 5, '0'), g, 'IN_STOCK'
-         FROM generate_series($5::int, $6::int) g`,
-      [ctx.tenantId, BRANCH_ID, series[0].id, PREFIX, FROM, TO],
+      `INSERT INTO pos_vehicle_plates
+         ("tenantId","branchId","seriesId","plateNumber","plateCode","regionCode","serial","sortKey",status)
+       SELECT $1, $2, $3, unnest($4::text[]), $5, $6, unnest($7::int[]), unnest($7::int[]), 'IN_STOCK'`,
+      [ctx.tenantId, BRANCH_ID, series[0].id, wanted, plateCode, REGION, numbers],
     );
   }
 

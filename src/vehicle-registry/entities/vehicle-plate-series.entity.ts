@@ -49,7 +49,22 @@ export class VehiclePlateSeries {
   @Column({ type: 'bigint', nullable: true })
   classId!: number | null;
 
-  /** Region/type code the numbers hang off, e.g. '5' or 'ET-5'. */
+  /**
+   * The Ethiopian class code every plate in this block carries — 1 taxi,
+   * 2 private, 3 commercial, 4 government, 5 religious & civic.
+   */
+  @Column({ type: 'varchar', length: 16, nullable: true })
+  plateCode!: string | null;
+
+  /** The issuing region — 'SM' (ሶማ) for the Somali Region. */
+  @Column({ type: 'varchar', length: 16, nullable: true })
+  regionCode!: string | null;
+
+  /**
+   * @deprecated The original single-prefix model, before the class and region
+   * codes were understood to be two independent identifiers. Retained so a
+   * series allotted under it still reads back.
+   */
   @Column({ type: 'varchar', length: 16 })
   prefix!: string;
 

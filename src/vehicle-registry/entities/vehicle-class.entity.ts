@@ -78,10 +78,31 @@ export class VehicleClass {
   nameAm!: string | null;
 
   /**
-   * The plate prefix this class draws from, when the Bureau segregates series
-   * by class (Ethiopian plates encode vehicle type). Null = no class-specific
-   * prefix; a series may still name one itself.
+   * The Ethiopian CLASS code this vehicle is plated under: 1 taxi, 2 private,
+   * 3 commercial, 4 government, 5 religious & civic, plus ፖሊስ / UN / AU /
+   * ተላላፊ. See ethiopian-plates.ts.
+   *
+   * It is about USE, not body shape — a minibus driven as a taxi is code 1 and
+   * the same minibus owned privately is code 2 — which is why it lives on the
+   * class rather than being inferred from the vehicle's make and model.
    */
+  @Column({ type: 'varchar', length: 16, nullable: true })
+  plateCode!: string | null;
+
+  /**
+   * The plate's colours, fixed by its class.
+   *
+   * Registry data rather than styling: colour is how a traffic officer reads a
+   * vehicle's category from thirty metres — red is a taxi, green lettering is
+   * commercial, orange is an NGO — so the certificate has to print it right.
+   */
+  @Column({ type: 'varchar', length: 24, nullable: true })
+  plateBackgroundColour!: string | null;
+
+  @Column({ type: 'varchar', length: 24, nullable: true })
+  plateTextColour!: string | null;
+
+  /** @deprecated Superseded by {@link plateCode}. Kept so no data is lost. */
   @Column({ type: 'varchar', length: 16, nullable: true })
   plateSeriesPrefix!: string | null;
 

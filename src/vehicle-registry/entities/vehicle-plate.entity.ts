@@ -67,9 +67,28 @@ export class VehiclePlate {
   @Column({ type: 'bigint' })
   seriesId!: number;
 
-  /** The number as it is printed and as the public types it: '5-01234'. */
+  /**
+   * The number as it is printed and as the public types it: '3-SM-01234'.
+   *
+   * Composed from the three columns below by formatPlateNumber, never parsed
+   * back apart — the arrangement is an assumption pending the Bureau's
+   * confirmation, and anything that parsed this string would break the day it
+   * changes.
+   */
   @Column({ type: 'varchar', length: 32 })
   plateNumber!: string;
+
+  /** Ethiopian class code: 1 taxi, 2 private, 3 commercial, 4 government, 5 civic. */
+  @Column({ type: 'varchar', length: 16, nullable: true })
+  plateCode!: string | null;
+
+  /** Issuing region — 'SM' for the Somali Region. */
+  @Column({ type: 'varchar', length: 16, nullable: true })
+  regionCode!: string | null;
+
+  /** The numeric part on its own, so the parts never have to be parsed back. */
+  @Column({ type: 'int', nullable: true })
+  serial!: number | null;
 
   /**
    * Issue order within the series. The numeric part, so plates go out in the
