@@ -471,3 +471,19 @@ export class RequestPlateNumberDto extends VehicleBranchScopeDto {
   @MaxLength(128)
   reference?: string;
 }
+
+/**
+ * Hand a waiting vehicle one of the numbers the Ministry has since granted.
+ *
+ * `seriesId` is optional and usually omitted — the office takes the next blank
+ * off the shelf. It exists because a bureau granted two blocks for two classes
+ * needs to be able to say which one this vehicle is being plated from, and
+ * guessing wrong puts a commercial number on a private car.
+ */
+export class AssignPlateNumberDto extends VehicleBranchScopeDto {
+  @Type(() => Number)
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  seriesId?: number;
+}

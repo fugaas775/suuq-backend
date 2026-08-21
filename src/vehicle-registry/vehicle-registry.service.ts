@@ -18,7 +18,10 @@ import {
   VehicleClass,
   VehicleClassStatus,
 } from './entities/vehicle-class.entity';
-import { VehicleOwner, VehicleOwnerKind } from './entities/vehicle-owner.entity';
+import {
+  VehicleOwner,
+  VehicleOwnerKind,
+} from './entities/vehicle-owner.entity';
 import { Vehicle } from './entities/vehicle.entity';
 import {
   VehiclePlateSeries,
@@ -32,7 +35,10 @@ import {
   VehicleRegistration,
   VehicleRegistrationStatus,
 } from './entities/vehicle-registration.entity';
-import { VehicleEvent, VehicleEventType } from './entities/vehicle-event.entity';
+import {
+  VehicleEvent,
+  VehicleEventType,
+} from './entities/vehicle-event.entity';
 import { VehicleFlag, VehicleFlagType } from './entities/vehicle-flag.entity';
 import {
   DEFAULT_PLATE_SERIAL_WIDTH,
@@ -205,8 +211,7 @@ export class VehicleRegistryService {
     row.nameAm = dto.nameAm ?? row.nameAm;
     row.plateSeriesPrefix = dto.plateSeriesPrefix ?? row.plateSeriesPrefix;
     row.renewalMonths = dto.renewalMonths ?? row.renewalMonths;
-    row.inspectionRequired =
-      dto.inspectionRequired ?? row.inspectionRequired;
+    row.inspectionRequired = dto.inspectionRequired ?? row.inspectionRequired;
     row.plateFollowsVehicle =
       dto.plateFollowsVehicle ?? row.plateFollowsVehicle;
     row.registrationFeeSku = dto.registrationFeeSku ?? row.registrationFeeSku;
@@ -653,12 +658,7 @@ export class VehicleRegistryService {
 
     const result = await this.dataSource.transaction(async (manager) => {
       const owner = await this.resolveOwner(manager, tenantId, dto);
-      const vehicle = await this.resolveVehicle(
-        manager,
-        tenantId,
-        dto,
-        klass,
-      );
+      const vehicle = await this.resolveVehicle(manager, tenantId, dto, klass);
 
       const registration = await manager.save(
         manager.create(VehicleRegistration, {
@@ -713,18 +713,17 @@ export class VehicleRegistryService {
         this.quarantinePlate(
           manager,
           tenantId,
-          dto.vehicle.presentedPlateNumber as string,
+          dto.vehicle.presentedPlateNumber,
           `Already in circulation on chassis ${result.vehicle.vin} at registration`,
         ),
       );
     }
 
     // A first registration is the registration fee plus the plate itself.
-    const { lines, missing } = await this.resolveFeeLines(
-      dto.branchId,
-      klass,
-      ['REGISTRATION', 'PLATE'],
-    );
+    const { lines, missing } = await this.resolveFeeLines(dto.branchId, klass, [
+      'REGISTRATION',
+      'PLATE',
+    ]);
 
     return {
       ...result,
@@ -1039,34 +1038,27 @@ export class VehicleRegistryService {
         );
       }
 
-      // The paper that covers the vehicle until the plate goes on. Minted for
-      // every issuance rather than only when the plate is unavailable: always
-      // issuing it means every registration has a dated record of the gap, and
-      // a clerk who hands the plate over immediately simply confirms fitment on
-      // the spot and the permit is spent the same day.
-      const permitDays = vehicleClass.interimPermitDays ?? 30;
-      const permitExpires = new Date(issuedAt);
-      permitExpires.setDate(permitExpires.getDate() + permitDays);
-      registration.interimPermitNumber = `IP-${dto.branchId}-${String(
-        registration.id,
-      ).padStart(8, '0')}`;
-      registration.interimPermitExpiresAt = permitExpires;
-      await manager.save(registration);
-
-      await this.recordEvent(manager, {
-        tenantId,
-        branchId: dto.branchId,
-        vehicleId: Number(registration.vehicleId),
-        registrationId: Number(registration.id),
-        type: VehicleEventType.INTERIM_PERMIT_ISSUED,
-        actorUserId,
-        occurredAt: issuedAt,
-        meta: {
-          permitNumber: registration.interimPermitNumber,
-          expiresAt: permitExpires.toISOString(),
-          days: permitDays,
-        },
-      });
+      // The paper that covers the vehicle until the plate goes on — minted ONLY
+      // when there is a plate to wait for.
+      //
+      // A permit exists to cover the gap between a number being issued and the
+      // metal reaching the car. A registration with no number has no such gap:
+      // it is waiting on a federal application, which is not a fitting delay
+      // and has no 30-day shape. Handing that citizen a permit that expires in
+      // a month would set them up to be stopped at a checkpoint carrying paper
+      // that ran out, for a number the Bureau had not yet been granted. Their
+      // permit is minted when the number actually arrives — see
+      // `assignPlateNumber`, which is where the fitting clock genuinely starts.
+      if (registration.plateId) {
+        await this.mintInterimPermit(manager, {
+          registration,
+          tenantId,
+          branchId: dto.branchId,
+          permitDays: vehicleClass.interimPermitDays ?? 30,
+          from: issuedAt,
+          actorUserId,
+        });
+      }
 
       await this.recordEvent(manager, {
         tenantId,
@@ -1205,9 +1197,7 @@ export class VehicleRegistryService {
    * alphabet deliberately: its I/L→1 and O→0 folding is what lets an officer
    * read a code down a phone line without ambiguity.
    */
-  private async mintVerificationCode(
-    manager: EntityManager,
-  ): Promise<string> {
+  private async mintVerificationCode(manager: EntityManager): Promise<string> {
     const alphabet = RECEIPT_VERIFICATION_CODE_ALPHABET;
 
     for (let attempt = 0; attempt < VERIFICATION_CODE_ATTEMPTS; attempt++) {
@@ -1261,6 +1251,192 @@ export class VehicleRegistryService {
     );
   }
 
+  // ── Plate numbers, when the Ministry grants them ─────────────────────────
+
+  /**
+   * The paper that covers a vehicle between its number being issued and the
+   * plate reaching the car.
+   *
+   * Extracted because the clock can start at two different moments. A vehicle
+   * plated at the counter starts it at issuance; a vehicle registered without a
+   * number starts it months later, when the federal application comes back.
+   * Minting from a `from` date rather than `now()` keeps both honest.
+   */
+  private async mintInterimPermit(
+    manager: EntityManager,
+    params: {
+      registration: VehicleRegistration;
+      tenantId: number;
+      branchId: number;
+      permitDays: number;
+      from: Date;
+      actorUserId?: number | null;
+    },
+  ) {
+    const { registration, permitDays, from } = params;
+    const expires = new Date(from);
+    expires.setDate(expires.getDate() + permitDays);
+
+    registration.interimPermitNumber = `IP-${params.branchId}-${String(
+      registration.id,
+    ).padStart(8, '0')}`;
+    registration.interimPermitExpiresAt = expires;
+    await manager.save(registration);
+
+    await this.recordEvent(manager, {
+      tenantId: params.tenantId,
+      branchId: params.branchId,
+      vehicleId: Number(registration.vehicleId),
+      registrationId: Number(registration.id),
+      type: VehicleEventType.INTERIM_PERMIT_ISSUED,
+      actorUserId: params.actorUserId ?? null,
+      occurredAt: from,
+      meta: {
+        permitNumber: registration.interimPermitNumber,
+        expiresAt: expires.toISOString(),
+        days: permitDays,
+      },
+    });
+
+    return registration;
+  }
+
+  /**
+   * Give a number to a vehicle that was registered without one.
+   *
+   * THE EXIT FROM THE WAITING LIST. Every other path sets `plateId` at draft
+   * time and never again, so before this existed a registration created with no
+   * number could never acquire one: the Bureau could apply to the Federal Trade
+   * Ministry, be granted a block, load it as a plate series — and the vehicles
+   * that had been waiting for exactly that would go on waiting, because nothing
+   * in the codebase could attach a blank to a registration after the fact.
+   * "Awaiting number" was a list with no way off it.
+   *
+   * Three things happen together, and each is load-bearing:
+   *
+   *  - The plate is taken off the shelf with the same `FOR UPDATE SKIP LOCKED`
+   *    statement the counter uses. Two registrars working the backlog on two
+   *    machines must not hand one number to two vehicles — which is the exact
+   *    fault this registry exists to end.
+   *  - The interim permit is minted NOW, not backdated to registration. The
+   *    fitting window is the gap between having a number and wearing it, and
+   *    that gap opens today. Backdating would hand someone a permit that had
+   *    already expired.
+   *  - The certificate is re-signed. The offline payload carries the plate
+   *    code, region and serial, so a signature minted when the vehicle had no
+   *    number attests to no number. Leaving it would print a new certificate
+   *    whose QR, verified offline, contradicts the plate on its own face.
+   *
+   * That last point makes this a NEW certificate rather than a reprint, and the
+   * citizen has to be given it — the old paper is not wrong about what it said,
+   * it is simply about a vehicle that has since been granted a number.
+   */
+  async assignPlateNumber(
+    registrationId: number,
+    branchId: number,
+    seriesId?: number | null,
+    actorUserId?: number,
+  ) {
+    const tenantId = await this.resolveTenantId(branchId);
+
+    const registration = await this.registrationsRepository.findOne({
+      where: { id: registrationId, tenantId },
+    });
+    if (!registration) {
+      throw new NotFoundException(`Registration ${registrationId} not found`);
+    }
+    if (registration.status !== VehicleRegistrationStatus.ACTIVE) {
+      throw new ConflictException(
+        `Registration ${registrationId} is ${registration.status}; only a live registration can be given a number.`,
+      );
+    }
+    // Already has one. Return it rather than throwing: a registrar working a
+    // list somebody else has half-cleared is being diligent, not wrong.
+    if (registration.plateId) return registration;
+
+    const vehicle = await this.vehiclesRepository.findOne({
+      where: { id: registration.vehicleId, tenantId },
+    });
+    if (!vehicle) {
+      throw new NotFoundException('The vehicle on this registration is gone.');
+    }
+    const vehicleClass = await this.classesRepository.findOne({
+      where: { id: vehicle.classId, tenantId },
+    });
+    if (!vehicleClass) {
+      throw new NotFoundException('The class on this vehicle is gone.');
+    }
+
+    return this.dataSource.transaction(async (manager) => {
+      const plate = await this.allocatePlate(manager, {
+        tenantId,
+        branchId,
+        classId: Number(vehicle.classId),
+        registrationId: Number(registration.id),
+        seriesId: seriesId ?? null,
+      });
+
+      // Here, unlike at the counter, an empty shelf IS the error. Registering a
+      // vehicle without a number is the ordinary case and must never be
+      // blocked; being asked to hand over a number the office does not have is
+      // a registrar clicking on the wrong row, and telling them so is the whole
+      // value of the action.
+      if (!plate) {
+        throw new ConflictException(
+          'No plate number is available in this office for that class. Load the block granted by the Federal Trade Ministry as a plate series first.',
+        );
+      }
+
+      const assignedAt = new Date();
+
+      registration.plateId = Number(plate.id);
+      await manager.update(
+        VehiclePlate,
+        { id: plate.id },
+        { status: VehiclePlateStatus.ISSUED },
+      );
+
+      // Re-sign: the payload names the plate, so a signature made when there
+      // was none no longer describes this certificate.
+      registration.offlineSignature = signCertificate({
+        issuedAt: registration.issuedAt ?? assignedAt,
+        expiresAt: registration.expiresAt ?? assignedAt,
+        plateCode: plate.plateCode ?? vehicleClass.plateCode ?? '?',
+        regionCode: plate.regionCode ?? SOMALI_REGION_CODE,
+        serial: plate.serial ?? 0,
+        vin: vehicle.vin,
+      });
+      await manager.save(registration);
+
+      await this.mintInterimPermit(manager, {
+        registration,
+        tenantId,
+        branchId,
+        permitDays: vehicleClass.interimPermitDays ?? 30,
+        from: assignedAt,
+        actorUserId,
+      });
+
+      await this.recordEvent(manager, {
+        tenantId,
+        branchId,
+        vehicleId: Number(registration.vehicleId),
+        registrationId: Number(registration.id),
+        type: VehicleEventType.PLATE_ISSUED,
+        actorUserId,
+        occurredAt: assignedAt,
+        reason: registration.federalPlateRequestReference,
+        meta: {
+          plateId: registration.plateId,
+          plateNumber: plate.plateNumber,
+          afterFederalRequest: Boolean(registration.federalPlateRequestedAt),
+        },
+      });
+
+      return registration;
+    });
+  }
+
   // ── Plate fitment ────────────────────────────────────────────────────────
 
   /**
@@ -1293,6 +1469,15 @@ export class VehicleRegistryService {
     // Already done. Return it rather than throwing — confirming twice is a
     // clerk being careful, not an error.
     if (registration.plateFittedAt) return registration;
+    // There is no plate to fit. Recording one anyway would write a fitment that
+    // cannot have happened, and — because the fitting worklist keys off this
+    // column — would quietly drop the vehicle off the only list that was going
+    // to chase it. The message names the action that actually applies.
+    if (!registration.plateId) {
+      throw new ConflictException(
+        'This vehicle has no plate number yet, so there is nothing to fit. Assign a number to it first.',
+      );
+    }
 
     const fittedAt = new Date();
 
@@ -1354,6 +1539,14 @@ export class VehicleRegistryService {
         WHERE r."tenantId" = $1
           AND r."branchId" = $2
           AND r."status" = 'ACTIVE'
+          -- A plate must EXIST before it can be waiting to go on. Without this
+          -- the list is every plateless registration — which, since a number
+          -- comes from a federal application rather than a shelf, is very
+          -- nearly the whole register. The office would open its fitting
+          -- worklist and find the entire fleet on it, and the two worklists
+          -- would not be two lists at all: "awaiting number" would be a subset
+          -- of "awaiting fitting" rather than the separate backlog it is.
+          AND r."plateId" IS NOT NULL
           AND r."plateFittedAt" IS NULL
         ORDER BY r."interimPermitExpiresAt" ASC NULLS FIRST
         LIMIT 200`,
@@ -1485,10 +1678,16 @@ export class VehicleRegistryService {
    * registry that kept its own copy would be a second set of books, and the two
    * would disagree the first time a sale was voided.
    */
-  async getRegistryPerformance(branchId: number, fromIso?: string, toIso?: string) {
+  async getRegistryPerformance(
+    branchId: number,
+    fromIso?: string,
+    toIso?: string,
+  ) {
     const tenantId = await this.resolveTenantId(branchId);
 
-    const from = fromIso ? new Date(fromIso) : new Date(Date.now() - 30 * 86_400_000);
+    const from = fromIso
+      ? new Date(fromIso)
+      : new Date(Date.now() - 30 * 86_400_000);
     const to = toIso ? new Date(toIso) : new Date();
 
     const [registrations] = await this.dataSource.query(
@@ -1636,7 +1835,11 @@ export class VehicleRegistryService {
     // One open flag of a kind is enough. A second STOLEN report on an already
     // stolen vehicle adds nothing a checkpoint can act on and buries the first.
     const existing = await this.flagsRepository.findOne({
-      where: { vehicleId: params.vehicleId, type: params.type, clearedAt: IsNull() },
+      where: {
+        vehicleId: params.vehicleId,
+        type: params.type,
+        clearedAt: IsNull(),
+      },
     });
     if (existing) return existing;
 

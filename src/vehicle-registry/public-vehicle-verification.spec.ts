@@ -8,12 +8,13 @@ function makeService(row: any, previousRow: any = undefined) {
   // verifyByPlate asks twice: the issued plate, then the number the vehicle
   // used to wear. A single-answer stub cannot tell those apart.
   const dataSource: any = {
-    query: previousRow === undefined
-      ? jest.fn().mockResolvedValue(row ? [row] : [])
-      : jest
-          .fn()
-          .mockResolvedValueOnce(row ? [row] : [])
-          .mockResolvedValueOnce(previousRow ? [previousRow] : []),
+    query:
+      previousRow === undefined
+        ? jest.fn().mockResolvedValue(row ? [row] : [])
+        : jest
+            .fn()
+            .mockResolvedValueOnce(row ? [row] : [])
+            .mockResolvedValueOnce(previousRow ? [previousRow] : []),
   };
   return {
     svc: new PublicVehicleVerificationService({} as any, dataSource),
@@ -57,7 +58,13 @@ describe('public vehicle verification — what a stranger is told', () => {
 
     expect(result.vinLast4).toBe('3456');
     expect(JSON.stringify(result)).not.toContain('JTDBR32E060123456');
-    for (const leaked of ['ownerName', 'nationalId', 'phone', 'address', 'vin']) {
+    for (const leaked of [
+      'ownerName',
+      'nationalId',
+      'phone',
+      'address',
+      'vin',
+    ]) {
       expect(Object.keys(result)).not.toContain(leaked);
     }
   });
@@ -147,7 +154,8 @@ describe('public vehicle verification — cars still wearing the old number', ()
 
   it('tells the reader plainly that the plate has changed', () => {
     const html = renderVehicleResultPage({
-      found: true, status: 'VALID',
+      found: true,
+      status: 'VALID',
       plateNumber: '2-SM-00001',
       previousPlateNumber: '3-SM-00042',
       matchedOnPreviousNumber: true,
@@ -159,7 +167,9 @@ describe('public vehicle verification — cars still wearing the old number', ()
 
   it('says nothing about a swap for a vehicle on its issued plate', () => {
     const html = renderVehicleResultPage({
-      found: true, status: 'VALID', plateNumber: '2-SM-00001',
+      found: true,
+      status: 'VALID',
+      plateNumber: '2-SM-00001',
     });
     expect(html).not.toMatch(/used to carry/i);
   });
@@ -185,7 +195,9 @@ describe('public vehicle verification — registered with no plate number', () =
     // Colouring it as a problem would tell an officer something is wrong with a
     // vehicle whose paperwork is in perfect order.
     const html = renderVehicleResultPage({
-      found: true, status: 'REGISTERED_NO_PLATE', previousPlateNumber: '3-SM-00042',
+      found: true,
+      status: 'REGISTERED_NO_PLATE',
+      previousPlateNumber: '3-SM-00042',
     });
     expect(html).toContain('#166534');
     expect(html).toMatch(/This vehicle IS registered/i);
@@ -213,7 +225,9 @@ describe('public vehicle verification — registered with no plate number', () =
 
   it('an expired licence still outranks a missing plate number', async () => {
     const { svc } = makeService({
-      ...base, plateNumber: null, plateFittedAt: null,
+      ...base,
+      plateNumber: null,
+      plateFittedAt: null,
       expiresAt: new Date('2020-01-01T00:00:00Z'),
     });
     expect((await svc.verifyByPlate('x')).status).toBe('EXPIRED');
@@ -223,10 +237,13 @@ describe('public vehicle verification — registered with no plate number', () =
     // With no official plate and no invented one, the stamped chassis is the
     // only identity the car carries.
     const dataSource: any = {
-      query: jest.fn()
-        .mockResolvedValueOnce([])                       // no issued plate
-        .mockResolvedValueOnce([])                       // no previous number
-        .mockResolvedValueOnce([{ ...base, plateNumber: null, plateFittedAt: null }]),
+      query: jest
+        .fn()
+        .mockResolvedValueOnce([]) // no issued plate
+        .mockResolvedValueOnce([]) // no previous number
+        .mockResolvedValueOnce([
+          { ...base, plateNumber: null, plateFittedAt: null },
+        ]),
     };
     const svc = new PublicVehicleVerificationService({} as any, dataSource);
     const result = await svc.verifyByPlate('JTDBR32E060123456');
@@ -282,8 +299,10 @@ describe('public vehicle verification — the plate-fitting window', () => {
 
   it('tells the reader which plate the vehicle should be carrying', () => {
     const html = renderVehicleResultPage({
-      found: true, status: 'AWAITING_PLATE',
-      plateNumber: '2-SM-00001', previousPlateNumber: '3-SM-00042',
+      found: true,
+      status: 'AWAITING_PLATE',
+      plateNumber: '2-SM-00001',
+      previousPlateNumber: '3-SM-00042',
       interimPermitExpiresAt: new Date('2026-09-20T00:00:00Z'),
     });
     expect(html).toContain('PLATE NOT YET FITTED');
@@ -299,7 +318,9 @@ describe('public vehicle verification — the plate-fitting window', () => {
     // The office may simply not have produced the plate. A driver should not
     // carry the consequence of the office's backlog.
     const html = renderVehicleResultPage({
-      found: true, status: 'PLATE_OVERDUE', plateNumber: '2-SM-00001',
+      found: true,
+      status: 'PLATE_OVERDUE',
+      plateNumber: '2-SM-00001',
     });
     expect(html).toContain('PLATE OVERDUE');
     expect(html).toMatch(/refer the driver to the issuing office/i);
@@ -309,7 +330,11 @@ describe('public vehicle verification — the plate-fitting window', () => {
 
 describe('public vehicle verification — the page', () => {
   it('says its verdict in all three languages', () => {
-    const html = renderVehicleResultPage({ found: true, status: 'VALID', plateNumber: '3-SM-00042' });
+    const html = renderVehicleResultPage({
+      found: true,
+      status: 'VALID',
+      plateNumber: '3-SM-00042',
+    });
     expect(html).toContain('DIIWAAN GASHAN');
     expect(html).toContain('የተመዘገበ');
     expect(html).toContain('REGISTERED');
@@ -317,28 +342,40 @@ describe('public vehicle verification — the page', () => {
 
   it('shouts when a vehicle is reported', () => {
     const html = renderVehicleResultPage({
-      found: true, status: 'VALID', plateNumber: '3-SM-00042', flagged: true,
+      found: true,
+      status: 'VALID',
+      plateNumber: '3-SM-00042',
+      flagged: true,
     });
     expect(html).toContain('CONTACT TRAFFIC POLICE');
     expect(html).toContain('ፖሊስን ያነጋግሩ');
   });
 
   it('does not shout when it is clean', () => {
-    const html = renderVehicleResultPage({ found: true, status: 'VALID', plateNumber: '3-SM-00042' });
+    const html = renderVehicleResultPage({
+      found: true,
+      status: 'VALID',
+      plateNumber: '3-SM-00042',
+    });
     expect(html).not.toContain('CONTACT TRAFFIC POLICE');
   });
 
   it('prints the plate in its class colours', () => {
     const html = renderVehicleResultPage({
-      found: true, status: 'VALID', plateNumber: '1-SM-00007',
-      plateBackgroundColour: '#c1121f', plateTextColour: '#ffffff',
+      found: true,
+      status: 'VALID',
+      plateNumber: '1-SM-00007',
+      plateBackgroundColour: '#c1121f',
+      plateTextColour: '#ffffff',
     });
     expect(html).toContain('background:#c1121f');
   });
 
   it('escapes rather than renders anything from the record', () => {
     const html = renderVehicleResultPage({
-      found: true, status: 'VALID', plateNumber: '<script>alert(1)</script>',
+      found: true,
+      status: 'VALID',
+      plateNumber: '<script>alert(1)</script>',
     });
     expect(html).not.toContain('<script>alert(1)</script>');
     expect(html).toContain('&lt;script&gt;');
@@ -358,6 +395,153 @@ describe('public vehicle verification — the page', () => {
   });
 
   it('asks search engines not to index a lookup result', () => {
-    expect(renderVehicleResultPage({ found: true, status: 'VALID' })).toContain('noindex');
+    expect(renderVehicleResultPage({ found: true, status: 'VALID' })).toContain(
+      'noindex',
+    );
+  });
+});
+
+/**
+ * Two cars, one invented number.
+ *
+ * The registry deliberately does NOT make presented numbers unique — refusing
+ * the second car would send it away still wearing the fake plate, which is the
+ * opposite of the point of the drive. So the collision has to surface at the
+ * only place a member of the public meets it: the lookup.
+ */
+describe('public vehicle verification — a number worn by more than one vehicle', () => {
+  const first = {
+    ...base,
+    plateNumber: null,
+    plateCode: null,
+    regionCode: null,
+    plateFittedAt: null,
+    interimPermitExpiresAt: null,
+    presentedPlateNumber: '3-SM-09999',
+    make: 'Toyota',
+    model: 'Corolla',
+  };
+
+  function withDuplicates(n: number) {
+    const dataSource: any = {
+      query: jest
+        .fn()
+        // issued-plate lookup: nothing
+        .mockResolvedValueOnce([])
+        // previous-number lookup: the first of them
+        .mockResolvedValueOnce([first])
+        // the count
+        .mockResolvedValueOnce([{ n }]),
+    };
+    return new PublicVehicleVerificationService({} as any, dataSource);
+  }
+
+  it('refuses to name one vehicle when several carry the number', async () => {
+    // Naming a single record would be a guess dressed as an answer: an officer
+    // whose car does not match concludes the plate is stolen, and one whose car
+    // happens to match is waved through without anybody noticing the number is
+    // shared.
+    const result: any = await withDuplicates(3).verifyByPlate('3-SM-09999');
+
+    expect(result.found).toBe(true);
+    expect(result.status).toBe('DUPLICATE_PRESENTED_NUMBER');
+    expect(result.duplicateCount).toBe(3);
+    expect(result.make).toBeUndefined();
+    expect(result.model).toBeUndefined();
+    expect(result.certificateNumber).toBeUndefined();
+  });
+
+  it('answers normally when exactly one vehicle carries it', async () => {
+    const result: any = await withDuplicates(1).verifyByPlate('3-SM-09999');
+
+    expect(result.status).toBe('REGISTERED_NO_PLATE');
+    expect(result.make).toBe('Toyota');
+  });
+
+  it('counts vehicles, not registration rows', async () => {
+    // Defensive rather than load-bearing: a partial unique index already allows
+    // one ACTIVE registration per vehicle, so the two spellings agree today.
+    // Verified against the real schema — an attempt to insert a second ACTIVE
+    // registration for one vehicle is refused by
+    // `uq_pos_vehicle_registrations_active_vehicle`. This pins the safer
+    // spelling so that relaxing the constraint later cannot quietly turn every
+    // renewed vehicle into a "duplicate plate" warning.
+    const dataSource: any = {
+      query: jest
+        .fn()
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([first])
+        .mockResolvedValueOnce([{ n: 1 }]),
+    };
+    const svc = new PublicVehicleVerificationService({} as any, dataSource);
+    await svc.verifyByPlate('3-SM-09999');
+
+    const countSql = String(dataSource.query.mock.calls[2][0]);
+    expect(countSql).toMatch(/count\(DISTINCT v\."id"\)/);
+  });
+
+  it('tells the reader to read the chassis, in all three languages', async () => {
+    const html = renderVehicleResultPage({
+      found: true,
+      status: 'DUPLICATE_PRESENTED_NUMBER',
+      previousPlateNumber: '3-SM-09999',
+      matchedOnPreviousNumber: true,
+      duplicateCount: 2,
+    } as any);
+
+    expect(html).toContain('3-SM-09999');
+    expect(html).toMatch(/chassis/i);
+    expect(html).toContain('ሻሲ');
+    expect(html).toContain('chassis-ka');
+    // No vehicle to describe, so no empty detail table pretending there is one.
+    expect(html).not.toMatch(/Issuing office/);
+  });
+
+  it('does not accuse the driver of anything', async () => {
+    // The number was invented by somebody, but the person holding this car may
+    // have bought it in good faith — and the registry has no idea which of the
+    // vehicles is which. Wording that says "illegal" convicts whoever happens
+    // to be stopped first.
+    const html = renderVehicleResultPage({
+      found: true,
+      status: 'DUPLICATE_PRESENTED_NUMBER',
+      previousPlateNumber: '3-SM-09999',
+      duplicateCount: 2,
+    } as any);
+
+    expect(html).not.toMatch(/illegal|unlawful|offence|fraud|criminal/i);
+  });
+});
+
+describe('public vehicle verification — the blank-plate notice', () => {
+  it('does not claim a registered plate the vehicle does not have', async () => {
+    // A vehicle registered without a number matches on its old one AND has a
+    // null plate, so the "its registered plate is now X" notice printed a BLANK
+    // where the answer should be — on the one line the reader is looking for.
+    const html = renderVehicleResultPage({
+      found: true,
+      status: 'REGISTERED_NO_PLATE',
+      matchedOnPreviousNumber: true,
+      previousPlateNumber: '3-SM-09999',
+      plateNumber: null,
+    } as any);
+
+    expect(html).not.toMatch(/registered plate is now/);
+    expect(html).toMatch(/has not been\s+issued yet/);
+    expect(html).toContain('3-SM-09999');
+  });
+
+  it('still shows the swap notice when there IS a new plate', async () => {
+    const html = renderVehicleResultPage({
+      found: true,
+      status: 'VALID',
+      matchedOnPreviousNumber: true,
+      previousPlateNumber: '3-SM-09999',
+      plateNumber: '2-SM-00001',
+      plateFittedAt: new Date('2026-01-10T00:00:00Z'),
+    } as any);
+
+    expect(html).toMatch(/registered plate is now/);
+    expect(html).toContain('2-SM-00001');
   });
 });

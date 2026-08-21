@@ -40,6 +40,17 @@ export type PublicVehicleStatus =
   | 'AWAITING_PLATE'
   /** Registered, plate not fitted, and the permit has run out. */
   | 'PLATE_OVERDUE'
+  /**
+   * More than one registered vehicle is carrying the number that was typed.
+   *
+   * Only reachable through the previous-number lookup, and only because those
+   * numbers were invented — two owners can and do pick the same one. Naming a
+   * single vehicle here would be a guess dressed as an answer: an officer whose
+   * car does not match what the page shows concludes the plate is stolen, and
+   * one whose car happens to match is waved through without anybody noticing
+   * the number is shared. Neither is a thing this portal should cause.
+   */
+  | 'DUPLICATE_PRESENTED_NUMBER'
   | 'EXPIRED'
   | 'SUSPENDED'
   | 'NOT_REGISTERED'
@@ -80,9 +91,21 @@ export interface PublicVehicleResult {
   interimPermitExpiresAt?: Date | null;
   /** True when the vehicle carries an open flag. Detail is withheld. */
   flagged?: boolean;
+  /**
+   * How many registered vehicles are carrying the number that was searched.
+   *
+   * Present only when it is more than one. A count and nothing else: which
+   * vehicles they are is exactly the plate-to-owner directory this page refuses
+   * to be, and the reader does not need it — they need to be told to read the
+   * chassis instead of the bumper.
+   */
+  duplicateCount?: number;
 }
 
-const NOT_FOUND: PublicVehicleResult = { found: false, status: 'NOT_REGISTERED' };
+const NOT_FOUND: PublicVehicleResult = {
+  found: false,
+  status: 'NOT_REGISTERED',
+};
 
 @Injectable()
 export class PublicVehicleVerificationService {
@@ -112,9 +135,10 @@ export class PublicVehicleVerificationService {
     const plate = String(rawPlate || '').trim();
     if (!plate) return NOT_FOUND;
 
-
     // The issued plate first.
-    const issued = await this.query(`UPPER(pl."plateNumber") = UPPER($1)`, [plate]);
+    const issued = await this.query(`UPPER(pl."plateNumber") = UPPER($1)`, [
+      plate,
+    ]);
     if (issued?.[0]) return this.present(issued[0]);
 
     // Then the number the vehicle used to wear. This is not a fallback for
@@ -122,11 +146,26 @@ export class PublicVehicleVerificationService {
     // old number, so an officer reading a bumper types THIS one. A portal that
     // only knew plates we had issued would be useless for most of the fleet it
     // is meant to cover.
-    const previous = await this.query(
-      `UPPER(COALESCE(v."presentedPlateNumber", '')) = UPPER($1)`,
-      [plate],
-    );
+    const previousPredicate = `UPPER(COALESCE(v."presentedPlateNumber", '')) = UPPER($1)`;
+    const previous = await this.query(previousPredicate, [plate]);
     if (previous?.[0]) {
+      // Invented numbers are not unique and the registry deliberately does not
+      // make them so — refusing the second car would send it away still wearing
+      // the fake plate, which is the opposite of the point. So the collision
+      // surfaces here instead, where it is also the single most useful thing
+      // this page can tell an officer: a number worn by two registered vehicles
+      // is precisely what the drive exists to find.
+      const duplicates = await this.countMatching(previousPredicate, [plate]);
+      if (duplicates > 1) {
+        return {
+          found: true,
+          status: 'DUPLICATE_PRESENTED_NUMBER',
+          previousPlateNumber: plate,
+          matchedOnPreviousNumber: true,
+          duplicateCount: duplicates,
+        };
+      }
+
       return {
         ...this.present(previous[0]),
         matchedOnPreviousNumber: true,
@@ -141,6 +180,32 @@ export class PublicVehicleVerificationService {
     const byChassis = await this.query(`UPPER(v."vin") = UPPER($1)`, [plate]);
     if (!byChassis?.[0]) return NOT_FOUND;
     return this.present(byChassis[0]);
+  }
+
+  /**
+   * How many distinct VEHICLES satisfy the same predicate the lookup used.
+   *
+   * Counting vehicles rather than rows is belt-and-braces, not the load-bearing
+   * part: `uq_pos_vehicle_registrations_active_vehicle` already allows one
+   * ACTIVE registration per vehicle, so within this predicate the two counts
+   * are provably equal today. It is written this way so that relaxing that
+   * constraint later — to let a renewal overlap its predecessor, say — cannot
+   * turn every renewed vehicle into a red "duplicate plate" warning on the
+   * public page. The failure mode of the other spelling is silent and points
+   * the wrong way, which is worth one keyword to rule out.
+   */
+  private async countMatching(
+    predicate: string,
+    params: unknown[],
+  ): Promise<number> {
+    const rows = await this.dataSource.query(
+      `SELECT count(DISTINCT v."id")::int AS "n"
+         FROM "pos_vehicle_registrations" r
+         JOIN "pos_vehicles" v ON v."id" = r."vehicleId"
+        WHERE r."status" = 'ACTIVE' AND ${predicate}`,
+      params,
+    );
+    return Number(rows?.[0]?.n ?? 0);
   }
 
   private async query(predicate: string, params: unknown[]) {
@@ -198,7 +263,7 @@ export class PublicVehicleVerificationService {
       plateTextColour: row.plateTextColour ?? null,
       className: row.classNameSo
         ? `${row.classNameSo} / ${row.classNameEn}`
-        : row.classNameEn ?? null,
+        : (row.classNameEn ?? null),
       make: row.make ?? null,
       model: row.model ?? null,
       modelYear: row.modelYear ?? null,

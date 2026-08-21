@@ -1,4 +1,7 @@
-import type { PublicVehicleResult, PublicVehicleStatus } from './public-vehicle-verification.service';
+import type {
+  PublicVehicleResult,
+  PublicVehicleStatus,
+} from './public-vehicle-verification.service';
 
 /**
  * The page a scanned certificate lands on.
@@ -69,6 +72,22 @@ const STATUS_COPY: Record<
     so: 'TAARIKHDA WAA DIB U DHACDAY',
     am: 'ሰሌዳው አልተገጠመም — ጊዜው አልፎበታል',
     en: 'PLATE OVERDUE',
+    bg: '#b91c1c',
+    fg: '#ffffff',
+  },
+  /**
+   * Two or more registered vehicles are carrying the number that was typed.
+   *
+   * RED, and it names no vehicle. The reader is looking at one car and the
+   * registry knows of several under that number, so any single record shown
+   * here would be a guess — and a guess that either accuses an innocent driver
+   * of a plate swap or clears a car nobody checked. The only safe instruction
+   * is: stop reading the bumper, read the chassis.
+   */
+  DUPLICATE_PRESENTED_NUMBER: {
+    so: 'LAMBARKAN WAA LA WADAAGAA',
+    am: 'ይህ ቁጥር በብዙ ተሽከርካሪዎች ተይዟል',
+    en: 'NUMBER USED BY MORE THAN ONE VEHICLE',
     bg: '#b91c1c',
     fg: '#ffffff',
   },
@@ -282,13 +301,30 @@ export function renderVehicleResultPage(result: PublicVehicleResult): string {
       }
 
       ${
-        result.matchedOnPreviousNumber
+        result.matchedOnPreviousNumber && result.plateNumber
           ? `<div class="flag" style="background:#fffbeb;border-color:#f59e0b;color:#92400e">
                Baabuurkan wuxuu hadda leeyahay lambar cusub — ${esc(result.plateNumber ?? '')}<br>
                ይህ ተሽከርካሪ አሁን አዲስ ቁጥር አለው<br>
                You searched <strong>${esc(result.previousPlateNumber ?? '')}</strong>, the number this
                vehicle used to carry. Its registered plate is now
                <strong>${esc(result.plateNumber ?? '')}</strong>.
+             </div>`
+          : ''
+      }
+
+      ${
+        result.status === 'DUPLICATE_PRESENTED_NUMBER'
+          ? `<div class="flag" style="background:#fef2f2;border-color:#dc2626;color:#991b1b">
+               Lambarkan <strong>${esc(result.previousPlateNumber ?? '')}</strong> waxaa sita
+               ${esc(result.duplicateCount ?? 2)} gaadhi oo diiwaan gashan.
+               Fadlan hubi lambarka chassis-ka.<br>
+               ይህንን ቁጥር ${esc(result.duplicateCount ?? 2)} የተመዘገቡ ተሽከርካሪዎች ይዘውታል።
+               እባክዎ የሻሲ ቁጥሩን ያረጋግጡ።<br>
+               <strong>${esc(result.duplicateCount ?? 2)}</strong> registered vehicles are
+               carrying the number <strong>${esc(result.previousPlateNumber ?? '')}</strong>.
+               This number was not issued by the Bureau, and it does not identify
+               a vehicle on its own — check the chassis number stamped on the
+               vehicle, or ask the issuing office.
              </div>`
           : ''
       }
@@ -303,7 +339,10 @@ export function renderVehicleResultPage(result: PublicVehicleResult): string {
           : ''
       }
 
-      <dl>
+      ${
+        result.status === 'DUPLICATE_PRESENTED_NUMBER'
+          ? ''
+          : `<dl>
         ${row('Nooca', 'ዓይነት', 'Class', result.className)}
         ${row('Nooca gaadhiga', 'ማርካ', 'Make', [result.make, result.model].filter(Boolean).join(' '))}
         ${row('Sanadka', 'ዓመት', 'Year', result.modelYear)}
@@ -312,7 +351,8 @@ export function renderVehicleResultPage(result: PublicVehicleResult): string {
         ${row('Dhacaya', 'የሚያበቃበት', 'Expires', formatDate(result.expiresAt))}
         ${row('Xafiiska', 'ጽሕፈት ቤት', 'Issuing office', result.issuingOffice)}
         ${row('Shahaadada', 'የምስክር ወረቀት', 'Certificate', result.certificateNumber)}
-      </dl>
+      </dl>`
+      }
     </div>
     <p class="note">
       Macluumaadka milkiilaha lama muujiyo. Booliska ayaa arka.<br>

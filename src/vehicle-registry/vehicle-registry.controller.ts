@@ -31,6 +31,7 @@ import {
   ListPlateStockDto,
   RaiseVehicleFlagDto,
   RequestPlateNumberDto,
+  AssignPlateNumberDto,
   ListVehicleClassesDto,
   SearchVehiclesDto,
   UpdateVehicleClassDto,
@@ -223,6 +224,30 @@ export class VehicleRegistryController {
       id,
       dto.branchId,
       dto.reference,
+      req?.user?.id,
+    );
+  }
+
+  /**
+   * Hand a waiting vehicle a number the Ministry has since granted.
+   *
+   * The way OFF the federal backlog, and the counterpart to the request above.
+   * Gated the same way and for the same reason: the office does not conjure a
+   * number, it distributes the block the Bureau was granted, and deciding which
+   * waiting vehicle gets one is a registrar's call rather than a clerk's.
+   */
+  @Post('registrations/:id/assign-plate-number')
+  @RetailBranchContext('body.branchId')
+  @RequirePosPermissions(PosVehiclePermission.VEHICLE_PLATE_STOCK)
+  assignPlateNumber(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: AssignPlateNumberDto,
+    @Req() req: any,
+  ) {
+    return this.svc.assignPlateNumber(
+      id,
+      dto.branchId,
+      dto.seriesId ?? null,
       req?.user?.id,
     );
   }

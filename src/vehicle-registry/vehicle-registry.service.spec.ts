@@ -11,6 +11,11 @@ import {
   PosCheckoutTransactionType,
 } from '../pos-sync/entities/pos-checkout.entity';
 import { RECEIPT_VERIFICATION_CODE_ALPHABET } from '../pos-sync/receipt-verification-code';
+import { generateKeyPairSync } from 'crypto';
+import {
+  resolvePublicKeyPem,
+  verifyCertificateBlob,
+} from './certificate-signing';
 
 /**
  * The registry's rules, which are the ones a paper register cannot enforce:
@@ -111,14 +116,14 @@ function makeService({
   });
 
   const svc = new VehicleRegistryService(
-    classes as any,
-    repo() as any,
-    vehicles as any,
-    repo() as any,
-    plates as any,
-    registrations as any,
-    repo() as any,
-    repo() as any,
+    classes,
+    repo(),
+    vehicles,
+    repo(),
+    plates,
+    registrations,
+    repo(),
+    repo(),
     { findOne: jest.fn().mockResolvedValue(branch) } as any,
     dataSource,
   );
@@ -134,9 +139,9 @@ describe('VehicleRegistryService — region scope', () => {
     // same plate — so this fails loudly rather than defaulting.
     const { svc } = makeService({ branch: { id: 7, retailTenantId: null } });
 
-    await expect(svc.listClasses({ branchId: 7 } as any)).rejects.toBeInstanceOf(
-      BadRequestException,
-    );
+    await expect(
+      svc.listClasses({ branchId: 7 } as any),
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 
   it('refuses an unknown branch', async () => {
@@ -173,7 +178,7 @@ describe('VehicleRegistryService — plate allocation', () => {
         classId: 3,
         owner: { fullName: 'Ayaan Yuusuf' },
         vehicle: { vin: 'CHASSIS123' },
-      } as any,
+      },
       11,
     );
 
@@ -213,7 +218,7 @@ describe('VehicleRegistryService — plate allocation', () => {
         classId: 3,
         owner: { fullName: 'Ayaan Yuusuf' },
         vehicle: { vin: 'CHASSIS123', presentedPlateNumber: '3-SM-00042' },
-      } as any,
+      },
       11,
     );
 
@@ -273,10 +278,15 @@ describe('VehicleRegistryService — regularising an unregistered fleet', () => 
   // already wearing a number that is not ours: invented, or issued by a zonal
   // office with no regional record behind it.
 
-  function regService({ duplicates = [] as any[], officialPlate = null as any } = {}) {
+  function regService({
+    duplicates = [] as any[],
+    officialPlate = null as any,
+  } = {}) {
     const saved: any[] = [];
     const manager: any = {
-      query: jest.fn().mockResolvedValue([{ id: 900, plateNumber: '2-SM-00001' }]),
+      query: jest
+        .fn()
+        .mockResolvedValue([{ id: 900, plateNumber: '2-SM-00001' }]),
       create: (_e: any, row: any) => row,
       save: jest.fn(async (row: any) => {
         const withId = row.id ? row : { ...row, id: 555 };
@@ -290,7 +300,10 @@ describe('VehicleRegistryService — regularising an unregistered fleet', () => 
       // has to answer both.
       createQueryBuilder: jest.fn(() => {
         const b: any = {
-          update: () => b, set: () => b, where: () => b, andWhere: () => b,
+          update: () => b,
+          set: () => b,
+          where: () => b,
+          andWhere: () => b,
           execute: jest.fn().mockResolvedValue({ affected: 1 }),
           getOne: jest.fn().mockResolvedValue(null),
         };
@@ -310,29 +323,49 @@ describe('VehicleRegistryService — regularising an unregistered fleet', () => 
       }),
     });
     const svc = new VehicleRegistryService(
-      { ...repo(), findOne: jest.fn().mockResolvedValue({ id: 3, nameEn: 'Private car', status: 'ACTIVE', renewalMonths: 12, plateCode: '2' }) } as any,
-      repo() as any, repo() as any, repo() as any, plates as any,
-      repo() as any, repo() as any, repo() as any,
-      { findOne: jest.fn().mockResolvedValue({ id: 7, retailTenantId: 42 }) } as any,
+      {
+        ...repo(),
+        findOne: jest.fn().mockResolvedValue({
+          id: 3,
+          nameEn: 'Private car',
+          status: 'ACTIVE',
+          renewalMonths: 12,
+          plateCode: '2',
+        }),
+      },
+      repo(),
+      repo(),
+      repo(),
+      plates,
+      repo(),
+      repo(),
+      repo(),
+      {
+        findOne: jest.fn().mockResolvedValue({ id: 7, retailTenantId: 42 }),
+      } as any,
       dataSource,
     );
     return { svc, saved, manager };
   }
 
   const draft = (vehicle: any) => ({
-    branchId: 7, classId: 3,
+    branchId: 7,
+    classId: 3,
     owner: { fullName: 'Ayaan Yuusuf' },
     vehicle: { vin: 'CHASSIS123', ...vehicle },
   });
 
   it('records the number the vehicle turned up wearing, and where it came from', async () => {
     const { svc, saved } = regService();
-    await svc.draftRegistration(draft({
-      presentedPlateNumber: '3-SM-00042',
-      presentedPlateOrigin: 'UNOFFICIAL',
-      presentedPlateNote: 'Owner says bought with the car',
-      chassisCondition: 'WORN',
-    }) as any, 11);
+    await svc.draftRegistration(
+      draft({
+        presentedPlateNumber: '3-SM-00042',
+        presentedPlateOrigin: 'UNOFFICIAL',
+        presentedPlateNote: 'Owner says bought with the car',
+        chassisCondition: 'WORN',
+      }),
+      11,
+    );
 
     const vehicle = saved.find((r) => r.vin === 'CHASSIS123');
     expect(vehicle.presentedPlateNumber).toBe('3-SM-00042');
@@ -342,7 +375,7 @@ describe('VehicleRegistryService — regularising an unregistered fleet', () => 
 
   it('registers a vehicle that arrived with no number at all', async () => {
     const { svc, saved } = regService();
-    await svc.draftRegistration(draft({ presentedPlateOrigin: 'NONE' }) as any, 11);
+    await svc.draftRegistration(draft({ presentedPlateOrigin: 'NONE' }), 11);
     const vehicle = saved.find((r) => r.vin === 'CHASSIS123');
     expect(vehicle.presentedPlateNumber).toBeNull();
     expect(vehicle.presentedPlateOrigin).toBe('NONE');
@@ -355,11 +388,16 @@ describe('VehicleRegistryService — regularising an unregistered fleet', () => 
       duplicates: [{ vehicleId: 99, vin: 'OTHERCHASSIS' }],
     });
     const result: any = await svc.draftRegistration(
-      draft({ presentedPlateNumber: '3-SM-00042', presentedPlateOrigin: 'UNOFFICIAL' }) as any,
+      draft({
+        presentedPlateNumber: '3-SM-00042',
+        presentedPlateOrigin: 'UNOFFICIAL',
+      }),
       11,
     );
     expect(result.presentedPlate.duplicatePresentations).toHaveLength(1);
-    expect(result.presentedPlate.duplicatePresentations[0].vin).toBe('OTHERCHASSIS');
+    expect(result.presentedPlate.duplicatePresentations[0].vin).toBe(
+      'OTHERCHASSIS',
+    );
     expect(result.registration).toBeTruthy(); // still registered
   });
 
@@ -371,7 +409,10 @@ describe('VehicleRegistryService — regularising an unregistered fleet', () => 
       officialPlate: { id: 5, status: 'IN_STOCK', plateNumber: '2-SM-00001' },
     });
     const result: any = await svc.draftRegistration(
-      draft({ presentedPlateNumber: '2-SM-00001', presentedPlateOrigin: 'UNOFFICIAL' }) as any,
+      draft({
+        presentedPlateNumber: '2-SM-00001',
+        presentedPlateOrigin: 'UNOFFICIAL',
+      }),
       11,
     );
 
@@ -382,21 +423,29 @@ describe('VehicleRegistryService — regularising an unregistered fleet', () => 
 
   it('says nothing about a vehicle that presented no number', async () => {
     const { svc } = regService();
-    const result: any = await svc.draftRegistration(draft({}) as any, 11);
+    const result: any = await svc.draftRegistration(draft({}), 11);
     expect(result.presentedPlate.duplicatePresentations).toEqual([]);
     expect(result.presentedPlate.collidesWithOfficialStock).toBe(false);
   });
 });
 
 describe('VehicleRegistryService — flags', () => {
-  function flagService({ vehicle = { id: 5, tenantId: 42 }, openFlag = null as any } = {}) {
+  function flagService({
+    vehicle = { id: 5, tenantId: 42 },
+    openFlag = null as any,
+  } = {}) {
     const saved: any[] = [];
     const manager: any = {
       create: (_e: any, row: any) => row,
-      save: jest.fn(async (row: any) => { saved.push(row); return { ...row, id: row.id ?? 900 }; }),
+      save: jest.fn(async (row: any) => {
+        saved.push(row);
+        return { ...row, id: row.id ?? 900 };
+      }),
       query: jest.fn(),
     };
-    const dataSource: any = { transaction: jest.fn(async (fn: any) => fn(manager)) };
+    const dataSource: any = {
+      transaction: jest.fn(async (fn: any) => fn(manager)),
+    };
     const flags = {
       find: jest.fn().mockResolvedValue([]),
       findOne: jest.fn().mockResolvedValue(openFlag),
@@ -405,11 +454,17 @@ describe('VehicleRegistryService — flags', () => {
       createQueryBuilder: jest.fn(() => qb()),
     };
     const svc = new VehicleRegistryService(
-      repo() as any, repo() as any,
-      { ...repo(), findOne: jest.fn().mockResolvedValue(vehicle) } as any,
-      repo() as any, repo() as any, repo() as any, repo() as any,
+      repo(),
+      repo(),
+      { ...repo(), findOne: jest.fn().mockResolvedValue(vehicle) },
+      repo(),
+      repo(),
+      repo(),
+      repo(),
       flags as any,
-      { findOne: jest.fn().mockResolvedValue({ id: 7, retailTenantId: 42 }) } as any,
+      {
+        findOne: jest.fn().mockResolvedValue({ id: 7, retailTenantId: 42 }),
+      } as any,
       dataSource,
     );
     return { svc, saved, flags };
@@ -418,7 +473,12 @@ describe('VehicleRegistryService — flags', () => {
   it('records who reported it, from where, and when', async () => {
     const { svc, saved } = flagService();
     await svc.raiseFlag(
-      { branchId: 7, vehicleId: 5, type: 'STOLEN' as any, reference: 'CASE-77' },
+      {
+        branchId: 7,
+        vehicleId: 5,
+        type: 'STOLEN' as any,
+        reference: 'CASE-77',
+      },
       11,
     );
     const flag = saved.find((r) => r.type === 'STOLEN');
@@ -444,7 +504,9 @@ describe('VehicleRegistryService — flags', () => {
 
   it('refuses to release a vehicle without a reason', async () => {
     // A cleared flag is how a stolen car becomes sellable.
-    const { svc } = flagService({ openFlag: { id: 1, type: 'STOLEN', clearedAt: null } });
+    const { svc } = flagService({
+      openFlag: { id: 1, type: 'STOLEN', clearedAt: null },
+    });
     await expect(
       svc.clearFlag({ branchId: 7, flagId: 1, reason: '   ' }),
     ).rejects.toBeInstanceOf(BadRequestException);
@@ -453,7 +515,10 @@ describe('VehicleRegistryService — flags', () => {
   it('records who released it and why', async () => {
     const flag: any = { id: 1, vehicleId: 5, type: 'STOLEN', clearedAt: null };
     const { svc, saved } = flagService({ openFlag: flag });
-    await svc.clearFlag({ branchId: 7, flagId: 1, reason: 'Recovered by police' }, 22);
+    await svc.clearFlag(
+      { branchId: 7, flagId: 1, reason: 'Recovered by police' },
+      22,
+    );
     expect(flag.clearedByUserId).toBe(22);
     expect(flag.clearReason).toBe('Recovered by police');
     expect(flag.clearedAt).toBeInstanceOf(Date);
@@ -461,7 +526,7 @@ describe('VehicleRegistryService — flags', () => {
   });
 
   it('refuses an unknown vehicle', async () => {
-    const { svc } = flagService({ vehicle: null as any });
+    const { svc } = flagService({ vehicle: null });
     await expect(
       svc.raiseFlag({ branchId: 7, vehicleId: 999, type: 'STOLEN' as any }),
     ).rejects.toBeInstanceOf(NotFoundException);
@@ -498,7 +563,7 @@ describe('VehicleRegistryService — issuance', () => {
 
     const issued: any = await svc.issueRegistration(
       77,
-      { branchId: 7, checkoutId: 3001 } as any,
+      { branchId: 7, checkoutId: 3001 },
       11,
     );
 
@@ -524,7 +589,7 @@ describe('VehicleRegistryService — issuance', () => {
 
     const issued: any = await svc.issueRegistration(
       77,
-      { branchId: 7, checkoutId: 3001 } as any,
+      { branchId: 7, checkoutId: 3001 },
       11,
     );
 
@@ -551,7 +616,7 @@ describe('VehicleRegistryService — issuance', () => {
     const issued: any = await svc.issueRegistration(77, {
       branchId: 7,
       checkoutId: 3001,
-    } as any);
+    });
 
     expect(issued.certificateNumber).toBe('VR-7-00000077');
     // No second transaction — nothing was re-issued.
@@ -592,7 +657,9 @@ describe('VehicleRegistryService — issuance', () => {
       },
       vehicle: { id: 5, classId: 3, tenantId: 42 },
       vehicleClass: {
-        id: 3, renewalMonths: 12, nameEn: 'Private car',
+        id: 3,
+        renewalMonths: 12,
+        nameEn: 'Private car',
         registrationFeeSku: 'VR-PRIVATE_CAR-REG',
         plateFeeSku: 'VR-PRIVATE_CAR-PLATE',
       },
@@ -615,14 +682,18 @@ describe('VehicleRegistryService — issuance', () => {
       },
       vehicle: { id: 5, classId: 3, tenantId: 42 },
       vehicleClass: {
-        id: 3, renewalMonths: 12, nameEn: 'Private car',
+        id: 3,
+        renewalMonths: 12,
+        nameEn: 'Private car',
         registrationFeeSku: 'VR-PRIVATE_CAR-REG',
         plateFeeSku: 'VR-PRIVATE_CAR-PLATE',
       },
     });
 
     const issued: any = await svc.issueRegistration(
-      77, { branchId: 7, checkoutId: 3001 } as any, 11,
+      77,
+      { branchId: 7, checkoutId: 3001 },
+      11,
     );
     expect(issued.status).toBe(VehicleRegistrationStatus.ACTIVE);
   });
@@ -638,7 +709,9 @@ describe('VehicleRegistryService — issuance', () => {
     });
 
     const issued: any = await svc.issueRegistration(
-      77, { branchId: 7, checkoutId: 3001 } as any, 11,
+      77,
+      { branchId: 7, checkoutId: 3001 },
+      11,
     );
     expect(issued.status).toBe(VehicleRegistrationStatus.ACTIVE);
   });
@@ -677,5 +750,252 @@ describe('VehicleRegistryService — issuance', () => {
     await expect(
       svc.issueRegistration(77, { branchId: 7, checkoutId: 3001 } as any),
     ).rejects.toBeInstanceOf(BadRequestException);
+  });
+});
+
+/**
+ * The way OFF the waiting list.
+ *
+ * Every other path sets `plateId` when the registration is drafted and never
+ * again, so before `assignPlateNumber` existed a vehicle registered without a
+ * number could not acquire one — the Bureau could be granted a block by the
+ * Federal Trade Ministry, load it as a series, and the vehicles that had been
+ * waiting for precisely that would go on waiting for ever.
+ */
+describe('VehicleRegistryService — the Ministry grants a number', () => {
+  const ACTIVE_NO_PLATE = {
+    id: 77,
+    tenantId: 42,
+    branchId: 7,
+    vehicleId: 88,
+    status: VehicleRegistrationStatus.ACTIVE,
+    plateId: null,
+    issuedAt: new Date('2026-03-01T00:00:00Z'),
+    expiresAt: new Date('2027-03-01T00:00:00Z'),
+    federalPlateRequestedAt: new Date('2026-03-02T00:00:00Z'),
+    federalPlateRequestReference: 'FTM/2026/114',
+    offlineSignature: 'signature-from-when-it-had-no-number',
+  };
+
+  const CLASS = {
+    id: 3,
+    tenantId: 42,
+    renewalMonths: 12,
+    interimPermitDays: 30,
+    plateCode: '2',
+  };
+  const VEHICLE = { id: 88, tenantId: 42, classId: 3, vin: 'CHASSIS9' };
+
+  function withStock(plate: any) {
+    return makeService({
+      registrationFindOne: { ...ACTIVE_NO_PLATE },
+      vehicle: VEHICLE,
+      vehicleClass: CLASS,
+      managerQuery: jest.fn().mockResolvedValue(plate ? [plate] : []),
+    });
+  }
+
+  const PLATE = {
+    id: 5150,
+    plateNumber: '2-SM-00042',
+    plateCode: '2',
+    regionCode: 'SM',
+    serial: 42,
+  };
+
+  it('takes the number off the shelf with the same SKIP LOCKED statement', async () => {
+    // Two registrars working the backlog on two machines must not hand one
+    // number to two vehicles — the exact fault this registry exists to end.
+    const { svc, manager } = withStock(PLATE);
+
+    await svc.assignPlateNumber(77, 7, null, 1863);
+
+    const sql = String(manager.query.mock.calls[0][0]);
+    expect(sql).toMatch(/FOR UPDATE OF pick SKIP LOCKED/);
+    expect(sql).toMatch(/UPDATE "pos_vehicle_plates"/);
+  });
+
+  it('attaches the plate and marks it ISSUED, not FITTED', async () => {
+    const { svc, manager } = withStock(PLATE);
+
+    const result = await svc.assignPlateNumber(77, 7, null, 1863);
+
+    expect(Number(result.plateId)).toBe(5150);
+    expect(manager.update).toHaveBeenCalledWith(
+      expect.anything(),
+      { id: 5150 },
+      { status: VehiclePlateStatus.ISSUED },
+    );
+  });
+
+  it('re-signs the certificate, because the signature names the plate', async () => {
+    // The offline payload carries the plate code, region and serial. A
+    // signature minted when the vehicle had no number attests to no number, so
+    // keeping it would print a certificate whose QR — verified offline —
+    // contradicts the plate on its own face.
+    //
+    // A real key is configured for this test on purpose. Without one
+    // `signCertificate` returns null, which differs from the stale value and
+    // would pass while proving nothing — the test would go green whether the
+    // signature was recomputed or simply thrown away.
+    const { privateKey } = generateKeyPairSync('ed25519');
+    const previous = process.env.VEHICLE_REGISTRY_SIGNING_KEY;
+    process.env.VEHICLE_REGISTRY_SIGNING_KEY = privateKey
+      .export({ type: 'pkcs8', format: 'pem' })
+      .toString();
+
+    try {
+      const { svc } = withStock(PLATE);
+      const result = await svc.assignPlateNumber(77, 7, null, 1863);
+
+      expect(result.offlineSignature).toBeTruthy();
+      expect(result.offlineSignature).not.toBe(
+        'signature-from-when-it-had-no-number',
+      );
+
+      // And it verifies as a real certificate for the number just granted.
+      const verdict = verifyCertificateBlob(
+        result.offlineSignature,
+        resolvePublicKeyPem(process.env),
+      );
+      expect(verdict.valid).toBe(true);
+      expect(verdict.payload?.serial).toBe(42);
+      expect(verdict.payload?.plateCode).toBe('2');
+    } finally {
+      if (previous === undefined) {
+        delete process.env.VEHICLE_REGISTRY_SIGNING_KEY;
+      } else {
+        process.env.VEHICLE_REGISTRY_SIGNING_KEY = previous;
+      }
+    }
+  });
+
+  it('starts the fitting clock NOW, not back at registration', async () => {
+    // The permit covers the gap between having a number and wearing it, and
+    // that gap opens today. Backdating it to an issuance five months ago hands
+    // someone a permit that has already run out.
+    const { svc } = withStock(PLATE);
+
+    const result = await svc.assignPlateNumber(77, 7, null, 1863);
+
+    const expiry = new Date(result.interimPermitExpiresAt).getTime();
+    expect(expiry).toBeGreaterThan(Date.now());
+    expect(result.interimPermitNumber).toBe('IP-7-00000077');
+  });
+
+  it('records the issue against the federal request that produced it', async () => {
+    const { svc, saved } = withStock(PLATE);
+
+    await svc.assignPlateNumber(77, 7, null, 1863);
+
+    const event = saved.find((row: any) => row.type === 'PLATE_ISSUED');
+    expect(event).toBeTruthy();
+    expect(event.meta.plateNumber).toBe('2-SM-00042');
+    expect(event.meta.afterFederalRequest).toBe(true);
+    expect(event.reason).toBe('FTM/2026/114');
+  });
+
+  it('refuses when the office has no number to give', async () => {
+    // Here, unlike at the counter, an empty shelf IS the error. Registering
+    // without a number must never be blocked; being ASKED for a number the
+    // office does not hold is a registrar on the wrong row.
+    const { svc } = withStock(null);
+
+    await expect(
+      svc.assignPlateNumber(77, 7, null, 1863),
+    ).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it('is idempotent — a registrar clearing a half-worked list is not an error', async () => {
+    const { svc, manager } = makeService({
+      registrationFindOne: { ...ACTIVE_NO_PLATE, plateId: 5150 },
+      vehicle: VEHICLE,
+      vehicleClass: CLASS,
+    });
+
+    const result = await svc.assignPlateNumber(77, 7, null, 1863);
+
+    expect(Number(result.plateId)).toBe(5150);
+    expect(manager.query).not.toHaveBeenCalled();
+  });
+
+  it('refuses to number a registration that is not live', async () => {
+    const { svc } = makeService({
+      registrationFindOne: {
+        ...ACTIVE_NO_PLATE,
+        status: VehicleRegistrationStatus.DEREGISTERED,
+      },
+      vehicle: VEHICLE,
+      vehicleClass: CLASS,
+    });
+
+    await expect(
+      svc.assignPlateNumber(77, 7, null, 1863),
+    ).rejects.toBeInstanceOf(ConflictException);
+  });
+});
+
+describe('VehicleRegistryService — fitting a plate that exists', () => {
+  it('refuses to record a fitment for a vehicle that has no number', async () => {
+    // Recording one would write a fitment that cannot have happened AND — since
+    // the fitting worklist keys off `plateFittedAt` — quietly drop the vehicle
+    // off the only list that was going to chase it.
+    const { svc } = makeService({
+      registrationFindOne: {
+        id: 77,
+        tenantId: 42,
+        vehicleId: 88,
+        status: VehicleRegistrationStatus.ACTIVE,
+        plateId: null,
+        plateFittedAt: null,
+      },
+    });
+
+    await expect(svc.confirmPlateFitted(77, 7, 1863)).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+  });
+
+  it('still records a fitment when there is a plate', async () => {
+    const { svc } = makeService({
+      registrationFindOne: {
+        id: 77,
+        tenantId: 42,
+        vehicleId: 88,
+        status: VehicleRegistrationStatus.ACTIVE,
+        plateId: 5150,
+        plateFittedAt: null,
+      },
+    });
+
+    const result = await svc.confirmPlateFitted(77, 7, 1863);
+    expect(result.plateFittedAt).toBeInstanceOf(Date);
+  });
+});
+
+describe('VehicleRegistryService — the two worklists are two lists', () => {
+  it('never puts a vehicle with no number on the fitting list', async () => {
+    // Without this the fitting list is every plateless registration, which —
+    // since a number comes from a federal application rather than a shelf — is
+    // very nearly the whole register. "Awaiting number" would be a SUBSET of
+    // "awaiting fitting" rather than the separate backlog it is, and the
+    // dashboard card would show the office its entire fleet as a plate backlog.
+    const queries: any[] = [];
+    const { svc } = makeService({ queries });
+
+    await svc.listAwaitingPlateFitment(7);
+
+    const sql = String(queries[0][0]);
+    expect(sql).toMatch(/r\."plateId" IS NOT NULL/);
+    expect(sql).toMatch(/r\."plateFittedAt" IS NULL/);
+  });
+
+  it('lists only vehicles with no number as awaiting a number', async () => {
+    const queries: any[] = [];
+    const { svc } = makeService({ queries });
+
+    await svc.listAwaitingPlateNumber(7);
+
+    expect(String(queries[0][0])).toMatch(/r\."plateId" IS NULL/);
   });
 });
