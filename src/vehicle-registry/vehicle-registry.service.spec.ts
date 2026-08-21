@@ -261,6 +261,126 @@ describe('VehicleRegistryService — plate series', () => {
   });
 });
 
+describe('VehicleRegistryService — regularising an unregistered fleet', () => {
+  // Every vehicle in this drive is a first registration, and most arrive
+  // already wearing a number that is not ours: invented, or issued by a zonal
+  // office with no regional record behind it.
+
+  function regService({ duplicates = [] as any[], officialPlate = null as any } = {}) {
+    const saved: any[] = [];
+    const manager: any = {
+      query: jest.fn().mockResolvedValue([{ id: 900, plateNumber: '2-SM-00001' }]),
+      create: (_e: any, row: any) => row,
+      save: jest.fn(async (row: any) => {
+        const withId = row.id ? row : { ...row, id: 555 };
+        saved.push(withId);
+        return withId;
+      }),
+      update: jest.fn(),
+      findOne: jest.fn().mockResolvedValue(null),
+      // The manager builds queries for two different jobs here — looking a
+      // chassis up (getOne) and quarantining a plate (execute) — so one stub
+      // has to answer both.
+      createQueryBuilder: jest.fn(() => {
+        const b: any = {
+          update: () => b, set: () => b, where: () => b, andWhere: () => b,
+          execute: jest.fn().mockResolvedValue({ affected: 1 }),
+          getOne: jest.fn().mockResolvedValue(null),
+        };
+        return b;
+      }),
+    };
+    const dataSource: any = {
+      transaction: jest.fn(async (fn: any) => fn(manager)),
+      query: jest.fn().mockResolvedValue(duplicates),
+      getRepository: jest.fn(() => ({ findOne: jest.fn() })),
+    };
+    const plates = repo({
+      createQueryBuilder: jest.fn(() => {
+        const b = qb(officialPlate);
+        b.getRawMany = jest.fn().mockResolvedValue([]);
+        return b;
+      }),
+    });
+    const svc = new VehicleRegistryService(
+      { ...repo(), findOne: jest.fn().mockResolvedValue({ id: 3, nameEn: 'Private car', status: 'ACTIVE', renewalMonths: 12, plateCode: '2' }) } as any,
+      repo() as any, repo() as any, repo() as any, plates as any,
+      repo() as any, repo() as any, repo() as any,
+      { findOne: jest.fn().mockResolvedValue({ id: 7, retailTenantId: 42 }) } as any,
+      dataSource,
+    );
+    return { svc, saved, manager };
+  }
+
+  const draft = (vehicle: any) => ({
+    branchId: 7, classId: 3,
+    owner: { fullName: 'Ayaan Yuusuf' },
+    vehicle: { vin: 'CHASSIS123', ...vehicle },
+  });
+
+  it('records the number the vehicle turned up wearing, and where it came from', async () => {
+    const { svc, saved } = regService();
+    await svc.draftRegistration(draft({
+      presentedPlateNumber: '3-SM-00042',
+      presentedPlateOrigin: 'UNOFFICIAL',
+      presentedPlateNote: 'Owner says bought with the car',
+      chassisCondition: 'WORN',
+    }) as any, 11);
+
+    const vehicle = saved.find((r) => r.vin === 'CHASSIS123');
+    expect(vehicle.presentedPlateNumber).toBe('3-SM-00042');
+    expect(vehicle.presentedPlateOrigin).toBe('UNOFFICIAL');
+    expect(vehicle.chassisCondition).toBe('WORN');
+  });
+
+  it('registers a vehicle that arrived with no number at all', async () => {
+    const { svc, saved } = regService();
+    await svc.draftRegistration(draft({ presentedPlateOrigin: 'NONE' }) as any, 11);
+    const vehicle = saved.find((r) => r.vin === 'CHASSIS123');
+    expect(vehicle.presentedPlateNumber).toBeNull();
+    expect(vehicle.presentedPlateOrigin).toBe('NONE');
+  });
+
+  it('surfaces another vehicle wearing the same invented number — without blocking', async () => {
+    // Both cars are real and both need registering. Refusing would send one
+    // away still wearing the fake plate, which helps nobody.
+    const { svc } = regService({
+      duplicates: [{ vehicleId: 99, vin: 'OTHERCHASSIS' }],
+    });
+    const result: any = await svc.draftRegistration(
+      draft({ presentedPlateNumber: '3-SM-00042', presentedPlateOrigin: 'UNOFFICIAL' }) as any,
+      11,
+    );
+    expect(result.presentedPlate.duplicatePresentations).toHaveLength(1);
+    expect(result.presentedPlate.duplicatePresentations[0].vin).toBe('OTHERCHASSIS');
+    expect(result.registration).toBeTruthy(); // still registered
+  });
+
+  it('quarantines a real blank whose number is already on a car', async () => {
+    // The invented number happens to match stock in the drawer. Issuing that
+    // blank to a different vehicle would put two cars on the road under one
+    // number — the fault this registry exists to end, made by the registry.
+    const { svc, manager } = regService({
+      officialPlate: { id: 5, status: 'IN_STOCK', plateNumber: '2-SM-00001' },
+    });
+    const result: any = await svc.draftRegistration(
+      draft({ presentedPlateNumber: '2-SM-00001', presentedPlateOrigin: 'UNOFFICIAL' }) as any,
+      11,
+    );
+
+    expect(result.presentedPlate.collidesWithOfficialStock).toBe(true);
+    // A quarantine UPDATE was issued against the plates table.
+    expect(manager.createQueryBuilder).toHaveBeenCalled();
+  });
+
+  it('says nothing about a vehicle that presented no number', async () => {
+    const { svc } = regService();
+    const result: any = await svc.draftRegistration(draft({}) as any, 11);
+    expect(result.presentedPlate.duplicatePresentations).toEqual([]);
+    expect(result.presentedPlate.collidesWithOfficialStock).toBe(false);
+  });
+});
+
 describe('VehicleRegistryService — flags', () => {
   function flagService({ vehicle = { id: 5, tenantId: 42 }, openFlag = null as any } = {}) {
     const saved: any[] = [];

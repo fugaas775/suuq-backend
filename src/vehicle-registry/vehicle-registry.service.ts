@@ -582,6 +582,9 @@ export class VehicleRegistryService {
              v."make"              AS "make",
              v."model"             AS "model",
              v."colour"            AS "colour",
+             v."presentedPlateNumber" AS "presentedPlateNumber",
+             v."presentedPlateOrigin" AS "presentedPlateOrigin",
+             v."chassisCondition"     AS "chassisCondition",
              v."modelYear"         AS "modelYear",
              c."code"              AS "classCode",
              c."nameEn"            AS "className",
@@ -599,6 +602,10 @@ export class VehicleRegistryService {
        WHERE v."tenantId" = $1
          AND (
            UPPER(v."vin") = UPPER($2)
+           -- The number the vehicle USED to wear. A police file or an
+           -- insurance claim from before the drive references that number and
+           -- nothing else, so it has to resolve.
+           OR UPPER(COALESCE(v."presentedPlateNumber", '')) = UPPER($2)
            OR UPPER(COALESCE(v."engineNumber", '')) = UPPER($2)
            OR UPPER(COALESCE(pl."plateNumber", '')) = UPPER($2)
            OR LOWER(COALESCE(o."fullName", '')) LIKE LOWER($3)
@@ -680,6 +687,33 @@ export class VehicleRegistryService {
       return { registration, vehicle, owner, plate };
     });
 
+    // Everything the desk needs to know about the number this vehicle turned up
+    // wearing. Computed after the record exists so the vehicle itself is
+    // excluded from its own duplicate check.
+    const presentedAssessment = await this.assessPresentedPlate(
+      tenantId,
+      dto.vehicle.presentedPlateNumber,
+      Number(result.vehicle.id),
+    );
+
+    // If the invented number is a real blank in this office's drawer, take it
+    // out of the pool now — before some later registration is handed a number
+    // that is already on a car.
+    if (
+      presentedAssessment.collidesWithOfficialStock &&
+      presentedAssessment.officialPlateStatus === VehiclePlateStatus.IN_STOCK &&
+      dto.vehicle.presentedPlateNumber
+    ) {
+      await this.dataSource.transaction((manager) =>
+        this.quarantinePlate(
+          manager,
+          tenantId,
+          dto.vehicle.presentedPlateNumber as string,
+          `Already in circulation on chassis ${result.vehicle.vin} at registration`,
+        ),
+      );
+    }
+
     // A first registration is the registration fee plus the plate itself.
     const { lines, missing } = await this.resolveFeeLines(
       dto.branchId,
@@ -690,6 +724,7 @@ export class VehicleRegistryService {
     return {
       ...result,
       class: klass,
+      presentedPlate: presentedAssessment,
       feeLines: lines,
       // Surfaced, never silently dropped: a class whose fee product this office
       // does not carry would otherwise register a vehicle for nothing, and the
@@ -806,8 +841,91 @@ export class VehicleRegistryService {
         grossWeightKg: dto.vehicle.grossWeightKg ?? null,
         engineCc: dto.vehicle.engineCc ?? null,
         importRef: dto.vehicle.importRef ?? null,
+        presentedPlateNumber: dto.vehicle.presentedPlateNumber ?? null,
+        presentedPlateOrigin: dto.vehicle.presentedPlateOrigin ?? null,
+        presentedPlateNote: dto.vehicle.presentedPlateNote ?? null,
+        chassisCondition: dto.vehicle.chassisCondition ?? null,
       }),
     );
+  }
+
+  /**
+   * What the desk must be told before it issues a plate to this vehicle.
+   *
+   * Neither of these blocks registration. Both cars in a duplicate-plate pair
+   * are real and both need registering, and refusing would simply send the
+   * vehicle away still wearing the fake number. What the clerk gets is the
+   * fact, in front of them, at the moment it can still change what they do.
+   */
+  private async assessPresentedPlate(
+    tenantId: number,
+    presented: string | null | undefined,
+    excludeVehicleId?: number,
+  ): Promise<{
+    duplicatePresentations: Array<{ vehicleId: number; vin: string }>;
+    collidesWithOfficialStock: boolean;
+    officialPlateStatus: string | null;
+  }> {
+    const plate = String(presented || '').trim();
+    if (!plate) {
+      return {
+        duplicatePresentations: [],
+        collidesWithOfficialStock: false,
+        officialPlateStatus: null,
+      };
+    }
+
+    // Another vehicle already registered wearing this same number. Two invented
+    // plates can carry one number; the registrar needs to know both exist.
+    const duplicates = await this.dataSource.query(
+      `SELECT v."id" AS "vehicleId", v."vin" AS "vin"
+         FROM "pos_vehicles" v
+        WHERE v."tenantId" = $1
+          AND UPPER(v."presentedPlateNumber") = UPPER($2)
+          AND ($3::bigint IS NULL OR v."id" <> $3::bigint)
+        LIMIT 5`,
+      [tenantId, plate, excludeVehicleId ?? null],
+    );
+
+    // The number this car invented is a real blank sitting in a drawer. Issuing
+    // it to somebody else would put two cars on the road under one number.
+    const official = await this.platesRepository
+      .createQueryBuilder('p')
+      .where('p."tenantId" = :tenantId', { tenantId })
+      .andWhere('UPPER(p."plateNumber") = UPPER(:plate)', { plate })
+      .getOne();
+
+    return {
+      duplicatePresentations: duplicates ?? [],
+      collidesWithOfficialStock: Boolean(official),
+      officialPlateStatus: official?.status ?? null,
+    };
+  }
+
+  /**
+   * Withhold a blank whose number is already in circulation unofficially.
+   *
+   * Called when a vehicle presents an invented plate matching real stock. The
+   * blank leaves the allocation pool rather than being destroyed: what to do
+   * about a number already on a car is the registrar's decision, and the
+   * registry's job is to stop handing it out in the meantime.
+   */
+  private async quarantinePlate(
+    manager: EntityManager,
+    tenantId: number,
+    plateNumber: string,
+    reason: string,
+  ) {
+    await manager
+      .createQueryBuilder()
+      .update(VehiclePlate)
+      .set({ status: VehiclePlateStatus.QUARANTINED, statusReason: reason })
+      .where('"tenantId" = :tenantId', { tenantId })
+      .andWhere('UPPER("plateNumber") = UPPER(:plateNumber)', { plateNumber })
+      .andWhere('status = :inStock', {
+        inStock: VehiclePlateStatus.IN_STOCK,
+      })
+      .execute();
   }
 
   /**

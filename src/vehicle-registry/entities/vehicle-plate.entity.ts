@@ -24,6 +24,16 @@ export enum VehiclePlateStatus {
   LOST = 'LOST',
   /** Physically destroyed and accounted for. */
   DESTROYED = 'DESTROYED',
+  /**
+   * Withheld because the number is already in circulation unofficially.
+   *
+   * A vehicle turned up wearing an invented plate that happens to match a blank
+   * in this office's drawer. Issuing that blank to a different car would put
+   * two vehicles on the road under one number — the exact fault this registry
+   * exists to end, manufactured by the registry itself. The blank stays out of
+   * the allocation pool until somebody decides what to do about it.
+   */
+  QUARANTINED = 'QUARANTINED',
 }
 
 /**

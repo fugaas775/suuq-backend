@@ -13,6 +13,10 @@ import {
 } from 'class-validator';
 import { VehicleClassStatus } from '../entities/vehicle-class.entity';
 import { VehicleOwnerKind } from '../entities/vehicle-owner.entity';
+import {
+  ChassisCondition,
+  PresentedPlateOrigin,
+} from '../entities/vehicle.entity';
 import { VehicleFlagType } from '../entities/vehicle-flag.entity';
 
 function trimString(value: unknown) {
@@ -322,6 +326,35 @@ export class VehicleInputDto {
   @IsString()
   @MaxLength(128)
   importRef?: string;
+
+  /**
+   * The number the vehicle arrived wearing, if any. Almost every vehicle in
+   * this drive has one and almost none of them are ours.
+   */
+  @Transform(({ value }) => upperString(value))
+  @IsOptional()
+  @IsString()
+  @MaxLength(32)
+  presentedPlateNumber?: string;
+
+  @IsOptional()
+  @IsEnum(PresentedPlateOrigin)
+  presentedPlateOrigin?: PresentedPlateOrigin;
+
+  @Transform(({ value }) => trimString(value))
+  @IsOptional()
+  @IsString()
+  @MaxLength(512)
+  presentedPlateNote?: string;
+
+  /**
+   * The state of the stamped chassis, as the clerk saw it. Recorded because a
+   * first-registration drive is where a stolen vehicle would be laundered, and
+   * the chassis is the identity a thief has to attack.
+   */
+  @IsOptional()
+  @IsEnum(ChassisCondition)
+  chassisCondition?: ChassisCondition;
 }
 
 export class DraftRegistrationDto extends VehicleBranchScopeDto {
