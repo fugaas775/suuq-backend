@@ -379,19 +379,39 @@ export class VehicleRegistryService {
       .createQueryBuilder('p')
       .select('p."seriesId"', 'seriesId')
       .addSelect('p."status"', 'status')
+      // The code the block actually holds, taken from the PLATES rather than
+      // from `series.prefix`. Allocation matches on `plate.plateCode`, so that
+      // is the column a caller has to reason about; `prefix` is a label on the
+      // series that nothing enforces against its contents.
+      .addSelect('p."plateCode"', 'plateCode')
       .addSelect('COUNT(*)', 'count')
       .where('p."seriesId" IN (:...ids)', { ids: series.map((s) => s.id) })
       .groupBy('p."seriesId"')
       .addGroupBy('p."status"')
-      .getRawMany<{ seriesId: string; status: string; count: string }>();
+      .addGroupBy('p."plateCode"')
+      .getRawMany<{
+        seriesId: string;
+        status: string;
+        plateCode: string | null;
+        count: string;
+      }>();
 
     return series.map((s) => {
       const mine = counts.filter((c) => String(c.seriesId) === String(s.id));
       const byStatus: Record<string, number> = {};
-      for (const row of mine) byStatus[row.status] = Number(row.count);
+      for (const row of mine) {
+        byStatus[row.status] = (byStatus[row.status] ?? 0) + Number(row.count);
+      }
+      const inStock = mine.filter(
+        (row) => row.status === VehiclePlateStatus.IN_STOCK,
+      );
       return {
         series: s,
         byStatus,
+        // Which code this block's remaining blanks carry. A desk that only
+        // knows the TOTAL left in the office will offer a number for a goods
+        // truck while every remaining blank is a taxi plate.
+        plateCode: inStock[0]?.plateCode ?? mine[0]?.plateCode ?? null,
         remaining: byStatus[VehiclePlateStatus.IN_STOCK] ?? 0,
       };
     });
@@ -1685,6 +1705,10 @@ export class VehicleRegistryService {
               v."presentedPlateNumber" AS "presentedPlateNumber",
               v."presentedPlateOrigin" AS "presentedPlateOrigin",
               c."nameEn"               AS "className",
+              -- The code this vehicle must be plated under. Without it the desk
+              -- cannot tell whether the office holds a number it can actually
+              -- give this vehicle, only whether it holds one at all.
+              c."plateCode"            AS "plateCode",
               o."fullName"             AS "ownerName",
               o."phone"                AS "ownerPhone"
          FROM "pos_vehicle_registrations" r
@@ -1757,7 +1781,15 @@ export class VehicleRegistryService {
       `SELECT COALESCE(SUM((item->>'lineTotal')::numeric), 0) AS "feeRevenue",
               count(DISTINCT c."id")::int                     AS "paidCheckouts"
          FROM "pos_checkouts" c
-         CROSS JOIN LATERAL jsonb_array_elements(c."items") item
+         -- jsonb_array_elements RAISES on an object, so one malformed checkout
+         -- would 500 the whole income report rather than costing it a row.
+         -- Every production row is an array today; a report that a single bad
+         -- row can take down is not one an office should depend on.
+         -- (No backticks in here: this is inside a JS template literal.)
+         CROSS JOIN LATERAL jsonb_array_elements(
+           CASE WHEN jsonb_typeof(c."items") = 'array'
+                THEN c."items" ELSE '[]'::jsonb END
+         ) item
         WHERE c."branchId" = $1
           AND c."transactionType" = 'SALE'
           AND c."voidedAt" IS NULL

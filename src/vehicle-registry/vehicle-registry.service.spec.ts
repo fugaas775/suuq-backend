@@ -79,6 +79,8 @@ function makeService({
   vehicle = null as any,
   plateClash = [] as any[],
   spentCheckoutRegistration = null as any,
+  plateSeries = [] as any[],
+  plateCounts = null as any,
 } = {}) {
   const saved: any[] = [];
 
@@ -113,9 +115,16 @@ function makeService({
   const plates = repo({
     createQueryBuilder: jest.fn(() => {
       const b = qb();
-      b.getRawMany = jest.fn().mockResolvedValue(plateClash);
+      // Two different questions reach this builder — "what stock is left" and
+      // "does any real blank already carry this invented number". The stock
+      // answer is opted into explicitly so the two cannot stand in for each
+      // other and quietly make a test pass for the wrong reason.
+      b.getRawMany = plateCounts ?? jest.fn().mockResolvedValue(plateClash);
       return b;
     }),
+  });
+  const seriesRepo = repo({
+    find: jest.fn().mockResolvedValue(plateSeries),
   });
   // Where-aware, because the service asks this repository two different
   // questions — "load registration 77" and "has checkout 3001 already been
@@ -137,7 +146,7 @@ function makeService({
     classes,
     repo(),
     vehicles,
-    repo(),
+    seriesRepo,
     plates,
     registrations,
     repo(),
@@ -1087,7 +1096,9 @@ describe('VehicleRegistryService — a truck must not be handed a taxi plate', (
     });
 
     await expect(svc.assignPlateNumber(77, 7, null, 1863)).rejects.toThrow(
-      /code 3.*Goods truck/s,
+      // `[\s\S]` rather than the /s flag: this project's tsconfig targets
+      // below es2018, where dotAll is a compile error.
+      /code 3[\s\S]*Goods truck/,
     );
   });
 
@@ -1118,5 +1129,72 @@ describe('VehicleRegistryService — a truck must not be handed a taxi plate', (
 
     expect(result.plate).toBeNull();
     expect(result.registration).toBeTruthy();
+  });
+});
+
+describe('VehicleRegistryService — the income report must not be one bad row from a 500', () => {
+  it('skips a checkout whose items are not an array instead of raising', async () => {
+    // `jsonb_array_elements` RAISES "cannot extract elements from an object" —
+    // verified against a real Postgres — so a single malformed checkout would
+    // take down the whole income report rather than costing it one row. Income
+    // is a stated purpose of this drive; the report an office depends on should
+    // not be that brittle.
+    const queries: any[] = [];
+    const { svc } = makeService({ queries });
+
+    await svc.getRegistryPerformance(7);
+
+    const revenueSql = String(
+      queries.map((q) => String(q[0])).find((q) => q.includes('feeRevenue')),
+    );
+    expect(revenueSql).toMatch(/jsonb_typeof\(c\."items"\)\s*=\s*'array'/);
+    expect(revenueSql).toMatch(/ELSE\s*'\[\]'::jsonb/);
+  });
+
+  it('reads money from the till, never from anything the registry stores', async () => {
+    // A registry keeping its own copy of the money would be a second set of
+    // books, and the two would disagree the first time a sale was voided.
+    const queries: any[] = [];
+    const { svc } = makeService({ queries });
+
+    await svc.getRegistryPerformance(7);
+
+    const revenueSql = String(
+      queries.map((q) => String(q[0])).find((q) => q.includes('feeRevenue')),
+    );
+    expect(revenueSql).toContain('"pos_checkouts"');
+    expect(revenueSql).toMatch(/c\."voidedAt" IS NULL/);
+    expect(revenueSql).toMatch(/LIKE 'VR-%'/);
+  });
+});
+
+describe('VehicleRegistryService — the desk must know which CODE it can offer', () => {
+  it('reports plate stock broken down by the code the blanks carry', async () => {
+    // An office total is the wrong number to gate on: allocation only hands out
+    // a plate carrying the code the vehicle's class is plated under, so a
+    // drawer of four hundred taxi blanks is empty as far as a truck goes.
+    const rawMany = jest.fn().mockResolvedValue([
+      { seriesId: '1', status: 'IN_STOCK', plateCode: '1', count: '400' },
+      { seriesId: '1', status: 'ISSUED', plateCode: '1', count: '3' },
+    ]);
+    const { svc } = makeService({
+      plateSeries: [{ id: 1, tenantId: 42, branchId: 7, prefix: '1' }],
+      plateCounts: rawMany,
+    });
+
+    const stock: any = await svc.listPlateStock({ branchId: 7 });
+
+    expect(stock[0].plateCode).toBe('1');
+    expect(stock[0].remaining).toBe(400);
+    expect(stock[0].byStatus.ISSUED).toBe(3);
+  });
+
+  it('tells the waiting list which code each vehicle needs', async () => {
+    const queries: any[] = [];
+    const { svc } = makeService({ queries });
+
+    await svc.listAwaitingPlateNumber(7);
+
+    expect(String(queries[0][0])).toMatch(/c\."plateCode"\s+AS "plateCode"/);
   });
 });
