@@ -12,6 +12,9 @@ import { VehiclePlateSeries } from './entities/vehicle-plate-series.entity';
 import { VehiclePlate } from './entities/vehicle-plate.entity';
 import { VehicleRegistration } from './entities/vehicle-registration.entity';
 import { VehicleEvent } from './entities/vehicle-event.entity';
+import { VehicleFlag } from './entities/vehicle-flag.entity';
+import { PublicVehicleVerificationController } from './public-vehicle-verification.controller';
+import { PublicVehicleVerificationService } from './public-vehicle-verification.service';
 import { VehicleRegistryController } from './vehicle-registry.controller';
 import { VehicleRegistryService } from './vehicle-registry.service';
 
@@ -33,16 +36,22 @@ import { VehicleRegistryService } from './vehicle-registry.service';
       VehiclePlate,
       VehicleRegistration,
       VehicleEvent,
+      VehicleFlag,
       Branch,
       PosCheckout,
     ]),
     RetailModule,
   ],
-  controllers: [VehicleRegistryController],
+  controllers: [VehicleRegistryController, PublicVehicleVerificationController],
   // Guards provided rather than AuthModule imported, following SchoolModule:
   // the registry is a leaf and pulling in the auth module would be a new edge
   // into a graph the supplier modules already had to be untangled from.
-  providers: [VehicleRegistryService, PosBranchAccessGuard, RolesGuard],
+  providers: [
+    VehicleRegistryService,
+    PublicVehicleVerificationService,
+    PosBranchAccessGuard,
+    RolesGuard,
+  ],
   exports: [VehicleRegistryService],
 })
 export class VehicleRegistryModule {}

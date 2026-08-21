@@ -87,6 +87,23 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
+    # Vehicle registration verification — the QR on every certificate, and the
+    # typed-plate lookup for when there is no certificate to scan. Same shape as
+    # /v above and case-insensitive for the same reason: the QR encodes an
+    # uppercase path to stay in alphanumeric mode and keep the printed square
+    # small, while a person typing the URL will use lower case.
+    location ~* ^/vr$ { return 302 /vr/; }
+    location ~* ^/vr/(.*)$ {
+        # $is_args$args carries the typed-plate form's ?plate=, for the same
+        # reason it is needed on /v — once proxy_pass holds a variable, nginx
+        # stops forwarding the query string by itself.
+        proxy_pass http://127.0.0.1:3000/api/public/vehicles/page/$1$is_args$args;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
     location / {
         try_files $uri $uri/ /index.html;
     }

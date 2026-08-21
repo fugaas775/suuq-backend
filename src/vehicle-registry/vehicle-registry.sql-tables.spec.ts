@@ -49,12 +49,21 @@ function declaredTableNames(): Set<string> {
   return names;
 }
 
-/** Table names the module's raw SQL reads from or joins. */
+/**
+ * Table names the module's raw SQL reads from or joins.
+ *
+ * Scans EVERY file in the module, not just the one where the bug happened. A
+ * guard aimed at a single file stops guarding the moment somebody adds raw SQL
+ * next door — which is exactly what the public verification service then did.
+ */
 function tablesReferencedInRawSql(): string[] {
-  const src = readFileSync(
-    join(__dirname, 'vehicle-registry.service.ts'),
-    'utf8',
-  );
+  const { execSync } = require('child_process');
+  const files: string[] = execSync(`find ${__dirname} -name '*.ts' -not -name '*.spec.ts'`, {
+    encoding: 'utf8',
+  })
+    .split('\n')
+    .filter(Boolean);
+  const src = files.map((f) => readFileSync(f, 'utf8')).join('\n');
   const refs = new Set<string>();
   for (const m of src.matchAll(/\b(?:FROM|JOIN|INTO|UPDATE)\s+"([a-zA-Z0-9_]+)"/g)) {
     refs.add(m[1].toLowerCase());
