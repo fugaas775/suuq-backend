@@ -195,6 +195,22 @@ describe('public vehicle verification — registered with no plate number', () =
     expect(html).toContain('3-SM-00042');
   });
 
+  it('says what the car is wearing even on a direct certificate scan', async () => {
+    // The previous-number notice used to appear only when the SEARCH matched on
+    // it. An officer scanning the QR of a vehicle with no official number was
+    // told it was registered and nothing about the plate in front of them.
+    const { svc } = makeService({
+      ...base,
+      plateNumber: null,
+      plateFittedAt: null,
+      presentedPlateNumber: '3-SM-09999',
+      expiresAt: new Date(Date.now() + 86_400_000),
+    });
+    const result = await svc.verifyByCode('P4R7WXY2QM8NB3');
+    expect(result.status).toBe('REGISTERED_NO_PLATE');
+    expect(result.previousPlateNumber).toBe('3-SM-09999');
+  });
+
   it('an expired licence still outranks a missing plate number', async () => {
     const { svc } = makeService({
       ...base, plateNumber: null, plateFittedAt: null,

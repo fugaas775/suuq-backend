@@ -211,6 +211,13 @@ export class PublicVehicleVerificationService {
       issuingOffice: row.issuingOffice ?? null,
       certificateNumber: row.certificateNumber ?? null,
       plateFittedAt: row.plateFittedAt ?? null,
+      // Always report what the car is physically wearing when there is no
+      // official plate — not only when the search happened to match on it.
+      // An officer scanning the certificate of a vehicle with no number still
+      // needs to be told which number is on the bumper in front of them.
+      previousPlateNumber: !row.plateNumber
+        ? (row.presentedPlateNumber ?? null)
+        : null,
       interimPermitExpiresAt: row.interimPermitExpiresAt ?? null,
       flagged: row.flagged === true,
     };
