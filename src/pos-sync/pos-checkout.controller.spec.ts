@@ -1,5 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { Reflector } from '@nestjs/core';
+import { getDataSourceToken } from '@nestjs/typeorm';
 import { RetailModulesGuard } from '../retail/retail-modules.guard';
 import { RetailEntitlementsService } from '../retail/retail-entitlements.service';
 import { PosSessionRevocationService } from '../auth/pos-session-revocation.service';
@@ -41,6 +42,16 @@ describe('PosCheckoutController', () => {
           useValue: { canActivate: jest.fn().mockReturnValue(true) },
         },
         { provide: PosSessionRevocationService, useValue: {} },
+        // PosBranchAccessGuard reads the roster for a session that carries no
+        // permissions claim of its own. Nothing here exercises that path — the
+        // Reflector stub reports no required permissions — but the guard is
+        // instantiated, so the token has to resolve.
+        {
+          provide: getDataSourceToken(),
+          useValue: {
+            getRepository: () => ({ find: jest.fn().mockResolvedValue([]) }),
+          },
+        },
       ],
     }).compile();
 
