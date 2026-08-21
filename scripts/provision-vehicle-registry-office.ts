@@ -42,9 +42,7 @@
  *     --office="TEST — Jigjiga Zone Office" --code=TEST-VR-JIGJIGA [--execute]
  */
 import dataSource from '../src/data-source';
-import {
-  getDefaultAllowedSelfServeServiceFormats,
-} from '../src/retail/self-serve-service-format.policy';
+import { getDefaultAllowedSelfServeServiceFormats } from '../src/retail/self-serve-service-format.policy';
 
 const EXECUTE = process.argv.includes('--execute');
 const arg = (n: string) => {
@@ -52,7 +50,8 @@ const arg = (n: string) => {
   return f ? f.slice(`--${n}=`.length) : null;
 };
 
-const TENANT_NAME = arg('tenant') || 'TEST — Somali Region Bureau of Trade and Transport';
+const TENANT_NAME =
+  arg('tenant') || 'TEST — Somali Region Bureau of Trade and Transport';
 const OFFICE_NAME = arg('office') || 'TEST — Jigjiga Zone Office';
 const OFFICE_CODE = (arg('code') || 'TEST-VR-JIGJIGA').toUpperCase();
 /**
@@ -72,13 +71,18 @@ async function main() {
     );
   }
   await dataSource.initialize();
-  console.log(`\n[provision] ${EXECUTE ? 'EXECUTING' : 'DRY RUN — pass --execute to write'}`);
+  console.log(
+    `\n[provision] ${EXECUTE ? 'EXECUTING' : 'DRY RUN — pass --execute to write'}`,
+  );
   console.log(`[provision] tenant : ${TENANT_NAME}`);
   console.log(`[provision] office : ${OFFICE_NAME}  (${OFFICE_CODE})\n`);
 
   // ── 1. Tenant ──────────────────────────────────────────────────────────
   let tenant = (
-    await dataSource.query(`SELECT id, name FROM retail_tenants WHERE name = $1`, [TENANT_NAME])
+    await dataSource.query(
+      `SELECT id, name FROM retail_tenants WHERE name = $1`,
+      [TENANT_NAME],
+    )
   )?.[0];
 
   if (tenant) {
@@ -110,7 +114,10 @@ async function main() {
 
   // ── 2. Entitlement — the gate that makes the format usable ─────────────
   const allowed = Array.from(
-    new Set([...getDefaultAllowedSelfServeServiceFormats(), 'VEHICLE_REGISTRY']),
+    new Set([
+      ...getDefaultAllowedSelfServeServiceFormats(),
+      'VEHICLE_REGISTRY',
+    ]),
   );
   console.log(`  entitlement allows       ${allowed.join(', ')}`);
 
@@ -122,7 +129,9 @@ async function main() {
       )
     )?.[0];
 
-    const metadata = JSON.stringify({ allowedSelfServeServiceFormats: allowed });
+    const metadata = JSON.stringify({
+      allowedSelfServeServiceFormats: allowed,
+    });
     if (existing) {
       await dataSource.query(
         `UPDATE tenant_module_entitlements SET metadata=$2::jsonb, enabled=true, "updatedAt"=now() WHERE id=$1`,
@@ -143,13 +152,16 @@ async function main() {
 
   // ── 3. Office ──────────────────────────────────────────────────────────
   let branch = (
-    await dataSource.query(`SELECT id, name, "serviceFormat", "retailTenantId" FROM branches WHERE code = $1`, [
-      OFFICE_CODE,
-    ])
+    await dataSource.query(
+      `SELECT id, name, "serviceFormat", "retailTenantId" FROM branches WHERE code = $1`,
+      [OFFICE_CODE],
+    )
   )?.[0];
 
   if (branch) {
-    console.log(`  office exists            id=${branch.id} (${branch.serviceFormat})`);
+    console.log(
+      `  office exists            id=${branch.id} (${branch.serviceFormat})`,
+    );
     if (EXECUTE) {
       await dataSource.query(
         `UPDATE branches
@@ -160,7 +172,9 @@ async function main() {
           WHERE id = $1`,
         [branch.id, tenantId, OWNER_USER_ID],
       );
-      console.log(`  office corrected         → VEHICLE_REGISTRY, owner ${OWNER_USER_ID}`);
+      console.log(
+        `  office corrected         → VEHICLE_REGISTRY, owner ${OWNER_USER_ID}`,
+      );
     }
   } else if (EXECUTE) {
     branch = (
@@ -178,6 +192,71 @@ async function main() {
     console.log('  office would be created');
   }
 
+  // ── 4. The POS subscription — WITHOUT THIS THE OFFICE DOES NOT OPEN ────
+  //
+  // The entitlement above says the tenant MAY use POS_CORE. It does not say the
+  // branch has a live workspace, and `assertBranchHasModules` checks both: a
+  // branch with no `tenant_subscriptions` row resolves to a workspaceStatus
+  // that is not ACTIVE, and every POS route for it answers
+  //   "Retail tenant N does not have an active POS workspace for branch B".
+  //
+  // Which is exactly what happened. Branch 137 was provisioned, seeded with
+  // nine classes and five hundred blanks, and could not load a single one of
+  // them: the desk opened, said "0 plates left in stock", and put that error on
+  // screen. Everything existed and nothing worked, because the one row that
+  // makes a branch tradeable was the one row this script never wrote.
+  //
+  // Provisioned manually rather than sold: a government bureau does not buy a
+  // POS seat through the consumer checkout, and the Ebirr gateway has been
+  // unreachable from this box since June in any case. The metadata says so, in
+  // the same shape the platform owner's other manual provisions use.
+  if (tenant?.id && branch?.id) {
+    const existingSub = EXECUTE
+      ? (
+          await dataSource.query(
+            `SELECT id, status FROM tenant_subscriptions WHERE "tenantId"=$1 AND "branchId"=$2 LIMIT 1`,
+            [tenant.id, branch.id],
+          )
+        )[0]
+      : null;
+
+    if (existingSub) {
+      console.log(
+        `  subscription exists      id=${existingSub.id} (${existingSub.status})`,
+      );
+    } else if (EXECUTE) {
+      const startsAt = new Date();
+      const endsAt = new Date(startsAt);
+      endsAt.setFullYear(endsAt.getFullYear() + 1);
+
+      const [sub] = await dataSource.query(
+        `INSERT INTO tenant_subscriptions
+           ("tenantId", "planCode", status, "billingInterval", amount, currency,
+            "periodMonths", "amountTotal", "branchId", "startsAt", "endsAt",
+            "autoRenew", metadata, "createdAt", "updatedAt")
+         VALUES ($1, 'POS_BRANCH_1Y', 'ACTIVE', 'ONE_YEAR', $2, 'ETB',
+                 12, $2, $3, $4, $5, false, $6::jsonb, now(), now())
+         RETURNING id`,
+        [
+          tenant.id,
+          0,
+          branch.id,
+          startsAt,
+          endsAt,
+          JSON.stringify({
+            fundingMode: 'MANUAL_PROVISION',
+            reason:
+              'Government vehicle-registry office provisioned by the platform owner; a regional bureau does not buy a POS seat through the consumer checkout.',
+            provisionedAt: startsAt.toISOString(),
+          }),
+        ],
+      );
+      console.log(`  subscription created     id=${sub.id} (ACTIVE, 1 year)`);
+    } else {
+      console.log('  subscription would be created');
+    }
+  }
+
   if (EXECUTE && branch?.id) {
     console.log(
       `\n[provision] done. Now seed it:\n` +
@@ -193,6 +272,10 @@ async function main() {
 
 main().catch(async (err) => {
   console.error(`\n[provision] FAILED: ${err.message}\n`);
-  try { await dataSource.destroy(); } catch { /* already closed */ }
+  try {
+    await dataSource.destroy();
+  } catch {
+    /* already closed */
+  }
   process.exit(1);
 });
