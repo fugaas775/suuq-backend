@@ -111,6 +111,17 @@ export class VehicleClass {
   renewalMonths!: number;
 
   /**
+   * How long the interim permit covers a vehicle whose plate has not yet been
+   * fitted.
+   *
+   * Configurable rather than fixed because the right answer is however long
+   * this office actually takes to produce a plate — a number the Bureau knows
+   * and we do not. Thirty days is a starting point, not a policy.
+   */
+  @Column({ type: 'int', default: 30 })
+  interimPermitDays!: number;
+
+  /**
    * Whether a renewal is gated on a current roadworthiness pass.
    *
    * True for anything that carries people or goods. A Bureau may set it false

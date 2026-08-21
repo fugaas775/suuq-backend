@@ -29,6 +29,34 @@ const STATUS_COPY: Record<
     bg: '#166534',
     fg: '#ffffff',
   },
+  /**
+   * Registered, plate not yet fitted, permit still valid.
+   *
+   * Amber rather than green: the vehicle is legal, but the plate an officer is
+   * looking at does not match the record, and saying "registered" without
+   * saying that would be misleading.
+   */
+  AWAITING_PLATE: {
+    so: 'DIIWAAN GASHAN — TAARIKHDU MA RIBIN',
+    am: 'የተመዘገበ — ሰሌዳ ገና አልተገጠመም',
+    en: 'REGISTERED — PLATE NOT YET FITTED',
+    bg: '#b45309',
+    fg: '#ffffff',
+  },
+  /**
+   * Registered, plate not fitted, and the permit has run out.
+   *
+   * Overdue, not unlawful. The office may simply not have produced the plate,
+   * and the wording refers the reader to the office rather than accusing the
+   * driver of anything.
+   */
+  PLATE_OVERDUE: {
+    so: 'TAARIKHDA WAA DIB U DHACDAY',
+    am: 'ሰሌዳው አልተገጠመም — ጊዜው አልፎበታል',
+    en: 'PLATE OVERDUE',
+    bg: '#b91c1c',
+    fg: '#ffffff',
+  },
   EXPIRED: {
     so: 'DHACAY',
     am: 'ጊዜው አልፎበታል',
@@ -199,6 +227,29 @@ export function renderVehicleResultPage(result: PublicVehicleResult): string {
       <div class="plate" style="background:${esc(plateBg)};color:${esc(plateFg)}">
         ${esc(result.plateNumber ?? '—')}
       </div>
+
+      ${
+        result.status === 'AWAITING_PLATE' || result.status === 'PLATE_OVERDUE'
+          ? `<div class="flag" style="background:#fffbeb;border-color:#f59e0b;color:#92400e">
+               Baabuurkani wuxuu diiwaan ugu jiraa ${esc(result.plateNumber ?? '')}<br>
+               ይህ ተሽከርካሪ የተመዘገበው በ ${esc(result.plateNumber ?? '')} ነው<br>
+               This vehicle is registered as <strong>${esc(result.plateNumber ?? '')}</strong>.
+               The plate has not been fitted yet${
+                 result.previousPlateNumber
+                   ? `, so it is still carrying <strong>${esc(result.previousPlateNumber)}</strong>`
+                   : ''
+               }.${
+                 result.status === 'PLATE_OVERDUE'
+                   ? ' The interim permit has run out — refer the driver to the issuing office.'
+                   : `${
+                       result.interimPermitExpiresAt
+                         ? ` Permitted until ${esc(formatDate(result.interimPermitExpiresAt))}.`
+                         : ''
+                     }`
+               }
+             </div>`
+          : ''
+      }
 
       ${
         result.matchedOnPreviousNumber

@@ -39,6 +39,10 @@ const base = {
   plateBackgroundColour: '#ffffff',
   plateTextColour: '#15803d',
   issuingOffice: 'Jigjiga Zone Office',
+  // A settled vehicle has its plate ON. Registrations with no fitment date are
+  // a real and different state — see the plate-fitment block below.
+  plateFittedAt: new Date('2026-01-10T00:00:00Z'),
+  interimPermitExpiresAt: new Date('2026-02-09T00:00:00Z'),
   flagged: false,
 };
 
@@ -123,6 +127,7 @@ describe('public vehicle verification — cars still wearing the old number', ()
       presentedPlateNumber: '3-SM-00042',
       plateNumber: '2-SM-00001',
       expiresAt: new Date(Date.now() + 86_400_000),
+      plateFittedAt: new Date('2026-01-10T00:00:00Z'),
     });
 
     const result = await svc.verifyByPlate('3-SM-00042');
@@ -157,6 +162,78 @@ describe('public vehicle verification — cars still wearing the old number', ()
       found: true, status: 'VALID', plateNumber: '2-SM-00001',
     });
     expect(html).not.toMatch(/used to carry/i);
+  });
+});
+
+describe('public vehicle verification — the plate-fitting window', () => {
+  // Issuance and fitting are different moments. Between them the record says
+  // one number and the car wears another, which is indistinguishable from a
+  // swapped plate — and is where a stolen vehicle is easiest to move.
+
+  it('does not say "registered" while the plate is still not on the car', async () => {
+    const { svc } = makeService({
+      ...base,
+      plateFittedAt: null,
+      expiresAt: new Date(Date.now() + 86_400_000),
+      interimPermitExpiresAt: new Date(Date.now() + 86_400_000),
+    });
+    const result = await svc.verifyByPlate('x');
+    expect(result.status).toBe('AWAITING_PLATE');
+  });
+
+  it('reports OVERDUE once the interim permit has run out', async () => {
+    const { svc } = makeService({
+      ...base,
+      plateFittedAt: null,
+      expiresAt: new Date(Date.now() + 86_400_000),
+      interimPermitExpiresAt: new Date('2020-01-01T00:00:00Z'),
+    });
+    expect((await svc.verifyByPlate('x')).status).toBe('PLATE_OVERDUE');
+  });
+
+  it('says VALID once the plate is confirmed fitted', async () => {
+    const { svc } = makeService({
+      ...base,
+      expiresAt: new Date(Date.now() + 86_400_000),
+    });
+    expect((await svc.verifyByPlate('x')).status).toBe('VALID');
+  });
+
+  it('lets an EXPIRED licence outrank an unfitted plate', async () => {
+    // A lapsed registration is the more serious fact, and reporting it as
+    // merely awaiting a plate would understate it.
+    const { svc } = makeService({
+      ...base,
+      plateFittedAt: null,
+      expiresAt: new Date('2020-01-01T00:00:00Z'),
+    });
+    expect((await svc.verifyByPlate('x')).status).toBe('EXPIRED');
+  });
+
+  it('tells the reader which plate the vehicle should be carrying', () => {
+    const html = renderVehicleResultPage({
+      found: true, status: 'AWAITING_PLATE',
+      plateNumber: '2-SM-00001', previousPlateNumber: '3-SM-00042',
+      interimPermitExpiresAt: new Date('2026-09-20T00:00:00Z'),
+    });
+    expect(html).toContain('PLATE NOT YET FITTED');
+    expect(html).toContain('2-SM-00001');
+    expect(html).toContain('3-SM-00042');
+    // Not pinning the month abbreviation: Node's ICU renders September as
+    // "Sept" in some versions and "Sep" in others, and a test that fails on a
+    // runtime upgrade is a test people learn to ignore.
+    expect(html).toMatch(/Permitted until 20 Sep\w* 2026/);
+  });
+
+  it('refers an overdue vehicle to the office rather than accusing the driver', () => {
+    // The office may simply not have produced the plate. A driver should not
+    // carry the consequence of the office's backlog.
+    const html = renderVehicleResultPage({
+      found: true, status: 'PLATE_OVERDUE', plateNumber: '2-SM-00001',
+    });
+    expect(html).toContain('PLATE OVERDUE');
+    expect(html).toMatch(/refer the driver to the issuing office/i);
+    expect(html).not.toMatch(/illegal|unlawful|offence/i);
   });
 });
 

@@ -16,8 +16,17 @@ export enum VehiclePlateStatus {
    * clerk can take it, but nothing has been handed over yet.
    */
   ALLOCATED = 'ALLOCATED',
-  /** On a vehicle, on the road. */
+  /**
+   * Assigned to a registration and the certificate printed — but nobody has
+   * confirmed the plate reached the car.
+   *
+   * This used to mean "on a vehicle, on the road", which conflated a paper
+   * event with a physical one. Between the two the record says one number and
+   * the car wears another, and that is indistinguishable from a swapped plate.
+   */
   ISSUED = 'ISSUED',
+  /** Confirmed on the vehicle, by a named person, on a recorded date. */
+  FITTED = 'FITTED',
   /** Handed back — deregistered, or replaced by a new series. Reissuable. */
   RETURNED = 'RETURNED',
   /** Reported lost or stolen. Never reissued: the number is live in the wild. */

@@ -112,6 +112,37 @@ export class VehicleRegistration {
   @Column({ type: 'timestamptz', nullable: true })
   expiresAt!: Date | null;
 
+  /**
+   * When the physical plate went on the car — NOT when it was assigned.
+   *
+   * Null means "not yet", never "unknown", and that distinction is the point:
+   * a registration with no fitment date is a vehicle driving on a number that
+   * does not match its record, which is exactly what a stolen car looks like.
+   */
+  @Column({ type: 'timestamptz', nullable: true })
+  plateFittedAt!: Date | null;
+
+  @Column({ type: 'int', nullable: true })
+  plateFittedByUserId!: number | null;
+
+  /**
+   * The paper that covers the vehicle until the plate is fitted.
+   *
+   * It names BOTH numbers — the one the record holds and the one the car is
+   * wearing — which is what makes the mismatch explainable at a checkpoint
+   * rather than suspicious.
+   */
+  @Column({ type: 'varchar', length: 64, nullable: true })
+  interimPermitNumber!: string | null;
+
+  /**
+   * When that cover runs out. Past it the vehicle is OVERDUE, not unlawful:
+   * a citizen whose plate the office has not produced should not lose their
+   * registration because of the office's backlog.
+   */
+  @Column({ type: 'timestamptz', nullable: true })
+  interimPermitExpiresAt!: Date | null;
+
   /** When it stopped being the live registration, whatever ended it. */
   @Column({ type: 'timestamptz', nullable: true })
   endedAt!: Date | null;

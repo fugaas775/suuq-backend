@@ -26,6 +26,10 @@ import { VehicleRegistration } from './entities/vehicle-registration.entity';
 
 export type PublicVehicleStatus =
   | 'VALID'
+  /** Registered, plate not yet fitted, interim permit still valid. */
+  | 'AWAITING_PLATE'
+  /** Registered, plate not fitted, and the permit has run out. */
+  | 'PLATE_OVERDUE'
   | 'EXPIRED'
   | 'SUSPENDED'
   | 'NOT_REGISTERED'
@@ -61,6 +65,9 @@ export interface PublicVehicleResult {
    */
   matchedOnPreviousNumber?: boolean;
   previousPlateNumber?: string | null;
+  /** When the plate went on. Null while the vehicle is still on its old one. */
+  plateFittedAt?: Date | null;
+  interimPermitExpiresAt?: Date | null;
   /** True when the vehicle carries an open flag. Detail is withheld. */
   flagged?: boolean;
 }
@@ -124,6 +131,8 @@ export class PublicVehicleVerificationService {
              r."issuedAt"          AS "issuedAt",
              r."expiresAt"         AS "expiresAt",
              r."certificateNumber" AS "certificateNumber",
+             r."plateFittedAt"     AS "plateFittedAt",
+             r."interimPermitExpiresAt" AS "interimPermitExpiresAt",
              pl."plateNumber"      AS "plateNumber",
              pl."plateCode"        AS "plateCode",
              pl."regionCode"       AS "regionCode",
@@ -182,6 +191,8 @@ export class PublicVehicleVerificationService {
       expiresAt: row.expiresAt ?? null,
       issuingOffice: row.issuingOffice ?? null,
       certificateNumber: row.certificateNumber ?? null,
+      plateFittedAt: row.plateFittedAt ?? null,
+      interimPermitExpiresAt: row.interimPermitExpiresAt ?? null,
       flagged: row.flagged === true,
     };
   }
@@ -207,6 +218,24 @@ export class PublicVehicleVerificationService {
       return 'EXPIRED';
     }
 
-    return status === 'ACTIVE' ? 'VALID' : 'NOT_REGISTERED';
+    if (status !== 'ACTIVE') return 'NOT_REGISTERED';
+
+    // Registered, but has the plate actually gone on? Saying "registered" to an
+    // officer looking at a plate that does not match the record tells them
+    // something misleading — and the gap between the two is exactly where a
+    // stolen vehicle is easiest to move.
+    if (!row.plateFittedAt) {
+      const permitExpiry = row.interimPermitExpiresAt
+        ? new Date(row.interimPermitExpiresAt).getTime()
+        : null;
+      // Overdue, not unlawful. The office may simply not have produced the
+      // plate yet, and a driver should not carry the consequence of that.
+      if (permitExpiry !== null && permitExpiry < Date.now()) {
+        return 'PLATE_OVERDUE';
+      }
+      return 'AWAITING_PLATE';
+    }
+
+    return 'VALID';
   }
 }

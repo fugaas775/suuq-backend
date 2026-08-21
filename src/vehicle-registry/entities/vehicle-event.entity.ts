@@ -14,6 +14,9 @@ export enum VehicleEventType {
   FLAGGED = 'FLAGGED',
   FLAG_CLEARED = 'FLAG_CLEARED',
   PLATE_ISSUED = 'PLATE_ISSUED',
+  /** The plate physically went on the car — a different event from issuing it. */
+  PLATE_FITTED = 'PLATE_FITTED',
+  INTERIM_PERMIT_ISSUED = 'INTERIM_PERMIT_ISSUED',
   PLATE_REPLACED = 'PLATE_REPLACED',
   DEREGISTERED = 'DEREGISTERED',
   /**

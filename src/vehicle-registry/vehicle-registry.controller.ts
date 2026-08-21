@@ -33,6 +33,7 @@ import {
   ListVehicleClassesDto,
   SearchVehiclesDto,
   UpdateVehicleClassDto,
+  VehicleBranchScopeDto,
 } from './dto/vehicle-registry.dto';
 import { VehicleRegistryService } from './vehicle-registry.service';
 
@@ -171,6 +172,34 @@ export class VehicleRegistryController {
     @Query('branchId', ParseIntPipe) branchId: number,
   ) {
     return this.svc.getVehicleHistory(id, branchId);
+  }
+
+  // ── Plate fitment ────────────────────────────────────────────────────────
+
+  /**
+   * Confirm the plate physically went on the car — a different act from issuing
+   * it, performed by whoever watched it happen.
+   */
+  @Post('registrations/:id/plate-fitted')
+  @RetailBranchContext('body.branchId')
+  @RequirePosPermissions(PosVehiclePermission.VEHICLE_ISSUE)
+  confirmPlateFitted(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: VehicleBranchScopeDto,
+    @Req() req: any,
+  ) {
+    return this.svc.confirmPlateFitted(id, dto.branchId, req?.user?.id);
+  }
+
+  /** The worklist: registered vehicles still driving without their plate. */
+  @Get('awaiting-plate')
+  @RetailBranchContext('query.branchId')
+  @RequirePosPermissions(
+    PosVehiclePermission.VEHICLE_ISSUE,
+    PosVehiclePermission.VEHICLE_PLATE_STOCK,
+  )
+  awaitingPlate(@Query('branchId', ParseIntPipe) branchId: number) {
+    return this.svc.listAwaitingPlateFitment(branchId);
   }
 
   // ── Flags ────────────────────────────────────────────────────────────────

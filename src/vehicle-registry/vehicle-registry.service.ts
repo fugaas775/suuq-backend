@@ -1020,12 +1020,43 @@ export class VehicleRegistryService {
       await manager.save(registration);
 
       if (registration.plateId) {
+        // ISSUED, not FITTED. The certificate exists; whether the plate reached
+        // the car is a separate fact somebody has to confirm.
         await manager.update(
           VehiclePlate,
           { id: registration.plateId },
           { status: VehiclePlateStatus.ISSUED },
         );
       }
+
+      // The paper that covers the vehicle until the plate goes on. Minted for
+      // every issuance rather than only when the plate is unavailable: always
+      // issuing it means every registration has a dated record of the gap, and
+      // a clerk who hands the plate over immediately simply confirms fitment on
+      // the spot and the permit is spent the same day.
+      const permitDays = vehicleClass.interimPermitDays ?? 30;
+      const permitExpires = new Date(issuedAt);
+      permitExpires.setDate(permitExpires.getDate() + permitDays);
+      registration.interimPermitNumber = `IP-${dto.branchId}-${String(
+        registration.id,
+      ).padStart(8, '0')}`;
+      registration.interimPermitExpiresAt = permitExpires;
+      await manager.save(registration);
+
+      await this.recordEvent(manager, {
+        tenantId,
+        branchId: dto.branchId,
+        vehicleId: Number(registration.vehicleId),
+        registrationId: Number(registration.id),
+        type: VehicleEventType.INTERIM_PERMIT_ISSUED,
+        actorUserId,
+        occurredAt: issuedAt,
+        meta: {
+          permitNumber: registration.interimPermitNumber,
+          expiresAt: permitExpires.toISOString(),
+          days: permitDays,
+        },
+      });
 
       await this.recordEvent(manager, {
         tenantId,
@@ -1172,6 +1203,116 @@ export class VehicleRegistryService {
         occurredAt: event.occurredAt,
       }),
     );
+  }
+
+  // ── Plate fitment ────────────────────────────────────────────────────────
+
+  /**
+   * Record that the plate physically went on the car.
+   *
+   * A separate act from issuing it, performed by whoever watched it happen.
+   * Until this is called the registry knows the vehicle is driving on a number
+   * that does not match its record — which is the honest state, and the one the
+   * verification page needs in order to stop saying "registered" to an officer
+   * looking at a plate that disagrees with it.
+   */
+  async confirmPlateFitted(
+    registrationId: number,
+    branchId: number,
+    actorUserId?: number,
+  ) {
+    const tenantId = await this.resolveTenantId(branchId);
+
+    const registration = await this.registrationsRepository.findOne({
+      where: { id: registrationId, tenantId },
+    });
+    if (!registration) {
+      throw new NotFoundException(`Registration ${registrationId} not found`);
+    }
+    if (registration.status !== VehicleRegistrationStatus.ACTIVE) {
+      throw new ConflictException(
+        `Registration ${registrationId} is ${registration.status}; only a live registration can have a plate fitted.`,
+      );
+    }
+    // Already done. Return it rather than throwing — confirming twice is a
+    // clerk being careful, not an error.
+    if (registration.plateFittedAt) return registration;
+
+    const fittedAt = new Date();
+
+    return this.dataSource.transaction(async (manager) => {
+      registration.plateFittedAt = fittedAt;
+      registration.plateFittedByUserId = actorUserId ?? null;
+      await manager.save(registration);
+
+      if (registration.plateId) {
+        await manager.update(
+          VehiclePlate,
+          { id: registration.plateId },
+          { status: VehiclePlateStatus.FITTED },
+        );
+      }
+
+      await this.recordEvent(manager, {
+        tenantId,
+        branchId,
+        vehicleId: Number(registration.vehicleId),
+        registrationId: Number(registration.id),
+        type: VehicleEventType.PLATE_FITTED,
+        actorUserId,
+        occurredAt: fittedAt,
+        meta: { plateId: registration.plateId },
+      });
+
+      return registration;
+    });
+  }
+
+  /**
+   * Registrations whose plate has not gone on, oldest first.
+   *
+   * The worklist that turns the fitment gap from a blind spot into something
+   * somebody chases. `overdue` is computed against the permit expiry rather
+   * than stored, for the same reason registration expiry is: nothing sweeps
+   * these rows, so a stored flag would be stale the day after it was written.
+   */
+  async listAwaitingPlateFitment(branchId: number) {
+    const tenantId = await this.resolveTenantId(branchId);
+    const now = Date.now();
+
+    const rows = await this.dataSource.query(
+      `SELECT r."id"                     AS "registrationId",
+              r."certificateNumber"      AS "certificateNumber",
+              r."issuedAt"               AS "issuedAt",
+              r."interimPermitNumber"    AS "permitNumber",
+              r."interimPermitExpiresAt" AS "permitExpiresAt",
+              pl."plateNumber"           AS "plateNumber",
+              v."vin"                    AS "vin",
+              v."presentedPlateNumber"   AS "presentedPlateNumber",
+              o."fullName"               AS "ownerName",
+              o."phone"                  AS "ownerPhone"
+         FROM "pos_vehicle_registrations" r
+         JOIN "pos_vehicles" v          ON v."id" = r."vehicleId"
+         LEFT JOIN "pos_vehicle_owners" o ON o."id" = r."ownerId"
+         LEFT JOIN "pos_vehicle_plates" pl ON pl."id" = r."plateId"
+        WHERE r."tenantId" = $1
+          AND r."branchId" = $2
+          AND r."status" = 'ACTIVE'
+          AND r."plateFittedAt" IS NULL
+        ORDER BY r."interimPermitExpiresAt" ASC NULLS FIRST
+        LIMIT 200`,
+      [tenantId, branchId],
+    );
+
+    return (rows as any[]).map((row) => ({
+      ...row,
+      overdue: row.permitExpiresAt
+        ? new Date(row.permitExpiresAt).getTime() < now
+        : false,
+      daysWaiting: row.issuedAt
+        ? Math.floor((now - new Date(row.issuedAt).getTime()) / 86_400_000)
+        : null,
+    }));
   }
 
   // ── Reads ────────────────────────────────────────────────────────────────
