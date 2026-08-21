@@ -413,6 +413,26 @@ export class VehicleRegistryService {
       classId: number;
       registrationId: number;
       seriesId?: number | null;
+      /**
+       * The code this class is plated under — 1 taxi, 2 private, 3 commercial,
+       * 4 government, 5 religious and civic.
+       *
+       * The single most important filter here, and it was missing. A series is
+       * a block of ONE code, but `pos_vehicle_plate_series.classId` is a single
+       * nullable column and a code serves several classes — code 3 covers the
+       * truck, the bus and the trailer — so the office cannot express "this
+       * block is for commercial vehicles" through it, and in production all
+       * five blocks were left NULL. Every series therefore matched every class,
+       * and ordering by series age meant the FIRST block won every time: a
+       * goods truck was handed 1-SM-00001, a taxi plate.
+       *
+       * That is not cosmetic. The code and its colours are how an officer reads
+       * a vehicle's category at thirty metres, and it is printed on the
+       * certificate. Matching plate code to plate code is the join that was
+       * always meant — the class declares the code, the plate carries it — and
+       * it needs no migration because both columns already exist.
+       */
+      plateCode?: string | null;
     },
   ): Promise<VehiclePlate | null> {
     const rows = await manager.query(
@@ -431,6 +451,7 @@ export class VehicleRegistryService {
             AND s."status" = $6
             AND ($7::bigint IS NULL OR pick."seriesId" = $7::bigint)
             AND (s."classId" IS NULL OR s."classId" = $8::bigint)
+            AND ($9::text IS NULL OR pick."plateCode" = $9::text)
           ORDER BY s."createdAt" ASC, pick."sortKey" ASC
           LIMIT 1
           FOR UPDATE OF pick SKIP LOCKED
@@ -446,6 +467,7 @@ export class VehicleRegistryService {
         VehiclePlateSeriesStatus.ACTIVE,
         params.seriesId ?? null,
         params.classId,
+        params.plateCode ?? null,
       ],
     );
 
@@ -700,6 +722,7 @@ export class VehicleRegistryService {
         classId: Number(klass.id),
         registrationId: Number(registration.id),
         seriesId: dto.plateSeriesId ?? null,
+        plateCode: klass.plateCode ?? null,
       });
 
       if (plate) {
@@ -1392,6 +1415,7 @@ export class VehicleRegistryService {
         classId: Number(vehicle.classId),
         registrationId: Number(registration.id),
         seriesId: seriesId ?? null,
+        plateCode: vehicleClass.plateCode ?? null,
       });
 
       // Here, unlike at the counter, an empty shelf IS the error. Registering a
@@ -1401,7 +1425,11 @@ export class VehicleRegistryService {
       // value of the action.
       if (!plate) {
         throw new ConflictException(
-          'No plate number is available in this office for that class. Load the block granted by the Federal Trade Ministry as a plate series first.',
+          `No plate number is available in this office under code ${
+            vehicleClass.plateCode ?? '?'
+          }, which is what a ${
+            vehicleClass.nameEn
+          } is plated as. Load the block granted by the Federal Trade Ministry for that code as a plate series first.`,
         );
       }
 

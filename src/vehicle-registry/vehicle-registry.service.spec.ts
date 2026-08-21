@@ -1021,3 +1021,102 @@ describe('VehicleRegistryService — the two worklists are two lists', () => {
     expect(String(queries[0][0])).toMatch(/r\."plateId" IS NULL/);
   });
 });
+
+/**
+ * A plate's code says what the vehicle is FOR — 1 taxi, 2 private, 3
+ * commercial, 4 government, 5 religious and civic — and it is how an officer
+ * reads a category at thirty metres.
+ */
+describe('VehicleRegistryService — a truck must not be handed a taxi plate', () => {
+  const CLASS_TRUCK = {
+    id: 11,
+    tenantId: 42,
+    nameEn: 'Goods truck',
+    plateCode: '3',
+    renewalMonths: 12,
+    interimPermitDays: 30,
+  };
+
+  it('asks only for plates carrying the class’s own code', async () => {
+    // A series is a block of ONE code, but `plate_series.classId` is a single
+    // nullable column and a code serves several classes — 3 covers the truck,
+    // the bus and the trailer — so an office cannot express "this block is
+    // commercial" through it. In production all five blocks were left NULL,
+    // every series matched every class, and ordering by series age meant the
+    // FIRST block won every time: a goods truck was allocated 1-SM-00001.
+    const managerQuery = jest
+      .fn()
+      .mockResolvedValue(
+        updateReturning([{ id: 900, plateNumber: '3-SM-00001' }]),
+      );
+
+    const { svc } = makeService({
+      managerQuery,
+      registrationFindOne: {
+        id: 77,
+        tenantId: 42,
+        vehicleId: 88,
+        status: VehicleRegistrationStatus.ACTIVE,
+        plateId: null,
+      },
+      vehicle: { id: 88, tenantId: 42, classId: 11, vin: 'CHASSIS9' },
+      vehicleClass: CLASS_TRUCK,
+    });
+
+    await svc.assignPlateNumber(77, 7, null, 1863);
+
+    const sql = String(managerQuery.mock.calls[0][0]);
+    expect(sql).toContain('pick."plateCode" = $9::text');
+    expect(managerQuery.mock.calls[0][1]).toContain('3');
+  });
+
+  it('names the code and the class when there is none of it left', async () => {
+    // "No plate available" sends a registrar to look at a drawer with 400
+    // blanks in it. Naming the code tells them WHICH block is empty.
+    const { svc } = makeService({
+      managerQuery: jest.fn().mockResolvedValue(updateReturning([])),
+      registrationFindOne: {
+        id: 77,
+        tenantId: 42,
+        vehicleId: 88,
+        status: VehicleRegistrationStatus.ACTIVE,
+        plateId: null,
+      },
+      vehicle: { id: 88, tenantId: 42, classId: 11, vin: 'CHASSIS9' },
+      vehicleClass: CLASS_TRUCK,
+    });
+
+    await expect(svc.assignPlateNumber(77, 7, null, 1863)).rejects.toThrow(
+      /code 3.*Goods truck/s,
+    );
+  });
+
+  it('still registers at the counter when that code is out of stock', async () => {
+    // The counter must NOT be blocked by an empty block — that is the rule the
+    // whole drive depends on. Narrowing the search must not quietly reintroduce
+    // the failure that stopped every registration.
+    const { svc } = makeService({
+      managerQuery: jest.fn().mockResolvedValue(updateReturning([])),
+      vehicleClass: {
+        id: 11,
+        nameEn: 'Goods truck',
+        plateCode: '3',
+        status: 'ACTIVE',
+        renewalMonths: 12,
+      },
+    });
+
+    const result: any = await svc.draftRegistration(
+      {
+        branchId: 7,
+        classId: 11,
+        owner: { fullName: 'Xasan Diiriye' },
+        vehicle: { vin: 'CHASSISX' },
+      },
+      11,
+    );
+
+    expect(result.plate).toBeNull();
+    expect(result.registration).toBeTruthy();
+  });
+});
