@@ -23,6 +23,24 @@ import {
  * and no certificate without a fee behind it.
  */
 
+/**
+ * What TypeORM's Postgres driver ACTUALLY answers an `UPDATE ... RETURNING`
+ * with: `[rows, affectedCount]`, not the bare row array a SELECT gives.
+ *
+ * Every allocation mock in this file used to return the SELECT shape, and the
+ * specs passed while `allocatePlate` was broken against a real database in two
+ * ways at once — it handed back an ARRAY of plates where a plate was expected
+ * (so `Number(plate.id)` was NaN), and its empty-shelf branch never fired,
+ * because `[[], 0]` yields `[]`, which is truthy.
+ *
+ * Neither could be seen from here. A fixture I write agrees with me by
+ * construction; this one is written to agree with the driver instead. Verified
+ * against production Postgres — see scripts/verify-assign-plate-number.ts.
+ */
+function updateReturning(rows: any[]) {
+  return [rows, rows.length];
+}
+
 function repo(overrides: any = {}) {
   return {
     find: jest.fn().mockResolvedValue([]),
@@ -54,7 +72,7 @@ function qb(result: any = null, count = 0) {
 function makeService({
   branch = { id: 7, retailTenantId: 42 },
   queries = [] as any[],
-  managerQuery = jest.fn().mockResolvedValue([]),
+  managerQuery = jest.fn().mockResolvedValue(updateReturning([])),
   registrationFindOne = null as any,
   checkout = null as any,
   vehicleClass = null as any,
@@ -160,7 +178,9 @@ describe('VehicleRegistryService — plate allocation', () => {
     // shape is asserted rather than trusted to survive a future tidy-up.
     const managerQuery = jest
       .fn()
-      .mockResolvedValue([{ id: 900, plateNumber: '5-00001' }]);
+      .mockResolvedValue(
+        updateReturning([{ id: 900, plateNumber: '5-00001' }]),
+      );
 
     const { svc, manager } = makeService({
       managerQuery,
@@ -203,7 +223,7 @@ describe('VehicleRegistryService — plate allocation', () => {
     // counter. Refusing to register without one blocked the entire drive over a
     // number nobody was going to hand over that day.
     const { svc } = makeService({
-      managerQuery: jest.fn().mockResolvedValue([]),
+      managerQuery: jest.fn().mockResolvedValue(updateReturning([])),
       vehicleClass: {
         id: 3,
         nameEn: 'Private car',
@@ -791,7 +811,9 @@ describe('VehicleRegistryService — the Ministry grants a number', () => {
       registrationFindOne: { ...ACTIVE_NO_PLATE },
       vehicle: VEHICLE,
       vehicleClass: CLASS,
-      managerQuery: jest.fn().mockResolvedValue(plate ? [plate] : []),
+      managerQuery: jest
+        .fn()
+        .mockResolvedValue(updateReturning(plate ? [plate] : [])),
     });
   }
 

@@ -449,12 +449,30 @@ export class VehicleRegistryService {
       ],
     );
 
+    // A data-modifying statement does NOT return rows the way a SELECT does.
+    //
+    // TypeORM's Postgres driver answers an `UPDATE ... RETURNING` with
+    // `[rows, affectedCount]` — a two-element array whose FIRST element is the
+    // array of returned rows. Reading `rows[0]` therefore yields an array of
+    // plates, not a plate, and `Number(thatArray.id)` is NaN. Worse, an empty
+    // result is `[[], 0]`, and `[]` is truthy, so the "no stock" branch below
+    // never fired either: an office with an empty drawer got a NaN plate id
+    // rather than the null this method promises.
+    //
+    // Both halves of that were invisible to the unit specs, because the mocked
+    // `manager.query` returned a bare row array — the shape a SELECT gives. A
+    // fixture I write agrees with me by construction; only running the real
+    // statement against a real Postgres showed the difference. The mocks now
+    // return the driver's actual shape.
+    const returned =
+      Array.isArray(rows) && Array.isArray(rows[0]) ? rows[0] : rows;
+    const plate = Array.isArray(returned) ? returned[0] : null;
+
     // Null is an answer, not a failure. A real plate number is requested through
     // the Bureau rather than taken off a shelf, so an office with no stock is
     // the ordinary case — and refusing to register a vehicle because of it
     // would block the entire drive over a number the Bureau was never going to
     // issue at the counter.
-    const plate = Array.isArray(rows) ? rows[0] : null;
     return (plate as VehiclePlate) ?? null;
   }
 
