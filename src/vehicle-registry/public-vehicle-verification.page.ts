@@ -201,6 +201,18 @@ export function renderVehicleResultPage(result: PublicVehicleResult): string {
       </div>
 
       ${
+        result.matchedOnPreviousNumber
+          ? `<div class="flag" style="background:#fffbeb;border-color:#f59e0b;color:#92400e">
+               Baabuurkan wuxuu hadda leeyahay lambar cusub — ${esc(result.plateNumber ?? '')}<br>
+               ይህ ተሽከርካሪ አሁን አዲስ ቁጥር አለው<br>
+               You searched <strong>${esc(result.previousPlateNumber ?? '')}</strong>, the number this
+               vehicle used to carry. Its registered plate is now
+               <strong>${esc(result.plateNumber ?? '')}</strong>.
+             </div>`
+          : ''
+      }
+
+      ${
         result.flagged
           ? `<div class="flag">
                ⚠ GAADIIDKAN WAA LA SOO SHEEGAY — LA XIDHIIDH BOOLISKA<br>

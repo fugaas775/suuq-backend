@@ -50,6 +50,17 @@ export interface PublicVehicleResult {
   expiresAt?: Date | null;
   issuingOffice?: string | null;
   certificateNumber?: string | null;
+  /**
+   * True when the number typed was the one the vehicle USED to wear, not the
+   * plate the Bureau issued.
+   *
+   * During the regularisation drive most cars on the road are still carrying
+   * their old number, so this is the common case rather than the exception —
+   * and the reader has to be told plainly that the plate on the bumper is not
+   * the plate on the record.
+   */
+  matchedOnPreviousNumber?: boolean;
+  previousPlateNumber?: string | null;
   /** True when the vehicle carries an open flag. Detail is withheld. */
   flagged?: boolean;
 }
@@ -83,8 +94,27 @@ export class PublicVehicleVerificationService {
   async verifyByPlate(rawPlate: string): Promise<PublicVehicleResult> {
     const plate = String(rawPlate || '').trim();
     if (!plate) return NOT_FOUND;
-    const rows = await this.query(`UPPER(pl."plateNumber") = UPPER($1)`, [plate]);
-    return this.present(rows?.[0]);
+
+    // The issued plate first.
+    const issued = await this.query(`UPPER(pl."plateNumber") = UPPER($1)`, [plate]);
+    if (issued?.[0]) return this.present(issued[0]);
+
+    // Then the number the vehicle used to wear. This is not a fallback for
+    // completeness — during the drive most cars on the road still carry their
+    // old number, so an officer reading a bumper types THIS one. A portal that
+    // only knew plates we had issued would be useless for most of the fleet it
+    // is meant to cover.
+    const previous = await this.query(
+      `UPPER(COALESCE(v."presentedPlateNumber", '')) = UPPER($1)`,
+      [plate],
+    );
+    if (!previous?.[0]) return NOT_FOUND;
+
+    return {
+      ...this.present(previous[0]),
+      matchedOnPreviousNumber: true,
+      previousPlateNumber: previous[0].presentedPlateNumber ?? plate,
+    };
   }
 
   private async query(predicate: string, params: unknown[]) {
@@ -102,6 +132,7 @@ export class PublicVehicleVerificationService {
              v."model"             AS "model",
              v."modelYear"         AS "modelYear",
              v."colour"            AS "colour",
+             v."presentedPlateNumber" AS "presentedPlateNumber",
              c."nameEn"            AS "classNameEn",
              c."nameSo"            AS "classNameSo",
              c."plateBackgroundColour" AS "plateBackgroundColour",

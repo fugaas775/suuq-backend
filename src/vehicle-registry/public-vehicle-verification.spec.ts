@@ -4,8 +4,17 @@ import {
   renderVehicleResultPage,
 } from './public-vehicle-verification.page';
 
-function makeService(row: any) {
-  const dataSource: any = { query: jest.fn().mockResolvedValue(row ? [row] : []) };
+function makeService(row: any, previousRow: any = undefined) {
+  // verifyByPlate asks twice: the issued plate, then the number the vehicle
+  // used to wear. A single-answer stub cannot tell those apart.
+  const dataSource: any = {
+    query: previousRow === undefined
+      ? jest.fn().mockResolvedValue(row ? [row] : [])
+      : jest
+          .fn()
+          .mockResolvedValueOnce(row ? [row] : [])
+          .mockResolvedValueOnce(previousRow ? [previousRow] : []),
+  };
   return {
     svc: new PublicVehicleVerificationService({} as any, dataSource),
     dataSource,
@@ -101,6 +110,53 @@ describe('public vehicle verification — what a stranger is told', () => {
     const result = await svc.verifyByPlate('3-SM-00042');
     expect(result.flagged).toBe(true);
     expect(JSON.stringify(result)).not.toMatch(/reference|note|raisedBy/i);
+  });
+});
+
+describe('public vehicle verification — cars still wearing the old number', () => {
+  it('resolves the number a vehicle used to carry', async () => {
+    // During the drive most cars on the road still wear their old number, so an
+    // officer reading a bumper types THAT one. A portal that only knew plates we
+    // had issued would be useless for most of the fleet it exists to cover.
+    const { svc } = makeService(null, {
+      ...base,
+      presentedPlateNumber: '3-SM-00042',
+      plateNumber: '2-SM-00001',
+      expiresAt: new Date(Date.now() + 86_400_000),
+    });
+
+    const result = await svc.verifyByPlate('3-SM-00042');
+    expect(result.found).toBe(true);
+    expect(result.status).toBe('VALID');
+    expect(result.matchedOnPreviousNumber).toBe(true);
+    expect(result.previousPlateNumber).toBe('3-SM-00042');
+    // And it reports the plate the vehicle SHOULD now be wearing.
+    expect(result.plateNumber).toBe('2-SM-00001');
+  });
+
+  it('prefers the issued plate when both could match', async () => {
+    const { svc } = makeService({ ...base, plateNumber: '2-SM-00001' }, null);
+    const result = await svc.verifyByPlate('2-SM-00001');
+    expect(result.matchedOnPreviousNumber).toBeUndefined();
+  });
+
+  it('tells the reader plainly that the plate has changed', () => {
+    const html = renderVehicleResultPage({
+      found: true, status: 'VALID',
+      plateNumber: '2-SM-00001',
+      previousPlateNumber: '3-SM-00042',
+      matchedOnPreviousNumber: true,
+    });
+    expect(html).toContain('3-SM-00042');
+    expect(html).toContain('2-SM-00001');
+    expect(html).toMatch(/used to carry/i);
+  });
+
+  it('says nothing about a swap for a vehicle on its issued plate', () => {
+    const html = renderVehicleResultPage({
+      found: true, status: 'VALID', plateNumber: '2-SM-00001',
+    });
+    expect(html).not.toMatch(/used to carry/i);
   });
 });
 
