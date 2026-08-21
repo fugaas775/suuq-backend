@@ -965,7 +965,10 @@ export class VehicleRegistryService {
       );
     }
 
-    await this.assertCheckoutPaysForThis(
+    // Payment first: a clerk who mistyped a receipt number should be told the
+    // payment is wrong, not that the vehicle is missing. Cheap checks, clear
+    // message, before anything else is loaded.
+    const paidCheckout = await this.assertCheckoutPaysForThis(
       dto.branchId,
       dto.checkoutId,
       registrationId,
@@ -983,6 +986,8 @@ export class VehicleRegistryService {
     if (!vehicleClass) {
       throw new NotFoundException('The class on this vehicle is gone.');
     }
+
+    this.assertCheckoutCarriesFee(paidCheckout, vehicleClass, dto.checkoutId);
 
     return this.dataSource.transaction(async (manager) => {
       const issuedAt = new Date();
@@ -1098,7 +1103,7 @@ export class VehicleRegistryService {
     branchId: number,
     checkoutId: number,
     registrationId: number,
-  ) {
+  ): Promise<PosCheckout> {
     const checkout = await this.dataSource
       .getRepository(PosCheckout)
       .findOne({ where: { id: checkoutId } });
@@ -1136,6 +1141,52 @@ export class VehicleRegistryService {
     if (alreadySpent && Number(alreadySpent.id) !== Number(registrationId)) {
       throw new ConflictException(
         `That payment has already issued registration ${alreadySpent.certificateNumber ?? alreadySpent.id}.`,
+      );
+    }
+
+    return checkout;
+  }
+
+  /**
+   * And is it actually THIS registration's fee?
+   *
+   * Everything in assertCheckoutPaysForThis proves the payment is real, unspent
+   * and this office's. None of it proves it has anything to do with this
+   * vehicle. A clerk typing a receipt number off a till can transpose two
+   * digits and land on another customer's settled basket — a different amount,
+   * for a different thing — and every check up to here would wave it through,
+   * issuing a plate against a payment nobody made for it.
+   */
+  private assertCheckoutCarriesFee(
+    checkout: PosCheckout,
+    vehicleClass: VehicleClass | null | undefined,
+    checkoutId: number,
+  ) {
+    // ── And is it actually THIS registration's fee? ────────────────────────
+    //
+    // Only enforced when the class actually names fee SKUs. A bureau that has
+    // not finished pricing its classes should not be blocked from registering;
+    // the missing-fee warning on the draft already tells them.
+    const expectedSkus = [
+      vehicleClass?.registrationFeeSku,
+      vehicleClass?.plateFeeSku,
+      vehicleClass?.renewalFeeSku,
+      vehicleClass?.transferFeeSku,
+    ]
+      .filter((sku): sku is string => Boolean(sku))
+      .map((sku) => sku.toUpperCase());
+
+    if (expectedSkus.length === 0) return;
+
+    const items = Array.isArray(checkout.items) ? checkout.items : [];
+    const paidSkus = items
+      .map((item: any) => String(item?.sku ?? '').toUpperCase())
+      .filter(Boolean);
+
+    const matches = paidSkus.some((sku) => expectedSkus.includes(sku));
+    if (!matches) {
+      throw new BadRequestException(
+        `Payment ${checkout.receiptNumber ?? checkoutId} does not include a registration fee for this class of vehicle. Check the receipt number — this looks like a different sale.`,
       );
     }
   }

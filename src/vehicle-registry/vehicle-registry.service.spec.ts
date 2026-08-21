@@ -570,6 +570,72 @@ describe('VehicleRegistryService — issuance', () => {
     ).rejects.toBeInstanceOf(ConflictException);
   });
 
+  it("refuses a payment that is real but is somebody else's sale", async () => {
+    // Every other check passes: the payment exists, it is this office's, it is
+    // a SALE, it is not voided and it is unspent. It is simply not THIS
+    // registration's fee — a clerk transposed two digits and landed on another
+    // customer's settled basket. Without this the registry would issue a plate
+    // against a payment nobody made for it.
+    const { svc } = makeService({
+      registrationFindOne: { ...pending },
+      checkout: {
+        ...goodCheckout,
+        receiptNumber: 'R-0099',
+        items: [{ sku: 'CAFE-LATTE', title: 'Latte', lineTotal: 80 }],
+      },
+      vehicle: { id: 5, classId: 3, tenantId: 42 },
+      vehicleClass: {
+        id: 3, renewalMonths: 12, nameEn: 'Private car',
+        registrationFeeSku: 'VR-PRIVATE_CAR-REG',
+        plateFeeSku: 'VR-PRIVATE_CAR-PLATE',
+      },
+    });
+
+    await expect(
+      svc.issueRegistration(77, { branchId: 7, checkoutId: 3001 } as any),
+    ).rejects.toThrow(/different sale/i);
+  });
+
+  it('accepts a payment that carries the class fee', async () => {
+    const { svc } = makeService({
+      registrationFindOne: { ...pending },
+      checkout: {
+        ...goodCheckout,
+        items: [
+          { sku: 'VR-PRIVATE_CAR-REG', title: 'Registration', lineTotal: 1500 },
+          { sku: 'VR-PRIVATE_CAR-PLATE', title: 'Plate', lineTotal: 700 },
+        ],
+      },
+      vehicle: { id: 5, classId: 3, tenantId: 42 },
+      vehicleClass: {
+        id: 3, renewalMonths: 12, nameEn: 'Private car',
+        registrationFeeSku: 'VR-PRIVATE_CAR-REG',
+        plateFeeSku: 'VR-PRIVATE_CAR-PLATE',
+      },
+    });
+
+    const issued: any = await svc.issueRegistration(
+      77, { branchId: 7, checkoutId: 3001 } as any, 11,
+    );
+    expect(issued.status).toBe(VehicleRegistrationStatus.ACTIVE);
+  });
+
+  it('does not block a bureau that has not finished pricing its classes', async () => {
+    // A class with no fee SKUs cannot be checked against, and refusing would
+    // stop registration for a configuration gap the draft already warns about.
+    const { svc } = makeService({
+      registrationFindOne: { ...pending },
+      checkout: { ...goodCheckout, items: [{ sku: 'ANYTHING' }] },
+      vehicle: { id: 5, classId: 3, tenantId: 42 },
+      vehicleClass: { id: 3, renewalMonths: 12, nameEn: 'Private car' },
+    });
+
+    const issued: any = await svc.issueRegistration(
+      77, { branchId: 7, checkoutId: 3001 } as any, 11,
+    );
+    expect(issued.status).toBe(VehicleRegistrationStatus.ACTIVE);
+  });
+
   it('refuses a voided payment', async () => {
     const { svc } = makeService({
       registrationFindOne: { ...pending },
