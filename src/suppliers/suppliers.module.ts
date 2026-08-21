@@ -14,6 +14,7 @@ import { SupplierStaffController } from './supplier-staff.controller';
 import { SupplierOnboardingService } from './supplier-onboarding.service';
 import { SupplierActivationService } from './supplier-activation.service';
 import { SupplierOutletService } from './supplier-outlet.service';
+import { SupplierSubscriptionLifecycleService } from './supplier-subscription-lifecycle.service';
 
 @Module({
   imports: [
@@ -38,6 +39,7 @@ import { SupplierOutletService } from './supplier-outlet.service';
     SupplierOnboardingService,
     SupplierActivationService,
     SupplierOutletService,
+    SupplierSubscriptionLifecycleService,
   ],
   exports: [
     SuppliersService,
@@ -45,6 +47,7 @@ import { SupplierOutletService } from './supplier-outlet.service';
     SupplierOnboardingService,
     SupplierActivationService,
     SupplierOutletService,
+    SupplierSubscriptionLifecycleService,
   ],
 })
 export class SuppliersModule {}

@@ -4,34 +4,37 @@ import {
 } from './entities/tenant-subscription.entity';
 
 /**
- * The free trial a brand-new POS signup is provisioned with.
+ * The free period a brand-new POS signup is provisioned with.
  *
  * A first-time Google/Apple signup is auto-provisioned a QSR branch that opens
  * immediately (see PosPortalOnboardingService.createTrialWorkspaceForNewUser),
- * so the owner can actually use POS-S before paying. The trial is what makes
- * that branch openable: `getBranchWorkspaceStatus` reports a LIVE trial as
+ * so the owner can actually use POS-S before paying. The free period is what
+ * makes that branch openable: `getBranchWorkspaceStatus` reports a LIVE one as
  * ACTIVE, and a LAPSED one as EXPIRED — which drops the branch out of the
  * session and routes the owner to the normal Ebirr activation paywall.
  *
  * The plan code is the marker. Legacy TRIAL subscriptions (created before this
  * existed, and any TRIAL row an admin sets by hand) keep their old
- * PAYMENT_REQUIRED meaning — only rows stamped with one of the auto-trial plan
+ * PAYMENT_REQUIRED meaning — only rows stamped with one of the free-period plan
  * codes can open a branch without payment, and only until `endsAt`.
+ *
+ * ONE free workspace per account, ever — a branch OR a supplier, whichever the
+ * account opens first. That allowance is not enforced here: it lives in
+ * FreeWorkspaceGrantService, which is the only thing that may hand one out.
  */
-export const POS_SELF_SERVE_TRIAL_PLAN_CODE = 'POS_BRANCH_TRIAL_6M';
-
-export const POS_SELF_SERVE_TRIAL_MONTHS = 6;
+export const POS_SELF_SERVE_TRIAL_PLAN_CODE = 'POS_BRANCH_FREE_2026';
 
 /**
- * Plan codes that mark an auto-trial row — current first, then superseded ones.
+ * Plan codes that mark a free-period row — current first, then superseded ones.
  *
  * The code is baked into every row already in the database, so shortening the
- * list would strand live trials: a branch whose row still says the old code
+ * list would strand live grants: a branch whose row still says an old code
  * would stop matching, drop to PAYMENT_REQUIRED and lock its owner out
- * mid-trial. Old codes stay recognised for as long as their rows can exist.
+ * mid-period. Old codes stay recognised for as long as their rows can exist.
  */
 export const POS_SELF_SERVE_TRIAL_PLAN_CODES = [
   POS_SELF_SERVE_TRIAL_PLAN_CODE,
+  'POS_BRANCH_TRIAL_6M',
   'POS_BRANCH_TRIAL_14D',
 ] as const;
 
@@ -39,30 +42,24 @@ export const POS_SELF_SERVE_TRIAL_PLAN_CODES = [
 export const POS_SELF_SERVE_TRIAL_SERVICE_FORMAT = 'QSR';
 
 /**
- * Calendar months, not 30-day blocks: a trial started on the 3rd ends on the
- * 3rd, which is what "six months free" means to the owner reading the date.
- * A start day with no counterpart in the end month (31 Aug + 6) clamps back to
- * that month's last day rather than spilling into the next one.
+ * The deadline is platform-wide — the same date for a free branch and a free
+ * supplier account — so it lives in free-period.policy.ts and is re-exported
+ * here under POS-flavoured names for the callers that already import from this
+ * file.
  */
-export function getPosSelfServeTrialEndsAt(startsAt: Date): Date {
-  const endsAt = new Date(startsAt.getTime());
-  const startDayOfMonth = endsAt.getDate();
-
-  endsAt.setMonth(endsAt.getMonth() + POS_SELF_SERVE_TRIAL_MONTHS);
-  if (endsAt.getDate() !== startDayOfMonth) {
-    endsAt.setDate(0);
-  }
-
-  return endsAt;
-}
+export {
+  getFreePeriodEndsAt as getPosFreePeriodEndsAt,
+  isFreePeriodOpen as isPosFreePeriodOpen,
+  formatFreePeriodEndsAt as formatPosFreePeriodEndsAt,
+} from '../free-workspace/free-period.policy';
 
 /**
- * This row was created by the auto-trial — whatever its status is NOW.
+ * This row was created by the free-period grant — whatever its status is NOW.
  *
- * Once the lifecycle cron persists a lapsed trial as EXPIRED (and once a paid
+ * Once the lifecycle cron persists a lapsed grant as EXPIRED (and once a paid
  * conversion overwrites the row), status-based predicates stop matching it.
- * Reporting and audit code that asks "did this workspace start life on the
- * trial?" must use this one.
+ * Reporting and audit code that asks "did this workspace start life free?"
+ * must use this one.
  */
 export function isPosSelfServeTrialPlan(
   subscription: TenantSubscription | null | undefined,
@@ -72,7 +69,7 @@ export function isPosSelfServeTrialPlan(
   );
 }
 
-/** Still on the unpaid trial — not yet converted, not yet expired. */
+/** Still on the free period — not yet converted, not yet expired. */
 export function isPosSelfServeTrialSubscription(
   subscription: TenantSubscription | null | undefined,
 ): boolean {
@@ -83,7 +80,7 @@ export function isPosSelfServeTrialSubscription(
 }
 
 /**
- * The trial ran out. Answers the same before and after the cron persists
+ * The free period ran out. Answers the same before and after the cron persists
  * EXPIRED, so callers do not change behaviour the night the sweep first runs.
  */
 export function isLapsedPosSelfServeTrial(
@@ -109,7 +106,7 @@ export function isLapsedPosSelfServeTrial(
   );
 }
 
-/** An auto-trial that has not run out yet — the branch may open unpaid. */
+/** A free period that has not run out yet — the branch may open unpaid. */
 export function isLivePosSelfServeTrial(
   subscription: TenantSubscription | null | undefined,
   now: number = Date.now(),

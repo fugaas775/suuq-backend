@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
+import { FreeWorkspaceGrantService } from '../free-workspace/free-workspace-grant.service';
 import { AuditService } from '../audit/audit.service';
 import { BranchStaffAssignment } from '../branch-staff/entities/branch-staff-assignment.entity';
 import { Branch } from '../branches/entities/branch.entity';
@@ -39,6 +40,7 @@ describe('RetailEntitlementsService', () => {
   let branchesRepository: any;
   let usersRepository: any;
   let auditService: any;
+  let freeWorkspaceGrantService: any;
 
   beforeEach(async () => {
     retailTenantsRepository = {
@@ -75,6 +77,11 @@ describe('RetailEntitlementsService', () => {
     auditService = {
       log: jest.fn(),
     };
+    freeWorkspaceGrantService = {
+      claim: jest.fn(async () => ({ id: 5 })),
+      findActiveGrant: jest.fn(async () => null),
+      hasClaimedFreeWorkspace: jest.fn(async () => false),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -102,6 +109,10 @@ describe('RetailEntitlementsService', () => {
         { provide: getRepositoryToken(Branch), useValue: branchesRepository },
         { provide: getRepositoryToken(User), useValue: usersRepository },
         { provide: AuditService, useValue: auditService },
+        {
+          provide: FreeWorkspaceGrantService,
+          useValue: freeWorkspaceGrantService,
+        },
       ],
     }).compile();
 
@@ -698,6 +709,72 @@ describe('RetailEntitlementsService', () => {
       service.createTenant({ name: 'Retail HQ', ownerUserId: 99 }),
     ).rejects.toThrow(NotFoundException);
   });
+  describe('the one free workspace an account gets', () => {
+    const savedDeadline = process.env.POS_FREE_PERIOD_ENDS_AT;
+
+    afterEach(() => {
+      if (savedDeadline == null) {
+        delete process.env.POS_FREE_PERIOD_ENDS_AT;
+      } else {
+        process.env.POS_FREE_PERIOD_ENDS_AT = savedDeadline;
+      }
+    });
+
+    it('opens a first branch free until the deadline', async () => {
+      delete process.env.POS_FREE_PERIOD_ENDS_AT;
+      tenantSubscriptionsRepository.findOne.mockResolvedValue(null);
+
+      const subscription = await service.startPosSelfServeTrial(5, 8, 9);
+
+      expect(subscription).toMatchObject({
+        tenantId: 5,
+        branchId: 8,
+        planCode: 'POS_BRANCH_FREE_2026',
+        status: TenantSubscriptionStatus.TRIAL,
+        amountTotal: 0,
+      });
+      expect(subscription?.endsAt?.toISOString()).toBe(
+        '2026-12-31T20:59:59.999Z',
+      );
+      expect(freeWorkspaceGrantService.claim).toHaveBeenCalledWith(
+        9,
+        expect.objectContaining({ kind: 'BRANCH', branchId: 8 }),
+      );
+    });
+
+    it('charges the second branch: the slot is spent per account', async () => {
+      // This is the whole rule. The account already holds a free workspace —
+      // a branch it still runs, one it deleted, or a supplier account — so this
+      // branch is born chargeable and getBranchWorkspaceStatus reports
+      // PAYMENT_REQUIRED for it.
+      delete process.env.POS_FREE_PERIOD_ENDS_AT;
+      tenantSubscriptionsRepository.findOne.mockResolvedValue(null);
+      freeWorkspaceGrantService.claim.mockResolvedValue(null);
+
+      expect(await service.startPosSelfServeTrial(5, 9, 9)).toBeNull();
+      expect(tenantSubscriptionsRepository.save).not.toHaveBeenCalled();
+    });
+
+    it('charges everyone once the promotion has closed', async () => {
+      process.env.POS_FREE_PERIOD_ENDS_AT = '2020-01-01T00:00:00.000Z';
+      tenantSubscriptionsRepository.findOne.mockResolvedValue(null);
+
+      expect(await service.startPosSelfServeTrial(5, 8, 9)).toBeNull();
+      // The slot must not be spent on a workspace that is chargeable anyway.
+      expect(freeWorkspaceGrantService.claim).not.toHaveBeenCalled();
+      expect(tenantSubscriptionsRepository.save).not.toHaveBeenCalled();
+    });
+
+    it('does not spend a second slot on a branch that already has a row', async () => {
+      delete process.env.POS_FREE_PERIOD_ENDS_AT;
+      const existing = { id: 71, tenantId: 5, branchId: 8 };
+      tenantSubscriptionsRepository.findOne.mockResolvedValue(existing);
+
+      expect(await service.startPosSelfServeTrial(5, 8, 9)).toBe(existing);
+      expect(freeWorkspaceGrantService.claim).not.toHaveBeenCalled();
+    });
+  });
+
   describe('branch-scoped subscription resolution', () => {
     function stubTenantAndBranch(branchId: number) {
       branchesRepository.findOne.mockResolvedValue({

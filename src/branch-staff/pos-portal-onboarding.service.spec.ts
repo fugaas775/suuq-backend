@@ -8,6 +8,7 @@ import { User } from '../users/entities/user.entity';
 import { SellerWorkspace } from '../seller-workspace/entities/seller-workspace.entity';
 import { BranchStaffService } from './branch-staff.service';
 import { PosPortalOnboardingService } from './pos-portal-onboarding.service';
+import { FreeWorkspaceGrantService } from '../free-workspace/free-workspace-grant.service';
 import {
   BranchStaffAssignment,
   BranchStaffRole,
@@ -41,7 +42,17 @@ describe('PosPortalOnboardingService', () => {
       },
     })),
     upsertModuleEntitlement: jest.fn(async () => undefined),
-    startPosSelfServeTrial: jest.fn(async () => ({ id: 71 })),
+    startPosSelfServeTrial: jest.fn(async () => ({
+      id: 71,
+      planCode: 'POS_BRANCH_FREE_2026',
+      endsAt: new Date('2026-12-31T20:59:59.999Z'),
+    })),
+  };
+
+  const freeWorkspaceGrantService = {
+    hasClaimedFreeWorkspace: jest.fn(async () => false),
+    findActiveGrant: jest.fn(async () => null),
+    claim: jest.fn(async () => ({ id: 5 })),
   };
 
   const equityPartnerService = {
@@ -115,7 +126,10 @@ describe('PosPortalOnboardingService', () => {
     );
     retailEntitlementsService.startPosSelfServeTrial.mockResolvedValue({
       id: 71,
+      planCode: 'POS_BRANCH_FREE_2026',
+      endsAt: new Date('2026-12-31T20:59:59.999Z'),
     });
+    freeWorkspaceGrantService.hasClaimedFreeWorkspace.mockResolvedValue(false);
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -124,6 +138,10 @@ describe('PosPortalOnboardingService', () => {
         {
           provide: getRepositoryToken(BranchStaffAssignment),
           useValue: assignmentsRepository,
+        },
+        {
+          provide: FreeWorkspaceGrantService,
+          useValue: freeWorkspaceGrantService,
         },
         {
           provide: RetailEntitlementsService,
@@ -370,28 +388,64 @@ describe('PosPortalOnboardingService', () => {
       );
     }
 
-    it('opens the workspace free for six months instead of demanding payment', async () => {
+    it('opens the workspace free until the deadline instead of demanding payment', async () => {
       process.env.POS_FIRST_BRANCH_TRIAL_ENABLED = '1';
       expectFirstBranch();
-      retailEntitlementsService.startPosSelfServeTrial.mockResolvedValue({
-        id: 71,
-        planCode: 'POS_BRANCH_TRIAL_6M',
-        endsAt: new Date('2027-02-05T09:00:00.000Z'),
-      });
 
       const result = await service.createWorkspaceForUser(OWNER, {
         businessName: 'Bole Bites',
       });
 
+      // The owner's id goes with it: the free workspace is spent per ACCOUNT,
+      // and the branch is not what the allowance is counted against.
       expect(
         retailEntitlementsService.startPosSelfServeTrial,
-      ).toHaveBeenCalledWith(31, 21);
+      ).toHaveBeenCalledWith(31, 21, 9);
       expect(result.onboardingState).toBe('BRANCH_WORKSPACE_TRIAL_ACTIVE');
-      expect(result.trial).toMatchObject({
-        planCode: 'POS_BRANCH_TRIAL_6M',
-        months: 6,
-        endsAt: '2027-02-05T09:00:00.000Z',
+      expect(result.trial).toEqual({
+        planCode: 'POS_BRANCH_FREE_2026',
+        endsAt: '2026-12-31T20:59:59.999Z',
       });
+    });
+
+    it('asks for payment when the account already spent its free workspace', async () => {
+      // The gate's create form is reachable by an account that deleted its free
+      // branch, or that already has a free supplier account. Neither gets a
+      // second free one — startPosSelfServeTrial answers null and the branch is
+      // born chargeable.
+      process.env.POS_FIRST_BRANCH_TRIAL_ENABLED = '1';
+      branchStaffService.getPosBranchSummariesForUser.mockResolvedValue([]);
+      branchStaffService.getPosWorkspaceActivationCandidatesForUser
+        .mockResolvedValueOnce([])
+        .mockResolvedValue([
+          { branchId: 21, workspaceStatus: 'PAYMENT_REQUIRED' },
+        ]);
+      retailEntitlementsService.startPosSelfServeTrial.mockResolvedValue(null);
+
+      const result = await service.createWorkspaceForUser(OWNER, {
+        businessName: 'Bole Bites',
+      });
+
+      expect(result.onboardingState).toBe(
+        'BRANCH_WORKSPACE_ACTIVATION_REQUIRED',
+      );
+      expect(result.trial).toBeNull();
+      expect(result.workspace.workspaceStatus).toBe('PAYMENT_REQUIRED');
+    });
+
+    it('opens a first branch free without the env flag being set', async () => {
+      // The flag shipped OFF so a stale client could not bill an owner for what
+      // it had just given them free. Every live client checks the returned
+      // status now, and "the first branch is free" must not depend on which
+      // sign-in button the owner pressed.
+      delete process.env.POS_FIRST_BRANCH_TRIAL_ENABLED;
+      expectFirstBranch();
+
+      const result = await service.createWorkspaceForUser(OWNER, {
+        businessName: 'Bole Bites',
+      });
+
+      expect(result.onboardingState).toBe('BRANCH_WORKSPACE_TRIAL_ACTIVE');
     });
 
     it('reports the workspace ACTIVE, not PAYMENT_REQUIRED', async () => {
@@ -410,7 +464,8 @@ describe('PosPortalOnboardingService', () => {
       expect(result.workspace.workspaceStatus).toBe('ACTIVE');
     });
 
-    it('still asks for payment while the flag is off', async () => {
+    it('still asks for payment while the flag is switched off', async () => {
+      process.env.POS_FIRST_BRANCH_TRIAL_ENABLED = 'false';
       branchStaffService.getPosBranchSummariesForUser.mockResolvedValue([]);
       branchStaffService.getPosWorkspaceActivationCandidatesForUser
         .mockResolvedValueOnce([])
@@ -537,7 +592,7 @@ describe('PosPortalOnboardingService', () => {
       // branch drops straight back out of the session.
       expect(
         retailEntitlementsService.startPosSelfServeTrial,
-      ).toHaveBeenCalledWith(31, 21);
+      ).toHaveBeenCalledWith(31, 21, 9);
       // The caller resolves branch access from this user object immediately.
       expect(user.roles).toContain('POS_MANAGER');
     });

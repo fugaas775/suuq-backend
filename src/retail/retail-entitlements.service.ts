@@ -44,14 +44,16 @@ import {
   RetailPlanPreset,
 } from './retail-plan-presets';
 import {
-  getPosSelfServeTrialEndsAt,
+  getPosFreePeriodEndsAt,
   isLapsedPosSelfServeTrial,
   isLivePosSelfServeTrial,
+  isPosFreePeriodOpen,
   isPosSelfServeTrialPlan,
   isPosSelfServeTrialSubscription,
-  POS_SELF_SERVE_TRIAL_MONTHS,
   POS_SELF_SERVE_TRIAL_PLAN_CODE,
 } from './pos-self-serve-trial.policy';
+import { FreeWorkspaceGrantService } from '../free-workspace/free-workspace-grant.service';
+import { FreeWorkspaceGrantKind } from '../free-workspace/entities/account-free-workspace-grant.entity';
 
 type PosWorkspaceStatus =
   | 'ACTIVE'
@@ -170,6 +172,7 @@ export class RetailEntitlementsService {
     private readonly usersRepository: Repository<User>,
     @InjectRepository(BranchStaffAssignment)
     private readonly branchStaffAssignmentRepository: Repository<BranchStaffAssignment>,
+    private readonly freeWorkspaceGrantService: FreeWorkspaceGrantService,
   ) {}
 
   /**
@@ -411,15 +414,23 @@ export class RetailEntitlementsService {
   }
 
   /**
-   * Starts the free trial that lets an auto-provisioned branch open before it
-   * is paid for. Branch-scoped, so a later paid subscription supersedes it, and
-   * idempotent per branch — a second call returns the existing trial rather
-   * than extending it.
+   * Opens a branch free until the promotion's deadline, without payment.
+   *
+   * Returns null when the branch is chargeable — the promotion has closed, or
+   * the owner has already spent the one free workspace their account gets. A
+   * null answer is an ordinary outcome, not a failure: the caller falls through
+   * to the Ebirr paywall it would have shown anyway. Callers MUST NOT tell the
+   * owner their workspace is open without checking it.
+   *
+   * Branch-scoped, so a later paid subscription supersedes it, and idempotent
+   * per branch — a second call returns the existing row rather than extending
+   * it or spending a second slot.
    */
   async startPosSelfServeTrial(
     tenantId: number,
     branchId: number,
-  ): Promise<TenantSubscription> {
+    ownerUserId: number,
+  ): Promise<TenantSubscription | null> {
     const existing = await this.tenantSubscriptionsRepository.findOne({
       where: { tenantId, branchId },
       order: { createdAt: 'DESC' },
@@ -430,6 +441,28 @@ export class RetailEntitlementsService {
     }
 
     const startsAt = new Date();
+    const endsAt = getPosFreePeriodEndsAt();
+
+    if (!isPosFreePeriodOpen(startsAt.getTime())) {
+      return null;
+    }
+
+    // Claimed BEFORE the subscription is written: if the slot is already spent
+    // the branch must be born chargeable, and a row that says otherwise would
+    // open it for free anyway — getBranchWorkspaceStatus reads the row, not
+    // the grant.
+    const grant = await this.freeWorkspaceGrantService.claim(ownerUserId, {
+      kind: FreeWorkspaceGrantKind.BRANCH,
+      planCode: POS_SELF_SERVE_TRIAL_PLAN_CODE,
+      endsAt,
+      branchId,
+      retailTenantId: tenantId,
+      metadata: { source: 'POS_SELF_SERVE_AUTO_TRIAL' },
+    });
+
+    if (!grant) {
+      return null;
+    }
 
     return this.tenantSubscriptionsRepository.save(
       this.tenantSubscriptionsRepository.create({
@@ -442,11 +475,11 @@ export class RetailEntitlementsService {
         amountTotal: 0,
         currency: 'ETB',
         startsAt,
-        endsAt: getPosSelfServeTrialEndsAt(startsAt),
+        endsAt,
         autoRenew: false,
         metadata: {
           source: 'POS_SELF_SERVE_AUTO_TRIAL',
-          trialMonths: POS_SELF_SERVE_TRIAL_MONTHS,
+          freeWorkspaceGrantId: grant.id,
           branchId,
         },
       }),

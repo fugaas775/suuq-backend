@@ -3,12 +3,13 @@ import {
   TenantSubscriptionStatus,
 } from './entities/tenant-subscription.entity';
 import {
-  getPosSelfServeTrialEndsAt,
+  formatPosFreePeriodEndsAt,
+  getPosFreePeriodEndsAt,
   isLapsedPosSelfServeTrial,
   isLivePosSelfServeTrial,
+  isPosFreePeriodOpen,
   isPosSelfServeTrialPlan,
   isPosSelfServeTrialSubscription,
-  POS_SELF_SERVE_TRIAL_MONTHS,
   POS_SELF_SERVE_TRIAL_PLAN_CODE,
 } from './pos-self-serve-trial.policy';
 
@@ -23,40 +24,56 @@ function buildSubscription(
   } as TenantSubscription;
 }
 
-describe('pos self-serve trial policy', () => {
-  it('ends the trial the configured number of calendar months later', () => {
-    // 1 Jul 2026 + 6 months = 1 Jan 2027.
-    const startsAt = new Date(2026, 6, 1, 9, 0, 0);
-    const expected = new Date(
-      2026,
-      6 + POS_SELF_SERVE_TRIAL_MONTHS,
-      1,
-      9,
-      0,
-      0,
-    );
-    const endsAt = getPosSelfServeTrialEndsAt(startsAt);
+describe('pos self-serve free-period policy', () => {
+  const savedDeadline = process.env.POS_FREE_PERIOD_ENDS_AT;
 
-    // Same day-of-month and clock time, six months on.
-    expect(endsAt.toISOString()).toBe(expected.toISOString());
-    expect(endsAt.getFullYear()).toBe(2027);
-    expect(endsAt.getMonth()).toBe(0);
-    expect(endsAt.getDate()).toBe(1);
+  afterEach(() => {
+    if (savedDeadline == null) {
+      delete process.env.POS_FREE_PERIOD_ENDS_AT;
+    } else {
+      process.env.POS_FREE_PERIOD_ENDS_AT = savedDeadline;
+    }
   });
 
-  it('clamps a start day the end month does not have', () => {
-    // 31 Aug + 6 months has no 31 Feb — the trial ends on the last of February
-    // rather than spilling into March.
-    const endsAt = getPosSelfServeTrialEndsAt(new Date(2026, 7, 31, 9, 0, 0));
+  it('ends on the last moment of 31 December 2026 in Addis Ababa', () => {
+    delete process.env.POS_FREE_PERIOD_ENDS_AT;
 
-    expect(endsAt.getFullYear()).toBe(2027);
-    expect(endsAt.getMonth()).toBe(1);
-    expect(endsAt.getDate()).toBe(28);
+    // Not "six months from now" — one date, the same for everybody, whenever
+    // they signed up. 23:59:59.999 +03:00 is 20:59:59.999Z.
+    expect(getPosFreePeriodEndsAt().toISOString()).toBe(
+      '2026-12-31T20:59:59.999Z',
+    );
+    expect(formatPosFreePeriodEndsAt()).toBe('31 December 2026');
+  });
+
+  it('is open before the deadline and shut after it', () => {
+    delete process.env.POS_FREE_PERIOD_ENDS_AT;
+
+    expect(isPosFreePeriodOpen(Date.parse('2026-12-31T20:59:59.000Z'))).toBe(
+      true,
+    );
+    expect(isPosFreePeriodOpen(Date.parse('2027-01-01T00:00:00.000Z'))).toBe(
+      false,
+    );
+  });
+
+  it('honours a moved deadline, and ignores an unparseable one', () => {
+    process.env.POS_FREE_PERIOD_ENDS_AT = '2027-06-30T23:59:59.999+03:00';
+    expect(getPosFreePeriodEndsAt().toISOString()).toBe(
+      '2027-06-30T20:59:59.999Z',
+    );
+
+    // A typo in an env var must not silently end every free workspace on the
+    // platform — the built-in deadline stands instead.
+    process.env.POS_FREE_PERIOD_ENDS_AT = 'next christmas';
+    expect(getPosFreePeriodEndsAt().toISOString()).toBe(
+      '2026-12-31T20:59:59.999Z',
+    );
   });
 
   it('still recognises a trial row stamped with a superseded plan code', () => {
-    // Rows created before the trial was lengthened must keep opening their
-    // branch until their own endsAt, not lock out mid-trial.
+    // Rows created before the free period was reshaped must keep opening their
+    // branch until their own endsAt, not lock out mid-period.
     const legacy = buildSubscription({ planCode: 'POS_BRANCH_TRIAL_14D' });
 
     expect(isPosSelfServeTrialPlan(legacy)).toBe(true);

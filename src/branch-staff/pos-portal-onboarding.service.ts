@@ -11,9 +11,12 @@ import {
   getDefaultAllowedSelfServeServiceFormats,
 } from '../retail/self-serve-service-format.policy';
 import {
-  POS_SELF_SERVE_TRIAL_MONTHS,
+  formatPosFreePeriodEndsAt,
+  getPosFreePeriodEndsAt,
+  isPosFreePeriodOpen,
   POS_SELF_SERVE_TRIAL_SERVICE_FORMAT,
 } from '../retail/pos-self-serve-trial.policy';
+import { FreeWorkspaceGrantService } from '../free-workspace/free-workspace-grant.service';
 
 /**
  * Stamped on the POS_CORE entitlement so admin reporting can tell a self-served
@@ -22,25 +25,32 @@ import {
 export const POS_SELF_SERVE_PROVISIONING_SOURCE = 'POS_SELF_SERVE_AUTO_TRIAL';
 
 /**
- * Whether creating a first branch by hand also starts the free trial.
+ * Whether creating a first branch by hand also opens it free.
  *
- * Until this, the six free months were reachable only by a first-ever Google
- * sign-in (the silent auto-provision). Everyone else — Apple, username/password,
- * or any account that already existed — was sent to the gate's create form,
- * which demanded an Ebirr number and 3,900 ETB before the branch existed. That
- * is the paywall this flag removes.
+ * The free period used to be reachable only by a first-ever Google sign-in (the
+ * silent auto-provision). Everyone else — Apple, username/password, or any
+ * account that already existed — was sent to the gate's create form, which
+ * demanded an Ebirr number and 3,900 ETB before the branch existed. That is the
+ * paywall this flag removes.
  *
- * Flagged because an older cached frontend, seeing a workspace it believes is
- * unpaid, would follow the create call with an activation charge — billing the
- * owner for what they were just promised free. Flip it only once clients that
- * check the returned status are live everywhere.
+ * It was introduced switched OFF because an older cached frontend, seeing a
+ * workspace it believed unpaid, would follow the create call with an activation
+ * charge — billing the owner for what they were just promised free. Every
+ * shipped client now checks the returned status (isOpenWorkspaceResponse in
+ * pos-s/src/app/session/portalSession.js), so the default is ON and the env var
+ * is the way OFF, not the way on. "The first branch is free until the deadline"
+ * cannot depend on which sign-in button the owner happened to press.
  */
 function isFirstBranchTrialEnabled(): boolean {
-  return ['1', 'true', 'yes', 'on'].includes(
-    String(process.env.POS_FIRST_BRANCH_TRIAL_ENABLED || '')
-      .trim()
-      .toLowerCase(),
-  );
+  const configured = String(process.env.POS_FIRST_BRANCH_TRIAL_ENABLED || '')
+    .trim()
+    .toLowerCase();
+
+  if (!configured) {
+    return true;
+  }
+
+  return !['0', 'false', 'no', 'off'].includes(configured);
 }
 import { User } from '../users/entities/user.entity';
 import { UserRole } from '../auth/roles.enum';
@@ -71,6 +81,7 @@ export class PosPortalOnboardingService {
     private readonly retailEntitlementsService: RetailEntitlementsService,
     private readonly branchStaffService: BranchStaffService,
     private readonly equityPartnerService: EquityPartnerService,
+    private readonly freeWorkspaceGrantService: FreeWorkspaceGrantService,
   ) {}
 
   /**
@@ -241,11 +252,15 @@ export class PosPortalOnboardingService {
 
     // The guard at the top of this method already rejected anyone who has a
     // branch or a pending activation, so reaching here means this is the
-    // account's FIRST branch — no extra query needed to establish that.
+    // account's first branch TODAY. Whether it is their first ever — the thing
+    // the free workspace is actually owed on — is settled inside
+    // startPosSelfServeTrial, which returns null when the account has already
+    // spent its slot or the promotion has closed.
     const trial = isFirstBranchTrialEnabled()
       ? await this.retailEntitlementsService.startPosSelfServeTrial(
           tenant.id,
           branch.id,
+          user.id,
         )
       : null;
 
@@ -281,7 +296,7 @@ export class PosPortalOnboardingService {
         ? 'BRANCH_WORKSPACE_TRIAL_ACTIVE'
         : 'BRANCH_WORKSPACE_ACTIVATION_REQUIRED',
       message: trial
-        ? `Your POS-S workspace is open and free for ${POS_SELF_SERVE_TRIAL_MONTHS} months.`
+        ? `Your POS-S workspace is open and free until ${formatPosFreePeriodEndsAt()}.`
         : 'Your POS-S workspace was created. Complete billing activation to open it.',
       workspace: {
         tenantId: tenant.id,
@@ -294,11 +309,12 @@ export class PosPortalOnboardingService {
           createdWorkspace?.workspaceStatus ??
           (trial ? 'ACTIVE' : 'PAYMENT_REQUIRED'),
       },
-      // A date the owner can plan around beats a duration they have to compute.
+      // A date the owner can plan around beats a duration they have to compute —
+      // and since the deadline is now the same for everyone, the date IS the
+      // offer. `months` is gone: there is no fixed number of them any more.
       trial: trial
         ? {
             planCode: trial.planCode,
-            months: POS_SELF_SERVE_TRIAL_MONTHS,
             endsAt: trial.endsAt ? new Date(trial.endsAt).toISOString() : null,
           }
         : null,
@@ -333,6 +349,21 @@ export class PosPortalOnboardingService {
     ]);
 
     if (existingBranches.length || activationCandidates.length) {
+      return null;
+    }
+
+    // Auto-provisioning only makes sense while the branch would be free. Once
+    // the promotion closes — or if this account already spent its one free
+    // workspace on a branch it deleted, or on a supplier account — the silent
+    // provision would drop the owner into a QSR branch that immediately reports
+    // PAYMENT_REQUIRED, in a service format nobody asked them about. Returning
+    // null hands them to the gate's create form instead, where they choose the
+    // format and pay for it: exactly what this path did before the promotion.
+    const freePeriodAvailable =
+      isPosFreePeriodOpen() &&
+      !(await this.freeWorkspaceGrantService.hasClaimedFreeWorkspace(user.id));
+
+    if (!freePeriodAvailable) {
       return null;
     }
 
@@ -400,18 +431,31 @@ export class PosPortalOnboardingService {
       ),
     ]);
 
-    // The trial is what makes the branch openable — without it the workspace
-    // resolves to PAYMENT_REQUIRED and drops straight back out of the session.
-    await this.retailEntitlementsService.startPosSelfServeTrial(
+    // The free period is what makes the branch openable — without it the
+    // workspace resolves to PAYMENT_REQUIRED and drops straight back out of the
+    // session. Checked again rather than assumed: the eligibility read above is
+    // not in the same transaction as the grant, so two simultaneous first
+    // sign-ins can both pass it and only one can win the slot.
+    const trial = await this.retailEntitlementsService.startPosSelfServeTrial(
       tenant.id,
       branch.id,
+      user.id,
     );
+
+    if (!trial) {
+      this.logger.warn(
+        `Auto-provisioned branch #${branch.id} for user #${user.id} did not ` +
+          `receive the free period — it opens only once paid. The caller falls ` +
+          `back to the activation gate.`,
+      );
+    }
 
     void this.linkSellerWorkspaceTenant(user.id, tenant.id);
 
     this.logger.log(
-      `Auto-provisioned trial ${POS_SELF_SERVE_TRIAL_SERVICE_FORMAT} workspace ` +
-        `(tenant #${tenant.id}, branch #${branch.id}) for new user #${user.id}`,
+      `Auto-provisioned ${POS_SELF_SERVE_TRIAL_SERVICE_FORMAT} workspace ` +
+        `(tenant #${tenant.id}, branch #${branch.id}) for new user #${user.id}` +
+        (trial ? `, free until ${getPosFreePeriodEndsAt().toISOString()}` : ''),
     );
 
     return { tenantId: tenant.id, branchId: branch.id };

@@ -25,6 +25,14 @@ import {
   findSupplierSubscriptionOption,
   requireSupplierSubscriptionOption,
 } from './supplier-subscription-pricing';
+import {
+  getSupplierFreePeriodEndsAt,
+  isLiveSupplierFreePeriod,
+  isSupplierFreePeriodOpen,
+  SUPPLIER_FREE_PERIOD_PLAN_CODE,
+} from './supplier-free-period.policy';
+import { FreeWorkspaceGrantService } from '../free-workspace/free-workspace-grant.service';
+import { FreeWorkspaceGrantKind } from '../free-workspace/entities/account-free-workspace-grant.entity';
 
 const SUPPLIER_ACTIVATION_REFERENCE_PREFIX = 'SUPACT';
 export { SUPPLIER_ACTIVATION_REFERENCE_PREFIX };
@@ -53,6 +61,7 @@ export class SupplierActivationService {
     private readonly profilesRepository: Repository<SupplierProfile>,
     @InjectRepository(SupplierSubscription)
     private readonly subscriptionsRepository: Repository<SupplierSubscription>,
+    private readonly freeWorkspaceGrantService: FreeWorkspaceGrantService,
   ) {}
 
   /**
@@ -332,6 +341,97 @@ export class SupplierActivationService {
     return saved;
   }
 
+  /**
+   * Opens a supplier account free until the promotion's deadline, spending the
+   * account's one free workspace on it.
+   *
+   * Returns null when the supplier is chargeable — the promotion has closed, or
+   * this account already spent its slot (on another supplier profile, or on a
+   * POS branch). A null answer is an ordinary outcome, not a failure: the caller
+   * shows the ordinary activation paywall it would have shown anyway.
+   *
+   * Idempotent: a profile that already has any subscription row is left alone,
+   * so re-running onboarding neither stacks free periods nor spends a slot
+   * twice.
+   */
+  async grantFreePeriod(
+    supplierProfileId: number,
+    ownerUserId: number,
+  ): Promise<SupplierSubscription | null> {
+    const now = new Date();
+
+    if (!isSupplierFreePeriodOpen(now.getTime())) {
+      return null;
+    }
+
+    const existing = await this.subscriptionsRepository.findOne({
+      where: { supplierProfileId },
+      order: { createdAt: 'DESC' },
+    });
+
+    if (existing) {
+      return null;
+    }
+
+    const profile = await this.profilesRepository.findOne({
+      where: { id: supplierProfileId },
+    });
+
+    if (!profile) {
+      throw new NotFoundException(
+        `Supplier profile ${supplierProfileId} not found for free activation.`,
+      );
+    }
+
+    const endsAt = getSupplierFreePeriodEndsAt();
+    const grant = await this.freeWorkspaceGrantService.claim(ownerUserId, {
+      kind: FreeWorkspaceGrantKind.SUPPLIER,
+      planCode: SUPPLIER_FREE_PERIOD_PLAN_CODE,
+      endsAt,
+      supplierProfileId,
+      metadata: { source: 'SUPPLIER_SELF_SERVE_FREE_PERIOD' },
+    });
+
+    if (!grant) {
+      return null;
+    }
+
+    const saved = await this.subscriptionsRepository.save(
+      this.subscriptionsRepository.create({
+        supplierProfileId,
+        planCode: SUPPLIER_FREE_PERIOD_PLAN_CODE,
+        status: TenantSubscriptionStatus.TRIAL,
+        billingInterval: TenantBillingInterval.MONTHLY,
+        amount: 0,
+        amountTotal: 0,
+        currency: 'ETB',
+        startsAt: now,
+        endsAt,
+        autoRenew: false,
+        metadata: {
+          source: 'SUPPLIER_SELF_SERVE_FREE_PERIOD',
+          freeWorkspaceGrantId: grant.id,
+        },
+      }),
+    );
+
+    // ACTIVE is what every downstream gate reads — publishing offers, receiving
+    // purchase orders, the outlet. The free period has to move the profile the
+    // same way a payment does, or the account is "free" and unable to trade.
+    profile.activationStatus = SupplierActivationStatus.ACTIVE;
+    profile.lastActivatedAt = now;
+    await this.profilesRepository.save(profile);
+
+    this.logger.log(
+      `Supplier #${supplierProfileId} opened on the free period until ` +
+        `${endsAt.toISOString()} (user #${ownerUserId}).`,
+    );
+
+    await this.provisionOutletSafe(supplierProfileId);
+
+    return saved;
+  }
+
   /** Lightweight activation/subscription state for the billing page. */
   async getActivationState(user: {
     id: number;
@@ -348,6 +448,17 @@ export class SupplierActivationService {
       supplierProfileId: profile.id,
       activationStatus: profile.activationStatus,
       lastActivatedAt: profile.lastActivatedAt ?? null,
+      // Distinct from an ACTIVE paid account: this one is live and owes nothing
+      // YET. The billing page has to say so, or the owner reads "active" and is
+      // surprised when the account closes on the deadline.
+      freePeriod: isLiveSupplierFreePeriod(subscription)
+        ? {
+            planCode: subscription.planCode,
+            endsAt: subscription.endsAt
+              ? new Date(subscription.endsAt).toISOString()
+              : null,
+          }
+        : null,
       subscription: subscription
         ? {
             planCode: subscription.planCode,

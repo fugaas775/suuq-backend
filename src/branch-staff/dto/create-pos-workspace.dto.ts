@@ -118,9 +118,9 @@ export class CreatePosWorkspaceDto {
    * Equity partner who referred this owner.
    *
    * Attribution used to happen at payment, which was the same moment the
-   * workspace was created. Now that a first branch opens on a free trial, that
-   * moment is six months later — so the code has to be captured here or the
-   * partner loses the referral entirely.
+   * workspace was created. Now that a first branch opens free until the
+   * promotion's deadline, that moment is months later — so the code has to be
+   * captured here or the partner loses the referral entirely.
    */
   @ApiPropertyOptional({ example: 'PART-XXXX', nullable: true })
   @Transform(({ value }) =>
@@ -155,13 +155,15 @@ export class PosWorkspaceSummaryDto {
 }
 
 export class PosWorkspaceTrialDto {
-  @ApiProperty({ example: 'POS_BRANCH_TRIAL_6M' })
+  @ApiProperty({ example: 'POS_BRANCH_FREE_2026' })
   planCode!: string;
 
-  @ApiProperty({ example: 6 })
-  months!: number;
-
-  @ApiProperty({ example: '2027-02-05T09:00:00.000Z', nullable: true })
+  /**
+   * The deadline, not a duration. Every account's free period ends on the same
+   * date, so how many months that is depends on when they signed up — there is
+   * no `months` to report any more.
+   */
+  @ApiProperty({ example: '2026-12-31T20:59:59.999Z', nullable: true })
   endsAt!: string | null;
 }
 
@@ -170,7 +172,7 @@ export class CreatePosWorkspaceResponseDto {
   onboardingState!: string;
 
   @ApiProperty({
-    example: 'Your POS-S workspace is open and free for 6 months.',
+    example: 'Your POS-S workspace is open and free until 31 December 2026.',
   })
   message!: string;
 
@@ -178,13 +180,13 @@ export class CreatePosWorkspaceResponseDto {
   workspace!: PosWorkspaceSummaryDto;
 
   /**
-   * Present when the workspace opened on a free trial. Null means the branch
-   * still needs billing activation before it can open.
+   * Present when the workspace opened on the free period. Null means the branch
+   * still needs billing activation before it can open — because the promotion
+   * has closed, or because this account already spent its one free workspace.
    */
   @ApiPropertyOptional({ type: PosWorkspaceTrialDto, nullable: true })
   trial?: {
     planCode: string;
-    months: number;
     endsAt: string | null;
   } | null;
 
