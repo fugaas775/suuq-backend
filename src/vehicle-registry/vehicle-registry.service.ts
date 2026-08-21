@@ -409,7 +409,7 @@ export class VehicleRegistryService {
       registrationId: number;
       seriesId?: number | null;
     },
-  ): Promise<VehiclePlate> {
+  ): Promise<VehiclePlate | null> {
     const rows = await manager.query(
       `
       UPDATE "pos_vehicle_plates" p
@@ -444,14 +444,13 @@ export class VehicleRegistryService {
       ],
     );
 
+    // Null is an answer, not a failure. A real plate number is requested through
+    // the Bureau rather than taken off a shelf, so an office with no stock is
+    // the ordinary case — and refusing to register a vehicle because of it
+    // would block the entire drive over a number the Bureau was never going to
+    // issue at the counter.
     const plate = Array.isArray(rows) ? rows[0] : null;
-    if (!plate) {
-      throw new ConflictException(
-        'This office has no plates left for that class of vehicle. Ask the bureau to issue it another series before registering.',
-      );
-    }
-
-    return plate as VehiclePlate;
+    return (plate as VehiclePlate) ?? null;
   }
 
   // ── Fees ─────────────────────────────────────────────────────────────────
@@ -673,6 +672,10 @@ export class VehicleRegistryService {
         }),
       );
 
+      // Best-effort. If the office happens to hold stock for this class the
+      // vehicle gets a number now; if it does not — the normal case — it is
+      // registered anyway and the number is requested separately. Registering
+      // the vehicle is the goal; the plate is a later, separate matter.
       const plate = await this.allocatePlate(manager, {
         tenantId,
         branchId: dto.branchId,
@@ -681,8 +684,10 @@ export class VehicleRegistryService {
         seriesId: dto.plateSeriesId ?? null,
       });
 
-      registration.plateId = Number(plate.id);
-      await manager.save(registration);
+      if (plate) {
+        registration.plateId = Number(plate.id);
+        await manager.save(registration);
+      }
 
       return { registration, vehicle, owner, plate };
     });
@@ -1364,6 +1369,194 @@ export class VehicleRegistryService {
         ? Math.floor((now - new Date(row.issuedAt).getTime()) / 86_400_000)
         : null,
     }));
+  }
+
+  /**
+   * Record that the Bureau has formally requested a number from the Federal
+   * Trade Ministry.
+   *
+   * Not an allocation, and not something a zonal office can do for itself: a
+   * real plate number is obtained by the Bureau applying to the federal
+   * ministry. This records that the application was made, with the ministry's
+   * reference, so a vehicle waiting on a number can be chased rather than
+   * forgotten. The vehicle is already registered and already verifiable — this
+   * is only about the number.
+   */
+  async recordFederalPlateRequest(
+    registrationId: number,
+    branchId: number,
+    reference: string | null | undefined,
+    actorUserId?: number,
+  ) {
+    const tenantId = await this.resolveTenantId(branchId);
+
+    const registration = await this.registrationsRepository.findOne({
+      where: { id: registrationId, tenantId },
+    });
+    if (!registration) {
+      throw new NotFoundException(`Registration ${registrationId} not found`);
+    }
+    if (registration.plateId) {
+      throw new ConflictException(
+        'This vehicle already has a plate number; there is nothing to request.',
+      );
+    }
+    if (registration.federalPlateRequestedAt) return registration;
+
+    const requestedAt = new Date();
+
+    return this.dataSource.transaction(async (manager) => {
+      registration.federalPlateRequestedAt = requestedAt;
+      registration.federalPlateRequestReference = reference?.trim() || null;
+      registration.federalPlateRequestedByUserId = actorUserId ?? null;
+      await manager.save(registration);
+
+      await this.recordEvent(manager, {
+        tenantId,
+        branchId,
+        vehicleId: Number(registration.vehicleId),
+        registrationId: Number(registration.id),
+        type: VehicleEventType.PLATE_REQUESTED,
+        actorUserId,
+        reason: registration.federalPlateRequestReference,
+        occurredAt: requestedAt,
+      });
+
+      return registration;
+    });
+  }
+
+  /**
+   * Registered vehicles with no plate number yet.
+   *
+   * The office's real backlog. Distinct from the fitment worklist: those have a
+   * number and are waiting for the metal, these have no number at all and are
+   * waiting on the Bureau.
+   */
+  async listAwaitingPlateNumber(branchId: number) {
+    const tenantId = await this.resolveTenantId(branchId);
+
+    const rows = await this.dataSource.query(
+      `SELECT r."id"                   AS "registrationId",
+              r."certificateNumber"    AS "certificateNumber",
+              r."issuedAt"             AS "issuedAt",
+              r."federalPlateRequestedAt"     AS "federalPlateRequestedAt",
+              r."federalPlateRequestReference" AS "federalPlateRequestReference",
+              v."vin"                  AS "vin",
+              v."presentedPlateNumber" AS "presentedPlateNumber",
+              v."presentedPlateOrigin" AS "presentedPlateOrigin",
+              c."nameEn"               AS "className",
+              o."fullName"             AS "ownerName",
+              o."phone"                AS "ownerPhone"
+         FROM "pos_vehicle_registrations" r
+         JOIN "pos_vehicles" v        ON v."id" = r."vehicleId"
+         JOIN "pos_vehicle_classes" c ON c."id" = v."classId"
+         LEFT JOIN "pos_vehicle_owners" o ON o."id" = r."ownerId"
+        WHERE r."tenantId" = $1
+          AND r."branchId" = $2
+          AND r."status" = 'ACTIVE'
+          AND r."plateId" IS NULL
+        ORDER BY r."federalPlateRequestedAt" ASC NULLS FIRST, r."issuedAt" ASC
+        LIMIT 200`,
+      [tenantId, branchId],
+    );
+
+    const now = Date.now();
+    return (rows as any[]).map((row) => ({
+      ...row,
+      requested: Boolean(row.federalPlateRequestedAt),
+      daysSinceRegistered: row.issuedAt
+        ? Math.floor((now - new Date(row.issuedAt).getTime()) / 86_400_000)
+        : null,
+    }));
+  }
+
+  /**
+   * What the drive has registered, and what it has collected.
+   *
+   * Income is a stated purpose of this exercise, not a side effect — the Bureau
+   * is bringing unregistered vehicles onto a register AND raising revenue by
+   * doing it. So the two numbers belong together: registrations without the
+   * money says nothing about whether the drive is paying for itself, and the
+   * money without registrations says nothing about coverage.
+   *
+   * Revenue is read from `pos_checkouts` via the fee SKUs rather than from
+   * anything the registry stores. The till is the authority on money; a
+   * registry that kept its own copy would be a second set of books, and the two
+   * would disagree the first time a sale was voided.
+   */
+  async getRegistryPerformance(branchId: number, fromIso?: string, toIso?: string) {
+    const tenantId = await this.resolveTenantId(branchId);
+
+    const from = fromIso ? new Date(fromIso) : new Date(Date.now() - 30 * 86_400_000);
+    const to = toIso ? new Date(toIso) : new Date();
+
+    const [registrations] = await this.dataSource.query(
+      `SELECT count(*)::int                                            AS "total",
+              count(*) FILTER (WHERE r."plateId" IS NULL)::int          AS "withoutNumber",
+              count(*) FILTER (WHERE r."federalPlateRequestedAt" IS NOT NULL)::int AS "numberRequested",
+              count(*) FILTER (WHERE v."presentedPlateOrigin" = 'UNOFFICIAL')::int AS "arrivedUnofficial",
+              count(*) FILTER (WHERE v."presentedPlateOrigin" = 'ZONAL_OFFICE')::int AS "arrivedZonal",
+              count(*) FILTER (WHERE v."presentedPlateOrigin" = 'NONE')::int         AS "arrivedNoNumber",
+              count(*) FILTER (WHERE v."chassisCondition" = 'TAMPERED')::int         AS "chassisTampered"
+         FROM "pos_vehicle_registrations" r
+         JOIN "pos_vehicles" v ON v."id" = r."vehicleId"
+        WHERE r."tenantId" = $1 AND r."branchId" = $2
+          AND r."issuedAt" BETWEEN $3 AND $4`,
+      [tenantId, branchId, from, to],
+    );
+
+    // Fee income, from the till. Matched on the VR- SKU prefix so a class the
+    // bureau adds later is counted without anybody remembering to update this.
+    const [revenue] = await this.dataSource.query(
+      `SELECT COALESCE(SUM((item->>'lineTotal')::numeric), 0) AS "feeRevenue",
+              count(DISTINCT c."id")::int                     AS "paidCheckouts"
+         FROM "pos_checkouts" c
+         CROSS JOIN LATERAL jsonb_array_elements(c."items") item
+        WHERE c."branchId" = $1
+          AND c."transactionType" = 'SALE'
+          AND c."voidedAt" IS NULL
+          AND c."status" <> 'VOIDED'
+          AND c."occurredAt" BETWEEN $2 AND $3
+          AND UPPER(item->>'sku') LIKE 'VR-%'`,
+      [branchId, from, to],
+    );
+
+    const byClass = await this.dataSource.query(
+      `SELECT c."nameEn" AS "className", count(*)::int AS "registrations"
+         FROM "pos_vehicle_registrations" r
+         JOIN "pos_vehicles" v        ON v."id" = r."vehicleId"
+         JOIN "pos_vehicle_classes" c ON c."id" = v."classId"
+        WHERE r."tenantId" = $1 AND r."branchId" = $2
+          AND r."issuedAt" BETWEEN $3 AND $4
+        GROUP BY c."nameEn"
+        ORDER BY count(*) DESC`,
+      [tenantId, branchId, from, to],
+    );
+
+    return {
+      from,
+      to,
+      registrations: {
+        total: registrations?.total ?? 0,
+        withoutNumber: registrations?.withoutNumber ?? 0,
+        numberRequested: registrations?.numberRequested ?? 0,
+      },
+      // What the drive is actually finding out there — the reason it exists.
+      arrivedWith: {
+        unofficial: registrations?.arrivedUnofficial ?? 0,
+        zonalOffice: registrations?.arrivedZonal ?? 0,
+        noNumber: registrations?.arrivedNoNumber ?? 0,
+      },
+      // Surfaced beside the money because it is the one number that should
+      // never be looked at only in aggregate.
+      chassisTampered: registrations?.chassisTampered ?? 0,
+      income: {
+        feeRevenue: Number(revenue?.feeRevenue ?? 0),
+        paidCheckouts: revenue?.paidCheckouts ?? 0,
+      },
+      byClass,
+    };
   }
 
   // ── Reads ────────────────────────────────────────────────────────────────

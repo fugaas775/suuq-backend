@@ -26,7 +26,17 @@ import { VehicleRegistration } from './entities/vehicle-registration.entity';
 
 export type PublicVehicleStatus =
   | 'VALID'
-  /** Registered, plate not yet fitted, interim permit still valid. */
+  /**
+   * Registered, but no official plate number has been issued yet.
+   *
+   * The NORMAL state for this drive, not a defect. A real number is requested
+   * through the Bureau rather than handed over at the counter, so most
+   * registered vehicles legitimately have none — and the question the public
+   * portal exists to answer is "is this vehicle registered", which for these
+   * vehicles is yes.
+   */
+  | 'REGISTERED_NO_PLATE'
+  /** Plate number issued, metal not yet fitted, interim permit still valid. */
   | 'AWAITING_PLATE'
   /** Registered, plate not fitted, and the permit has run out. */
   | 'PLATE_OVERDUE'
@@ -102,6 +112,7 @@ export class PublicVehicleVerificationService {
     const plate = String(rawPlate || '').trim();
     if (!plate) return NOT_FOUND;
 
+
     // The issued plate first.
     const issued = await this.query(`UPPER(pl."plateNumber") = UPPER($1)`, [plate]);
     if (issued?.[0]) return this.present(issued[0]);
@@ -115,13 +126,21 @@ export class PublicVehicleVerificationService {
       `UPPER(COALESCE(v."presentedPlateNumber", '')) = UPPER($1)`,
       [plate],
     );
-    if (!previous?.[0]) return NOT_FOUND;
+    if (previous?.[0]) {
+      return {
+        ...this.present(previous[0]),
+        matchedOnPreviousNumber: true,
+        previousPlateNumber: previous[0].presentedPlateNumber ?? plate,
+      };
+    }
 
-    return {
-      ...this.present(previous[0]),
-      matchedOnPreviousNumber: true,
-      previousPlateNumber: previous[0].presentedPlateNumber ?? plate,
-    };
+    // Finally the chassis. A vehicle with no official number and no invented
+    // one has nothing else to be found by, and the stamped chassis is the only
+    // identity it carries — so someone standing at the car can still ask the
+    // one question this portal exists to answer.
+    const byChassis = await this.query(`UPPER(v."vin") = UPPER($1)`, [plate]);
+    if (!byChassis?.[0]) return NOT_FOUND;
+    return this.present(byChassis[0]);
   }
 
   private async query(predicate: string, params: unknown[]) {
@@ -219,6 +238,10 @@ export class PublicVehicleVerificationService {
     }
 
     if (status !== 'ACTIVE') return 'NOT_REGISTERED';
+
+    // No official number at all. Registered, verifiable, and waiting on the
+    // Bureau — which is what most of this fleet looks like.
+    if (!row.plateNumber) return 'REGISTERED_NO_PLATE';
 
     // Registered, but has the plate actually gone on? Saying "registered" to an
     // officer looking at a plate that does not match the record tells them

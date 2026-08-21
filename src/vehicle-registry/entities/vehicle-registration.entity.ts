@@ -68,9 +68,35 @@ export class VehicleRegistration {
   @Column({ type: 'bigint' })
   ownerId!: number;
 
-  /** Null only while PENDING_ISSUE — a live registration always holds a plate. */
+  /**
+   * The official plate, once the Bureau has issued a number.
+   *
+   * Null is NORMAL and expected, not half-finished. A real plate number is
+   * requested through the Bureau rather than taken off a shelf at the counter,
+   * so most registrations in this drive exist without one — the vehicle is on
+   * the register, which is the point, and the number follows later.
+   */
   @Column({ type: 'bigint', nullable: true })
   plateId!: number | null;
+
+  /**
+   * When the BUREAU formally requested a number from the Federal Trade
+   * Ministry. Null = not requested yet.
+   *
+   * Named for the counterparty on purpose. A zonal office cannot obtain a real
+   * plate number — it registers the vehicle and the number comes later, through
+   * a federal request the Bureau makes. A field called "plateRequestedAt" would
+   * read, to the next person, as though the office asked itself.
+   */
+  @Column({ type: 'timestamptz', nullable: true })
+  federalPlateRequestedAt!: Date | null;
+
+  /** The Federal Trade Ministry's reference, so the request can be chased. */
+  @Column({ type: 'varchar', length: 128, nullable: true })
+  federalPlateRequestReference!: string | null;
+
+  @Column({ type: 'int', nullable: true })
+  federalPlateRequestedByUserId!: number | null;
 
   /** Printed on the certificate. The Bureau's own document number. */
   @Column({ type: 'varchar', length: 64, nullable: true })

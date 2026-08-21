@@ -192,7 +192,11 @@ describe('VehicleRegistryService — plate allocation', () => {
     void manager;
   });
 
-  it('says the office is out of plates rather than issuing without one', async () => {
+  it('registers the vehicle even when the office holds no plates at all', async () => {
+    // THE central correction. A real plate number is obtained by the Bureau
+    // applying to the Federal Trade Ministry — it is not on a shelf at the
+    // counter. Refusing to register without one blocked the entire drive over a
+    // number nobody was going to hand over that day.
     const { svc } = makeService({
       managerQuery: jest.fn().mockResolvedValue([]),
       vehicleClass: {
@@ -203,17 +207,20 @@ describe('VehicleRegistryService — plate allocation', () => {
       },
     });
 
-    await expect(
-      svc.draftRegistration(
-        {
-          branchId: 7,
-          classId: 3,
-          owner: { fullName: 'Ayaan Yuusuf' },
-          vehicle: { vin: 'CHASSIS123' },
-        } as any,
-        11,
-      ),
-    ).rejects.toBeInstanceOf(ConflictException);
+    const result: any = await svc.draftRegistration(
+      {
+        branchId: 7,
+        classId: 3,
+        owner: { fullName: 'Ayaan Yuusuf' },
+        vehicle: { vin: 'CHASSIS123', presentedPlateNumber: '3-SM-00042' },
+      } as any,
+      11,
+    );
+
+    expect(result.registration).toBeTruthy();
+    // No plate, and that is the normal state rather than a half-finished one.
+    expect(result.plate).toBeNull();
+    expect(result.registration.plateId).toBeFalsy();
   });
 });
 

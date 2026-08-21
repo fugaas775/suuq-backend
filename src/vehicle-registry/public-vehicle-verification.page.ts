@@ -30,6 +30,21 @@ const STATUS_COPY: Record<
     fg: '#ffffff',
   },
   /**
+   * Registered, no official number issued yet.
+   *
+   * GREEN, not amber. This is the normal, correct state for most of the fleet
+   * in this drive — the vehicle is on the register, which is exactly what the
+   * portal is asked about. Colouring it as a problem would tell an officer
+   * something is wrong with a vehicle whose paperwork is in perfect order.
+   */
+  REGISTERED_NO_PLATE: {
+    so: 'DIIWAAN GASHAN',
+    am: 'የተመዘገበ',
+    en: 'REGISTERED',
+    bg: '#166534',
+    fg: '#ffffff',
+  },
+  /**
    * Registered, plate not yet fitted, permit still valid.
    *
    * Amber rather than green: the vehicle is legal, but the plate an officer is
@@ -227,6 +242,21 @@ export function renderVehicleResultPage(result: PublicVehicleResult): string {
       <div class="plate" style="background:${esc(plateBg)};color:${esc(plateFg)}">
         ${esc(result.plateNumber ?? '—')}
       </div>
+
+      ${
+        result.status === 'REGISTERED_NO_PLATE'
+          ? `<div class="flag" style="background:#f0fdf4;border-color:#16a34a;color:#166534">
+               Baabuurkani wuxuu ku jiraa diiwaanka. Lambar rasmi ah weli lama siin.<br>
+               ይህ ተሽከርካሪ ተመዝግቧል። ኦፊሴላዊ ቁጥር ገና አልተሰጠም።<br>
+               This vehicle IS registered. An official plate number has not been
+               issued yet${
+                 result.previousPlateNumber
+                   ? `, so it still carries <strong>${esc(result.previousPlateNumber)}</strong>`
+                   : ''
+               }.
+             </div>`
+          : ''
+      }
 
       ${
         result.status === 'AWAITING_PLATE' || result.status === 'PLATE_OVERDUE'

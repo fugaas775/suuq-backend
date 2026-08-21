@@ -165,6 +165,60 @@ describe('public vehicle verification — cars still wearing the old number', ()
   });
 });
 
+describe('public vehicle verification — registered with no plate number', () => {
+  // The NORMAL state for this drive. A real number is obtained by the Bureau
+  // applying to the Federal Trade Ministry, not handed over at the counter, so
+  // most registered vehicles legitimately have none.
+
+  it('answers the question it exists to answer: yes, this is registered', async () => {
+    const { svc } = makeService({
+      ...base,
+      plateNumber: null,
+      plateFittedAt: null,
+      presentedPlateNumber: '3-SM-00042',
+      expiresAt: new Date(Date.now() + 86_400_000),
+    });
+    expect((await svc.verifyByPlate('x')).status).toBe('REGISTERED_NO_PLATE');
+  });
+
+  it('shows it GREEN, because nothing is wrong with the vehicle', () => {
+    // Colouring it as a problem would tell an officer something is wrong with a
+    // vehicle whose paperwork is in perfect order.
+    const html = renderVehicleResultPage({
+      found: true, status: 'REGISTERED_NO_PLATE', previousPlateNumber: '3-SM-00042',
+    });
+    expect(html).toContain('#166534');
+    expect(html).toMatch(/This vehicle IS registered/i);
+    // Whitespace-tolerant: the template wraps its lines, so asserting a single
+    // space between words tests the indentation rather than the sentence.
+    expect(html).toMatch(/has not been\s+issued yet/i);
+    expect(html).toContain('3-SM-00042');
+  });
+
+  it('an expired licence still outranks a missing plate number', async () => {
+    const { svc } = makeService({
+      ...base, plateNumber: null, plateFittedAt: null,
+      expiresAt: new Date('2020-01-01T00:00:00Z'),
+    });
+    expect((await svc.verifyByPlate('x')).status).toBe('EXPIRED');
+  });
+
+  it('finds a vehicle by its chassis when it has no number of any kind', async () => {
+    // With no official plate and no invented one, the stamped chassis is the
+    // only identity the car carries.
+    const dataSource: any = {
+      query: jest.fn()
+        .mockResolvedValueOnce([])                       // no issued plate
+        .mockResolvedValueOnce([])                       // no previous number
+        .mockResolvedValueOnce([{ ...base, plateNumber: null, plateFittedAt: null }]),
+    };
+    const svc = new PublicVehicleVerificationService({} as any, dataSource);
+    const result = await svc.verifyByPlate('JTDBR32E060123456');
+    expect(result.found).toBe(true);
+    expect(dataSource.query).toHaveBeenCalledTimes(3);
+  });
+});
+
 describe('public vehicle verification — the plate-fitting window', () => {
   // Issuance and fitting are different moments. Between them the record says
   // one number and the car wears another, which is indistinguishable from a

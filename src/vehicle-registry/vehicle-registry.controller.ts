@@ -30,6 +30,7 @@ import {
   IssueRegistrationDto,
   ListPlateStockDto,
   RaiseVehicleFlagDto,
+  RequestPlateNumberDto,
   ListVehicleClassesDto,
   SearchVehiclesDto,
   UpdateVehicleClassDto,
@@ -200,6 +201,61 @@ export class VehicleRegistryController {
   )
   awaitingPlate(@Query('branchId', ParseIntPipe) branchId: number) {
     return this.svc.listAwaitingPlateFitment(branchId);
+  }
+
+  /**
+   * Record that the Bureau has applied to the Federal Trade Ministry for a
+   * number.
+   *
+   * VEHICLE_PLATE_STOCK, not VEHICLE_ISSUE: applying to the federal ministry is
+   * the registrar's act, not a counter clerk's. The clerk registers the
+   * vehicle; obtaining the number is a level above them.
+   */
+  @Post('registrations/:id/request-plate-number')
+  @RetailBranchContext('body.branchId')
+  @RequirePosPermissions(PosVehiclePermission.VEHICLE_PLATE_STOCK)
+  requestPlateNumber(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: RequestPlateNumberDto,
+    @Req() req: any,
+  ) {
+    return this.svc.recordFederalPlateRequest(
+      id,
+      dto.branchId,
+      dto.reference,
+      req?.user?.id,
+    );
+  }
+
+  /** Registered vehicles with no number yet — the Bureau's federal backlog. */
+  @Get('awaiting-plate-number')
+  @RetailBranchContext('query.branchId')
+  @RequirePosPermissions(
+    PosVehiclePermission.VEHICLE_ISSUE,
+    PosVehiclePermission.VEHICLE_PLATE_STOCK,
+  )
+  awaitingPlateNumber(@Query('branchId', ParseIntPipe) branchId: number) {
+    return this.svc.listAwaitingPlateNumber(branchId);
+  }
+
+  /**
+   * What the drive has registered and collected.
+   *
+   * Income is a stated purpose of this exercise, so the count and the money are
+   * returned together — either alone answers half the question.
+   */
+  @Get('performance')
+  @RetailBranchContext('query.branchId')
+  @RequirePosPermissions(
+    PosVehiclePermission.VEHICLE_PLATE_STOCK,
+    PosVehiclePermission.VEHICLE_APPLICATION_REVIEW,
+  )
+  performance(
+    @Query('branchId', ParseIntPipe) branchId: number,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    return this.svc.getRegistryPerformance(branchId, from, to);
   }
 
   // ── Flags ────────────────────────────────────────────────────────────────

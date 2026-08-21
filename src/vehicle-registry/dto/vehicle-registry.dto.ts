@@ -455,3 +455,19 @@ export class ClearVehicleFlagDto extends VehicleBranchScopeDto {
   @MaxLength(1024)
   reason!: string;
 }
+
+/**
+ * The Bureau's application to the Federal Trade Ministry for a plate number.
+ *
+ * A zonal office cannot obtain a real number; the Bureau applies for it. This
+ * records that the application was made and under what reference, so a vehicle
+ * waiting on a number can be chased rather than forgotten.
+ */
+export class RequestPlateNumberDto extends VehicleBranchScopeDto {
+  /** The ministry's reference. Optional — the application may precede it. */
+  @Transform(({ value }) => trimString(value))
+  @IsOptional()
+  @IsString()
+  @MaxLength(128)
+  reference?: string;
+}
