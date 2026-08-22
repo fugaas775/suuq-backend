@@ -8,6 +8,9 @@ import { HospitalityIdempotencyKey } from './entities/hospitality-idempotency-ke
 import { HospitalityKitchenTicket } from './entities/hospitality-kitchen-ticket.entity';
 import { HospitalityTableBoard } from './entities/hospitality-table-board.entity';
 import { KitchenProductAvailability } from './entities/kitchen-product-availability.entity';
+import { KitchenStation } from './entities/kitchen-station.entity';
+import { KitchenStationController } from './kitchen-station.controller';
+import { KitchenStationService } from './kitchen-station.service';
 import { Branch } from '../branches/entities/branch.entity';
 import { HotelFolio } from './entities/hotel-folio.entity';
 import { HotelFolioCharge } from './entities/hotel-folio-charge.entity';
@@ -40,6 +43,7 @@ import { StarpayModule } from '../starpay/starpay.module';
       HospitalityBillIntervention,
       HospitalityIdempotencyKey,
       KitchenProductAvailability,
+      KitchenStation,
       HotelFolio,
       HotelFolioCharge,
       HotelRoom,
@@ -64,12 +68,14 @@ import { StarpayModule } from '../starpay/starpay.module';
     HospitalityWorkflowsController,
     HotelFolioController,
     HotelInventoryController,
+    KitchenStationController,
     ConsumerHotelController,
   ],
   providers: [
     HospitalityWorkflowsService,
     HotelFolioService,
     HotelInventoryService,
+    KitchenStationService,
     HotelPrepaymentService,
     PosBranchAccessGuard,
     RolesGuard,
