@@ -42,6 +42,17 @@ export enum PosRegisterPermission {
   UPDATE_TABLE_STATUS = 'UPDATE_TABLE_STATUS',
   ASSIGN_TABLE_OWNER = 'ASSIGN_TABLE_OWNER',
   SPLIT_OPEN_BILL = 'SPLIT_OPEN_BILL',
+  // QSR counter-service permissions.
+  //
+  // Not a mirror of a server guard, unlike every other block here: printing a
+  // kitchen slip is not a route — the till renders and prints it. A QSR slip
+  // locks itself to "view only" once printed, because a second copy of a ticket
+  // the pass already holds is a plate cooked twice. This is the manager's
+  // per-person exception to that lock, for the case the lock cannot tell from a
+  // duplicate: a slip that jammed or never left the printer. It lives in this
+  // enum because this enum is the allow-list — a permission missing here cannot
+  // be stored on a staff account at all, so it could never reach the till.
+  REPRINT_ORDER_SLIP = 'REPRINT_ORDER_SLIP',
   // Property-rental booking permissions
   VIEW_PROPERTY_BOARD = 'VIEW_PROPERTY_BOARD',
   OPEN_PROPERTY_BOOKING = 'OPEN_PROPERTY_BOOKING',

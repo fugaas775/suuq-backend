@@ -52,6 +52,15 @@ describe('CreateBranchStaffManualAccountDto — permissions allow-list', () => {
     expect(errors).toHaveLength(1);
   });
 
+  it('accepts the QSR slip re-print grant', async () => {
+    // Nothing on the server enforces this one — printing is not a route, the
+    // till renders the slip itself. It has to survive account creation all the
+    // same: this enum is the only place a permission can be rejected, so a
+    // manager granting "re-print parked order slips" would get a 400 they could
+    // not act on, and the waiter would never see the control.
+    expect(await validatePermissions(['REPRINT_ORDER_SLIP'])).toEqual([]);
+  });
+
   it('leaves the existing format permissions grantable', async () => {
     // The school members are additive; nothing else may have been displaced.
     expect(
