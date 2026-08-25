@@ -30,6 +30,7 @@ import { PosSyncRequestAuthGuard } from './pos-sync-request-auth.guard';
 import { PosBranchAccessGuard } from '../auth/pos-branch-access.guard';
 import { PosCheckout } from './entities/pos-checkout.entity';
 import { PosRegisterSession } from './entities/pos-register-session.entity';
+import { PosCashMovement } from '../purchasing/entities/pos-cash-movement.entity';
 import { PosSuspendedCart } from './entities/pos-suspended-cart.entity';
 import { PosSyncService } from './pos-sync.service';
 import { PosSyncJob } from './entities/pos-sync-job.entity';
@@ -53,6 +54,7 @@ import { PosSyncJob } from './entities/pos-sync-job.entity';
       Product,
       ProductAlias,
       PurchaseOrderItem,
+      PosCashMovement,
     ]),
   ],
   controllers: [

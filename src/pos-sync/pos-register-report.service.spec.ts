@@ -21,9 +21,14 @@ describe('PosRegisterReportService.buildReport', () => {
     };
     const branchesRepository = { findOne: jest.fn() };
     const emailService = { send: jest.fn() };
+    // No drawer movements: the branch has never filed a purchase run, which is
+    // every branch until somebody does. The expected-cash math must be the same
+    // as it was before pos_cash_movements existed.
+    const cashMovementsRepository = { find: jest.fn().mockResolvedValue([]) };
     const service = new PosRegisterReportService(
       checkoutsRepository as any,
       branchesRepository as any,
+      cashMovementsRepository as any,
       emailService as any,
     );
     return { service, qb };
@@ -143,9 +148,14 @@ describe('PosRegisterReportService.dispatchCloseReport (client report)', () => {
     const emailService = {
       send: jest.fn(async (mail: any) => sent.push(mail)),
     };
+    // No drawer movements: the branch has never filed a purchase run, which is
+    // every branch until somebody does. The expected-cash math must be the same
+    // as it was before pos_cash_movements existed.
+    const cashMovementsRepository = { find: jest.fn().mockResolvedValue([]) };
     const service = new PosRegisterReportService(
       checkoutsRepository as any,
       branchesRepository as any,
+      cashMovementsRepository as any,
       emailService as any,
     );
     return { service, emailService, sent };

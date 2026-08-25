@@ -30,6 +30,7 @@ import { BranchDepreciationEntry } from './entities/branch-depreciation-entry.en
 import {
   BranchExpense,
   isLiabilitySettlementCategory,
+  isPurchasesCategory,
 } from '../billing/entities/branch-expense.entity';
 import {
   BranchFixedAsset,
@@ -54,6 +55,16 @@ export interface ProfitAndLossReport {
   range: { from: Date | null; to: Date | null };
   revenue: { gross: number; voided: number; tax: number; net: number };
   cogs: number;
+  /**
+   * Goods bought in the range, on the periodic basis: a market run, a cash
+   * purchase of stock. Reported beside `cogs` rather than inside it because the
+   * two are different bases for the same idea — `cogs` is perpetual (what was
+   * SOLD, valued at weighted-average cost from purchase-order history) and this
+   * is periodic (what was BOUGHT). Both are direct costs and both sit above the
+   * gross-profit line; keeping them apart is what lets a reader see which basis
+   * a given branch is actually running on.
+   */
+  purchases: number;
   grossProfit: number;
   expensesByCategory: Record<string, number>;
   totalExpenses: number;
@@ -192,6 +203,11 @@ export class BranchFinancialReportsService {
         net: pl.revenueNet,
       },
       cogs: pl.cogs,
+      // Zero, and not because nothing was bought. On the ledger-backed path COGS
+      // is an ACCOUNT BALANCE, and goods purchased debit account 5000 like every
+      // other cost of sales — so they are already inside `cogs` above. Reporting
+      // them again here would show the same money twice on one statement.
+      purchases: 0,
       grossProfit: pl.grossProfit,
       expensesByCategory: pl.expensesByCategory,
       totalExpenses: pl.totalExpenses,
@@ -363,6 +379,7 @@ export class BranchFinancialReportsService {
     const expensesByCategory: Record<string, number> = {};
     let totalExpenses = 0;
     let taxRemitted = 0;
+    let purchases = 0;
     for (const exp of expenses) {
       const amount = Number(exp.amount) || 0;
       // A tax remittance shares this table but is not a cost: the money it pays
@@ -373,20 +390,42 @@ export class BranchFinancialReportsService {
         taxRemitted += amount;
         continue;
       }
+      // Goods bought share this table too, and are a cost — but a direct one.
+      // Leaving them among the operating expenses puts a restaurant's food bill
+      // below its gross margin, which is the line every restaurateur actually
+      // manages the business by.
+      if (isPurchasesCategory(exp.category)) {
+        purchases += amount;
+        continue;
+      }
       expensesByCategory[exp.category] =
         (expensesByCategory[exp.category] || 0) + amount;
       totalExpenses += amount;
     }
 
     const netRevenue = gross - tax;
-    const grossProfit = netRevenue - cogs;
+    const grossProfit = netRevenue - cogs - purchases;
     const netProfit = grossProfit - totalExpenses;
 
     const notes: string[] = [];
     if (!checkouts.length) notes.push('No POS checkouts in range.');
-    if (!wacByProduct.size && itemsByProduct.size) {
+    if (!wacByProduct.size && itemsByProduct.size && purchases < 0.01) {
       notes.push(
         'Cost-of-goods-sold is 0 because no purchase-order history was found for the items sold.',
+      );
+    }
+    if (purchases >= 0.01) {
+      notes.push(
+        `Goods purchased in this range total ${this.round2(purchases)}. They are counted against gross profit as a direct cost, not as an operating expense.`,
+      );
+    }
+    // Both bases at once. Not an error — a branch can genuinely run purchase
+    // orders for its drinks and a cash market run for its vegetables — but a
+    // reader comparing this to a hand-kept book needs to be told, because the
+    // same tomato counted through both paths would be counted twice.
+    if (purchases >= 0.01 && cogs >= 0.01) {
+      notes.push(
+        'This branch reports both cost-of-goods-sold from purchase-order history and goods purchased directly. Anything bought on a purchase order AND filed as a purchase would be counted twice.',
       );
     }
     if (!expenses.length) notes.push('No branch expenses recorded in range.');
@@ -406,6 +445,7 @@ export class BranchFinancialReportsService {
       range: { from, to },
       revenue: { gross, voided, tax, net: netRevenue },
       cogs,
+      purchases,
       grossProfit,
       expensesByCategory,
       totalExpenses,
@@ -685,7 +725,14 @@ export class BranchFinancialReportsService {
         credit: bs.liabilities.nonCurrent.longTermDebt,
       },
       { account: 'Sales Revenue', debit: 0, credit: pl.revenue.net },
-      { account: 'Cost of Goods Sold', debit: pl.cogs, credit: 0 },
+      // Both legs debit COGS (5000): `cogs` is what was sold at weighted-average
+      // cost, `purchases` is what was bought outright. Splitting them in the P&L
+      // and re-joining them here is what keeps the trial balance balanced.
+      {
+        account: 'Cost of Goods Sold',
+        debit: pl.cogs + pl.purchases,
+        credit: 0,
+      },
       ...Object.entries(pl.expensesByCategory).map(([category, amount]) => ({
         account: `Expense: ${category}`,
         debit: amount,
@@ -807,6 +854,16 @@ export class BranchFinancialReportsService {
         session.openingFloat != null
           ? Number(session.openingFloat) || 0
           : carriedOpening;
+      /* Deliberately does NOT net off pos_cash_movements, though a drawer that
+         paid out a purchase advance really is lighter by it.
+
+         This figure feeds `cashOnHand`, and the caller subtracts EVERY expense
+         from that a few lines later — including the one an approved purchase run
+         posts. Netting the advance off here as well would take the same money
+         out twice and report a branch as holding less cash than it does. The
+         session REPORT is the opposite case and does net them: that one is a
+         count-the-drawer figure with no expense subtraction anywhere near it.
+         See cashMovementsFor in pos-register-report.service.ts. */
       const expectedCash =
         openingFloat + (cashBySessionId.get(Number(session.id)) || 0);
       const closedByAsOf =

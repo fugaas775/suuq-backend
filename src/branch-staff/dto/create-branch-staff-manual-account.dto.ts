@@ -96,6 +96,22 @@ export enum PosRegisterPermission {
   // Overrides happen in a real office; this makes them recorded rather than
   // impossible, and every use writes a VEHICLE_EVENT row with a reason.
   VEHICLE_OVERRIDE = 'VEHICLE_OVERRIDE',
+  // Purchasing — the market run.
+  //
+  // A restaurant here does not buy its tomatoes from a supplier with an account
+  // on the platform; somebody walks to the market every morning with cash. These
+  // three codes split that into the three authorities it actually is, for the
+  // same reason the registry codes are split: the person who buys is not the
+  // person who signs for it, and neither is the person who opens the drawer.
+  //
+  //   FILE_PURCHASE_RUN     — record what was bought and what it cost.
+  //   APPROVE_PURCHASE_RUN  — sign it off, which is what posts it to the books
+  //                           and moves stock. A manager's signature.
+  //   ISSUE_PURCHASE_ADVANCE— hand cash out of the till against a run. The till
+  //                           is the cashier's, not the purchaser's.
+  FILE_PURCHASE_RUN = 'FILE_PURCHASE_RUN',
+  APPROVE_PURCHASE_RUN = 'APPROVE_PURCHASE_RUN',
+  ISSUE_PURCHASE_ADVANCE = 'ISSUE_PURCHASE_ADVANCE',
 }
 
 function trimString(value: unknown) {

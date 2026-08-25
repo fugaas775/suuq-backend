@@ -36,6 +36,20 @@ export enum BranchExpenseCategory {
    * already handles that. See {@link isLiabilitySettlementCategory}.
    */
   TAX_REMITTANCE = 'TAX_REMITTANCE',
+  /**
+   * Goods bought to be sold or cooked — a restaurant's market run, a shop's
+   * cash purchase of stock.
+   *
+   * NOT an operating expense, despite living in this table: it is a direct cost
+   * of what the branch sells, so it debits COGS (5000) and is reported against
+   * gross profit rather than below it. A QSR buying its meat and vegetables at
+   * the market had nowhere to put that money before this — SUPPLIES posts to
+   * EXPENSE_SUPPLIES, which put the single largest cost a restaurant has below
+   * the gross-profit line and left every one of them showing a 100% margin.
+   *
+   * See {@link isPurchasesCategory}.
+   */
+  INGREDIENTS = 'INGREDIENTS',
 }
 
 /**
@@ -47,6 +61,22 @@ export enum BranchExpenseCategory {
  * in one place. Cash is the exception that needs no test: the money left the
  * branch either way, so every cash path treats all rows alike.
  */
+/**
+ * True for rows in this table that buy goods rather than incur an operating
+ * expense.
+ *
+ * Same shape as {@link isLiabilitySettlementCategory} and for the same reason:
+ * every reader has to make the call, so the test lives in one place. The ledger
+ * posting picks COGS from it and the P&L reports it against gross profit
+ * instead of inside operating expenses. Cash is again the exception that needs
+ * no test — the money left the branch either way.
+ */
+export function isPurchasesCategory(category?: string | null): boolean {
+  return (
+    String(category || '').toUpperCase() === BranchExpenseCategory.INGREDIENTS
+  );
+}
+
 export function isLiabilitySettlementCategory(
   category?: string | null,
 ): boolean {

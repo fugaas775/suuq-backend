@@ -10,6 +10,10 @@ import {
   PosCheckoutTransactionType,
 } from './entities/pos-checkout.entity';
 import { PosRegisterSession } from './entities/pos-register-session.entity';
+import {
+  PosCashMovement,
+  PosCashMovementDirection,
+} from '../purchasing/entities/pos-cash-movement.entity';
 
 type PaymentMixRow = { method: string; label: string; amount: number };
 
@@ -27,6 +31,10 @@ export interface SessionReportData {
   cashNet: number;
   openingFloat: number | null;
   closingFloat: number | null;
+  /** Non-sale cash INTO the drawer — a purchaser's change coming back. */
+  cashPaidIn: number;
+  /** Non-sale cash OUT of the drawer — an advance for a market run. */
+  cashPaidOut: number;
   expectedCash: number | null;
   variance: number | null;
 }
@@ -83,6 +91,8 @@ interface RenderModel {
   cash: {
     openingFloat: number | null;
     closingFloat: number | null;
+    cashPaidIn: number;
+    cashPaidOut: number;
     expectedCash: number | null;
     variance: number | null;
   };
@@ -117,8 +127,37 @@ export class PosRegisterReportService {
     private readonly checkoutsRepository: Repository<PosCheckout>,
     @InjectRepository(Branch)
     private readonly branchesRepository: Repository<Branch>,
+    @InjectRepository(PosCashMovement)
+    private readonly cashMovementsRepository: Repository<PosCashMovement>,
     private readonly emailService: EmailService,
   ) {}
+
+  /**
+   * Cash that went through this drawer without a sale behind it.
+   *
+   * `openingFloat + cash taken` is only the right answer for a drawer nobody
+   * ever takes money out of. A restaurant hands a purchaser cash before service
+   * and gets change back at noon, and a till that does not know it comes up
+   * short by exactly the advance — which reads as a cashier stealing, not as
+   * bookkeeping. Returns zeroes when nothing moved, which is every branch that
+   * has never filed a purchase run.
+   */
+  private async cashMovementsFor(
+    sessionId: number,
+  ): Promise<{ paidIn: number; paidOut: number; net: number }> {
+    const rows = await this.cashMovementsRepository.find({
+      where: { registerSessionId: sessionId },
+      select: ['direction', 'amount'],
+    });
+    let paidIn = 0;
+    let paidOut = 0;
+    for (const row of rows) {
+      const amount = Number(row.amount) || 0;
+      if (row.direction === PosCashMovementDirection.IN) paidIn += amount;
+      else paidOut += amount;
+    }
+    return { paidIn, paidOut, net: paidIn - paidOut };
+  }
 
   /**
    * Fire-and-forget entry point called right after a session is closed.
@@ -212,7 +251,9 @@ export class PosRegisterReportService {
 
     const openingFloat = session.openingFloat ?? null;
     const closingFloat = session.closingFloat ?? null;
-    const expectedCash = openingFloat != null ? openingFloat + cashIn : null;
+    const drawer = await this.cashMovementsFor(Number(session.id));
+    const expectedCash =
+      openingFloat != null ? openingFloat + cashIn + drawer.net : null;
     const variance =
       closingFloat != null && expectedCash != null
         ? closingFloat - expectedCash
@@ -285,7 +326,14 @@ export class PosRegisterReportService {
       })),
       counts:
         report.counts && typeof report.counts === 'object' ? report.counts : {},
-      cash: { openingFloat, closingFloat, expectedCash, variance },
+      cash: {
+        openingFloat,
+        closingFloat,
+        cashPaidIn: drawer.paidIn,
+        cashPaidOut: drawer.paidOut,
+        expectedCash,
+        variance,
+      },
     };
   }
 
@@ -319,6 +367,8 @@ export class PosRegisterReportService {
       cash: {
         openingFloat: r.openingFloat,
         closingFloat: r.closingFloat,
+        cashPaidIn: r.cashPaidIn,
+        cashPaidOut: r.cashPaidOut,
         expectedCash: r.expectedCash,
         variance: r.variance,
       },
@@ -382,7 +432,9 @@ export class PosRegisterReportService {
     const averageTicket = receiptCount ? grossSales / receiptCount : 0;
     const openingFloat = session.openingFloat ?? null;
     const closingFloat = session.closingFloat ?? null;
-    const expectedCash = openingFloat != null ? openingFloat + cashNet : null;
+    const drawer = await this.cashMovementsFor(Number(session.id));
+    const expectedCash =
+      openingFloat != null ? openingFloat + cashNet + drawer.net : null;
     const variance =
       closingFloat != null && expectedCash != null
         ? closingFloat - expectedCash
@@ -411,6 +463,8 @@ export class PosRegisterReportService {
       cashNet,
       openingFloat,
       closingFloat,
+      cashPaidIn: drawer.paidIn,
+      cashPaidOut: drawer.paidOut,
       expectedCash,
       variance,
     };
@@ -570,6 +624,12 @@ export class PosRegisterReportService {
       '',
       'Cash drawer',
       `  Opening float : ${this.money(m.cash.openingFloat, cur)}`,
+      m.cash.cashPaidOut > 0
+        ? `  Paid out      : -${this.money(m.cash.cashPaidOut, cur)}`
+        : '',
+      m.cash.cashPaidIn > 0
+        ? `  Paid in       : +${this.money(m.cash.cashPaidIn, cur)}`
+        : '',
       `  Closing float : ${this.money(m.cash.closingFloat, cur)}`,
       `  Expected cash : ${this.money(m.cash.expectedCash, cur)}`,
       m.cash.variance != null
@@ -739,6 +799,8 @@ export class PosRegisterReportService {
       heading('Cash drawer') +
         `<table style="width:100%;font-size:0.92em;border-collapse:collapse">
           ${kv('Opening float', this.money(m.cash.openingFloat, cur))}
+          ${m.cash.cashPaidOut > 0 ? kv('Paid out (advances)', `-${this.money(m.cash.cashPaidOut, cur)}`) : ''}
+          ${m.cash.cashPaidIn > 0 ? kv('Paid in (change back)', `+${this.money(m.cash.cashPaidIn, cur)}`) : ''}
           ${kv('Closing float', this.money(m.cash.closingFloat, cur))}
           ${kv('Expected cash', this.money(m.cash.expectedCash, cur))}
           <tr><td style="padding:6px 0;color:#555">Variance</td><td style="padding:6px 0;text-align:right;font-weight:bold;color:${varianceColor}">${varianceStr}</td></tr>
@@ -890,6 +952,12 @@ export class PosRegisterReportService {
 
         heading('Cash drawer');
         kv('Opening float', this.money(m.cash.openingFloat, cur));
+        if (m.cash.cashPaidOut > 0) {
+          kv('Paid out (advances)', `-${this.money(m.cash.cashPaidOut, cur)}`);
+        }
+        if (m.cash.cashPaidIn > 0) {
+          kv('Paid in (change back)', `+${this.money(m.cash.cashPaidIn, cur)}`);
+        }
         kv('Closing float', this.money(m.cash.closingFloat, cur));
         kv('Expected cash', this.money(m.cash.expectedCash, cur));
         kv(

@@ -133,6 +133,10 @@ export class BranchBillingService {
         return GlAccountCode.EXPENSE_PAYROLL;
       case 'SUPPLIES':
         return GlAccountCode.EXPENSE_SUPPLIES;
+      // Goods bought to be cooked or resold are a direct cost of sales, not an
+      // operating expense. See isPurchasesCategory.
+      case 'INGREDIENTS':
+        return GlAccountCode.COGS;
       case 'MARKETING':
         return GlAccountCode.EXPENSE_MARKETING;
       case 'MAINTENANCE':
