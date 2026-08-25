@@ -1,6 +1,8 @@
 import {
+  ADMIN_PROVISIONED_SERVICE_FORMAT_CODES,
   assertAllowedSelfServeServiceFormat,
   getDefaultAllowedSelfServeServiceFormats,
+  resolveAllowedServiceFormatsForActor,
 } from './self-serve-service-format.policy';
 
 /**
@@ -55,6 +57,74 @@ describe('self-serve service format policy', () => {
     expect(() =>
       assertAllowedSelfServeServiceFormat('QSR', 'test', allowed),
     ).toThrow(/until hospitality rollout is enabled/);
+  });
+
+  /**
+   * A vehicle registry office carries statutory authority — it issues plates
+   * and prints a certificate a checkpoint is asked to trust. It is provisioned
+   * by the platform, never picked off a signup grid. Both halves of that are
+   * asserted here: nobody self-serve reaches it, and an admin can.
+   */
+  describe('admin-provisioned formats', () => {
+    it('refuses VEHICLE_REGISTRY to an ordinary owner', () => {
+      process.env.POS_HOSPITALITY_SERVICE_FORMATS_ENABLED = '1';
+      const allowed = resolveAllowedServiceFormatsForActor(null, {
+        isPlatformAdmin: false,
+      });
+
+      expect(allowed).not.toContain('VEHICLE_REGISTRY');
+      expect(() =>
+        assertAllowedSelfServeServiceFormat(
+          'VEHICLE_REGISTRY',
+          'test',
+          allowed,
+        ),
+      ).toThrow(/does not support VEHICLE_REGISTRY/);
+    });
+
+    it('lets a platform admin put a branch on it', () => {
+      // Until this existed the ownership check passed for a SUPER_ADMIN and the
+      // format check refused them anyway, so the region's one registry office
+      // had to be written straight into the database.
+      process.env.POS_HOSPITALITY_SERVICE_FORMATS_ENABLED = '1';
+      const allowed = resolveAllowedServiceFormatsForActor(null, {
+        isPlatformAdmin: true,
+      });
+
+      expect(allowed).toContain('VEHICLE_REGISTRY');
+      expect(
+        assertAllowedSelfServeServiceFormat(
+          'VEHICLE_REGISTRY',
+          'test',
+          allowed,
+        ),
+      ).toBe('VEHICLE_REGISTRY');
+    });
+
+    it('adds nothing else to what the tenant already had', () => {
+      // The admin allowance is exactly the admin-provisioned list — it must not
+      // become a back door around the rollout flag.
+      process.env.POS_HOSPITALITY_SERVICE_FORMATS_ENABLED = 'false';
+      const asOwner = resolveAllowedServiceFormatsForActor(null, {
+        isPlatformAdmin: false,
+      });
+      const asAdmin = resolveAllowedServiceFormatsForActor(null, {
+        isPlatformAdmin: true,
+      });
+
+      expect(asOwner).toEqual(['RETAIL']);
+      expect(asAdmin).toEqual([
+        'RETAIL',
+        ...ADMIN_PROVISIONED_SERVICE_FORMAT_CODES,
+      ]);
+    });
+
+    it('is never folded into the self-serve default', () => {
+      process.env.POS_HOSPITALITY_SERVICE_FORMATS_ENABLED = '1';
+      for (const code of ADMIN_PROVISIONED_SERVICE_FORMAT_CODES) {
+        expect(getDefaultAllowedSelfServeServiceFormats()).not.toContain(code);
+      }
+    });
   });
 
   it('still rejects a format nothing offers', () => {

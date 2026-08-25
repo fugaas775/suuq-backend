@@ -45,6 +45,7 @@ import {
   assertAllowedSelfServeServiceFormat,
   getPosCoreEntitlement,
   resolveAllowedSelfServeServiceFormats,
+  resolveAllowedServiceFormatsForActor,
 } from '../retail/self-serve-service-format.policy';
 import {
   TenantBillingInterval,
@@ -2636,9 +2637,17 @@ export class SellerWorkspaceService {
       // The branch's CURRENT format is always allowed: re-submitting what a
       // branch already runs on must never fail, even if the rollout that
       // enabled it has since been narrowed.
+      //
+      // `...ForActor` rather than the tenant list alone because a handful of
+      // formats are admin-provisioned and reachable nowhere else — a vehicle
+      // registry office is one, and until this call knew who was asking, the
+      // ownership check above passed for a SUPER_ADMIN and the format check
+      // three lines later refused them anyway. The only registry branch in
+      // production had to be written straight into the database.
       [
-        ...resolveAllowedSelfServeServiceFormats(
+        ...resolveAllowedServiceFormatsForActor(
           getPosCoreEntitlement([posCoreEntitlement].filter(Boolean)),
+          { isPlatformAdmin },
         ),
         ...(previousServiceFormat ? [previousServiceFormat] : []),
       ],
