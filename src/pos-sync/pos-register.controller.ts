@@ -165,6 +165,17 @@ export class PosRegisterController {
   // way on 2026-08-19 (three 403s against folio 16867, on a stale operator token
   // whose roster grant had since been widened) and the till reported the child
   // paid up. Settling a fee has to imply the right to write it down.
+  //
+  // MARK_KITCHEN_TICKET_READY is the QSR cook's, and it is here for the same
+  // reason POST_FEE_CHARGE is. A QSR kitchen display is derived from the order
+  // itself rather than from a ticket table, so "this station's food is up" is
+  // written to `metadata` on THIS route. A cook lane holds exactly one
+  // permission by design (it can neither park a basket nor open a folio), so
+  // without this entry the board renders, the cook taps Ready, and the tap
+  // 403s — the pass believing food is served while every other screen still
+  // shows it cooking. Nothing else on the row is writable by that permission:
+  // metadata is shallow-merged per top-level key, and the cook writes only its
+  // own `qsrKitchen:<STATION>` one.
   @RequirePosPermissions(
     'SUSPEND_SALE',
     'OPEN_ROOM_FOLIO',
@@ -172,6 +183,7 @@ export class PosRegisterController {
     'ENROL_STUDENT',
     'POST_FEE_CHARGE',
     'SETTLE_FEE_PAYMENT',
+    'MARK_KITCHEN_TICKET_READY',
   )
   @Roles(
     UserRole.SUPER_ADMIN,
