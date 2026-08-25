@@ -814,10 +814,18 @@ export class PurchasingService {
       throw error;
     }
 
-    await this.applyStockLines(run, lines, actor);
+    const stockFailures = await this.applyStockLines(run, lines, actor);
 
     const fresh = await this.loadRunOrFail(run.id, dto.branchId);
-    return this.toRun(fresh, await this.loadLines(run.id));
+    return {
+      ...this.toRun(fresh, await this.loadLines(run.id)),
+      /* Which lines were meant to add stock and could not — a product deleted
+         from the catalog since the run was written, most likely. Empty on every
+         normal approval. Deliberately not an error: the goods are in the kitchen
+         and the money is posted, so failing the request would only get the
+         manager to tap Approve again. */
+      stockFailures,
+    };
   }
 
   /**
@@ -833,7 +841,8 @@ export class PurchasingService {
     run: PurchaseRun,
     lines: PurchaseRunLine[],
     actor: PurchasingActor,
-  ) {
+  ): Promise<string[]> {
+    const failed: string[] = [];
     for (const line of lines) {
       if (!line.productId || !line.stockQuantity || line.stockMovementId) {
         continue;
@@ -860,8 +869,13 @@ export class PurchasingService {
             (error as Error)?.message ?? error
           }`,
         );
+        // Named, not just logged. The money posted either way, so the manager
+        // has signed off a run whose stock did not move — and a stock figure
+        // that is quietly wrong is worse than one that says so.
+        failed.push(line.description);
       }
     }
+    return failed;
   }
 
   /** Send it back, with a reason. The run returns to the purchaser editable. */

@@ -30,15 +30,24 @@ function makeService({
   const deletedExpenses: any[] = [];
   const stockMovements: any[] = [];
 
+  // Mirrors the conditional UPDATE the service claims a run with: the values
+  // land on the row only when the claim actually won, so a test with
+  // claimAffected 0 sees a run that never moved.
+  let pending: any = null;
   const runUpdateQb: any = {
     update: () => runUpdateQb,
     set: (values: any) => {
+      pending = values;
       updatedRuns.push(values);
       return runUpdateQb;
     },
     where: () => runUpdateQb,
     andWhere: () => runUpdateQb,
-    execute: async () => ({ affected: claimAffected }),
+    execute: async () => {
+      if (claimAffected && run && pending) Object.assign(run, pending);
+      pending = null;
+      return { affected: claimAffected };
+    },
   };
 
   const runs: any = {
@@ -279,6 +288,52 @@ describe('PurchasingService — approval', () => {
       sourceReferenceId: 14,
     });
     expect(lines[1].stockMovementId).toBe(501);
+  });
+
+  /**
+   * A product deleted from the catalog since the run was written. The money is
+   * posted and the goods are in the kitchen, so the approval must not fail —
+   * but a stock figure that is quietly wrong is worse than one that says so.
+   */
+  it('names the lines whose stock could not move, without failing the approval', async () => {
+    const run = runRow();
+    const lines = [
+      lineRow({ id: 1, description: 'Charcoal' }),
+      lineRow({
+        id: 2,
+        description: 'Ukun (eggs)',
+        productId: 999999,
+        stockQuantity: 180,
+      }),
+    ];
+    const ctx = makeService({ run, lines });
+    (ctx.service as any).inventoryLedger.recordMovement = async () => {
+      throw new Error('product not found');
+    };
+
+    const result: any = await ctx.service.approveRun(
+      14,
+      { branchId: 44 },
+      manager,
+    );
+
+    expect(result.status).toBe(PurchaseRunStatus.APPROVED);
+    expect(ctx.postedExpenses).toHaveLength(1);
+    expect(result.stockFailures).toEqual(['Ukun (eggs)']);
+  });
+
+  it('reports no stock failures on an ordinary approval', async () => {
+    const run = runRow();
+    const ctx = makeService({
+      run,
+      lines: [lineRow({ id: 2, productId: 77, stockQuantity: 12 })],
+    });
+    const result: any = await ctx.service.approveRun(
+      14,
+      { branchId: 44 },
+      manager,
+    );
+    expect(result.stockFailures).toEqual([]);
   });
 
   it('does not raise stock twice for a line that already moved', async () => {
