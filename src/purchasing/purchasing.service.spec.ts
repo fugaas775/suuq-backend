@@ -21,6 +21,7 @@ function makeService({
   expenseThrows = false,
   existingChangeMovement = null as any,
   cashMovementCount = 0,
+  alreadyPostedExpenseId = null,
 } = {}) {
   const savedRuns: any[] = [];
   const updatedRuns: any[] = [];
@@ -44,7 +45,22 @@ function makeService({
     where: () => runUpdateQb,
     andWhere: () => runUpdateQb,
     execute: async () => {
-      if (claimAffected && run && pending) Object.assign(run, pending);
+      if (claimAffected && run && pending) {
+        for (const [key, value] of Object.entries(pending)) {
+          /* A function value is raw SQL — the service adds the advance IN THE
+             DATABASE so two concurrent issues cannot lose one. Emulated here
+             rather than skipped, so the test still asserts the arithmetic and
+             not just that an UPDATE was attempted. */
+          if (typeof value === 'function') {
+            const sql = String((value as () => string)());
+            const delta = Number(sql.match(/\+\s*([0-9.]+)/)?.[1] ?? 0);
+            run[key] =
+              Math.round(((Number(run[key]) || 0) + delta) * 100) / 100;
+          } else {
+            run[key] = value;
+          }
+        }
+      }
       pending = null;
       return { affected: claimAffected };
     },
@@ -89,6 +105,17 @@ function makeService({
     },
     delete: async () => ({ affected: 1 }),
     createQueryBuilder: () => ({}),
+    manager: {
+      transaction: async (fn: any) =>
+        fn({
+          delete: async () => ({ affected: 1 }),
+          save: async (_entity: any, rows: any) => {
+            const list = Array.isArray(rows) ? rows : [rows];
+            savedLines.push(...list);
+            return list;
+          },
+        }),
+    },
   };
 
   const cashMovements: any = {
@@ -132,17 +159,33 @@ function makeService({
     findOne: async () => ({ id: 12, displayName: 'Maxamed Cabdi' }),
   };
 
+  // The books, read only to recognise an expense a previous attempt wrote.
+  const expenseQb: any = {
+    select: () => expenseQb,
+    addSelect: () => expenseQb,
+    where: () => expenseQb,
+    andWhere: () => expenseQb,
+    orderBy: () => expenseQb,
+    limit: () => expenseQb,
+    getRawOne: async () =>
+      alreadyPostedExpenseId ? { id: alreadyPostedExpenseId } : null,
+  };
+  const expensesRepo: any = { createQueryBuilder: () => expenseQb };
+
   const service = new PurchasingService(
     runs,
     linesRepo,
     cashMovements,
     users,
+    expensesRepo,
     billing,
     inventoryLedger,
   );
 
   return {
     service,
+    runsRepo: runs,
+    linesRepo,
     savedRuns,
     updatedRuns,
     savedLines,
@@ -351,6 +394,146 @@ describe('PurchasingService — approval', () => {
     await ctx.service.approveRun(14, { branchId: 44 }, manager);
 
     expect(ctx.stockMovements).toHaveLength(0);
+  });
+});
+
+describe('PurchasingService — one market trip, one run', () => {
+  /**
+   * Filing is a POST from a phone standing in a market: the write lands, the
+   * response does not come back, and the purchaser taps again. Without a ref
+   * that is a second run for one trip — and two expenses once both are signed
+   * off.
+   */
+  it('returns the run it already made when a retry carries the same ref', async () => {
+    const existing = runRow({ id: 40, clientRef: 'run-abc' });
+    const ctx = makeService({ run: existing, lines: [lineRow()] });
+
+    const result = await ctx.service.createRun(
+      {
+        branchId: 44,
+        clientRef: 'run-abc',
+        lines: [{ description: 'Yaanyo', lineTotal: 300 }],
+      },
+      purchaser,
+    );
+
+    expect(result.id).toBe(40);
+    // Nothing new written: not the run, not its lines.
+    expect(ctx.savedRuns).toHaveLength(0);
+    expect(ctx.savedLines).toHaveLength(0);
+  });
+
+  /**
+   * Two taps close enough together that both read an empty table. The unique
+   * index is the real guard; losing that race must still look like success.
+   */
+  it('reads back the winner when two identical taps race', async () => {
+    const ctx = makeService({ run: null, lines: [] });
+    let looked = 0;
+    ctx.runsRepo.findOne = async () => {
+      looked += 1;
+      // Nothing on the pre-check; the winner's row on the post-violation read.
+      return looked === 1 ? null : runRow({ id: 41, clientRef: 'run-xyz' });
+    };
+    ctx.runsRepo.save = async () => {
+      const err: any = new Error('duplicate key');
+      err.code = '23505';
+      throw err;
+    };
+
+    const result = await ctx.service.createRun(
+      { branchId: 44, clientRef: 'run-xyz', lines: [] },
+      purchaser,
+    );
+    expect(result.id).toBe(41);
+  });
+
+  /** No ref, no idempotency — an older client still gets a run. */
+  it('still creates a run when the device sent no ref', async () => {
+    const ctx = makeService({ run: null, lines: [] });
+    ctx.runsRepo.findOne = async () => null;
+    const result = await ctx.service.createRun(
+      { branchId: 44, lines: [] },
+      purchaser,
+    );
+    expect(ctx.savedRuns).toHaveLength(1);
+    expect(ctx.savedRuns[0].clientRef).toBeNull();
+    expect(result.status).toBe(PurchaseRunStatus.DRAFT);
+  });
+});
+
+describe('PurchasingService — an interrupted sign-off', () => {
+  /**
+   * The claim and the posting cannot be one atomic act — the books are another
+   * service with their own repositories — so a request can end with the run
+   * APPROVED and `expenseId` still null. Every retry used to answer "only a
+   * filed run can be signed off", forever, at a run the manager had already
+   * approved.
+   */
+  it('finishes a posting that was interrupted, instead of refusing forever', async () => {
+    const run = runRow({ status: PurchaseRunStatus.APPROVED, expenseId: null });
+    const ctx = makeService({ run, lines: [lineRow()] });
+
+    const result: any = await ctx.service.approveRun(
+      14,
+      { branchId: 44 },
+      manager,
+    );
+
+    expect(result.status).toBe(PurchaseRunStatus.APPROVED);
+    expect(ctx.postedExpenses).toHaveLength(1);
+    expect(ctx.updatedRuns.some((u) => u.expenseId === 900)).toBe(true);
+  });
+
+  /**
+   * …and if the interruption came AFTER the expense was written, the retry must
+   * adopt it. Posting again would put one market trip in the books twice, which
+   * is the very thing the retry exists to prevent.
+   */
+  it('adopts an expense a previous attempt already wrote', async () => {
+    const run = runRow({ status: PurchaseRunStatus.APPROVED, expenseId: null });
+    const ctx = makeService({
+      run,
+      lines: [lineRow()],
+      alreadyPostedExpenseId: 777,
+    });
+
+    const result: any = await ctx.service.approveRun(
+      14,
+      { branchId: 44 },
+      manager,
+    );
+
+    expect(ctx.postedExpenses).toHaveLength(0);
+    expect(ctx.updatedRuns.some((u) => u.expenseId === 777)).toBe(true);
+    expect(result.status).toBe(PurchaseRunStatus.APPROVED);
+  });
+
+  /**
+   * The claim is released only when the BOOKS refused. It used to be released
+   * whenever anything after the claim threw — including the write that records
+   * the expense id — so the expense existed, the run went back to SUBMITTED,
+   * and the next tap posted a second one for the same trip.
+   */
+  it('does not release the claim once the money is in the books', async () => {
+    const run = runRow();
+    const ctx = makeService({ run, lines: [lineRow()] });
+    ctx.runsRepo.update = async (_where: any, values: any) => {
+      if (values.expenseId != null) throw new Error('connection lost');
+      ctx.updatedRuns.push(values);
+      Object.assign(run, values);
+      return { affected: 1 };
+    };
+
+    await expect(
+      ctx.service.approveRun(14, { branchId: 44 } as any, manager),
+    ).rejects.toThrow('connection lost');
+
+    expect(ctx.postedExpenses).toHaveLength(1);
+    // Still signed. Rolling back here is what produced the second expense.
+    expect(
+      ctx.updatedRuns.some((u) => u.status === PurchaseRunStatus.SUBMITTED),
+    ).toBe(false);
   });
 });
 

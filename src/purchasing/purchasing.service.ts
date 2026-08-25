@@ -8,7 +8,10 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { BranchBillingService } from '../billing/branch-billing.service';
-import { BranchExpenseCategory } from '../billing/entities/branch-expense.entity';
+import {
+  BranchExpense,
+  BranchExpenseCategory,
+} from '../billing/entities/branch-expense.entity';
 import { InventoryLedgerService } from '../branches/inventory-ledger.service';
 import { User } from '../users/entities/user.entity';
 import { StockMovementType } from '../branches/entities/stock-movement.entity';
@@ -33,6 +36,26 @@ import {
 
 /** The source tag every cash movement and stock movement a run makes carries. */
 export const PURCHASE_RUN_SOURCE = 'PURCHASE_RUN';
+
+/**
+ * The opening of the note every approved run posts, and the only handle there
+ * is on "has this run already been posted?".
+ *
+ * Deterministic and defined once, because it is read back as an idempotency key
+ * — see findPostedExpense. Changing the shape of this string breaks the ability
+ * to recognise an expense a previous attempt already wrote.
+ */
+export function purchaseRunExpenseNote(runId: number): string {
+  return `Purchase run #${runId}`;
+}
+
+/** Postgres unique-violation, however the driver wrapped it. */
+function isUniqueViolation(error: unknown): boolean {
+  const code =
+    (error as { code?: string })?.code ??
+    (error as { driverError?: { code?: string } })?.driverError?.code;
+  return String(code) === '23505';
+}
 
 function money(value: unknown): number {
   return Math.round((Number(value) || 0) * 100) / 100;
@@ -83,6 +106,10 @@ export class PurchasingService {
     private readonly cashMovements: Repository<PosCashMovement>,
     @InjectRepository(User)
     private readonly users: Repository<User>,
+    // Read-only, and only to answer "did this run already post one?" — see
+    // findPostedExpense. Everything that WRITES an expense goes through billing.
+    @InjectRepository(BranchExpense)
+    private readonly expenses: Repository<BranchExpense>,
     private readonly billing: BranchBillingService,
     private readonly inventoryLedger: InventoryLedgerService,
   ) {}
@@ -118,6 +145,7 @@ export class PurchasingService {
       branchId: row.branchId,
       status: row.status,
       label: row.label ?? null,
+      clientRef: row.clientRef ?? null,
       purchaserUserId: row.purchaserUserId ?? null,
       purchaserName: row.purchaserName ?? null,
       registerSessionId: row.registerSessionId ?? null,
@@ -465,26 +493,70 @@ export class PurchasingService {
 
   // ------------------------------------------------------------------- writes
 
+  /**
+   * Start a run.
+   *
+   * Idempotent on `clientRef`, because this is a POST from a phone standing in a
+   * market: the write lands, the response does not come back, and the purchaser
+   * taps again. Without a ref that is a second run for one trip, and two
+   * expenses once both are signed off.
+   *
+   * The ref is checked first and the unique index catches the race the check
+   * cannot — two taps close enough together that both read an empty table. Both
+   * paths end the same way: return the run that exists.
+   */
   async createRun(dto: CreatePurchaseRunDto, actor: PurchasingActor) {
-    const occurredAt = this.parseDate(dto.occurredAt, 'occurredAt');
-    const run = await this.runs.save(
-      this.runs.create({
-        branchId: dto.branchId,
-        status: PurchaseRunStatus.DRAFT,
-        label: dto.label ? String(dto.label).trim() : null,
-        purchaserUserId: actor.userId ?? null,
-        purchaserName: await this.actorName(actor),
-        currency: (dto.currency || 'ETB').toUpperCase().slice(0, 8),
-        occurredAt,
-        spentTotal: 0,
-        note: dto.note ? String(dto.note).trim() : null,
-      }),
-    );
+    const clientRef =
+      String(dto.clientRef || '')
+        .trim()
+        .slice(0, 64) || null;
 
-    if (dto.lines?.length) {
-      await this.lines.save(this.buildLines(run, dto.lines));
+    if (clientRef) {
+      const existing = await this.runs.findOne({
+        where: { branchId: dto.branchId, clientRef },
+      });
+      if (existing) {
+        return this.toRun(existing, await this.loadLines(existing.id));
+      }
     }
 
+    const occurredAt = this.parseDate(dto.occurredAt, 'occurredAt');
+    let run: PurchaseRun;
+    try {
+      run = await this.runs.save(
+        this.runs.create({
+          branchId: dto.branchId,
+          status: PurchaseRunStatus.DRAFT,
+          label: dto.label ? String(dto.label).trim() : null,
+          clientRef,
+          purchaserUserId: actor.userId ?? null,
+          purchaserName: await this.actorName(actor),
+          currency: (dto.currency || 'ETB').toUpperCase().slice(0, 8),
+          occurredAt,
+          spentTotal: 0,
+          note: dto.note ? String(dto.note).trim() : null,
+        }),
+      );
+    } catch (error) {
+      // Lost the race to an identical retry. The index is the real guard; the
+      // lookup above only saves the common case a round trip.
+      if (clientRef && isUniqueViolation(error)) {
+        const raced = await this.runs.findOne({
+          where: { branchId: dto.branchId, clientRef },
+        });
+        if (raced) return this.toRun(raced, await this.loadLines(raced.id));
+      }
+      throw error;
+    }
+
+    // Only re-save when there is something to total. An empty new run is
+    // already zero, and a second write is a second thing to fail on a market
+    // connection.
+    if (!dto.lines?.length) {
+      return this.toRun(run, []);
+    }
+
+    await this.lines.save(this.buildLines(run, dto.lines));
     const saved = await this.recalcTotal(run);
     return this.toRun(saved, await this.loadLines(saved.id));
   }
@@ -519,12 +591,23 @@ export class PurchasingService {
     }
 
     if (dto.lines) {
-      // Replace the set. See UpdatePurchaseRunDto — a partial line patch would
-      // need stable ids for rows still being typed on a phone in a market.
-      await this.lines.delete({ runId: run.id });
-      if (dto.lines.length) {
-        await this.lines.save(this.buildLines(run, dto.lines));
-      }
+      /* Replace the set, in ONE transaction. See UpdatePurchaseRunDto — a
+         partial line patch would need stable ids for rows still being typed on
+         a phone in a market.
+
+         The delete and the insert used to be two statements, so a connection
+         dropped between them left a run with no lines at all and a spentTotal
+         that still claimed a number. Twelve lines typed at a stall, gone, and
+         the run reading as if they had never been written. */
+      const replacements = dto.lines.length
+        ? this.buildLines(run, dto.lines)
+        : [];
+      await this.lines.manager.transaction(async (manager) => {
+        await manager.delete(PurchaseRunLine, { runId: run.id });
+        if (replacements.length) {
+          await manager.save(PurchaseRunLine, replacements);
+        }
+      });
     }
 
     const saved = await this.recalcTotal(run);
@@ -695,38 +778,56 @@ export class PurchasingService {
     }
 
     const isTopUp = run.advanceAmount != null && Number(run.advanceAmount) > 0;
+    const sessionId = dto.registerSessionId ?? run.registerSessionId ?? null;
 
-    if (dto.registerSessionId) {
-      run.registerSessionId = dto.registerSessionId;
-    }
-    run.advanceAmount = money(Number(run.advanceAmount || 0) + amount);
-    const saved = await this.runs.save(run);
-
+    /* The DRAWER row is written first, and that ordering is the whole point.
+       Cash is in somebody's hand the moment this call is made. If the process
+       dies between the two writes, the survivable failure is a till that knows
+       money left and a run that does not — a manager can see the payout and fix
+       the paperwork. The other order leaves a drawer short with nothing to
+       explain it, which is the shape that gets read as a cashier stealing. */
     await this.cashMovements.save(
       this.cashMovements.create({
-        branchId: saved.branchId,
-        registerSessionId:
-          dto.registerSessionId ?? saved.registerSessionId ?? null,
+        branchId: run.branchId,
+        registerSessionId: sessionId,
         direction: PosCashMovementDirection.OUT,
         amount,
-        currency: saved.currency,
+        currency: run.currency,
         reason: isTopUp
           ? PosCashMovementReason.PURCHASE_TOP_UP
           : PosCashMovementReason.PURCHASE_ADVANCE,
         sourceType: PURCHASE_RUN_SOURCE,
-        sourceId: saved.id,
+        sourceId: run.id,
         recordedByUserId: actor.userId ?? null,
         recordedByName: await this.actorName(actor),
         occurredAt: new Date(),
         note:
           dto.note ||
-          `${isTopUp ? 'Top-up' : 'Advance'} for run #${saved.id}${
-            saved.purchaserName ? ` — ${saved.purchaserName}` : ''
+          `${isTopUp ? 'Top-up' : 'Advance'} for run #${run.id}${
+            run.purchaserName ? ` — ${run.purchaserName}` : ''
           }`,
       }),
     );
 
-    return this.toRun(saved, await this.loadLines(saved.id));
+    /* Added IN THE DATABASE, not in JavaScript.
+       `advanceAmount = read + amount` on a loaded entity loses one of two
+       concurrent issues — a cashier and a manager both handing over cash, or
+       one double-tap that beat the guard — and the money that goes missing is
+       the money that was already handed over. `save(entity)` made it worse by
+       rewriting every column from a read that may already be stale. */
+    await this.runs
+      .createQueryBuilder()
+      .update(PurchaseRun)
+      .set({
+        advanceAmount: () => `COALESCE("advanceAmount", 0) + ${amount}`,
+        ...(sessionId != null ? { registerSessionId: sessionId } : {}),
+      })
+      .where('id = :id', { id: run.id })
+      .andWhere('"branchId" = :branchId', { branchId: dto.branchId })
+      .execute();
+
+    const fresh = await this.loadRunOrFail(run.id, dto.branchId);
+    return this.toRun(fresh, await this.loadLines(fresh.id));
   }
 
   /**
@@ -749,6 +850,19 @@ export class PurchasingService {
     if (run.status === PurchaseRunStatus.APPROVED && run.expenseId != null) {
       return this.toRun(run, await this.loadLines(run.id));
     }
+
+    /* Signed, but the expense never got recorded against it.
+       The claim and the posting cannot be one atomic act — the books are
+       another service with its own repositories — so there is a window where
+       the run is APPROVED and `expenseId` is still null. Whatever ended the
+       request there, the run is now stuck: every retry used to fall through to
+       the conflict below and answer "only a filed run can be signed off",
+       forever, while the manager looks at a run they have already approved.
+       So the retry FINISHES THE JOB instead. */
+    if (run.status === PurchaseRunStatus.APPROVED && run.expenseId == null) {
+      return this.postApprovedRun(run, dto.branchId, actor);
+    }
+
     if (run.status !== PurchaseRunStatus.SUBMITTED) {
       throw new ConflictException(
         'Only a filed run can be signed off. This one is ' +
@@ -783,7 +897,69 @@ export class PurchasingService {
       );
     }
 
-    let expenseId: number | null = null;
+    return this.postApprovedRun(run, dto.branchId, actor);
+  }
+
+  /**
+   * Post a run that is already claimed as APPROVED: the expense, then the stock.
+   *
+   * Split out because it is reached twice — once by an ordinary sign-off, and
+   * once by a retry finishing a posting that was interrupted. Both need exactly
+   * the same work, and it must be safe to enter with the run already APPROVED.
+   */
+  /**
+   * The expense a previous attempt already posted for this run, if there is one.
+   *
+   * The claim and the posting are not one atomic act, so an attempt can die
+   * having written the expense but not the id that records it. Without this the
+   * retry that finishes the job would post a SECOND expense for one market trip
+   * — the exact thing the retry exists to prevent.
+   *
+   * Matched on the deterministic note prefix, which is the only key the billing
+   * table offers. Narrow enough to be safe: a voided run's expense is deleted,
+   * and a voided run can never be approved again, so nothing stale can match.
+   */
+  private async findPostedExpense(
+    branchId: number,
+    runId: number,
+  ): Promise<number | null> {
+    const row = await this.expenses
+      .createQueryBuilder('e')
+      .select('e.id', 'id')
+      .where('e."branchId" = :branchId', { branchId })
+      .andWhere('e.category = :category', {
+        category: BranchExpenseCategory.INGREDIENTS,
+      })
+      .andWhere('e.note LIKE :note', {
+        note: `${purchaseRunExpenseNote(runId)}%`,
+      })
+      .orderBy('e.id', 'ASC')
+      .limit(1)
+      .getRawOne();
+    return row?.id ? Number(row.id) : null;
+  }
+
+  private async postApprovedRun(
+    run: PurchaseRun,
+    branchId: number,
+    actor: PurchasingActor,
+  ) {
+    const lines = await this.loadLines(run.id);
+
+    // A previous attempt may have written the expense and died before recording
+    // it. Adopt that one rather than posting the food a second time.
+    const already = await this.findPostedExpense(run.branchId, run.id);
+    if (already != null) {
+      await this.runs.update({ id: run.id }, { expenseId: already });
+      const stockFailures = await this.applyStockLines(run, lines, actor);
+      const resumed = await this.loadRunOrFail(run.id, branchId);
+      return {
+        ...this.toRun(resumed, await this.loadLines(run.id)),
+        stockFailures,
+      };
+    }
+
+    let expenseId: number;
     try {
       const expense = await this.billing.createBranchExpense(
         run.branchId,
@@ -793,15 +969,19 @@ export class PurchasingService {
           amount: money(run.spentTotal),
           currency: run.currency,
           occurredAt: run.occurredAt,
-          note: `Purchase run #${run.id}${run.label ? ` — ${run.label}` : ''}${
-            run.purchaserName ? ` (${run.purchaserName})` : ''
-          }`,
+          note: `${purchaseRunExpenseNote(run.id)}${
+            run.label ? ` — ${run.label}` : ''
+          }${run.purchaserName ? ` (${run.purchaserName})` : ''}`,
         },
       );
       expenseId = Number(expense.id);
-      await this.runs.update({ id: run.id }, { expenseId });
     } catch (error) {
-      // Nothing posted, so the signature must not stand.
+      /* The books refused, so nothing was posted and the signature must not
+         stand — released only on THIS path, where the failure is the posting
+         itself. It used to be released whenever anything after the claim threw,
+         including the write that records the expense id: the expense existed,
+         the run went back to SUBMITTED, and the next tap posted a second one
+         for the same market trip. */
       await this.runs.update(
         { id: run.id },
         {
@@ -814,9 +994,14 @@ export class PurchasingService {
       throw error;
     }
 
+    /* Past this point the money IS in the books, so the claim is never released
+       again. A failure here leaves a run that is APPROVED with no expense id —
+       which the retry at the top of approveRun picks up and finishes. */
+    await this.runs.update({ id: run.id }, { expenseId });
+
     const stockFailures = await this.applyStockLines(run, lines, actor);
 
-    const fresh = await this.loadRunOrFail(run.id, dto.branchId);
+    const fresh = await this.loadRunOrFail(run.id, branchId);
     return {
       ...this.toRun(fresh, await this.loadLines(run.id)),
       /* Which lines were meant to add stock and could not — a product deleted

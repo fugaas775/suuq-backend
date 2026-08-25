@@ -79,6 +79,20 @@ export class PurchaseRun {
   @Column({ type: 'varchar', length: 160, nullable: true })
   label?: string | null;
 
+  /**
+   * The id the DEVICE gave this run, unique per branch where present.
+   *
+   * Filing is a POST from a phone in a market: the write lands, the response
+   * does not, the purchaser taps again, and one trip becomes two runs — two
+   * expenses once both are signed off. The ref is minted when the draft is
+   * started and travels with it, so every retry carries the same one and the
+   * unique index turns the second write into a read of the first.
+   *
+   * Nullable: every run filed before this has none, and they must not collide.
+   */
+  @Column({ type: 'varchar', length: 64, nullable: true })
+  clientRef?: string | null;
+
   @Column({ type: 'int', nullable: true })
   purchaserUserId?: number | null;
 

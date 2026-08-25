@@ -154,6 +154,17 @@ export class CreatePurchaseRunDto {
   @Type(() => PurchaseRunLineDto)
   lines?: PurchaseRunLineDto[];
 
+  /**
+   * The id the device gave this run. Send the same one on every retry — the
+   * server returns the run it already created rather than making a second.
+   */
+  @ApiPropertyOptional({ example: 'run-1787661539-k3f9x2' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  @Transform(({ value }) => trimmed(value))
+  clientRef?: string | null;
+
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()

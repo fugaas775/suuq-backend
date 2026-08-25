@@ -9,6 +9,7 @@ import { PosCashMovement } from './entities/pos-cash-movement.entity';
 import { PurchaseRun } from './entities/purchase-run.entity';
 import { PurchaseRunLine } from './entities/purchase-run-line.entity';
 import { User } from '../users/entities/user.entity';
+import { BranchExpense } from '../billing/entities/branch-expense.entity';
 import { PurchasingController } from './purchasing.controller';
 import { PurchasingService } from './purchasing.service';
 
@@ -36,6 +37,9 @@ import { PurchasingService } from './purchasing.service';
       // Read-only, and only to put a human name on a document: a POS token
       // carries a synthetic @sys.internal address and no displayName.
       User,
+      // Read-only. Answers "did a previous attempt already post this run's
+      // expense?" so a resumed approval adopts it instead of posting twice.
+      BranchExpense,
     ]),
     BillingModule,
     BranchesModule,
