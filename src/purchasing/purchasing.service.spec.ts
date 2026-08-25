@@ -22,6 +22,7 @@ function makeService({
   existingChangeMovement = null as any,
   cashMovementCount = 0,
   alreadyPostedExpenseId = null,
+  cashRows = null as any[] | null,
 } = {}) {
   const savedRuns: any[] = [];
   const updatedRuns: any[] = [];
@@ -125,7 +126,7 @@ function makeService({
       savedMovements.push(saved);
       return saved;
     },
-    find: async () => savedMovements,
+    find: async () => cashRows ?? savedMovements,
     findOne: async () => existingChangeMovement,
     count: async () => cashMovementCount,
   };
@@ -754,6 +755,60 @@ describe('PurchasingService — who sees what', () => {
     await expect(
       ctx.service.updateRun(14, { branchId: 44, lines: [] } as any, purchaser),
     ).rejects.toBeInstanceOf(ConflictException);
+  });
+});
+
+describe('PurchasingService — the document against the till', () => {
+  /**
+   * The run and its drawer rows are two writes that cannot be one, and the
+   * order was chosen so an interruption leaves the TILL right and the paperwork
+   * behind. That is only the survivable direction if somebody can see it.
+   */
+  it('reports agreement when the two tell the same story', async () => {
+    const run = runRow({ advanceAmount: 2500, returnedAmount: 410 });
+    const ctx = makeService({
+      run,
+      lines: [lineRow()],
+      cashRows: [
+        { direction: 'OUT', amount: 2500 },
+        { direction: 'IN', amount: 410 },
+      ],
+    });
+    const result: any = await ctx.service.getRun(14, 44, manager);
+    expect(result.cash).toMatchObject({
+      drawerPaidOut: 2500,
+      drawerPaidIn: 410,
+      mismatch: false,
+    });
+  });
+
+  it('says so when the till paid out more than the run admits', async () => {
+    const run = runRow({ advanceAmount: 2500, returnedAmount: 410 });
+    const ctx = makeService({
+      run,
+      lines: [lineRow()],
+      // The advance row landed; the run's increment did not.
+      cashRows: [
+        { direction: 'OUT', amount: 2500 },
+        { direction: 'OUT', amount: 300 },
+        { direction: 'IN', amount: 410 },
+      ],
+    });
+    const result: any = await ctx.service.getRun(14, 44, manager);
+    expect(result.cash.drawerPaidOut).toBe(2800);
+    expect(result.cash.mismatch).toBe(true);
+  });
+
+  /** A run nobody funded has nothing to disagree about. */
+  it('is quiet on a run with no cash against it', async () => {
+    const run = runRow({ advanceAmount: null, returnedAmount: null });
+    const ctx = makeService({ run, lines: [lineRow()], cashRows: [] });
+    const result: any = await ctx.service.getRun(14, 44, manager);
+    expect(result.cash).toMatchObject({
+      drawerPaidOut: 0,
+      drawerPaidIn: 0,
+      mismatch: false,
+    });
   });
 });
 

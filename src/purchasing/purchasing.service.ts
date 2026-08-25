@@ -368,7 +368,57 @@ export class PurchasingService {
   async getRun(id: number, branchId: number, actor: PurchasingActor) {
     const run = await this.loadRunOrFail(id, branchId);
     this.assertMayEdit(run, actor);
-    return this.toRun(run, await this.loadLines(run.id));
+    return {
+      ...this.toRun(run, await this.loadLines(run.id)),
+      cash: await this.reconcileCash(run),
+    };
+  }
+
+  /**
+   * What the run says about its cash, against what the drawer says.
+   *
+   * These are written by two statements that cannot be one, and the order was
+   * chosen deliberately: the drawer row goes first, so an interruption leaves a
+   * till that knows money left and a run that does not. That is the survivable
+   * direction — but only if somebody can SEE it. An advance the run never
+   * recorded is money out with no paperwork, which is exactly the shape this
+   * whole feature exists to stop being invisible.
+   *
+   * Read on the single-run view rather than the list: it is one query, and the
+   * question is asked about a run somebody is already looking at.
+   */
+  private async reconcileCash(run: PurchaseRun) {
+    const rows = await this.cashMovements.find({
+      where: { sourceType: PURCHASE_RUN_SOURCE, sourceId: run.id },
+      select: ['direction', 'amount'],
+    });
+
+    let out = 0;
+    let back = 0;
+    for (const row of rows) {
+      const amount = Number(row.amount) || 0;
+      if (row.direction === PosCashMovementDirection.OUT) out += amount;
+      else back += amount;
+    }
+
+    const statedOut = money(Number(run.advanceAmount || 0));
+    const statedBack = money(Number(run.returnedAmount || 0));
+    const drawerOut = money(out);
+    const drawerBack = money(back);
+
+    return {
+      drawerPaidOut: drawerOut,
+      drawerPaidIn: drawerBack,
+      /**
+       * True when the document and the till disagree. Never expected — every
+       * write that moves cash is now atomic — and worth answering anyway,
+       * because the failure it catches is money leaving a drawer with nothing
+       * on the board to account for it.
+       */
+      mismatch:
+        Math.abs(statedOut - drawerOut) >= 0.01 ||
+        Math.abs(statedBack - drawerBack) >= 0.01,
+    };
   }
 
   /**
