@@ -332,12 +332,33 @@ export class PurchasingService {
       .addSelect('MAX(line.description)', 'description')
       .addSelect('MAX(line."unitLabel")', 'unitLabel')
       .addSelect('COUNT(*)', 'timesBought')
-      .addSelect('MIN(line."unitPrice")', 'minUnitPrice')
-      .addSelect('MAX(line."unitPrice")', 'maxUnitPrice')
+      /* Every one of these derives the unit price as total ÷ quantity rather
+         than reading the `unitPrice` column, because that column is optional by
+         design: a price agreed on the whole lot — "three hundred for those" —
+         is typed as a total with no per-unit rate behind it. Reading the column
+         reported charcoal at "between 0 and 0" while the average said 350,
+         which is not a range anybody paid. */
+      .addSelect(
+        'MIN(line."lineTotal" / NULLIF(line.quantity, 0))',
+        'minUnitPrice',
+      )
+      .addSelect(
+        'MAX(line."lineTotal" / NULLIF(line.quantity, 0))',
+        'maxUnitPrice',
+      )
       .addSelect('MAX(run."occurredAt")', 'lastBoughtAt')
       .addSelect(
         'SUM(line."lineTotal") / NULLIF(SUM(line.quantity), 0)',
         'avgUnitPrice',
+      )
+      /* What it cost the LAST time, which is the number a purchaser standing at
+         a stall is actually arguing with. An average is a number nobody paid:
+         tomatoes at 45 then 70 average to 57.50, and quoting that back to the
+         seller is quoting a price that never existed. */
+      .addSelect(
+        `(array_agg(line."lineTotal" / NULLIF(line.quantity, 0)
+           ORDER BY run."occurredAt" DESC, line.id DESC))[1]`,
+        'lastUnitPrice',
       )
       .groupBy('LOWER(line.description)');
 
@@ -358,6 +379,7 @@ export class PurchasingService {
         minUnitPrice: money(row.minUnitPrice),
         maxUnitPrice: money(row.maxUnitPrice),
         avgUnitPrice: money(row.avgUnitPrice),
+        lastUnitPrice: money(row.lastUnitPrice),
         lastBoughtAt: row.lastBoughtAt
           ? new Date(row.lastBoughtAt as string).toISOString()
           : null,

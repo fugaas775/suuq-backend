@@ -465,6 +465,52 @@ describe('PurchasingService — reversal', () => {
   });
 });
 
+describe('PurchasingService — what a thing cost last time', () => {
+  /**
+   * The query derives every unit price as total ÷ quantity rather than reading
+   * the optional `unitPrice` column. Live on SMAK QSR a sack of charcoal typed
+   * as a flat 350 came back as "between 0 and 0" with an average of 350 — a
+   * range nobody paid, on the one screen a purchaser argues with at a stall.
+   */
+  it('derives min, max and last from the line total, never from the optional unit price', async () => {
+    const raw: Record<string, unknown>[] = [];
+    const qb: any = {
+      innerJoin: () => qb,
+      where: () => qb,
+      andWhere: () => qb,
+      select: (expr: string, alias: string) => {
+        raw.push({ expr, alias });
+        return qb;
+      },
+      addSelect: (expr: string, alias: string) => {
+        raw.push({ expr, alias });
+        return qb;
+      },
+      groupBy: () => qb,
+      orderBy: () => qb,
+      limit: () => qb,
+      getRawMany: async () => [],
+    };
+    const ctx = makeService();
+    (ctx.service as any).lines.createQueryBuilder = () => qb;
+
+    await ctx.service.priceHistory({ branchId: 44 });
+
+    const by = (alias: string) =>
+      String(raw.find((r) => r.alias === alias)?.expr ?? '');
+
+    for (const alias of ['minUnitPrice', 'maxUnitPrice', 'lastUnitPrice']) {
+      const expr = by(alias);
+      expect(expr).toContain('"lineTotal"');
+      expect(expr).toContain('NULLIF');
+      // The column that may never have been typed.
+      expect(expr).not.toContain('"unitPrice"');
+    }
+    // And the last one is genuinely the most recent, not just any row.
+    expect(by('lastUnitPrice')).toContain('ORDER BY run."occurredAt" DESC');
+  });
+});
+
 describe('PurchasingService — the balance a purchaser is holding', () => {
   it('reports what has not come back yet', async () => {
     const run = runRow({
