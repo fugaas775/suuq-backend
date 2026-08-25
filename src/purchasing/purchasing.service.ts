@@ -542,6 +542,34 @@ export class PurchasingService {
         'A run that reached the books cannot be deleted. Void it instead, so the reversal is recorded.',
       );
     }
+
+    /* A draft that money has already moved against is not a note somebody can
+       tear up.
+       
+       Deleting one used to leave its drawer rows behind, pointing at a run that
+       no longer existed — so the till stayed short by the advance with nothing
+       on the board to explain it, which is the exact shape of a discrepancy
+       that gets read as theft. Found on SMAK QSR: a deleted run left ETB 1,000
+       out and ETB 100 back, still moving session 533's expected cash.
+       
+       Refused rather than reversed, because a reversal here would be a claim
+       that the cash came back, and this service has no way to know that. The
+       way out is to record what the money bought, or to have a manager sign the
+       run off and void it — both of which leave a document behind. */
+    const cashMoved = await this.cashMovements.count({
+      where: { sourceType: PURCHASE_RUN_SOURCE, sourceId: run.id },
+    });
+    if (cashMoved > 0) {
+      const outstanding = money(
+        Number(run.advanceAmount || 0) - Number(run.returnedAmount || 0),
+      );
+      throw new ConflictException(
+        outstanding > 0
+          ? `${outstanding} was taken from the till against this run and has not come back. Record what it bought, or hand the cash in, before deleting it.`
+          : 'Cash moved through the till against this run, so it cannot simply be deleted. File it, or ask a manager to sign it off and void it.',
+      );
+    }
+
     await this.runs.delete({ id: run.id, branchId });
     return { deleted: true, id: Number(run.id) };
   }

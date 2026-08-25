@@ -20,6 +20,7 @@ function makeService({
   claimAffected = 1,
   expenseThrows = false,
   existingChangeMovement = null as any,
+  cashMovementCount = 0,
 } = {}) {
   const savedRuns: any[] = [];
   const updatedRuns: any[] = [];
@@ -90,6 +91,7 @@ function makeService({
     },
     find: async () => savedMovements,
     findOne: async () => existingChangeMovement,
+    count: async () => cashMovementCount,
   };
 
   const billing: any = {
@@ -398,6 +400,56 @@ describe('PurchasingService — filing and the drawer', () => {
         manager,
       ),
     ).rejects.toBeInstanceOf(ConflictException);
+  });
+});
+
+describe('PurchasingService — deleting a run', () => {
+  it('deletes a draft nothing has moved against', async () => {
+    const run = runRow({
+      status: PurchaseRunStatus.DRAFT,
+      advanceAmount: null,
+    });
+    const ctx = makeService({ run, lines: [lineRow()] });
+    await expect(ctx.service.deleteRun(14, 44, manager)).resolves.toMatchObject(
+      {
+        deleted: true,
+      },
+    );
+  });
+
+  /**
+   * The bug SMAK QSR found. A deleted run left its drawer rows behind, pointing
+   * at a document nobody could open — so the till stayed short by the advance
+   * with nothing on the board to explain it, which is the exact shape of a
+   * discrepancy that gets read as theft.
+   *
+   * Refused rather than reversed: a reversal would be a claim the cash came
+   * back, and nothing here knows that.
+   */
+  it('refuses to delete a draft that cash was taken out against', async () => {
+    const run = runRow({
+      status: PurchaseRunStatus.DRAFT,
+      advanceAmount: 1000,
+      returnedAmount: 100,
+    });
+    const ctx = makeService({ run, lines: [lineRow()], cashMovementCount: 2 });
+
+    await expect(ctx.service.deleteRun(14, 44, manager)).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+    await expect(ctx.service.deleteRun(14, 44, manager)).rejects.toThrow(/900/);
+  });
+
+  it('still refuses when the cash all came back, because it moved', async () => {
+    const run = runRow({
+      status: PurchaseRunStatus.DRAFT,
+      advanceAmount: 1000,
+      returnedAmount: 1000,
+    });
+    const ctx = makeService({ run, lines: [lineRow()], cashMovementCount: 2 });
+    await expect(ctx.service.deleteRun(14, 44, manager)).rejects.toThrow(
+      /cannot simply be deleted/,
+    );
   });
 });
 
