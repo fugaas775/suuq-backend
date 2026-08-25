@@ -116,10 +116,16 @@ function makeService({
     },
   };
 
+  // The roster, consulted only when the token could not name the actor.
+  const users: any = {
+    findOne: async () => ({ id: 12, displayName: 'Maxamed Cabdi' }),
+  };
+
   const service = new PurchasingService(
     runs,
     linesRepo,
     cashMovements,
+    users,
     billing,
     inventoryLedger,
   );
@@ -392,6 +398,40 @@ describe('PurchasingService — filing and the drawer', () => {
         manager,
       ),
     ).rejects.toBeInstanceOf(ConflictException);
+  });
+});
+
+describe('PurchasingService — the name on the document', () => {
+  /**
+   * A POS-scoped token states `email` and no `displayName`, and a manual staff
+   * account's email is synthetic. SMAK QSR's board showed a run filed by
+   * "pos.m.pos.m.purchaser.qsr@sys.internal", which is a machine address on a
+   * record an owner reads for months.
+   */
+  it('falls back to the roster when the token only has a synthetic address', async () => {
+    const ctx = makeService({ run: runRow(), lines: [] });
+    await ctx.service.createRun(
+      { branchId: 44 },
+      {
+        userId: 12,
+        name: 'pos.m.purchaser.qsr@sys.internal',
+        canApprove: false,
+      },
+    );
+    expect(ctx.savedRuns[0].purchaserName).toBe('Maxamed Cabdi');
+  });
+
+  it('keeps a real name the token already carried', async () => {
+    const ctx = makeService({ run: runRow(), lines: [] });
+    await ctx.service.createRun(
+      { branchId: 44 },
+      {
+        userId: 12,
+        name: 'Hodan Yusuf',
+        canApprove: true,
+      },
+    );
+    expect(ctx.savedRuns[0].purchaserName).toBe('Hodan Yusuf');
   });
 });
 

@@ -8,6 +8,7 @@ import { RolesGuard } from '../auth/roles.guard';
 import { PosCashMovement } from './entities/pos-cash-movement.entity';
 import { PurchaseRun } from './entities/purchase-run.entity';
 import { PurchaseRunLine } from './entities/purchase-run-line.entity';
+import { User } from '../users/entities/user.entity';
 import { PurchasingController } from './purchasing.controller';
 import { PurchasingService } from './purchasing.service';
 
@@ -28,7 +29,14 @@ import { PurchasingService } from './purchasing.service';
  */
 @Module({
   imports: [
-    TypeOrmModule.forFeature([PurchaseRun, PurchaseRunLine, PosCashMovement]),
+    TypeOrmModule.forFeature([
+      PurchaseRun,
+      PurchaseRunLine,
+      PosCashMovement,
+      // Read-only, and only to put a human name on a document: a POS token
+      // carries a synthetic @sys.internal address and no displayName.
+      User,
+    ]),
     BillingModule,
     BranchesModule,
     RetailModule,

@@ -10,6 +10,7 @@ import { Repository } from 'typeorm';
 import { BranchBillingService } from '../billing/branch-billing.service';
 import { BranchExpenseCategory } from '../billing/entities/branch-expense.entity';
 import { InventoryLedgerService } from '../branches/inventory-ledger.service';
+import { User } from '../users/entities/user.entity';
 import { StockMovementType } from '../branches/entities/stock-movement.entity';
 import {
   PosCashMovement,
@@ -80,6 +81,8 @@ export class PurchasingService {
     private readonly lines: Repository<PurchaseRunLine>,
     @InjectRepository(PosCashMovement)
     private readonly cashMovements: Repository<PosCashMovement>,
+    @InjectRepository(User)
+    private readonly users: Repository<User>,
     private readonly billing: BranchBillingService,
     private readonly inventoryLedger: InventoryLedgerService,
   ) {}
@@ -146,6 +149,36 @@ export class PurchasingService {
       createdAt: row.createdAt?.toISOString?.() ?? null,
       updatedAt: row.updatedAt?.toISOString?.() ?? null,
     };
+  }
+
+  /**
+   * The name to write on the document.
+   *
+   * A POS-scoped token states `email` and no `displayName`, and a manual staff
+   * account's email is synthetic — `pos.m.purchaser.qsr@sys.internal`. Printing
+   * that as the purchaser turns a record an owner reads for months into a
+   * machine address; SMAK QSR's board showed exactly that. So a synthetic
+   * address falls back to the roster, which is where the human name lives.
+   *
+   * One lookup, only when the token could not answer.
+   */
+  private async actorName(actor: PurchasingActor): Promise<string | null> {
+    const stated = String(actor.name || '').trim();
+    if (stated && !stated.toLowerCase().endsWith('@sys.internal')) {
+      return stated;
+    }
+    if (!actor.userId) return stated || null;
+    try {
+      const row = await this.users.findOne({
+        where: { id: actor.userId },
+        select: ['id', 'displayName'],
+      });
+      const resolved = String(row?.displayName || '').trim();
+      return resolved || stated || null;
+    } catch {
+      // A name is worth a query, not a failed request.
+      return stated || null;
+    }
   }
 
   private parseDate(value: string | undefined | null, field: string): Date {
@@ -440,7 +473,7 @@ export class PurchasingService {
         status: PurchaseRunStatus.DRAFT,
         label: dto.label ? String(dto.label).trim() : null,
         purchaserUserId: actor.userId ?? null,
-        purchaserName: actor.name ?? null,
+        purchaserName: await this.actorName(actor),
         currency: (dto.currency || 'ETB').toUpperCase().slice(0, 8),
         occurredAt,
         spentTotal: 0,
@@ -597,7 +630,7 @@ export class PurchasingService {
         sourceType: PURCHASE_RUN_SOURCE,
         sourceId: run.id,
         recordedByUserId: actor.userId ?? null,
-        recordedByName: actor.name ?? null,
+        recordedByName: await this.actorName(actor),
         occurredAt: new Date(),
         note: `Change returned from run #${run.id}`,
       }),
@@ -655,7 +688,7 @@ export class PurchasingService {
         sourceType: PURCHASE_RUN_SOURCE,
         sourceId: saved.id,
         recordedByUserId: actor.userId ?? null,
-        recordedByName: actor.name ?? null,
+        recordedByName: await this.actorName(actor),
         occurredAt: new Date(),
         note:
           dto.note ||
@@ -708,7 +741,7 @@ export class PurchasingService {
         status: PurchaseRunStatus.APPROVED,
         decidedAt,
         decidedByUserId: actor.userId ?? null,
-        decidedByName: actor.name ?? null,
+        decidedByName: await this.actorName(actor),
         decisionReason: dto.reason ? String(dto.reason).trim() : null,
       })
       .where('id = :id', { id: run.id })
@@ -823,7 +856,7 @@ export class PurchasingService {
     run.status = PurchaseRunStatus.REJECTED;
     run.decidedAt = new Date();
     run.decidedByUserId = actor.userId ?? null;
-    run.decidedByName = actor.name ?? null;
+    run.decidedByName = await this.actorName(actor);
     run.decisionReason = reason;
     const saved = await this.runs.save(run);
     return this.toRun(saved, await this.loadLines(saved.id));
@@ -855,7 +888,7 @@ export class PurchasingService {
         status: PurchaseRunStatus.VOID,
         decidedAt: new Date(),
         decidedByUserId: actor.userId ?? null,
-        decidedByName: actor.name ?? null,
+        decidedByName: await this.actorName(actor),
         decisionReason: reason,
       })
       .where('id = :id', { id: run.id })
