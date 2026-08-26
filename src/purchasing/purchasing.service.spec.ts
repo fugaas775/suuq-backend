@@ -694,6 +694,45 @@ describe('PurchasingService — deleting a run', () => {
 
 describe('PurchasingService — a rate nobody stated', () => {
   /**
+   * A line bought for 1450 with no quantity has no per-unit price. Reporting
+   * zero made the till offer "last time: ETB 0" at a stall — the name is worth
+   * suggesting, the price is not.
+   */
+  it('reports no rate rather than a rate of nothing', async () => {
+    const ctx = makeService();
+    (ctx.service as any).lines.createQueryBuilder = () => ({
+      innerJoin: () => qbSelf,
+      where: () => qbSelf,
+      andWhere: () => qbSelf,
+      select: () => qbSelf,
+      addSelect: () => qbSelf,
+      groupBy: () => qbSelf,
+      orderBy: () => qbSelf,
+      limit: () => qbSelf,
+      getRawMany: async () => [
+        {
+          description: 'Dhuxul',
+          timesBought: '1',
+          minUnitPrice: null,
+          maxUnitPrice: null,
+          avgUnitPrice: null,
+          lastUnitPrice: null,
+          lastBoughtAt: null,
+        },
+      ],
+    });
+    const qbSelf: any = (ctx.service as any).lines.createQueryBuilder();
+
+    const out = await ctx.service.priceHistory({ branchId: 44 });
+    expect(out.items[0]).toMatchObject({
+      description: 'Dhuxul',
+      lastUnitPrice: null,
+      avgUnitPrice: null,
+      minUnitPrice: null,
+    });
+  });
+
+  /**
    * A rate is total ÷ quantity, so defaulting the quantity to one made every
    * bare total a per-unit price: "1450" typed for four sacks of charcoal taught
    * the book that charcoal costs 1450 each, and the purchaser read that back at

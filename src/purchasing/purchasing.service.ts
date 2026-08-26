@@ -66,6 +66,21 @@ function money(value: unknown): number {
   return Math.round((Number(value) || 0) * 100) / 100;
 }
 
+/**
+ * A rate, or nothing at all.
+ *
+ * `money()` turns a NULL into 0, which is right for an amount and wrong for a
+ * rate: a line bought for 1450 with no quantity stated has no per-unit price,
+ * and reporting 0 makes the till offer "last time: ETB 0" at a stall. The name
+ * is still worth suggesting, so the row stays — only its prices go empty.
+ */
+function rateOrNull(value: unknown): number | null {
+  if (value === null || value === undefined) return null;
+  const num = Number(value);
+  if (!Number.isFinite(num) || num <= 0) return null;
+  return Math.round(num * 100) / 100;
+}
+
 function qty(value: unknown): number {
   return Math.round((Number(value) || 0) * 1000) / 1000;
 }
@@ -519,10 +534,10 @@ export class PurchasingService {
         description: String(row.description ?? ''),
         unitLabel: (row.unitLabel as string) ?? null,
         timesBought: Number(row.timesBought) || 0,
-        minUnitPrice: money(row.minUnitPrice),
-        maxUnitPrice: money(row.maxUnitPrice),
-        avgUnitPrice: money(row.avgUnitPrice),
-        lastUnitPrice: money(row.lastUnitPrice),
+        minUnitPrice: rateOrNull(row.minUnitPrice),
+        maxUnitPrice: rateOrNull(row.maxUnitPrice),
+        avgUnitPrice: rateOrNull(row.avgUnitPrice),
+        lastUnitPrice: rateOrNull(row.lastUnitPrice),
         lastBoughtAt: row.lastBoughtAt
           ? new Date(row.lastBoughtAt as string).toISOString()
           : null,
