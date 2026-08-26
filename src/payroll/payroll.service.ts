@@ -366,16 +366,22 @@ export class PayrollService {
   /**
    * Undo a run, expense and ledger together.
    *
-   * `deleteBranchExpense` reverses its own ledger posting, so removing the run
-   * without it would leave the P&L carrying a month of wages no document
-   * explains.
+   * Voiding the expense reverses its ledger posting, so removing the run without
+   * it would leave the P&L carrying a month of wages no document explains. The
+   * expense row itself survives the run, voided and stamped with the reason —
+   * the run is gone, so that row is the only remaining record that this month
+   * was once posted at all.
    */
   async deleteRun(id: number, branchId: number) {
     const run = await this.runs.findOne({ where: { id, branchId } });
     if (!run) throw new NotFoundException('Payroll run not found.');
 
     if (run.expenseId != null) {
-      await this.billing.deleteBranchExpense(branchId, Number(run.expenseId));
+      await this.billing.voidBranchExpenseForRun(
+        branchId,
+        Number(run.expenseId),
+        `Payroll run ${run.periodKey} was deleted.`,
+      );
     }
     await this.runs.delete({ id: run.id });
     return { deleted: true, id: Number(run.id), periodKey: run.periodKey };

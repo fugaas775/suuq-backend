@@ -1011,8 +1011,9 @@ export class PurchasingService {
    * — the exact thing the retry exists to prevent.
    *
    * Matched on the deterministic note prefix, which is the only key the billing
-   * table offers. Narrow enough to be safe: a voided run's expense is deleted,
-   * and a voided run can never be approved again, so nothing stale can match.
+   * table offers. Narrow enough to be safe: a voided run's expense is voided too
+   * and excluded below, and a voided run can never be approved again, so nothing
+   * stale can match.
    */
   private async findPostedExpense(
     branchId: number,
@@ -1028,6 +1029,9 @@ export class PurchasingService {
       .andWhere('e.note LIKE :note', {
         note: `${purchaseRunExpenseNote(runId)}%`,
       })
+      // A voided expense is not something to adopt — re-linking one would leave
+      // an APPROVED run pointing at money the books have already backed out.
+      .andWhere('e."voidedAt" IS NULL')
       .orderBy('e.id', 'ASC')
       .limit(1)
       .getRawOne();
@@ -1266,16 +1270,19 @@ export class PurchasingService {
     const newTotal = this.liveTotal(liveAfter);
     await this.runs.update({ id: run.id }, { spentTotal: newTotal });
 
-    /* A run already in the books needs the books moved with it. Billing offers
-       create and delete and no update, so the expense is replaced — which
-       reverses the old ledger entry and posts the new one, exactly what a
-       correction should do. Deliberately after the line is marked: if this
-       throws, the run reads as having a struck line and an expense that is too
-       big, which a manager can see and act on. The other order hides it. */
+    /* A run already in the books needs the books moved with it. The expense is
+       replaced rather than edited — the old row is voided (reversing its ledger
+       entry) and a corrected one posted, which is exactly the shape a correction
+       should leave behind: two rows and a reason, not one row that quietly
+       changed. Deliberately after the line is marked: if this throws, the run
+       reads as having a struck line and an expense that is too big, which a
+       manager can see and act on. The other order hides it. */
     if (run.status === PurchaseRunStatus.APPROVED && run.expenseId != null) {
-      await this.billing.deleteBranchExpense(
+      await this.billing.voidBranchExpenseForRun(
         run.branchId,
         Number(run.expenseId),
+        `Line voided on purchase run #${run.id} — re-posted at the corrected total.`,
+        { userId: actor.userId ?? null, name: actor.name ?? null },
       );
       const expense = await this.billing.createBranchExpense(
         run.branchId,
@@ -1362,9 +1369,17 @@ export class PurchasingService {
     }
 
     if (run.expenseId != null) {
-      await this.billing.deleteBranchExpense(
+      // Never throws, even if the expense is missing or already voided. It used
+      // to: a hand-deleted expense made this line die AFTER the run had been
+      // claimed VOID and BEFORE the stock reversal below, leaving the goods on
+      // the shelf as received with the money un-booked. Hand voids of a run's
+      // expense are refused outright now, and this stays forgiving so the run
+      // always reaches its stock.
+      await this.billing.voidBranchExpenseForRun(
         run.branchId,
         Number(run.expenseId),
+        `Purchase run #${run.id} was voided — ${reason}`,
+        { userId: actor.userId ?? null, name: actor.name ?? null },
       );
       await this.runs.update({ id: run.id }, { expenseId: null });
     }

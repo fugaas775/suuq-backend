@@ -143,8 +143,12 @@ function makeService({
       postedExpenses.push(expense);
       return expense;
     },
-    deleteBranchExpense: async (branchId: number, expenseId: number) => {
-      deletedExpenses.push({ branchId, expenseId });
+    voidBranchExpenseForRun: async (
+      branchId: number,
+      expenseId: number,
+      reason: string,
+    ) => {
+      deletedExpenses.push({ branchId, expenseId, reason });
     },
   };
 
@@ -993,7 +997,14 @@ describe('PurchasingService — striking one thing off', () => {
       manager,
     );
 
-    expect(ctx.deletedExpenses).toEqual([{ branchId: 44, expenseId: 900 }]);
+    // Voided, not deleted — and the void says which line moved the total.
+    expect(ctx.deletedExpenses).toEqual([
+      {
+        branchId: 44,
+        expenseId: 900,
+        reason: expect.stringContaining('Line voided on purchase run #14'),
+      },
+    ]);
     expect(ctx.postedExpenses).toHaveLength(1);
     expect(ctx.postedExpenses[0]).toMatchObject({
       amount: 540,
@@ -1081,7 +1092,13 @@ describe('PurchasingService — reversal', () => {
       manager,
     );
 
-    expect(ctx.deletedExpenses).toEqual([{ branchId: 44, expenseId: 900 }]);
+    expect(ctx.deletedExpenses).toEqual([
+      {
+        branchId: 44,
+        expenseId: 900,
+        reason: expect.stringContaining('Purchase run #14 was voided'),
+      },
+    ]);
     expect(ctx.stockMovements).toHaveLength(1);
     expect(ctx.stockMovements[0].quantityDelta).toBe(-12);
     expect(lines[0].stockMovementId).toBeNull();

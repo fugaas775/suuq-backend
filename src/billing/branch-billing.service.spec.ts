@@ -1,4 +1,9 @@
-import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { BranchBillingService } from './branch-billing.service';
 import { BranchAccruedLiabilityCategory } from './entities/branch-accrued-liability.entity';
 import { BranchFixedAssetCategory } from './entities/branch-fixed-asset.entity';
@@ -10,8 +15,43 @@ function createRepo() {
     save: jest.fn(async (value) => ({ id: 1, ...value })),
     create: jest.fn((value) => value),
     remove: jest.fn().mockResolvedValue(undefined),
+    update: jest.fn().mockResolvedValue({ affected: 1 }),
     createQueryBuilder: jest.fn(),
   };
+}
+
+/**
+ * Stand-in for the transaction `applyExpenseVoid` opens.
+ *
+ * It records what the claiming UPDATE set and hands the same values back from
+ * `findOne`, so a test can assert the row came out stamped with who voided it
+ * and why. `affected` is settable: 0 is the second tap of a double-tapped Void.
+ */
+function createVoidTransaction() {
+  const state = { affected: 1, set: null as any, row: null as any };
+  const repo = {
+    createQueryBuilder: jest.fn(() => {
+      const qb: any = {
+        update: jest.fn(() => qb),
+        set: jest.fn((value: any) => {
+          state.set = value;
+          return qb;
+        }),
+        where: jest.fn(() => qb),
+        andWhere: jest.fn(() => qb),
+        execute: jest.fn(async () => ({ affected: state.affected })),
+      };
+      return qb;
+    }),
+    findOne: jest.fn(async () => ({
+      ...(state.row || {}),
+      ...(state.set || {}),
+    })),
+  };
+  const dataSource = {
+    transaction: jest.fn(async (fn: any) => fn({ getRepository: () => repo })),
+  };
+  return { state, repo, dataSource };
 }
 
 describe('BranchBillingService', () => {
@@ -38,6 +78,10 @@ describe('BranchBillingService', () => {
 
     const staffAssignmentsRepo = createRepo();
     const retailTenantsRepo = createRepo();
+    const usersRepo = createRepo();
+    const payrollRunsRepo = createRepo();
+    const purchaseRunsRepo = createRepo();
+    const voidTx = createVoidTransaction();
 
     const service = new BranchBillingService(
       branchesRepo as any,
@@ -52,10 +96,18 @@ describe('BranchBillingService', () => {
       generalLedger as any,
       staffAssignmentsRepo as any,
       retailTenantsRepo as any,
+      usersRepo as any,
+      payrollRunsRepo as any,
+      purchaseRunsRepo as any,
+      voidTx.dataSource as any,
     );
 
     return {
       service,
+      voidTx,
+      usersRepo,
+      payrollRunsRepo,
+      purchaseRunsRepo,
       branchesRepo,
       subscriptionsRepo,
       ebirrRepo,
@@ -314,19 +366,229 @@ describe('BranchBillingService', () => {
       expect(lineFor(entry, '2600').credit).toBe(120000); // LONG_TERM_DEBT
     });
 
-    it('reverses the ledger entry when an expense is deleted', async () => {
-      const { service, expensesRepo, generalLedger } = createService();
-      expensesRepo.findOne.mockResolvedValueOnce({
+    it('reverses the ledger entry when an expense is voided', async () => {
+      const { service, branchesRepo, expensesRepo, generalLedger, voidTx } =
+        createService();
+      branchesRepo.findOne.mockResolvedValue({ id: 44, ownerId: 7 });
+      expensesRepo.findOne.mockResolvedValue({
         id: 9,
         branchId: 44,
         occurredAt: new Date('2026-06-01T00:00:00.000Z'),
       });
-      generalLedger.findEntryByIdempotencyKey.mockResolvedValueOnce({ id: 55 });
-      await service.deleteBranchExpense(44, 9);
+      generalLedger.findEntryByIdempotencyKey.mockResolvedValue({ id: 55 });
+
+      await service.voidBranchExpense(
+        44,
+        9,
+        { userId: 7, roles: [], name: 'Ayan' },
+        'Keyed twice.',
+      );
+
+      // Inside the transaction that hides the row — not after it, and not
+      // best-effort. Both writes land or neither does.
+      expect(voidTx.dataSource.transaction).toHaveBeenCalled();
       expect(generalLedger.reverse).toHaveBeenCalledWith(
         55,
         expect.objectContaining({ idempotencyKey: 'reverse-expense-9' }),
+        expect.anything(),
       );
+    });
+
+    it('keeps the row, stamped with who voided it and why', async () => {
+      const { service, branchesRepo, expensesRepo, voidTx } = createService();
+      branchesRepo.findOne.mockResolvedValue({ id: 44, ownerId: 7 });
+      expensesRepo.findOne.mockResolvedValue({
+        id: 9,
+        branchId: 44,
+        occurredAt: new Date('2026-06-01T00:00:00.000Z'),
+      });
+
+      const voided = await service.voidBranchExpense(
+        44,
+        9,
+        { userId: 7, roles: [], name: 'Ayan' },
+        'Keyed twice.',
+      );
+
+      expect(expensesRepo.remove).not.toHaveBeenCalled();
+      expect(voidTx.state.set).toMatchObject({
+        voidedByUserId: 7,
+        voidedByName: 'Ayan',
+        voidReason: 'Keyed twice.',
+      });
+      expect(voided.voidedAt).toBeInstanceOf(Date);
+    });
+
+    it('refuses a void with no reason', async () => {
+      const { service, branchesRepo } = createService();
+      branchesRepo.findOne.mockResolvedValue({ id: 44, ownerId: 7 });
+      await expect(
+        service.voidBranchExpense(44, 9, { userId: 7, roles: [] }, '   '),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('refuses to void an expense a purchase run posted', async () => {
+      // Hand-voiding one used to strand the run: voidRun claimed VOID, then died
+      // on the missing expense before reversing the stock, leaving the goods on
+      // the shelf as received with the money un-booked.
+      const { service, branchesRepo, expensesRepo, purchaseRunsRepo } =
+        createService();
+      branchesRepo.findOne.mockResolvedValue({ id: 44, ownerId: 7 });
+      expensesRepo.findOne.mockResolvedValue({ id: 9, branchId: 44 });
+      purchaseRunsRepo.findOne.mockResolvedValue({ id: 42 });
+
+      await expect(
+        service.voidBranchExpense(44, 9, { userId: 7, roles: [] }, 'oops'),
+      ).rejects.toBeInstanceOf(ConflictException);
+    });
+
+    it('refuses to void an expense a payroll run posted', async () => {
+      const { service, branchesRepo, expensesRepo, payrollRunsRepo } =
+        createService();
+      branchesRepo.findOne.mockResolvedValue({ id: 44, ownerId: 7 });
+      expensesRepo.findOne.mockResolvedValue({ id: 9, branchId: 44 });
+      payrollRunsRepo.findOne.mockResolvedValue({
+        id: 3,
+        periodKey: '2026-07',
+      });
+
+      await expect(
+        service.voidBranchExpense(44, 9, { userId: 7, roles: [] }, 'oops'),
+      ).rejects.toBeInstanceOf(ConflictException);
+    });
+
+    it("stops a manager voiding somebody else's expense", async () => {
+      const { service, branchesRepo, expensesRepo, staffAssignmentsRepo } =
+        createService();
+      branchesRepo.findOne.mockResolvedValue({ id: 44, ownerId: 7 });
+      staffAssignmentsRepo.findOne.mockResolvedValue({ id: 1, userId: 12 });
+      expensesRepo.findOne.mockResolvedValue({
+        id: 9,
+        branchId: 44,
+        recordedByUserId: 7,
+        occurredAt: new Date(),
+        createdAt: new Date(),
+      });
+
+      await expect(
+        service.voidBranchExpense(44, 9, { userId: 12, roles: [] }, 'oops'),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('stops a manager voiding an expense older than a day', async () => {
+      const { service, branchesRepo, expensesRepo, staffAssignmentsRepo } =
+        createService();
+      branchesRepo.findOne.mockResolvedValue({ id: 44, ownerId: 7 });
+      staffAssignmentsRepo.findOne.mockResolvedValue({ id: 1, userId: 12 });
+      const old = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000);
+      expensesRepo.findOne.mockResolvedValue({
+        id: 9,
+        branchId: 44,
+        recordedByUserId: 12,
+        occurredAt: old,
+        createdAt: old,
+      });
+
+      await expect(
+        service.voidBranchExpense(44, 9, { userId: 12, roles: [] }, 'oops'),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('lets a manager void their own entry from today', async () => {
+      const { service, branchesRepo, expensesRepo, staffAssignmentsRepo } =
+        createService();
+      branchesRepo.findOne.mockResolvedValue({ id: 44, ownerId: 7 });
+      staffAssignmentsRepo.findOne.mockResolvedValue({ id: 1, userId: 12 });
+      expensesRepo.findOne.mockResolvedValue({
+        id: 9,
+        branchId: 44,
+        recordedByUserId: 12,
+        occurredAt: new Date(),
+        createdAt: new Date(),
+      });
+
+      await expect(
+        service.voidBranchExpense(
+          44,
+          9,
+          { userId: 12, roles: [], name: 'Deeq' },
+          'Wrong amount.',
+        ),
+      ).resolves.toBeTruthy();
+    });
+
+    it('refuses an expense dated into the future', async () => {
+      const { service } = createService();
+      await expect(
+        service.createBranchExpense(44, 7, {
+          category: 'RENT',
+          amount: 100,
+          occurredAt: new Date(Date.now() + 40 * 24 * 60 * 60 * 1000),
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('leaves voided rows out of the list unless asked for them', async () => {
+      const { service, expensesRepo } = createService();
+      await service.listBranchExpenses(44);
+      expect(expensesRepo.find.mock.calls[0][0].where.voidedAt).toBeDefined();
+
+      await service.listBranchExpenses(44, { includeVoided: true });
+      expect(expensesRepo.find.mock.calls[1][0].where.voidedAt).toBeUndefined();
+    });
+
+    it('corrects an expense by voiding it and posting a replacement', async () => {
+      const { service, branchesRepo, expensesRepo, generalLedger } =
+        createService();
+      branchesRepo.findOne.mockResolvedValue({ id: 44, ownerId: 7 });
+      expensesRepo.findOne.mockResolvedValue({
+        id: 9,
+        branchId: 44,
+        category: 'RENT',
+        amount: 15000,
+        currency: 'ETB',
+        occurredAt: new Date('2026-06-01T00:00:00.000Z'),
+        note: 'June rent',
+      });
+
+      const replacement = await service.amendBranchExpense(
+        44,
+        9,
+        { userId: 7, roles: [], name: 'Ayan' },
+        { amount: 1500, reason: 'Keyed 15000 instead of 1500.' },
+      );
+
+      // Never a silent UPDATE: the wrong row is voided and a corrected one
+      // posted, so the books keep both halves of the correction.
+      expect(expensesRepo.remove).not.toHaveBeenCalled();
+      expect(replacement.amount).toBe(1500);
+      expect(replacement.category).toBe('RENT');
+      const posted = generalLedger.post.mock.calls.at(-1)?.[0];
+      expect(posted.sourceType).toBe('EXPENSE');
+    });
+
+    it('voids a run-posted expense without any of the hand-void guards', async () => {
+      const { service, expensesRepo, purchaseRunsRepo, voidTx } =
+        createService();
+      expensesRepo.findOne.mockResolvedValue({
+        id: 9,
+        branchId: 44,
+        occurredAt: new Date('2026-06-01T00:00:00.000Z'),
+      });
+      purchaseRunsRepo.findOne.mockResolvedValue({ id: 42 });
+
+      await service.voidBranchExpenseForRun(44, 9, 'Run #42 voided.');
+      expect(voidTx.state.set.voidReason).toBe('Run #42 voided.');
+    });
+
+    it('never throws when a run undoes an expense that is already gone', async () => {
+      // voidRun has already claimed the run as VOID by the time it calls this.
+      // Throwing here would skip the stock reversal below it.
+      const { service, expensesRepo } = createService();
+      expensesRepo.findOne.mockResolvedValue(null);
+      await expect(
+        service.voidBranchExpenseForRun(44, 9, 'gone'),
+      ).resolves.toBeUndefined();
     });
 
     it('posts a tax remittance against the liability, not as an expense', async () => {

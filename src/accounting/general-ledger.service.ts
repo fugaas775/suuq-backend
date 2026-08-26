@@ -181,12 +181,19 @@ export class GeneralLedgerService {
     return entry;
   }
 
-  /** Look up an entry by its idempotency key (used to find what to reverse). */
+  /**
+   * Look up an entry by its idempotency key (used to find what to reverse).
+   * Pass `manager` to read inside a caller's transaction — a void that reverses
+   * and marks its source row in one go must not read the ledger from outside
+   * the transaction it is about to write to.
+   */
   findEntryByIdempotencyKey(
     branchId: number,
     idempotencyKey: string,
+    manager?: EntityManager,
   ): Promise<GlJournalEntry | null> {
-    return this.entries.findOne({
+    const repo = manager?.getRepository(GlJournalEntry) ?? this.entries;
+    return repo.findOne({
       where: { branchId, idempotencyKey },
     });
   }
@@ -195,6 +202,11 @@ export class GeneralLedgerService {
    * Post a mirror entry that reverses `entryId` (debits↔credits), linking the
    * two. Idempotent on `opts.idempotencyKey` and a no-op if already reversed.
    * Returns null if the original entry does not exist.
+   *
+   * Pass `manager` to enlist in a caller's transaction, the same way `post()`
+   * does. Voiding an expense has to reverse the ledger and mark the row in one
+   * atomic step: reversing in its own transaction and failing on the mark would
+   * leave a live expense whose ledger entry is already backed out.
    */
   async reverse(
     entryId: number,
@@ -205,8 +217,11 @@ export class GeneralLedgerService {
       memo?: string | null;
       createdByUserId?: number | null;
     },
+    manager?: EntityManager,
   ): Promise<GlJournalEntry | null> {
-    return this.dataSource.transaction(async (manager) => {
+    const work = async (
+      manager: EntityManager,
+    ): Promise<GlJournalEntry | null> => {
       const entryRepo = manager.getRepository(GlJournalEntry);
       const lineRepo = manager.getRepository(GlJournalLine);
 
@@ -260,7 +275,8 @@ export class GeneralLedgerService {
       await entryRepo.save(original);
       reversal.lines = swapped;
       return reversal;
-    });
+    };
+    return manager ? work(manager) : this.dataSource.transaction(work);
   }
 
   /**

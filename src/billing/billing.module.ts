@@ -7,6 +7,12 @@ import { Product } from '../products/entities/product.entity';
 import { RetailTenant } from '../retail/entities/retail-tenant.entity';
 import { TenantSubscription } from '../retail/entities/tenant-subscription.entity';
 import { EbirrTransaction } from '../payments/entities/ebirr-transaction.entity';
+import { User } from '../users/entities/user.entity';
+// Entities only — importing PayrollModule or PurchasingModule here would be a
+// cycle (both import this one). BranchBillingService needs these two
+// repositories to refuse a hand void of an expense a run posted.
+import { PayrollRun } from '../payroll/entities/payroll-run.entity';
+import { PurchaseRun } from '../purchasing/entities/purchase-run.entity';
 import { PosCheckout } from '../pos-sync/entities/pos-checkout.entity';
 import { PosRegisterSession } from '../pos-sync/entities/pos-register-session.entity';
 import {
@@ -48,6 +54,9 @@ import { BranchFinancialReportsController } from './branch-financial-reports.con
       PurchaseOrder,
       PurchaseOrderItem,
       Product,
+      User,
+      PayrollRun,
+      PurchaseRun,
     ]),
   ],
   controllers: [OwnerBillingController, BranchFinancialReportsController],

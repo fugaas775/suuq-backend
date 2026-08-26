@@ -122,6 +122,39 @@ export class BranchExpense {
   @Column({ type: 'int', nullable: true })
   recordedByUserId?: number | null;
 
+  /**
+   * When this row was voided, or null while it still counts.
+   *
+   * Money that was spent cannot be un-spent, so a mis-keyed expense is VOIDED,
+   * never deleted. The row survives with who voided it and why; the ledger entry
+   * it posted is reversed in the same transaction, so the P&L and the balance
+   * sheet stop counting it the moment the void lands. Every reader that answers
+   * "what did this branch spend" filters on `voidedAt IS NULL` — see
+   * `listBranchExpenses` and `findExpenses`.
+   *
+   * Before this, the Delete button ran a hard DELETE: the amount, the note and
+   * the date left no trace anywhere, and a manager could quietly remove a cost
+   * from a month the owner had already been shown.
+   */
+  @Column({ type: 'timestamp', nullable: true })
+  voidedAt?: Date | null;
+
+  @Column({ type: 'int', nullable: true })
+  voidedByUserId?: number | null;
+
+  /**
+   * Name of whoever voided it, frozen at the moment of the void — the same
+   * reason `PurchaseRun.decidedByName` is stored rather than joined: the person
+   * may later be renamed, or lose their staff assignment entirely, and the books
+   * still have to say who did this.
+   */
+  @Column({ type: 'varchar', length: 160, nullable: true })
+  voidedByName?: string | null;
+
+  /** Required to void. Never null on a voided row. */
+  @Column({ type: 'text', nullable: true })
+  voidReason?: string | null;
+
   @CreateDateColumn()
   createdAt!: Date;
 

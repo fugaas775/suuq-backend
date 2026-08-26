@@ -108,8 +108,12 @@ function makeService({
       expenses.push(row);
       return row;
     },
-    deleteBranchExpense: async (branchId: number, expenseId: number) => {
-      deletedExpenses.push({ branchId, expenseId });
+    voidBranchExpenseForRun: async (
+      branchId: number,
+      expenseId: number,
+      reason: string,
+    ) => {
+      deletedExpenses.push({ branchId, expenseId, reason });
     },
   };
 
@@ -324,7 +328,15 @@ describe('PayrollService — running a month', () => {
 
     const res = await service.deleteRun(55, 115);
     expect(res).toEqual({ deleted: true, id: 55, periodKey: '2026-09' });
-    expect(deletedExpenses).toEqual([{ branchId: 115, expenseId: 700 }]);
+    // The run is gone; the voided expense row is the only surviving record
+    // that this month was ever posted, so it has to say why it went.
+    expect(deletedExpenses).toEqual([
+      {
+        branchId: 115,
+        expenseId: 700,
+        reason: 'Payroll run 2026-09 was deleted.',
+      },
+    ]);
     expect(deletedRuns).toEqual([{ id: 55 }]);
   });
 });

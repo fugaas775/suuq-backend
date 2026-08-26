@@ -1,11 +1,20 @@
 import {
+  BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Between, In, IsNull, Repository } from 'typeorm';
+import {
+  Between,
+  DataSource,
+  EntityManager,
+  In,
+  IsNull,
+  Repository,
+} from 'typeorm';
 import { GeneralLedgerService } from '../accounting/general-ledger.service';
 import { GlAccountCode } from '../accounting/gl-accounts.constant';
 import { GlJournalSourceType } from '../accounting/entities/gl-journal-entry.entity';
@@ -22,6 +31,12 @@ import {
   TenantSubscriptionStatus,
 } from '../retail/entities/tenant-subscription.entity';
 import { EbirrTransaction } from '../payments/entities/ebirr-transaction.entity';
+import { User } from '../users/entities/user.entity';
+// Entity-only imports. Billing cannot import PayrollModule or PurchasingModule —
+// both of those import BillingModule — but it can hold their repositories, which
+// is all `assertExpenseWasHandRecorded` needs to answer "did a run post this?".
+import { PayrollRun } from '../payroll/entities/payroll-run.entity';
+import { PurchaseRun } from '../purchasing/entities/purchase-run.entity';
 import { POS_WORKSPACE_REFERENCE_PREFIX } from '../branch-staff/pos-workspace-activation.service';
 import {
   BranchAccruedLiability,
@@ -100,6 +115,13 @@ export class BranchBillingService {
     private readonly staffAssignmentsRepo: Repository<BranchStaffAssignment>,
     @InjectRepository(RetailTenant)
     private readonly retailTenantsRepo: Repository<RetailTenant>,
+    @InjectRepository(User)
+    private readonly usersRepo: Repository<User>,
+    @InjectRepository(PayrollRun)
+    private readonly payrollRunsRepo: Repository<PayrollRun>,
+    @InjectRepository(PurchaseRun)
+    private readonly purchaseRunsRepo: Repository<PurchaseRun>,
+    private readonly dataSource: DataSource,
   ) {}
 
   private readonly logger = new Logger(BranchBillingService.name);
@@ -482,16 +504,48 @@ export class BranchBillingService {
     return row;
   }
 
+  /**
+   * Recorded expenses, newest first.
+   *
+   * Voided rows are left out unless asked for. Every caller that answers a money
+   * question — the register's Today tab, the Daily P&L panel, the cash tile —
+   * calls this without `includeVoided` and is therefore correct by default; only
+   * the books panel, which has to SHOW what was voided and by whom, asks for
+   * them.
+   */
   async listBranchExpenses(
     branchId: number,
-    range: { from?: Date; to?: Date } = {},
+    range: { from?: Date; to?: Date; includeVoided?: boolean } = {},
   ) {
     const where: any = { branchId };
     if (range.from && range.to) {
       where.occurredAt = Between(range.from, range.to);
     }
+    if (!range.includeVoided) {
+      where.voidedAt = IsNull();
+    }
     return this.expensesRepo.find({ where, order: { occurredAt: 'DESC' } });
   }
+
+  /**
+   * How far ahead an expense may be dated.
+   *
+   * Money that has not left yet is not an expense, and a row dated into next
+   * month silently restates a period the owner has already been shown. A day of
+   * slack absorbs a device clock that is out by a few hours and the fact that
+   * the picker sends midnight UTC for a date chosen in EAT.
+   */
+  private static readonly MAX_FUTURE_DATING_MS = 24 * 60 * 60 * 1000;
+
+  /**
+   * How long a manager keeps the right to void their own entry.
+   *
+   * Deliberately a rolling window rather than "today", because `occurredAt` is a
+   * naive timestamp and the picker sends midnight UTC — a calendar test would
+   * flip three hours early for a branch in EAT. Past this, the void is the
+   * owner's call.
+   */
+  private static readonly MANAGER_VOID_WINDOW_MS = 24 * 60 * 60 * 1000;
 
   async createBranchExpense(
     branchId: number,
@@ -504,12 +558,21 @@ export class BranchBillingService {
       note?: string;
     },
   ): Promise<BranchExpense> {
+    const occurredAt = dto.occurredAt || new Date();
+    if (
+      occurredAt.getTime() >
+      Date.now() + BranchBillingService.MAX_FUTURE_DATING_MS
+    ) {
+      throw new BadRequestException(
+        'An expense cannot be dated in the future — record it on the day the money leaves.',
+      );
+    }
     const expense = this.expensesRepo.create({
       branchId,
       category: dto.category as any,
       amount: dto.amount,
       currency: dto.currency || 'ETB',
-      occurredAt: dto.occurredAt || new Date(),
+      occurredAt,
       note: dto.note ?? null,
       recordedByUserId: userId,
     });
@@ -531,10 +594,44 @@ export class BranchBillingService {
     return saved;
   }
 
-  async deleteBranchExpense(
+  /**
+   * Void an expense somebody recorded by hand.
+   *
+   * Replaces the old hard delete. The row stays, stamped with who voided it,
+   * when and why; its ledger entry is reversed in the SAME transaction, so the
+   * books can never be left with an expense the ledger has already backed out
+   * (or the reverse). Three separate things had to be true before this was safe:
+   *
+   *  1. A reason is mandatory — the same bar `voidRun` sets for a purchase run.
+   *  2. A row a payroll or purchase run posted cannot be voided from here at
+   *     all. Voiding it by hand used to strand the run: `voidRun` flipped the
+   *     run to VOID, then died on the missing expense before it ever reversed
+   *     the stock, leaving the goods on the shelf as received with the money
+   *     un-booked. See {@link assertExpenseWasHandRecorded}.
+   *  3. Voiding somebody else's entry, or an old one, is the owner's call.
+   *
+   * @returns the voided row, so the caller can show what it just took out.
+   */
+  async voidBranchExpense(
     branchId: number,
     expenseId: number,
-  ): Promise<void> {
+    actor: { userId: number; roles?: string[]; name?: string | null },
+    reason: string,
+  ): Promise<BranchExpense> {
+    // Asserted here rather than in the controller (which is where every other
+    // route on this service asserts) because the owner-only rule below needs the
+    // branch this returns, and resolving it twice is a wasted query.
+    const branch = await this.assertBranchAccountingAccess(
+      branchId,
+      actor.userId,
+      actor.roles || [],
+    );
+
+    const trimmedReason = String(reason || '').trim();
+    if (!trimmedReason) {
+      throw new BadRequestException('A void has to say why.');
+    }
+
     const expense = await this.expensesRepo.findOne({
       where: { id: expenseId, branchId },
     });
@@ -543,12 +640,268 @@ export class BranchBillingService {
         `Expense #${expenseId} not found for branch #${branchId}.`,
       );
     }
-    await this.reverseLedger(
+    if (expense.voidedAt) {
+      throw new ConflictException('That expense was already voided.');
+    }
+
+    await this.assertExpenseWasHandRecorded(branchId, expenseId);
+    this.assertMayVoidExpense(branch, expense, actor);
+
+    const { expense: voided } = await this.applyExpenseVoid(expense, {
+      userId: actor.userId,
+      name: await this.resolveActorName(actor.userId, actor.name),
+      reason: trimmedReason,
+    });
+    return voided;
+  }
+
+  /**
+   * Correct a recorded expense.
+   *
+   * The reason people deleted expenses was almost never fraud — it was a typo,
+   * and with no way to edit one, destroying the row was the only way to fix it.
+   * That is what made deletion routine. This voids the wrong row and posts a
+   * corrected one, leaving the pair visible: what was recorded, what it should
+   * have said, and who changed it.
+   *
+   * Void first, then post. The other order would put two live rows in the books
+   * if the void failed — the same money counted twice, which is the one outcome
+   * worse than an unfixed typo. This order's failure mode is a voided row with
+   * no replacement: visible in the panel, and re-recordable by hand.
+   */
+  async amendBranchExpense(
+    branchId: number,
+    expenseId: number,
+    actor: { userId: number; roles?: string[]; name?: string | null },
+    changes: {
+      category?: string;
+      amount?: number;
+      occurredAt?: Date;
+      note?: string | null;
+      reason?: string;
+    },
+  ): Promise<BranchExpense> {
+    const existing = await this.expensesRepo.findOne({
+      where: { id: expenseId, branchId },
+    });
+    if (!existing) {
+      throw new NotFoundException(
+        `Expense #${expenseId} not found for branch #${branchId}.`,
+      );
+    }
+
+    const stated = String(changes.reason || '').trim();
+    await this.voidBranchExpense(
       branchId,
-      `expense-${expenseId}`,
-      expense.occurredAt,
+      expenseId,
+      actor,
+      stated ? `Corrected — ${stated}` : 'Corrected and re-recorded.',
     );
-    await this.expensesRepo.remove(expense);
+
+    const replacement = await this.createBranchExpense(branchId, actor.userId, {
+      category: changes.category ?? existing.category,
+      amount: changes.amount ?? Number(existing.amount),
+      currency: existing.currency,
+      occurredAt: changes.occurredAt ?? existing.occurredAt,
+      note:
+        changes.note === undefined
+          ? (existing.note ?? undefined)
+          : changes.note
+            ? changes.note
+            : undefined,
+    });
+
+    // Best-effort back-reference. The correction already stands without it; a
+    // failed UPDATE here must not undo a void the ledger has acted on.
+    try {
+      await this.expensesRepo.update(
+        { id: expenseId },
+        {
+          voidReason: `${
+            stated ? `Corrected — ${stated}` : 'Corrected and re-recorded.'
+          } Replaced by expense #${replacement.id}.`,
+        },
+      );
+    } catch {
+      // The pair is still legible from the timestamps and the reason.
+    }
+
+    return replacement;
+  }
+
+  /**
+   * Void the expense a run posted, as part of undoing that run.
+   *
+   * Deliberately skips every guard `voidBranchExpense` applies: authority was
+   * decided when the run was voided, and the machine-posted guard exists to stop
+   * a HAND void from doing exactly this out of order. It also never throws on a
+   * row that is missing or already voided — a run being undone must reach its
+   * stock reversal whatever state the expense is in.
+   */
+  async voidBranchExpenseForRun(
+    branchId: number,
+    expenseId: number,
+    reason: string,
+    actor: { userId?: number | null; name?: string | null } = {},
+  ): Promise<void> {
+    const expense = await this.expensesRepo.findOne({
+      where: { id: expenseId, branchId },
+    });
+    if (!expense || expense.voidedAt) return;
+    await this.applyExpenseVoid(expense, {
+      userId: actor.userId ?? null,
+      name: await this.resolveActorName(actor.userId, actor.name),
+      reason: String(reason || '').trim() || 'Reversed with its run.',
+    });
+  }
+
+  /**
+   * Refuse a hand void of a row a run owns.
+   *
+   * `expenseId` is the link in both directions: a payroll run and a purchase run
+   * each hold the id of the single expense they posted, and undoing either one
+   * goes through the run so the stock and the run status move with the money.
+   */
+  private async assertExpenseWasHandRecorded(
+    branchId: number,
+    expenseId: number,
+  ): Promise<void> {
+    const [payrollRun, purchaseRun] = await Promise.all([
+      this.payrollRunsRepo.findOne({ where: { branchId, expenseId } }),
+      this.purchaseRunsRepo.findOne({ where: { branchId, expenseId } }),
+    ]);
+    if (payrollRun) {
+      throw new ConflictException(
+        `This expense was posted by payroll run ${payrollRun.periodKey}. Delete that run instead — voiding it here would leave the run standing with no money behind it.`,
+      );
+    }
+    if (purchaseRun) {
+      throw new ConflictException(
+        `This expense was posted by purchase run #${purchaseRun.id}. Void that run instead — voiding it here would leave the stock it brought in on the shelf.`,
+      );
+    }
+  }
+
+  /**
+   * Who may void what.
+   *
+   * Recording an expense is owner-or-manager. Un-recording one is not the same
+   * act: it removes a cost from a month somebody may already have been shown. A
+   * manager keeps the obvious case — their own entry, caught the same day — and
+   * everything else is the owner's, which is the shape a school fee refund
+   * already has.
+   */
+  private assertMayVoidExpense(
+    branch: Branch,
+    expense: BranchExpense,
+    actor: { userId: number; roles?: string[] },
+  ): void {
+    if (
+      this.isPlatformAdmin(actor.roles || []) ||
+      branch.ownerId === actor.userId
+    ) {
+      return;
+    }
+    if (expense.recordedByUserId !== actor.userId) {
+      throw new ForbiddenException(
+        'Only the branch owner can void an expense somebody else recorded.',
+      );
+    }
+    const occurredAt = expense.occurredAt
+      ? new Date(expense.occurredAt).getTime()
+      : 0;
+    const recordedAt = expense.createdAt
+      ? new Date(expense.createdAt).getTime()
+      : 0;
+    // Whichever is more recent: an expense entered today for last week is still
+    // a fresh mistake, and the person who just made it should be able to fix it.
+    const freshest = Math.max(occurredAt, recordedAt);
+    if (Date.now() - freshest > BranchBillingService.MANAGER_VOID_WINDOW_MS) {
+      throw new ForbiddenException(
+        'Only the branch owner can void an expense older than a day. Ask the owner to void it.',
+      );
+    }
+  }
+
+  /**
+   * Mark the row voided and reverse its ledger entry, atomically.
+   *
+   * The UPDATE claims the void with `voidedAt IS NULL` in the WHERE, so a
+   * double-tapped Void cannot reverse the ledger twice — the second one affects
+   * no rows and returns what the first one wrote.
+   */
+  private async applyExpenseVoid(
+    expense: BranchExpense,
+    stamp: { userId: number | null; name: string | null; reason: string },
+  ): Promise<{ expense: BranchExpense; alreadyVoided: boolean }> {
+    return this.dataSource.transaction(async (manager) => {
+      const repo = manager.getRepository(BranchExpense);
+      const voidedAt = new Date();
+      const claim = await repo
+        .createQueryBuilder()
+        .update(BranchExpense)
+        .set({
+          voidedAt,
+          voidedByUserId: stamp.userId ?? null,
+          voidedByName: stamp.name ?? null,
+          voidReason: stamp.reason,
+        })
+        .where('id = :id', { id: expense.id })
+        .andWhere('"voidedAt" IS NULL')
+        .execute();
+
+      const fresh = await repo.findOne({ where: { id: expense.id } });
+      if (!claim.affected) {
+        return { expense: fresh || expense, alreadyVoided: true };
+      }
+
+      // Strict, unlike `reverseLedger`: this one runs inside the transaction
+      // that hides the expense, so a failure here must take the void with it
+      // rather than leaving the P&L and the ledger disagreeing in silence.
+      const key = `expense-${expense.id}`;
+      const entry = await this.generalLedger.findEntryByIdempotencyKey(
+        expense.branchId,
+        key,
+        manager,
+      );
+      if (entry) {
+        await this.generalLedger.reverse(
+          entry.id,
+          {
+            sourceType: GlJournalSourceType.MANUAL,
+            idempotencyKey: `reverse-${key}`,
+            occurredAt: expense.occurredAt || voidedAt,
+            memo: `Void of ${key}${
+              stamp.name ? ` by ${stamp.name}` : ''
+            } — ${stamp.reason}`,
+            createdByUserId: stamp.userId ?? null,
+          },
+          manager,
+        );
+      }
+
+      return { expense: fresh || expense, alreadyVoided: false };
+    });
+  }
+
+  /** A stated name, else the user's display name. Worth a query, not a failure. */
+  private async resolveActorName(
+    userId?: number | null,
+    stated?: string | null,
+  ): Promise<string | null> {
+    const given = String(stated || '').trim();
+    if (given) return given.slice(0, 160);
+    if (!userId) return null;
+    try {
+      const row = await this.usersRepo.findOne({
+        where: { id: userId },
+        select: ['id', 'displayName'],
+      });
+      const resolved = String(row?.displayName || '').trim();
+      return resolved ? resolved.slice(0, 160) : null;
+    } catch {
+      return null;
+    }
   }
 
   async listBranchFixedAssets(branchId: number) {

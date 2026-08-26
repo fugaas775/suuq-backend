@@ -782,7 +782,11 @@ export class BranchFinancialReportsService {
   ): Promise<BranchExpense[]> {
     const qb = this.expensesRepo
       .createQueryBuilder('e')
-      .where('e.branchId = :branchId', { branchId });
+      .where('e.branchId = :branchId', { branchId })
+      // A voided expense is money that was never spent. It stays in the table so
+      // the books can say who took it out and why, and it stays out of every
+      // statement this service produces.
+      .andWhere('e.voidedAt IS NULL');
     if (from) qb.andWhere('e.occurredAt >= :from', { from });
     if (to) qb.andWhere('e.occurredAt <= :to', { to });
     return qb.orderBy('e.occurredAt', 'ASC').getMany();

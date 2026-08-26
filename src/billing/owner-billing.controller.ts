@@ -5,6 +5,7 @@ import {
   Get,
   Param,
   ParseIntPipe,
+  Patch,
   Post,
   Query,
   Req,
@@ -22,6 +23,8 @@ import { CreateBranchDepreciationEntryDto } from './dto/create-branch-depreciati
 import { CreateBranchExpenseDto } from './dto/create-branch-expense.dto';
 import { CreateBranchFixedAssetDto } from './dto/create-branch-fixed-asset.dto';
 import { CreateBranchLongTermDebtDto } from './dto/create-branch-long-term-debt.dto';
+import { VoidBranchExpenseDto } from './dto/void-branch-expense.dto';
+import { AmendBranchExpenseDto } from './dto/amend-branch-expense.dto';
 import { SettleBranchAccruedLiabilityDto } from './dto/settle-branch-accrued-liability.dto';
 import { StartBranchRenewalDto } from './dto/start-branch-renewal.dto';
 
@@ -107,6 +110,7 @@ export class OwnerBillingController {
     @Param('branchId', ParseIntPipe) branchId: number,
     @Query('from') from?: string,
     @Query('to') to?: string,
+    @Query('includeVoided') includeVoided?: string,
   ) {
     const userId = (req.user as any).id;
     await this.billingService.assertBranchAccountingAccess(
@@ -117,6 +121,9 @@ export class OwnerBillingController {
     return this.billingService.listBranchExpenses(branchId, {
       from: from ? new Date(from) : undefined,
       to: to ? new Date(to) : undefined,
+      // Opt-in, so every caller that asks "what did we spend" is right by
+      // default and only the books panel sees the voided rows it exists to show.
+      includeVoided: String(includeVoided) === 'true',
     });
   }
 
@@ -141,20 +148,63 @@ export class OwnerBillingController {
     });
   }
 
-  @Delete('branches/:branchId/expenses/:expenseId')
-  async deleteExpense(
+  /**
+   * Correct an expense. Voids the wrong row and posts a corrected one, so the
+   * books keep both; access and authority are asserted inside the service, which
+   * routes this through the same rules as a plain void.
+   */
+  @Patch('branches/:branchId/expenses/:expenseId')
+  async amendExpense(
     @Req() req: AuthenticatedRequest,
     @Param('branchId', ParseIntPipe) branchId: number,
     @Param('expenseId', ParseIntPipe) expenseId: number,
+    @Body() dto: AmendBranchExpenseDto,
   ) {
-    const userId = (req.user as any).id;
-    await this.billingService.assertBranchAccountingAccess(
+    const user = req.user as any;
+    return this.billingService.amendBranchExpense(
       branchId,
-      userId,
-      (req.user as any).roles,
+      expenseId,
+      {
+        userId: user.id,
+        roles: user.roles,
+        name: user.displayName || user.fullName || null,
+      },
+      {
+        category: dto.category,
+        amount: dto.amount,
+        occurredAt: dto.occurredAt ? new Date(dto.occurredAt) : undefined,
+        note: dto.note,
+        reason: dto.reason,
+      },
     );
-    await this.billingService.deleteBranchExpense(branchId, expenseId);
-    return { ok: true };
+  }
+
+  /**
+   * There is no DELETE for an expense. Money that left cannot be un-spent, so a
+   * mistake is voided — the row survives, carrying who voided it and why, and
+   * its ledger entry is reversed in the same transaction.
+   *
+   * `voidBranchExpense` asserts access itself: the owner-only rules it applies
+   * need the branch, and resolving it twice would be a wasted query.
+   */
+  @Post('branches/:branchId/expenses/:expenseId/void')
+  async voidExpense(
+    @Req() req: AuthenticatedRequest,
+    @Param('branchId', ParseIntPipe) branchId: number,
+    @Param('expenseId', ParseIntPipe) expenseId: number,
+    @Body() dto: VoidBranchExpenseDto,
+  ) {
+    const user = req.user as any;
+    return this.billingService.voidBranchExpense(
+      branchId,
+      expenseId,
+      {
+        userId: user.id,
+        roles: user.roles,
+        name: user.displayName || user.fullName || null,
+      },
+      dto.reason,
+    );
   }
 
   @Get('branches/:branchId/fixed-assets')
