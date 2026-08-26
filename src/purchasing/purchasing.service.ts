@@ -57,6 +57,11 @@ function isUniqueViolation(error: unknown): boolean {
   return String(code) === '23505';
 }
 
+/** Still standing. Every total, every rate and every stock move asks this. */
+function isLive(line: PurchaseRunLine): boolean {
+  return line?.voidedAt == null;
+}
+
 function money(value: unknown): number {
   return Math.round((Number(value) || 0) * 100) / 100;
 }
@@ -131,6 +136,9 @@ export class PurchasingService {
       stockMovementId: row.stockMovementId ?? null,
       note: row.note ?? null,
       sortOrder: row.sortOrder ?? 0,
+      voidedAt: row.voidedAt?.toISOString?.() ?? null,
+      voidedByName: row.voidedByName ?? null,
+      voidReason: row.voidReason ?? null,
     };
   }
 
@@ -169,7 +177,9 @@ export class PurchasingService {
       decisionReason: row.decisionReason ?? null,
       expenseId: row.expenseId ?? null,
       note: row.note ?? null,
-      lineCount: lines.length,
+      // What is still standing. A struck line stays on the document but is not
+      // part of what the run bought.
+      lineCount: lines.filter(isLive).length,
       lines: lines
         .slice()
         .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
@@ -292,10 +302,17 @@ export class PurchasingService {
 
   private async recalcTotal(run: PurchaseRun): Promise<PurchaseRun> {
     const lines = await this.loadLines(run.id);
-    run.spentTotal = money(
-      lines.reduce((sum, line) => sum + Number(line.lineTotal || 0), 0),
-    );
+    run.spentTotal = this.liveTotal(lines);
     return this.runs.save(run);
+  }
+
+  /** What the run comes to, ignoring anything a manager has struck off. */
+  private liveTotal(lines: PurchaseRunLine[]): number {
+    return money(
+      (lines || [])
+        .filter(isLive)
+        .reduce((sum, line) => sum + Number(line.lineTotal || 0), 0),
+    );
   }
 
   // -------------------------------------------------------------------- reads
@@ -439,6 +456,9 @@ export class PurchasingService {
       .andWhere('run.status IN (:...statuses)', {
         statuses: [PurchaseRunStatus.SUBMITTED, PurchaseRunStatus.APPROVED],
       })
+      // A struck line is not evidence of a price. Somebody looked at it and
+      // said the branch did not buy that.
+      .andWhere('line."voidedAt" IS NULL')
       .select('LOWER(line.description)', 'key')
       .addSelect('MAX(line.description)', 'description')
       .addSelect('MAX(line."unitLabel")', 'unitLabel')
@@ -731,15 +751,13 @@ export class PurchasingService {
     }
 
     const lines = await this.loadLines(run.id);
-    if (!lines.length) {
+    if (!lines.filter(isLive).length) {
       throw new BadRequestException(
         'A run needs at least one thing bought on it before it can be filed.',
       );
     }
 
-    run.spentTotal = money(
-      lines.reduce((sum, line) => sum + Number(line.lineTotal || 0), 0),
-    );
+    run.spentTotal = this.liveTotal(lines);
     if (run.spentTotal <= 0) {
       throw new BadRequestException(
         'Every line on this run costs nothing. Add the prices before filing it.',
@@ -921,7 +939,7 @@ export class PurchasingService {
     }
 
     const lines = await this.loadLines(run.id);
-    if (!lines.length) {
+    if (!lines.filter(isLive).length) {
       throw new BadRequestException('This run has nothing on it.');
     }
 
@@ -1079,7 +1097,12 @@ export class PurchasingService {
   ): Promise<string[]> {
     const failed: string[] = [];
     for (const line of lines) {
-      if (!line.productId || !line.stockQuantity || line.stockMovementId) {
+      if (
+        !isLive(line) ||
+        !line.productId ||
+        !line.stockQuantity ||
+        line.stockMovementId
+      ) {
         continue;
       }
       try {
@@ -1111,6 +1134,140 @@ export class PurchasingService {
       }
     }
     return failed;
+  }
+
+  /**
+   * Strike ONE thing off a run.
+   *
+   * The manager's alternative to rejecting fifteen good lines because one is
+   * wrong. Theirs alone: a purchaser who wants a line gone while the run is
+   * still a draft simply removes it, and once it is filed the decision is the
+   * signature's.
+   *
+   * Three rules, and each answers a way this goes wrong quietly:
+   *
+   *   It never empties a run. Striking the last line standing would leave a
+   *   document that bought nothing, holding cash it cannot explain — that is a
+   *   whole-run void, and it is refused here so the reversal is recorded as
+   *   one. The QSR order void refuses for the same reason.
+   *
+   *   It always leaves a record. The line is marked, not deleted, so the
+   *   largest void of the day is not the one that vanished.
+   *
+   *   On a run already in the books, the books come with it. The expense is
+   *   reposted at the new total and any stock the line moved goes back — a
+   *   struck line that stayed in the P&L would be the branch paying for
+   *   something it just decided it had not bought.
+   */
+  async voidLine(
+    runId: number,
+    lineId: number,
+    dto: { branchId: number; reason?: string | null },
+    actor: PurchasingActor,
+  ) {
+    const run = await this.loadRunOrFail(runId, dto.branchId);
+    const reason = String(dto.reason || '').trim();
+    if (!reason) {
+      throw new BadRequestException(
+        'Say why it is coming off — the purchaser sees this on their board.',
+      );
+    }
+
+    if (
+      run.status !== PurchaseRunStatus.SUBMITTED &&
+      run.status !== PurchaseRunStatus.APPROVED
+    ) {
+      throw new ConflictException(
+        run.status === PurchaseRunStatus.VOID
+          ? 'This run has already been reversed in full.'
+          : 'This run is still being written — remove the line instead of voiding it.',
+      );
+    }
+
+    const lines = await this.loadLines(runId);
+    const target = lines.find((line) => Number(line.id) === Number(lineId));
+    if (!target) throw new NotFoundException('That line was not found.');
+    if (!isLive(target)) {
+      // Already struck. Answer with the run rather than an error: the manager
+      // tapped twice, and the second tap should show them the result.
+      return this.toRun(run, lines);
+    }
+
+    const liveAfter = lines.filter(
+      (line) => isLive(line) && line.id !== target.id,
+    );
+    if (!liveAfter.length) {
+      throw new ConflictException(
+        'That is the only thing left on this run. Void the whole run instead, so the reversal is recorded as one.',
+      );
+    }
+
+    await this.lines.update(
+      { id: target.id },
+      {
+        voidedAt: new Date(),
+        voidedByUserId: actor.userId ?? null,
+        voidedByName: await this.actorName(actor),
+        voidReason: reason,
+      },
+    );
+
+    // Put the line's stock back before anything else reads the run: it moved
+    // when the run was signed off, and it did not buy what it claimed.
+    if (target.stockMovementId && target.productId && target.stockQuantity) {
+      try {
+        await this.inventoryLedger.recordMovement({
+          branchId: run.branchId,
+          productId: Number(target.productId),
+          movementType: StockMovementType.PURCHASE_RECEIPT,
+          quantityDelta: -Number(target.stockQuantity),
+          sourceType: PURCHASE_RUN_SOURCE,
+          sourceReferenceId: run.id,
+          actorUserId: actor.userId ?? null,
+          note: `Voided line on run #${run.id} — ${target.description}`,
+        });
+        await this.lines.update({ id: target.id }, { stockMovementId: null });
+      } catch (error) {
+        this.logger.warn(
+          `Purchase run #${run.id} line ${target.id} could not give its stock back: ${
+            (error as Error)?.message ?? error
+          }`,
+        );
+      }
+    }
+
+    const newTotal = this.liveTotal(liveAfter);
+    await this.runs.update({ id: run.id }, { spentTotal: newTotal });
+
+    /* A run already in the books needs the books moved with it. Billing offers
+       create and delete and no update, so the expense is replaced — which
+       reverses the old ledger entry and posts the new one, exactly what a
+       correction should do. Deliberately after the line is marked: if this
+       throws, the run reads as having a struck line and an expense that is too
+       big, which a manager can see and act on. The other order hides it. */
+    if (run.status === PurchaseRunStatus.APPROVED && run.expenseId != null) {
+      await this.billing.deleteBranchExpense(
+        run.branchId,
+        Number(run.expenseId),
+      );
+      const expense = await this.billing.createBranchExpense(
+        run.branchId,
+        actor.userId ?? 0,
+        {
+          category: BranchExpenseCategory.INGREDIENTS,
+          amount: newTotal,
+          currency: run.currency,
+          occurredAt: run.occurredAt,
+          note: `${purchaseRunExpenseNote(run.id)}${
+            run.label ? ` — ${run.label}` : ''
+          }${run.purchaserName ? ` (${run.purchaserName})` : ''}`,
+        },
+      );
+      await this.runs.update({ id: run.id }, { expenseId: Number(expense.id) });
+    }
+
+    const fresh = await this.loadRunOrFail(run.id, dto.branchId);
+    return this.toRun(fresh, await this.loadLines(run.id));
   }
 
   /** Send it back, with a reason. The run returns to the purchaser editable. */

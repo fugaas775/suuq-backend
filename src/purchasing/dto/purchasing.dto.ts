@@ -313,3 +313,17 @@ export class ListCashMovementsQueryDto {
   @Min(1)
   limit?: number;
 }
+
+export class VoidPurchaseRunLineDto {
+  @ApiProperty({ example: 44 })
+  @Type(() => Number)
+  @IsInt()
+  branchId!: number;
+
+  @ApiProperty({ example: 'Dhuxusha Isniinta ayaa la soo iibsaday.' })
+  @IsString()
+  @MinLength(1)
+  @MaxLength(1000)
+  @Transform(({ value }) => trimmed(value))
+  reason!: string;
+}

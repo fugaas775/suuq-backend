@@ -32,6 +32,7 @@ import {
   ListPurchaseRunsQueryDto,
   PurchasePriceHistoryQueryDto,
   SubmitPurchaseRunDto,
+  VoidPurchaseRunLineDto,
   UpdatePurchaseRunDto,
 } from './dto/purchasing.dto';
 import { PurchasingActor, PurchasingService } from './purchasing.service';
@@ -212,6 +213,22 @@ export class PurchasingController {
     @Body() dto: DecidePurchaseRunDto,
   ) {
     return this.svc.rejectRun(id, dto, this.actorFrom(req));
+  }
+
+  /**
+   * Strike one thing off, rather than sending fifteen good lines back for one
+   * bad one. The signature's decision, so it rides APPROVE_PURCHASE_RUN.
+   */
+  @Post('runs/:id/lines/:lineId/void')
+  @RetailBranchContext('body.branchId')
+  @RequirePosPermissions(PosPurchasingPermission.APPROVE_PURCHASE_RUN)
+  voidRunLine(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', ParseIntPipe) id: number,
+    @Param('lineId', ParseIntPipe) lineId: number,
+    @Body() dto: VoidPurchaseRunLineDto,
+  ) {
+    return this.svc.voidLine(id, lineId, dto, this.actorFrom(req));
   }
 
   @Post('runs/:id/void')

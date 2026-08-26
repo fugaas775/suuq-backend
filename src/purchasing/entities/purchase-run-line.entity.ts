@@ -113,6 +113,26 @@ export class PurchaseRunLine {
   @Column({ type: 'text', nullable: true })
   note?: string | null;
 
+  /**
+   * When a manager struck this line off, if they did.
+   *
+   * Marked rather than deleted: a struck line is a thing that happened, and the
+   * reason it came off is the part somebody wants in a month. A voided line is
+   * excluded from the run's total, from the price book, and from any stock the
+   * run applies — but it stays on the document, greyed, with the reason.
+   */
+  @Column({ type: 'timestamp', nullable: true })
+  voidedAt?: Date | null;
+
+  @Column({ type: 'int', nullable: true })
+  voidedByUserId?: number | null;
+
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  voidedByName?: string | null;
+
+  @Column({ type: 'text', nullable: true })
+  voidReason?: string | null;
+
   @Column({ type: 'int', default: 0 })
   sortOrder!: number;
 

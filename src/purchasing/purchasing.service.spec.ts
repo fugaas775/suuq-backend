@@ -812,6 +812,180 @@ describe('PurchasingService — the document against the till', () => {
   });
 });
 
+describe('PurchasingService — striking one thing off', () => {
+  const twoLines = () => [
+    lineRow({ id: 1, description: 'Yaanyo', lineTotal: 540 }),
+    lineRow({ id: 2, description: 'Dhuxul', lineTotal: 1450 }),
+  ];
+
+  it('marks the line rather than deleting it, and keeps the reason', async () => {
+    const lines = twoLines();
+    const ctx = makeService({ run: runRow({ spentTotal: 1990 }), lines });
+
+    await ctx.service.voidLine(
+      14,
+      2,
+      { branchId: 44, reason: 'Bought Monday.' },
+      manager,
+    );
+
+    expect(lines[1].voidedAt).toBeInstanceOf(Date);
+    expect(lines[1].voidReason).toBe('Bought Monday.');
+    // The largest void of the day must not be the one that left no trace.
+    expect(lines).toHaveLength(2);
+  });
+
+  it('brings the run total down to what is still standing', async () => {
+    const ctx = makeService({
+      run: runRow({ spentTotal: 1990 }),
+      lines: twoLines(),
+    });
+    await ctx.service.voidLine(
+      14,
+      2,
+      { branchId: 44, reason: 'Bought Monday.' },
+      manager,
+    );
+    expect(ctx.updatedRuns.some((u) => u.spentTotal === 540)).toBe(true);
+  });
+
+  /**
+   * Striking the last line standing would leave a document that bought nothing
+   * while holding cash it cannot explain. That is a whole-run void, and it is
+   * refused here so the reversal is recorded as one — the same rule the QSR
+   * order void keeps.
+   */
+  it('refuses to empty a run, and points at the whole-run void', async () => {
+    const ctx = makeService({
+      run: runRow({ spentTotal: 540 }),
+      lines: [lineRow({ id: 1, description: 'Yaanyo', lineTotal: 540 })],
+    });
+    await expect(
+      ctx.service.voidLine(14, 1, { branchId: 44, reason: 'Wrong.' }, manager),
+    ).rejects.toThrow(/Void the whole run/);
+  });
+
+  it('insists on a reason', async () => {
+    const ctx = makeService({ run: runRow(), lines: twoLines() });
+    await expect(
+      ctx.service.voidLine(14, 2, { branchId: 44 } as any, manager),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  /** A draft is edited, not voided. */
+  it('sends a draft back to the editor instead', async () => {
+    const ctx = makeService({
+      run: runRow({ status: PurchaseRunStatus.DRAFT }),
+      lines: twoLines(),
+    });
+    await expect(
+      ctx.service.voidLine(14, 2, { branchId: 44, reason: 'x' }, manager),
+    ).rejects.toThrow(/remove the line instead/);
+  });
+
+  /** Tapped twice. The second tap shows the result, not an error. */
+  it('is quiet about a line that is already struck', async () => {
+    const lines = [
+      lineRow({ id: 1, lineTotal: 540 }),
+      lineRow({ id: 2, lineTotal: 1450, voidedAt: new Date() }),
+    ];
+    const ctx = makeService({ run: runRow(), lines });
+    await expect(
+      ctx.service.voidLine(14, 2, { branchId: 44, reason: 'again' }, manager),
+    ).resolves.toBeTruthy();
+    expect(ctx.updatedRuns.some((u) => u.spentTotal !== undefined)).toBe(false);
+  });
+
+  /**
+   * A struck line that stayed in the P&L would be the branch paying for
+   * something it had just decided it did not buy.
+   */
+  it('reposts the expense at the new total on a run already in the books', async () => {
+    const ctx = makeService({
+      run: runRow({
+        status: PurchaseRunStatus.APPROVED,
+        expenseId: 900,
+        spentTotal: 1990,
+      }),
+      lines: twoLines(),
+    });
+
+    await ctx.service.voidLine(
+      14,
+      2,
+      { branchId: 44, reason: 'Bought Monday.' },
+      manager,
+    );
+
+    expect(ctx.deletedExpenses).toEqual([{ branchId: 44, expenseId: 900 }]);
+    expect(ctx.postedExpenses).toHaveLength(1);
+    expect(ctx.postedExpenses[0]).toMatchObject({
+      amount: 540,
+      category: 'INGREDIENTS',
+    });
+  });
+
+  it('leaves the books alone on a run nobody has signed yet', async () => {
+    const ctx = makeService({
+      run: runRow({ spentTotal: 1990 }),
+      lines: twoLines(),
+    });
+    await ctx.service.voidLine(
+      14,
+      2,
+      { branchId: 44, reason: 'Bought Monday.' },
+      manager,
+    );
+    expect(ctx.deletedExpenses).toHaveLength(0);
+    expect(ctx.postedExpenses).toHaveLength(0);
+  });
+
+  /** It moved when the run was signed off, and it did not buy what it claimed. */
+  it('gives the line its stock back', async () => {
+    const lines = [
+      lineRow({ id: 1, lineTotal: 540 }),
+      lineRow({
+        id: 2,
+        lineTotal: 1450,
+        productId: 77,
+        stockQuantity: 12,
+        stockMovementId: 501,
+      }),
+    ];
+    const ctx = makeService({
+      run: runRow({ status: PurchaseRunStatus.APPROVED, expenseId: 900 }),
+      lines,
+    });
+
+    await ctx.service.voidLine(
+      14,
+      2,
+      { branchId: 44, reason: 'Bought Monday.' },
+      manager,
+    );
+
+    expect(ctx.stockMovements).toHaveLength(1);
+    expect(ctx.stockMovements[0].quantityDelta).toBe(-12);
+    expect(lines[1].stockMovementId).toBeNull();
+  });
+
+  /** And a struck line never moves stock on a later sign-off. */
+  it('never applies stock for a line that was struck before approval', async () => {
+    const lines = [
+      lineRow({ id: 1, lineTotal: 540 }),
+      lineRow({
+        id: 2,
+        productId: 77,
+        stockQuantity: 12,
+        voidedAt: new Date(),
+      }),
+    ];
+    const ctx = makeService({ run: runRow(), lines });
+    await ctx.service.approveRun(14, { branchId: 44 }, manager);
+    expect(ctx.stockMovements).toHaveLength(0);
+  });
+});
+
 describe('PurchasingService — reversal', () => {
   it('takes the expense and the stock back, and leaves the cash alone', async () => {
     const run = runRow({ status: PurchaseRunStatus.APPROVED, expenseId: 900 });
@@ -859,10 +1033,14 @@ describe('PurchasingService — what a thing cost last time', () => {
    */
   it('derives min, max and last from the line total, never from the optional unit price', async () => {
     const raw: Record<string, unknown>[] = [];
+    const wheres: string[] = [];
     const qb: any = {
       innerJoin: () => qb,
       where: () => qb,
-      andWhere: () => qb,
+      andWhere: (expr: unknown) => {
+        wheres.push(String(expr));
+        return qb;
+      },
       select: (expr: string, alias: string) => {
         raw.push({ expr, alias });
         return qb;
@@ -893,6 +1071,9 @@ describe('PurchasingService — what a thing cost last time', () => {
     }
     // And the last one is genuinely the most recent, not just any row.
     expect(by('lastUnitPrice')).toContain('ORDER BY run."occurredAt" DESC');
+    // A struck line is not evidence of a price: somebody looked at it and said
+    // the branch did not buy that.
+    expect(wheres.some((w) => /voidedAt" IS NULL/.test(w))).toBe(true);
   });
 });
 
