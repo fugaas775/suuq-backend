@@ -320,10 +320,18 @@ export class VoidPurchaseRunLineDto {
   @IsInt()
   branchId!: number;
 
-  @ApiProperty({ example: 'Dhuxusha Isniinta ayaa la soo iibsaday.' })
+  /**
+   * Optional to the VALIDATOR, required by the service.
+   *
+   * `@MinLength(1)` answered a missing reason with "reason must be longer than
+   * or equal to 1 characters" — the raw validator string, on a screen a manager
+   * reads. The service already has the sentence worth showing, so the DTO gets
+   * out of its way and only guards the length.
+   */
+  @ApiPropertyOptional({ example: 'Dhuxusha Isniinta ayaa la soo iibsaday.' })
+  @IsOptional()
   @IsString()
-  @MinLength(1)
   @MaxLength(1000)
   @Transform(({ value }) => trimmed(value))
-  reason!: string;
+  reason?: string;
 }
