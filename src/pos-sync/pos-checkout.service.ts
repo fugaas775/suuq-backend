@@ -1735,11 +1735,18 @@ export class PosCheckoutService {
           excluded: [PosCheckoutStatus.VOIDED, PosCheckoutStatus.FAILED],
         });
 
+    // Summed on `total`, the amount APPLIED to the folio — not on `paidAmount`,
+    // which is what was handed across the counter and includes the change given
+    // back. A parent paying a 500 fee with a 1,000 note books paidAmount 1,000
+    // and changeDue 500, so summing tenders reached the folio's cap at half the
+    // money and would have collapsed the family's next legitimate instalment.
+    // Harmless where no change is given (the two are equal), and always the
+    // conservative direction: it can only ever let a payment through.
     const sumRow = await scopeFolioSales(
       manager
         .getRepository(PosCheckout)
         .createQueryBuilder('c')
-        .select('COALESCE(SUM(c.paidAmount), 0)', 'collected'),
+        .select('COALESCE(SUM(c.total), 0)', 'collected'),
     ).getRawOne<{ collected: string }>();
     const priorCollected = Number(sumRow?.collected ?? 0);
     // 1-unit tolerance for rounding. Still owes → legitimate instalment, allow it.
