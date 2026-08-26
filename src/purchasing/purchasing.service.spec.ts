@@ -692,6 +692,43 @@ describe('PurchasingService — deleting a run', () => {
   });
 });
 
+describe('PurchasingService — a rate nobody stated', () => {
+  /**
+   * A rate is total ÷ quantity, so defaulting the quantity to one made every
+   * bare total a per-unit price: "1450" typed for four sacks of charcoal taught
+   * the book that charcoal costs 1450 each, and the purchaser read that back at
+   * a stall as what they last paid.
+   */
+  it('leaves the quantity unstated rather than assuming one', async () => {
+    const ctx = makeService({ run: null, lines: [] });
+    ctx.runsRepo.findOne = async () => null;
+    await ctx.service.createRun(
+      {
+        branchId: 44,
+        lines: [{ description: 'Dhuxul', lineTotal: 1450 }],
+      },
+      purchaser,
+    );
+    expect(ctx.savedLines[0]).toMatchObject({
+      description: 'Dhuxul',
+      quantity: 0,
+    });
+  });
+
+  it('keeps a quantity that was actually stated', async () => {
+    const ctx = makeService({ run: null, lines: [] });
+    ctx.runsRepo.findOne = async () => null;
+    await ctx.service.createRun(
+      {
+        branchId: 44,
+        lines: [{ description: 'Basal', quantity: 12, lineTotal: 660 }],
+      },
+      purchaser,
+    );
+    expect(ctx.savedLines[0]).toMatchObject({ quantity: 12 });
+  });
+});
+
 describe('PurchasingService — the name on the document', () => {
   /**
    * A POS-scoped token states `email` and no `displayName`, and a manual staff
@@ -1074,6 +1111,9 @@ describe('PurchasingService — what a thing cost last time', () => {
     // A struck line is not evidence of a price: somebody looked at it and said
     // the branch did not buy that.
     expect(wheres.some((w) => /voidedAt" IS NULL/.test(w))).toBe(true);
+    // Nor is a line nobody priced — it would enter the book at a rate of zero
+    // and drag every average it appears in down.
+    expect(wheres.some((w) => /lineTotal" > 0/.test(w))).toBe(true);
   });
 });
 

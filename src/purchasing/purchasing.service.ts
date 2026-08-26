@@ -250,7 +250,14 @@ export class PurchasingService {
         branchId: run.branchId,
         description: String(dto.description || '').trim(),
         vendorName: dto.vendorName ? String(dto.vendorName).trim() : null,
-        quantity: qty(dto.quantity ?? 1),
+        /* NOT defaulted to 1.
+           A rate is derived as total ÷ quantity, so assuming one meant every
+           bare total became a per-unit price: "1450" typed for four sacks of
+           charcoal taught the price book that charcoal costs 1450 each, and
+           the purchaser then read that back at a stall as what they last paid.
+           No stated quantity means no rate — which the price-history query
+           already handles, because NULLIF(0) excludes it. */
+        quantity: qty(dto.quantity ?? 0),
         unitLabel: dto.unitLabel ? String(dto.unitLabel).trim() : null,
         unitPrice: money(dto.unitPrice ?? 0),
         lineTotal: this.lineTotalOf(dto),
@@ -459,6 +466,11 @@ export class PurchasingService {
       // A struck line is not evidence of a price. Somebody looked at it and
       // said the branch did not buy that.
       .andWhere('line."voidedAt" IS NULL')
+      /* Nor is a line nobody priced. A purchaser walking a market writes the
+         name and gets the price when the seller says it; one that never got a
+         price would otherwise enter the book at a rate of zero and drag every
+         average it appears in down with it. */
+      .andWhere('line."lineTotal" > 0')
       .select('LOWER(line.description)', 'key')
       .addSelect('MAX(line.description)', 'description')
       .addSelect('MAX(line."unitLabel")', 'unitLabel')
