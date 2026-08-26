@@ -1236,6 +1236,103 @@ describe('PosCheckoutService', () => {
     expect(posCheckoutsRepository.save).toHaveBeenCalled();
   });
 
+  it('collapses a duplicate SCHOOL fee settlement, which is anchored on folioId', async () => {
+    // A school has no pos_hotel_folios row, so its settles carry `folioId` (the
+    // suspended-cart id) and no `backendFolioId` at all — and the dedupe used to
+    // read `backendFolioId` alone, so NO school settle was ever inside it. SMAG
+    // School charged one pupil ETB 500 twice, 3m40s apart, and both were written.
+    posCheckoutsRepository.findOne.mockResolvedValue(null);
+    const original = {
+      id: 19336,
+      branchId: 128,
+      externalCheckoutId: null,
+      idempotencyKey: 'fee-aaa',
+      receiptNumber: 'POS-128-1787640657854',
+      transactionType: PosCheckoutTransactionType.SALE,
+      status: PosCheckoutStatus.PROCESSED,
+      currency: 'ETB',
+      subtotal: 500,
+      discountAmount: 0,
+      taxAmount: 0,
+      total: 500,
+      paidAmount: 500,
+      changeDue: 0,
+      itemCount: 1,
+      occurredAt: new Date('2026-08-25T06:50:57.858Z'),
+      processedAt: new Date('2026-08-25T06:50:58.000Z'),
+      metadata: { folioId: 17185, guestName: 'Shugri Rasaas Farax' },
+      tenders: [],
+      items: [],
+      createdAt: new Date('2026-08-25T06:50:57.858Z'),
+      updatedAt: new Date('2026-08-25T06:50:58.000Z'),
+    };
+    const folioQb = {
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      getOne: jest.fn().mockResolvedValue(original),
+    };
+    posCheckoutsRepository.createQueryBuilder.mockReturnValue(folioQb);
+
+    const result = await service.ingest({
+      branchId: 128,
+      transactionType: PosCheckoutTransactionType.SALE,
+      idempotencyKey: 'fee-bbb',
+      receiptNumber: 'POS-128-1787640877631',
+      currency: 'ETB',
+      subtotal: 500,
+      total: 500,
+      occurredAt: '2026-08-25T06:54:37.633Z',
+      metadata: { folioId: 17185, guestName: 'Shugri Rasaas Farax' },
+      items: [{ productId: null, quantity: 1, unitPrice: 500, lineTotal: 500 }],
+    });
+
+    expect(result.id).toBe(19336);
+    expect(posCheckoutsRepository.save).not.toHaveBeenCalled();
+    // The dedupe must compare against THIS folio key — matching on
+    // backendFolioId would have compared a pupil against hotel folios.
+    expect(
+      folioQb.andWhere.mock.calls.some((call) =>
+        String(call[0]).includes("metadata->>'folioId'"),
+      ),
+    ).toBe(true);
+    // …and the till has to be told, or it credits the pupil's folio a second
+    // time for money that was never banked.
+    expect(result.collapsedDuplicate).toBe(true);
+    expect(result.duplicateOfReceiptNumber).toBe('POS-128-1787640657854');
+    expect(result.submittedReceiptNumber).toBe('POS-128-1787640877631');
+  });
+
+  it('still anchors a HOTEL settle on backendFolioId when both ids are present', async () => {
+    // HOTEL stamps both. The backend folio is the authoritative one — it
+    // survives the suspended-cart row being replaced — so it keeps precedence.
+    const folioQb = {
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      getOne: jest.fn().mockResolvedValue(null),
+    };
+    posCheckoutsRepository.createQueryBuilder.mockReturnValue(folioQb);
+
+    await service.ingest({
+      branchId: 3,
+      transactionType: PosCheckoutTransactionType.SALE,
+      currency: 'USD',
+      subtotal: 3500,
+      total: 3500,
+      occurredAt: '2026-06-17T00:29:15.000Z',
+      metadata: { backendFolioId: 731, folioId: 4242, roomNumber: '405' },
+      items: [{ productId: 55, quantity: 1, unitPrice: 3500, lineTotal: 3500 }],
+    });
+
+    expect(
+      folioQb.andWhere.mock.calls.some((call) =>
+        String(call[0]).includes("metadata->>'backendFolioId'"),
+      ),
+    ).toBe(true);
+    expect(posCheckoutsRepository.save).toHaveBeenCalled();
+  });
+
   it('collapses a re-collection on an already fully-paid folio (different amount, folioGrandTotal cap)', async () => {
     // Prod Blue Hotel shape: a folio was fully settled (16,000), the board reverted
     // to "unpaid" (the paid-flag strip), and the operator re-collected a DIFFERENT

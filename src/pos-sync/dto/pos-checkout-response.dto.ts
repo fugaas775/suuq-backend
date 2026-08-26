@@ -186,6 +186,28 @@ export class PosCheckoutListItemResponseDto {
 export class PosCheckoutResponseDto extends PosCheckoutListItemResponseDto {
   @ApiPropertyOptional({ type: Object })
   metadata?: Record<string, any> | null;
+
+  /**
+   * Set only when the ingest COLLAPSED this settlement onto an earlier one for
+   * the same folio (see the folio-scoped dedupe in PosCheckoutService). The body
+   * is then the ORIGINAL checkout, not the row that was just posted — without
+   * this the caller cannot tell that its own receipt was never written, and a
+   * folio-settling client goes on to credit the folio a second time for money
+   * nobody banked.
+   */
+  @ApiPropertyOptional({
+    description:
+      'True when this settlement was collapsed onto an earlier one for the same folio.',
+  })
+  collapsedDuplicate?: boolean;
+
+  /** The receipt the settlement was collapsed onto (the one that stands). */
+  @ApiPropertyOptional()
+  duplicateOfReceiptNumber?: string | null;
+
+  /** The receipt number the caller submitted, which was NOT written. */
+  @ApiPropertyOptional()
+  submittedReceiptNumber?: string | null;
 }
 
 export class PosCheckoutPageResponseDto {

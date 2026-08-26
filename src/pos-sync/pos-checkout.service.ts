@@ -577,7 +577,19 @@ export class PosCheckoutService {
         this.logger.warn(
           `Collapsed duplicate folio settlement for branch ${dto.branchId} folio ${folioLockId} (amount ${dto.total}) onto checkout ${result.duplicate.id}`,
         );
-        return this.toResponse(result.duplicate);
+        // Say so, rather than handing back the original as though it were the
+        // row just posted. The till cannot tell the two apart otherwise — it
+        // marks its own receipt reconciled and goes on to credit the folio for
+        // money that was never banked a second time, which is the same
+        // over-credit the collapse exists to prevent, arriving from the other
+        // side. The client keys on `duplicateOfReceiptNumber` being present.
+        return {
+          ...this.toResponse(result.duplicate),
+          collapsedDuplicate: true,
+          duplicateOfReceiptNumber: result.duplicate.receiptNumber ?? null,
+          submittedReceiptNumber:
+            this.normalizeOptionalString(dto.receiptNumber) ?? null,
+        };
       }
       checkout = result.saved!;
     } else {
@@ -1582,28 +1594,61 @@ export class PosCheckoutService {
   }
 
   /**
-   * Returns a stable int4 lock key (the backend folio id) when this checkout is
-   * a hospitality-folio settlement that should be guarded against duplicates,
-   * or null when the folio-scoped dedupe does not apply (no folio link, not a
-   * forward SALE, or a folio id outside int4 range for the advisory lock).
+   * Which folio this settlement belongs to, and under which metadata key.
+   *
+   * `backendFolioId` is a row in `pos_hotel_folios` and **only HOTEL mints
+   * one**. Every other folio format — SCHOOL above all, where the folio IS the
+   * pupil's record — carries `folioId`, the suspended-cart id, and nothing
+   * else. Anchoring the dedupe on `backendFolioId` alone therefore meant no
+   * school settle had ever been inside it: SMAG School charged one pupil ETB
+   * 500 twice, three minutes and forty seconds apart, and both rows were
+   * written. So the id falls back to `folioId`, and the KEY travels with it —
+   * the queries below must filter on the same field the id came from, or a
+   * school settle would be compared against hotel folios.
+   *
+   * Returns null when the folio-scoped dedupe does not apply (no folio link,
+   * not a forward SALE, or an id outside int4 range for the advisory lock).
+   */
+  private resolveFolioSettlementAnchor(
+    dto: IngestPosCheckoutDto,
+  ): { key: 'backendFolioId' | 'folioId'; id: number } | null {
+    if (dto.transactionType !== PosCheckoutTransactionType.SALE) {
+      return null;
+    }
+    const key =
+      dto.metadata?.backendFolioId != null
+        ? ('backendFolioId' as const)
+        : dto.metadata?.folioId != null
+          ? ('folioId' as const)
+          : null;
+    if (!key) {
+      return null;
+    }
+    const id = Number(dto.metadata?.[key]);
+    // pg_advisory_xact_lock(int, int) needs an int4; folio ids are well within
+    // that range. Skip the lock (and the dedupe) for anything that isn't.
+    if (!Number.isInteger(id) || id <= 0 || id > 2147483647) {
+      return null;
+    }
+    return { key, id };
+  }
+
+  /**
+   * The int4 advisory-lock key for a folio settlement.
+   *
+   * NEGATED for a suspended-cart anchor so the two id spaces cannot alias: a
+   * hotel folio 17185 and a suspended cart 17185 in one branch would otherwise
+   * take the same lock. Harmless if they did (it only serialises), but the sign
+   * costs nothing and keeps the lock meaning one thing.
    */
   private resolveFolioSettlementLockId(
     dto: IngestPosCheckoutDto,
   ): number | null {
-    if (dto.transactionType !== PosCheckoutTransactionType.SALE) {
+    const anchor = this.resolveFolioSettlementAnchor(dto);
+    if (!anchor) {
       return null;
     }
-    const raw = dto.metadata?.backendFolioId;
-    if (raw == null) {
-      return null;
-    }
-    const folioId = Number(raw);
-    // pg_advisory_xact_lock(int, int) needs an int4; folio ids are well within
-    // that range. Skip the lock (and the dedupe) for anything that isn't.
-    if (!Number.isInteger(folioId) || folioId <= 0 || folioId > 2147483647) {
-      return null;
-    }
-    return folioId;
+    return anchor.key === 'backendFolioId' ? anchor.id : -anchor.id;
   }
 
   /**
@@ -1617,8 +1662,8 @@ export class PosCheckoutService {
     dto: IngestPosCheckoutDto,
     manager: EntityManager,
   ): Promise<PosCheckout | null> {
-    const folioId = this.resolveFolioSettlementLockId(dto);
-    if (folioId == null) {
+    const anchor = this.resolveFolioSettlementAnchor(dto);
+    if (!anchor) {
       return null;
     }
     const amountCents = Math.round(Number(dto.total || 0) * 100);
@@ -1627,8 +1672,8 @@ export class PosCheckoutService {
       .getRepository(PosCheckout)
       .createQueryBuilder('c')
       .where('c.branchId = :branchId', { branchId: dto.branchId })
-      .andWhere("(c.metadata->>'backendFolioId') = :folioId", {
-        folioId: String(folioId),
+      .andWhere(`(c.metadata->>'${anchor.key}') = :folioId`, {
+        folioId: String(anchor.id),
       })
       .andWhere('c.transactionType = :tt', {
         tt: PosCheckoutTransactionType.SALE,
@@ -1659,14 +1704,15 @@ export class PosCheckoutService {
    *    folio still owes; ONLY collection beyond the full total is collapsed.
    *  - Never drops revenue without a target: collapses only when a prior settlement
    *    exists to fold the duplicate onto.
-   * Anchors on metadata.backendFolioId; must run inside the advisory-locked txn.
+   * Anchors on the same folio key as the window guard above (backendFolioId,
+   * else folioId); must run inside the advisory-locked txn.
    */
   private async findFullyPaidFolioDuplicate(
     dto: IngestPosCheckoutDto,
     manager: EntityManager,
   ): Promise<PosCheckout | null> {
-    const folioId = this.resolveFolioSettlementLockId(dto);
-    if (folioId == null) {
+    const anchor = this.resolveFolioSettlementAnchor(dto);
+    if (!anchor) {
       return null;
     }
     const declaredTotal = Number(dto.metadata?.folioGrandTotal);
@@ -1679,8 +1725,8 @@ export class PosCheckoutService {
     ): SelectQueryBuilder<T> =>
       qb
         .where('c.branchId = :branchId', { branchId: dto.branchId })
-        .andWhere("(c.metadata->>'backendFolioId') = :folioId", {
-          folioId: String(folioId),
+        .andWhere(`(c.metadata->>'${anchor.key}') = :folioId`, {
+          folioId: String(anchor.id),
         })
         .andWhere('c.transactionType = :tt', {
           tt: PosCheckoutTransactionType.SALE,
