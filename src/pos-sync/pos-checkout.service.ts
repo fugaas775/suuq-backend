@@ -49,6 +49,10 @@ import {
 } from './dto/pos-checkout-response.dto';
 import { TaxSummaryQueryDto } from './dto/tax-summary-query.dto';
 import {
+  SalesSummaryQueryDto,
+  SalesSummaryResponseDto,
+} from './dto/sales-summary.dto';
+import {
   TaxSummaryResponseDto,
   TaxSummaryRateBucketDto,
   TaxSummaryShiftDto,
@@ -2663,6 +2667,209 @@ export class PosCheckoutService {
       allocatedBase = this.roundMoney(allocatedBase + baseShare);
       allocatedTax = this.roundMoney(allocatedTax + taxShare);
     });
+  }
+
+  /**
+   * The window's takings, over every checkout in it.
+   *
+   * The reports hub derives these same figures on the device, from the rows it
+   * managed to page in — and it stops at fifty pages of a hundred. Past five
+   * thousand checkouts in a window, every total it printed was short by however
+   * much came after page fifty, and all it could do was warn that it had
+   * stopped counting. This is the same arithmetic with no cap.
+   *
+   * It deliberately mirrors the client's definitions rather than picking its own,
+   * because the two are shown side by side and a summary that quietly answered a
+   * slightly different question would be worse than the cap it replaces:
+   *
+   *  - Settled means PROCESSED or RECEIVED. A VOIDED or FAILED checkout is not a
+   *    sale and is not netted off one either.
+   *  - The instant a checkout counts at is the EARLIER of processedAt and
+   *    occurredAt. An offline batch syncs with processedAt set to sync time,
+   *    hours after the sale it records; taking the later of the two would move a
+   *    Tuesday's takings onto Wednesday.
+   *  - The operator credited is the one who OWNS the sale, which on a QSR is the
+   *    waiter who took the order and on a chair format the person who opened the
+   *    chair — not the cashier who tapped Settle. Mirrors
+   *    getCheckoutPrimaryActorLabel on the client.
+   */
+  async getSalesSummary(
+    query: SalesSummaryQueryDto,
+  ): Promise<SalesSummaryResponseDto> {
+    const qb = this.posCheckoutsRepository
+      .createQueryBuilder('checkout')
+      .where('checkout.branchId = :branchId', { branchId: query.branchId })
+      .andWhere('checkout.status IN (:...statuses)', {
+        statuses: [PosCheckoutStatus.PROCESSED, PosCheckoutStatus.RECEIVED],
+      });
+
+    /* Widened by the EAT offset on the fetch, then re-filtered below on the
+       effective instant — the same two-step the client does. A receipt whose
+       processedAt overshot the boundary is still retrieved; one that genuinely
+       belongs to the next day is then dropped. */
+    const fromAt = query.fromAt ? new Date(query.fromAt) : null;
+    const toAt = query.toAt ? new Date(query.toAt) : null;
+    const WIDEN_MS = 3 * 60 * 60 * 1000;
+    if (fromAt && !Number.isNaN(fromAt.getTime())) {
+      qb.andWhere('checkout.occurredAt >= :fromAt', {
+        fromAt: new Date(fromAt.getTime() - WIDEN_MS),
+      });
+    }
+    if (toAt && !Number.isNaN(toAt.getTime())) {
+      qb.andWhere('checkout.occurredAt <= :toAt', {
+        toAt: new Date(toAt.getTime() + WIDEN_MS),
+      });
+    }
+
+    const checkouts = await qb.getMany();
+
+    type OperatorBucket = {
+      operator: string;
+      salesCount: number;
+      salesGross: number;
+      returnsCount: number;
+      returnsGross: number;
+    };
+
+    const tenderTotals = new Map<string, number>();
+    const operatorTotals = new Map<string, OperatorBucket>();
+    let currency = 'ETB';
+    let salesGross = 0;
+    let salesCount = 0;
+    let salesTax = 0;
+    let returnsGross = 0;
+    let returnsCount = 0;
+    let returnsTax = 0;
+    let firstAt: string | null = null;
+    let lastAt: string | null = null;
+    let checkoutCount = 0;
+
+    for (const checkout of checkouts) {
+      const effective = this.checkoutEffectiveInstant(checkout);
+      if (!effective) continue;
+      if (fromAt && !Number.isNaN(fromAt.getTime()) && effective < fromAt) {
+        continue;
+      }
+      if (toAt && !Number.isNaN(toAt.getTime()) && effective > toAt) continue;
+
+      checkoutCount += 1;
+      currency = checkout.currency || currency;
+      const total = Number(checkout.total) || 0;
+      const taxAmount = Number(checkout.taxAmount) || 0;
+      const isReturn =
+        checkout.transactionType === PosCheckoutTransactionType.RETURN;
+
+      const iso = effective.toISOString();
+      if (!firstAt || iso < firstAt) firstAt = iso;
+      if (!lastAt || iso > lastAt) lastAt = iso;
+
+      if (isReturn) {
+        returnsGross += Math.abs(total);
+        returnsTax += Math.abs(taxAmount);
+        returnsCount += 1;
+      } else {
+        salesGross += total;
+        salesTax += taxAmount;
+        salesCount += 1;
+      }
+
+      const operator = this.checkoutPrimaryActorLabel(checkout);
+      if (operator) {
+        const bucket = operatorTotals.get(operator) ?? {
+          operator,
+          salesCount: 0,
+          salesGross: 0,
+          returnsCount: 0,
+          returnsGross: 0,
+        };
+        if (isReturn) {
+          bucket.returnsGross += Math.abs(total);
+          bucket.returnsCount += 1;
+        } else {
+          bucket.salesGross += total;
+          bucket.salesCount += 1;
+        }
+        operatorTotals.set(operator, bucket);
+      }
+
+      for (const tender of checkout.tenders || []) {
+        const method = String(tender?.method || 'UNKNOWN').toUpperCase();
+        const amount = Number(tender?.amount) || 0;
+        // A return's tenders are already stored negative on some paths and
+        // positive on others; the sign that matters is the transaction's.
+        const signed = isReturn ? -Math.abs(amount) : amount;
+        tenderTotals.set(method, (tenderTotals.get(method) || 0) + signed);
+      }
+    }
+
+    const round2 = (value: number) => Math.round(value * 100) / 100;
+    const taxTotal = round2(salesTax - returnsTax);
+    const netSales = salesGross - returnsGross;
+
+    return {
+      currency,
+      salesGross: round2(salesGross),
+      salesCount,
+      salesTax: round2(salesTax),
+      returnsGross: round2(returnsGross),
+      returnsCount,
+      returnsTax: round2(returnsTax),
+      taxTotal,
+      netSales: round2(netSales),
+      netSalesExTax: round2(netSales - taxTotal),
+      averageBasket: salesCount > 0 ? round2(salesGross / salesCount) : 0,
+      tenderBreakdown: Array.from(tenderTotals.entries())
+        .map(([method, amount]) => ({ method, amount: round2(amount) }))
+        .sort((left, right) => Math.abs(right.amount) - Math.abs(left.amount)),
+      operatorBreakdown: Array.from(operatorTotals.values())
+        .map((bucket) => ({
+          ...bucket,
+          salesGross: round2(bucket.salesGross),
+          returnsGross: round2(bucket.returnsGross),
+          netSales: round2(bucket.salesGross - bucket.returnsGross),
+          avgBasket:
+            bucket.salesCount > 0
+              ? round2(bucket.salesGross / bucket.salesCount)
+              : 0,
+          returnRate:
+            bucket.salesGross > 0 ? bucket.returnsGross / bucket.salesGross : 0,
+        }))
+        .sort((left, right) => right.netSales - left.netSales),
+      firstAt,
+      lastAt,
+      checkoutCount,
+    };
+  }
+
+  /**
+   * When a checkout counts. The EARLIER of processedAt and occurredAt — see
+   * getSalesSummary; mirrors checkoutEffectiveTs on the client.
+   */
+  private checkoutEffectiveInstant(checkout: PosCheckout): Date | null {
+    const processed = checkout.processedAt ?? null;
+    const occurred = checkout.occurredAt ?? null;
+    if (!processed) return occurred;
+    if (!occurred) return processed;
+    return processed < occurred ? processed : occurred;
+  }
+
+  /** Who owns the sale. Mirrors getCheckoutPrimaryActorLabel on the client. */
+  private checkoutPrimaryActorLabel(checkout: PosCheckout): string | null {
+    const metadata = checkout.metadata || {};
+    const format = String(metadata.serviceFormat || '').toUpperCase();
+    // A QSR waiter owns the order; a barber or salon attendant owns the chair.
+    // Both are written to tableOwnerName when the ticket is suspended.
+    if (format === 'QSR' || format === 'BARBER' || format === 'SALON_SPA') {
+      const owner = String(metadata.tableOwnerName || '').trim();
+      if (owner) return owner;
+    }
+    const cashier =
+      (checkout as any).cashierName ||
+      (checkout as any).operatorName ||
+      metadata.operatorName ||
+      null;
+    const label = String(cashier || '').trim();
+    return label || null;
   }
 
   async getTaxSummary(

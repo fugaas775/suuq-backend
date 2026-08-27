@@ -2555,4 +2555,187 @@ describe('PosCheckoutService', () => {
       expect(result.taxableBase).toBe(1000);
     });
   });
+
+  /**
+   * The window's takings, uncapped.
+   *
+   * The reports hub derives the same figures on the device from the rows it
+   * paged in, and it stops at fifty pages of a hundred. Past five thousand
+   * checkouts every total it printed was short. This must answer the SAME
+   * question the client does — same settled statuses, same effective instant,
+   * same person credited — or the two figures shown side by side would disagree
+   * for reasons nobody could explain.
+   */
+  describe('getSalesSummary', () => {
+    const stubCheckouts = (rows: any[]) => {
+      posCheckoutsRepository.createQueryBuilder.mockReturnValue({
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue(rows),
+      });
+    };
+
+    const sale = (over: Record<string, any> = {}) => ({
+      currency: 'ETB',
+      transactionType: PosCheckoutTransactionType.SALE,
+      status: PosCheckoutStatus.PROCESSED,
+      total: 1150,
+      taxAmount: 150,
+      occurredAt: new Date('2026-08-02T09:00:00.000Z'),
+      processedAt: new Date('2026-08-02T09:00:00.000Z'),
+      tenders: [{ method: 'CASH', amount: 1150 }],
+      metadata: { operatorName: 'Amina' },
+      items: [],
+      ...over,
+    });
+
+    it('nets a return out of the takings and out of the tender', async () => {
+      stubCheckouts([
+        sale(),
+        sale({
+          transactionType: PosCheckoutTransactionType.RETURN,
+          total: 115,
+          taxAmount: 15,
+          tenders: [{ method: 'CASH', amount: 115 }],
+        }),
+      ]);
+
+      const result = await service.getSalesSummary({ branchId: 3 });
+
+      expect(result.salesGross).toBe(1150);
+      expect(result.returnsGross).toBe(115);
+      expect(result.netSales).toBe(1035);
+      expect(result.taxTotal).toBe(135);
+      expect(result.netSalesExTax).toBe(900);
+      expect(result.tenderBreakdown).toEqual([
+        { method: 'CASH', amount: 1035 },
+      ]);
+    });
+
+    it('counts a checkout on the earlier of its two timestamps', async () => {
+      // An offline batch syncs with processedAt set to sync time, hours after
+      // the sale it records. Taking the later of the two would move a Tuesday's
+      // takings onto Wednesday.
+      stubCheckouts([
+        sale({
+          occurredAt: new Date('2026-08-02T20:00:00.000Z'),
+          processedAt: new Date('2026-08-03T05:00:00.000Z'),
+        }),
+      ]);
+
+      const result = await service.getSalesSummary({
+        branchId: 3,
+        fromAt: '2026-08-01T21:00:00.000Z',
+        toAt: '2026-08-02T20:59:59.999Z',
+      });
+
+      expect(result.salesCount).toBe(1);
+      expect(result.checkoutCount).toBe(1);
+    });
+
+    it('drops a checkout the widened fetch pulled in from the next day', async () => {
+      // The query widens by three hours to catch late-syncing receipts; the
+      // re-filter is what keeps the ones that genuinely belong to tomorrow out.
+      stubCheckouts([
+        sale({
+          occurredAt: new Date('2026-08-02T22:00:00.000Z'),
+          processedAt: null,
+        }),
+      ]);
+
+      const result = await service.getSalesSummary({
+        branchId: 3,
+        fromAt: '2026-08-01T21:00:00.000Z',
+        toAt: '2026-08-02T20:59:59.999Z',
+      });
+
+      expect(result.salesCount).toBe(0);
+      expect(result.netSales).toBe(0);
+    });
+
+    it('credits the waiter who owns a QSR order, not the cashier who settled it', async () => {
+      stubCheckouts([
+        sale({
+          metadata: {
+            serviceFormat: 'QSR',
+            operatorName: 'Cashier',
+            tableOwnerName: 'Bashir',
+          },
+        }),
+      ]);
+
+      const result = await service.getSalesSummary({ branchId: 3 });
+
+      expect(result.operatorBreakdown).toHaveLength(1);
+      expect(result.operatorBreakdown[0]).toEqual(
+        expect.objectContaining({
+          operator: 'Bashir',
+          salesCount: 1,
+          netSales: 1150,
+        }),
+      );
+    });
+
+    it('credits the cashier when no waiter owns the sale', async () => {
+      stubCheckouts([
+        sale({ metadata: { serviceFormat: 'QSR', operatorName: 'Cashier' } }),
+      ]);
+      const result = await service.getSalesSummary({ branchId: 3 });
+      expect(result.operatorBreakdown[0].operator).toBe('Cashier');
+    });
+
+    it('ranks operators by what they netted, and reports each one a return rate', async () => {
+      stubCheckouts([
+        sale({ metadata: { operatorName: 'Amina' }, total: 300, taxAmount: 0 }),
+        sale({
+          metadata: { operatorName: 'Bashir' },
+          total: 900,
+          taxAmount: 0,
+        }),
+        sale({
+          metadata: { operatorName: 'Bashir' },
+          transactionType: PosCheckoutTransactionType.RETURN,
+          total: 90,
+          taxAmount: 0,
+        }),
+      ]);
+
+      const result = await service.getSalesSummary({ branchId: 3 });
+
+      expect(result.operatorBreakdown.map((o) => o.operator)).toEqual([
+        'Bashir',
+        'Amina',
+      ]);
+      expect(result.operatorBreakdown[0]).toEqual(
+        expect.objectContaining({ netSales: 810, returnRate: 0.1 }),
+      );
+    });
+
+    it('answers for an empty window without inventing a currency or a basket', async () => {
+      stubCheckouts([]);
+      const result = await service.getSalesSummary({ branchId: 3 });
+      expect(result.checkoutCount).toBe(0);
+      expect(result.netSales).toBe(0);
+      expect(result.averageBasket).toBe(0);
+      expect(result.firstAt).toBeNull();
+      expect(result.lastAt).toBeNull();
+      expect(result.tenderBreakdown).toEqual([]);
+    });
+
+    it('reports the span it actually covered', async () => {
+      stubCheckouts([
+        sale({
+          occurredAt: new Date('2026-08-02T06:00:00.000Z'),
+          processedAt: null,
+        }),
+        sale({
+          occurredAt: new Date('2026-08-02T17:30:00.000Z'),
+          processedAt: null,
+        }),
+      ]);
+      const result = await service.getSalesSummary({ branchId: 3 });
+      expect(result.firstAt).toBe('2026-08-02T06:00:00.000Z');
+      expect(result.lastAt).toBe('2026-08-02T17:30:00.000Z');
+    });
+  });
 });

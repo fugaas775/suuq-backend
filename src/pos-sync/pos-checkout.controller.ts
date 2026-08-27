@@ -35,6 +35,10 @@ import {
   PosCheckoutResponseDto,
 } from './dto/pos-checkout-response.dto';
 import { TaxSummaryQueryDto } from './dto/tax-summary-query.dto';
+import {
+  SalesSummaryQueryDto,
+  SalesSummaryResponseDto,
+} from './dto/sales-summary.dto';
 import { TaxSummaryResponseDto } from './dto/tax-summary-response.dto';
 import { StylistSummaryQueryDto } from './dto/stylist-summary-query.dto';
 import { StylistSummaryResponseDto } from './dto/stylist-summary-response.dto';
@@ -126,6 +130,27 @@ export class PosCheckoutController {
   @ApiOkResponse({ type: TaxSummaryResponseDto })
   getTaxSummary(@Query() query: TaxSummaryQueryDto) {
     return this.posCheckoutService.getTaxSummary(query);
+  }
+
+  /**
+   * Window takings with no page cap — see PosCheckoutService.getSalesSummary.
+   * The reports hub pages checkouts to the device and stops at fifty pages, so
+   * past five thousand in a window every total it derived was short. Same
+   * permissions as the other report reads on this controller.
+   */
+  @Get('reports/sales-summary')
+  @UseGuards(JwtAuthGuard, RolesGuard, RetailModulesGuard, PosBranchAccessGuard)
+  @Roles(
+    UserRole.SUPER_ADMIN,
+    UserRole.ADMIN,
+    UserRole.POS_MANAGER,
+    UserRole.POS_OPERATOR,
+  )
+  @RequireRetailModules(RetailOsModule.POS_CORE)
+  @RetailBranchContext('query.branchId')
+  @ApiOkResponse({ type: SalesSummaryResponseDto })
+  getSalesSummary(@Query() query: SalesSummaryQueryDto) {
+    return this.posCheckoutService.getSalesSummary(query);
   }
 
   @Get('reports/stylist-summary')

@@ -73,6 +73,13 @@ export interface ProfitAndLossReport {
   notes: string[];
 }
 
+/** One calendar day of the series, in the caller's clock. */
+export interface ProfitAndLossSeriesEntry {
+  /** The local calendar day this row covers, 'YYYY-MM-DD'. */
+  day: string;
+  pl: ProfitAndLossReport;
+}
+
 export interface BalanceSheetReport {
   branchId: number;
   asOfAt: Date;
@@ -335,6 +342,52 @@ export class BranchFinancialReportsService {
     const to = range.to ?? null;
 
     const checkouts = await this.findCheckouts(branchId, from, to);
+    const expenses = await this.findExpenses(branchId, from, to);
+    const soldProductIds = new Set<number>();
+    for (const checkout of checkouts) {
+      if (
+        checkout.status === PosCheckoutStatus.VOIDED ||
+        checkout.status === PosCheckoutStatus.FAILED
+      ) {
+        continue;
+      }
+      for (const item of checkout.items || []) {
+        if (item?.productId != null) soldProductIds.add(item.productId);
+      }
+    }
+    const wacByProduct = await this.computeWeightedAverageCosts(
+      branchId,
+      Array.from(soldProductIds),
+    );
+
+    return this.buildProfitAndLoss(branchId, {
+      from,
+      to,
+      checkouts,
+      expenses,
+      wacByProduct,
+    });
+  }
+
+  /**
+   * The P&L itself, over rows somebody else has already fetched.
+   *
+   * Split out so the single-day endpoint and `getProfitAndLossSeries` compute
+   * the statement the same way — the series buckets a month of rows and calls
+   * this once per day, and if the arithmetic lived in only one of the two they
+   * would drift the first time either was touched.
+   */
+  private buildProfitAndLoss(
+    branchId: number,
+    input: {
+      from: Date | null;
+      to: Date | null;
+      checkouts: PosCheckout[];
+      expenses: BranchExpense[];
+      wacByProduct: Map<number, number>;
+    },
+  ): ProfitAndLossReport {
+    const { from, to, checkouts, expenses, wacByProduct } = input;
     let gross = 0;
     let voided = 0;
     let tax = 0;
@@ -365,17 +418,12 @@ export class BranchFinancialReportsService {
       }
     }
 
-    const wacByProduct = await this.computeWeightedAverageCosts(
-      branchId,
-      Array.from(itemsByProduct.keys()),
-    );
     let cogs = 0;
     for (const [productId, qty] of itemsByProduct) {
       const wac = wacByProduct.get(productId) || 0;
       cogs += wac * qty;
     }
 
-    const expenses = await this.findExpenses(branchId, from, to);
     const expensesByCategory: Record<string, number> = {};
     let totalExpenses = 0;
     let taxRemitted = 0;
@@ -453,6 +501,151 @@ export class BranchFinancialReportsService {
       currency,
       notes,
     };
+  }
+
+  /**
+   * A day-by-day P&L across a range, built from three reads rather than 3N.
+   *
+   * The naive version — call `getProfitAndLoss` once per day — is what the
+   * Dashboard was doing from the client, and it costs one checkout scan, one
+   * weighted-average-cost computation and one expense read PER DAY. For a
+   * 31-day month that is 93 round trips to answer one question.
+   *
+   * Everything those reads produce is bucketable: checkouts and expenses carry
+   * their own timestamps, and weighted-average cost is derived from a branch's
+   * whole purchase-order history rather than from the range, so one lookup for
+   * the union of products sold across the range is the same cost basis every
+   * individual day would have computed for itself.
+   *
+   * Days with no trading are still returned, as zero rows. A calendar with gaps
+   * in it would read as missing data rather than as a quiet day.
+   */
+  async getProfitAndLossSeries(
+    branchId: number,
+    range: ReportRange & { tzOffsetMinutes?: number } = {},
+  ): Promise<ProfitAndLossSeriesEntry[]> {
+    const tzOffsetMinutes = Number(range.tzOffsetMinutes) || 0;
+    const from = range.from ?? null;
+    const to = range.to ?? null;
+    if (!from || !to || from > to) return [];
+
+    const days = this.enumerateLocalDays(from, to, tzOffsetMinutes);
+    // A guard, not a policy: the client asks for a month. Anything past a year
+    // is a malformed range, and the per-day fan-out below would be enormous.
+    if (!days.length || days.length > 366) return [];
+
+    /* When the ledger is authoritative the figures come out of posted journal
+       entries rather than from these three tables, and there is no equivalent
+       bucketing shortcut. Correctness first: fall back to the per-day calls,
+       which is what the client was doing anyway. */
+    if (this.ledgerEnabled) {
+      const rows: ProfitAndLossSeriesEntry[] = [];
+      for (const day of days) {
+        rows.push({
+          day: day.key,
+          pl: await this.getProfitAndLoss(branchId, {
+            from: day.start,
+            to: day.end,
+          }),
+        });
+      }
+      return rows;
+    }
+
+    const [checkouts, expenses] = await Promise.all([
+      this.findCheckouts(branchId, from, to),
+      this.findExpenses(branchId, from, to),
+    ]);
+
+    // One cost basis for the whole range — see the note above.
+    const soldProductIds = new Set<number>();
+    for (const checkout of checkouts) {
+      for (const item of checkout.items || []) {
+        if (item?.productId != null) soldProductIds.add(item.productId);
+      }
+    }
+    const wacByProduct = await this.computeWeightedAverageCosts(
+      branchId,
+      Array.from(soldProductIds),
+    );
+
+    const byDay = new Map<
+      string,
+      { checkouts: PosCheckout[]; expenses: BranchExpense[] }
+    >();
+    for (const day of days) byDay.set(day.key, { checkouts: [], expenses: [] });
+
+    for (const checkout of checkouts) {
+      const bucket = byDay.get(
+        this.localDayKey(checkout.occurredAt, tzOffsetMinutes),
+      );
+      if (bucket) bucket.checkouts.push(checkout);
+    }
+    for (const expense of expenses) {
+      const bucket = byDay.get(
+        this.localDayKey(expense.occurredAt, tzOffsetMinutes),
+      );
+      if (bucket) bucket.expenses.push(expense);
+    }
+
+    return days.map((day) => {
+      const bucket = byDay.get(day.key);
+      return {
+        day: day.key,
+        pl: this.buildProfitAndLoss(branchId, {
+          from: day.start,
+          to: day.end,
+          checkouts: bucket.checkouts,
+          expenses: bucket.expenses,
+          wacByProduct,
+        }),
+      };
+    });
+  }
+
+  /** The local calendar days a range spans, inclusive of both ends. */
+  private enumerateLocalDays(
+    from: Date,
+    to: Date,
+    tzOffsetMinutes: number,
+  ): { key: string; start: Date; end: Date }[] {
+    const out: { key: string; start: Date; end: Date }[] = [];
+    const offsetMs = tzOffsetMinutes * 60_000;
+    // Walk in LOCAL midnights: shift into the local clock, floor to the day,
+    // step 24 h, shift back. Stepping in UTC days would drift a range that
+    // starts mid-day.
+    let cursor = Date.UTC(
+      new Date(from.getTime() + offsetMs).getUTCFullYear(),
+      new Date(from.getTime() + offsetMs).getUTCMonth(),
+      new Date(from.getTime() + offsetMs).getUTCDate(),
+    );
+    const lastLocal = new Date(to.getTime() + offsetMs);
+    const last = Date.UTC(
+      lastLocal.getUTCFullYear(),
+      lastLocal.getUTCMonth(),
+      lastLocal.getUTCDate(),
+    );
+    while (cursor <= last && out.length <= 366) {
+      const startUtc = new Date(cursor - offsetMs);
+      out.push({
+        key: new Date(cursor).toISOString().slice(0, 10),
+        start: startUtc,
+        end: new Date(startUtc.getTime() + 24 * 60 * 60_000 - 1),
+      });
+      cursor += 24 * 60 * 60_000;
+    }
+    return out;
+  }
+
+  /** Which local calendar day an instant falls on. */
+  private localDayKey(
+    value: Date | null | undefined,
+    tzOffsetMinutes: number,
+  ): string {
+    if (!value) return '';
+    return new Date(value.getTime() + tzOffsetMinutes * 60_000)
+      .toISOString()
+      .slice(0, 10);
   }
 
   // ---------------------------------------------------------------------------

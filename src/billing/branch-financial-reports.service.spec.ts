@@ -810,3 +810,226 @@ describe('BranchFinancialReportsService', () => {
     });
   });
 });
+
+/**
+ * A month of daily profit, in one request and one clock.
+ *
+ * The branch Dashboard draws a calendar of daily net profit. It was building it
+ * by firing one `profit-loss` call per day — up to 31 in parallel, each of which
+ * re-scanned the branch's checkouts, recomputed weighted-average cost for every
+ * product sold and re-read the expense table. Ninety-three round trips to answer
+ * one question, repaid on every month switch.
+ *
+ * And the day each figure landed on was a UTC day, while every window in the POS
+ * is EAT (UTC+3): a sale rung at 01:00 in Jigjiga was filed against the previous
+ * calendar day, so the dashboard and the till's own Z-report for the same date
+ * never quite agreed.
+ */
+describe('BranchFinancialReportsService — profit-and-loss series', () => {
+  function createSeriesService() {
+    const checkoutsRepo = { createQueryBuilder: jest.fn() };
+    const expensesRepo = { createQueryBuilder: jest.fn() };
+    const productCost = {
+      weightedAverageCosts: jest.fn().mockResolvedValue(new Map()),
+    };
+    const repo = () => ({ createQueryBuilder: jest.fn() });
+    const service = new BranchFinancialReportsService(
+      checkoutsRepo as any,
+      repo() as any,
+      { find: jest.fn().mockResolvedValue([]) } as any,
+      repo() as any,
+      repo() as any,
+      expensesRepo as any,
+      repo() as any,
+      repo() as any,
+      repo() as any,
+      repo() as any,
+      {
+        getProfitAndLoss: jest.fn(),
+        getBalanceSheet: jest.fn(),
+        getTrialBalance: jest.fn(),
+      } as any,
+      productCost as any,
+    );
+    return { service, checkoutsRepo, expensesRepo, productCost };
+  }
+
+  const sale = (over: any = {}) => ({
+    id: 1,
+    currency: 'ETB',
+    total: 100,
+    taxAmount: 0,
+    status: PosCheckoutStatus.PROCESSED,
+    transactionType: PosCheckoutTransactionType.SALE,
+    items: [],
+    ...over,
+  });
+
+  // EAT. 03:00 on the 2nd in UTC is 06:00 on the 2nd locally; 21:30 UTC on the
+  // 1st is 00:30 on the 2nd locally — the case the old UTC bucketing got wrong.
+  const EAT = 180;
+  const AUG_2 = {
+    from: new Date('2026-08-01T21:00:00.000Z'),
+    to: new Date('2026-08-03T20:59:59.999Z'),
+  };
+
+  it('reads the three tables once for the whole range, not once per day', async () => {
+    const { service, checkoutsRepo, expensesRepo, productCost } =
+      createSeriesService();
+    checkoutsRepo.createQueryBuilder.mockReturnValue(createBuilder([]));
+    expensesRepo.createQueryBuilder.mockReturnValue(createBuilder([]));
+
+    const rows = await service.getProfitAndLossSeries(7, {
+      from: new Date('2026-07-31T21:00:00.000Z'),
+      to: new Date('2026-08-30T20:59:59.999Z'),
+      tzOffsetMinutes: EAT,
+    });
+
+    expect(rows).toHaveLength(30);
+    // The whole point: three reads, not three per day.
+    expect(checkoutsRepo.createQueryBuilder).toHaveBeenCalledTimes(1);
+    expect(expensesRepo.createQueryBuilder).toHaveBeenCalledTimes(1);
+    expect(productCost.weightedAverageCosts).toHaveBeenCalledTimes(1);
+  });
+
+  it('files a sale on the local day it was rung, not the UTC one', async () => {
+    const { service, checkoutsRepo, expensesRepo } = createSeriesService();
+    // 00:30 on 2 August in Jigjiga. In UTC this is still 1 August.
+    checkoutsRepo.createQueryBuilder.mockReturnValue(
+      createBuilder([
+        sale({ occurredAt: new Date('2026-08-01T21:30:00.000Z'), total: 250 }),
+      ]),
+    );
+    expensesRepo.createQueryBuilder.mockReturnValue(createBuilder([]));
+
+    const rows = await service.getProfitAndLossSeries(7, {
+      ...AUG_2,
+      tzOffsetMinutes: EAT,
+    });
+    const byDay = Object.fromEntries(
+      rows.map((r) => [r.day, r.pl.revenue.gross]),
+    );
+
+    expect(byDay['2026-08-02']).toBe(250);
+    expect(byDay['2026-08-01']).toBeUndefined(); // outside the requested range
+    expect(byDay['2026-08-03']).toBe(0);
+  });
+
+  it('returns a zero row for a day nobody traded', async () => {
+    // A calendar with holes in it reads as missing data. A quiet Tuesday is not
+    // missing data, and the heatmap has to be able to tell the two apart.
+    const { service, checkoutsRepo, expensesRepo } = createSeriesService();
+    checkoutsRepo.createQueryBuilder.mockReturnValue(createBuilder([]));
+    expensesRepo.createQueryBuilder.mockReturnValue(createBuilder([]));
+
+    const rows = await service.getProfitAndLossSeries(7, {
+      ...AUG_2,
+      tzOffsetMinutes: EAT,
+    });
+    expect(rows.map((r) => r.day)).toEqual(['2026-08-02', '2026-08-03']);
+    expect(rows.every((r) => r.pl.netProfit === 0)).toBe(true);
+  });
+
+  it('buckets an expense by the same clock as a sale', async () => {
+    const { service, checkoutsRepo, expensesRepo } = createSeriesService();
+    checkoutsRepo.createQueryBuilder.mockReturnValue(createBuilder([]));
+    expensesRepo.createQueryBuilder.mockReturnValue(
+      createBuilder([
+        {
+          amount: 400,
+          category: 'RENT',
+          occurredAt: new Date('2026-08-02T21:30:00.000Z'),
+        },
+      ]),
+    );
+
+    const rows = await service.getProfitAndLossSeries(7, {
+      ...AUG_2,
+      tzOffsetMinutes: EAT,
+    });
+    const byDay = Object.fromEntries(
+      rows.map((r) => [r.day, r.pl.totalExpenses]),
+    );
+    // 00:30 local on the 3rd — not the 2nd, which is where UTC would put it.
+    expect(byDay['2026-08-03']).toBe(400);
+    expect(byDay['2026-08-02']).toBe(0);
+  });
+
+  it('subtracts goods bought on the day they were bought', async () => {
+    const { service, checkoutsRepo, expensesRepo } = createSeriesService();
+    checkoutsRepo.createQueryBuilder.mockReturnValue(createBuilder([]));
+    expensesRepo.createQueryBuilder.mockReturnValue(
+      createBuilder([
+        {
+          amount: 640,
+          category: 'INGREDIENTS',
+          occurredAt: new Date('2026-08-02T06:00:00.000Z'),
+        },
+      ]),
+    );
+
+    const rows = await service.getProfitAndLossSeries(7, {
+      ...AUG_2,
+      tzOffsetMinutes: EAT,
+    });
+    const day = rows.find((r) => r.day === '2026-08-02');
+    // A market run is a direct cost above gross, never an operating expense.
+    expect(day.pl.purchases).toBe(640);
+    expect(day.pl.totalExpenses).toBe(0);
+    expect(day.pl.grossProfit).toBe(-640);
+  });
+
+  it('refuses a range that is inverted, empty or absurd', async () => {
+    const { service } = createSeriesService();
+    expect(await service.getProfitAndLossSeries(7, {})).toEqual([]);
+    expect(
+      await service.getProfitAndLossSeries(7, {
+        from: new Date('2026-08-10T00:00:00.000Z'),
+        to: new Date('2026-08-01T00:00:00.000Z'),
+      }),
+    ).toEqual([]);
+    // Past a year the per-day fan-out stops being a report.
+    expect(
+      await service.getProfitAndLossSeries(7, {
+        from: new Date('2020-01-01T00:00:00.000Z'),
+        to: new Date('2026-01-01T00:00:00.000Z'),
+      }),
+    ).toEqual([]);
+  });
+
+  it('agrees with the single-day endpoint, which is the only reason to have both', async () => {
+    const { service, checkoutsRepo, expensesRepo } = createSeriesService();
+    const rows = [
+      sale({
+        occurredAt: new Date('2026-08-02T09:00:00.000Z'),
+        total: 900,
+        taxAmount: 100,
+      }),
+    ];
+    checkoutsRepo.createQueryBuilder.mockReturnValue(createBuilder(rows));
+    expensesRepo.createQueryBuilder.mockReturnValue(
+      createBuilder([
+        {
+          amount: 200,
+          category: 'RENT',
+          occurredAt: new Date('2026-08-02T09:00:00.000Z'),
+        },
+      ]),
+    );
+
+    const series = await service.getProfitAndLossSeries(7, {
+      from: new Date('2026-08-01T21:00:00.000Z'),
+      to: new Date('2026-08-02T20:59:59.999Z'),
+      tzOffsetMinutes: EAT,
+    });
+    const single = await service.getProfitAndLoss(7, {
+      from: new Date('2026-08-01T21:00:00.000Z'),
+      to: new Date('2026-08-02T20:59:59.999Z'),
+    });
+
+    const day = series.find((r) => r.day === '2026-08-02');
+    expect(day.pl.revenue).toEqual(single.revenue);
+    expect(day.pl.netProfit).toBe(single.netProfit);
+    expect(day.pl.grossProfit).toBe(single.grossProfit);
+  });
+});
