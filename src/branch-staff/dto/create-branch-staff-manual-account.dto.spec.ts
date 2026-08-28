@@ -5,6 +5,7 @@ import {
   PosRegisterPermission,
 } from './create-branch-staff-manual-account.dto';
 import { POS_SCHOOL_PERMISSION_VALUES } from '../../school/permissions/pos-school-permission.enum';
+import { POS_HOSPITALITY_PERMISSION_VALUES } from '../../hospitality/permissions/pos-hospitality-permission.enum';
 
 /**
  * `PosRegisterPermission` is the load-bearing allow-list for staff permissions.
@@ -59,6 +60,26 @@ describe('CreateBranchStaffManualAccountDto — permissions allow-list', () => {
     // manager granting "re-print parked order slips" would get a 400 they could
     // not act on, and the waiter would never see the control.
     expect(await validatePermissions(['REPRINT_ORDER_SLIP'])).toEqual([]);
+  });
+
+  it('accepts every HOTEL hospitality permission', async () => {
+    expect(
+      await validatePermissions([...POS_HOSPITALITY_PERMISSION_VALUES]),
+    ).toEqual([]);
+  });
+
+  it('keeps the hospitality enum and the allow-list in step', async () => {
+    // The same drift guard the SCHOOL enum gets, for the same reason — this one
+    // was missing, and three hospitality permissions had drifted out of the
+    // allow-list. SET_ROOM_MAINTENANCE is the one the till actually offers, and
+    // because a manager is created holding every gate its format offers, its
+    // absence here rejected the whole payload: no manager could be created on a
+    // HOTEL branch, and the 400 listed every permission except the one at fault.
+    const allowed = new Set<string>(Object.values(PosRegisterPermission));
+    const missing = POS_HOSPITALITY_PERMISSION_VALUES.filter(
+      (value) => !allowed.has(value),
+    );
+    expect(missing).toEqual([]);
   });
 
   it('leaves the existing format permissions grantable', async () => {

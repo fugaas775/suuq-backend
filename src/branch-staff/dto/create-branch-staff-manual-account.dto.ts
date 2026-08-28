@@ -34,6 +34,18 @@ export enum PosRegisterPermission {
   VOID_ROOM_FOLIO = 'VOID_ROOM_FOLIO',
   TRANSFER_FOLIO_ROOM = 'TRANSFER_FOLIO_ROOM',
   REOPEN_SETTLED_FOLIO = 'REOPEN_SETTLED_FOLIO',
+  // Rooms out of service, the night audit, and the audit log. All three are
+  // declared in `PosHospitalityPermission` and each guards a real route
+  // (`PATCH hotel/room-maintenance`, `POST hotel/night-audit`,
+  // `GET hotel/night-audit/logs`) — but a guard on a route that no staff
+  // account can be granted is a lock with no key cut for it. They were missing
+  // from this allow-list, and because a MANAGER is created holding every gate
+  // its branch's format offers, the one the till does offer
+  // (SET_ROOM_MAINTENANCE) failed validation for the entire payload: no manager
+  // could be created on a HOTEL branch at all.
+  SET_ROOM_MAINTENANCE = 'SET_ROOM_MAINTENANCE',
+  RUN_NIGHT_AUDIT = 'RUN_NIGHT_AUDIT',
+  VIEW_HOTEL_REPORT = 'VIEW_HOTEL_REPORT',
   // Hospitality workflow permissions
   FIRE_KITCHEN_TICKET = 'FIRE_KITCHEN_TICKET',
   HOLD_KITCHEN_TICKET = 'HOLD_KITCHEN_TICKET',
