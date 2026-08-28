@@ -1,3 +1,17 @@
+/**
+ * Hotel / cafeteria hospitality permissions.
+ *
+ * ⚠ THIS ENUM IS NOT THE ALLOW-LIST. `PosRegisterPermission` in
+ * `src/branch-staff/dto/create-branch-staff-manual-account.dto.ts` is what
+ * `@IsEnum(PosRegisterPermission, { each: true })` validates staff accounts
+ * against, and it is the only place a permission code can be refused. A member
+ * added here and not there guards a route that no staff account can ever be
+ * granted — and worse, because a manager is created holding every gate its
+ * format offers, one such member rejects the whole payload and no manager can
+ * be created on the branch at all. That happened to SET_ROOM_MAINTENANCE,
+ * RUN_NIGHT_AUDIT and VIEW_HOTEL_REPORT; the drift guard in
+ * `create-branch-staff-manual-account.dto.spec.ts` now fails if it recurs.
+ */
 export enum PosHospitalityPermission {
   FIRE_KITCHEN_TICKET = 'FIRE_KITCHEN_TICKET',
   HOLD_KITCHEN_TICKET = 'HOLD_KITCHEN_TICKET',
