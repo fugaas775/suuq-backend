@@ -6,6 +6,8 @@ import {
 } from './create-branch-staff-manual-account.dto';
 import { POS_SCHOOL_PERMISSION_VALUES } from '../../school/permissions/pos-school-permission.enum';
 import { POS_HOSPITALITY_PERMISSION_VALUES } from '../../hospitality/permissions/pos-hospitality-permission.enum';
+import { POS_VEHICLE_PERMISSION_VALUES } from '../../vehicle-registry/permissions/pos-vehicle-permission.enum';
+import { POS_PURCHASING_PERMISSION_VALUES } from '../../purchasing/permissions/pos-purchasing-permission.enum';
 
 /**
  * `PosRegisterPermission` is the load-bearing allow-list for staff permissions.
@@ -13,9 +15,9 @@ import { POS_HOSPITALITY_PERMISSION_VALUES } from '../../hospitality/permissions
  * Every other staff DTO validates `permissions` with `@IsString({ each: true })`
  * and accepts anything, so this enum is the ONLY place a permission can be
  * rejected — and a permission that cannot survive account creation can never
- * reach a token, however it is declared elsewhere. That is why the SCHOOL
- * permission enum living in `src/school/permissions/` is not sufficient on its
- * own, and why this spec asserts against the DTO rather than against that enum.
+ * reach a token, however it is declared elsewhere. That is why the per-format
+ * permission enums living in their own modules are not sufficient on their own,
+ * and why this spec asserts against the DTO rather than against those enums.
  */
 async function validatePermissions(permissions: string[]) {
   const dto = plainToInstance(CreateBranchStaffManualAccountDto, {
@@ -30,22 +32,39 @@ async function validatePermissions(permissions: string[]) {
   return errors.filter((e) => e.property === 'permissions');
 }
 
-describe('CreateBranchStaffManualAccountDto — permissions allow-list', () => {
-  it('accepts every SCHOOL fee-desk permission', async () => {
-    expect(
-      await validatePermissions([...POS_SCHOOL_PERMISSION_VALUES]),
-    ).toEqual([]);
-  });
+/**
+ * Every per-format permission enum, and the drift guard each one needs.
+ *
+ * Each is a documented mirror of the allow-list; this DTO is what actually
+ * gates. Add a permission to one and not the other and the owner gets a 400
+ * they cannot act on — and because a manager is created holding EVERY gate its
+ * branch's format offers, a single missing code fails the whole payload and no
+ * manager can be created on that format at all. The 400 then lists every
+ * accepted permission, i.e. everything except the one at fault.
+ *
+ * Hit twice before this table covered all four: REPRINT_ORDER_SLIP (2026-08-22,
+ * a frontend ship that landed ahead of the backend enum) and
+ * SET_ROOM_MAINTENANCE (2026-08-28, which was never in the allow-list at all —
+ * it had guarded a live route since June while being ungrantable, invisible
+ * because owners and managers bypass every guard via `isManagerLike`).
+ */
+const PERMISSION_REGISTRIES: Array<[string, readonly string[]]> = [
+  ['school fee-desk', POS_SCHOOL_PERMISSION_VALUES],
+  ['hotel/cafeteria hospitality', POS_HOSPITALITY_PERMISSION_VALUES],
+  ['vehicle-registry', POS_VEHICLE_PERMISSION_VALUES],
+  ['market-run purchasing', POS_PURCHASING_PERMISSION_VALUES],
+];
 
-  it('keeps the SCHOOL enum and the allow-list in step', async () => {
-    // Drift guard: the school enum is the documented mirror, this DTO is what
-    // actually gates. If someone adds a permission to one and not the other, a
-    // school owner gets a 400 they cannot act on.
-    const allowed = new Set<string>(Object.values(PosRegisterPermission));
-    const missing = POS_SCHOOL_PERMISSION_VALUES.filter(
-      (value) => !allowed.has(value),
-    );
-    expect(missing).toEqual([]);
+describe('CreateBranchStaffManualAccountDto — permissions allow-list', () => {
+  describe.each(PERMISSION_REGISTRIES)('%s permissions', (_name, values) => {
+    it('are every one of them grantable', async () => {
+      expect(await validatePermissions([...values])).toEqual([]);
+    });
+
+    it('stay in step with the allow-list', () => {
+      const allowed = new Set<string>(Object.values(PosRegisterPermission));
+      expect(values.filter((value) => !allowed.has(value))).toEqual([]);
+    });
   });
 
   it('still rejects a permission nothing declares', async () => {
@@ -58,35 +77,19 @@ describe('CreateBranchStaffManualAccountDto — permissions allow-list', () => {
     // till renders the slip itself. It has to survive account creation all the
     // same: this enum is the only place a permission can be rejected, so a
     // manager granting "re-print parked order slips" would get a 400 they could
-    // not act on, and the waiter would never see the control.
+    // not act on, and the waiter would never see the control. It has no format
+    // enum of its own, which is why it is asserted by name here.
     expect(await validatePermissions(['REPRINT_ORDER_SLIP'])).toEqual([]);
   });
 
-  it('accepts every HOTEL hospitality permission', async () => {
-    expect(
-      await validatePermissions([...POS_HOSPITALITY_PERMISSION_VALUES]),
-    ).toEqual([]);
-  });
-
-  it('keeps the hospitality enum and the allow-list in step', async () => {
-    // The same drift guard the SCHOOL enum gets, for the same reason — this one
-    // was missing, and three hospitality permissions had drifted out of the
-    // allow-list. SET_ROOM_MAINTENANCE is the one the till actually offers, and
-    // because a manager is created holding every gate its format offers, its
-    // absence here rejected the whole payload: no manager could be created on a
-    // HOTEL branch, and the 400 listed every permission except the one at fault.
-    const allowed = new Set<string>(Object.values(PosRegisterPermission));
-    const missing = POS_HOSPITALITY_PERMISSION_VALUES.filter(
-      (value) => !allowed.has(value),
-    );
-    expect(missing).toEqual([]);
-  });
-
-  it('leaves the existing format permissions grantable', async () => {
-    // The school members are additive; nothing else may have been displaced.
+  it('leaves the base register permissions grantable', async () => {
+    // The per-format members are additive; nothing else may have been displaced.
     expect(
       await validatePermissions([
         'OPEN_REGISTER',
+        'CLOSE_REGISTER',
+        'SUSPEND_SALE',
+        'PROCESS_RETURN',
         'VIEW_FOLIO_BOARD',
         'VIEW_PROPERTY_BOARD',
         'FIRE_KITCHEN_TICKET',

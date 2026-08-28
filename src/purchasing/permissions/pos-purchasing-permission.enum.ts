@@ -21,3 +21,7 @@ export enum PosPurchasingPermission {
   /** Hand cash out of the till against a run. */
   ISSUE_PURCHASE_ADVANCE = 'ISSUE_PURCHASE_ADVANCE',
 }
+
+export const POS_PURCHASING_PERMISSION_VALUES = Object.values(
+  PosPurchasingPermission,
+);
