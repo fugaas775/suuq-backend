@@ -17,6 +17,7 @@ import {
   TenantSubscription,
   TenantSubscriptionStatus,
 } from '../retail/entities/tenant-subscription.entity';
+import { isLivePosSelfServeTrial } from '../retail/pos-self-serve-trial.policy';
 import { UserRole } from './roles.enum';
 
 @Injectable()
@@ -112,9 +113,21 @@ export class EffectiveUserRoleService {
         subscriptionRepository.find({
           where: {
             tenantId: In(tenantIds),
-            status: TenantSubscriptionStatus.ACTIVE,
+            status: In([
+              TenantSubscriptionStatus.ACTIVE,
+              // TRIAL is read too, not because every TRIAL row opens a
+              // workspace, but because the auto-provisioned free period is
+              // stored as one. The columns `isLivePosSelfServeTrial` reads have
+              // to come back with it.
+              TenantSubscriptionStatus.TRIAL,
+            ]),
           },
-          select: { tenantId: true },
+          select: {
+            tenantId: true,
+            status: true,
+            planCode: true,
+            endsAt: true,
+          },
         }),
         entitlementRepository
           .createQueryBuilder('entitlement')
@@ -144,7 +157,35 @@ export class EffectiveUserRoleService {
       ]);
 
       for (const subscription of activeSubscriptions) {
-        activeTenantIds.add(subscription.tenantId);
+        // A live self-serve trial counts exactly as a paid subscription does.
+        //
+        // It did not, and the branch staff of every free workspace paid for it.
+        // A brand-new signup is provisioned with `status: TRIAL` (see
+        // `startPosSelfServeTrial`), so a tenant filtered on ACTIVE alone was
+        // never reached by the loop below, and the roles a staff member is owed
+        // BY THEIR ASSIGNMENT — POS_MANAGER, POS_OPERATOR — were never granted.
+        //
+        // The owner never noticed: onboarding stamps POS_MANAGER onto their
+        // user row, and a VENDOR gets it unconditionally above. A cashier
+        // created by `createManualAccount` starts with `roles: []` and has
+        // nothing else to fall back on, so they signed in holding an empty
+        // roles array — a session that works everywhere the POS lives under
+        // `/pos/v1` (PosBranchAccessGuard reads the assignment, not the role)
+        // and 403s on every `@Roles`-guarded `/retail/v1/ops` route. The one
+        // that shows is `branch-products`: the till opened, the drawer worked,
+        // the shift ran, and the product grid was empty with no way to refresh
+        // it into existence.
+        //
+        // `isLivePosSelfServeTrial` is the same predicate
+        // `getBranchWorkspaceStatus` already answers ACTIVE with, so staff
+        // access and workspace access now agree on what an open branch is. A
+        // LAPSED trial still grants nothing, which is the point of a deadline.
+        if (
+          subscription.status === TenantSubscriptionStatus.ACTIVE ||
+          isLivePosSelfServeTrial(subscription, now)
+        ) {
+          activeTenantIds.add(subscription.tenantId);
+        }
       }
 
       for (const entitlement of posEntitlements) {
@@ -191,6 +232,6 @@ export class EffectiveUserRoleService {
     return {
       ...user,
       roles,
-    } as T & { roles: UserRole[] };
+    };
   }
 }

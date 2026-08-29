@@ -11,6 +11,7 @@ import {
   TenantSubscription,
   TenantSubscriptionStatus,
 } from '../retail/entities/tenant-subscription.entity';
+import { POS_SELF_SERVE_TRIAL_PLAN_CODE } from '../retail/pos-self-serve-trial.policy';
 import { UserRole } from './roles.enum';
 import { EffectiveUserRoleService } from './effective-user-role.service';
 
@@ -130,5 +131,96 @@ describe('EffectiveUserRoleService', () => {
       UserRole.ADMIN,
       UserRole.POS_OPERATOR,
     ]);
+  });
+
+  /**
+   * The cases above all start from `roles: [VENDOR]`, which grants POS_MANAGER
+   * on its own — so they passed while the derivation under test granted
+   * nothing. A manually created cashier starts from `roles: []` and has no
+   * such floor: what this service returns is the whole of their authority.
+   */
+  describe('a staff member whose only authority is their branch assignment', () => {
+    const operatorAssignment = {
+      branchId: 139,
+      role: BranchStaffRole.OPERATOR,
+      branch: { isActive: true, retailTenantId: 31 },
+    };
+
+    beforeEach(() => {
+      branchRepository.find.mockResolvedValue([]);
+      assignmentRepository.find.mockResolvedValue([operatorAssignment]);
+      entitlementQueryBuilder.getRawMany.mockResolvedValue([
+        { tenantId: 31, module: RetailModule.POS_CORE },
+      ]);
+    });
+
+    it('is a POS_OPERATOR on a branch whose free period is still running', async () => {
+      subscriptionRepository.find.mockResolvedValue([
+        {
+          tenantId: 31,
+          status: TenantSubscriptionStatus.TRIAL,
+          planCode: POS_SELF_SERVE_TRIAL_PLAN_CODE,
+          endsAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+        },
+      ]);
+
+      const roles = await service.resolveRoles({ id: 900, roles: [] });
+
+      // Without this the cashier signs in holding `[]`, and every
+      // @Roles-guarded /retail/v1/ops route — the register's product catalog
+      // among them — answers 403 for as long as the branch is free.
+      expect(roles).toEqual([UserRole.POS_OPERATOR]);
+    });
+
+    it('is a POS_MANAGER when the assignment says MANAGER', async () => {
+      assignmentRepository.find.mockResolvedValue([
+        { ...operatorAssignment, role: BranchStaffRole.MANAGER },
+      ]);
+      subscriptionRepository.find.mockResolvedValue([
+        {
+          tenantId: 31,
+          status: TenantSubscriptionStatus.TRIAL,
+          planCode: POS_SELF_SERVE_TRIAL_PLAN_CODE,
+          endsAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+        },
+      ]);
+
+      const roles = await service.resolveRoles({ id: 901, roles: [] });
+
+      expect(roles).toEqual([UserRole.POS_MANAGER]);
+    });
+
+    it('gets nothing once the free period has lapsed', async () => {
+      subscriptionRepository.find.mockResolvedValue([
+        {
+          tenantId: 31,
+          status: TenantSubscriptionStatus.TRIAL,
+          planCode: POS_SELF_SERVE_TRIAL_PLAN_CODE,
+          endsAt: new Date(Date.now() - 1000),
+        },
+      ]);
+
+      const roles = await service.resolveRoles({ id: 902, roles: [] });
+
+      expect(roles).toEqual([]);
+    });
+
+    it('gets nothing from a hand-set TRIAL row that is not the free period', async () => {
+      // Only the free-period plan codes open a branch unpaid; a bare TRIAL row
+      // keeps its pay-first meaning, exactly as getBranchWorkspaceStatus reads
+      // it.
+      subscriptionRepository.find.mockResolvedValue([
+        {
+          tenantId: 31,
+          status: TenantSubscriptionStatus.TRIAL,
+          planCode: 'SOME_PAID_PLAN',
+          endsAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+        },
+      ]);
+
+      const roles = await service.resolveRoles({ id: 903, roles: [] });
+
+      expect(roles).toEqual([]);
+    });
   });
 });
