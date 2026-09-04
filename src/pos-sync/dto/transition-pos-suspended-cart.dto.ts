@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
 import {
+  IsBoolean,
   IsIn,
   IsNumber,
   IsOptional,
@@ -50,4 +51,16 @@ export class TransitionPosSuspendedCartDto {
   @MaxLength(280)
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   declineReason?: string;
+
+  /**
+   * This discard is a school taking a pupil off the roll — sent by Seller HQ's
+   * Students panel, the one place a withdrawal is offered. It changes nothing
+   * about the discard itself; it asks the server to email the branch owner a
+   * record of who left the roll, because a withdrawal destroys the folio the
+   * roll would otherwise remember them by.
+   */
+  @ApiPropertyOptional({ example: true })
+  @IsOptional()
+  @IsBoolean()
+  withdrawal?: boolean;
 }

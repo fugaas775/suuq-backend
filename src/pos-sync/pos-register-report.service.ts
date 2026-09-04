@@ -228,6 +228,116 @@ export class PosRegisterReportService {
     }
   }
 
+  /**
+   * Fire-and-forget record of a pupil taken off the roll, emailed to the
+   * branch owner. A withdrawal DISCARDS the folio that is the school's memory
+   * of the child — their fee lines, paid-through date, guardian and marks all
+   * leave the board with it — while the money stays in `pos_checkouts`. This
+   * email is the record that survives: who left, which class, what had been
+   * collected and what was still owed at the moment they left, and who did it.
+   *
+   * Never throws: a missing owner email or a mail failure is logged, because
+   * the withdrawal itself has already happened and must not report as failed.
+   */
+  async dispatchStudentWithdrawalEmail(
+    cart: {
+      id: number;
+      branchId: number;
+      currency?: string | null;
+      total?: number | string | null;
+      cartSnapshot?: Record<string, any> | null;
+      metadata?: Record<string, any> | null;
+    },
+    actor: { id?: number | null; email?: string | null } = {},
+  ): Promise<void> {
+    try {
+      const branch = await this.branchesRepository.findOne({
+        where: { id: cart.branchId },
+        relations: ['owner'],
+      });
+      const ownerEmail = branch?.owner?.email?.trim();
+      if (!ownerEmail) {
+        this.logger.warn(
+          `Student folio ${cart.id} withdrawn but branch ${cart.branchId} has no owner email; skipping withdrawal email.`,
+        );
+        return;
+      }
+
+      const snap = cart.cartSnapshot ?? {};
+      const student = s(snap.hotelGuestName) || 'Unnamed student';
+      const admissionNo = s(snap.schoolAdmissionNo);
+      const classCode = s(snap.hotelRoomNumber);
+      const guardian = s(snap.schoolGuardianName);
+      const guardianPhone = s(snap.hotelGuestPhone);
+      const currency = s(cart.currency) || 'ETB';
+      const total = n(cart.total ?? snap.total);
+      const paid =
+        snap.paid === true
+          ? total
+          : n(cart.metadata?.partialPaidAmount ?? snap.partialPaidAmount);
+      const outstanding = Math.max(0, total - paid);
+      const branchName = branch?.name || `Branch ${cart.branchId}`;
+      const when = new Date().toLocaleString('en-GB', EAT_OPTS);
+      const byWhom = s(actor.email) || 'the branch owner';
+
+      const facts: Array<[string, string]> = [
+        ['Student', admissionNo ? `${student} · #${admissionNo}` : student],
+        ['Class', classCode || '—'],
+        ['Guardian', guardian || '—'],
+        ['Guardian phone', guardianPhone || '—'],
+        ['Fees billed', this.money(total, currency)],
+        ['Collected', this.money(paid, currency)],
+        ['Still owed when withdrawn', this.money(outstanding, currency)],
+        ['Withdrawn by', byWhom],
+        ['When', `${when} (EAT)`],
+      ];
+
+      const text = [
+        `${student} was withdrawn from the roll at ${branchName}.`,
+        '',
+        ...facts.map(([k, v]) => `${k.padEnd(26)}: ${v}`),
+        '',
+        'The money already collected stays in the books; the amount still owed',
+        'left the roll with the student. This email is the record of both.',
+      ].join('\n');
+
+      const esc = (v: string) =>
+        v.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const html = [
+        `<div style="font-family:Arial,Helvetica,sans-serif;max-width:560px">`,
+        `<h2 style="margin:0 0 4px">Student withdrawn from the roll</h2>`,
+        `<p style="margin:0 0 12px;color:#475569">${esc(branchName)}</p>`,
+        `<table style="border-collapse:collapse;width:100%">`,
+        ...facts.map(
+          ([k, v]) =>
+            `<tr><td style="padding:4px 10px 4px 0;color:#64748b;white-space:nowrap">${esc(
+              k,
+            )}</td><td style="padding:4px 0;font-weight:600">${esc(v)}</td></tr>`,
+        ),
+        `</table>`,
+        `<p style="margin:12px 0 0;color:#64748b;font-size:13px">The money already collected stays in the books; the amount still owed left the roll with the student. This email is the record of both.</p>`,
+        `</div>`,
+      ].join('');
+
+      await this.emailService.send({
+        to: ownerEmail,
+        subject: `Student withdrawn — ${
+          admissionNo ? `${student} (#${admissionNo})` : student
+        } — ${branchName}`,
+        text,
+        html,
+      });
+      this.logger.log(
+        `Queued withdrawal email for folio ${cart.id} to branch ${cart.branchId} owner.`,
+      );
+    } catch (err: any) {
+      this.logger.error(
+        `Failed to dispatch withdrawal email for folio ${cart?.id}: ${err?.message || err}`,
+        err?.stack,
+      );
+    }
+  }
+
   // --- model builders -----------------------------------------------------
 
   /** Map the client-sent "Today"-tab session report onto the render model. */

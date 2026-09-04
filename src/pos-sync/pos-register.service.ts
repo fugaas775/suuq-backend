@@ -434,9 +434,17 @@ export class PosRegisterService {
       cart.metadata = stamped;
     }
 
-    return this.toSuspendedCartResponse(
-      await this.suspendedCartsRepository.save(cart),
-    );
+    const saved = await this.suspendedCartsRepository.save(cart);
+
+    // A school withdrawal destroys the folio the roll remembers a pupil by, so
+    // the owner gets an emailed record of who left and what money stood against
+    // them. Fire-and-forget AFTER the save: the child is off the roll either
+    // way, and a mail failure must not report the withdrawal as failed.
+    if (dto.withdrawal) {
+      void this.reportService.dispatchStudentWithdrawalEmail(saved, actor);
+    }
+
+    return this.toSuspendedCartResponse(saved);
   }
 
   async updateSuspendedCart(
