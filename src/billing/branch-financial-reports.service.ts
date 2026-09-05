@@ -29,6 +29,7 @@ import {
 import { BranchDepreciationEntry } from './entities/branch-depreciation-entry.entity';
 import {
   BranchExpense,
+  isCapitalContributionCategory,
   isLiabilitySettlementCategory,
   isPurchasesCategory,
 } from '../billing/entities/branch-expense.entity';
@@ -428,8 +429,16 @@ export class BranchFinancialReportsService {
     let totalExpenses = 0;
     let taxRemitted = 0;
     let purchases = 0;
+    let ownerContributions = 0;
     for (const exp of expenses) {
       const amount = Number(exp.amount) || 0;
+      // Owner capital put into the business shares this table but is neither a
+      // cost nor income — it was contributed, not earned. It belongs on the
+      // balance sheet, in cash and in equity, and nowhere on this statement.
+      if (isCapitalContributionCategory(exp.category)) {
+        ownerContributions += amount;
+        continue;
+      }
       // A tax remittance shares this table but is not a cost: the money it pays
       // over was collected on the authority's behalf and was already excluded
       // from revenue, so charging it here would deduct the same tax from profit
@@ -485,6 +494,11 @@ export class BranchFinancialReportsService {
     if (taxRemitted >= 0.01) {
       notes.push(
         `Sales tax of ${this.round2(taxRemitted)} was remitted to the authority in this range. It is not an operating expense — it settles tax collected on the authority's behalf, and is shown against tax payable on the balance sheet.`,
+      );
+    }
+    if (ownerContributions >= 0.01) {
+      notes.push(
+        `Owner capital of ${this.round2(ownerContributions)} was contributed in this range. Contributed capital is not income, so it does not appear on this statement — it raises cash and owner equity on the balance sheet.`,
       );
     }
 
@@ -684,13 +698,22 @@ export class BranchFinancialReportsService {
     } = await this.computeLiquidAssetBalances(branchId, asOfAt, checkouts);
 
     const expenses = await this.findExpenses(branchId, null, asOfAt);
-    // Every row reduces cash — a remittance is money out of the drawer like any
-    // other. Only the liability side distinguishes them.
-    const cashOut = expenses.reduce(
-      (sum, exp) => sum + (Number(exp.amount) || 0),
-      0,
-    );
-    const cash = Math.max(0, cashOnHand - cashOut);
+    // Every row but one kind reduces cash — a remittance is money out of the
+    // drawer like any other, and only the liability side distinguishes it. The
+    // exception is owner capital contributed, the single row type in the table
+    // where the money came IN: it adds to cash, and the equity residual below
+    // picks up the other side.
+    let cashOut = 0;
+    let contributionsIn = 0;
+    for (const exp of expenses) {
+      const amount = Number(exp.amount) || 0;
+      if (isCapitalContributionCategory(exp.category)) {
+        contributionsIn += amount;
+      } else {
+        cashOut += amount;
+      }
+    }
+    const cash = Math.max(0, cashOnHand + contributionsIn - cashOut);
     // Tax already handed to the authority is no longer owed. Without this the
     // liability only ever grew: cash fell when the branch paid, the payable
     // stayed, and equity absorbed the same tax twice.
@@ -765,6 +788,11 @@ export class BranchFinancialReportsService {
     notes.push(
       'Cash chains register-session floats forward per register and then subtracts recorded branch expenses; tender clearing holds non-cash tenders until treasury settlement is modeled separately.',
     );
+    if (contributionsIn > 0.01) {
+      notes.push(
+        `Owner capital of ${this.round2(contributionsIn)} contributed to the branch is included in cash and backed by owner equity rather than by trading profit.`,
+      );
+    }
     if (normalizedTaxPayable > 0) {
       notes.push(
         'Tax payable reflects checkout tax collected up to the snapshot date, less any remitted to the authority, and is kept separate from sales revenue.',

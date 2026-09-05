@@ -620,5 +620,21 @@ describe('BranchBillingService', () => {
       expect(lineFor(entry, '6060').debit).toBe(300); // EXPENSE_TAXES
       expect(lineFor(entry, '2100')).toBeUndefined(); // not the liability
     });
+
+    it('posts an owner contribution the other way round (Dr Cash / Cr Equity)', async () => {
+      // The one row in branch_expenses where money comes IN. Crediting cash
+      // like every other row would book the owner funding the branch as money
+      // leaving it.
+      const { service, generalLedger } = createService();
+      await service.createBranchExpense(44, 7, {
+        category: 'OWNER_CONTRIBUTION',
+        amount: 20000,
+        occurredAt: new Date('2026-09-01T00:00:00.000Z'),
+      });
+      const entry = generalLedger.post.mock.calls[0][0];
+      expect(lineFor(entry, '1000').debit).toBe(20000); // CASH
+      expect(lineFor(entry, '3000').credit).toBe(20000); // OWNER_EQUITY
+      expect(entry.memo).toBe('Owner capital contributed');
+    });
   });
 });

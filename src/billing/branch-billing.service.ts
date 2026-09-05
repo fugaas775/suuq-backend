@@ -45,6 +45,7 @@ import {
 import { BranchDepreciationEntry } from './entities/branch-depreciation-entry.entity';
 import {
   BranchExpense,
+  isCapitalContributionCategory,
   isLiabilitySettlementCategory,
 } from './entities/branch-expense.entity';
 import {
@@ -564,7 +565,9 @@ export class BranchBillingService {
       Date.now() + BranchBillingService.MAX_FUTURE_DATING_MS
     ) {
       throw new BadRequestException(
-        'An expense cannot be dated in the future — record it on the day the money leaves.',
+        isCapitalContributionCategory(dto.category)
+          ? 'A contribution cannot be dated in the future — record it on the day the money arrives.'
+          : 'An expense cannot be dated in the future — record it on the day the money leaves.',
       );
     }
     const expense = this.expensesRepo.create({
@@ -577,6 +580,10 @@ export class BranchBillingService {
       recordedByUserId: userId,
     });
     const saved = await this.expensesRepo.save(expense);
+    // An owner contribution is the one row here where the money comes IN, so
+    // its legs run the other way: cash rises, and what backs it is the owner's
+    // stake rather than a cost.
+    const contribution = isCapitalContributionCategory(saved.category);
     await this.postLedger({
       branchId,
       occurredAt: saved.occurredAt,
@@ -584,11 +591,15 @@ export class BranchBillingService {
       sourceId: `expense-${saved.id}`,
       idempotencyKey: `expense-${saved.id}`,
       currency: saved.currency,
-      memo: isLiabilitySettlementCategory(saved.category)
-        ? 'Sales tax remitted to the authority'
-        : `Expense — ${saved.category}`,
-      debit: this.expenseDebitAccountFor(saved.category),
-      credit: GlAccountCode.CASH,
+      memo: contribution
+        ? 'Owner capital contributed'
+        : isLiabilitySettlementCategory(saved.category)
+          ? 'Sales tax remitted to the authority'
+          : `Expense — ${saved.category}`,
+      debit: contribution
+        ? GlAccountCode.CASH
+        : this.expenseDebitAccountFor(saved.category),
+      credit: contribution ? GlAccountCode.OWNER_EQUITY : GlAccountCode.CASH,
       amount: Number(saved.amount),
     });
     return saved;

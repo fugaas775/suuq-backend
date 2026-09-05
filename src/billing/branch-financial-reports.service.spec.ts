@@ -808,6 +808,71 @@ describe('BranchFinancialReportsService', () => {
         ]),
       );
     });
+
+    it('adds an owner contribution to cash instead of subtracting it', async () => {
+      // The one branch_expenses row where the money came IN. Summed as money
+      // out, the owner funding the branch would LOWER reported cash.
+      const repos = createService();
+      stubBalanceSheet(repos, [
+        {
+          amount: 500,
+          category: 'OWNER_CONTRIBUTION',
+          occurredAt: new Date('2026-08-05T00:00:00.000Z'),
+        },
+        {
+          amount: 100,
+          category: 'UTILITIES',
+          occurredAt: new Date('2026-08-05T00:00:00.000Z'),
+        },
+      ]);
+
+      const bs = await repos.service.getBalanceSheet(44, {
+        asOfAt: new Date('2026-08-09T18:00:00.000Z'),
+      });
+
+      // 1,150 taken at the till + 500 put in − 100 spent.
+      expect(bs.assets.cash).toBe(1550);
+      // The contribution backs equity, not the tax owed on the sale.
+      expect(bs.liabilities.current.taxPayable).toBe(150);
+      expect(bs.notes).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining('Owner capital of 500'),
+        ]),
+      );
+    });
+
+    it('keeps an owner contribution off the P&L entirely', async () => {
+      // Contributed capital is neither a cost nor income: profit must not move.
+      const repos = createService();
+      repos.checkoutsRepo.createQueryBuilder.mockReturnValue(
+        createBuilder([TAXED_SALE]),
+      );
+      repos.expensesRepo.createQueryBuilder.mockReturnValue(
+        createBuilder([
+          {
+            amount: 500,
+            category: 'OWNER_CONTRIBUTION',
+            occurredAt: new Date('2026-08-05T00:00:00.000Z'),
+          },
+          {
+            amount: 40,
+            category: 'UTILITIES',
+            occurredAt: new Date('2026-08-05T00:00:00.000Z'),
+          },
+        ]),
+      );
+
+      const pl = await repos.service.getProfitAndLoss(44, {});
+
+      expect(pl.totalExpenses).toBe(40);
+      expect(pl.expensesByCategory.OWNER_CONTRIBUTION).toBeUndefined();
+      expect(pl.netProfit).toBe(960);
+      expect(pl.notes).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining('Contributed capital is not income'),
+        ]),
+      );
+    });
   });
 });
 

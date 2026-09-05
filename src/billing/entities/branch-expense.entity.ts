@@ -50,6 +50,20 @@ export enum BranchExpenseCategory {
    * See {@link isPurchasesCategory}.
    */
   INGREDIENTS = 'INGREDIENTS',
+  /**
+   * The owner putting their own money INTO the business — the one row in this
+   * table where cash moves toward the branch instead of away from it.
+   *
+   * NOT an expense, and not income either: capital contributed is not earned,
+   * so it never touches the P&L. It debits CASH and credits OWNER_EQUITY
+   * (3000), raises balance-sheet cash and equity by the same amount, and that
+   * is all. It shares the table because everything else about it — an amount
+   * on a date with a note, recorded by someone, voidable but never deletable —
+   * is exactly what this table's CRUD, void and amend paths already do.
+   *
+   * See {@link isCapitalContributionCategory}.
+   */
+  OWNER_CONTRIBUTION = 'OWNER_CONTRIBUTION',
 }
 
 /**
@@ -83,6 +97,26 @@ export function isLiabilitySettlementCategory(
   return (
     String(category || '').toUpperCase() ===
     BranchExpenseCategory.TAX_REMITTANCE
+  );
+}
+
+/**
+ * True for rows in this table where the money came IN — owner capital put into
+ * the business.
+ *
+ * Same shape as {@link isLiabilitySettlementCategory}, but here even cash needs
+ * the test: every other row reduces the branch's cash and these raise it, so
+ * any reader summing this table as "money out" must call this first. The ledger
+ * posting reverses its legs on it (debit CASH, credit OWNER_EQUITY), the P&L
+ * skips it entirely, and the balance sheet adds it to cash instead of
+ * subtracting.
+ */
+export function isCapitalContributionCategory(
+  category?: string | null,
+): boolean {
+  return (
+    String(category || '').toUpperCase() ===
+    BranchExpenseCategory.OWNER_CONTRIBUTION
   );
 }
 
