@@ -48,14 +48,27 @@ function makeService({
   const expenses: any[] = [];
   const deletedExpenses: any[] = [];
 
+  // The service filters an explicit selection in SQL; the mock honours the
+  // `ids` param so an advance for one person yields a one-person roster.
+  let idFilter: number[] | null = null;
   const employeeQb: any = {
     where: () => employeeQb,
-    andWhere: () => employeeQb,
+    andWhere: (_sql: string, params?: any) => {
+      if (params && Array.isArray(params.ids))
+        idFilter = params.ids.map(Number);
+      return employeeQb;
+    },
     orderBy: () => employeeQb,
     addOrderBy: () => employeeQb,
     take: () => employeeQb,
     getOne: async () => existingByName,
-    getMany: async () => roster,
+    getMany: async () => {
+      const picked = idFilter;
+      idFilter = null;
+      return picked
+        ? roster.filter((r: any) => picked.includes(Number(r.id)))
+        : roster;
+    },
   };
 
   const employees: any = {
@@ -98,16 +111,25 @@ function makeService({
 
   const members: any = {
     find: async () => memberRows,
-    insert: async (rows: any[]) => {
-      if (memberInsertThrows) {
-        // Exactly what the driver raises when the unique member index rejects
-        // a person who already holds a claim on this (branchId, periodKey).
-        const err: any = new Error('duplicate key value');
-        err.code = '23505';
-        throw err;
-      }
-      insertedMembers.push(...rows);
-      return { identifiers: rows.map((_, i) => ({ id: i + 1 })) };
+    manager: {
+      // The claim phase runs inside a branch-locked transaction; the mock
+      // hands the service an entity-manager with the same three calls it uses.
+      transaction: async (fn: any) =>
+        fn({
+          query: async () => undefined,
+          find: async () => memberRows,
+          insert: async (_entity: any, rows: any[]) => {
+            if (memberInsertThrows) {
+              const err: any = new Error('duplicate key value');
+              err.code = '23505';
+              throw err;
+            }
+            insertedMembers.push(...rows);
+            return {
+              identifiers: rows.map((_: any, i: number) => ({ id: i + 1 })),
+            };
+          },
+        }),
     },
   };
 
@@ -280,10 +302,22 @@ describe('PayrollService — running a month', () => {
     await service.createRun(115, 42, { branchId: 115, periodKey: '2026-09' });
 
     // The claim rows are what a concurrent run collides with — one per person
-    // paid, keyed by the month.
+    // per wave, keyed by the month, carrying the AMOUNT this run paid.
     expect(insertedMembers).toEqual([
-      { runId: 55, branchId: 115, periodKey: '2026-09', employeeId: 1 },
-      { runId: 55, branchId: 115, periodKey: '2026-09', employeeId: 2 },
+      {
+        runId: 55,
+        branchId: 115,
+        periodKey: '2026-09',
+        employeeId: 1,
+        amount: 40000,
+      },
+      {
+        runId: 55,
+        branchId: 115,
+        periodKey: '2026-09',
+        employeeId: 2,
+        amount: 11000,
+      },
     ]);
   });
 
@@ -292,7 +326,7 @@ describe('PayrollService — running a month', () => {
     // the rest and says out loud who it left alone.
     const { service, expenses } = makeService({
       roster: ROSTER,
-      memberRows: [{ employeeId: 1 }],
+      memberRows: [{ employeeId: 1, amount: 40000 }],
     });
 
     const run = await service.createRun(115, 42, {
@@ -307,7 +341,7 @@ describe('PayrollService — running a month', () => {
       {
         employeeId: 1,
         fullName: 'Dr. Aron Alemayehu',
-        reason: 'Already paid for this month',
+        reason: 'Already paid in full for this month',
       },
       {
         employeeId: 3,
@@ -322,7 +356,7 @@ describe('PayrollService — running a month', () => {
     // "Pay these two" must not quietly become "pay one of these two".
     const { service, expenses } = makeService({
       roster: ROSTER,
-      memberRows: [{ employeeId: 1 }],
+      memberRows: [{ employeeId: 1, amount: 40000 }],
     });
 
     await expect(
@@ -338,11 +372,77 @@ describe('PayrollService — running a month', () => {
   it('refuses a month everyone payable has already been paid for', async () => {
     const { service } = makeService({
       roster: ROSTER,
-      memberRows: [{ employeeId: 1 }, { employeeId: 2 }],
+      memberRows: [
+        { employeeId: 1, amount: 40000 },
+        { employeeId: 2, amount: 11000 },
+      ],
     });
     await expect(
       service.createRun(115, 42, { branchId: 115, periodKey: '2026-09' }),
     ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('pays a chosen AMOUNT — an advance against the salary', async () => {
+    // A teacher asks for 5,000 on the 10th. The run pays exactly that, posts
+    // exactly that, and the member row claims exactly that — the remainder
+    // stays payable this month.
+    const { service, expenses, insertedMembers } = makeService({
+      roster: ROSTER,
+    });
+
+    const run = await service.createRun(115, 42, {
+      branchId: 115,
+      periodKey: '2026-09',
+      amounts: [{ employeeId: 2, amount: 5000 }],
+    });
+
+    expect(run.headcount).toBe(1);
+    expect(run.total).toBe(5000);
+    expect(run.lines).toEqual([
+      {
+        employeeId: 2,
+        fullName: 'Ahmed Idris',
+        jobTitle: 'Teacher',
+        amount: 5000,
+      },
+    ]);
+    expect(expenses[0].amount).toBe(5000);
+    expect(insertedMembers[0].amount).toBe(5000);
+  });
+
+  it('a later bare run pays the REMAINDER of an advanced salary', async () => {
+    const { service } = makeService({
+      roster: ROSTER,
+      memberRows: [{ employeeId: 2, amount: 5000 }],
+    });
+
+    const run = await service.createRun(115, 42, {
+      branchId: 115,
+      periodKey: '2026-09',
+    });
+
+    // The director's full 40,000 + Ahmed's remaining 6,000.
+    expect(run.total).toBe(46000);
+    expect(run.lines.find((l: any) => l.employeeId === 2)?.amount).toBe(6000);
+  });
+
+  it('refuses an advance past what is still unpaid, naming the person', async () => {
+    // "Pay Ahmed 7,000" when only 6,000 of his month is left must not quietly
+    // become 6,000 — an advance that shrank in transit is a mystery at the
+    // next count.
+    const { service, expenses } = makeService({
+      roster: ROSTER,
+      memberRows: [{ employeeId: 2, amount: 5000 }],
+    });
+
+    await expect(
+      service.createRun(115, 42, {
+        branchId: 115,
+        periodKey: '2026-09',
+        amounts: [{ employeeId: 2, amount: 7000 }],
+      }),
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect(expenses).toHaveLength(0);
   });
 
   it('backs the run out when the member index refuses a claim', async () => {

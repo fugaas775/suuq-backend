@@ -34,6 +34,9 @@ function money(value: number): number {
   return Math.round((Number(value) || 0) * 100) / 100;
 }
 
+/** Advisory-lock namespace for payroll writes — arbitrary, but never reused. */
+const PAYROLL_LOCK_NAMESPACE = 812_640;
+
 /**
  * The branch's people and what they cost.
  *
@@ -265,15 +268,25 @@ export class PayrollService {
   async createRun(branchId: number, userId: number, dto: CreatePayrollRunDto) {
     const periodKey = String(dto.periodKey || '').trim();
     if (!periodKey) throw new BadRequestException('A period is required.');
-    const explicit =
-      Array.isArray(dto.employeeIds) && dto.employeeIds.length > 0;
+    // Amounts chosen by hand — an advance, or a hand-set remainder. Anyone
+    // selected without one is paid whatever they are still owed.
+    const amountByEmployee = new Map<number, number>(
+      (dto.amounts || []).map((a) => [Number(a.employeeId), money(a.amount)]),
+    );
+    const requestedIds = [
+      ...new Set([
+        ...(dto.employeeIds || []).map(Number),
+        ...amountByEmployee.keys(),
+      ]),
+    ];
+    const explicit = requestedIds.length > 0;
 
     const qb = this.employees
       .createQueryBuilder('e')
       .where('e."branchId" = :branchId', { branchId })
       .andWhere('e.status = :status', { status: BranchEmployeeStatus.ACTIVE });
     if (explicit) {
-      qb.andWhere('e.id IN (:...ids)', { ids: dto.employeeIds });
+      qb.andWhere('e.id IN (:...ids)', { ids: requestedIds });
     }
     const roster = await qb.orderBy('e."fullName"', 'ASC').getMany();
 
@@ -285,55 +298,108 @@ export class PayrollService {
       );
     }
 
-    // Who already holds a claim on this month. This read is a COURTESY — it
-    // lets us exclude and NAME the already-paid rather than fail on them; the
-    // unique member index below is what actually decides a race.
+    // What each person has ALREADY been paid for this month, summed across the
+    // waves that paid them. This read is a courtesy — it lets us skip and NAME
+    // the fully-paid rather than fail on them; the locked re-check below is
+    // what actually decides a race.
     const paidRows = await this.members.find({
       where: { branchId, periodKey },
     });
-    const paidIds = new Set(paidRows.map((m) => Number(m.employeeId)));
-
-    if (explicit) {
-      // The caller asked for these people BY NAME. Silently dropping the paid
-      // ones would turn "pay these five" into "pay some of these five", so a
-      // paid selection is refused out loud instead.
-      const clash = roster.filter((e) => paidIds.has(Number(e.id)));
-      if (clash.length) {
-        throw new ConflictException(
-          `Already paid for ${periodKey}: ${clash
-            .map((e) => e.fullName)
-            .join(', ')}. Unselect them, or undo the run that paid them.`,
-        );
-      }
+    const paidByEmployee = new Map<number, number>();
+    for (const row of paidRows) {
+      const id = Number(row.employeeId);
+      paidByEmployee.set(
+        id,
+        money((paidByEmployee.get(id) || 0) + (Number(row.amount) || 0)),
+      );
     }
 
-    const payable = roster.filter(
-      (e) =>
-        e.monthlySalary != null &&
-        Number(e.monthlySalary) > 0 &&
-        !paidIds.has(Number(e.id)),
-    );
-    const skipped = roster
-      .filter((e) => !payable.includes(e))
-      .map((e) => ({
-        employeeId: Number(e.id),
+    /* Build the run line by line. A salary can now be paid in PARTS, so the
+       question per person is "how much is still unpaid", and a hand-chosen
+       amount must fit inside it. An explicit ask that cannot be honoured is
+       refused OUT LOUD with the person named — silently trimming "pay Bishar
+       5,000" is how an advance becomes a mystery. */
+    const salaryById = new Map<number, number>();
+    const skipped: { employeeId: number; fullName: string; reason: string }[] =
+      [];
+    const refused: string[] = [];
+    const lines: PayrollRunLine[] = [];
+    for (const e of roster) {
+      const id = Number(e.id);
+      const asked = amountByEmployee.get(id);
+      if (e.monthlySalary == null) {
+        if (asked != null) {
+          refused.push(`${e.fullName} has no salary on file to pay against`);
+        } else {
+          skipped.push({
+            employeeId: id,
+            fullName: e.fullName,
+            reason: 'No salary on file',
+          });
+        }
+        continue;
+      }
+      const salary = money(Number(e.monthlySalary));
+      if (salary <= 0) {
+        skipped.push({
+          employeeId: id,
+          fullName: e.fullName,
+          reason: 'Salary is zero',
+        });
+        continue;
+      }
+      salaryById.set(id, salary);
+      const remaining = money(salary - (paidByEmployee.get(id) || 0));
+      if (remaining <= 0) {
+        if (
+          explicit &&
+          (asked != null || (dto.employeeIds || []).map(Number).includes(id))
+        ) {
+          refused.push(
+            `${e.fullName} is already paid in full for ${periodKey}`,
+          );
+        } else {
+          skipped.push({
+            employeeId: id,
+            fullName: e.fullName,
+            reason: 'Already paid in full for this month',
+          });
+        }
+        continue;
+      }
+      const amount = asked != null ? asked : remaining;
+      if (amount > remaining + 0.001) {
+        refused.push(
+          `${e.fullName} has only ${remaining} of ${salary} still unpaid for ${periodKey}`,
+        );
+        continue;
+      }
+      lines.push({
+        employeeId: id,
         fullName: e.fullName,
-        reason: paidIds.has(Number(e.id))
-          ? 'Already paid for this month'
-          : e.monthlySalary == null
-            ? 'No salary on file'
-            : 'Salary is zero',
-      }));
+        jobTitle: e.jobTitle ?? null,
+        amount: money(amount),
+      });
+    }
 
-    if (!payable.length) {
+    if (refused.length) {
+      throw new ConflictException(
+        `Cannot pay: ${refused.join('; ')}. Lower the amount, or undo the run that paid them.`,
+      );
+    }
+
+    if (!lines.length) {
       throw new BadRequestException(
-        skipped.some((s) => s.reason === 'Already paid for this month')
+        skipped.some((s) => s.reason === 'Already paid in full for this month')
           ? `Everyone with a salary on file has already been paid for ${periodKey}.`
           : 'No one on the roster has a salary recorded, so there is nothing to pay.',
       );
     }
 
-    const currencies = new Set(payable.map((e) => e.currency || 'ETB'));
+    const paidEmployees = roster.filter((e) =>
+      lines.some((l) => l.employeeId === Number(e.id)),
+    );
+    const currencies = new Set(paidEmployees.map((e) => e.currency || 'ETB'));
     if (currencies.size > 1) {
       throw new BadRequestException(
         `This roster mixes currencies (${[...currencies].join(', ')}). One run posts one expense, so it can only pay one.`,
@@ -341,22 +407,18 @@ export class PayrollService {
     }
     const currency = [...currencies][0] || 'ETB';
 
-    const lines: PayrollRunLine[] = payable.map((e) => ({
-      employeeId: Number(e.id),
-      fullName: e.fullName,
-      jobTitle: e.jobTitle ?? null,
-      amount: money(Number(e.monthlySalary)),
-    }));
     const total = money(lines.reduce((sum, l) => sum + l.amount, 0));
     const occurredAt = dto.occurredAt ? new Date(dto.occurredAt) : new Date();
     if (Number.isNaN(occurredAt.getTime())) {
       throw new BadRequestException('That date could not be read.');
     }
 
-    // Save the run, then claim each PERSON on the members index — before any
-    // money moves. The index, not the courtesy read above, is what stops a
-    // double press or a lost race, and the ordering means a failed claim can
-    // never strand an unreferenced expense in the books.
+    // Save the run, then claim each person's AMOUNT — before any money moves.
+    // The claim happens inside a branch-scoped advisory-locked transaction:
+    // with amounts that accumulate, no unique index can hold the cap, so the
+    // lock serialises payroll writers per branch and the re-check under it —
+    // not the courtesy read above — decides a double press or a lost race.
+    // The ordering still means a failed claim never strands an expense.
     let run: PayrollRun = await this.runs.save(
       this.runs.create({
         branchId,
@@ -373,17 +435,46 @@ export class PayrollService {
       }),
     );
     try {
-      await this.members.insert(
-        lines.map((l) => ({
-          runId: Number(run.id),
+      await this.members.manager.transaction(async (em) => {
+        // Namespaced so it can never collide with another feature's locks.
+        await em.query('SELECT pg_advisory_xact_lock($1, $2)', [
+          PAYROLL_LOCK_NAMESPACE,
           branchId,
-          periodKey,
-          employeeId: Number(l.employeeId),
-        })),
-      );
+        ]);
+        const current = await em.find(PayrollRunMember, {
+          where: { branchId, periodKey },
+        });
+        const paidNow = new Map<number, number>();
+        for (const row of current) {
+          const id = Number(row.employeeId);
+          paidNow.set(
+            id,
+            money((paidNow.get(id) || 0) + (Number(row.amount) || 0)),
+          );
+        }
+        for (const l of lines) {
+          const cap = salaryById.get(Number(l.employeeId)) || 0;
+          const already = paidNow.get(Number(l.employeeId)) || 0;
+          if (money(already + l.amount) > cap + 0.001) {
+            throw new ConflictException(
+              `${l.fullName} was paid for ${periodKey} by another run posted just now. Refresh and run it again.`,
+            );
+          }
+        }
+        await em.insert(
+          PayrollRunMember,
+          lines.map((l) => ({
+            runId: Number(run.id),
+            branchId,
+            periodKey,
+            employeeId: Number(l.employeeId),
+            amount: l.amount,
+          })),
+        );
+      });
     } catch (error) {
       // The run must not survive a lost claim — delete cascades away whatever
-      // member rows the multi-row insert did not roll back itself.
+      // member rows the transaction did not roll back itself.
       await this.runs.delete({ id: run.id });
       if (isUniqueViolation(error)) {
         throw new ConflictException(

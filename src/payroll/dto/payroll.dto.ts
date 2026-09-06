@@ -10,7 +10,25 @@ import {
   MaxLength,
   Min,
   MinLength,
+  ValidateNested,
 } from 'class-validator';
+
+/** Pay this person THIS amount — an advance, or a hand-set remainder. */
+export class PayrollRunAmountDto {
+  @ApiProperty({ example: 12 })
+  @Type(() => Number)
+  @IsInt()
+  employeeId!: number;
+
+  @ApiProperty({
+    example: 5000,
+    description: 'Capped at what is still unpaid of the monthly salary.',
+  })
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0.01)
+  amount!: number;
+}
 
 export class ListBranchEmployeesQueryDto {
   @ApiProperty({ example: 115 })
@@ -202,6 +220,18 @@ export class CreatePayrollRunDto {
   @Type(() => Number)
   @IsInt({ each: true })
   employeeIds?: number[];
+
+  /**
+   * Pay some people a chosen amount instead of everything they are owed — an
+   * ADVANCE. Anyone selected without an entry here is paid their remainder.
+   * The service refuses an amount past what is still unpaid of the month.
+   */
+  @ApiPropertyOptional({ type: [PayrollRunAmountDto] })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => PayrollRunAmountDto)
+  amounts?: PayrollRunAmountDto[];
 
   @ApiPropertyOptional({ example: 'Paid in cash on the 10th.' })
   @IsOptional()

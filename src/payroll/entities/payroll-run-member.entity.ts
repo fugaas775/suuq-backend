@@ -8,31 +8,29 @@ import {
 } from 'typeorm';
 import { PayrollRun } from './payroll-run.entity';
 
+const decimalTransformer = {
+  to: (value?: number | null) => value,
+  from: (value?: string | number | null) =>
+    value == null ? value : Number(value),
+};
+
 /**
- * One person's claim on one month's pay — the row whose unique index decides a
- * double payment.
+ * One run's claim on one person's month — HOW MUCH of the salary it paid.
  *
- * Payroll used to be all-or-nothing: `(branchId, periodKey)` was unique on the
- * run itself, so one run claimed the whole month and paying a subset locked
- * everyone else out. Real branches pay in waves — the teachers on the 1st, the
- * guards when the fees clear — so a period may now hold several runs, and the
- * thing that must stay unique is smaller: no PERSON is paid twice for the same
- * month.
+ * Payroll used to be all-or-nothing per month, then all-or-nothing per person.
+ * Real branches pay a salary in PARTS too — an advance on the 10th when a
+ * teacher asks, the remainder at month end — so a (person, month) may now hold
+ * several rows, one per wave, and the invariant that survives is smaller
+ * still: the rows for a (person, month) may never SUM past the salary.
  *
- * `(branchId, periodKey, employeeId)` is that guarantee, enforced by the index
- * rather than by a prior read, for the same reason the old run index was: a
- * nervous double press or a lost race must be decided by the database, not by
- * whoever read stale state last. Rows are written with the run and go with it
- * (FK ON DELETE CASCADE), so undoing a run frees its people for a redo.
+ * That cap cannot be a unique index, so the service enforces it inside a
+ * branch-scoped advisory-locked transaction — the lock serialises payroll
+ * writers per branch, deciding a double press the way the index used to.
+ * Rows are written with the run and go with it (FK ON DELETE CASCADE), so
+ * undoing an advance frees exactly that amount for a redo.
  */
 @Entity('pos_payroll_run_members')
-@Index(
-  'uq_pos_payroll_member_period',
-  ['branchId', 'periodKey', 'employeeId'],
-  {
-    unique: true,
-  },
-)
+@Index('ix_pos_payroll_member_period', ['branchId', 'periodKey', 'employeeId'])
 export class PayrollRunMember {
   @PrimaryGeneratedColumn('increment', { type: 'bigint' })
   id!: number;
@@ -47,10 +45,20 @@ export class PayrollRunMember {
   @Column({ type: 'int' })
   branchId!: number;
 
-  /** Denormalised from the run so the unique index needs no join. */
+  /** Denormalised from the run so the claim lookup needs no join. */
   @Column({ type: 'varchar', length: 32 })
   periodKey!: string;
 
   @Column({ type: 'bigint' })
   employeeId!: number;
+
+  /** What this run paid this person — the rows for a month sum to ≤ salary. */
+  @Column({
+    type: 'decimal',
+    precision: 14,
+    scale: 2,
+    default: 0,
+    transformer: decimalTransformer,
+  })
+  amount!: number;
 }
