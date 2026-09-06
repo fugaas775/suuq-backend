@@ -36,14 +36,15 @@ export interface PayrollRunLine {
  * labour. `expenseId` is that row. Deleting a run deletes the expense, which
  * reverses the ledger; the two must not drift apart.
  *
- * `(branchId, periodKey)` is UNIQUE. Payroll is the one figure a nervous user
- * will press twice, and a double-posted month overstates costs by a whole
- * month's wages with nothing on screen to suggest it happened.
+ * A period may hold SEVERAL runs — a month is paid in waves (the teachers on
+ * the 1st, the guards when the fees clear). What stays unique is one level
+ * down: `pos_payroll_run_members` guarantees no PERSON is paid twice for the
+ * same month, index-enforced, exactly as the old run-level index was. Payroll
+ * is still the one figure a nervous user will press twice; the double press is
+ * now decided per person instead of per month.
  */
 @Entity('pos_payroll_runs')
-@Index('uq_pos_payroll_runs_branch_period', ['branchId', 'periodKey'], {
-  unique: true,
-})
+@Index('ix_pos_payroll_runs_branch_period', ['branchId', 'periodKey'])
 export class PayrollRun {
   @PrimaryGeneratedColumn('increment', { type: 'bigint' })
   id!: number;
@@ -51,7 +52,7 @@ export class PayrollRun {
   @Column({ type: 'int' })
   branchId!: number;
 
-  /** The month being paid, as 'YYYY-MM'. One run per branch per period. */
+  /** The month being paid, as 'YYYY-MM'. A period may hold several runs. */
   @Column({ type: 'varchar', length: 32 })
   periodKey!: string;
 

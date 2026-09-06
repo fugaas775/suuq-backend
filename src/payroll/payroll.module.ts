@@ -6,6 +6,7 @@ import { PosBranchAccessGuard } from '../auth/pos-branch-access.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { BranchEmployee } from './entities/branch-employee.entity';
 import { PayrollRun } from './entities/payroll-run.entity';
+import { PayrollRunMember } from './entities/payroll-run-member.entity';
 import { PayrollController } from './payroll.controller';
 import { PayrollService } from './payroll.service';
 
@@ -24,7 +25,7 @@ import { PayrollService } from './payroll.service';
  */
 @Module({
   imports: [
-    TypeOrmModule.forFeature([BranchEmployee, PayrollRun]),
+    TypeOrmModule.forFeature([BranchEmployee, PayrollRun, PayrollRunMember]),
     BillingModule,
     RetailModule,
   ],

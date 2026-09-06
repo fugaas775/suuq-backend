@@ -13,6 +13,7 @@ import {
   BranchEmployeeStatus,
 } from './entities/branch-employee.entity';
 import { PayrollRun, PayrollRunLine } from './entities/payroll-run.entity';
+import { PayrollRunMember } from './entities/payroll-run-member.entity';
 import {
   CreateBranchEmployeeDto,
   CreatePayrollRunDto,
@@ -50,6 +51,8 @@ export class PayrollService {
     private readonly employees: Repository<BranchEmployee>,
     @InjectRepository(PayrollRun)
     private readonly runs: Repository<PayrollRun>,
+    @InjectRepository(PayrollRunMember)
+    private readonly members: Repository<PayrollRunMember>,
     private readonly billing: BranchBillingService,
   ) {}
 
@@ -252,7 +255,8 @@ export class PayrollService {
   async listRuns(query: ListPayrollRunsQueryDto) {
     const rows = await this.runs.find({
       where: { branchId: query.branchId },
-      order: { periodKey: 'DESC' },
+      // A month may hold several runs now — newest wave first within it.
+      order: { periodKey: 'DESC', createdAt: 'DESC' },
       take: 120,
     });
     return { items: rows.map((r) => this.toRun(r)) };
@@ -261,37 +265,71 @@ export class PayrollService {
   async createRun(branchId: number, userId: number, dto: CreatePayrollRunDto) {
     const periodKey = String(dto.periodKey || '').trim();
     if (!periodKey) throw new BadRequestException('A period is required.');
+    const explicit =
+      Array.isArray(dto.employeeIds) && dto.employeeIds.length > 0;
 
     const qb = this.employees
       .createQueryBuilder('e')
       .where('e."branchId" = :branchId', { branchId })
       .andWhere('e.status = :status', { status: BranchEmployeeStatus.ACTIVE });
-    if (dto.employeeIds?.length) {
+    if (explicit) {
       qb.andWhere('e.id IN (:...ids)', { ids: dto.employeeIds });
     }
     const roster = await qb.orderBy('e."fullName"', 'ASC').getMany();
 
     if (!roster.length) {
       throw new BadRequestException(
-        'Nobody is on this branch’s payroll yet. Add employees before running it.',
+        explicit
+          ? 'None of the selected people are on this branch’s active roster.'
+          : 'Nobody is on this branch’s payroll yet. Add employees before running it.',
       );
     }
 
+    // Who already holds a claim on this month. This read is a COURTESY — it
+    // lets us exclude and NAME the already-paid rather than fail on them; the
+    // unique member index below is what actually decides a race.
+    const paidRows = await this.members.find({
+      where: { branchId, periodKey },
+    });
+    const paidIds = new Set(paidRows.map((m) => Number(m.employeeId)));
+
+    if (explicit) {
+      // The caller asked for these people BY NAME. Silently dropping the paid
+      // ones would turn "pay these five" into "pay some of these five", so a
+      // paid selection is refused out loud instead.
+      const clash = roster.filter((e) => paidIds.has(Number(e.id)));
+      if (clash.length) {
+        throw new ConflictException(
+          `Already paid for ${periodKey}: ${clash
+            .map((e) => e.fullName)
+            .join(', ')}. Unselect them, or undo the run that paid them.`,
+        );
+      }
+    }
+
     const payable = roster.filter(
-      (e) => e.monthlySalary != null && Number(e.monthlySalary) > 0,
+      (e) =>
+        e.monthlySalary != null &&
+        Number(e.monthlySalary) > 0 &&
+        !paidIds.has(Number(e.id)),
     );
     const skipped = roster
       .filter((e) => !payable.includes(e))
       .map((e) => ({
         employeeId: Number(e.id),
         fullName: e.fullName,
-        reason:
-          e.monthlySalary == null ? 'No salary on file' : 'Salary is zero',
+        reason: paidIds.has(Number(e.id))
+          ? 'Already paid for this month'
+          : e.monthlySalary == null
+            ? 'No salary on file'
+            : 'Salary is zero',
       }));
 
     if (!payable.length) {
       throw new BadRequestException(
-        'No one on the roster has a salary recorded, so there is nothing to pay.',
+        skipped.some((s) => s.reason === 'Already paid for this month')
+          ? `Everyone with a salary on file has already been paid for ${periodKey}.`
+          : 'No one on the roster has a salary recorded, so there is nothing to pay.',
       );
     }
 
@@ -315,30 +353,41 @@ export class PayrollService {
       throw new BadRequestException('That date could not be read.');
     }
 
-    // Claim the period FIRST. The unique index is what actually stops a double
-    // post, and saving the run before the expense means a lost race can never
-    // strand an unreferenced expense in the books.
-    let run: PayrollRun;
+    // Save the run, then claim each PERSON on the members index — before any
+    // money moves. The index, not the courtesy read above, is what stops a
+    // double press or a lost race, and the ordering means a failed claim can
+    // never strand an unreferenced expense in the books.
+    let run: PayrollRun = await this.runs.save(
+      this.runs.create({
+        branchId,
+        periodKey,
+        label: dto.label ? String(dto.label).trim() : null,
+        total,
+        currency,
+        headcount: lines.length,
+        lines,
+        expenseId: null,
+        occurredAt,
+        postedByUserId: userId ?? null,
+        note: dto.note ? String(dto.note).trim() : null,
+      }),
+    );
     try {
-      run = await this.runs.save(
-        this.runs.create({
+      await this.members.insert(
+        lines.map((l) => ({
+          runId: Number(run.id),
           branchId,
           periodKey,
-          label: dto.label ? String(dto.label).trim() : null,
-          total,
-          currency,
-          headcount: lines.length,
-          lines,
-          expenseId: null,
-          occurredAt,
-          postedByUserId: userId ?? null,
-          note: dto.note ? String(dto.note).trim() : null,
-        }),
+          employeeId: Number(l.employeeId),
+        })),
       );
     } catch (error) {
+      // The run must not survive a lost claim — delete cascades away whatever
+      // member rows the multi-row insert did not roll back itself.
+      await this.runs.delete({ id: run.id });
       if (isUniqueViolation(error)) {
         throw new ConflictException(
-          `Payroll for ${periodKey} has already been run for this branch. Delete that run first if you need to redo it.`,
+          `Someone in this run was already paid for ${periodKey} by another run posted just now. Refresh and run it again.`,
         );
       }
       throw error;
