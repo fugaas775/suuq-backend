@@ -26,12 +26,14 @@ describe('PosRegisterService.suspendCart (clientRef idempotency)', () => {
     };
     const registerSessionsRepository = { findOne: jest.fn() };
     const reportService = { dispatchCloseReport: jest.fn() };
+    const staffAssignmentsRepository = { findOne: jest.fn() };
 
     const service = new PosRegisterService(
       registerSessionsRepository as any,
       suspendedCartsRepository as any,
       branchesRepository as any,
       reportService as any,
+      staffAssignmentsRepository as any,
     );
 
     return { service, suspendedCartsRepository };

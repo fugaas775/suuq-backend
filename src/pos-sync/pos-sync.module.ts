@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { EmailModule } from '../email/email.module';
 import { BranchesModule } from '../branches/branches.module';
+import { BranchStaffAssignment } from '../branch-staff/entities/branch-staff-assignment.entity';
 import { BranchInventory } from '../branches/entities/branch-inventory.entity';
 import { Branch } from '../branches/entities/branch.entity';
 import { PartnerCredentialsModule } from '../partner-credentials/partner-credentials.module';
@@ -49,6 +50,7 @@ import { PosSyncJob } from './entities/pos-sync-job.entity';
       PosRegisterSession,
       PosSuspendedCart,
       Branch,
+      BranchStaffAssignment,
       BranchInventory,
       PartnerCredential,
       Product,

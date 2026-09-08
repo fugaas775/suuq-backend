@@ -1,12 +1,19 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { BranchStaffAssignment } from '../branch-staff/entities/branch-staff-assignment.entity';
 import { Branch } from '../branches/entities/branch.entity';
 import { PosRegisterReportService } from './pos-register-report.service';
+import {
+  SCHOOL_WITHDRAWAL_REFUSED_MESSAGE,
+  canWithdrawStudent,
+  isSchoolPupilFolio,
+} from './school-withdrawal.policy';
 import { ClosePosRegisterSessionDto } from './dto/close-pos-register-session.dto';
 import { CreatePosRegisterSessionDto } from './dto/create-pos-register-session.dto';
 import { CreatePosSuspendedCartDto } from './dto/create-pos-suspended-cart.dto';
@@ -41,6 +48,8 @@ export class PosRegisterService {
     @InjectRepository(Branch)
     private readonly branchesRepository: Repository<Branch>,
     private readonly reportService: PosRegisterReportService,
+    @InjectRepository(BranchStaffAssignment)
+    private readonly staffAssignmentsRepository: Repository<BranchStaffAssignment>,
   ) {}
 
   async findSessions(
@@ -403,6 +412,13 @@ export class PosRegisterService {
       return this.toSuspendedCartResponse(cart);
     }
 
+    // Every discard of a pupil's folio is a withdrawal, whether it arrives
+    // flagged as one from Seller HQ or as a write-off from the till, so the
+    // gate sits on the discard itself rather than on the flag.
+    if (isSchoolPupilFolio(cart)) {
+      await this.assertCanWithdrawStudent(cart, actor);
+    }
+
     cart.status = PosSuspendedCartStatus.DISCARDED;
     cart.discardedAt = new Date();
     cart.discardedByUserId = actor.id ?? null;
@@ -544,6 +560,31 @@ export class PosRegisterService {
       throw new NotFoundException(`Register session ${id} not found`);
     }
     return session;
+  }
+
+  private async assertCanWithdrawStudent(
+    cart: PosSuspendedCart,
+    actor: { id?: number | null; email?: string | null },
+  ): Promise<void> {
+    const branch = await this.branchesRepository.findOne({
+      where: { id: cart.branchId },
+      select: { id: true, ownerId: true },
+    });
+    const assignment =
+      actor.id != null
+        ? await this.staffAssignmentsRepository.findOne({
+            where: { branchId: cart.branchId, userId: actor.id },
+          })
+        : null;
+    if (
+      !canWithdrawStudent({
+        actorId: actor.id ?? null,
+        ownerId: branch?.ownerId ?? null,
+        assignment,
+      })
+    ) {
+      throw new ForbiddenException(SCHOOL_WITHDRAWAL_REFUSED_MESSAGE);
+    }
   }
 
   private async findSuspendedCart(id: number): Promise<PosSuspendedCart> {
