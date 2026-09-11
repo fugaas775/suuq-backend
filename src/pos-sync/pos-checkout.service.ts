@@ -1533,12 +1533,16 @@ export class PosCheckoutService {
         `Register session ${dto.registerSessionId} does not belong to branch ${dto.branchId}`,
       );
     }
-    if (
-      session.status !== PosRegisterSessionStatus.OPEN &&
-      !this.occurredWhileSessionWasOpen(dto, session)
-    ) {
-      throw new BadRequestException(
-        `Register session ${dto.registerSessionId} is not open`,
+    if (session.status !== PosRegisterSessionStatus.OPEN) {
+      if (!this.occurredWhileSessionWasOpen(dto, session)) {
+        throw new BadRequestException(
+          `Register session ${dto.registerSessionId} is not open`,
+        );
+      }
+      // Say so in the log: this is the path a receipt lost to the old shared
+      // key takes home, and the one the owner will ask about.
+      this.logger.log(
+        `Late sale ${this.normalizeOptionalString(dto.receiptNumber) ?? this.normalizeOptionalString(dto.externalCheckoutId) ?? '(no receipt)'} accepted into closed register session ${session.id} (branch ${dto.branchId}, occurred ${dto.occurredAt})`,
       );
     }
     if (dto.registerId && session.registerId !== dto.registerId.trim()) {
@@ -1666,14 +1670,24 @@ export class PosCheckoutService {
   ): Promise<PosCheckout | null> {
     const idempotencyKey = this.normalizeOptionalString(dto.idempotencyKey);
     if (idempotencyKey) {
-      return this.posCheckoutsRepository.findOne({
+      const byKey = await this.posCheckoutsRepository.findOne({
         where: {
           branchId: dto.branchId,
           idempotencyKey,
         },
       });
+      if (byKey) {
+        return byKey;
+      }
     }
 
+    // The receipt's own id is the surer identity, and it is checked whether or
+    // not a key came with it. A device re-offering a receipt it holds may key it
+    // differently from the first time — the till's re-send sweep builds a fresh
+    // record from the receipt, and the old shared hotel-fullsettle key is not
+    // on the receipt — but it is the same receipt, and it must come back as the
+    // row already written, not be inserted a second time (the unique index on
+    // externalCheckoutId would refuse it as a 500 rather than as a duplicate).
     const externalCheckoutId = this.normalizeOptionalString(
       dto.externalCheckoutId,
     );

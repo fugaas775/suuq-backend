@@ -1596,6 +1596,45 @@ describe('PosCheckoutService', () => {
     expect(result.status).toBe(PosCheckoutStatus.PROCESSED);
   });
 
+  it('recognises a re-offered receipt by its externalCheckoutId when the key no longer matches', async () => {
+    // The till's re-send sweep rebuilds a record from the receipt, so the key
+    // is the per-receipt default while the row was written under the shared
+    // hotel-fullsettle key. Same receipt id → the existing row, no second insert.
+    posCheckoutsRepository.findOne
+      .mockResolvedValueOnce(null) // by key: no such key
+      .mockResolvedValueOnce({
+        id: 71,
+        branchId: 3,
+        externalCheckoutId: 'receipt-night-1',
+        receiptNumber: 'POS-3-1',
+        idempotencyKey: 'hotel-fullsettle-3-2730|300000|F',
+        transactionType: PosCheckoutTransactionType.SALE,
+        status: PosCheckoutStatus.PROCESSED,
+        total: 3000,
+        tenders: [],
+        items: [],
+      });
+
+    const result = await service.ingest({
+      branchId: 3,
+      transactionType: PosCheckoutTransactionType.SALE,
+      idempotencyKey: 'receipt-night-1-POS-3-1',
+      externalCheckoutId: 'receipt-night-1',
+      receiptNumber: 'POS-3-1',
+      currency: 'USD',
+      subtotal: 3000,
+      total: 3000,
+      occurredAt: '2026-09-07T13:43:00.000Z',
+      items: [{ productId: 55, quantity: 1, unitPrice: 3000, lineTotal: 3000 }],
+    });
+
+    expect(posCheckoutsRepository.findOne).toHaveBeenNthCalledWith(2, {
+      where: { branchId: 3, externalCheckoutId: 'receipt-night-1' },
+    });
+    expect(result.id).toBe(71);
+    expect(posCheckoutsRepository.save).not.toHaveBeenCalled();
+  });
+
   it('still answers a replay of the SAME receipt with the existing checkout', async () => {
     posCheckoutsRepository.findOne.mockResolvedValue({
       id: 71,
