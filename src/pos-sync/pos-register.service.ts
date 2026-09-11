@@ -282,7 +282,12 @@ export class PosRegisterService {
       }
     }
 
-    const buildCart = () =>
+    const buildCart = (
+      overrides: {
+        cartSnapshot?: Record<string, unknown>;
+        metadata?: Record<string, unknown> | null;
+      } = {},
+    ) =>
       this.suspendedCartsRepository.create({
         branchId: dto.branchId,
         registerSessionId: dto.registerSessionId ?? null,
@@ -295,8 +300,11 @@ export class PosRegisterService {
         itemCount: dto.itemCount,
         total: dto.total,
         note: dto.note?.trim() || null,
-        cartSnapshot: dto.cartSnapshot,
-        metadata: dto.metadata ?? null,
+        cartSnapshot: overrides.cartSnapshot ?? dto.cartSnapshot,
+        metadata:
+          overrides.metadata !== undefined
+            ? overrides.metadata
+            : (dto.metadata ?? null),
         suspendedByUserId: actor.id ?? null,
         suspendedByName: actor.email ?? null,
       });
@@ -323,12 +331,6 @@ export class PosRegisterService {
         ? String(snapshot.backendFolioId).trim()
         : null;
 
-    if (!backendFolioId) {
-      return this.toSuspendedCartResponse(
-        await this.suspendedCartsRepository.save(buildCart()),
-      );
-    }
-
     const folioUnitKey = String(
       snapshot.hotelRoomNumber ??
         snapshot.cafeteriaTableNumber ??
@@ -339,34 +341,155 @@ export class PosRegisterService {
       .trim()
       .toLowerCase();
 
+    // The same invariant for a HOTEL stay that has NO backend folio id.
+    //
+    // A stay checked in straight through "Record deposit" is written by the
+    // settle path, which opens no backend folio, so every row of that stay
+    // carries backendFolioId null — and the folio-keyed supersede above it
+    // never applies. Muntaha Room 204 (2026-09-11) accumulated three live copies
+    // of one guest's folio that way and the board summed them to 46,500 owed
+    // by a guest who owed 13,500. Such a stay is identified by the room, the
+    // check-in date and the guest: a room holds one guest at a time, and a
+    // re-save carries all three unchanged. The guest name is part of the key
+    // on purpose — a stale device checking a DIFFERENT guest into a room must
+    // never silently discard the folio (and the payments) of the guest who is
+    // actually in it. PROPERTY_RENTAL and every other format stamp their own
+    // serviceFormat and are untouched.
+    const hotelStayKey =
+      !backendFolioId &&
+      String(snapshot.serviceFormat ?? '')
+        .trim()
+        .toUpperCase() === 'HOTEL' &&
+      String(snapshot.hotelRoomNumber ?? '').trim() &&
+      String(snapshot.hotelCheckInAt ?? '').trim()
+        ? {
+            unit: String(snapshot.hotelRoomNumber).trim().toLowerCase(),
+            checkInAt: String(snapshot.hotelCheckInAt).trim(),
+            guest: String(snapshot.hotelGuestName ?? '')
+              .trim()
+              .toLowerCase(),
+          }
+        : null;
+
+    if (!backendFolioId && !hotelStayKey) {
+      return this.toSuspendedCartResponse(
+        await this.suspendedCartsRepository.save(buildCart()),
+      );
+    }
+
     const saved = await this.suspendedCartsRepository.manager.transaction(
       async (em) => {
         // Serialize concurrent saves of the same folio so two devices can't both
         // insert before seeing each other's row. Released at transaction end.
         await em.query('SELECT pg_advisory_xact_lock(hashtext($1)::bigint)', [
-          `pos-folio:${dto.branchId}:${backendFolioId}`,
+          backendFolioId
+            ? `pos-folio:${dto.branchId}:${backendFolioId}`
+            : `pos-room:${dto.branchId}:${hotelStayKey.unit}`,
         ]);
-        await em.query(
-          `UPDATE pos_suspended_carts
-              SET status = $1, "discardedAt" = now(), "discardedByName" = $2
-            WHERE "branchId" = $3
-              AND status = $4
-              AND "cartSnapshot" ->> 'backendFolioId' = $5
-              AND lower(btrim(coalesce(
-                    "cartSnapshot" ->> 'hotelRoomNumber',
-                    "cartSnapshot" ->> 'cafeteriaTableNumber',
-                    "cartSnapshot" ->> 'barberSeatNumber',
-                    label, ''))) = $6`,
-          [
-            PosSuspendedCartStatus.DISCARDED,
-            'superseded by folio re-save',
-            dto.branchId,
-            PosSuspendedCartStatus.SUSPENDED,
-            backendFolioId,
-            folioUnitKey,
-          ],
+        const priorRows: Array<{
+          id: number;
+          total: string | number | null;
+          metadata: Record<string, unknown> | null;
+          cartSnapshot: Record<string, unknown> | null;
+        }> = backendFolioId
+          ? await em.query(
+              `SELECT id, total, metadata, "cartSnapshot"
+                 FROM pos_suspended_carts
+                WHERE "branchId" = $1
+                  AND status = $2
+                  AND "cartSnapshot" ->> 'backendFolioId' = $3
+                  AND lower(btrim(coalesce(
+                        "cartSnapshot" ->> 'hotelRoomNumber',
+                        "cartSnapshot" ->> 'cafeteriaTableNumber',
+                        "cartSnapshot" ->> 'barberSeatNumber',
+                        label, ''))) = $4
+                  FOR UPDATE`,
+              [
+                dto.branchId,
+                PosSuspendedCartStatus.SUSPENDED,
+                backendFolioId,
+                folioUnitKey,
+              ],
+            )
+          : await em.query(
+              `SELECT id, total, metadata, "cartSnapshot"
+                 FROM pos_suspended_carts
+                WHERE "branchId" = $1
+                  AND status = $2
+                  AND upper(btrim(coalesce("cartSnapshot" ->> 'serviceFormat', ''))) = 'HOTEL'
+                  AND coalesce("cartSnapshot" ->> 'backendFolioId', '') = ''
+                  AND lower(btrim(coalesce("cartSnapshot" ->> 'hotelRoomNumber', ''))) = $3
+                  AND btrim(coalesce("cartSnapshot" ->> 'hotelCheckInAt', '')) = $4
+                  AND lower(btrim(coalesce("cartSnapshot" ->> 'hotelGuestName', ''))) = $5
+                  FOR UPDATE`,
+              [
+                dto.branchId,
+                PosSuspendedCartStatus.SUSPENDED,
+                hotelStayKey.unit,
+                hotelStayKey.checkInAt,
+                hotelStayKey.guest,
+              ],
+            );
+
+        // Money already taken never leaves with a superseded row. The row
+        // being written is a RE-SAVE, and a re-save from a device that never
+        // saw the row holding the deposit carries no partialPaidAmount at all
+        // — so discarding the old row would erase the deposit from every
+        // surface at once. Collected money is monotonic (a refund is a return
+        // receipt, never a lowered partialPaidAmount), so the largest figure
+        // across the rows being retired is carried onto the new row when its
+        // own is smaller. A row that declares itself fully paid is left alone:
+        // its total already says what was collected.
+        const collectedOn = (row: {
+          total: string | number | null;
+          metadata: Record<string, unknown> | null;
+          cartSnapshot: Record<string, unknown> | null;
+        }) => {
+          const snap = row.cartSnapshot ?? {};
+          if (snap.paid === true) return Number(row.total) || 0;
+          return (
+            Number(
+              row.metadata?.partialPaidAmount ?? snap.partialPaidAmount ?? 0,
+            ) || 0
+          );
+        };
+        const carried = priorRows.reduce(
+          (max, row) => Math.max(max, collectedOn(row)),
+          0,
         );
-        return em.getRepository(PosSuspendedCart).save(buildCart());
+        const own = collectedOn({
+          total: dto.total,
+          metadata: dto.metadata ?? null,
+          cartSnapshot: snapshot,
+        });
+        const overrides =
+          snapshot.paid !== true && carried > own
+            ? {
+                metadata: {
+                  ...(dto.metadata ?? {}),
+                  partialPaidAmount: carried,
+                },
+                cartSnapshot: {
+                  ...snapshot,
+                  paid: false,
+                  partialPaidAmount: carried,
+                },
+              }
+            : {};
+
+        if (priorRows.length > 0) {
+          await em.query(
+            `UPDATE pos_suspended_carts
+                SET status = $1, "discardedAt" = now(), "discardedByName" = $2
+              WHERE id = ANY($3::int[])`,
+            [
+              PosSuspendedCartStatus.DISCARDED,
+              'superseded by folio re-save',
+              priorRows.map((row) => Number(row.id)),
+            ],
+          );
+        }
+        return em.getRepository(PosSuspendedCart).save(buildCart(overrides));
       },
     );
 
