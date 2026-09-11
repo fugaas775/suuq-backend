@@ -68,7 +68,12 @@ describe('PosCheckoutService', () => {
     posCheckoutsRepository = {
       create: jest.fn((value) => ({ id: value.id ?? 71, ...value })),
       save: jest.fn(async (value) => value),
-      findOne: jest.fn().mockResolvedValue({ id: 71, status: 'PROCESSED' }),
+      // By default no sale is already on file: the identity lookups (key,
+      // receipt id, receipt number) miss, and only the by-id read that closes
+      // an ingest answers. A test that wants a replay sets its own findOne.
+      findOne: jest.fn(async (opts: any) =>
+        opts?.where?.id != null ? { id: 71, status: 'PROCESSED' } : null,
+      ),
       createQueryBuilder: jest.fn(),
     };
 
@@ -1632,6 +1637,46 @@ describe('PosCheckoutService', () => {
       where: { branchId: 3, externalCheckoutId: 'receipt-night-1' },
     });
     expect(result.id).toBe(71);
+    expect(posCheckoutsRepository.save).not.toHaveBeenCalled();
+  });
+
+  it('recognises a receipt by its receipt number when neither key nor receipt id matches', async () => {
+    // A row written on the server's side of a lost sale carries the paper's
+    // receipt number but not the device's receipt id. When the device later
+    // re-offers the real receipt, it is the same sale.
+    posCheckoutsRepository.findOne
+      .mockResolvedValueOnce(null) // by key
+      .mockResolvedValueOnce(null) // by externalCheckoutId
+      .mockResolvedValueOnce({
+        id: 90,
+        branchId: 47,
+        externalCheckoutId: null,
+        receiptNumber: 'POS-47-1789057446121',
+        idempotencyKey: 'recovery-POS-47-1789057446121',
+        transactionType: PosCheckoutTransactionType.SALE,
+        status: PosCheckoutStatus.PROCESSED,
+        total: 3000,
+        tenders: [],
+        items: [],
+      });
+
+    const result = await service.ingest({
+      branchId: 47,
+      transactionType: PosCheckoutTransactionType.SALE,
+      idempotencyKey: 'receipt-1789057446121-abc123-POS-47-1789057446121',
+      externalCheckoutId: 'receipt-1789057446121-abc123',
+      receiptNumber: 'POS-47-1789057446121',
+      currency: 'ETB',
+      subtotal: 3000,
+      total: 3000,
+      occurredAt: '2026-09-10T16:24:06.000Z',
+      items: [{ productId: 55, quantity: 1, unitPrice: 3000, lineTotal: 3000 }],
+    });
+
+    expect(posCheckoutsRepository.findOne).toHaveBeenNthCalledWith(3, {
+      where: { branchId: 47, receiptNumber: 'POS-47-1789057446121' },
+    });
+    expect(result.id).toBe(90);
     expect(posCheckoutsRepository.save).not.toHaveBeenCalled();
   });
 

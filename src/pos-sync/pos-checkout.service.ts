@@ -1692,10 +1692,30 @@ export class PosCheckoutService {
       dto.externalCheckoutId,
     );
     if (externalCheckoutId) {
-      return this.posCheckoutsRepository.findOne({
+      const byExternalId = await this.posCheckoutsRepository.findOne({
         where: {
           branchId: dto.branchId,
           externalCheckoutId,
+        },
+      });
+      if (byExternalId) {
+        return byExternalId;
+      }
+    }
+
+    // Last, the receipt NUMBER — the one identity printed on the paper and
+    // stamped on the folio (paidReceiptNumber), so the one a row written on
+    // the server's side of a lost sale carries when the device's own receipt
+    // id is not known. Muntaha Room 411's fourth night was written that way
+    // into session #28; when the front-desk PC finally re-offers the real
+    // receipt, this is what makes it the same sale and not a second one.
+    // Unique per branch by construction (POS-<branch>-<ms>).
+    const receiptNumber = this.normalizeOptionalString(dto.receiptNumber);
+    if (receiptNumber) {
+      return this.posCheckoutsRepository.findOne({
+        where: {
+          branchId: dto.branchId,
+          receiptNumber,
         },
       });
     }
