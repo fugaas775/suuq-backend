@@ -5,6 +5,7 @@ import {
   ForbiddenException,
   Injectable,
   UnauthorizedException,
+  Logger,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { InjectDataSource } from '@nestjs/typeorm';
@@ -31,6 +32,8 @@ type PosScopedRequestUser = {
 
 @Injectable()
 export class PosBranchAccessGuard implements CanActivate {
+  private readonly logger = new Logger(PosBranchAccessGuard.name);
+
   constructor(
     private readonly reflector: Reflector,
     private readonly revocationService: PosSessionRevocationService,
@@ -167,6 +170,14 @@ export class PosBranchAccessGuard implements CanActivate {
       return true;
     }
 
+    // Say WHO was refused WHAT, and what their token actually carried. Muntaha
+    // Hotel's till was refused OPEN_ROOM_FOLIO on every check-in for a season
+    // and nothing on the server recorded which account or which claim — the
+    // access log shows a 403 and nothing else. One line here would have named
+    // the row to fix on the first day.
+    this.logger.warn(
+      `POS permission refused: ${String(request.method || '')} ${String(request.originalUrl || request.url || '')} branch ${routeBranchId} needs [${requiredPermissions.join('|')}] — user ${user.id ?? '?'} ${String((user as { email?: string }).email ?? '')} tokenType=${tokenType || 'account'} branchRole=${user.branchRole ?? '-'} roles=[${(user.roles ?? []).join(',')}] claim=${claimedPermissions === null ? 'none (roster consulted)' : `[${Array.from(claimedPermissions).slice(0, 24).join(',')}]`}`,
+    );
     throw new ForbiddenException(
       'Your POS operator token does not include the required branch permission.',
     );
