@@ -13,6 +13,8 @@ import { POS_REQUIRED_PERMISSIONS_KEY } from './decorators/require-pos-permissio
 import { RETAIL_BRANCH_CONTEXT_KEY } from '../retail/decorators/retail-branch-context.decorator';
 import { PosSessionRevocationService } from './pos-session-revocation.service';
 import { BranchStaffAssignment } from '../branch-staff/entities/branch-staff-assignment.entity';
+import { Branch } from '../branches/entities/branch.entity';
+import { RetailTenant } from '../retail/entities/retail-tenant.entity';
 
 type PosScopedRequestUser = {
   id?: number;
@@ -137,13 +139,89 @@ export class PosBranchAccessGuard implements CanActivate {
       ),
     );
 
-    if (!hasPermission) {
-      throw new ForbiddenException(
-        'Your POS operator token does not include the required branch permission.',
-      );
+    if (hasPermission) {
+      return true;
     }
 
-    return true;
+    /* An account session of the branch's OWNER, or of someone the roster
+       lists as its MANAGER, is manager-like — the gate says so when it mints
+       a scoped token (canIssueManagerApproval), and isManagerLike above reads
+       exactly those claims. An account session carries none of them: it is
+       `sub`, `email` and `roles`, and an owner's roles are whatever they
+       signed up as — CUSTOMER, for a hotel that came in through the app.
+
+       Muntaha Hotel's till is signed in as its owner (roles: CUSTOMER; a
+       MANAGER roster row holding no permission codes, because a manager
+       needs none). Every operator refusal the client retried on that session
+       — the way a waiter's table folio is rescued at every other site — was
+       refused again, and the hotel opened no backend folio for a season: 186
+       refusals on POST /hotel/folios in one day, each swallowed by the till.
+       So a claimless session that the roster does not grant is asked one more
+       question before it is refused: does this branch belong to you, or does
+       the roster call you its manager? Never asked of a POS token, whose
+       claims already answered it. */
+    if (
+      claimedPermissions === null &&
+      (await this.isRosterManagerOrOwner(user.id, routeBranchId))
+    ) {
+      return true;
+    }
+
+    throw new ForbiddenException(
+      'Your POS operator token does not include the required branch permission.',
+    );
+  }
+
+  /**
+   * Whether the roster or the branch record makes this account manager-like
+   * for the branch: an active MANAGER assignment, the branch's own ownerId, or
+   * ownership of the tenant the branch belongs to — the same three facts
+   * canIssueManagerApproval reads when it mints a scoped token.
+   */
+  private async isRosterManagerOrOwner(
+    userId?: number,
+    branchId?: number | null,
+  ): Promise<boolean> {
+    if (!userId || !branchId) {
+      return false;
+    }
+    const assignments = await this.dataSource
+      .getRepository(BranchStaffAssignment)
+      .find({
+        where: { userId, branchId, isActive: true },
+        select: { id: true, role: true },
+      });
+    if (
+      assignments.some(
+        (assignment) =>
+          String(assignment.role || '')
+            .trim()
+            .toUpperCase() === 'MANAGER',
+      )
+    ) {
+      return true;
+    }
+    const branch = await this.dataSource.getRepository(Branch).findOne({
+      where: { id: branchId },
+      select: { id: true, ownerId: true, retailTenantId: true },
+    });
+    if (!branch) {
+      return false;
+    }
+    if (branch.ownerId != null && Number(branch.ownerId) === Number(userId)) {
+      return true;
+    }
+    if (branch.retailTenantId == null) {
+      return false;
+    }
+    const tenant = await this.dataSource.getRepository(RetailTenant).findOne({
+      where: { id: branch.retailTenantId },
+      select: { id: true, ownerUserId: true },
+    });
+    return (
+      tenant?.ownerUserId != null &&
+      Number(tenant.ownerUserId) === Number(userId)
+    );
   }
 
   /**

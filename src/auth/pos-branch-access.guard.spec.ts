@@ -3,6 +3,7 @@ import { Reflector } from '@nestjs/core';
 import { DataSource } from 'typeorm';
 import { HospitalityWorkflowsController } from '../hospitality/hospitality-workflows.controller';
 import { PosCheckoutController } from '../pos-sync/pos-checkout.controller';
+import { HotelFolioController } from '../hospitality/hotel-folio.controller';
 import { PosBranchAccessGuard } from './pos-branch-access.guard';
 import { PosSessionRevocationService } from './pos-session-revocation.service';
 
@@ -33,8 +34,11 @@ const revocationServiceStub = {
 // `rosterRows` is what branch_staff_assignments would return for the (userId,
 // branchId) asked for; the default is an empty roll.
 const rosterFind = jest.fn().mockResolvedValue([]);
+// The branch and tenant records, for the owner question a refused claimless
+// session is asked last. Default: no such branch.
+const recordFindOne = jest.fn().mockResolvedValue(null);
 const dataSourceStub = {
-  getRepository: () => ({ find: rosterFind }),
+  getRepository: () => ({ find: rosterFind, findOne: recordFindOne }),
 } as unknown as DataSource;
 
 describe('PosBranchAccessGuard', () => {
@@ -47,6 +51,8 @@ describe('PosBranchAccessGuard', () => {
   beforeEach(() => {
     rosterFind.mockReset();
     rosterFind.mockResolvedValue([]);
+    recordFindOne.mockReset();
+    recordFindOne.mockResolvedValue(null);
   });
 
   it('rejects checkout void for an operator token without VOID_SETTLED_BILL permission', async () => {
@@ -193,6 +199,101 @@ describe('PosBranchAccessGuard', () => {
     await expect(guard.canActivate(context)).rejects.toThrow(
       ForbiddenException,
     );
+  });
+
+  /* Muntaha Hotel's till is signed in as its owner — roles CUSTOMER, a MANAGER
+     roster row with no permission codes — so the account-session retry that
+     rescues a refused operator at every other site was refused too, and the
+     hotel opened no backend folio for a season. */
+  it('lets a claimless session through when the roster calls it the branch MANAGER', async () => {
+    rosterFind.mockResolvedValue([
+      { id: 49, role: 'MANAGER', permissions: [] },
+    ]);
+
+    const context = createExecutionContext(
+      HotelFolioController.prototype.openFolio,
+      HotelFolioController,
+      {
+        body: { branchId: 47, roomNumber: '204' },
+        user: { id: 2071, roles: ['CUSTOMER'] },
+      },
+    );
+
+    await expect(guard.canActivate(context)).resolves.toBe(true);
+    expect(recordFindOne).not.toHaveBeenCalled();
+  });
+
+  it('lets a claimless session through when the branch record names it the owner', async () => {
+    rosterFind.mockResolvedValue([]);
+    recordFindOne.mockResolvedValueOnce({
+      id: 47,
+      ownerId: 2071,
+      retailTenantId: 9,
+    });
+
+    const context = createExecutionContext(
+      HotelFolioController.prototype.openFolio,
+      HotelFolioController,
+      {
+        body: { branchId: 47, roomNumber: '204' },
+        user: { id: 2071, roles: ['CUSTOMER'] },
+      },
+    );
+
+    await expect(guard.canActivate(context)).resolves.toBe(true);
+  });
+
+  it('lets the tenant owner through, and still refuses a stranger', async () => {
+    recordFindOne
+      .mockResolvedValueOnce({ id: 47, ownerId: 999, retailTenantId: 9 })
+      .mockResolvedValueOnce({ id: 9, ownerUserId: 2071 });
+    const owner = createExecutionContext(
+      HotelFolioController.prototype.openFolio,
+      HotelFolioController,
+      { body: { branchId: 47 }, user: { id: 2071, roles: ['CUSTOMER'] } },
+    );
+    await expect(guard.canActivate(owner)).resolves.toBe(true);
+
+    recordFindOne
+      .mockResolvedValueOnce({ id: 47, ownerId: 999, retailTenantId: 9 })
+      .mockResolvedValueOnce({ id: 9, ownerUserId: 888 });
+    const stranger = createExecutionContext(
+      HotelFolioController.prototype.openFolio,
+      HotelFolioController,
+      { body: { branchId: 47 }, user: { id: 2071, roles: ['CUSTOMER'] } },
+    );
+    await expect(guard.canActivate(stranger)).rejects.toThrow(
+      ForbiddenException,
+    );
+  });
+
+  it('never asks the owner question of a POS token — its claims already answered it', async () => {
+    rosterFind.mockResolvedValue([
+      { id: 49, role: 'MANAGER', permissions: [] },
+    ]);
+    recordFindOne.mockResolvedValue({ id: 47, ownerId: 2071 });
+
+    const context = createExecutionContext(
+      HotelFolioController.prototype.openFolio,
+      HotelFolioController,
+      {
+        body: { branchId: 47 },
+        user: {
+          id: 2071,
+          roles: ['POS_OPERATOR'],
+          tokenType: 'pos_operator',
+          branchId: 47,
+          branchRole: 'OPERATOR',
+          permissions: ['OPEN_REGISTER'],
+        },
+      },
+    );
+
+    await expect(guard.canActivate(context)).rejects.toThrow(
+      ForbiddenException,
+    );
+    expect(rosterFind).not.toHaveBeenCalled();
+    expect(recordFindOne).not.toHaveBeenCalled();
   });
 
   /* An EMPTY claim is not an absent one. A POS token states what the gate
