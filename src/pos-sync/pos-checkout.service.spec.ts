@@ -397,6 +397,8 @@ describe('PosCheckoutService', () => {
   it('ingests sale checkouts into negative sale stock movements', async () => {
     posCheckoutsRepository.findOne
       .mockResolvedValueOnce(null)
+      // no key on this sale: the receipt-id and receipt-number lookups miss
+      .mockResolvedValueOnce(null)
       .mockResolvedValueOnce({
         id: 71,
         branchId: 3,
@@ -661,6 +663,8 @@ describe('PosCheckoutService', () => {
   it('persists customer profile metadata during checkout ingest', async () => {
     posCheckoutsRepository.findOne
       .mockResolvedValueOnce(null)
+      // no key on this sale: the receipt-id and receipt-number lookups miss
+      .mockResolvedValueOnce(null)
       .mockResolvedValueOnce({
         id: 72,
         branchId: 3,
@@ -758,6 +762,8 @@ describe('PosCheckoutService', () => {
 
   it('persists loyalty and normalized hotel checkout item metadata during ingest', async () => {
     posCheckoutsRepository.findOne
+      .mockResolvedValueOnce(null)
+      // no key on this sale: the receipt-id and receipt-number lookups miss
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce({
         id: 73,
