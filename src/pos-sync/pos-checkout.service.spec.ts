@@ -1542,6 +1542,201 @@ describe('PosCheckoutService', () => {
     );
   });
 
+  // An idempotency key names a request. The till keyed every HOTEL full
+  // settlement as `hotel-fullsettle-<branch>-<folio>|<amount>|F` — the same
+  // string every night for a guest paying the same rate on one folio — so the
+  // server handed nights two to four back night one's receipt (Muntaha Room
+  // 411, 2026-09-10). A collision from a DIFFERENT receipt is ingested under a
+  // key made unique by that receipt, and only the folio guards decide whether
+  // it is a duplicate.
+  it('ingests a different receipt that reused an idempotency key, under a key of its own', async () => {
+    posCheckoutsRepository.findOne
+      .mockResolvedValueOnce({
+        id: 71,
+        branchId: 3,
+        externalCheckoutId: 'receipt-night-1',
+        receiptNumber: 'POS-3-1',
+        idempotencyKey: 'hotel-fullsettle-3-2730|300000|F',
+        transactionType: PosCheckoutTransactionType.SALE,
+        status: PosCheckoutStatus.PROCESSED,
+        total: 3000,
+        tenders: [],
+        items: [],
+      })
+      // The derived key has never been seen.
+      .mockResolvedValueOnce(null);
+
+    const result = await service.ingest({
+      branchId: 3,
+      transactionType: PosCheckoutTransactionType.SALE,
+      idempotencyKey: 'hotel-fullsettle-3-2730|300000|F',
+      externalCheckoutId: 'receipt-night-2',
+      receiptNumber: 'POS-3-2',
+      currency: 'USD',
+      subtotal: 3000,
+      total: 3000,
+      occurredAt: '2026-09-10T16:24:00.000Z',
+      items: [{ productId: 55, quantity: 1, unitPrice: 3000, lineTotal: 3000 }],
+    });
+
+    expect(posCheckoutsRepository.findOne).toHaveBeenCalledWith({
+      where: {
+        branchId: 3,
+        idempotencyKey: 'hotel-fullsettle-3-2730|300000|F#receipt-night-2',
+      },
+    });
+    expect(posCheckoutsRepository.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        idempotencyKey: 'hotel-fullsettle-3-2730|300000|F#receipt-night-2',
+        externalCheckoutId: 'receipt-night-2',
+        receiptNumber: 'POS-3-2',
+      }),
+    );
+    expect(posCheckoutsRepository.save).toHaveBeenCalled();
+    expect(result.status).toBe(PosCheckoutStatus.PROCESSED);
+  });
+
+  it('still answers a replay of the SAME receipt with the existing checkout', async () => {
+    posCheckoutsRepository.findOne.mockResolvedValue({
+      id: 71,
+      branchId: 3,
+      externalCheckoutId: 'receipt-night-1',
+      receiptNumber: 'POS-3-1',
+      idempotencyKey: 'hotel-fullsettle-3-2730|300000|F',
+      transactionType: PosCheckoutTransactionType.SALE,
+      status: PosCheckoutStatus.PROCESSED,
+      total: 3000,
+      tenders: [],
+      items: [],
+    });
+
+    const result = await service.ingest({
+      branchId: 3,
+      transactionType: PosCheckoutTransactionType.SALE,
+      idempotencyKey: 'hotel-fullsettle-3-2730|300000|F',
+      externalCheckoutId: 'receipt-night-1',
+      receiptNumber: 'POS-3-1',
+      currency: 'USD',
+      subtotal: 3000,
+      total: 3000,
+      occurredAt: '2026-09-10T16:24:00.000Z',
+      items: [{ productId: 55, quantity: 1, unitPrice: 3000, lineTotal: 3000 }],
+    });
+
+    expect(result.id).toBe(71);
+    expect(posCheckoutsRepository.save).not.toHaveBeenCalled();
+    expect(posCheckoutsRepository.findOne).toHaveBeenCalledTimes(1);
+  });
+
+  it('replays the derived key too, so a retry of the re-ingested receipt does not double', async () => {
+    posCheckoutsRepository.findOne
+      .mockResolvedValueOnce({
+        id: 71,
+        branchId: 3,
+        externalCheckoutId: 'receipt-night-1',
+        idempotencyKey: 'hotel-fullsettle-3-2730|300000|F',
+        status: PosCheckoutStatus.PROCESSED,
+        tenders: [],
+        items: [],
+      })
+      .mockResolvedValueOnce({
+        id: 72,
+        branchId: 3,
+        externalCheckoutId: 'receipt-night-2',
+        idempotencyKey: 'hotel-fullsettle-3-2730|300000|F#receipt-night-2',
+        status: PosCheckoutStatus.PROCESSED,
+        tenders: [],
+        items: [],
+      });
+
+    const result = await service.ingest({
+      branchId: 3,
+      transactionType: PosCheckoutTransactionType.SALE,
+      idempotencyKey: 'hotel-fullsettle-3-2730|300000|F',
+      externalCheckoutId: 'receipt-night-2',
+      currency: 'USD',
+      subtotal: 3000,
+      total: 3000,
+      occurredAt: '2026-09-10T16:24:00.000Z',
+      items: [{ productId: 55, quantity: 1, unitPrice: 3000, lineTotal: 3000 }],
+    });
+
+    expect(result.id).toBe(72);
+    expect(posCheckoutsRepository.save).not.toHaveBeenCalled();
+  });
+
+  // A sale captured while the shift was open belongs to that shift however late
+  // it arrives — the outbox exists for that lag. Refusing it because the shift
+  // has since closed is how a real payment vanished from the owner's session
+  // report while the till still showed it.
+  const answerOnlyById = () =>
+    posCheckoutsRepository.findOne.mockImplementation(async (opts: any) =>
+      opts?.where?.id != null
+        ? (posCheckoutsRepository.save.mock.calls[
+            posCheckoutsRepository.save.mock.calls.length - 1
+          ]?.[0] ?? null)
+        : null,
+    );
+
+  it('accepts a late sale into a CLOSED session when it occurred while that session was open', async () => {
+    answerOnlyById();
+    registerSessionsRepository.findOne.mockResolvedValueOnce({
+      id: 11,
+      branchId: 3,
+      registerId: 'front-1',
+      status: PosRegisterSessionStatus.CLOSED,
+      openedAt: new Date('2026-09-10T14:40:00.000Z'),
+      closedAt: new Date('2026-09-11T05:07:00.000Z'),
+    });
+
+    const result = await service.ingest({
+      branchId: 3,
+      transactionType: PosCheckoutTransactionType.SALE,
+      registerId: 'front-1',
+      registerSessionId: 11,
+      currency: 'USD',
+      subtotal: 3000,
+      total: 3000,
+      occurredAt: '2026-09-10T16:24:00.000Z',
+      items: [{ productId: 55, quantity: 1, unitPrice: 3000, lineTotal: 3000 }],
+    });
+
+    expect(result.status).toBe(PosCheckoutStatus.PROCESSED);
+    expect(posCheckoutsRepository.save).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        status: PosCheckoutStatus.PROCESSED,
+        registerSessionId: 11,
+      }),
+    );
+  });
+
+  it('still refuses a CLOSED session for a sale that occurred after it closed', async () => {
+    answerOnlyById();
+    registerSessionsRepository.findOne.mockResolvedValueOnce({
+      id: 11,
+      branchId: 3,
+      registerId: 'front-1',
+      status: PosRegisterSessionStatus.CLOSED,
+      openedAt: new Date('2026-09-10T14:40:00.000Z'),
+      closedAt: new Date('2026-09-11T05:07:00.000Z'),
+    });
+
+    const result = await service.ingest({
+      branchId: 3,
+      transactionType: PosCheckoutTransactionType.SALE,
+      registerId: 'front-1',
+      registerSessionId: 11,
+      currency: 'USD',
+      subtotal: 3000,
+      total: 3000,
+      occurredAt: '2026-09-11T09:00:00.000Z',
+      items: [{ productId: 55, quantity: 1, unitPrice: 3000, lineTotal: 3000 }],
+    });
+
+    expect(result.status).toBe(PosCheckoutStatus.FAILED);
+    expect(result.failureReason).toBe('Register session 11 is not open');
+  });
+
   it('rejects checkouts against closed register sessions and persists the failure', async () => {
     posCheckoutsRepository.findOne.mockResolvedValue({
       id: 71,

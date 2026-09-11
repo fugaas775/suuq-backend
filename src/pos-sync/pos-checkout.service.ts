@@ -465,7 +465,40 @@ export class PosCheckoutService {
 
     this.assertPricingSummary(dto.pricingSummary, dto);
 
-    const existing = await this.findExistingForIdempotency(dto);
+    let existing = await this.findExistingForIdempotency(dto);
+    // An idempotency key names a REQUEST, so a second request under the same
+    // key is a replay — unless it is a different receipt. The till used to key
+    // every HOTEL full settlement as `hotel-fullsettle-<branch>-<folio>|<amount>|F`,
+    // which is the same string every night for a guest paying the same rate on
+    // one folio: Muntaha Room 411 paid 3,000 four nights running and the server
+    // answered nights two to four with night one's receipt. The device filed
+    // each as synced, so the till read 26,000 for a session the owner's report
+    // put at 23,000, and the books were short three nights of a real guest.
+    //
+    // A collision from another receipt therefore falls through to the folio
+    // guards below — the same-amount window and the fully-paid cap — which are
+    // the rules that actually know a duplicate from a repeat, under a key made
+    // unique by the receipt's own identity so the row can still be written.
+    let effectiveIdempotencyKey = this.normalizeOptionalString(
+      dto.idempotencyKey,
+    );
+    if (existing && !this.isSameReceipt(existing, dto)) {
+      const receiptIdentity =
+        this.normalizeOptionalString(dto.externalCheckoutId) ??
+        this.normalizeOptionalString(dto.receiptNumber);
+      if (effectiveIdempotencyKey && receiptIdentity) {
+        effectiveIdempotencyKey = `${effectiveIdempotencyKey}#${receiptIdentity}`;
+        this.logger.warn(
+          `Idempotency key ${dto.idempotencyKey} on branch ${dto.branchId} was already used by checkout ${existing.id} (${existing.receiptNumber ?? existing.externalCheckoutId ?? 'no receipt'}); ingesting ${receiptIdentity} under ${effectiveIdempotencyKey}`,
+        );
+        existing = await this.posCheckoutsRepository.findOne({
+          where: {
+            branchId: dto.branchId,
+            idempotencyKey: effectiveIdempotencyKey,
+          },
+        });
+      }
+    }
     if (existing && existing.status !== PosCheckoutStatus.FAILED) {
       return this.toResponse(existing);
     }
@@ -507,7 +540,7 @@ export class PosCheckoutService {
       branchId: dto.branchId,
       partnerCredentialId: dto.partnerCredentialId ?? null,
       externalCheckoutId: this.normalizeOptionalString(dto.externalCheckoutId),
-      idempotencyKey: this.normalizeOptionalString(dto.idempotencyKey),
+      idempotencyKey: effectiveIdempotencyKey,
       registerId: this.normalizeOptionalString(dto.registerId),
       registerSessionId: dto.registerSessionId ?? null,
       suspendedCartId: dto.suspendedCartId ?? null,
@@ -1500,7 +1533,10 @@ export class PosCheckoutService {
         `Register session ${dto.registerSessionId} does not belong to branch ${dto.branchId}`,
       );
     }
-    if (session.status !== PosRegisterSessionStatus.OPEN) {
+    if (
+      session.status !== PosRegisterSessionStatus.OPEN &&
+      !this.occurredWhileSessionWasOpen(dto, session)
+    ) {
       throw new BadRequestException(
         `Register session ${dto.registerSessionId} is not open`,
       );
@@ -1567,6 +1603,62 @@ export class PosCheckoutService {
     }
 
     return cart;
+  }
+
+  /**
+   * A sale captured while a session was open belongs to that session however
+   * late it reaches the server — the device outbox exists for exactly that lag,
+   * and a receipt held back for days (offline, or filed as synced under a key
+   * another receipt had used) must land in the shift that took the money, not
+   * be refused because the shift has since been closed. The owner reads
+   * sessions, so a refusal here is a payment that vanishes from their books
+   * while the till still shows it. Ten minutes of grace on either side covers a
+   * device clock a little off the server's.
+   */
+  private static readonly CLOSED_SESSION_GRACE_MS = 10 * 60_000;
+
+  private occurredWhileSessionWasOpen(
+    dto: IngestPosCheckoutDto,
+    session: PosRegisterSession,
+  ): boolean {
+    if (session.status !== PosRegisterSessionStatus.CLOSED) {
+      return false;
+    }
+    const occurred = Date.parse(String(dto.occurredAt ?? ''));
+    const opened = session.openedAt
+      ? new Date(session.openedAt).getTime()
+      : NaN;
+    const closed = session.closedAt
+      ? new Date(session.closedAt).getTime()
+      : NaN;
+    if (![occurred, opened, closed].every(Number.isFinite)) {
+      return false;
+    }
+    const grace = PosCheckoutService.CLOSED_SESSION_GRACE_MS;
+    return occurred >= opened - grace && occurred <= closed + grace;
+  }
+
+  /**
+   * Whether a checkout found under the incoming idempotency key is the SAME
+   * receipt being replayed, or a different receipt that happened to reuse the
+   * key. Compared on the receipt's own identity — externalCheckoutId first (the
+   * device's receipt id), then receiptNumber. When neither side carries one
+   * there is nothing to tell them apart by, and the row is read as the replay
+   * it has always been read as.
+   */
+  private isSameReceipt(
+    existing: PosCheckout,
+    dto: IngestPosCheckoutDto,
+  ): boolean {
+    const externalId = this.normalizeOptionalString(dto.externalCheckoutId);
+    if (externalId && existing.externalCheckoutId) {
+      return existing.externalCheckoutId === externalId;
+    }
+    const receiptNumber = this.normalizeOptionalString(dto.receiptNumber);
+    if (receiptNumber && existing.receiptNumber) {
+      return existing.receiptNumber === receiptNumber;
+    }
+    return true;
   }
 
   private async findExistingForIdempotency(
