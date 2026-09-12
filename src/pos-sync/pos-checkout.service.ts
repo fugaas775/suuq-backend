@@ -784,17 +784,21 @@ export class PosCheckoutService {
           // would drive on-hand negative, and that rejection aborts the whole
           // checkout transaction — the sale lands FAILED and drops out of every
           // report (production already holds such rows). Losing the revenue is
-          // strictly worse than an imprecise stock count, so an oversold RETAIL
-          // line records what it could and reports the shortfall on the
-          // checkout instead of failing the sale.
-          const appliedDelta = isRetailBranch
-            ? await this.clampRetailSaleDelta(
-                quantityDelta,
-                () => this.readProductOnHand(dto.branchId, productId, manager),
-                item,
-                oversoldLines,
-              )
-            : quantityDelta;
+          // strictly worse than an imprecise stock count, so an oversold line
+          // records what it could and reports the shortfall on the checkout
+          // instead of failing the sale.
+          //
+          // Every decremented line is clamped, not only RETAIL's: the only
+          // other way here is a product that opted in with manageStock — a QSR
+          // store product, a bottled drink counted from the fridge — and a
+          // till that rang up the last Coke twice, or one that never had an
+          // opening count entered, must not lose the whole order over it.
+          const appliedDelta = await this.clampRetailSaleDelta(
+            quantityDelta,
+            () => this.readProductOnHand(dto.branchId, productId, manager),
+            item,
+            oversoldLines,
+          );
 
           if (appliedDelta === 0) {
             continue;
@@ -1084,7 +1088,11 @@ export class PosCheckoutService {
   }
 
   /**
-   * Clamp a RETAIL sale movement to the units the branch actually holds.
+   * Clamp a sale movement to the units the branch actually holds.
+   *
+   * Named for the RETAIL case it was written for; every decremented line goes
+   * through it now (see the ingest stock loop), because a QSR store product
+   * can be oversold the same way and losing the sale is the same wrong answer.
    *
    * Returning 0 means "record no movement" — the caller skips the ledger write
    * entirely. Anything clamped (including to 0) is appended to `oversoldLines`
@@ -3395,9 +3403,11 @@ export class PosCheckoutService {
 
     // Voiding backed the money out of the books but left the stock gone: the
     // units were decremented at sale time and nothing ever put them back, so a
-    // voided RETAIL sale permanently understated on-hand. Reverse the movements
-    // too. Best-effort and RETAIL-scoped — no other format decremented for a
-    // manageStock=false product, so none has anything to give back.
+    // voided sale permanently understated on-hand. Reverse the movements too.
+    // Best-effort, and scoped to what the sale actually moved: every RETAIL
+    // line with an inventory row, and elsewhere only a product that opted in
+    // with manageStock (a QSR store product) — no format decrements for a
+    // manageStock=false product, so those have nothing to give back.
     if (checkout.status === PosCheckoutStatus.PROCESSED) {
       try {
         await this.restoreVoidedCheckoutStock(
@@ -3423,13 +3433,19 @@ export class PosCheckoutService {
   }
 
   /**
-   * Put back the units a now-voided RETAIL sale took off the shelf.
+   * Put back the units a now-voided sale took off the shelf.
    *
    * Mirrors the ingest stock loop: variant lines go back through the variant
    * ledger, product lines through the product ledger, and a line the sale never
    * moved (no product, or a product the branch does not stock) is skipped. A
    * RETURN is not reversed — its movement added stock, and voiding a refund is
    * out of scope here.
+   *
+   * Which lines the sale moved follows the ingest gate exactly: on a RETAIL
+   * branch every line with an inventory row; on any other format only a
+   * product that opted in with manageStock — a QSR store product. A
+   * CAFETERIA's ingredient rows sit on manageStock=false products that no sale
+   * ever decremented, and restoring "their" units would invent stock.
    */
   private async restoreVoidedCheckoutStock(
     checkout: PosCheckout,
@@ -3443,9 +3459,7 @@ export class PosCheckoutService {
     const branch = await this.branchesRepository.findOne({
       where: { id: checkout.branchId },
     });
-    if (!this.isRetailServiceFormat(branch)) {
-      return;
-    }
+    const isRetailBranch = this.isRetailServiceFormat(branch);
 
     const items = Array.isArray(checkout.items) ? checkout.items : [];
     if (!items.length) {
@@ -3461,6 +3475,16 @@ export class PosCheckoutService {
         const quantity = Math.abs(Number(item.quantity ?? 0));
         if (!quantity) {
           continue;
+        }
+
+        if (!isRetailBranch) {
+          const product = await manager.getRepository(Product).findOne({
+            where: { id: productId },
+            select: ['id', 'manageStock'],
+          });
+          if (!product?.manageStock) {
+            continue;
+          }
         }
 
         const { variantId } = await this.resolveCheckoutVariantId(

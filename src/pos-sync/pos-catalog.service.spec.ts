@@ -124,4 +124,18 @@ describe('PosCatalogService — branch retail pricing', () => {
     expect(result.items[0].retailPrice).toBeNull();
     expect(result.items[0].catalogLinkSource).toBe('PURCHASE_ORDER');
   });
+
+  it('says whether the product is counted stock, so a typed search blocks at zero like the tile', async () => {
+    // A QSR store product (a bottled drink) is told apart from a menu item by
+    // manage_stock alone; the register reads it off the search row too.
+    rawRows = [
+      row({ product_id: 501, product_manage_stock: true }),
+      row({ product_id: 502, product_name: 'Beef Burger', product_manage_stock: false }),
+      row({ product_id: 503, product_name: 'Legacy row', product_manage_stock: null }),
+    ];
+
+    const result = await search();
+
+    expect(result.items.map((item) => item.manageStock)).toEqual([true, false, false]);
+  });
 });

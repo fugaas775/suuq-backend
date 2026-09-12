@@ -111,6 +111,10 @@ export class PosCatalogService {
         'product.price AS product_price',
         'product.sale_price AS product_sale_price',
         'product.attributes AS product_attributes',
+        // Whether the product is counted stock. The register tile reads it to
+        // decide between "4 left" and "Available": a QSR store product found by
+        // typing its name must block at zero exactly like its tile does.
+        'product.manageStock AS product_manage_stock',
         'alias.aliasType AS alias_type',
         'alias.aliasValue AS alias_value',
         'inventory.availableToSell AS inventory_available_to_sell',
@@ -190,6 +194,7 @@ export class PosCatalogService {
           catalogLinkSource: row.link_source ?? null,
           availableToSell,
           stockStatus,
+          manageStock: row.product_manage_stock === true,
           matchedAliasType: row.alias_type ?? null,
           matchedAliasValue: row.alias_value ?? null,
           aliases: posCatalog.aliases,

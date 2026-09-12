@@ -41,6 +41,15 @@ export class PosCatalogSearchItemResponseDto {
   })
   stockStatus!: 'HEALTHY' | 'LOW_STOCK' | 'REORDER_NOW' | 'OUT_OF_STOCK';
 
+  /**
+   * True when the product opted into counted stock (`product.manage_stock`).
+   * Additive. The register shows a count and refuses the sale at zero for
+   * these — a QSR store product — and treats everything else as always
+   * available, so the search path has to say which it found.
+   */
+  @ApiProperty()
+  manageStock!: boolean;
+
   @ApiPropertyOptional({ enum: ProductAliasType })
   matchedAliasType?: ProductAliasType | null;
 

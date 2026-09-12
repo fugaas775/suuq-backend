@@ -112,11 +112,14 @@ describe('PosCheckoutService', () => {
       recordMovement: jest.fn().mockResolvedValue({}),
     };
 
-    // No branch inventory row and no variant row by default, so every existing
-    // expectation keeps running through the manageStock path unchanged.
+    // No branch inventory row by default (so the RETAIL row-exists escape hatch
+    // stays shut), but a well-stocked row wherever one IS read: every
+    // decremented line is clamped to on-hand now, so the manageStock path the
+    // older expectations run through needs units to take. Tests about a thin or
+    // missing row set their own findOne.
     branchInventoryRepository = {
       exists: jest.fn().mockResolvedValue(false),
-      findOne: jest.fn().mockResolvedValue(null),
+      findOne: jest.fn().mockResolvedValue({ id: 1, quantityOnHand: 100 }),
     };
 
     branchInventoryVariantRepository = {
@@ -2531,6 +2534,14 @@ describe('PosCheckoutService', () => {
     });
 
     it('issues no stock movement when a CAFETERIA checkout is voided', async () => {
+      // The ordinary CAFETERIA product: made to order, manageStock=false. Its
+      // ingredient inventory row was never decremented by the sale, so the void
+      // has nothing to give back.
+      productsRepository.findOne.mockResolvedValue({
+        id: 55,
+        name: 'Plate of the day',
+        manageStock: false,
+      });
       branchesRepository.findOne.mockResolvedValue({
         id: 3,
         serviceFormat: 'CAFETERIA',
@@ -2549,6 +2560,117 @@ describe('PosCheckoutService', () => {
       await service.voidCheckout(71, { reason: 'keyed twice' }, 9, 3);
 
       expect(inventoryLedgerService.recordMovement).not.toHaveBeenCalled();
+    });
+
+    // A QSR store product — a bottled drink counted from the fridge — opts in
+    // with manageStock on a branch that is NOT RETAIL. It decrements, it is
+    // clamped rather than failing the sale, and a void gives the units back.
+    describe('QSR store products', () => {
+      beforeEach(() => {
+        branchesRepository.findOne.mockResolvedValue({
+          id: 3,
+          serviceFormat: 'QSR',
+        });
+        productsRepository.findOne.mockResolvedValue({
+          id: 55,
+          name: 'Coca-Cola 300ml',
+          manageStock: true,
+        });
+        // No RETAIL escape hatch here: the row-exists check must stay unread.
+        branchInventoryRepository.exists.mockResolvedValue(false);
+      });
+
+      it('decrements the fridge on sale', async () => {
+        branchInventoryRepository.findOne.mockResolvedValue({
+          id: 1,
+          quantityOnHand: 12,
+        });
+
+        await ingestOneLine(2);
+
+        expect(inventoryLedgerService.recordMovement).toHaveBeenCalledWith(
+          expect.objectContaining({
+            branchId: 3,
+            productId: 55,
+            quantityDelta: -2,
+            movementType: StockMovementType.SALE,
+          }),
+          expect.anything(),
+        );
+        expect(branchInventoryRepository.exists).not.toHaveBeenCalled();
+      });
+
+      it('clamps an oversold line to on-hand and keeps the sale PROCESSED', async () => {
+        // Before the clamp reached this format, recordMovement threw on the
+        // negative on-hand and the whole order landed FAILED.
+        branchInventoryRepository.findOne.mockResolvedValue({
+          id: 1,
+          quantityOnHand: 1,
+        });
+
+        await ingestOneLine(3);
+
+        expect(inventoryLedgerService.recordMovement).toHaveBeenCalledWith(
+          expect.objectContaining({ quantityDelta: -1 }),
+          expect.anything(),
+        );
+        const saved = savedCheckout();
+        expect(saved?.status).toBe(PosCheckoutStatus.PROCESSED);
+        expect(saved?.metadata?.oversoldLines).toEqual([
+          expect.objectContaining({ requested: 3, applied: 1, shortfall: 2 }),
+        ]);
+      });
+
+      it('sells through with no opening count entered, and says so', async () => {
+        // Switched on in Seller HQ but never counted: no inventory row at all.
+        branchInventoryRepository.findOne.mockResolvedValue(null);
+
+        await ingestOneLine(1);
+
+        expect(inventoryLedgerService.recordMovement).not.toHaveBeenCalled();
+        const saved = savedCheckout();
+        expect(saved?.status).toBe(PosCheckoutStatus.PROCESSED);
+        expect(saved?.metadata?.oversoldLines).toEqual([
+          expect.objectContaining({ requested: 1, applied: 0, shortfall: 1 }),
+        ]);
+      });
+
+      it('leaves a menu item on the same branch alone', async () => {
+        productsRepository.findOne.mockResolvedValue({
+          id: 55,
+          name: 'Classic Beef Burger',
+          manageStock: false,
+        });
+
+        await ingestOneLine(2);
+
+        expect(inventoryLedgerService.recordMovement).not.toHaveBeenCalled();
+        expect(savedCheckout()?.metadata?.oversoldLines ?? null).toBeNull();
+      });
+
+      it('puts the units back when the sale is voided', async () => {
+        branchInventoryRepository.exists.mockResolvedValue(true);
+        posCheckoutsRepository.findOne.mockResolvedValue({
+          id: 71,
+          branchId: 3,
+          transactionType: PosCheckoutTransactionType.SALE,
+          status: PosCheckoutStatus.PROCESSED,
+          receiptNumber: 'POS-3-1',
+          items: [{ productId: 55, quantity: 2, unitPrice: 40, lineTotal: 80 }],
+        });
+        posCheckoutsRepository.update = jest.fn().mockResolvedValue({});
+
+        await service.voidCheckout(71, { reason: 'keyed twice' }, 9, 3);
+
+        expect(inventoryLedgerService.recordMovement).toHaveBeenCalledWith(
+          expect.objectContaining({
+            productId: 55,
+            quantityDelta: 2,
+            sourceType: 'POS_CHECKOUT_VOID',
+          }),
+          expect.anything(),
+        );
+      });
     });
 
     it('clamps a RETAIL variant line the same way', async () => {
