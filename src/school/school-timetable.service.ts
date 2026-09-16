@@ -239,6 +239,12 @@ export class SchoolTimetableService {
     periods.forEach((p, i) => periodRank.set(p.code.toUpperCase(), i));
 
     const shifts = this.normalizeShifts(dto, canonicalClass);
+    const shiftOfClass = new Map<string, string>();
+    for (const shift of shifts) {
+      for (const code of shift.classCodes) {
+        shiftOfClass.set(code.toLowerCase(), shift.code);
+      }
+    }
 
     const classSeen = new Map<string, SchoolTimetableSlot>();
     const teacherSeen = new Map<string, SchoolTimetableSlot>();
@@ -310,6 +316,19 @@ export class SchoolTimetableService {
       }
       classSeen.set(classKey, slot);
 
+      /* Two shifts ring the same bell at different hours: SMAQ's Monday P1 is
+         08:00 for a morning class and 14:00 for an afternoon one, and a teacher
+         holding both is not double-booked — the first import was refused for
+         exactly this. So the clash is keyed on the resolved START TIME when the
+         bell has one, and on shift + period code when it does not; a period
+         code alone is only "the same time" inside one shift. */
+      const shift = shiftOfClass.get(classCode.toLowerCase()) || null;
+      const times = period
+        ? period.times[shift || '*'] || period.times['*'] || null
+        : null;
+      const whenKey = times?.start
+        ? `t:${times.start}`
+        : `p:${shift || '*'}|${slot.period.toUpperCase()}`;
       const teacherKey =
         employeeId != null
           ? `e:${employeeId}`
@@ -317,7 +336,7 @@ export class SchoolTimetableService {
             ? `n:${normalizePersonName(teacherName)}`
             : null;
       if (teacherKey) {
-        const key = `${day}|${slot.period.toUpperCase()}|${teacherKey}`;
+        const key = `${day}|${whenKey}|${teacherKey}`;
         const busy = teacherSeen.get(key);
         if (busy && busy.classCode.toLowerCase() !== classCode.toLowerCase()) {
           throw new BadRequestException(

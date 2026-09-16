@@ -245,6 +245,119 @@ describe('SchoolTimetableService', () => {
     ).rejects.toThrow(/in 1aad and 3aad at the same time on Wednesday P2/);
   });
 
+  /**
+   * The first SMAQ import was refused for "Temesgen Eshetu is in 4aad and 6aad
+   * at the same time on Monday P1" — 4aad sits in the morning shift (P1 at
+   * 08:00) and 6aad in the afternoon (P1 at 14:00). Same bell, different hours.
+   */
+  it('lets a teacher hold the same period code in two shifts that ring at different hours', async () => {
+    const { svc } = makeService();
+    const twoShift = [
+      {
+        code: 'P1',
+        sortOrder: 1,
+        times: {
+          AM: { start: '08:00', end: '08:40' },
+          PM: { start: '14:00', end: '14:40' },
+        },
+      },
+    ];
+    const shifts = [
+      { code: 'AM', classCodes: ['1aad', '3aad'] },
+      { code: 'PM', classCodes: ['7th'] },
+    ];
+    const doc = await svc.put(
+      {
+        branchId: 115,
+        periods: twoShift,
+        shifts,
+        slots: [
+          {
+            day: 1,
+            period: 'P1',
+            classCode: '3aad',
+            subject: 'Amharic',
+            employeeId: 5,
+          },
+          {
+            day: 1,
+            period: 'P1',
+            classCode: '7th',
+            subject: 'Amharic',
+            employeeId: 5,
+          },
+        ],
+      },
+      null,
+    );
+    expect(doc.slots).toHaveLength(2);
+
+    // Inside one shift the same period code IS the same time.
+    await expect(
+      svc.put(
+        {
+          branchId: 115,
+          periods: twoShift,
+          shifts,
+          slots: [
+            {
+              day: 1,
+              period: 'P1',
+              classCode: '1aad',
+              subject: 'Amharic',
+              employeeId: 5,
+            },
+            {
+              day: 1,
+              period: 'P1',
+              classCode: '3aad',
+              subject: 'Amharic',
+              employeeId: 5,
+            },
+          ],
+        } as any,
+        null,
+      ),
+    ).rejects.toThrow(/in 1aad and 3aad at the same time on Monday P1/);
+
+    // Two shifts that ring at the SAME hour are one time, whatever they are called.
+    await expect(
+      svc.put(
+        {
+          branchId: 115,
+          periods: [
+            {
+              code: 'P1',
+              sortOrder: 1,
+              times: {
+                AM: { start: '08:00', end: '08:40' },
+                PM: { start: '08:00', end: '08:40' },
+              },
+            },
+          ],
+          shifts,
+          slots: [
+            {
+              day: 1,
+              period: 'P1',
+              classCode: '3aad',
+              subject: 'Amharic',
+              employeeId: 5,
+            },
+            {
+              day: 1,
+              period: 'P1',
+              classCode: '7th',
+              subject: 'Amharic',
+              employeeId: 5,
+            },
+          ],
+        } as any,
+        null,
+      ),
+    ).rejects.toThrow(/at the same time on Monday P1/);
+  });
+
   it('refuses two lessons for one class in one period', async () => {
     const { svc } = makeService();
     await expect(
