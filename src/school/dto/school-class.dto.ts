@@ -93,6 +93,24 @@ export class CreateSchoolClassDto {
   @Min(0)
   capacity?: number | null;
 
+  /**
+   * The staff row of the class's home room teacher — `pos_branch_employees.id`.
+   *
+   * The NAME is not accepted here. The service reads it off the employee row,
+   * so the id and the name on the class can never disagree, and an office
+   * cannot name a home room teacher who is not on the staff list.
+   */
+  @ApiPropertyOptional({
+    example: 30,
+    description:
+      'Staff row (pos_branch_employees.id) of the home room teacher. Null clears it.',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  homeroomEmployeeId?: number | null;
+
   @ApiPropertyOptional({ example: 'ACTIVE' })
   @IsOptional()
   @IsString()
@@ -157,6 +175,24 @@ export class UpdateSchoolClassDto {
   @Min(0)
   capacity?: number | null;
 
+  /**
+   * The staff row of the class's home room teacher — `pos_branch_employees.id`.
+   *
+   * The NAME is not accepted here. The service reads it off the employee row,
+   * so the id and the name on the class can never disagree, and an office
+   * cannot name a home room teacher who is not on the staff list.
+   */
+  @ApiPropertyOptional({
+    example: 30,
+    description:
+      'Staff row (pos_branch_employees.id) of the home room teacher. Null clears it.',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  homeroomEmployeeId?: number | null;
+
   @ApiPropertyOptional({ example: 'INACTIVE' })
   @IsOptional()
   @IsString()
@@ -194,4 +230,19 @@ export class ReorderSchoolClassesDto {
   @ValidateNested({ each: true })
   @Type(() => ReorderEntryDto)
   order!: ReorderEntryDto[];
+}
+
+/**
+ * The caller's OWN classes — the ones they are home room teacher of.
+ *
+ * The staff row is resolved from the signed-in user server-side, exactly as
+ * `GET school/timetable/mine` does: a teacher's lane cannot read the staff
+ * list, so it cannot ask "which employee am I" for itself, and letting the
+ * client name the employee would let any login claim any teacher's classes.
+ */
+export class MySchoolClassesQueryDto {
+  @ApiProperty({ example: 115 })
+  @Type(() => Number)
+  @IsInt()
+  branchId!: number;
 }

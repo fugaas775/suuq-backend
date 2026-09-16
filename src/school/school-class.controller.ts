@@ -8,9 +8,11 @@ import {
   Patch,
   Post,
   Query,
+  Req,
   UseGuards,
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
+import { AuthenticatedRequest } from '../common/interfaces/authenticated-request.interface';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { PosBranchAccessGuard } from '../auth/pos-branch-access.guard';
 import { RequirePosPermissions } from '../auth/decorators/require-pos-permissions.decorator';
@@ -25,6 +27,7 @@ import { PosSchoolPermission } from './permissions/pos-school-permission.enum';
 import {
   CreateSchoolClassDto,
   ListSchoolClassesQueryDto,
+  MySchoolClassesQueryDto,
   ReorderSchoolClassesDto,
   UpdateSchoolClassDto,
 } from './dto/school-class.dto';
@@ -67,6 +70,30 @@ export class SchoolClassController {
   @RequirePosPermissions(PosSchoolPermission.VIEW_CLASS_BOARD)
   list(@Query() query: ListSchoolClassesQueryDto) {
     return this.svc.list(query);
+  }
+
+  /**
+   * The caller's own classes — the ones they are home room teacher of.
+   *
+   * Declared before `classes/:id` so the literal segment wins; ParseIntPipe
+   * would otherwise 400 on "mine", the same trap `classes/reorder` has.
+   *
+   * Read on VIEW_CLASS_BOARD **or** MARK_ATTENDANCE, matching
+   * `timetable/mine`: a teacher's lane holds the second and not always the
+   * first, and this is the read that decides which register their till opens.
+   */
+  @Get('classes/mine')
+  @RetailBranchContext('query.branchId')
+  @RequirePosPermissions(
+    PosSchoolPermission.VIEW_CLASS_BOARD,
+    PosSchoolPermission.MARK_ATTENDANCE,
+  )
+  mine(
+    @Query() query: MySchoolClassesQueryDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const userId = Number((req.user as { id?: number })?.id) || null;
+    return this.svc.mine(query.branchId, userId);
   }
 
   @Post('classes')

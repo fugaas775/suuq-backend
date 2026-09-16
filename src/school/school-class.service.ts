@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { BranchEmployee } from '../payroll/entities/branch-employee.entity';
 import {
   PosSuspendedCart,
   PosSuspendedCartStatus,
@@ -36,6 +37,9 @@ export class SchoolClassService {
     private readonly repo: Repository<SchoolClass>,
     @InjectRepository(PosSuspendedCart)
     private readonly cartRepo: Repository<PosSuspendedCart>,
+    // Read-only: the registry names a home room teacher, it never writes one.
+    @InjectRepository(BranchEmployee)
+    private readonly employees: Repository<BranchEmployee>,
   ) {}
 
   private toResponse(row: SchoolClass) {
@@ -49,6 +53,8 @@ export class SchoolClassService {
       sortOrder: row.sortOrder ?? 0,
       feeProductId: row.feeProductId ?? null,
       capacity: row.capacity ?? null,
+      homeroomEmployeeId: row.homeroomEmployeeId ?? null,
+      homeroomTeacherName: row.homeroomTeacherName ?? null,
       status: row.status,
       metadata: row.metadata ?? null,
       createdAt: row.createdAt.toISOString(),
@@ -163,6 +169,88 @@ export class SchoolClassService {
     return { gradeCode, section: nextSection || null };
   }
 
+  /**
+   * The home room teacher a write is asking for, or `undefined` when the
+   * caller never mentioned one.
+   *
+   * Three outcomes, and the difference between the first two is the whole
+   * reason this returns `undefined` rather than null: a PATCH that only moves
+   * a class's fee product must not un-assign its teacher, while a PATCH
+   * carrying `homeroomEmployeeId: null` must.
+   *
+   * The name is read off the employee row, never taken from the client, so the
+   * denormalised copy cannot drift from the id beside it.
+   */
+  private async resolveHomeroom(
+    branchId: number,
+    dto: { homeroomEmployeeId?: number | null },
+  ): Promise<{ id: number | null; name: string | null } | undefined> {
+    if (dto.homeroomEmployeeId === undefined) return undefined;
+    const id = Number(dto.homeroomEmployeeId ?? NaN);
+    if (!Number.isFinite(id) || id <= 0) return { id: null, name: null };
+
+    const employee = await this.employees.findOne({ where: { id, branchId } });
+    // Named rather than silently dropped: assigning a class to somebody who
+    // is not on this branch's staff list is a mis-click in a long picker, and
+    // a class that quietly kept its old teacher is how an office comes to
+    // believe a register is somebody's job when it is nobody's.
+    if (!employee) {
+      throw new BadRequestException(
+        'That home room teacher is not on this branch’s staff list.',
+      );
+    }
+    return { id: Number(employee.id), name: employee.fullName || null };
+  }
+
+  /**
+   * The classes the signed-in user is home room teacher of.
+   *
+   * Mirrors `SchoolTimetableService.mine`: the user id comes from the token,
+   * is joined to this branch's employee row (an active one in preference to a
+   * closed one), and an account with no staff row gets an EMPTY answer rather
+   * than an error — every login that is not a teacher asks this question on
+   * its way into Attendance, and a 404 there would be a broken tab.
+   *
+   * Returns the whole class rows, not just codes, so the till can render the
+   * teacher's own class without a second read of the registry.
+   */
+  async mine(branchId: number, userId: number | null) {
+    const empty = {
+      employee: null as null | {
+        id: number;
+        fullName: string;
+        jobTitle: string | null;
+      },
+      items: [] as ReturnType<SchoolClassService['toResponse']>[],
+    };
+    if (!userId) return empty;
+
+    const rows = await this.employees.find({ where: { branchId, userId } });
+    const employee =
+      rows.find((r) => String(r.status).toUpperCase() !== 'INACTIVE') ??
+      rows[0] ??
+      null;
+    if (!employee) return empty;
+
+    const id = Number(employee.id);
+    const classes = await this.repo
+      .createQueryBuilder('c')
+      .where('c."branchId" = :branchId', { branchId })
+      .andWhere('c."homeroomEmployeeId" = :id', { id })
+      .orderBy('c."sortOrder"', 'ASC')
+      .addOrderBy('c.code', 'ASC')
+      .getMany();
+
+    return {
+      employee: {
+        id,
+        fullName: employee.fullName,
+        jobTitle: employee.jobTitle ?? null,
+      },
+      items: classes.map((row) => this.toResponse(row)),
+    };
+  }
+
   async list(query: ListSchoolClassesQueryDto) {
     const qb = this.repo
       .createQueryBuilder('c')
@@ -209,6 +297,7 @@ export class SchoolClassService {
       gradeCode: null,
       section: null,
     });
+    const homeroom = await this.resolveHomeroom(dto.branchId, dto);
     const row = this.repo.create({
       branchId: dto.branchId,
       code,
@@ -223,6 +312,8 @@ export class SchoolClassService {
         (await this.nextSortOrder(dto.branchId, placement.gradeCode ?? null)),
       feeProductId: dto.feeProductId ?? null,
       capacity: dto.capacity ?? null,
+      homeroomEmployeeId: homeroom?.id ?? null,
+      homeroomTeacherName: homeroom?.name ?? null,
       status:
         status === SchoolClassStatus.INACTIVE
           ? SchoolClassStatus.INACTIVE
@@ -313,6 +404,11 @@ export class SchoolClassService {
       row.feeProductId = dto.feeProductId ?? null;
     }
     if (dto.capacity !== undefined) row.capacity = dto.capacity ?? null;
+    const homeroom = await this.resolveHomeroom(dto.branchId, dto);
+    if (homeroom !== undefined) {
+      row.homeroomEmployeeId = homeroom.id;
+      row.homeroomTeacherName = homeroom.name;
+    }
     if (dto.status !== undefined) {
       const status = String(dto.status).trim().toUpperCase();
       if (

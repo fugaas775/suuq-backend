@@ -25,6 +25,10 @@ function makeService({
   gradeSibling = null,
   sectionClash = null,
   sortOrderTaken = 0,
+  // The staff rows this branch has, for the home room teacher checks.
+  employees = [],
+  // What the "which classes am I home room teacher of" query answers.
+  homeroomRows = null,
 }: any = {}) {
   const saved: any[] = [];
   const deleted: any[] = [];
@@ -50,7 +54,10 @@ function makeService({
         if (sql.includes('"gradeCode"')) return gradeSibling;
         return existingByCode;
       },
-      getMany: async () => rows,
+      getMany: async () =>
+        conds.join(' ').includes('"homeroomEmployeeId"')
+          ? (homeroomRows ?? [])
+          : rows,
       getCount: async () =>
         conds.join(' ').includes('"sortOrder"') ? sortOrderTaken : enrolled,
       getRawOne: async () => ({ max: rows.length ? 20 : null }),
@@ -83,8 +90,22 @@ function makeService({
   };
 
   const cartRepo: any = { createQueryBuilder: () => makeQb() };
+  const employeeRepo: any = {
+    findOne: async ({ where }: any) =>
+      employees.find(
+        (e: any) =>
+          Number(e.id) === Number(where.id) &&
+          Number(e.branchId) === Number(where.branchId),
+      ) ?? null,
+    find: async ({ where }: any) =>
+      employees.filter(
+        (e: any) =>
+          Number(e.branchId) === Number(where.branchId) &&
+          Number(e.userId) === Number(where.userId),
+      ),
+  };
   return {
-    service: new SchoolClassService(repo, cartRepo),
+    service: new SchoolClassService(repo, cartRepo, employeeRepo),
     saved,
     deleted,
   };
@@ -100,6 +121,8 @@ const row = (over: any = {}) => ({
   sortOrder: 10,
   feeProductId: null,
   capacity: null,
+  homeroomEmployeeId: null,
+  homeroomTeacherName: null,
   status: SchoolClassStatus.ACTIVE,
   metadata: null,
   createdAt: stamp,
@@ -382,5 +405,209 @@ describe('SchoolClassService — reordering', () => {
     });
     expect(saved).toHaveLength(1);
     expect(saved[0].sortOrder).toBe(30);
+  });
+});
+
+/**
+ * The home room teacher — who answers for a class's daily register.
+ *
+ * Named on the class rather than derived from the timetable, because both live
+ * schools are subject-taught from Grade 1 and the first period of a class is
+ * held by three to five different people across the week. These tests pin the
+ * two things that make the column trustworthy: the name always comes off the
+ * staff row, and a PATCH about something else never disturbs the assignment.
+ */
+describe('SchoolClassService — the home room teacher', () => {
+  const staff = [
+    {
+      id: 30,
+      branchId: 115,
+      fullName: 'Mustafe',
+      jobTitle: 'Teacher',
+      status: 'ACTIVE',
+      userId: 900,
+    },
+    {
+      id: 26,
+      branchId: 115,
+      fullName: 'Mustafe Maxamed Sheekh',
+      jobTitle: 'Teacher',
+      status: 'ACTIVE',
+      userId: null,
+    },
+    // Same person, on another branch: naming them here must be refused.
+    {
+      id: 77,
+      branchId: 128,
+      fullName: 'Kaamil',
+      jobTitle: 'Teacher',
+      status: 'ACTIVE',
+      userId: 901,
+    },
+  ];
+
+  it('stores the name off the staff row, not from the client', async () => {
+    const { service, saved } = makeService({
+      rows: [row({ id: 1 })],
+      employees: staff,
+    });
+    const out = await service.update(1, {
+      branchId: 115,
+      homeroomEmployeeId: 30,
+      // A client may send whatever it likes here; the DTO has no such field and
+      // the service must not read one.
+      homeroomTeacherName: 'Somebody Else',
+    } as any);
+    expect(saved[0].homeroomEmployeeId).toBe(30);
+    expect(saved[0].homeroomTeacherName).toBe('Mustafe');
+    expect(out.homeroomTeacherName).toBe('Mustafe');
+  });
+
+  it('refuses a teacher who is not on this branch’s staff list', async () => {
+    const { service } = makeService({
+      rows: [row({ id: 1 })],
+      employees: staff,
+    });
+    await expect(
+      service.update(1, { branchId: 115, homeroomEmployeeId: 77 }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('refuses an id nobody holds', async () => {
+    const { service } = makeService({
+      rows: [row({ id: 1 })],
+      employees: staff,
+    });
+    await expect(
+      service.update(1, { branchId: 115, homeroomEmployeeId: 4242 }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('clears both columns on an explicit null', async () => {
+    const { service, saved } = makeService({
+      rows: [
+        row({ id: 1, homeroomEmployeeId: 30, homeroomTeacherName: 'Mustafe' }),
+      ],
+      employees: staff,
+    });
+    await service.update(1, { branchId: 115, homeroomEmployeeId: null });
+    expect(saved[0].homeroomEmployeeId).toBeNull();
+    expect(saved[0].homeroomTeacherName).toBeNull();
+  });
+
+  it('leaves the assignment alone when the PATCH is about something else', async () => {
+    // The rule `resolvePlacement` already follows, for the same reason: moving
+    // a class's fee product must not un-assign the teacher who takes its
+    // register.
+    const { service, saved } = makeService({
+      rows: [
+        row({ id: 1, homeroomEmployeeId: 30, homeroomTeacherName: 'Mustafe' }),
+      ],
+      employees: staff,
+    });
+    await service.update(1, { branchId: 115, feeProductId: 321 });
+    expect(saved[0].feeProductId).toBe(321);
+    expect(saved[0].homeroomEmployeeId).toBe(30);
+    expect(saved[0].homeroomTeacherName).toBe('Mustafe');
+  });
+
+  it('can be named as a class is created', async () => {
+    const { service, saved } = makeService({ employees: staff });
+    await service.create({
+      branchId: 115,
+      code: '3aad',
+      homeroomEmployeeId: 26,
+    });
+    expect(saved[0].homeroomEmployeeId).toBe(26);
+    expect(saved[0].homeroomTeacherName).toBe('Mustafe Maxamed Sheekh');
+  });
+
+  it('a new class names nobody by default', async () => {
+    const { service, saved } = makeService({ employees: staff });
+    await service.create({ branchId: 115, code: '4aad' });
+    expect(saved[0].homeroomEmployeeId).toBeNull();
+    expect(saved[0].homeroomTeacherName).toBeNull();
+  });
+});
+
+describe('SchoolClassService.mine — a teacher’s own classes', () => {
+  const staff = [
+    {
+      id: 30,
+      branchId: 115,
+      fullName: 'Mustafe',
+      jobTitle: 'Teacher',
+      status: 'ACTIVE',
+      userId: 900,
+    },
+    {
+      id: 31,
+      branchId: 115,
+      fullName: 'Old Row',
+      jobTitle: 'Teacher',
+      status: 'INACTIVE',
+      userId: 901,
+    },
+    {
+      id: 32,
+      branchId: 115,
+      fullName: 'Rehired',
+      jobTitle: 'Teacher',
+      status: 'ACTIVE',
+      userId: 901,
+    },
+  ];
+
+  it('answers the classes that name the caller', async () => {
+    const { service } = makeService({
+      employees: staff,
+      homeroomRows: [
+        row({
+          id: 5,
+          code: '3aad',
+          homeroomEmployeeId: 30,
+          homeroomTeacherName: 'Mustafe',
+        }),
+      ],
+    });
+    const out = await service.mine(115, 900);
+    expect(out.employee).toEqual({
+      id: 30,
+      fullName: 'Mustafe',
+      jobTitle: 'Teacher',
+    });
+    expect(out.items.map((c: any) => c.code)).toEqual(['3aad']);
+  });
+
+  it('is EMPTY, not an error, for a login with no staff row', async () => {
+    // Every login that is not a teacher asks this on its way into Attendance —
+    // the office's, the owner's, a cashier's. A 404 there would be a tab that
+    // looks broken to the people who use it most.
+    const { service } = makeService({ employees: staff });
+    const out = await service.mine(115, 12345);
+    expect(out).toEqual({ employee: null, items: [] });
+  });
+
+  it('is empty for an unauthenticated read rather than reading somebody’s classes', async () => {
+    const { service } = makeService({ employees: staff });
+    expect(await service.mine(115, null)).toEqual({
+      employee: null,
+      items: [],
+    });
+  });
+
+  it('prefers the ACTIVE staff row when a user has two', async () => {
+    // A rehired teacher has a closed row and a live one. The live one is the
+    // employment their register belongs to.
+    const { service } = makeService({ employees: staff, homeroomRows: [] });
+    const out = await service.mine(115, 901);
+    expect(out.employee?.id).toBe(32);
+  });
+
+  it('answers nothing for a teacher who is home room teacher of no class', async () => {
+    const { service } = makeService({ employees: staff, homeroomRows: [] });
+    const out = await service.mine(115, 900);
+    expect(out.employee?.id).toBe(30);
+    expect(out.items).toEqual([]);
   });
 });

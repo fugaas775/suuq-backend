@@ -50,6 +50,10 @@ export enum SchoolClassStatus {
   unique: true,
 })
 @Index('idx_pos_school_classes_branch_grade', ['branchId', 'gradeCode'])
+@Index('idx_pos_school_classes_branch_homeroom', [
+  'branchId',
+  'homeroomEmployeeId',
+])
 export class SchoolClass {
   @PrimaryGeneratedColumn('increment', { type: 'bigint' })
   id!: number;
@@ -118,6 +122,41 @@ export class SchoolClass {
   /** Places available, for a roll that must not be over-filled. */
   @Column({ type: 'int', nullable: true })
   capacity!: number | null;
+
+  /**
+   * The HOME ROOM teacher — the one member of staff who answers for this
+   * class's daily register.
+   *
+   * `pos_branch_employees.id`. Deliberately the employment row and not the
+   * login: a teacher may take the register from a shared tablet, and a class
+   * keeps its home room teacher through a login being reissued. Null is a
+   * class nobody has been named for, which is every row that existed before
+   * this column.
+   *
+   * It has to be NAMED and cannot be derived from the timetable. Both live
+   * schools are subject-taught from Grade 1 — six to nine teachers per class
+   * over twenty-eight periods a week — and the first period of a class is
+   * held by three to five different people across the five days, so
+   * "whoever teaches P1" designates a different person every morning.
+   *
+   * No foreign key, for the reason the timetable's `employeeId` has none: the
+   * class outlives the employment row, and a cascade here would quietly
+   * un-assign a class when an old staff record was tidied away.
+   */
+  @Column({ type: 'int', nullable: true })
+  homeroomEmployeeId!: number | null;
+
+  /**
+   * That teacher's name as it stood when they were assigned.
+   *
+   * Denormalised on purpose, like the timetable's `teacherName` and
+   * attendance's `subjectName`: the office's board must still say who a class
+   * answered to after the person has left, and joining back to the live staff
+   * list would blank exactly the classes whose teacher has gone. The service
+   * fills it from the employee row, so it is never typed twice.
+   */
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  homeroomTeacherName!: string | null;
 
   @Column({ type: 'varchar', length: 16, default: SchoolClassStatus.ACTIVE })
   status!: SchoolClassStatus;
