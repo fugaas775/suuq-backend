@@ -4,9 +4,13 @@ import { RetailModule } from '../retail/retail.module';
 import { PosBranchAccessGuard } from '../auth/pos-branch-access.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { PosSuspendedCart } from '../pos-sync/entities/pos-suspended-cart.entity';
+import { BranchEmployee } from '../payroll/entities/branch-employee.entity';
 import { SchoolClass } from './entities/school-class.entity';
+import { SchoolTimetable } from './entities/school-timetable.entity';
 import { SchoolClassController } from './school-class.controller';
 import { SchoolClassService } from './school-class.service';
+import { SchoolTimetableController } from './school-timetable.controller';
+import { SchoolTimetableService } from './school-timetable.service';
 
 /**
  * SCHOOL — a term-based POS format whose board unit is a CLASS: a container
@@ -22,14 +26,23 @@ import { SchoolClassService } from './school-class.service';
   imports: [
     TypeOrmModule.forFeature([
       SchoolClass,
+      SchoolTimetable,
       // Read-only: refusing to delete a class that still holds children means
       // counting the student folios sitting in it.
       PosSuspendedCart,
+      // Read-only: a timetable slot names a teacher by their employment row,
+      // and an id that is not on this branch's register is refused.
+      BranchEmployee,
     ]),
     RetailModule,
   ],
-  controllers: [SchoolClassController],
-  providers: [SchoolClassService, PosBranchAccessGuard, RolesGuard],
-  exports: [SchoolClassService],
+  controllers: [SchoolClassController, SchoolTimetableController],
+  providers: [
+    SchoolClassService,
+    SchoolTimetableService,
+    PosBranchAccessGuard,
+    RolesGuard,
+  ],
+  exports: [SchoolClassService, SchoolTimetableService],
 })
 export class SchoolModule {}
