@@ -13,6 +13,7 @@ import {
 const stamp = new Date('2026-09-16T08:00:00.000Z');
 
 function makeService({
+  employeeFind = null,
   registry = [
     { id: 4, code: '1aad', sortOrder: 10 },
     { id: 6, code: '3aad', sortOrder: 30 },
@@ -37,7 +38,15 @@ function makeService({
     },
   };
   const classes: any = { find: async () => registry };
-  const staff: any = { find: async () => employees };
+  const staff: any = {
+    find: async (opts?: any) =>
+      opts?.where?.userId != null
+        ? employees.filter(
+            (e: any) => Number(e.userId) === Number(opts.where.userId),
+          )
+        : employees,
+  };
+  void employeeFind;
   const svc = new SchoolTimetableService(repo, classes, staff);
   return { svc, saved };
 }
@@ -510,6 +519,87 @@ describe('SchoolTimetableService', () => {
         null,
       ),
     ).rejects.toBeInstanceOf(BadRequestException);
+  });
+});
+
+describe('SchoolTimetableService.mine', () => {
+  const existing = {
+    id: 9,
+    branchId: 115,
+    title: 'Week',
+    periods: [{ code: 'P1' }],
+    shifts: [],
+    slots: [
+      {
+        day: 1,
+        period: 'P1',
+        classCode: '3aad',
+        subject: 'Amharic',
+        teacherName: 'T',
+        employeeId: 5,
+        room: null,
+      },
+      {
+        day: 1,
+        period: 'P1',
+        classCode: '1aad',
+        subject: 'Maths',
+        teacherName: 'I',
+        employeeId: 8,
+        room: null,
+      },
+    ],
+    createdAt: stamp,
+    updatedAt: stamp,
+  };
+
+  it('returns the caller’s own slots, joined through their employment row', async () => {
+    const { svc } = makeService({
+      existing,
+      employees: [
+        {
+          id: 5,
+          fullName: 'Temesgen Eshetu',
+          jobTitle: 'Teacher',
+          status: 'ACTIVE',
+          userId: 2371,
+        },
+        { id: 8, fullName: 'Ibrahim Ahmad', status: 'ACTIVE', userId: 2372 },
+      ],
+    });
+    const mine = await svc.mine(115, 2371);
+    expect(mine.employee).toEqual({
+      id: 5,
+      fullName: 'Temesgen Eshetu',
+      jobTitle: 'Teacher',
+    });
+    expect(mine.slots.map((s) => s.classCode)).toEqual(['3aad']);
+    expect(mine.periods).toHaveLength(1);
+  });
+
+  it('prefers the active row when a login is joined to two, and answers empty for a stranger', async () => {
+    const { svc } = makeService({
+      existing,
+      employees: [
+        { id: 40, fullName: 'Old row', status: 'INACTIVE', userId: 2371 },
+        {
+          id: 5,
+          fullName: 'Temesgen Eshetu',
+          jobTitle: 'Teacher',
+          status: 'ACTIVE',
+          userId: 2371,
+        },
+      ],
+    });
+    expect((await svc.mine(115, 2371)).employee?.id).toBe(5);
+    expect(await svc.mine(115, 999)).toMatchObject({
+      employee: null,
+      slots: [],
+    });
+    expect(await svc.mine(115, null)).toMatchObject({
+      employee: null,
+      slots: [],
+    });
   });
 });
 

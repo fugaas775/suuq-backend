@@ -104,6 +104,50 @@ export class SchoolTimetableService {
     return this.toResponse(row, branchId);
   }
 
+  /**
+   * The signed-in person's own week.
+   *
+   * A teacher's lane can read the whole timetable (VIEW_CLASS_BOARD or
+   * MARK_ATTENDANCE), but it cannot read the staff register that says which
+   * employee they are — that list is manager-only, because it carries pay.
+   * So the join is made here: the caller's user id → their employment row on
+   * this branch → the slots that name it. No row, or no login on the row, is
+   * an empty answer rather than an error; the till simply shows no strip.
+   */
+  async mine(branchId: number, userId: number | null) {
+    const empty = {
+      employee: null as null | {
+        id: number;
+        fullName: string;
+        jobTitle: string | null;
+      },
+      title: null as string | null,
+      periods: [] as SchoolTimetablePeriod[],
+      shifts: [] as SchoolTimetableShift[],
+      slots: [] as SchoolTimetableSlot[],
+    };
+    if (!userId) return empty;
+    const rows = await this.employees.find({ where: { branchId, userId } });
+    const employee =
+      rows.find((r) => String(r.status).toUpperCase() !== 'INACTIVE') ??
+      rows[0] ??
+      null;
+    if (!employee) return empty;
+    const doc = await this.get(branchId);
+    const id = Number(employee.id);
+    return {
+      employee: {
+        id,
+        fullName: employee.fullName,
+        jobTitle: employee.jobTitle ?? null,
+      },
+      title: doc.title,
+      periods: doc.periods,
+      shifts: doc.shifts,
+      slots: doc.slots.filter((slot) => Number(slot.employeeId) === id),
+    };
+  }
+
   private normalizePeriods(
     dto: PutSchoolTimetableDto,
   ): SchoolTimetablePeriod[] {

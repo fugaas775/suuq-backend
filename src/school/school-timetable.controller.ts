@@ -66,6 +66,21 @@ export class SchoolTimetableController {
     return this.svc.get(query.branchId);
   }
 
+  /** The caller's own lessons — the join a teacher's lane cannot make itself. */
+  @Get('timetable/mine')
+  @RetailBranchContext('query.branchId')
+  @RequirePosPermissions(
+    PosSchoolPermission.VIEW_CLASS_BOARD,
+    PosSchoolPermission.MARK_ATTENDANCE,
+  )
+  mine(
+    @Query() query: GetSchoolTimetableQueryDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const userId = Number((req.user as { id?: number })?.id) || null;
+    return this.svc.mine(query.branchId, userId);
+  }
+
   @Put('timetable')
   @RetailBranchContext('body.branchId')
   @RequirePosPermissions(PosSchoolPermission.ENROL_STUDENT)
