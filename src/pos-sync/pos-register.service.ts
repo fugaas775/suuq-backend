@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -14,6 +15,11 @@ import {
   canWithdrawStudent,
   isSchoolPupilFolio,
 } from './school-withdrawal.policy';
+import {
+  isEmptySchoolBasket,
+  schoolAdmissionNoOf,
+  schoolPupilShapeProblem,
+} from './school-roll.policy';
 import { ClosePosRegisterSessionDto } from './dto/close-pos-register-session.dto';
 import { CreatePosRegisterSessionDto } from './dto/create-pos-register-session.dto';
 import { CreatePosSuspendedCartDto } from './dto/create-pos-suspended-cart.dto';
@@ -326,6 +332,7 @@ export class PosRegisterService {
     // duplicate" condition. Skipped when there is no backendFolioId (RETAIL/QSR
     // baskets and not-yet-opened folios) — each of those is a distinct row.
     const snapshot = (dto.cartSnapshot ?? {}) as Record<string, unknown>;
+    await this.assertSchoolRollAccepts(dto.branchId, snapshot, null);
     const backendFolioId =
       snapshot.backendFolioId != null && String(snapshot.backendFolioId).trim()
         ? String(snapshot.backendFolioId).trim()
@@ -619,6 +626,14 @@ export class PosRegisterService {
     // had to create a replacement row and discard the original, churning the id
     // (and with it every folioId reference) on each edit.
     if (dto.cartSnapshot && typeof dto.cartSnapshot === 'object') {
+      // The same three rules as a create, with this row excused from the
+      // collision check: a settle re-saves the pupil's own snapshot, and a
+      // pupil cannot collide with themselves.
+      await this.assertSchoolRollAccepts(
+        cart.branchId,
+        dto.cartSnapshot as Record<string, unknown>,
+        Number(cart.id),
+      );
       cart.cartSnapshot = dto.cartSnapshot;
     }
     if (typeof dto.label === 'string' && dto.label.trim()) {
@@ -708,6 +723,67 @@ export class PosRegisterService {
     ) {
       throw new ForbiddenException(SCHOOL_WITHDRAWAL_REFUSED_MESSAGE);
     }
+  }
+
+  /**
+   * The three rules a SCHOOL folio must satisfy before it joins the roll —
+   * see `school-roll.policy.ts` for why they live server-side at all.
+   *
+   *   1. An empty school basket (no pupil, no lines, not an application) is
+   *      refused; there is nothing in it worth a row.
+   *   2. A pupil must be in a class.
+   *   3. A pupil's admission number must not already be on this branch's LIVE
+   *      roll — SUSPENDED, SCHOOL, not voided — on any row but `exceptId`.
+   *      The refusal names the row it collides with, so the office can open
+   *      the child that is already there instead of retyping them.
+   *
+   * Only ever reaches the database for a pupil folio carrying an admission
+   * number, so every other format pays nothing for it.
+   */
+  private async assertSchoolRollAccepts(
+    branchId: number,
+    snapshot: Record<string, unknown>,
+    exceptId: number | null,
+  ): Promise<void> {
+    const cart = { cartSnapshot: snapshot };
+    if (isEmptySchoolBasket(cart)) {
+      throw new BadRequestException(
+        'Nothing to park: a school folio needs a pupil or at least one line.',
+      );
+    }
+    const shape = schoolPupilShapeProblem(cart);
+    if (shape) throw new BadRequestException(shape);
+
+    const admissionNo = schoolAdmissionNoOf(cart);
+    if (!admissionNo) return;
+
+    const qb = this.suspendedCartsRepository
+      .createQueryBuilder('c')
+      .select(['c.id', 'c.cartSnapshot'])
+      .where('c."branchId" = :branchId', { branchId })
+      .andWhere('c.status = :status', {
+        status: PosSuspendedCartStatus.SUSPENDED,
+      })
+      .andWhere(
+        `upper(coalesce(c."cartSnapshot" ->> 'serviceFormat', '')) = 'SCHOOL'`,
+      )
+      .andWhere(`coalesce(c."cartSnapshot" ->> 'paid', '') <> 'voided'`)
+      .andWhere(
+        `lower(btrim(coalesce(c."cartSnapshot" ->> 'schoolAdmissionNo', ''))) = :admissionNo`,
+        { admissionNo },
+      );
+    if (exceptId != null) {
+      qb.andWhere('c.id <> :exceptId', { exceptId });
+    }
+    const clash = await qb.getOne();
+    if (!clash) return;
+
+    const theirs = (clash.cartSnapshot ?? {}) as Record<string, unknown>;
+    const name = String(theirs.hotelGuestName ?? '').trim() || 'a pupil';
+    const cls = String(theirs.hotelRoomNumber ?? '').trim();
+    throw new ConflictException(
+      `Admission no. ${String(snapshot.schoolAdmissionNo).trim()} is already on the roll — ${name}${cls ? ` in ${cls}` : ''} (record #${Number(clash.id)}). Open that record instead of enrolling them again.`,
+    );
   }
 
   private async findSuspendedCart(id: number): Promise<PosSuspendedCart> {

@@ -289,3 +289,171 @@ describe('PosRegisterService.suspendCart (same-stay supersede without a backend 
     });
   });
 });
+
+describe('PosRegisterService — a SCHOOL folio must be fit for the roll', () => {
+  /**
+   * The server-side guards a students table would have given for free. Each
+   * was bypassed live at least once: two schools carried an admission number
+   * three times over, and one carried a folio with no name, class or lines.
+   */
+  function makeService(clash: any = null) {
+    const qb: any = {
+      select: jest.fn(() => qb),
+      where: jest.fn(() => qb),
+      andWhere: jest.fn(() => qb),
+      getOne: jest.fn(async () => clash),
+    };
+    const suspendedCartsRepository = {
+      findOne: jest.fn().mockResolvedValue(null),
+      create: jest.fn((input) => input),
+      save: jest.fn(async (input) => ({ id: 777, ...input })),
+      createQueryBuilder: jest.fn(() => qb),
+    };
+    const service = new PosRegisterService(
+      { findOne: jest.fn() } as any,
+      suspendedCartsRepository as any,
+      { findOne: jest.fn().mockResolvedValue({ id: 115 }) } as any,
+      { dispatchCloseReport: jest.fn() } as any,
+      { findOne: jest.fn() } as any,
+    );
+    return { service, suspendedCartsRepository, qb };
+  }
+
+  const pupil = (snap: Record<string, unknown> = {}) => ({
+    branchId: 115,
+    label: '3aad',
+    currency: 'ETB',
+    itemCount: 2,
+    total: 2500,
+    cartSnapshot: {
+      serviceFormat: 'SCHOOL',
+      hotelGuestName: 'Amina Cali',
+      hotelRoomNumber: '3aad',
+      schoolAdmissionNo: 'SMAK-0150',
+      backendFolioId: null,
+      cartLines: [{ name: 'Tuition', quantity: 1, unitPrice: 2000 }],
+      ...snap,
+    },
+  });
+  const actor = { id: 1, email: 'office@school' } as any;
+
+  it('refuses an empty school basket', async () => {
+    const { service, suspendedCartsRepository } = makeService();
+    await expect(
+      service.suspendCart(
+        pupil({
+          hotelGuestName: '',
+          schoolAdmissionNo: '',
+          cartLines: [],
+        }) as any,
+        actor,
+      ),
+    ).rejects.toThrow(/Nothing to park/);
+    expect(suspendedCartsRepository.save).not.toHaveBeenCalled();
+  });
+
+  it('refuses a pupil with no class', async () => {
+    const { service, suspendedCartsRepository } = makeService();
+    await expect(
+      service.suspendCart(pupil({ hotelRoomNumber: '' }) as any, actor),
+    ).rejects.toThrow(/has no class/);
+    expect(suspendedCartsRepository.save).not.toHaveBeenCalled();
+  });
+
+  it('refuses an admission number already on the live roll, naming the row', async () => {
+    const { service, suspendedCartsRepository } = makeService({
+      id: 25383,
+      cartSnapshot: {
+        hotelGuestName: 'Ansal C/qadir Umer',
+        hotelRoomNumber: '5aad',
+      },
+    });
+    await expect(service.suspendCart(pupil() as any, actor)).rejects.toThrow(
+      /SMAK-0150 is already on the roll — Ansal C\/qadir Umer in 5aad \(record #25383\)/,
+    );
+    expect(suspendedCartsRepository.save).not.toHaveBeenCalled();
+  });
+
+  it('writes a pupil whose number is free', async () => {
+    const { service, suspendedCartsRepository, qb } = makeService(null);
+    await service.suspendCart(pupil(), actor);
+    expect(suspendedCartsRepository.save).toHaveBeenCalled();
+    // The collision query folds case and whitespace, as every SCHOOL reader does.
+    const bound = qb.andWhere.mock.calls.find(
+      (c: any[]) =>
+        typeof c[0] === 'string' && c[0].includes('schoolAdmissionNo'),
+    );
+    expect(bound?.[1]).toEqual({ admissionNo: 'smak-0150' });
+  });
+
+  it('never queries for a pupil the school has not numbered', async () => {
+    const { service, suspendedCartsRepository } = makeService();
+    await service.suspendCart(pupil({ schoolAdmissionNo: '' }), actor);
+    expect(suspendedCartsRepository.createQueryBuilder).not.toHaveBeenCalled();
+    expect(suspendedCartsRepository.save).toHaveBeenCalled();
+  });
+
+  it('costs every other format nothing', async () => {
+    const { service, suspendedCartsRepository } = makeService();
+    await service.suspendCart(
+      {
+        ...pupil(),
+        cartSnapshot: {
+          serviceFormat: 'HOTEL',
+          hotelRoomNumber: '204',
+          hotelGuestName: 'Guest',
+          backendFolioId: null,
+          cartLines: [],
+        },
+      },
+      actor,
+    );
+    expect(suspendedCartsRepository.createQueryBuilder).not.toHaveBeenCalled();
+  });
+
+  it('excuses a pupil from colliding with their own row on a re-save', async () => {
+    // A settle PATCHes the pupil's own snapshot back; the row itself is not a
+    // duplicate. Another live row with the same number still is.
+    const { service, suspendedCartsRepository, qb } = makeService(null);
+    suspendedCartsRepository.findOne.mockResolvedValue({
+      id: 25383,
+      branchId: 115,
+      status: PosSuspendedCartStatus.SUSPENDED,
+      cartSnapshot: {},
+      metadata: null,
+    });
+    await service.updateSuspendedCart(25383, {
+      branchId: 115,
+      cartSnapshot: pupil().cartSnapshot,
+    });
+    const except = qb.andWhere.mock.calls.find(
+      (c: any[]) => typeof c[0] === 'string' && c[0].includes('exceptId'),
+    );
+    expect(except?.[1]).toEqual({ exceptId: 25383 });
+    expect(suspendedCartsRepository.save).toHaveBeenCalled();
+  });
+
+  it('refuses a re-save that would give this pupil another pupil’s number', async () => {
+    const { service, suspendedCartsRepository } = makeService({
+      id: 25384,
+      cartSnapshot: {
+        hotelGuestName: 'Somebody Else',
+        hotelRoomNumber: '5aad',
+      },
+    });
+    suspendedCartsRepository.findOne.mockResolvedValue({
+      id: 25383,
+      branchId: 115,
+      status: PosSuspendedCartStatus.SUSPENDED,
+      cartSnapshot: {},
+      metadata: null,
+    });
+    await expect(
+      service.updateSuspendedCart(25383, {
+        branchId: 115,
+        cartSnapshot: pupil().cartSnapshot,
+      } as any),
+    ).rejects.toThrow(/already on the roll/);
+    expect(suspendedCartsRepository.save).not.toHaveBeenCalled();
+  });
+});
