@@ -258,3 +258,36 @@ export class ReclassAttendanceDto {
   @IsString({ each: true })
   subjectRefs?: string[];
 }
+
+/**
+ * Move one pupil's WHOLE register from one folio id to another.
+ *
+ * A mark is filed under the folio id (`subjectRef`), and a pupil who ended up
+ * on the roll twice can have marks under both rows. Discarding the duplicate
+ * would orphan them — the register shows what the live row holds. This
+ * re-keys them onto the surviving row first. Where both rows were marked on
+ * the same day the surviving row's mark wins and the duplicate's is dropped,
+ * because two marks for one child on one day is the duplication being undone.
+ */
+export class RekeyAttendanceDto {
+  @ApiProperty({ example: 115 })
+  @Type(() => Number)
+  @IsInt()
+  branchId!: number;
+
+  @ApiProperty({
+    example: '27289',
+    description: 'The folio id the marks are filed under now.',
+  })
+  @IsString()
+  @MaxLength(64)
+  from!: string;
+
+  @ApiProperty({
+    example: '27287',
+    description: 'The folio id they should be filed under.',
+  })
+  @IsString()
+  @MaxLength(64)
+  to!: string;
+}

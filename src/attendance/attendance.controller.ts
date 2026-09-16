@@ -26,6 +26,7 @@ import {
   ListAttendanceQueryDto,
   MarkAttendanceDto,
   ReclassAttendanceDto,
+  RekeyAttendanceDto,
 } from './dto/attendance.dto';
 import { AttendanceService } from './attendance.service';
 
@@ -104,5 +105,16 @@ export class AttendanceController {
   @RequirePosPermissions(PosSchoolPermission.ENROL_STUDENT)
   reclass(@Body() dto: ReclassAttendanceDto) {
     return this.svc.reclass(dto);
+  }
+
+  /**
+   * Re-file a pupil's marks from a duplicate folio onto the surviving one.
+   * Same door as reclass: it is a fact about the roll, not about marking.
+   */
+  @Patch('students/rekey')
+  @RetailBranchContext('body.branchId')
+  @RequirePosPermissions(PosSchoolPermission.ENROL_STUDENT)
+  rekey(@Body() dto: RekeyAttendanceDto) {
+    return this.svc.rekey(dto);
   }
 }

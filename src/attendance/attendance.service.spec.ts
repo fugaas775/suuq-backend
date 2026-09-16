@@ -626,3 +626,80 @@ describe('AttendanceService', () => {
     });
   });
 });
+
+describe('AttendanceService.rekey — a duplicate pupil’s marks follow the child', () => {
+  /**
+   * A mark is filed under the folio id. A pupil who reached the roll twice can
+   * hold marks under both rows, and discarding the duplicate would orphan its
+   * marks. Re-keying moves them; where both rows were marked on one day, the
+   * survivor's mark wins and the duplicate's is dropped.
+   */
+  function makeRepo(deleted = 2, moved = 5) {
+    const calls: any[] = [];
+    const qb: any = {
+      delete: () => {
+        calls.push('delete');
+        return qb;
+      },
+      from: () => qb,
+      update: () => {
+        calls.push('update');
+        return qb;
+      },
+      set: (v: any) => {
+        calls.push(['set', v]);
+        return qb;
+      },
+      where: (c: string, p: any) => {
+        calls.push(['where', c, p]);
+        return qb;
+      },
+      andWhere: (c: string, p: any) => {
+        calls.push(['andWhere', c, p]);
+        return qb;
+      },
+      execute: async () => ({
+        affected: calls.includes('update') ? moved : deleted,
+      }),
+    };
+    return { repo: { createQueryBuilder: () => qb } as any, calls };
+  }
+
+  it('drops the duplicate’s marks on days the survivor already has one, then moves the rest', async () => {
+    const { AttendanceService } = await import('./attendance.service');
+    const { repo, calls } = makeRepo(2, 5);
+    const svc = new AttendanceService(repo, {} as any);
+    const out = await svc.rekey({
+      branchId: 128,
+      from: '27289',
+      to: '27287',
+    });
+    expect(out).toEqual({ moved: 5, dropped: 2 });
+    expect(calls.indexOf('delete')).toBeLessThan(calls.indexOf('update'));
+    const set = calls.find((c) => Array.isArray(c) && c[0] === 'set');
+    expect(set[1]).toEqual({ subjectRef: '27287' });
+    // Only the STUDENT register, only this branch, only that row.
+    const wheres = calls.filter(
+      (c) => Array.isArray(c) && (c[0] === 'where' || c[0] === 'andWhere'),
+    );
+    expect(
+      wheres.some((c) => String(c[1]).includes('"subjectRef" = :from')),
+    ).toBe(true);
+    expect(
+      wheres.some((c) => String(c[1]).includes('"subjectRef" = :to')),
+    ).toBe(true);
+  });
+
+  it('refuses a missing side and does nothing for the same id twice', async () => {
+    const { AttendanceService } = await import('./attendance.service');
+    const { repo, calls } = makeRepo();
+    const svc = new AttendanceService(repo, {} as any);
+    await expect(
+      svc.rekey({ branchId: 128, from: '', to: '1' } as any),
+    ).rejects.toThrow(/required/);
+    expect(
+      await svc.rekey({ branchId: 128, from: '7', to: '7' } as any),
+    ).toEqual({ moved: 0, dropped: 0 });
+    expect(calls).toEqual([]);
+  });
+});

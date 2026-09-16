@@ -12,6 +12,7 @@ import {
   MarkAttendanceDto,
   MarkLessonAttendanceDto,
   ReclassAttendanceDto,
+  RekeyAttendanceDto,
 } from './dto/attendance.dto';
 
 /** 'YYYY-MM-DD' from anything the ISO8601 validator let through. */
@@ -335,6 +336,54 @@ export class AttendanceService {
 
     const result = await qb.execute();
     return { updated: result.affected ?? 0 };
+  }
+
+  /**
+   * Re-file one pupil's marks under another folio id — see RekeyAttendanceDto.
+   *
+   * Two statements, in order: drop the duplicate's marks on days the survivor
+   * already has one (the unique index would refuse the move), then move the
+   * rest. Both rows' marks are the same child's, so nothing is lost that the
+   * survivor did not already say.
+   */
+  async rekey(dto: RekeyAttendanceDto) {
+    const from = String(dto.from ?? '').trim();
+    const to = String(dto.to ?? '').trim();
+    if (!from || !to) {
+      throw new BadRequestException('from and to are both required.');
+    }
+    if (from === to) return { moved: 0, dropped: 0 };
+
+    const dropped = await this.repo
+      .createQueryBuilder()
+      .delete()
+      .from(AttendanceMark)
+      .where('"branchId" = :branchId', { branchId: dto.branchId })
+      .andWhere('"subjectType" = :subjectType', {
+        subjectType: AttendanceSubjectType.STUDENT,
+      })
+      .andWhere('"subjectRef" = :from', { from })
+      .andWhere(
+        `"attendanceDate" IN (
+          SELECT "attendanceDate" FROM pos_branch_attendance
+          WHERE "branchId" = :branchId AND "subjectType" = :subjectType AND "subjectRef" = :to
+        )`,
+        { to },
+      )
+      .execute();
+
+    const moved = await this.repo
+      .createQueryBuilder()
+      .update(AttendanceMark)
+      .set({ subjectRef: to })
+      .where('"branchId" = :branchId', { branchId: dto.branchId })
+      .andWhere('"subjectType" = :subjectType', {
+        subjectType: AttendanceSubjectType.STUDENT,
+      })
+      .andWhere('"subjectRef" = :from', { from })
+      .execute();
+
+    return { moved: moved.affected ?? 0, dropped: dropped.affected ?? 0 };
   }
 
   // ── Lessons: the grain below the day ────────────────────────────────────
