@@ -4,6 +4,7 @@ import { RetailModule } from '../retail/retail.module';
 import { PosBranchAccessGuard } from '../auth/pos-branch-access.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { AttendanceMark } from './entities/attendance-mark.entity';
+import { LessonAttendanceMark } from './entities/lesson-attendance-mark.entity';
 import { AttendanceController } from './attendance.controller';
 import { AttendanceStaffController } from './attendance-staff.controller';
 import { AttendanceService } from './attendance.service';
@@ -21,7 +22,10 @@ import { AttendanceService } from './attendance.service';
  * two registers are read by different people. See AttendanceStaffController.
  */
 @Module({
-  imports: [TypeOrmModule.forFeature([AttendanceMark]), RetailModule],
+  imports: [
+    TypeOrmModule.forFeature([AttendanceMark, LessonAttendanceMark]),
+    RetailModule,
+  ],
   controllers: [AttendanceController, AttendanceStaffController],
   providers: [AttendanceService, PosBranchAccessGuard, RolesGuard],
   exports: [AttendanceService],

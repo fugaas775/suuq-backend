@@ -137,6 +137,87 @@ export class MarkAttendanceDto {
   entries!: AttendanceEntryDto[];
 }
 
+class LessonAttendanceEntryDto {
+  @ApiProperty({ example: '5', description: 'pos_branch_employees.id' })
+  @IsString()
+  @MaxLength(64)
+  subjectRef!: string;
+
+  @ApiPropertyOptional({ example: 'Temesgen Eshetu' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  subjectName?: string | null;
+
+  @ApiProperty({
+    example: 'P1',
+    description: 'The bell period, as the timetable spells it.',
+  })
+  @IsString()
+  @MaxLength(16)
+  periodCode!: string;
+
+  @ApiProperty({
+    example: '3aad',
+    description: 'The class taught in that period.',
+  })
+  @IsString()
+  @MaxLength(64)
+  classCode!: string;
+
+  @ApiPropertyOptional({ example: 'Amharic' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  subject?: string | null;
+
+  /** Null CLEARS the lesson — "no register was taken", not "absent". */
+  @ApiProperty({
+    example: 'PRESENT',
+    description: `${STATUSES.join(' | ')} — or null to clear the lesson.`,
+    nullable: true,
+  })
+  @IsOptional()
+  @IsIn([...STATUSES, null])
+  status!: AttendanceStatus | null;
+
+  @ApiPropertyOptional({ example: 10 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  minutesLate?: number | null;
+
+  @ApiPropertyOptional({ example: 'Covered by the deputy' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  note?: string | null;
+}
+
+/**
+ * A day's lessons, marked in one request — the same reasoning as the day
+ * register's batch: a staff room of 14 teachers with up to 7 lessons each is
+ * one save, not a hundred.
+ */
+export class MarkLessonAttendanceDto {
+  @ApiProperty({ example: 115 })
+  @Type(() => Number)
+  @IsInt()
+  branchId!: number;
+
+  @ApiProperty({ example: '2026-09-16' })
+  @IsISO8601()
+  date!: string;
+
+  @ApiProperty({ type: [LessonAttendanceEntryDto] })
+  @IsArray()
+  @ArrayMaxSize(400)
+  @ValidateNested({ each: true })
+  @Type(() => LessonAttendanceEntryDto)
+  entries!: LessonAttendanceEntryDto[];
+}
+
 /**
  * Carry a class's register across a RENAME.
  *

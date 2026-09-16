@@ -22,6 +22,7 @@ import { AttendanceSubjectType } from './entities/attendance-mark.entity';
 import {
   ListAttendanceQueryDto,
   MarkAttendanceDto,
+  MarkLessonAttendanceDto,
 } from './dto/attendance.dto';
 import { AttendanceService } from './attendance.service';
 
@@ -69,6 +70,36 @@ export class AttendanceStaffController {
   @RetailBranchContext('body.branchId')
   mark(@Body() dto: MarkAttendanceDto, @Req() req: AuthenticatedRequest) {
     return this.svc.mark(
+      AttendanceSubjectType.STAFF,
+      dto,
+      req?.user?.id ?? null,
+    );
+  }
+
+  /* ── Lessons: period by period, against the timetable ───────────────────
+     The same door as the day register — POS_MANAGER only — because a lesson
+     a teacher did not teach is the same kind of employment fact as a day they
+     did not come in. */
+
+  @Get('staff/lessons')
+  @RetailBranchContext('query.branchId')
+  listLessons(@Query() query: ListAttendanceQueryDto) {
+    return this.svc.listLessons(AttendanceSubjectType.STAFF, query);
+  }
+
+  @Get('staff/lessons/summary')
+  @RetailBranchContext('query.branchId')
+  summaryLessons(@Query() query: ListAttendanceQueryDto) {
+    return this.svc.summaryLessons(AttendanceSubjectType.STAFF, query);
+  }
+
+  @Post('staff/lessons/mark')
+  @RetailBranchContext('body.branchId')
+  markLessons(
+    @Body() dto: MarkLessonAttendanceDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.svc.markLessons(
       AttendanceSubjectType.STAFF,
       dto,
       req?.user?.id ?? null,

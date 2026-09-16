@@ -83,8 +83,71 @@ function makeService({
   const repo: any = {
     createQueryBuilder: (alias?: string) => (alias ? readQb : writeQb),
   };
+  // The lesson table gets the same two builders and its own capture, so a
+  // test can tell which register a write went to.
+  const lessonCaptured: any = {
+    where: [],
+    inserted: null,
+    orUpdate: null,
+    deleted: false,
+  };
+  const lessonReadQb: any = {
+    where: (sql: string, params: any) => {
+      lessonCaptured.where.push([sql, params]);
+      return lessonReadQb;
+    },
+    andWhere: (sql: string, params: any) => {
+      lessonCaptured.where.push([sql, params]);
+      return lessonReadQb;
+    },
+    select: () => lessonReadQb,
+    addSelect: () => lessonReadQb,
+    groupBy: () => lessonReadQb,
+    orderBy: () => lessonReadQb,
+    addOrderBy: () => lessonReadQb,
+    take: () => lessonReadQb,
+    getMany: async () => rows,
+    getRawMany: async () => rawMany,
+    getRawOne: async () => rawOne,
+  };
+  const lessonWriteQb: any = {
+    insert: () => lessonWriteQb,
+    into: () => lessonWriteQb,
+    values: (v: any) => {
+      lessonCaptured.inserted = v;
+      return lessonWriteQb;
+    },
+    orUpdate: (cols: string[], conflict: string[]) => {
+      lessonCaptured.orUpdate = { cols, conflict };
+      return lessonWriteQb;
+    },
+    delete: () => {
+      lessonCaptured.deleted = true;
+      return lessonWriteQb;
+    },
+    from: () => lessonWriteQb,
+    where: (sql: any, params: any) => {
+      lessonCaptured.where.push([sql, params]);
+      return lessonWriteQb;
+    },
+    andWhere: (sql: any, params: any) => {
+      lessonCaptured.where.push([sql, params]);
+      return lessonWriteQb;
+    },
+    execute: async () => ({
+      affected: lessonCaptured.deleted ? deleteAffected : 0,
+    }),
+  };
+  const lessonRepo: any = {
+    createQueryBuilder: (alias?: string) =>
+      alias ? lessonReadQb : lessonWriteQb,
+  };
 
-  return { svc: new AttendanceService(repo), captured };
+  return {
+    svc: new AttendanceService(repo, lessonRepo),
+    captured,
+    lessonCaptured,
+  };
 }
 
 const dto = (over: Record<string, unknown> = {}) =>
@@ -368,6 +431,198 @@ describe('AttendanceService', () => {
       });
       expect(out.updated).toBe(0);
       expect(captured.updated).toBeNull();
+    });
+  });
+
+  /**
+   * The grain below the day: (teacher, day, period, class). Its own table, so
+   * nothing here touches the day register's builders.
+   */
+  describe('lessons', () => {
+    const lessonDto = (over: Record<string, unknown> = {}) =>
+      ({ branchId: 115, date: '2026-09-16', entries: [], ...over }) as any;
+
+    it('upserts onto the lesson index — a corrected mark is an update, never a second lesson', async () => {
+      const { svc, captured, lessonCaptured } = makeService();
+      const result = await svc.markLessons(
+        AttendanceSubjectType.STAFF,
+        lessonDto({
+          entries: [
+            {
+              subjectRef: '5',
+              subjectName: 'Temesgen Eshetu',
+              periodCode: 'P1',
+              classCode: '3AAD',
+              subject: 'Amharic',
+              status: AttendanceStatus.PRESENT,
+            },
+            {
+              subjectRef: '5',
+              periodCode: 'P1',
+              classCode: '7th',
+              status: AttendanceStatus.ABSENT,
+            },
+            // The same lesson twice in one request is one lesson.
+            {
+              subjectRef: '5',
+              periodCode: 'p1',
+              classCode: '7TH',
+              status: AttendanceStatus.PRESENT,
+            },
+          ],
+        }),
+        9,
+      );
+      expect(result).toEqual({ saved: 2, cleared: 0, date: '2026-09-16' });
+      expect(lessonCaptured.inserted).toHaveLength(2);
+      expect(lessonCaptured.inserted[0]).toMatchObject({
+        subjectType: 'STAFF',
+        subjectRef: '5',
+        periodCode: 'P1',
+        classCode: '3aad',
+        subject: 'Amharic',
+        status: 'PRESENT',
+        recordedByUserId: 9,
+      });
+      expect(lessonCaptured.orUpdate.conflict).toEqual([
+        'branchId',
+        'subjectType',
+        'subjectRef',
+        'attendanceDate',
+        'periodCode',
+        'classCode',
+      ]);
+      expect(lessonCaptured.orUpdate.cols).toContain('status');
+      // The day register was not written.
+      expect(captured.inserted).toBeNull();
+    });
+
+    it('refuses a lesson that names no class or period — the key would be incomplete', async () => {
+      const { svc } = makeService();
+      await expect(
+        svc.markLessons(
+          AttendanceSubjectType.STAFF,
+          lessonDto({
+            entries: [{ subjectRef: '5', periodCode: 'P1', status: 'PRESENT' }],
+          }),
+          null,
+        ),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      await expect(
+        svc.markLessons(
+          AttendanceSubjectType.STAFF,
+          lessonDto({
+            entries: [
+              { subjectRef: '5', classCode: '3aad', status: 'PRESENT' },
+            ],
+          }),
+          null,
+        ),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('clears a lesson on a null status instead of marking it, and only that lesson', async () => {
+      const { svc, lessonCaptured } = makeService({ deleteAffected: 1 });
+      const result = await svc.markLessons(
+        AttendanceSubjectType.STAFF,
+        lessonDto({
+          entries: [
+            {
+              subjectRef: '5',
+              periodCode: 'P1',
+              classCode: '3aad',
+              status: null,
+            },
+          ],
+        }),
+        null,
+      );
+      expect(result).toEqual({ saved: 0, cleared: 1, date: '2026-09-16' });
+      expect(lessonCaptured.inserted).toBeNull();
+      expect(lessonCaptured.deleted).toBe(true);
+      const sql = lessonCaptured.where
+        .map(([w]) => (typeof w === 'string' ? w : 'brackets'))
+        .join(' ');
+      expect(sql).toContain('"attendanceDate" = :day');
+      expect(sql).toContain('brackets');
+    });
+
+    it('only stores minutes on a LATE lesson', async () => {
+      const { svc, lessonCaptured } = makeService();
+      await svc.markLessons(
+        AttendanceSubjectType.STAFF,
+        lessonDto({
+          entries: [
+            {
+              subjectRef: '5',
+              periodCode: 'P1',
+              classCode: '3aad',
+              status: AttendanceStatus.LATE,
+              minutesLate: 10,
+            },
+            {
+              subjectRef: '8',
+              periodCode: 'P1',
+              classCode: '1aad',
+              status: AttendanceStatus.PRESENT,
+              minutesLate: 10,
+            },
+          ],
+        }),
+        null,
+      );
+      expect(lessonCaptured.inserted.map((r: any) => r.minutesLate)).toEqual([
+        10,
+        null,
+      ]);
+    });
+
+    it('lists and summarises lessons scoped to the day or range asked for', async () => {
+      const { svc, lessonCaptured } = makeService({
+        rows: [],
+        rawMany: [
+          {
+            subjectRef: '5',
+            subjectName: 'Temesgen Eshetu',
+            marked: '4',
+            present: '3',
+            absent: '1',
+            late: '0',
+            excused: '0',
+            days: '2',
+          },
+        ],
+        rawOne: { days: 2 },
+      });
+      await svc.listLessons(AttendanceSubjectType.STAFF, {
+        branchId: 115,
+        date: '2026-09-16',
+      });
+      expect(
+        lessonCaptured.where.some(([w]) =>
+          String(w).includes('"attendanceDate" = :exact'),
+        ),
+      ).toBe(true);
+      const summary = await svc.summaryLessons(AttendanceSubjectType.STAFF, {
+        branchId: 115,
+        from: '2026-09-01',
+        to: '2026-09-30',
+      });
+      expect(summary.items).toEqual([
+        {
+          subjectRef: '5',
+          subjectName: 'Temesgen Eshetu',
+          marked: 4,
+          present: 3,
+          absent: 1,
+          late: 0,
+          excused: 0,
+          days: 2,
+        },
+      ]);
+      expect(summary.days).toBe(2);
+      // Counts only — no percentage leaves the server.
+      expect(Object.keys(summary.items[0])).not.toContain('rate');
     });
   });
 });

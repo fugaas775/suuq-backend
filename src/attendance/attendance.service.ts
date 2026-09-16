@@ -1,14 +1,16 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Brackets, Repository } from 'typeorm';
 import {
   AttendanceMark,
   AttendanceStatus,
   AttendanceSubjectType,
 } from './entities/attendance-mark.entity';
+import { LessonAttendanceMark } from './entities/lesson-attendance-mark.entity';
 import {
   ListAttendanceQueryDto,
   MarkAttendanceDto,
+  MarkLessonAttendanceDto,
   ReclassAttendanceDto,
 } from './dto/attendance.dto';
 
@@ -56,6 +58,8 @@ export class AttendanceService {
   constructor(
     @InjectRepository(AttendanceMark)
     private readonly repo: Repository<AttendanceMark>,
+    @InjectRepository(LessonAttendanceMark)
+    private readonly lessons: Repository<LessonAttendanceMark>,
   ) {}
 
   private toResponse(row: AttendanceMark) {
@@ -331,5 +335,254 @@ export class AttendanceService {
 
     const result = await qb.execute();
     return { updated: result.affected ?? 0 };
+  }
+
+  // ── Lessons: the grain below the day ────────────────────────────────────
+
+  private lessonToResponse(row: LessonAttendanceMark) {
+    return {
+      id: Number(row.id),
+      branchId: row.branchId,
+      attendanceDate: String(row.attendanceDate).slice(0, 10),
+      subjectType: row.subjectType,
+      subjectRef: row.subjectRef,
+      subjectName: row.subjectName ?? null,
+      periodCode: row.periodCode,
+      classCode: row.classCode,
+      subject: row.subject ?? null,
+      status: row.status,
+      minutesLate: row.minutesLate ?? null,
+      note: row.note ?? null,
+      recordedByUserId: row.recordedByUserId ?? null,
+      updatedAt: row.updatedAt.toISOString(),
+    };
+  }
+
+  /** The same day / range / class / subject filters, over the lesson table. */
+  private scopedLessons(
+    alias: string,
+    branchId: number,
+    subjectType: AttendanceSubjectType,
+    query: ListAttendanceQueryDto,
+  ) {
+    const qb = this.lessons
+      .createQueryBuilder(alias)
+      .where(`${alias}."branchId" = :branchId`, { branchId })
+      .andWhere(`${alias}."subjectType" = :subjectType`, { subjectType });
+
+    const exact = dayOf(query.date);
+    if (exact) {
+      qb.andWhere(`${alias}."attendanceDate" = :exact`, { exact });
+    } else {
+      const from = dayOf(query.from);
+      const to = dayOf(query.to);
+      if (from) qb.andWhere(`${alias}."attendanceDate" >= :from`, { from });
+      if (to) qb.andWhere(`${alias}."attendanceDate" <= :to`, { to });
+    }
+
+    const code = classKey(query.classCode);
+    if (code) qb.andWhere(`${alias}."classCode" = :code`, { code });
+
+    const subjectRef = String(query.subjectRef ?? '').trim();
+    if (subjectRef) {
+      qb.andWhere(`${alias}."subjectRef" = :subjectRef`, { subjectRef });
+    }
+    return qb;
+  }
+
+  async listLessons(
+    subjectType: AttendanceSubjectType,
+    query: ListAttendanceQueryDto,
+  ) {
+    const rows = await this.scopedLessons(
+      'l',
+      query.branchId,
+      subjectType,
+      query,
+    )
+      .orderBy('l."attendanceDate"', 'ASC')
+      .addOrderBy('l."subjectRef"', 'ASC')
+      .addOrderBy('l."periodCode"', 'ASC')
+      // A month of 14 teachers × 28 lessons is ~1,600 rows; the cap is the
+      // backstop for a whole year of a whole branch.
+      .take(40000)
+      .getMany();
+    return { items: rows.map((r) => this.lessonToResponse(r)) };
+  }
+
+  /**
+   * Counts per person, in the database — never a percentage, for the reason
+   * the day summary gives: the rate has one definition and it lives in the
+   * frontend. `lessons` is the number marked, which is the honest denominator;
+   * the lessons a teacher SHOULD have taught are the timetable's to say.
+   */
+  async summaryLessons(
+    subjectType: AttendanceSubjectType,
+    query: ListAttendanceQueryDto,
+  ) {
+    const filter = (status: AttendanceStatus) =>
+      `COUNT(*) FILTER (WHERE l."status" = '${status}')::int`;
+    const rows = await this.scopedLessons(
+      'l',
+      query.branchId,
+      subjectType,
+      query,
+    )
+      .select('l."subjectRef"', 'subjectRef')
+      .addSelect('MAX(l."subjectName")', 'subjectName')
+      .addSelect('COUNT(*)::int', 'marked')
+      .addSelect(filter(AttendanceStatus.PRESENT), 'present')
+      .addSelect(filter(AttendanceStatus.ABSENT), 'absent')
+      .addSelect(filter(AttendanceStatus.LATE), 'late')
+      .addSelect(filter(AttendanceStatus.EXCUSED), 'excused')
+      .addSelect('COUNT(DISTINCT l."attendanceDate")::int', 'days')
+      .groupBy('l."subjectRef"')
+      .getRawMany<AttendanceSummaryRow & { days: number }>();
+    const daysRow = await this.scopedLessons(
+      'l',
+      query.branchId,
+      subjectType,
+      query,
+    )
+      .select('COUNT(DISTINCT l."attendanceDate")::int', 'days')
+      .getRawOne<{ days: number }>();
+    return {
+      items: rows.map((row) => ({
+        subjectRef: String(row.subjectRef),
+        subjectName: row.subjectName ?? null,
+        marked: Number(row.marked) || 0,
+        present: Number(row.present) || 0,
+        absent: Number(row.absent) || 0,
+        late: Number(row.late) || 0,
+        excused: Number(row.excused) || 0,
+        days: Number(row.days) || 0,
+      })),
+      days: Number(daysRow?.days) || 0,
+    };
+  }
+
+  /**
+   * Mark (or re-mark) a day's lessons.
+   *
+   * Idempotent on (branch, type, person, day, period, class): a second save of
+   * Monday P1 for 3aad updates the mark rather than adding a second lesson. A
+   * null status DELETES that lesson's mark — "no register was taken for this
+   * lesson", which is a different fact from "the teacher was not there".
+   */
+  async markLessons(
+    subjectType: AttendanceSubjectType,
+    dto: MarkLessonAttendanceDto,
+    recordedByUserId: number | null,
+  ) {
+    const day = dayOf(dto.date);
+    if (!day) throw new BadRequestException('date must be YYYY-MM-DD.');
+
+    const clearing: {
+      subjectRef: string;
+      periodCode: string;
+      classCode: string;
+    }[] = [];
+    const upserting: Partial<LessonAttendanceMark>[] = [];
+    const seen = new Set<string>();
+
+    for (const entry of dto.entries || []) {
+      const subjectRef = String(entry?.subjectRef ?? '').trim();
+      const periodCode = String(entry?.periodCode ?? '')
+        .trim()
+        .slice(0, 16);
+      const code = classKey(entry?.classCode);
+      if (!subjectRef || !periodCode || !code) {
+        throw new BadRequestException(
+          'Every lesson entry needs a subjectRef, a periodCode and a classCode.',
+        );
+      }
+      const key = `${subjectRef}|${periodCode.toUpperCase()}|${code}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      if (!entry.status) {
+        clearing.push({ subjectRef, periodCode, classCode: code });
+        continue;
+      }
+      upserting.push({
+        branchId: dto.branchId,
+        attendanceDate: day,
+        subjectType,
+        subjectRef,
+        subjectName: entry.subjectName
+          ? String(entry.subjectName).trim().slice(0, 255)
+          : null,
+        periodCode,
+        classCode: code,
+        subject: entry.subject
+          ? String(entry.subject).trim().slice(0, 120)
+          : null,
+        status: entry.status,
+        minutesLate:
+          entry.status === AttendanceStatus.LATE && entry.minutesLate != null
+            ? Number(entry.minutesLate)
+            : null,
+        note: entry.note ? String(entry.note).trim().slice(0, 200) : null,
+        recordedByUserId,
+        updatedAt: new Date(),
+      });
+    }
+
+    if (upserting.length) {
+      await this.lessons
+        .createQueryBuilder()
+        .insert()
+        .into(LessonAttendanceMark)
+        .values(upserting)
+        .orUpdate(
+          [
+            'subjectName',
+            'subject',
+            'status',
+            'minutesLate',
+            'note',
+            'recordedByUserId',
+            'updatedAt',
+          ],
+          [
+            'branchId',
+            'subjectType',
+            'subjectRef',
+            'attendanceDate',
+            'periodCode',
+            'classCode',
+          ],
+        )
+        .execute();
+    }
+
+    let cleared = 0;
+    if (clearing.length) {
+      const qb = this.lessons
+        .createQueryBuilder()
+        .delete()
+        .from(LessonAttendanceMark)
+        .where('"branchId" = :branchId', { branchId: dto.branchId })
+        .andWhere('"subjectType" = :subjectType', { subjectType })
+        .andWhere('"attendanceDate" = :day', { day })
+        .andWhere(
+          new Brackets((outer) => {
+            clearing.forEach((c, i) => {
+              const clause = `("subjectRef" = :ref${i} AND "periodCode" = :period${i} AND "classCode" = :class${i})`;
+              const params = {
+                [`ref${i}`]: c.subjectRef,
+                [`period${i}`]: c.periodCode,
+                [`class${i}`]: c.classCode,
+              };
+              if (i === 0) outer.where(clause, params);
+              else outer.orWhere(clause, params);
+            });
+          }),
+        );
+      const result = await qb.execute();
+      cleared = result.affected ?? 0;
+    }
+
+    return { saved: upserting.length, cleared, date: day };
   }
 }
