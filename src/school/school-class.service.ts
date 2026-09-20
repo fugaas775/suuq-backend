@@ -18,6 +18,7 @@ import {
   ReorderSchoolClassesDto,
   UpdateSchoolClassDto,
 } from './dto/school-class.dto';
+import { SchoolRoomService } from './school-room.service';
 
 /**
  * The branch's class registry.
@@ -40,6 +41,7 @@ export class SchoolClassService {
     // Read-only: the registry names a home room teacher, it never writes one.
     @InjectRepository(BranchEmployee)
     private readonly employees: Repository<BranchEmployee>,
+    private readonly roomsSvc: SchoolRoomService = null,
   ) {}
 
   private toResponse(row: SchoolClass) {
@@ -53,6 +55,7 @@ export class SchoolClassService {
       sortOrder: row.sortOrder ?? 0,
       feeProductId: row.feeProductId ?? null,
       capacity: row.capacity ?? null,
+      roomId: row.roomId ?? null,
       homeroomEmployeeId: row.homeroomEmployeeId ?? null,
       homeroomTeacherName: row.homeroomTeacherName ?? null,
       status: row.status,
@@ -298,6 +301,8 @@ export class SchoolClassService {
       section: null,
     });
     const homeroom = await this.resolveHomeroom(dto.branchId, dto);
+    if (dto.roomId != null)
+      await this.roomsSvc.assertOnBranch(dto.branchId, Number(dto.roomId));
     const row = this.repo.create({
       branchId: dto.branchId,
       code,
@@ -312,6 +317,7 @@ export class SchoolClassService {
         (await this.nextSortOrder(dto.branchId, placement.gradeCode ?? null)),
       feeProductId: dto.feeProductId ?? null,
       capacity: dto.capacity ?? null,
+      roomId: dto.roomId == null ? null : Number(dto.roomId),
       homeroomEmployeeId: homeroom?.id ?? null,
       homeroomTeacherName: homeroom?.name ?? null,
       status:
@@ -404,6 +410,11 @@ export class SchoolClassService {
       row.feeProductId = dto.feeProductId ?? null;
     }
     if (dto.capacity !== undefined) row.capacity = dto.capacity ?? null;
+    if (dto.roomId !== undefined) {
+      if (dto.roomId !== null)
+        await this.roomsSvc.assertOnBranch(dto.branchId, Number(dto.roomId));
+      row.roomId = dto.roomId === null ? null : Number(dto.roomId);
+    }
     const homeroom = await this.resolveHomeroom(dto.branchId, dto);
     if (homeroom !== undefined) {
       row.homeroomEmployeeId = homeroom.id;

@@ -9,6 +9,7 @@ import {
   Min,
   MinLength,
   ValidateNested,
+  ValidateIf,
 } from 'class-validator';
 
 export class ListSchoolClassesQueryDto {
@@ -93,6 +94,14 @@ export class CreateSchoolClassDto {
   @Min(0)
   capacity?: number | null;
 
+  /** The room the class sits in; null takes it out of its room. */
+  @ApiPropertyOptional({ example: 3, nullable: true })
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null)
+  @Type(() => Number)
+  @IsInt()
+  roomId?: number | null;
+
   /**
    * The staff row of the class's home room teacher — `pos_branch_employees.id`.
    *
@@ -174,6 +183,14 @@ export class UpdateSchoolClassDto {
   @IsInt()
   @Min(0)
   capacity?: number | null;
+
+  /** The room the class sits in; null takes it out of its room. */
+  @ApiPropertyOptional({ example: 3, nullable: true })
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null)
+  @Type(() => Number)
+  @IsInt()
+  roomId?: number | null;
 
   /**
    * The staff row of the class's home room teacher — `pos_branch_employees.id`.

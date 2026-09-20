@@ -21,6 +21,9 @@ import { SchoolTimetableController } from './school-timetable.controller';
 import { SchoolTimetableService } from './school-timetable.service';
 import { SchoolClassScopeService } from './school-class-scope.service';
 import { SchoolLessonPlan } from './entities/school-lesson-plan.entity';
+import { SchoolRoom } from './entities/school-room.entity';
+import { SchoolRoomService } from './school-room.service';
+import { SchoolRoomController } from './school-room.controller';
 import { SchoolLessonPlanService } from './school-lesson-plan.service';
 import { SchoolLessonPlanController } from './school-lesson-plan.controller';
 
@@ -50,6 +53,8 @@ import { SchoolLessonPlanController } from './school-lesson-plan.controller';
       SchoolTextbookLoan,
       // Lesson plans: what a teacher means to teach, and what became of it.
       SchoolLessonPlan,
+      // Rooms and their desks — the seats a class can take.
+      SchoolRoom,
       // Marks: the policy reads the branch's owner and the caller's
       // assignment (its ENTER_MARKS capability), as withdrawal does.
       Branch,
@@ -62,6 +67,7 @@ import { SchoolLessonPlanController } from './school-lesson-plan.controller';
     SchoolTimetableController,
     SchoolTextbookController,
     SchoolLessonPlanController,
+    SchoolRoomController,
     SchoolMarksController,
   ],
   providers: [
@@ -69,6 +75,7 @@ import { SchoolLessonPlanController } from './school-lesson-plan.controller';
     SchoolTimetableService,
     SchoolClassScopeService,
     SchoolLessonPlanService,
+    SchoolRoomService,
     SchoolTextbookService,
     SchoolMarksService,
     PosBranchAccessGuard,

@@ -123,6 +123,12 @@ export class SchoolClass {
   @Column({ type: 'int', nullable: true })
   capacity!: number | null;
 
+  /** The room this class sits in (`pos_school_rooms.id`, no FK). Its seats
+   * are the class's capacity; `capacity` above is the typed override for a
+   * class with no room. */
+  @Column({ type: 'int', nullable: true })
+  roomId!: number | null;
+
   /**
    * The HOME ROOM teacher — the one member of staff who answers for this
    * class's daily register.
