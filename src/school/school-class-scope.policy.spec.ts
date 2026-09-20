@@ -70,13 +70,13 @@ describe('school-class-scope.policy', () => {
     ).toBe(true);
   });
 
-  it('unions the home room, the timetable classes and the SCHOOL_CLASS capabilities, lowercased', () => {
+  it('unions the home room and the SCHOOL_CLASS capabilities, lowercased — the timetable assigns nothing', () => {
     const codes = assignedClassCodes({
-      homeroomCodes: ['3aad'],
-      slots: [{ classCode: '4AAD' }, { classCode: '3aad' }, { classCode: '' }],
+      homeroomCodes: ['3aad', '', null],
       capabilities: ['SCHOOL_CLASS:7th', 'ENTER_MARKS', 'school_class:8th'],
     });
-    expect([...codes].sort()).toEqual(['3aad', '4aad', '7th', '8th']);
+    expect([...codes].sort()).toEqual(['3aad', '7th', '8th']);
+    expect(assignedClassCodes({}).size).toBe(0);
   });
 
   it('answers in-scope for an unscoped person, and by class for a scoped one, and names the refusal', () => {

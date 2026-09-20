@@ -3,7 +3,7 @@
  *
  * Owner 2026-09-20: "Teachers should only manage assigned grade only." A
  * teacher's classes are the ones the school assigned them: the home room
- * the registry names them on, the classes on their timetable slots, and any
+ * the registry names them on and any
  * `SCHOOL_CLASS:<code>` capability the office wrote on their login. The
  * owner, a manager, and the office (whoever holds ENROL_STUDENT, the
  * permission that defines classes) are not scoped — the office covers for
@@ -57,20 +57,22 @@ export function isClassScoped({
     .includes(OFFICE_PERMISSION);
 }
 
-/** Home room ∪ timetable classes ∪ SCHOOL_CLASS capabilities, lowercased. */
+/**
+ * Home room ∪ SCHOOL_CLASS capabilities, lowercased. ASSIGNED means assigned
+ * by the office — the timetable is a schedule, not an assignment: a
+ * Mathematics teacher takes eight classes and the owner does not want
+ * eight registers in their hands ("teacher should only see assigned class").
+ * Marks stay held to the timetable's (class, subject) pairs on top of this.
+ */
 export function assignedClassCodes({
   homeroomCodes,
-  slots,
   capabilities,
 }: {
   homeroomCodes?: Array<string | null | undefined> | null;
-  slots?: Array<{ classCode?: string | null }> | null;
   capabilities?: string[] | null;
 }): Set<string> {
   const out = new Set<string>();
   for (const code of homeroomCodes ?? []) if (fold(code)) out.add(fold(code));
-  for (const slot of slots ?? [])
-    if (fold(slot?.classCode)) out.add(fold(slot?.classCode));
   for (const cap of capabilities ?? []) {
     const c = String(cap ?? '').trim();
     if (c.toUpperCase().startsWith(SCHOOL_CLASS_CAPABILITY_PREFIX)) {

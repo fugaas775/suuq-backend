@@ -59,7 +59,8 @@ export class SchoolClassScopeService {
     });
 
     // The name, from the staff register first (a login's display name can
-    // lag a rename), then the account.
+    // lag a rename), then the account. The timetable is read for the name
+    // only — its classes are not assignments.
     const [mine, timetable] = await Promise.all([
       this.classes.mine(branchId, actorId),
       this.timetable.mine(branchId, actorId),
@@ -75,7 +76,6 @@ export class SchoolClassScopeService {
       scoped: true,
       codes: assignedClassCodes({
         homeroomCodes: mine.items.map((c) => c.code),
-        slots: timetable.slots,
         capabilities: assignment?.capabilities ?? null,
       }),
       recordedBy,
