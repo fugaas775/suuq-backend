@@ -69,9 +69,11 @@ export class SchoolTextbookService {
       await this.titles.find({ where: { branchId: dto.branchId, classCode } })
     ).find((row) => fold(row.title) === fold(title));
     const price = money(dto.replacementPrice);
+    const subject = text(dto.subject) || null;
     if (existing) {
       // Re-listing a title that was taken off brings it back, spelling kept.
-      // A price given on the way back in is taken; none given keeps the old.
+      // A price or a subject given on the way back in is taken; none given
+      // keeps the old.
       let dirty = false;
       if (!existing.isActive) {
         existing.isActive = true;
@@ -79,6 +81,10 @@ export class SchoolTextbookService {
       }
       if (price != null && existing.replacementPrice !== price) {
         existing.replacementPrice = price;
+        dirty = true;
+      }
+      if (subject && fold(existing.subject) !== fold(subject)) {
+        existing.subject = subject;
         dirty = true;
       }
       return dirty ? this.titles.save(existing) : existing;
@@ -94,6 +100,7 @@ export class SchoolTextbookService {
         sortOrder: count,
         isActive: true,
         replacementPrice: price,
+        subject,
         createdByUserId: userId,
       }),
     );
@@ -131,6 +138,9 @@ export class SchoolTextbookService {
     if (dto.replacementPrice !== undefined) {
       row.replacementPrice =
         dto.replacementPrice === null ? null : money(dto.replacementPrice);
+    }
+    if (dto.subject !== undefined) {
+      row.subject = dto.subject === null ? null : text(dto.subject) || null;
     }
     return this.titles.save(row);
   }

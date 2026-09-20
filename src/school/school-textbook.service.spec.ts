@@ -330,4 +330,48 @@ describe('SchoolTextbookService', () => {
       ).rejects.toThrow(/not found/);
     });
   });
+
+  describe('a book belongs to a subject, and the subject teacher provides it', () => {
+    it('keeps the subject a teacher gave, takes one on a re-listing, and clears it with null', async () => {
+      const { svc, titles } = makeService();
+      const a = await svc.createTitle(
+        {
+          branchId: 128,
+          classCode: '3aad',
+          title: 'Maths Grade 3',
+          subject: 'Maths',
+        },
+        1,
+      );
+      expect(titles[0].subject).toBe('Maths');
+      await svc.deactivateTitle(Number(a.id), 128);
+      await svc.createTitle(
+        { branchId: 128, classCode: '3aad', title: 'maths grade 3' },
+        1,
+      );
+      expect(titles[0].subject).toBe('Maths');
+      await svc.createTitle(
+        {
+          branchId: 128,
+          classCode: '3aad',
+          title: 'MATHS GRADE 3',
+          subject: 'Mathematics',
+        },
+        1,
+      );
+      expect(titles[0].subject).toBe('Mathematics');
+      await svc.updateTitle(Number(a.id), { branchId: 128, subject: null });
+      expect(titles[0].subject).toBeNull();
+      await svc.updateTitle(Number(a.id), {
+        branchId: 128,
+        subject: '  Maths ',
+      });
+      expect(titles[0].subject).toBe('Maths');
+      const b = await svc.createTitle(
+        { branchId: 128, classCode: '3aad', title: 'Atlas' },
+        1,
+      );
+      expect(b.subject).toBeNull();
+    });
+  });
 });

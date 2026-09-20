@@ -34,6 +34,15 @@ export class SchoolTextbookTitle {
   @Column({ type: 'varchar', length: 160 })
   title!: string;
 
+  /**
+   * The subject this book is for — the teacher who takes that subject in
+   * the class is the one who provides it. Spelled as the timetable spells
+   * the subject; matched case-insensitively. Null for a book the home room
+   * lists for everyone.
+   */
+  @Column({ type: 'varchar', length: 120, nullable: true })
+  subject!: string | null;
+
   @Column({ type: 'int', default: 0 })
   sortOrder!: number;
 

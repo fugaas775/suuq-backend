@@ -47,6 +47,12 @@ export class CreateSchoolTextbookTitleDto {
   @IsNumber()
   @Min(0)
   replacementPrice?: number;
+
+  /** The subject this book is for; the subject teacher provides it. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  subject?: string;
 }
 
 /** Rename a title or (un)price it. `replacementPrice: null` clears the price. */
@@ -65,6 +71,13 @@ export class UpdateSchoolTextbookTitleDto {
   @IsNumber()
   @Min(0)
   replacementPrice?: number | null;
+
+  /** `null` makes the book everyone's again. */
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null)
+  @IsString()
+  @MaxLength(120)
+  subject?: string | null;
 }
 
 export class ListSchoolTextbookLoansQueryDto {
