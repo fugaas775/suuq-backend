@@ -20,6 +20,9 @@ import { SchoolTextbookService } from './school-textbook.service';
 import { SchoolTimetableController } from './school-timetable.controller';
 import { SchoolTimetableService } from './school-timetable.service';
 import { SchoolClassScopeService } from './school-class-scope.service';
+import { SchoolLessonPlan } from './entities/school-lesson-plan.entity';
+import { SchoolLessonPlanService } from './school-lesson-plan.service';
+import { SchoolLessonPlanController } from './school-lesson-plan.controller';
 
 /**
  * SCHOOL — a term-based POS format whose board unit is a CLASS: a container
@@ -45,6 +48,8 @@ import { SchoolClassScopeService } from './school-class-scope.service';
       // Textbooks: the titles a class carries and who holds which.
       SchoolTextbookTitle,
       SchoolTextbookLoan,
+      // Lesson plans: what a teacher means to teach, and what became of it.
+      SchoolLessonPlan,
       // Marks: the policy reads the branch's owner and the caller's
       // assignment (its ENTER_MARKS capability), as withdrawal does.
       Branch,
@@ -56,12 +61,14 @@ import { SchoolClassScopeService } from './school-class-scope.service';
     SchoolClassController,
     SchoolTimetableController,
     SchoolTextbookController,
+    SchoolLessonPlanController,
     SchoolMarksController,
   ],
   providers: [
     SchoolClassService,
     SchoolTimetableService,
     SchoolClassScopeService,
+    SchoolLessonPlanService,
     SchoolTextbookService,
     SchoolMarksService,
     PosBranchAccessGuard,
