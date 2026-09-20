@@ -5,12 +5,17 @@ import {
   IsArray,
   IsIn,
   IsInt,
+  IsNumber,
   IsOptional,
   IsString,
   Matches,
   MaxLength,
+  Min,
   MinLength,
+  ValidateIf,
 } from 'class-validator';
+
+export const TEXTBOOK_LOAN_STATUSES = ['ISSUED', 'RETURNED', 'LOST'] as const;
 
 export class ListSchoolTextbookTitlesQueryDto {
   @Type(() => Number)
@@ -36,6 +41,30 @@ export class CreateSchoolTextbookTitleDto {
   @MinLength(1)
   @MaxLength(160)
   title!: string;
+
+  /** What a replacement costs the family. Optional — the office prices later. */
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  replacementPrice?: number;
+}
+
+/** Rename a title or (un)price it. `replacementPrice: null` clears the price. */
+export class UpdateSchoolTextbookTitleDto {
+  @IsInt()
+  branchId!: number;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(160)
+  title?: string;
+
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null)
+  @IsNumber()
+  @Min(0)
+  replacementPrice?: number | null;
 }
 
 export class ListSchoolTextbookLoansQueryDto {
@@ -52,6 +81,11 @@ export class ListSchoolTextbookLoansQueryDto {
   @Type(() => Number)
   @IsInt()
   folioId?: number;
+
+  /** One status only — the desk asks for the LOST books. */
+  @IsOptional()
+  @IsIn(TEXTBOOK_LOAN_STATUSES)
+  status?: (typeof TEXTBOOK_LOAN_STATUSES)[number];
 }
 
 export class IssueSchoolTextbooksDto {
@@ -92,6 +126,25 @@ export class UpdateSchoolTextbookLoanDto {
   @IsString()
   @MaxLength(200)
   note?: string;
+}
+
+/**
+ * The office has posted the bill for a lost book onto the pupil's folio and
+ * tells the register so: the amount, and the id of the folio line that IS
+ * the bill. The register never moves money itself.
+ */
+export class MarkSchoolTextbookLoanBilledDto {
+  @IsInt()
+  branchId!: number;
+
+  @IsNumber()
+  @Min(0)
+  amount!: number;
+
+  @IsString()
+  @MinLength(1)
+  @MaxLength(64)
+  lineId!: string;
 }
 
 export class SchoolTextbooksOutstandingQueryDto {

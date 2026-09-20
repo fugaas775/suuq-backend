@@ -7,6 +7,12 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 
+/** pg hands numeric back as a string; the register reads a number. */
+const numericTransformer = {
+  to: (v: number | null | undefined) => (v == null ? null : v),
+  from: (v: string | null) => (v == null ? null : Number(v)),
+};
+
 /**
  * A textbook a class is issued — the school's own list, one row per title
  * per class. The home-room teacher adds them; a title no longer in use is
@@ -33,6 +39,20 @@ export class SchoolTextbookTitle {
 
   @Column({ type: 'boolean', default: true })
   isActive!: boolean;
+
+  /**
+   * What a replacement costs the family — the figure the office bills when a
+   * book is marked lost. Set by the office; a teacher's register never shows
+   * it. Null until the school prices the title.
+   */
+  @Column({
+    type: 'numeric',
+    precision: 12,
+    scale: 2,
+    nullable: true,
+    transformer: numericTransformer,
+  })
+  replacementPrice!: number | null;
 
   @Column({ type: 'int', nullable: true })
   createdByUserId!: number | null;

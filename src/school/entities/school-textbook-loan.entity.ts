@@ -7,6 +7,12 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 
+/** pg hands numeric back as a string; the register reads a number. */
+const numericTransformer = {
+  to: (v: number | null | undefined) => (v == null ? null : v),
+  from: (v: string | null) => (v == null ? null : Number(v)),
+};
+
 export type TextbookLoanStatus = 'ISSUED' | 'RETURNED' | 'LOST';
 
 /**
@@ -49,6 +55,28 @@ export class SchoolTextbookLoan {
 
   @Column({ type: 'varchar', length: 200, nullable: true })
   note!: string | null;
+
+  /**
+   * The office's bill for a LOST book: the day, the amount, and the id of the
+   * line it posted on the pupil's folio. The LINE is the money; this is the
+   * register's memory of it, so a book is billed once and the desk can list
+   * the lost books nobody has billed yet. Kept when a lost book turns up
+   * again — reversing the charge is a till decision, not a register tap.
+   */
+  @Column({ type: 'date', nullable: true })
+  billedAt!: string | null;
+
+  @Column({
+    type: 'numeric',
+    precision: 12,
+    scale: 2,
+    nullable: true,
+    transformer: numericTransformer,
+  })
+  billedAmount!: number | null;
+
+  @Column({ type: 'varchar', length: 64, nullable: true })
+  billedLineId!: string | null;
 
   @Column({ type: 'int', nullable: true })
   issuedByUserId!: number | null;

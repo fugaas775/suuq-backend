@@ -29,8 +29,10 @@ import {
   IssueSchoolTextbooksDto,
   ListSchoolTextbookLoansQueryDto,
   ListSchoolTextbookTitlesQueryDto,
+  MarkSchoolTextbookLoanBilledDto,
   SchoolTextbooksOutstandingQueryDto,
   UpdateSchoolTextbookLoanDto,
+  UpdateSchoolTextbookTitleDto,
 } from './dto/school-textbook.dto';
 import { SchoolTextbookService } from './school-textbook.service';
 
@@ -85,6 +87,19 @@ export class SchoolTextbookController {
     return this.svc.createTitle(dto, this.actorId(req));
   }
 
+  @Patch('titles/:id')
+  @RetailBranchContext('body.branchId')
+  @RequirePosPermissions(
+    PosSchoolPermission.MARK_ATTENDANCE,
+    PosSchoolPermission.ENROL_STUDENT,
+  )
+  updateTitle(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateSchoolTextbookTitleDto,
+  ) {
+    return this.svc.updateTitle(id, dto);
+  }
+
   @Delete('titles/:id')
   @RetailBranchContext('query.branchId')
   @RequirePosPermissions(
@@ -105,6 +120,7 @@ export class SchoolTextbookController {
     return this.svc.listLoans(query.branchId, {
       classCode: query.classCode,
       folioId: query.folioId,
+      status: query.status,
     });
   }
 
@@ -133,6 +149,26 @@ export class SchoolTextbookController {
     @Req() req: AuthenticatedRequest,
   ) {
     return this.svc.updateLoan(id, dto, this.actorId(req));
+  }
+
+  /**
+   * The office's mark that a lost book has been billed onto the folio. The
+   * money itself moved through the register's own folio write, under that
+   * route's guard; this is bookkeeping in the fee desk's hands.
+   */
+  @Patch('loans/:id/billed')
+  @RetailBranchContext('body.branchId')
+  @RequirePosPermissions(
+    PosSchoolPermission.POST_FEE_CHARGE,
+    PosSchoolPermission.SETTLE_FEE_PAYMENT,
+    PosSchoolPermission.ENROL_STUDENT,
+  )
+  markBilled(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: MarkSchoolTextbookLoanBilledDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.svc.markBilled(id, dto, this.actorId(req));
   }
 
   @Get('outstanding')

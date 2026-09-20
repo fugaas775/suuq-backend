@@ -40,7 +40,9 @@ function makeService({ titles = [] as any[], loans = [] as any[] } = {}) {
               : Number(l.folioId) === Number(where.folioId))) &&
           (where.classCode === undefined || l.classCode === where.classCode) &&
           (where.status === undefined ||
-            where.status._value.includes(l.status)),
+            (where.status._value
+              ? where.status._value.includes(l.status)
+              : l.status === where.status)),
       ),
     findOne: async ({ where }: any) =>
       loans.find(
@@ -149,8 +151,8 @@ describe('SchoolTextbookService', () => {
     });
     const out = await svc.outstanding(128);
     expect(out.byFolio).toEqual({
-      '1': { issued: 1, lost: 0 },
-      '2': { issued: 0, lost: 1 },
+      '1': { issued: 1, lost: 0, lostUnbilled: 0 },
+      '2': { issued: 0, lost: 1, lostUnbilled: 1 },
     });
   });
 
@@ -165,5 +167,167 @@ describe('SchoolTextbookService', () => {
         1,
       ),
     ).rejects.toThrow(/title/);
+  });
+
+  describe("a lost book is money, and money is the office's", () => {
+    it('prices a title on the way in, keeps a price a re-listing did not give, and takes one it did', async () => {
+      const { svc, titles } = makeService();
+      const a = await svc.createTitle(
+        {
+          branchId: 128,
+          classCode: '3aad',
+          title: 'Maths',
+          replacementPrice: 250,
+        },
+        1,
+      );
+      expect(titles[0].replacementPrice).toBe(250);
+      await svc.deactivateTitle(Number(a.id), 128);
+      await svc.createTitle(
+        { branchId: 128, classCode: '3aad', title: 'maths' },
+        1,
+      );
+      expect(titles[0].isActive).toBe(true);
+      expect(titles[0].replacementPrice).toBe(250);
+      await svc.createTitle(
+        {
+          branchId: 128,
+          classCode: '3aad',
+          title: 'MATHS',
+          replacementPrice: 300.456,
+        },
+        1,
+      );
+      expect(titles[0].replacementPrice).toBe(300.46);
+    });
+
+    it('renames or prices a title, refuses a rename onto a classmate, and clears a price with null', async () => {
+      const { svc, titles } = makeService();
+      const a = await svc.createTitle(
+        { branchId: 128, classCode: '3aad', title: 'Maths' },
+        1,
+      );
+      await svc.createTitle(
+        { branchId: 128, classCode: '3aad', title: 'English' },
+        1,
+      );
+      await svc.updateTitle(Number(a.id), {
+        branchId: 128,
+        replacementPrice: 180,
+      });
+      expect(titles[0].replacementPrice).toBe(180);
+      await svc.updateTitle(Number(a.id), {
+        branchId: 128,
+        title: 'Maths Grade 3',
+      });
+      expect(titles[0].title).toBe('Maths Grade 3');
+      await expect(
+        svc.updateTitle(Number(a.id), { branchId: 128, title: 'english' }),
+      ).rejects.toThrow(/already lists/);
+      await svc.updateTitle(Number(a.id), {
+        branchId: 128,
+        replacementPrice: null,
+      });
+      expect(titles[0].replacementPrice).toBeNull();
+      await expect(
+        svc.updateTitle(999, { branchId: 128, replacementPrice: 1 }),
+      ).rejects.toThrow(/not found/);
+    });
+
+    it('lists the lost books alone when asked, and counts the unbilled ones per pupil', async () => {
+      const { svc, loans } = makeService();
+      await svc.issue(
+        {
+          branchId: 128,
+          classCode: '3aad',
+          title: 'Maths',
+          folioIds: [1, 2, 3],
+        },
+        1,
+      );
+      await svc.updateLoan(
+        Number(loans[0].id),
+        { branchId: 128, status: 'LOST' },
+        1,
+      );
+      await svc.updateLoan(
+        Number(loans[1].id),
+        { branchId: 128, status: 'LOST' },
+        1,
+      );
+      await svc.updateLoan(
+        Number(loans[2].id),
+        { branchId: 128, status: 'RETURNED' },
+        1,
+      );
+      const lost = await svc.listLoans(128, { status: 'LOST' });
+      expect(lost.items.map((l: any) => l.folioId)).toEqual([1, 2]);
+      await svc.markBilled(
+        Number(loans[0].id),
+        { branchId: 128, amount: 250, lineId: 'line-a' },
+        7,
+      );
+      const { byFolio } = await svc.outstanding(128);
+      expect(byFolio['1']).toEqual({ issued: 0, lost: 1, lostUnbilled: 0 });
+      expect(byFolio['2']).toEqual({ issued: 0, lost: 1, lostUnbilled: 1 });
+      expect(byFolio['3']).toBeUndefined();
+    });
+
+    it('bills a lost book once: not a book still out, not a returned one, and never twice under another line', async () => {
+      const { svc, loans } = makeService();
+      await svc.issue(
+        { branchId: 128, classCode: '3aad', title: 'Maths', folioIds: [1, 2] },
+        1,
+      );
+      await expect(
+        svc.markBilled(
+          Number(loans[0].id),
+          { branchId: 128, amount: 250, lineId: 'x' },
+          7,
+        ),
+      ).rejects.toThrow(/Only a lost book/);
+      await svc.updateLoan(
+        Number(loans[0].id),
+        { branchId: 128, status: 'LOST' },
+        1,
+      );
+      const billed = await svc.markBilled(
+        Number(loans[0].id),
+        { branchId: 128, amount: 250, lineId: 'line-a' },
+        7,
+      );
+      expect(billed.billedAmount).toBe(250);
+      expect(billed.billedLineId).toBe('line-a');
+      expect(billed.billedAt).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      expect(billed.updatedByUserId).toBe(7);
+      // The same line again is the same bill — idempotent for a retried write.
+      const again = await svc.markBilled(
+        Number(loans[0].id),
+        { branchId: 128, amount: 250, lineId: 'line-a' },
+        7,
+      );
+      expect(again.billedAt).toBe(billed.billedAt);
+      await expect(
+        svc.markBilled(
+          Number(loans[0].id),
+          { branchId: 128, amount: 250, lineId: 'line-b' },
+          7,
+        ),
+      ).rejects.toThrow(/already billed/);
+      // A lost book that turns up again keeps its bill: the till reverses money.
+      await svc.updateLoan(
+        Number(loans[0].id),
+        { branchId: 128, status: 'ISSUED' },
+        1,
+      );
+      expect(loans[0].billedLineId).toBe('line-a');
+      await expect(
+        svc.markBilled(
+          Number(loans[1].id),
+          { branchId: 999, amount: 1, lineId: 'z' },
+          7,
+        ),
+      ).rejects.toThrow(/not found/);
+    });
   });
 });

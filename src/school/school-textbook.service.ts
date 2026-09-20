@@ -13,7 +13,9 @@ import { SchoolTextbookTitle } from './entities/school-textbook-title.entity';
 import {
   CreateSchoolTextbookTitleDto,
   IssueSchoolTextbooksDto,
+  MarkSchoolTextbookLoanBilledDto,
   UpdateSchoolTextbookLoanDto,
+  UpdateSchoolTextbookTitleDto,
 } from './dto/school-textbook.dto';
 
 const fold = (v: unknown) =>
@@ -21,6 +23,12 @@ const fold = (v: unknown) =>
     .trim()
     .toLowerCase();
 const text = (v: unknown) => String(v ?? '').trim();
+/** A price, to the cent, or null for "not priced". */
+const money = (v: unknown): number | null => {
+  if (v == null || v === '') return null;
+  const n = Number(v);
+  return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) / 100 : null;
+};
 
 function today(): string {
   return new Date().toISOString().slice(0, 10);
@@ -60,13 +68,20 @@ export class SchoolTextbookService {
     const existing = (
       await this.titles.find({ where: { branchId: dto.branchId, classCode } })
     ).find((row) => fold(row.title) === fold(title));
+    const price = money(dto.replacementPrice);
     if (existing) {
       // Re-listing a title that was taken off brings it back, spelling kept.
+      // A price given on the way back in is taken; none given keeps the old.
+      let dirty = false;
       if (!existing.isActive) {
         existing.isActive = true;
-        return this.titles.save(existing);
+        dirty = true;
       }
-      return existing;
+      if (price != null && existing.replacementPrice !== price) {
+        existing.replacementPrice = price;
+        dirty = true;
+      }
+      return dirty ? this.titles.save(existing) : existing;
     }
     const count = await this.titles.count({
       where: { branchId: dto.branchId, classCode },
@@ -78,9 +93,46 @@ export class SchoolTextbookService {
         title,
         sortOrder: count,
         isActive: true,
+        replacementPrice: price,
         createdByUserId: userId,
       }),
     );
+  }
+
+  /**
+   * Rename a title, or price it. The rename is refused when another live
+   * title in the class already carries the new spelling — two rows for one
+   * book is the confusion the unique index exists to prevent — and loans keep
+   * their own copy of the title, so a rename changes the list, not history.
+   */
+  async updateTitle(id: number, dto: UpdateSchoolTextbookTitleDto) {
+    const row = await this.titles.findOne({
+      where: { id, branchId: dto.branchId },
+    });
+    if (!row) throw new NotFoundException(`Textbook title ${id} not found.`);
+    if (dto.title !== undefined) {
+      const title = text(dto.title);
+      if (!title) throw new BadRequestException('A title is required.');
+      if (fold(title) !== fold(row.title)) {
+        const clash = (
+          await this.titles.find({
+            where: { branchId: dto.branchId, classCode: row.classCode },
+          })
+        ).find(
+          (t) => Number(t.id) !== Number(id) && fold(t.title) === fold(title),
+        );
+        if (clash)
+          throw new BadRequestException(
+            `${row.classCode} already lists "${clash.title}".`,
+          );
+      }
+      row.title = title;
+    }
+    if (dto.replacementPrice !== undefined) {
+      row.replacementPrice =
+        dto.replacementPrice === null ? null : money(dto.replacementPrice);
+    }
+    return this.titles.save(row);
   }
 
   async deactivateTitle(id: number, branchId: number) {
@@ -93,11 +145,16 @@ export class SchoolTextbookService {
 
   async listLoans(
     branchId: number,
-    { classCode, folioId }: { classCode?: string; folioId?: number } = {},
+    {
+      classCode,
+      folioId,
+      status,
+    }: { classCode?: string; folioId?: number; status?: string } = {},
   ) {
     const where: Record<string, unknown> = { branchId };
     if (text(classCode)) where.classCode = fold(classCode);
     if (folioId != null) where.folioId = Number(folioId);
+    if (text(status)) where.status = text(status).toUpperCase();
     const items = await this.loans.find({
       where,
       order: { classCode: 'ASC', title: 'ASC', folioId: 'ASC' },
@@ -183,17 +240,55 @@ export class SchoolTextbookService {
     return this.loans.save(row);
   }
 
-  /** Per pupil, the books still out or lost — for the roll and a withdrawal. */
+  /**
+   * The office has billed a lost book. The folio line is the money; this
+   * records the day, the amount and the line, so the desk stops offering the
+   * book and a second clerk cannot bill it again. Only a LOST book is billed
+   * — a book still out is not owed, and a returned one is not either.
+   */
+  async markBilled(
+    id: number,
+    dto: MarkSchoolTextbookLoanBilledDto,
+    userId: number | null,
+  ) {
+    const row = await this.loans.findOne({
+      where: { id, branchId: dto.branchId },
+    });
+    if (!row) throw new NotFoundException(`Textbook loan ${id} not found.`);
+    if (row.status !== 'LOST')
+      throw new BadRequestException('Only a lost book is billed.');
+    const lineId = text(dto.lineId);
+    if (row.billedLineId && row.billedLineId !== lineId)
+      throw new BadRequestException(
+        `This book was already billed on ${row.billedAt ?? 'the folio'}.`,
+      );
+    row.billedAt = row.billedAt ?? today();
+    row.billedAmount = money(dto.amount) ?? 0;
+    row.billedLineId = lineId;
+    row.updatedByUserId = userId;
+    return this.loans.save(row);
+  }
+
+  /**
+   * Per pupil, the books still out or lost — for the roll and a withdrawal —
+   * and how many of the lost ones the office has not yet billed.
+   */
   async outstanding(branchId: number) {
     const rows = await this.loans.find({
       where: { branchId, status: In(['ISSUED', 'LOST']) },
     });
-    const byFolio: Record<string, { issued: number; lost: number }> = {};
+    const byFolio: Record<
+      string,
+      { issued: number; lost: number; lostUnbilled: number }
+    > = {};
     for (const row of rows) {
       const key = String(row.folioId);
-      const entry = byFolio[key] || { issued: 0, lost: 0 };
+      const entry = byFolio[key] || { issued: 0, lost: 0, lostUnbilled: 0 };
       if (row.status === 'ISSUED') entry.issued += 1;
-      else entry.lost += 1;
+      else {
+        entry.lost += 1;
+        if (!row.billedLineId) entry.lostUnbilled += 1;
+      }
       byFolio[key] = entry;
     }
     return { byFolio };
