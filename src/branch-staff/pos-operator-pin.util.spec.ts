@@ -17,6 +17,15 @@ describe('pos-operator-pin.util', () => {
       expect(isPinEligibleLane('QSR', 'QSR_MANAGER')).toBe(false);
     });
 
+    it('accepts a teacher at a school, and nobody else there', () => {
+      expect(isPinEligibleLane('SCHOOL', 'SCHOOL_TEACHER')).toBe(true);
+      expect(isPinEligibleLane('school', 'school_teacher')).toBe(true);
+      expect(isPinEligibleLane('SCHOOL', 'SCHOOL_CASHIER')).toBe(false);
+      expect(isPinEligibleLane('SCHOOL', 'SCHOOL_OFFICE')).toBe(false);
+      // A teacher-shaped lane at a QSR branch is not a teacher.
+      expect(isPinEligibleLane('QSR', 'SCHOOL_TEACHER')).toBe(false);
+    });
+
     it('rejects a waiter-shaped lane at a non-QSR branch', () => {
       expect(isPinEligibleLane('CAFETERIA', 'CAFETERIA_WAITER')).toBe(false);
       expect(isPinEligibleLane('HOTEL', 'QSR_WAITER')).toBe(false);

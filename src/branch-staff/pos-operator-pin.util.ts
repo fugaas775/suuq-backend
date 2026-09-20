@@ -20,29 +20,47 @@ import { createHmac } from 'crypto';
  * defeat the point of a quick unlock. */
 export const OPERATOR_UNLOCK_PIN_LENGTH = 4;
 
-/** The only branch format and lane allowed to carry a quick-unlock PIN. */
+/**
+ * The lanes allowed to carry a quick-unlock PIN, by branch format.
+ *
+ * QSR: the waiter — one tablet on the floor, taken in turns. SCHOOL: the
+ * teacher — one tablet in the staff room, and the person unlocking it is the
+ * person whose name lands on every mark they take. The cashier and the office
+ * at either kind of branch keep the password lock screen: their session
+ * carries money, and a four-digit secret is the wrong lock for it.
+ */
+export const OPERATOR_UNLOCK_PIN_LANES: Readonly<
+  Record<string, readonly string[]>
+> = Object.freeze({
+  QSR: Object.freeze(['QSR_WAITER']),
+  SCHOOL: Object.freeze(['SCHOOL_TEACHER']),
+});
+/** Kept for readers of the original single-format rule. */
 export const OPERATOR_UNLOCK_PIN_SERVICE_FORMAT = 'QSR';
 export const OPERATOR_UNLOCK_PIN_LANE_CODE = 'QSR_WAITER';
 
 export const OPERATOR_UNLOCK_PIN_PEPPER_ENV = 'POS_PIN_PEPPER';
 
+/** What the refusal says — one sentence, both cases. */
+export const OPERATOR_UNLOCK_PIN_NOT_ELIGIBLE_MESSAGE =
+  'A quick-unlock PIN is only available to waiters at a QSR branch and to teachers at a school.';
+
 /**
- * True only for a QSR branch's waiter lane. Checked when the PIN is set *and*
- * again on every unlock, so a lane change or a branch format change disables a
- * stored PIN immediately without needing a data migration.
+ * True for a lane the table above names at its branch's format. Checked when
+ * the PIN is set *and* again on every unlock, so a lane change or a branch
+ * format change disables a stored PIN immediately without a data migration.
  */
 export function isPinEligibleLane(
   serviceFormat: string | null | undefined,
   laneCode: string | null | undefined,
 ): boolean {
-  return (
-    String(serviceFormat || '')
-      .trim()
-      .toUpperCase() === OPERATOR_UNLOCK_PIN_SERVICE_FORMAT &&
-    String(laneCode || '')
-      .trim()
-      .toUpperCase() === OPERATOR_UNLOCK_PIN_LANE_CODE
-  );
+  const format = String(serviceFormat || '')
+    .trim()
+    .toUpperCase();
+  const lane = String(laneCode || '')
+    .trim()
+    .toUpperCase();
+  return (OPERATOR_UNLOCK_PIN_LANES[format] || []).includes(lane);
 }
 
 /** Digits only, exact length. Returns null when the input is not a valid PIN. */

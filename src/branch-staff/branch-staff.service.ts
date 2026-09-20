@@ -38,6 +38,7 @@ import { POS_BRANCH_SUBSCRIPTION_OPTIONS } from './pos-workspace-pricing';
 import {
   buildUnlockPinFingerprint,
   isPinEligibleLane,
+  OPERATOR_UNLOCK_PIN_NOT_ELIGIBLE_MESSAGE,
   isWeakUnlockPin,
   normalizeUnlockPin,
   OPERATOR_UNLOCK_PIN_LENGTH,
@@ -1656,7 +1657,7 @@ export class BranchStaffService {
     return saved;
   }
 
-  // --- Register quick-unlock PIN (QSR waiter lanes only) -------------------
+  // --- Register quick-unlock PIN (QSR waiters, SCHOOL teachers) ------------
 
   private resolveUnlockPinPepper(): string {
     const pepper = String(
@@ -1679,8 +1680,8 @@ export class BranchStaffService {
   }
 
   /**
-   * Loads the assignment and confirms it is a QSR waiter, which is the only
-   * lane allowed to hold a PIN. Shared by the set and clear paths.
+   * Loads the assignment and confirms its lane may hold a PIN at this
+   * branch's format (see OPERATOR_UNLOCK_PIN_LANES). Shared by set and clear.
    */
   private async loadPinEligibleAssignment(branchId: number, userId: number) {
     const assignment = await this.assignmentsRepository.findOne({
@@ -1699,8 +1700,7 @@ export class BranchStaffService {
     ) {
       throw new ForbiddenException({
         code: 'POS_PIN_NOT_ELIGIBLE',
-        message:
-          'A quick-unlock PIN is only available to waiters at a QSR branch.',
+        message: OPERATOR_UNLOCK_PIN_NOT_ELIGIBLE_MESSAGE,
       });
     }
 
