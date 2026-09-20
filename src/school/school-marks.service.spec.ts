@@ -255,4 +255,24 @@ describe('SchoolMarksService.save — who may, and for what', () => {
       NotFoundException,
     );
   });
+
+  it("refuses a score above the sheet's out-of by name, before any folio is written", async () => {
+    const { svc, saved } = makeService({
+      carts: [pupil(1), pupil(2)],
+    });
+    await expect(
+      svc.save(
+        {
+          ...SHEET,
+          outOf: 30,
+          entries: [
+            { folioId: 1, score: 25 },
+            { folioId: 2, score: 87 },
+          ],
+        },
+        { id: 1863 },
+      ),
+    ).rejects.toThrow(/above 30/);
+    expect(saved).toHaveLength(0);
+  });
 });

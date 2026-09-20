@@ -225,6 +225,20 @@ export class SchoolMarksService {
         e.score === undefined || e.score === null ? null : Number(e.score),
       );
     }
+    // A score above the sheet's own out-of is a typo, not a mark — 87 keyed
+    // into a sheet out of 30 would rank a child first in the class. Refused
+    // by name, BEFORE any folio is written, so a sheet is all-or-nothing.
+    const over = carts
+      .filter((c) => (scoreByFolio.get(Number(c.id)) ?? 0) > outOf)
+      .map(
+        (c) =>
+          `${text((c.cartSnapshot as any)?.hotelGuestName) || `folio ${c.id}`} (${scoreByFolio.get(Number(c.id))})`,
+      );
+    if (over.length) {
+      throw new BadRequestException(
+        `${over.length === 1 ? 'A score is' : `${over.length} scores are`} above ${outOf}, the sheet's out-of: ${over.join(', ')}.`,
+      );
+    }
 
     let saved = 0;
     for (const cart of carts) {
