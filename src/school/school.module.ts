@@ -5,10 +5,18 @@ import { PosBranchAccessGuard } from '../auth/pos-branch-access.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { PosSuspendedCart } from '../pos-sync/entities/pos-suspended-cart.entity';
 import { BranchEmployee } from '../payroll/entities/branch-employee.entity';
+import { Branch } from '../branches/entities/branch.entity';
+import { BranchStaffAssignment } from '../branch-staff/entities/branch-staff-assignment.entity';
 import { SchoolClass } from './entities/school-class.entity';
 import { SchoolTimetable } from './entities/school-timetable.entity';
+import { SchoolTextbookLoan } from './entities/school-textbook-loan.entity';
+import { SchoolTextbookTitle } from './entities/school-textbook-title.entity';
 import { SchoolClassController } from './school-class.controller';
 import { SchoolClassService } from './school-class.service';
+import { SchoolMarksController } from './school-marks.controller';
+import { SchoolMarksService } from './school-marks.service';
+import { SchoolTextbookController } from './school-textbook.controller';
+import { SchoolTextbookService } from './school-textbook.service';
 import { SchoolTimetableController } from './school-timetable.controller';
 import { SchoolTimetableService } from './school-timetable.service';
 
@@ -33,13 +41,27 @@ import { SchoolTimetableService } from './school-timetable.service';
       // Read-only: a timetable slot names a teacher by their employment row,
       // and an id that is not on this branch's register is refused.
       BranchEmployee,
+      // Textbooks: the titles a class carries and who holds which.
+      SchoolTextbookTitle,
+      SchoolTextbookLoan,
+      // Marks: the policy reads the branch's owner and the caller's
+      // assignment (its ENTER_MARKS capability), as withdrawal does.
+      Branch,
+      BranchStaffAssignment,
     ]),
     RetailModule,
   ],
-  controllers: [SchoolClassController, SchoolTimetableController],
+  controllers: [
+    SchoolClassController,
+    SchoolTimetableController,
+    SchoolTextbookController,
+    SchoolMarksController,
+  ],
   providers: [
     SchoolClassService,
     SchoolTimetableService,
+    SchoolTextbookService,
+    SchoolMarksService,
     PosBranchAccessGuard,
     RolesGuard,
   ],
