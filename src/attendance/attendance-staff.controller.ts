@@ -25,6 +25,7 @@ import {
   MarkLessonAttendanceDto,
 } from './dto/attendance.dto';
 import { AttendanceService } from './attendance.service';
+import { SchoolClassScopeService } from '../school/school-class-scope.service';
 
 const GUARDS = [
   JwtAuthGuard,
@@ -52,7 +53,10 @@ const GUARDS = [
 @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.POS_MANAGER)
 @RequireRetailModules(RetailOsModule.POS_CORE)
 export class AttendanceStaffController {
-  constructor(private readonly svc: AttendanceService) {}
+  constructor(
+    private readonly svc: AttendanceService,
+    private readonly scope: SchoolClassScopeService,
+  ) {}
 
   @Get('staff')
   @RetailBranchContext('query.branchId')
@@ -68,11 +72,13 @@ export class AttendanceStaffController {
 
   @Post('staff/mark')
   @RetailBranchContext('body.branchId')
-  mark(@Body() dto: MarkAttendanceDto, @Req() req: AuthenticatedRequest) {
+  async mark(@Body() dto: MarkAttendanceDto, @Req() req: AuthenticatedRequest) {
+    const scope = await this.scope.resolve(dto.branchId, req?.user);
     return this.svc.mark(
       AttendanceSubjectType.STAFF,
       dto,
       req?.user?.id ?? null,
+      { recordedByName: scope.recordedBy },
     );
   }
 

@@ -35,6 +35,7 @@ import {
   UpdateSchoolTextbookTitleDto,
 } from './dto/school-textbook.dto';
 import { SchoolTextbookService } from './school-textbook.service';
+import { SchoolClassScopeService } from './school-class-scope.service';
 
 const GUARDS = [
   JwtAuthGuard,
@@ -61,10 +62,22 @@ const ROLES = [
 @Roles(...ROLES)
 @RequireRetailModules(RetailOsModule.POS_CORE)
 export class SchoolTextbookController {
-  constructor(private readonly svc: SchoolTextbookService) {}
+  constructor(
+    private readonly svc: SchoolTextbookService,
+    private readonly scope: SchoolClassScopeService,
+  ) {}
 
   private actorId(req: AuthenticatedRequest): number | null {
     return Number((req.user as { id?: number })?.id) || null;
+  }
+
+  /** A teacher hands out books in their own classes only; the office anywhere. */
+  private async classScope(branchId: number, req: AuthenticatedRequest) {
+    const scope = await this.scope.resolve(branchId, req.user);
+    return {
+      assert: (classCode: unknown) =>
+        this.scope.assertInScope(scope, classCode),
+    };
   }
 
   @Get('titles')
@@ -80,11 +93,15 @@ export class SchoolTextbookController {
     PosSchoolPermission.MARK_ATTENDANCE,
     PosSchoolPermission.ENROL_STUDENT,
   )
-  createTitle(
+  async createTitle(
     @Body() dto: CreateSchoolTextbookTitleDto,
     @Req() req: AuthenticatedRequest,
   ) {
-    return this.svc.createTitle(dto, this.actorId(req));
+    return this.svc.createTitle(
+      dto,
+      this.actorId(req),
+      await this.classScope(dto.branchId, req),
+    );
   }
 
   @Patch('titles/:id')
@@ -93,11 +110,16 @@ export class SchoolTextbookController {
     PosSchoolPermission.MARK_ATTENDANCE,
     PosSchoolPermission.ENROL_STUDENT,
   )
-  updateTitle(
+  async updateTitle(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateSchoolTextbookTitleDto,
+    @Req() req: AuthenticatedRequest,
   ) {
-    return this.svc.updateTitle(id, dto);
+    return this.svc.updateTitle(
+      id,
+      dto,
+      await this.classScope(dto.branchId, req),
+    );
   }
 
   @Delete('titles/:id')
@@ -106,11 +128,16 @@ export class SchoolTextbookController {
     PosSchoolPermission.MARK_ATTENDANCE,
     PosSchoolPermission.ENROL_STUDENT,
   )
-  deactivateTitle(
+  async deactivateTitle(
     @Param('id', ParseIntPipe) id: number,
     @Query() query: SchoolTextbooksOutstandingQueryDto,
+    @Req() req: AuthenticatedRequest,
   ) {
-    return this.svc.deactivateTitle(id, query.branchId);
+    return this.svc.deactivateTitle(
+      id,
+      query.branchId,
+      await this.classScope(query.branchId, req),
+    );
   }
 
   @Get('loans')
@@ -130,11 +157,15 @@ export class SchoolTextbookController {
     PosSchoolPermission.MARK_ATTENDANCE,
     PosSchoolPermission.ENROL_STUDENT,
   )
-  issue(
+  async issue(
     @Body() dto: IssueSchoolTextbooksDto,
     @Req() req: AuthenticatedRequest,
   ) {
-    return this.svc.issue(dto, this.actorId(req));
+    return this.svc.issue(
+      dto,
+      this.actorId(req),
+      await this.classScope(dto.branchId, req),
+    );
   }
 
   @Patch('loans/:id')
@@ -143,12 +174,17 @@ export class SchoolTextbookController {
     PosSchoolPermission.MARK_ATTENDANCE,
     PosSchoolPermission.ENROL_STUDENT,
   )
-  updateLoan(
+  async updateLoan(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateSchoolTextbookLoanDto,
     @Req() req: AuthenticatedRequest,
   ) {
-    return this.svc.updateLoan(id, dto, this.actorId(req));
+    return this.svc.updateLoan(
+      id,
+      dto,
+      this.actorId(req),
+      await this.classScope(dto.branchId, req),
+    );
   }
 
   /**

@@ -76,6 +76,8 @@ export class AttendanceService {
       minutesLate: row.minutesLate ?? null,
       note: row.note ?? null,
       recordedByUserId: row.recordedByUserId ?? null,
+      recordedByName:
+        (row as { recordedByName?: string | null }).recordedByName ?? null,
       updatedAt: row.updatedAt.toISOString(),
     };
   }
@@ -206,6 +208,13 @@ export class AttendanceService {
     subjectType: AttendanceSubjectType,
     dto: MarkAttendanceDto,
     recordedByUserId: number | null,
+    /* The recorder's name and their class scope, resolved by the controller.
+       `scope.assert` refuses a class outside a teacher's own before a row is
+       written; absent (the staff register, older callers), nothing is scoped. */
+    who: {
+      recordedByName?: string | null;
+      scope?: { assert: (classCode: unknown) => void } | null;
+    } = {},
   ) {
     const day = dayOf(dto.date);
     if (!day) throw new BadRequestException('date must be YYYY-MM-DD.');
@@ -214,6 +223,13 @@ export class AttendanceService {
       subjectType === AttendanceSubjectType.STUDENT
         ? classKey(dto.classCode)
         : null;
+    if (subjectType === AttendanceSubjectType.STUDENT && who.scope) {
+      who.scope.assert(dto.classCode);
+    }
+    const recordedByName =
+      String(who.recordedByName ?? '')
+        .trim()
+        .slice(0, 160) || null;
 
     const clearing: string[] = [];
     const upserting: Partial<AttendanceMark>[] = [];
@@ -249,6 +265,7 @@ export class AttendanceService {
             : null,
         note: entry.note ? String(entry.note).trim().slice(0, 200) : null,
         recordedByUserId,
+        recordedByName,
         updatedAt: new Date(),
       });
     }
@@ -269,6 +286,7 @@ export class AttendanceService {
             'minutesLate',
             'note',
             'recordedByUserId',
+            'recordedByName',
             'updatedAt',
           ],
           ['branchId', 'subjectType', 'subjectRef', 'attendanceDate'],

@@ -374,4 +374,67 @@ describe('SchoolTextbookService', () => {
       expect(b.subject).toBeNull();
     });
   });
+
+  describe('a teacher hands out books in their own classes only', () => {
+    const scope = {
+      assert: (classCode: unknown) => {
+        if (String(classCode).toLowerCase() !== '3aad')
+          throw new Error(`${classCode} is not one of your classes`);
+      },
+    };
+    it('refuses a title, an issue and a loan change outside the scope, and allows them inside it', async () => {
+      const { svc, loans } = makeService();
+      await expect(
+        svc.createTitle(
+          { branchId: 128, classCode: '4aad', title: 'Maths' },
+          1,
+          scope,
+        ),
+      ).rejects.toThrow(/4aad is not/);
+      await svc.createTitle(
+        { branchId: 128, classCode: '3aad', title: 'Maths' },
+        1,
+        scope,
+      );
+      await expect(
+        svc.issue(
+          { branchId: 128, classCode: '4AAD', title: 'Maths', folioIds: [1] },
+          1,
+          scope,
+        ),
+      ).rejects.toThrow(/4aad is not/i);
+      await svc.issue(
+        { branchId: 128, classCode: '3aad', title: 'Maths', folioIds: [1] },
+        1,
+        scope,
+      );
+      // Another class's loan cannot be touched by this teacher, even by id.
+      await svc.issue(
+        { branchId: 128, classCode: '4aad', title: 'Atlas', folioIds: [9] },
+        1,
+      );
+      const foreign = loans.find((l) => l.classCode === '4aad');
+      await expect(
+        svc.updateLoan(
+          Number(foreign.id),
+          { branchId: 128, status: 'RETURNED' },
+          1,
+          scope,
+        ),
+      ).rejects.toThrow(/4aad is not/);
+      await svc.updateLoan(
+        Number(loans[0].id),
+        { branchId: 128, status: 'RETURNED' },
+        1,
+        scope,
+      );
+      expect(loans[0].status).toBe('RETURNED');
+      // The office passes no scope and is refused nothing.
+      await svc.updateLoan(
+        Number(foreign.id),
+        { branchId: 128, status: 'RETURNED' },
+        1,
+      );
+    });
+  });
 });

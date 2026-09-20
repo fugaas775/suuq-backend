@@ -19,6 +19,7 @@ import { SchoolTextbookController } from './school-textbook.controller';
 import { SchoolTextbookService } from './school-textbook.service';
 import { SchoolTimetableController } from './school-timetable.controller';
 import { SchoolTimetableService } from './school-timetable.service';
+import { SchoolClassScopeService } from './school-class-scope.service';
 
 /**
  * SCHOOL — a term-based POS format whose board unit is a CLASS: a container
@@ -60,11 +61,16 @@ import { SchoolTimetableService } from './school-timetable.service';
   providers: [
     SchoolClassService,
     SchoolTimetableService,
+    SchoolClassScopeService,
     SchoolTextbookService,
     SchoolMarksService,
     PosBranchAccessGuard,
     RolesGuard,
   ],
-  exports: [SchoolClassService, SchoolTimetableService],
+  exports: [
+    SchoolClassService,
+    SchoolTimetableService,
+    SchoolClassScopeService,
+  ],
 })
 export class SchoolModule {}

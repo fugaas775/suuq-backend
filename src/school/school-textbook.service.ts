@@ -18,6 +18,12 @@ import {
   UpdateSchoolTextbookTitleDto,
 } from './dto/school-textbook.dto';
 
+/** A teacher's class scope, resolved by the controller; absent = unscoped. */
+type ClassScopeCheck =
+  | { assert: (classCode: unknown) => void }
+  | null
+  | undefined;
+
 const fold = (v: unknown) =>
   String(v ?? '')
     .trim()
@@ -60,11 +66,16 @@ export class SchoolTextbookService {
     return { items };
   }
 
-  async createTitle(dto: CreateSchoolTextbookTitleDto, userId: number | null) {
+  async createTitle(
+    dto: CreateSchoolTextbookTitleDto,
+    userId: number | null,
+    scope?: ClassScopeCheck,
+  ) {
     const classCode = fold(dto.classCode);
     const title = text(dto.title);
     if (!classCode) throw new BadRequestException('A class is required.');
     if (!title) throw new BadRequestException('A title is required.');
+    scope?.assert(classCode);
     const existing = (
       await this.titles.find({ where: { branchId: dto.branchId, classCode } })
     ).find((row) => fold(row.title) === fold(title));
@@ -112,11 +123,16 @@ export class SchoolTextbookService {
    * book is the confusion the unique index exists to prevent — and loans keep
    * their own copy of the title, so a rename changes the list, not history.
    */
-  async updateTitle(id: number, dto: UpdateSchoolTextbookTitleDto) {
+  async updateTitle(
+    id: number,
+    dto: UpdateSchoolTextbookTitleDto,
+    scope?: ClassScopeCheck,
+  ) {
     const row = await this.titles.findOne({
       where: { id, branchId: dto.branchId },
     });
     if (!row) throw new NotFoundException(`Textbook title ${id} not found.`);
+    scope?.assert(row.classCode);
     if (dto.title !== undefined) {
       const title = text(dto.title);
       if (!title) throw new BadRequestException('A title is required.');
@@ -145,9 +161,10 @@ export class SchoolTextbookService {
     return this.titles.save(row);
   }
 
-  async deactivateTitle(id: number, branchId: number) {
+  async deactivateTitle(id: number, branchId: number, scope?: ClassScopeCheck) {
     const row = await this.titles.findOne({ where: { id, branchId } });
     if (!row) throw new NotFoundException(`Textbook title ${id} not found.`);
+    scope?.assert(row.classCode);
     row.isActive = false;
     await this.titles.save(row);
     return { deactivated: true, id: Number(row.id) };
@@ -178,11 +195,16 @@ export class SchoolTextbookService {
    * ISSUED with a fresh date, so the register never holds two answers for one
    * book.
    */
-  async issue(dto: IssueSchoolTextbooksDto, userId: number | null) {
+  async issue(
+    dto: IssueSchoolTextbooksDto,
+    userId: number | null,
+    scope?: ClassScopeCheck,
+  ) {
     const classCode = fold(dto.classCode);
     const title = text(dto.title);
     if (!classCode) throw new BadRequestException('A class is required.');
     if (!title) throw new BadRequestException('A title is required.');
+    scope?.assert(classCode);
     const folioIds = [...new Set(dto.folioIds.map(Number))].filter(
       (n) => Number.isFinite(n) && n > 0,
     );
@@ -233,11 +255,13 @@ export class SchoolTextbookService {
     id: number,
     dto: UpdateSchoolTextbookLoanDto,
     userId: number | null,
+    scope?: ClassScopeCheck,
   ) {
     const row = await this.loans.findOne({
       where: { id, branchId: dto.branchId },
     });
     if (!row) throw new NotFoundException(`Textbook loan ${id} not found.`);
+    scope?.assert(row.classCode);
     const status = String(dto.status).toUpperCase() as TextbookLoanStatus;
     row.status = status;
     if (status === 'RETURNED') row.returnedAt = today();

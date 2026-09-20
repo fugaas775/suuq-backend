@@ -12,6 +12,7 @@ import { ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { PosBranchAccessGuard } from '../auth/pos-branch-access.guard';
 import { RequirePosPermissions } from '../auth/decorators/require-pos-permissions.decorator';
+import { SchoolClassScopeService } from '../school/school-class-scope.service';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { UserRole } from '../auth/roles.enum';
@@ -61,7 +62,10 @@ const GUARDS = [
 )
 @RequireRetailModules(RetailOsModule.POS_CORE)
 export class AttendanceController {
-  constructor(private readonly svc: AttendanceService) {}
+  constructor(
+    private readonly svc: AttendanceService,
+    private readonly scope: SchoolClassScopeService,
+  ) {}
 
   @Get('students')
   @RetailBranchContext('query.branchId')
@@ -86,11 +90,20 @@ export class AttendanceController {
     PosSchoolPermission.MARK_ATTENDANCE,
     PosSchoolPermission.ENROL_STUDENT,
   )
-  mark(@Body() dto: MarkAttendanceDto, @Req() req: AuthenticatedRequest) {
+  async mark(@Body() dto: MarkAttendanceDto, @Req() req: AuthenticatedRequest) {
+    // Who is taking it, and which classes are theirs to take. A teacher is
+    // held to the classes the school assigned them; the office is not.
+    const scope = await this.scope.resolve(dto.branchId, req?.user);
     return this.svc.mark(
       AttendanceSubjectType.STUDENT,
       dto,
       req?.user?.id ?? null,
+      {
+        recordedByName: scope.recordedBy,
+        scope: {
+          assert: (classCode) => this.scope.assertInScope(scope, classCode),
+        },
+      },
     );
   }
 

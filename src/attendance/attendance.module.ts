@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { SchoolModule } from '../school/school.module';
 import { RetailModule } from '../retail/retail.module';
 import { PosBranchAccessGuard } from '../auth/pos-branch-access.guard';
 import { RolesGuard } from '../auth/roles.guard';
@@ -25,6 +26,8 @@ import { AttendanceService } from './attendance.service';
   imports: [
     TypeOrmModule.forFeature([AttendanceMark, LessonAttendanceMark]),
     RetailModule,
+    // Who may take which class's register, and the name to stamp on it.
+    SchoolModule,
   ],
   controllers: [AttendanceController, AttendanceStaffController],
   providers: [AttendanceService, PosBranchAccessGuard, RolesGuard],

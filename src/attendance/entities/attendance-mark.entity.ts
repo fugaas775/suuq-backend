@@ -150,6 +150,10 @@ export class AttendanceMark {
   @Column({ type: 'int', nullable: true })
   recordedByUserId!: number | null;
 
+  /** Who took it, by name — denormalised like subjectName, for the board. */
+  @Column({ type: 'varchar', length: 160, nullable: true })
+  recordedByName!: string | null;
+
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt!: Date;
 

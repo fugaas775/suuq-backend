@@ -702,4 +702,58 @@ describe('AttendanceService.rekey — a duplicate pupil’s marks follow the chi
     ).toEqual({ moved: 0, dropped: 0 });
     expect(calls).toEqual([]);
   });
+
+  describe('the teacher who took the register is known, and held to their own classes', () => {
+    it('stamps the recorder’s name on every row and on the upsert', async () => {
+      const { svc, captured } = makeService();
+      await svc.mark(
+        AttendanceSubjectType.STUDENT,
+        {
+          branchId: 115,
+          date: '2026-09-21',
+          classCode: '3aad',
+          entries: [{ subjectRef: '1', status: AttendanceStatus.PRESENT }],
+        },
+        900,
+        { recordedByName: '  Mustafe Maxamed  ' },
+      );
+      expect(captured.inserted[0].recordedByName).toBe('Mustafe Maxamed');
+      expect(captured.inserted[0].recordedByUserId).toBe(900);
+      expect(captured.orUpdate.cols).toContain('recordedByName');
+    });
+
+    it('refuses a class outside the teacher’s scope before any row is written', async () => {
+      const { svc, captured } = makeService();
+      const assert = jest.fn((classCode: unknown) => {
+        if (String(classCode).toLowerCase() !== '3aad')
+          throw new Error(`${classCode} is not one of your classes`);
+      });
+      await expect(
+        svc.mark(
+          AttendanceSubjectType.STUDENT,
+          {
+            branchId: 115,
+            date: '2026-09-21',
+            classCode: '4aad',
+            entries: [{ subjectRef: '1', status: AttendanceStatus.PRESENT }],
+          } as any,
+          900,
+          { recordedByName: 'Mustafe', scope: { assert } },
+        ),
+      ).rejects.toThrow(/4aad is not one of your classes/);
+      expect(captured.inserted).toBeNull();
+      // The staff register is never class-scoped: no assert is consulted.
+      await svc.mark(
+        AttendanceSubjectType.STAFF,
+        {
+          branchId: 115,
+          date: '2026-09-21',
+          entries: [{ subjectRef: '7', status: AttendanceStatus.PRESENT }],
+        },
+        900,
+        { recordedByName: 'Office', scope: { assert } },
+      );
+      expect(assert).toHaveBeenCalledTimes(1);
+    });
+  });
 });
