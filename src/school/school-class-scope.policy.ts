@@ -14,6 +14,7 @@
  */
 export const SCHOOL_CLASS_CAPABILITY_PREFIX = 'SCHOOL_CLASS:';
 const OFFICE_PERMISSION = 'ENROL_STUDENT';
+const TEACHER_LANE = 'SCHOOL_TEACHER';
 const UNSCOPED_ROLES = ['SUPER_ADMIN', 'ADMIN', 'POS_MANAGER'];
 
 const fold = (v: unknown) =>
@@ -42,10 +43,20 @@ export function isClassScoped({
     role?: string | null;
     isActive?: boolean;
     permissions?: string[] | null;
+    posExperienceProfileCode?: string | null;
   } | null;
 }): boolean {
   if (actorId == null) return true;
   if (ownerId != null && Number(ownerId) === Number(actorId)) return false;
+  // The Teacher lane is the office's own statement that this login is a
+  // teacher — scoped whatever permissions were ticked beside it.
+  if (
+    assignment?.isActive !== false &&
+    String(assignment?.posExperienceProfileCode ?? '')
+      .trim()
+      .toUpperCase() === TEACHER_LANE
+  )
+    return true;
   if (
     (roles ?? []).some((r) => UNSCOPED_ROLES.includes(String(r).toUpperCase()))
   )

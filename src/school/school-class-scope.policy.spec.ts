@@ -39,6 +39,47 @@ describe('school-class-scope.policy', () => {
     ).toBe(false);
   });
 
+  it('scopes the Teacher lane whatever else was ticked on it — the lane is the office’s own word', () => {
+    expect(
+      isClassScoped({
+        actorId: 5,
+        ownerId: 1863,
+        assignment: {
+          role: 'OPERATOR',
+          isActive: true,
+          permissions: ['ENROL_STUDENT'],
+          posExperienceProfileCode: 'SCHOOL_TEACHER',
+        },
+      }),
+    ).toBe(true);
+    expect(
+      isClassScoped({
+        actorId: 5,
+        ownerId: 1863,
+        roles: ['POS_MANAGER'],
+        assignment: {
+          role: 'MANAGER',
+          isActive: true,
+          permissions: [],
+          posExperienceProfileCode: 'school_teacher',
+        },
+      }),
+    ).toBe(true);
+    // The owner is never a teacher, even on that lane.
+    expect(
+      isClassScoped({
+        actorId: 1863,
+        ownerId: 1863,
+        assignment: {
+          role: 'OPERATOR',
+          isActive: true,
+          permissions: [],
+          posExperienceProfileCode: 'SCHOOL_TEACHER',
+        },
+      }),
+    ).toBe(false);
+  });
+
   it('scopes a teacher — an operator without the office permission — and anyone with no live assignment', () => {
     expect(
       isClassScoped({
