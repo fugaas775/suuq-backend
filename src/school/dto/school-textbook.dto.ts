@@ -165,3 +165,25 @@ export class SchoolTextbooksOutstandingQueryDto {
   @IsInt()
   branchId!: number;
 }
+
+export class SeedSchoolTextbooksDto {
+  @IsInt()
+  branchId!: number;
+
+  /** One class, or the whole school when omitted. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  classCode?: string;
+}
+
+export class SchoolTextbookSubjectsQueryDto {
+  @Type(() => Number)
+  @IsInt()
+  branchId!: number;
+
+  @IsString()
+  @MinLength(1)
+  @MaxLength(64)
+  classCode!: string;
+}

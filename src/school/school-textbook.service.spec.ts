@@ -1,7 +1,11 @@
 import { SchoolTextbookService } from './school-textbook.service';
 
 /** The textbook register: titles per class, one loan row per book per pupil. */
-function makeService({ titles = [] as any[], loans = [] as any[] } = {}) {
+function makeService({
+  titles = [] as any[],
+  loans = [] as any[],
+  slots = [] as any[],
+} = {}) {
   let nextId = 100;
   const titleRepo: any = {
     find: async ({ where }: any) =>
@@ -61,7 +65,12 @@ function makeService({ titles = [] as any[], loans = [] as any[] } = {}) {
       return rows;
     },
   };
-  return { svc: new SchoolTextbookService(titleRepo, loanRepo), titles, loans };
+  const timetable: any = { get: async () => ({ slots }) };
+  return {
+    svc: new SchoolTextbookService(titleRepo, loanRepo, timetable),
+    titles,
+    loans,
+  };
 }
 
 describe('SchoolTextbookService', () => {
@@ -435,6 +444,74 @@ describe('SchoolTextbookService', () => {
         { branchId: 128, status: 'RETURNED' },
         1,
       );
+    });
+  });
+
+  describe('the shelf is made of the timetable’s subjects', () => {
+    const slots = [
+      { classCode: '3aad', subject: 'Mathematics' },
+      { classCode: '3AAD', subject: 'mathematics' },
+      { classCode: '3aad', subject: 'English' },
+      { classCode: '4aad', subject: 'Science' },
+      { classCode: '4aad', subject: '' },
+    ];
+    it('lists a class’s subjects once each, spelled as the timetable first spells them', async () => {
+      const { svc } = makeService({ slots });
+      expect(await svc.subjectsFor(128, '3AAD')).toEqual({
+        classCode: '3aad',
+        subjects: ['Mathematics', 'English'],
+      });
+      expect((await svc.subjectsFor(128, '9th')).subjects).toEqual([]);
+    });
+    it('seeds one title per subject, idempotently, for one class or the whole school', async () => {
+      const { svc, titles } = makeService({ slots });
+      const one = await svc.seedFromTimetable(128, '3aad', 1);
+      expect(one).toEqual({ classes: 1, created: 2, existing: 0 });
+      expect(
+        titles.map((t) => `${t.classCode}:${t.title}:${t.subject}`),
+      ).toEqual(['3aad:Mathematics:Mathematics', '3aad:English:English']);
+      const all = await svc.seedFromTimetable(128, null, 1);
+      expect(all).toEqual({ classes: 2, created: 1, existing: 2 });
+      expect(titles).toHaveLength(3);
+      // A teacher's class only; the whole school is refused by the scope the controller passes.
+      const scope = {
+        assert: (c: unknown) => {
+          if (String(c) !== '3aad')
+            throw new Error(`${c} is not one of your classes`);
+        },
+      };
+      await expect(
+        svc.seedFromTimetable(128, '4aad', 1, scope),
+      ).rejects.toThrow(/4aad is not/);
+    });
+    it('summarises the shelf per class with counts, and names the subjects still without a book', async () => {
+      const { svc, loans } = makeService({ slots });
+      await svc.seedFromTimetable(128, '3aad', 1);
+      await svc.issue(
+        {
+          branchId: 128,
+          classCode: '3aad',
+          title: 'Mathematics',
+          folioIds: [1, 2],
+        },
+        1,
+      );
+      await svc.updateLoan(
+        Number(loans[1].id),
+        { branchId: 128, status: 'LOST' },
+        1,
+      );
+      const { classes } = await svc.summary(128);
+      expect(classes.map((c) => c.classCode)).toEqual(['3aad', '4aad']);
+      expect(
+        classes[0].titles.map(
+          (t) =>
+            `${t.title}:${t.issued}/${t.returned}/${t.lost}/${t.lostUnbilled}`,
+        ),
+      ).toEqual(['Mathematics:1/0/1/1', 'English:0/0/0/0']);
+      expect(classes[0].missingSubjects).toEqual([]);
+      expect(classes[1].titles).toEqual([]);
+      expect(classes[1].missingSubjects).toEqual(['Science']);
     });
   });
 });

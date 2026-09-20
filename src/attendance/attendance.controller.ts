@@ -13,6 +13,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { PosBranchAccessGuard } from '../auth/pos-branch-access.guard';
 import { RequirePosPermissions } from '../auth/decorators/require-pos-permissions.decorator';
 import { SchoolClassScopeService } from '../school/school-class-scope.service';
+import { SchoolTimetableService } from '../school/school-timetable.service';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { UserRole } from '../auth/roles.enum';
@@ -65,6 +66,7 @@ export class AttendanceController {
   constructor(
     private readonly svc: AttendanceService,
     private readonly scope: SchoolClassScopeService,
+    private readonly timetable: SchoolTimetableService,
   ) {}
 
   @Get('students')
@@ -72,6 +74,35 @@ export class AttendanceController {
   @RequirePosPermissions(PosSchoolPermission.VIEW_CLASS_BOARD)
   list(@Query() query: ListAttendanceQueryDto) {
     return this.svc.list(AttendanceSubjectType.STUDENT, query);
+  }
+
+  /**
+   * The signed-in person's OWN staff register, read-only — the day marks and
+   * lesson marks their heads recorded. On the teacher's permissions, because
+   * it is the teacher who asks; the STAFF register itself stays the heads'
+   * (AttendanceStaffController). The employee row is resolved from the token,
+   * so nobody can read a colleague's.
+   */
+  @Get('staff/mine')
+  @RetailBranchContext('query.branchId')
+  @RequirePosPermissions(
+    PosSchoolPermission.VIEW_CLASS_BOARD,
+    PosSchoolPermission.MARK_ATTENDANCE,
+  )
+  async mine(
+    @Query() query: ListAttendanceQueryDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const mine = await this.timetable.mine(
+      query.branchId,
+      req?.user?.id ?? null,
+    );
+    const employee = mine.employee;
+    const rows = await this.svc.mine(
+      employee ? String(employee.id) : null,
+      query,
+    );
+    return { employee, ...rows };
   }
 
   @Get('students/summary')

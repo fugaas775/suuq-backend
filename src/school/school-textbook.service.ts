@@ -10,6 +10,7 @@ import {
   TextbookLoanStatus,
 } from './entities/school-textbook-loan.entity';
 import { SchoolTextbookTitle } from './entities/school-textbook-title.entity';
+import { SchoolTimetableService } from './school-timetable.service';
 import {
   CreateSchoolTextbookTitleDto,
   IssueSchoolTextbooksDto,
@@ -54,7 +55,155 @@ export class SchoolTextbookService {
     private readonly titles: Repository<SchoolTextbookTitle>,
     @InjectRepository(SchoolTextbookLoan)
     private readonly loans: Repository<SchoolTextbookLoan>,
+    // The subjects a class is taught — the timetable is the school's own list.
+    private readonly timetable?: SchoolTimetableService,
   ) {}
+
+  /**
+   * The subjects taught in each class, off the timetable, spelled as the
+   * timetable spells them (first spelling wins), keyed by lowercased class.
+   * Owner 2026-09-20: "Subjects are those our teachers teach and they are in
+   * the timetable, so make it easy to manage Textbooks."
+   */
+  async subjectsByClass(branchId: number): Promise<Map<string, string[]>> {
+    const out = new Map<string, string[]>();
+    if (!this.timetable) return out;
+    const doc = await this.timetable.get(branchId);
+    for (const slot of doc?.slots ?? []) {
+      const cls = fold(slot?.classCode);
+      const subject = text(slot?.subject);
+      if (!cls || !subject) continue;
+      const list = out.get(cls) ?? [];
+      if (!list.some((s) => fold(s) === fold(subject))) list.push(subject);
+      out.set(cls, list);
+    }
+    return out;
+  }
+
+  async subjectsFor(branchId: number, classCode: string) {
+    const byClass = await this.subjectsByClass(branchId);
+    return {
+      classCode: fold(classCode),
+      subjects: byClass.get(fold(classCode)) ?? [],
+    };
+  }
+
+  /**
+   * One title per subject the timetable teaches in a class — the book IS the
+   * subject until the office renames it — for one class or the whole school.
+   * Idempotent: a title already listed (by spelling) is left alone; one taken
+   * off the list is brought back. Nobody types "Mathematics" forty times.
+   */
+  async seedFromTimetable(
+    branchId: number,
+    classCode: string | null | undefined,
+    userId: number | null,
+    scope?: ClassScopeCheck,
+  ) {
+    const byClass = await this.subjectsByClass(branchId);
+    const wanted = fold(classCode);
+    if (wanted) scope?.assert(wanted);
+    const classes = wanted ? [wanted] : [...byClass.keys()];
+    let created = 0;
+    let existing = 0;
+    for (const cls of classes) {
+      const subjects = byClass.get(cls) ?? [];
+
+      const listed = await this.titles.find({
+        where: { branchId, classCode: cls },
+      });
+      for (const subject of subjects) {
+        const match = listed.find(
+          (t) =>
+            fold(t.title) === fold(subject) ||
+            fold(t.subject) === fold(subject),
+        );
+        if (match && match.isActive) {
+          existing += 1;
+          continue;
+        }
+
+        await this.createTitle(
+          { branchId, classCode: cls, title: subject, subject },
+          userId,
+        );
+        created += 1;
+      }
+    }
+    return { classes: classes.length, created, existing };
+  }
+
+  /**
+   * The office's view of the whole shelf: every class, every title, its
+   * subject and price, and how many copies are out, back or lost — plus the
+   * subjects the timetable teaches that have no book yet.
+   */
+  async summary(branchId: number) {
+    const [titles, loans, byClass] = await Promise.all([
+      this.titles.find({
+        where: { branchId, isActive: true },
+        order: { classCode: 'ASC', sortOrder: 'ASC', id: 'ASC' },
+      }),
+      this.loans.find({ where: { branchId } }),
+      this.subjectsByClass(branchId),
+    ]);
+    const counts = new Map<
+      string,
+      { issued: number; returned: number; lost: number; lostUnbilled: number }
+    >();
+    for (const loan of loans) {
+      const key = `${fold(loan.classCode)}|${fold(loan.title)}`;
+      const row = counts.get(key) ?? {
+        issued: 0,
+        returned: 0,
+        lost: 0,
+        lostUnbilled: 0,
+      };
+      if (loan.status === 'ISSUED') row.issued += 1;
+      else if (loan.status === 'RETURNED') row.returned += 1;
+      else if (loan.status === 'LOST') {
+        row.lost += 1;
+        if (!loan.billedLineId) row.lostUnbilled += 1;
+      }
+      counts.set(key, row);
+    }
+    const classCodes = new Set<string>([
+      ...byClass.keys(),
+      ...titles.map((t) => fold(t.classCode)),
+    ]);
+    const classes = [...classCodes].sort().map((cls) => {
+      const rows = titles
+        .filter((t) => fold(t.classCode) === cls)
+        .map((t) => ({
+          id: Number(t.id),
+          title: t.title,
+          subject: t.subject ?? null,
+          replacementPrice: t.replacementPrice ?? null,
+          ...(counts.get(`${cls}|${fold(t.title)}`) ?? {
+            issued: 0,
+            returned: 0,
+            lost: 0,
+            lostUnbilled: 0,
+          }),
+        }));
+      const subjects = byClass.get(cls) ?? [];
+      const missing = subjects.filter(
+        (subject) =>
+          !rows.some(
+            (r) =>
+              fold(r.subject) === fold(subject) ||
+              fold(r.title) === fold(subject),
+          ),
+      );
+      return {
+        classCode: cls,
+        subjects,
+        titles: rows,
+        missingSubjects: missing,
+      };
+    });
+    return { classes };
+  }
 
   async listTitles(branchId: number, classCode?: string) {
     const where: Record<string, unknown> = { branchId, isActive: true };

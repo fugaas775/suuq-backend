@@ -151,6 +151,29 @@ export class AttendanceService {
    * and the Bureau's export can never quote three different numbers. A second
    * copy here is exactly how they would.
    */
+  /**
+   * One person's own register, read-only: the day marks and the lesson
+   * marks the heads recorded about them over a range. Owner 2026-09-20:
+   * "Teachers attendance is taken by the director or deputy director or the
+   * owner in Branch Staff, so teachers should see as a read-only their
+   * attendance taken by their heads." `subjectRef` is the employee id, the
+   * key both staff registers file under; the caller resolves it from the
+   * actor. A person with no employee row gets empty lists, not an error.
+   */
+  async mine(subjectRef: string | null, query: ListAttendanceQueryDto) {
+    if (!subjectRef) return { days: [], lessons: [] };
+    const [days, lessons] = await Promise.all([
+      this.list(AttendanceSubjectType.STAFF, query),
+      this.listLessons(AttendanceSubjectType.STAFF, query),
+    ]);
+    const own = (row: { subjectRef?: unknown }) =>
+      String(row?.subjectRef ?? '') === String(subjectRef);
+    return {
+      days: (days?.items ?? []).filter(own),
+      lessons: (lessons?.items ?? []).filter(own),
+    };
+  }
+
   async summary(
     subjectType: AttendanceSubjectType,
     query: ListAttendanceQueryDto,

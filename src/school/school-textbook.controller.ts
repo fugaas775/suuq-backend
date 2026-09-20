@@ -30,7 +30,9 @@ import {
   ListSchoolTextbookLoansQueryDto,
   ListSchoolTextbookTitlesQueryDto,
   MarkSchoolTextbookLoanBilledDto,
+  SchoolTextbookSubjectsQueryDto,
   SchoolTextbooksOutstandingQueryDto,
+  SeedSchoolTextbooksDto,
   UpdateSchoolTextbookLoanDto,
   UpdateSchoolTextbookTitleDto,
 } from './dto/school-textbook.dto';
@@ -85,6 +87,44 @@ export class SchoolTextbookController {
   @RequirePosPermissions(PosSchoolPermission.VIEW_CLASS_BOARD)
   titles(@Query() query: ListSchoolTextbookTitlesQueryDto) {
     return this.svc.listTitles(query.branchId, query.classCode);
+  }
+
+  /** The subjects the timetable teaches in a class — what a shelf is made of. */
+  @Get('subjects')
+  @RetailBranchContext('query.branchId')
+  @RequirePosPermissions(PosSchoolPermission.VIEW_CLASS_BOARD)
+  subjects(@Query() query: SchoolTextbookSubjectsQueryDto) {
+    return this.svc.subjectsFor(query.branchId, query.classCode);
+  }
+
+  /** One title per timetable subject, for a class or the school. */
+  @Post('titles/from-timetable')
+  @RetailBranchContext('body.branchId')
+  @RequirePosPermissions(
+    PosSchoolPermission.MARK_ATTENDANCE,
+    PosSchoolPermission.ENROL_STUDENT,
+  )
+  async seed(
+    @Body() dto: SeedSchoolTextbooksDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const scope = await this.classScope(dto.branchId, req);
+    // The whole school is the office's to set up; a teacher names their class.
+    if (!dto.classCode) scope.assert('*');
+    return this.svc.seedFromTimetable(
+      dto.branchId,
+      dto.classCode,
+      this.actorId(req),
+      scope,
+    );
+  }
+
+  /** The office's whole shelf: every class, title, price and count. */
+  @Get('summary')
+  @RetailBranchContext('query.branchId')
+  @RequirePosPermissions(PosSchoolPermission.VIEW_CLASS_BOARD)
+  summary(@Query() query: SchoolTextbooksOutstandingQueryDto) {
+    return this.svc.summary(query.branchId);
   }
 
   @Post('titles')

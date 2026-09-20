@@ -756,4 +756,44 @@ describe('AttendanceService.rekey — a duplicate pupil’s marks follow the chi
       expect(assert).toHaveBeenCalledTimes(1);
     });
   });
+
+  describe('a teacher reads their own register, and only their own', () => {
+    it('returns the day and lesson marks filed under the employee, and nothing for a login with no employee row', async () => {
+      const { svc } = makeService({
+        rows: [
+          {
+            id: 1,
+            branchId: 115,
+            attendanceDate: '2026-09-15',
+            subjectType: 'STAFF',
+            subjectRef: '30',
+            status: 'PRESENT',
+            recordedByName: 'Hibo',
+            updatedAt: new Date(),
+          },
+          {
+            id: 2,
+            branchId: 115,
+            attendanceDate: '2026-09-15',
+            subjectType: 'STAFF',
+            subjectRef: '31',
+            status: 'ABSENT',
+            recordedByName: 'Hibo',
+            updatedAt: new Date(),
+          },
+        ],
+      });
+      const mine = await svc.mine('30', {
+        branchId: 115,
+        from: '2026-09-01',
+        to: '2026-09-30',
+      });
+      expect(mine.days.map((d: any) => d.subjectRef)).toEqual(['30']);
+      expect(mine.days[0].recordedByName).toBe('Hibo');
+      expect(await svc.mine(null, { branchId: 115 } as any)).toEqual({
+        days: [],
+        lessons: [],
+      });
+    });
+  });
 });
