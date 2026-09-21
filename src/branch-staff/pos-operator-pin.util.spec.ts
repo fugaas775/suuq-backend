@@ -1,6 +1,7 @@
 import {
   buildUnlockPinFingerprint,
   isPinEligibleLane,
+  isUnlockPinUniquePerBranch,
   isWeakUnlockPin,
   normalizeUnlockPin,
 } from './pos-operator-pin.util';
@@ -94,6 +95,18 @@ describe('pos-operator-pin.util', () => {
       expect(buildUnlockPinFingerprint('pepper-a', 42, '4827')).not.toBe(
         buildUnlockPinFingerprint('pepper-b', 42, '4827'),
       );
+    });
+  });
+
+  describe('isUnlockPinUniquePerBranch', () => {
+    it('keeps a QSR waiter PIN unique — it stamps the order', () => {
+      expect(isUnlockPinUniquePerBranch('QSR')).toBe(true);
+      expect(isUnlockPinUniquePerBranch('qsr')).toBe(true);
+    });
+
+    it('lets a school give every teacher the same PIN', () => {
+      expect(isUnlockPinUniquePerBranch('SCHOOL')).toBe(false);
+      expect(isUnlockPinUniquePerBranch(null)).toBe(false);
     });
   });
 });

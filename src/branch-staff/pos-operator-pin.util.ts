@@ -63,6 +63,27 @@ export function isPinEligibleLane(
   return (OPERATOR_UNLOCK_PIN_LANES[format] || []).includes(lane);
 }
 
+/**
+ * The formats where no two people at one branch may hold the same digits.
+ *
+ * QSR only: the waiter's identity stamps `waiterUserId` onto every order, so
+ * a shared PIN is a money bug. A school is not on it — the owner gives every
+ * teacher one PIN (1122 at SMAQ and SMAG, 2026-09-21). The teacher taps their
+ * own name first and the PIN is checked against that one person, so a shared
+ * PIN still unlocks nobody by itself; the tile, not the digits, says who it is.
+ */
+export const OPERATOR_UNLOCK_PIN_UNIQUE_FORMATS: readonly string[] =
+  Object.freeze(['QSR']);
+
+export function isUnlockPinUniquePerBranch(
+  serviceFormat: string | null | undefined,
+): boolean {
+  const format = String(serviceFormat || '')
+    .trim()
+    .toUpperCase();
+  return OPERATOR_UNLOCK_PIN_UNIQUE_FORMATS.includes(format);
+}
+
 /** Digits only, exact length. Returns null when the input is not a valid PIN. */
 export function normalizeUnlockPin(raw: unknown): string | null {
   const pin = String(raw ?? '').trim();

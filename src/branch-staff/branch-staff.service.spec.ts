@@ -756,4 +756,53 @@ describe('BranchStaffService', () => {
       });
     });
   });
+
+  describe('setUnlockPin', () => {
+    const owner = { id: 7, roles: ['SUPER_ADMIN'] };
+    const assignmentAt = (serviceFormat: string, lane: string) => ({
+      id: 31,
+      branchId: 115,
+      userId: 2456,
+      isActive: true,
+      posExperienceProfileCode: lane,
+      branch: { id: 115, serviceFormat },
+    });
+
+    beforeEach(() => {
+      auditService.log.mockResolvedValue(undefined);
+    });
+
+    it('lets a teacher take a PIN another teacher already holds — no fingerprint stored', async () => {
+      assignmentsRepository.findOne.mockResolvedValueOnce(
+        assignmentAt('SCHOOL', 'SCHOOL_TEACHER'),
+      );
+
+      await expect(
+        service.setUnlockPin(115, 2456, '1122', owner),
+      ).resolves.toMatchObject({ userId: 2456, hasPin: true });
+
+      // Only the assignment lookup: no collision search at a school.
+      expect(assignmentsRepository.findOne).toHaveBeenCalledTimes(1);
+      expect(assignmentsRepository.update).toHaveBeenCalledWith(
+        { id: 31 },
+        expect.objectContaining({
+          unlockPinHash: expect.any(String),
+          unlockPinFingerprint: null,
+        }),
+      );
+    });
+
+    it('still refuses a QSR waiter the digits another waiter holds', async () => {
+      assignmentsRepository.findOne
+        .mockResolvedValueOnce(assignmentAt('QSR', 'QSR_WAITER'))
+        .mockResolvedValueOnce({ id: 32, userId: 2457 });
+
+      await expect(
+        service.setUnlockPin(115, 2456, '1122', owner),
+      ).rejects.toMatchObject({
+        response: expect.objectContaining({ code: 'POS_PIN_IN_USE' }),
+      });
+      expect(assignmentsRepository.update).not.toHaveBeenCalled();
+    });
+  });
 });

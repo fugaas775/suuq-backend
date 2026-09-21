@@ -38,6 +38,7 @@ import { POS_BRANCH_SUBSCRIPTION_OPTIONS } from './pos-workspace-pricing';
 import {
   buildUnlockPinFingerprint,
   isPinEligibleLane,
+  isUnlockPinUniquePerBranch,
   OPERATOR_UNLOCK_PIN_NOT_ELIGIBLE_MESSAGE,
   isWeakUnlockPin,
   normalizeUnlockPin,
@@ -1732,11 +1733,20 @@ export class BranchStaffService {
       });
     }
 
-    const fingerprint = buildUnlockPinFingerprint(pepper, branchId, pin);
-    const collision = await this.assignmentsRepository.findOne({
-      where: { branchId, unlockPinFingerprint: fingerprint },
-      select: { id: true, userId: true },
-    });
+    // A school's teachers may share one PIN (see
+    // OPERATOR_UNLOCK_PIN_UNIQUE_FORMATS): no fingerprint is stored for them,
+    // so the unique index never sees one.
+    const fingerprint = isUnlockPinUniquePerBranch(
+      assignment.branch?.serviceFormat,
+    )
+      ? buildUnlockPinFingerprint(pepper, branchId, pin)
+      : null;
+    const collision = fingerprint
+      ? await this.assignmentsRepository.findOne({
+          where: { branchId, unlockPinFingerprint: fingerprint },
+          select: { id: true, userId: true },
+        })
+      : null;
     if (collision && collision.userId !== userId) {
       // Deliberately does not say who holds it. In QSR the operator identity
       // stamps waiterUserId onto every order, so two waiters sharing digits
