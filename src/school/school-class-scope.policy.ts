@@ -113,3 +113,49 @@ export function classScopeRefusal(
     ? `${cls} is not one of your classes (${own.join(', ')}). Ask the office to take its register.`
     : 'No class is assigned to you yet — the office assigns your home room and timetable in Branch Staff.';
 }
+
+/**
+ * Pupils whose folio sits in a DIFFERENT class from the register being
+ * written. A register is (class, day); a mark for a pupil who is not in that
+ * class is a tap that crossed over from another sheet — a client that kept
+ * one draft across a class switch did exactly that — and it is refused by
+ * name, before any row is written. A folio not found at all passes: a child
+ * withdrawn since the morning was on that register, and an older client may
+ * carry ids the branch no longer lists. A folio with no class passes too.
+ */
+export function pupilsOutsideClass(
+  carts: Array<{
+    id: number | string;
+    cartSnapshot?: Record<string, unknown> | null;
+  }>,
+  classCode: unknown,
+): Array<{ id: string; name: string; classCode: string }> {
+  const want = fold(classCode);
+  if (!want) return [];
+  const out: Array<{ id: string; name: string; classCode: string }> = [];
+  for (const cart of carts ?? []) {
+    const snap = cart?.cartSnapshot ?? {};
+    const have = fold(snap.hotelRoomNumber);
+    if (!have || have === want) continue;
+    out.push({
+      id: String(cart.id),
+      name: String(snap.hotelGuestName ?? '').trim() || `folio ${cart.id}`,
+      classCode: String(snap.hotelRoomNumber ?? '').trim(),
+    });
+  }
+  return out;
+}
+
+/** One sentence naming the pupils and the class they are in. */
+export function pupilClassRefusal(
+  classCode: unknown,
+  outside: Array<{ name: string; classCode: string }>,
+): string {
+  const cls = String(classCode ?? '').trim() || 'this class';
+  const named = outside
+    .slice(0, 3)
+    .map((p) => `${p.name} (${p.classCode})`)
+    .join(', ');
+  const more = outside.length > 3 ? ` and ${outside.length - 3} more` : '';
+  return `${named}${more} ${outside.length === 1 ? 'is' : 'are'} not in ${cls} — this register cannot carry them.`;
+}

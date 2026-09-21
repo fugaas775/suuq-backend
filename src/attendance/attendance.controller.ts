@@ -133,6 +133,10 @@ export class AttendanceController {
         recordedByName: scope.recordedBy,
         scope: {
           assert: (classCode) => this.scope.assertInScope(scope, classCode),
+          // And the pupils themselves: a folio in another class is a tap
+          // that crossed over from another sheet, whoever is taking it.
+          assertPupils: (classCode, refs) =>
+            this.scope.assertPupilsInClass(dto.branchId, classCode, refs),
         },
       },
     );

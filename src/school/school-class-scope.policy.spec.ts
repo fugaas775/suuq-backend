@@ -3,6 +3,8 @@ import {
   classInScope,
   classScopeRefusal,
   isClassScoped,
+  pupilClassRefusal,
+  pupilsOutsideClass,
 } from './school-class-scope.policy';
 
 /* "Teachers should only manage assigned grade only." */
@@ -139,5 +141,40 @@ describe('school-class-scope.policy', () => {
         '4aad',
       ),
     ).toMatch(/No class is assigned to you yet/);
+  });
+
+  it('names the pupils whose folio sits in another class, and lets unknown or class-less folios pass', () => {
+    const carts = [
+      {
+        id: 1,
+        cartSnapshot: { hotelRoomNumber: '3aad', hotelGuestName: 'Amina' },
+      },
+      {
+        id: 2,
+        cartSnapshot: { hotelRoomNumber: '4AAD', hotelGuestName: 'Bilan' },
+      },
+      { id: 3, cartSnapshot: { hotelRoomNumber: '', hotelGuestName: 'Cali' } },
+      { id: 4, cartSnapshot: null },
+      { id: 5, cartSnapshot: { hotelRoomNumber: '5aad' } },
+    ];
+    expect(pupilsOutsideClass(carts, '3AAD')).toEqual([
+      { id: '2', name: 'Bilan', classCode: '4AAD' },
+      { id: '5', name: 'folio 5', classCode: '5aad' },
+    ]);
+    expect(pupilsOutsideClass(carts, '')).toEqual([]);
+    expect(
+      pupilClassRefusal('3aad', [{ name: 'Bilan', classCode: '4aad' }]),
+    ).toBe('Bilan (4aad) is not in 3aad — this register cannot carry them.');
+    expect(
+      pupilClassRefusal('3aad', [
+        { name: 'A', classCode: '4aad' },
+        { name: 'B', classCode: '4aad' },
+        { name: 'C', classCode: '4aad' },
+        { name: 'D', classCode: '4aad' },
+        { name: 'E', classCode: '4aad' },
+      ]),
+    ).toBe(
+      'A (4aad), B (4aad), C (4aad) and 2 more are not in 3aad — this register cannot carry them.',
+    );
   });
 });

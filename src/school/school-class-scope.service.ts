@@ -1,8 +1,13 @@
-import { ForbiddenException, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { Branch } from '../branches/entities/branch.entity';
 import { BranchStaffAssignment } from '../branch-staff/entities/branch-staff-assignment.entity';
+import { PosSuspendedCart } from '../pos-sync/entities/pos-suspended-cart.entity';
 import { SchoolClassService } from './school-class.service';
 import { SchoolTimetableService } from './school-timetable.service';
 import {
@@ -11,6 +16,8 @@ import {
   classInScope,
   classScopeRefusal,
   isClassScoped,
+  pupilClassRefusal,
+  pupilsOutsideClass,
 } from './school-class-scope.policy';
 
 export type ScopeActor = {
@@ -31,6 +38,8 @@ export class SchoolClassScopeService {
     private readonly branches: Repository<Branch>,
     @InjectRepository(BranchStaffAssignment)
     private readonly assignments: Repository<BranchStaffAssignment>,
+    @InjectRepository(PosSuspendedCart)
+    private readonly carts: Repository<PosSuspendedCart>,
     private readonly classes: SchoolClassService,
     private readonly timetable: SchoolTimetableService,
   ) {}
@@ -91,6 +100,32 @@ export class SchoolClassScopeService {
     throw new ForbiddenException({
       code: 'SCHOOL_CLASS_OUT_OF_SCOPE',
       message: classScopeRefusal(scope, classCode),
+    });
+  }
+
+  /**
+   * Throws a 400 naming the pupils when any of `subjectRefs` is a folio on
+   * this branch that sits in a different class from `classCode`. Applies to
+   * everyone, scoped or not: it is about the register's integrity, not about
+   * who is taking it. See `pupilsOutsideClass`.
+   */
+  async assertPupilsInClass(
+    branchId: number,
+    classCode: unknown,
+    subjectRefs: Array<string | number>,
+  ): Promise<void> {
+    const ids = [...new Set((subjectRefs ?? []).map((r) => Number(r)))].filter(
+      (n) => Number.isFinite(n) && n > 0,
+    );
+    if (!ids.length || !String(classCode ?? '').trim()) return;
+    const carts = await this.carts.find({
+      where: { id: In(ids), branchId },
+    });
+    const outside = pupilsOutsideClass(carts, classCode);
+    if (!outside.length) return;
+    throw new BadRequestException({
+      code: 'SCHOOL_PUPIL_NOT_IN_CLASS',
+      message: pupilClassRefusal(classCode, outside),
     });
   }
 }

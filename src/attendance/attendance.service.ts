@@ -236,7 +236,15 @@ export class AttendanceService {
        written; absent (the staff register, older callers), nothing is scoped. */
     who: {
       recordedByName?: string | null;
-      scope?: { assert: (classCode: unknown) => void } | null;
+      scope?: {
+        assert: (classCode: unknown) => void;
+        /* Optional: refuses pupils whose folio sits in another class. Runs
+           after the lists are built and before the first write. */
+        assertPupils?: (
+          classCode: unknown,
+          subjectRefs: string[],
+        ) => Promise<void> | void;
+      } | null;
     } = {},
   ) {
     const day = dayOf(dto.date);
@@ -291,6 +299,17 @@ export class AttendanceService {
         recordedByName,
         updatedAt: new Date(),
       });
+    }
+
+    if (
+      subjectType === AttendanceSubjectType.STUDENT &&
+      who.scope?.assertPupils &&
+      (upserting.length || clearing.length)
+    ) {
+      await who.scope.assertPupils(dto.classCode, [
+        ...upserting.map((row) => String(row.subjectRef)),
+        ...clearing,
+      ]);
     }
 
     if (upserting.length) {

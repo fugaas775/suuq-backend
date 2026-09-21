@@ -757,6 +757,64 @@ describe('AttendanceService.rekey — a duplicate pupil’s marks follow the chi
     });
   });
 
+  describe('a register carries only the pupils of its own class', () => {
+    it('refuses a pupil whose folio sits in another class before any row is written — and never for staff', async () => {
+      const { svc, captured } = makeService();
+      const assertPupils = jest.fn(
+        async (classCode: unknown, refs: string[]) => {
+          if (refs.includes('99'))
+            throw new Error(`Bilan (4aad) is not in ${classCode}`);
+        },
+      );
+      const scope = { assert: jest.fn(), assertPupils };
+      await expect(
+        svc.mark(
+          AttendanceSubjectType.STUDENT,
+          {
+            branchId: 115,
+            date: '2026-09-21',
+            classCode: '3aad',
+            entries: [
+              { subjectRef: '1', status: AttendanceStatus.PRESENT },
+              // A clear counts too: it would have deleted 4aad's mark for the day.
+              { subjectRef: '99', status: null },
+            ],
+          } as any,
+          900,
+          { recordedByName: 'Mustafe', scope },
+        ),
+      ).rejects.toThrow(/Bilan \(4aad\) is not in 3aad/);
+      expect(assertPupils).toHaveBeenCalledWith('3aad', ['1', '99']);
+      expect(captured.inserted).toBeNull();
+      expect(captured.deleted).toBe(false);
+
+      await svc.mark(
+        AttendanceSubjectType.STUDENT,
+        {
+          branchId: 115,
+          date: '2026-09-21',
+          classCode: '3aad',
+          entries: [{ subjectRef: '1', status: AttendanceStatus.PRESENT }],
+        },
+        900,
+        { recordedByName: 'Mustafe', scope },
+      );
+      expect(captured.inserted).toHaveLength(1);
+
+      await svc.mark(
+        AttendanceSubjectType.STAFF,
+        {
+          branchId: 115,
+          date: '2026-09-21',
+          entries: [{ subjectRef: '99', status: AttendanceStatus.PRESENT }],
+        },
+        900,
+        { recordedByName: 'Office', scope },
+      );
+      expect(assertPupils).toHaveBeenCalledTimes(2);
+    });
+  });
+
   describe('a teacher reads their own register, and only their own', () => {
     it('returns the day and lesson marks filed under the employee, and nothing for a login with no employee row', async () => {
       const { svc } = makeService({
