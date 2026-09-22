@@ -63,14 +63,17 @@ server {
 
 }
 server {
-    if ($host = pos.suuq-s.com) {
-        return 301 https://$host$request_uri;
-    } # managed by Certbot
-
-
     listen 80;
     server_name pos.suuq-s.com;
-    return 404; # managed by Certbot
 
+    # Certificate renewal answers here (HTTP-01, webroot /var/www/html). Must stay
+    # on plain HTTP and ahead of the redirect, or renewals fail.
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/html;
+        default_type "text/plain";
+    }
 
+    location / {
+        return 301 https://$server_name$request_uri;
+    }
 }
