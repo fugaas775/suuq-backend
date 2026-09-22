@@ -1,4 +1,5 @@
 import { ForbiddenException } from '@nestjs/common';
+import { QueryFailedError } from 'typeorm';
 import { SchoolLessonPlanService } from './school-lesson-plan.service';
 
 /* Lesson plans: a teacher's own word on their own lessons; the office reads
@@ -174,5 +175,99 @@ describe('SchoolLessonPlanService', () => {
         total: 1,
       },
     ]);
+  });
+
+  it('sends a plan back for review when what it says changes — and keeps the sign-off on a same-words re-save', async () => {
+    const { svc, plans } = makeService();
+    const a = await svc.upsert(PLAN, ACTOR);
+    const { svc: head } = makeService({ plans, head: true });
+    await head.review(
+      Number(a.id),
+      { branchId: 115, reviewComment: 'Good' },
+      HEAD,
+    );
+    expect(plans[0].reviewedAt).toBeInstanceOf(Date);
+
+    // The same words again: still signed off.
+    await svc.upsert(PLAN, ACTOR);
+    expect(plans[0]).toMatchObject({
+      reviewedByName: 'Hibo (deputy)',
+      reviewComment: 'Good',
+    });
+
+    // A different topic: the sign-off was on a plan that no longer exists.
+    await svc.upsert(
+      { ...PLAN, topic: 'Fractions', objectives: 'Add unlike fractions' },
+      ACTOR,
+    );
+    expect(plans[0]).toMatchObject({
+      reviewedAt: null,
+      reviewedByName: null,
+      reviewedByUserId: null,
+      reviewComment: null,
+      objectives: 'Add unlike fractions',
+    });
+  });
+
+  it('retries a lost insert race as an update of the row that won', async () => {
+    const { svc, plans } = makeService();
+    const winner = {
+      id: 55,
+      branchId: 115,
+      employeeId: 30,
+      lessonDate: '2026-09-21',
+      periodCode: 'P1',
+      classCode: '3aad',
+      subject: 'Maths',
+      topic: 'From the other tab',
+      status: 'TAUGHT',
+    };
+    // The repository says "no row" once, then the INSERT loses to the other
+    // tab's — which is in the table by the time the retry looks again.
+    const repo = (svc as any).plans;
+    const realFindOne = repo.findOne;
+    let first = true;
+    repo.findOne = async (opts: any) => {
+      if (first) {
+        first = false;
+        return null;
+      }
+      return realFindOne(opts);
+    };
+    const realSave = repo.save;
+    let raced = false;
+    repo.save = async (row: any) => {
+      if (!raced && !row.id) {
+        raced = true;
+        plans.push(winner);
+        throw new QueryFailedError(
+          'INSERT',
+          [],
+          Object.assign(new Error('duplicate key'), {
+            code: '23505',
+            constraint: 'uq_pos_school_lesson_plans_lesson',
+          }),
+        );
+      }
+      return realSave(row);
+    };
+    const saved = await svc.upsert({ ...PLAN, topic: 'Fractions' }, ACTOR);
+    expect(saved.id).toBe(55);
+    expect(plans).toHaveLength(1);
+    expect(plans[0]).toMatchObject({ topic: 'Fractions', status: 'TAUGHT' });
+  });
+
+  it('does not swallow any other database failure', async () => {
+    const { svc } = makeService();
+    (svc as any).plans.save = async () => {
+      throw new QueryFailedError(
+        'INSERT',
+        [],
+        Object.assign(new Error('boom'), { code: '23502' }),
+      );
+    };
+    await expect(svc.upsert(PLAN, ACTOR)).rejects.toBeInstanceOf(
+      QueryFailedError,
+    );
   });
 });

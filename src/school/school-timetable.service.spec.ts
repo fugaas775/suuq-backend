@@ -1,8 +1,15 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ConflictException } from '@nestjs/common';
+import 'reflect-metadata';
+import { validateSync } from 'class-validator';
+import { plainToInstance } from 'class-transformer';
 import {
   SchoolTimetableService,
   normalizePersonName,
 } from './school-timetable.service';
+import {
+  PutSchoolTimetableDto,
+  isPeriodTimes,
+} from './dto/school-timetable.dto';
 
 /**
  * The timetable's rules: class codes come from the registry, a teacher is in
@@ -29,13 +36,22 @@ function makeService({
   existing = null,
 }: any = {}) {
   const saved: any[] = [];
+  const reads: any[] = [];
   const repo: any = {
-    findOne: async () => existing,
+    findOne: async (opts: any) => {
+      reads.push(opts);
+      return existing;
+    },
     create: (partial: any) => ({ ...partial }),
     save: async (row: any) => {
       saved.push(row);
       return { id: 1, createdAt: stamp, updatedAt: stamp, ...row };
     },
+  };
+  // The week is replaced inside a transaction whose manager hands back the
+  // same repository, so every read and write stays observable.
+  repo.manager = {
+    transaction: async (fn: any) => fn({ getRepository: () => repo }),
   };
   const classes: any = { find: async () => registry };
   const staff: any = {
@@ -48,7 +64,7 @@ function makeService({
   };
   void employeeFind;
   const svc = new SchoolTimetableService(repo, classes, staff);
-  return { svc, saved };
+  return { svc, saved, reads };
 }
 
 const PERIODS = [
@@ -519,6 +535,291 @@ describe('SchoolTimetableService', () => {
         null,
       ),
     ).rejects.toBeInstanceOf(BadRequestException);
+  });
+});
+
+describe('SchoolTimetableService — overlapping hours, and a week saved over another', () => {
+  const twoShift = [
+    {
+      code: 'P1',
+      sortOrder: 1,
+      times: {
+        AM: { start: '08:00', end: '08:40' },
+        PM: { start: '12:20', end: '13:00' },
+      },
+    },
+    {
+      code: 'P6',
+      sortOrder: 6,
+      times: {
+        AM: { start: '12:00', end: '12:40' },
+        PM: { start: '16:00', end: '16:40' },
+      },
+    },
+  ];
+  const shifts = [
+    { code: 'AM', classCodes: ['1aad', '3aad'] },
+    { code: 'PM', classCodes: ['7th'] },
+  ];
+
+  it('refuses one teacher in two lessons whose hours overlap, naming both', async () => {
+    const { svc } = makeService();
+    await expect(
+      svc.put(
+        {
+          branchId: 115,
+          periods: twoShift,
+          shifts,
+          slots: [
+            {
+              day: 2,
+              period: 'P6',
+              classCode: '3aad',
+              subject: 'Maths',
+              employeeId: 8,
+            },
+            {
+              day: 2,
+              period: 'P1',
+              classCode: '7th',
+              subject: 'Maths',
+              employeeId: 8,
+            },
+          ],
+        } as any,
+        null,
+      ),
+    ).rejects.toThrow(
+      'Ibrahim Ahmad is in 3aad (P6 12:00–12:40) and 7th (P1 12:20–13:00) at the same time on Tuesday.',
+    );
+  });
+
+  it('lets lessons that only touch — one ends as the next begins — stand', async () => {
+    const { svc } = makeService();
+    const doc = await svc.put(
+      {
+        branchId: 115,
+        periods: [
+          {
+            code: 'P6',
+            sortOrder: 6,
+            times: {
+              AM: { start: '12:00', end: '12:40' },
+              PM: { start: '16:00', end: '16:40' },
+            },
+          },
+          {
+            code: 'P1',
+            sortOrder: 1,
+            times: {
+              AM: { start: '08:00', end: '08:40' },
+              PM: { start: '12:40', end: '13:20' },
+            },
+          },
+        ],
+        shifts,
+        slots: [
+          {
+            day: 2,
+            period: 'P6',
+            classCode: '3aad',
+            subject: 'M',
+            employeeId: 8,
+          },
+          {
+            day: 2,
+            period: 'P1',
+            classCode: '7th',
+            subject: 'M',
+            employeeId: 8,
+          },
+        ],
+      },
+      null,
+    );
+    expect(doc.slots).toHaveLength(2);
+  });
+
+  it('keeps the start-time rule where a bell has no end', async () => {
+    const { svc } = makeService();
+    await expect(
+      svc.put(
+        {
+          branchId: 115,
+          periods: [
+            {
+              code: 'P1',
+              sortOrder: 1,
+              times: { AM: { start: '08:00' }, PM: { start: '09:00' } },
+            },
+            {
+              code: 'P2',
+              sortOrder: 2,
+              times: { AM: { start: '09:00' }, PM: { start: '10:00' } },
+            },
+          ],
+          shifts,
+          slots: [
+            {
+              day: 1,
+              period: 'P2',
+              classCode: '3aad',
+              subject: 'M',
+              employeeId: 8,
+            },
+            {
+              day: 1,
+              period: 'P1',
+              classCode: '7th',
+              subject: 'M',
+              employeeId: 8,
+            },
+          ],
+        } as any,
+        null,
+      ),
+    ).rejects.toThrow(
+      /in 3aad \(P2 09:00\) and 7th \(P1 09:00\) at the same time on Monday/,
+    );
+    // And a start-only bell 08:00 beside a full 08:30–09:10 does not overlap
+    // by any rule it can be judged on.
+    const doc = await svc.put(
+      {
+        branchId: 115,
+        periods: [
+          {
+            code: 'P1',
+            sortOrder: 1,
+            times: {
+              AM: { start: '08:00' },
+              PM: { start: '08:30', end: '09:10' },
+            },
+          },
+        ],
+        shifts,
+        slots: [
+          {
+            day: 1,
+            period: 'P1',
+            classCode: '3aad',
+            subject: 'M',
+            employeeId: 8,
+          },
+          {
+            day: 1,
+            period: 'P1',
+            classCode: '7th',
+            subject: 'M',
+            employeeId: 8,
+          },
+        ],
+      },
+      null,
+    );
+    expect(doc.slots).toHaveLength(2);
+  });
+
+  it('reads the row under a lock and refuses a week planned over an older one — 409 TIMETABLE_CHANGED with the week as it stands', async () => {
+    const existing = {
+      id: 9,
+      branchId: 115,
+      title: 'Week A',
+      periods: [],
+      shifts: [],
+      slots: [],
+      createdAt: stamp,
+      updatedAt: stamp,
+    };
+    const { svc, saved, reads } = makeService({ existing });
+    const err = await svc
+      .put(
+        {
+          branchId: 115,
+          periods: PERIODS,
+          slots: [],
+          expectedUpdatedAt: '2026-09-16T07:00:00.000Z',
+        } as any,
+        null,
+      )
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(err.getResponse()).toMatchObject({
+      code: 'TIMETABLE_CHANGED',
+      details: { current: { id: 9, title: 'Week A' } },
+    });
+    expect(saved).toHaveLength(0);
+    expect(reads[0].lock).toEqual({ mode: 'pessimistic_write' });
+
+    await svc.put(
+      {
+        branchId: 115,
+        periods: PERIODS,
+        slots: [],
+        expectedUpdatedAt: stamp.toISOString(),
+      } as any,
+      null,
+    );
+    expect(saved).toHaveLength(1);
+  });
+
+  it('takes a bare HH:MM as a start time', async () => {
+    const { svc } = makeService();
+    const doc = await svc.put(
+      {
+        branchId: 115,
+        periods: [{ code: 'P1', times: { '*': '08:00' } }],
+        slots: [],
+      },
+      null,
+    );
+    expect(doc.periods[0].times).toEqual({
+      '*': { start: '08:00', end: null },
+    });
+  });
+});
+
+describe("PutSchoolTimetableDto — a period's times are bounded before they are walked", () => {
+  it('accepts the shapes the timetable editor sends', () => {
+    expect(isPeriodTimes({ '*': { start: '08:00', end: '08:40' } })).toBe(true);
+    expect(
+      isPeriodTimes({ AM: { start: null, end: null }, PM: { start: '14:00' } }),
+    ).toBe(true);
+    expect(isPeriodTimes({ AM: '08:00' })).toBe(true);
+    expect(isPeriodTimes({})).toBe(true);
+  });
+
+  it('refuses too many keys, a long key, a bad clock, and anything nested', () => {
+    const many = Object.fromEntries(
+      Array.from({ length: 13 }, (_, i) => [`S${i}`, { start: '08:00' }]),
+    );
+    expect(isPeriodTimes(many)).toBe(false);
+    expect(isPeriodTimes({ ['X'.repeat(33)]: { start: '08:00' } })).toBe(false);
+    expect(isPeriodTimes({ AM: { start: '8:00' } })).toBe(false);
+    expect(isPeriodTimes({ AM: { start: '08:00', extra: 1 } })).toBe(false);
+    expect(isPeriodTimes({ AM: { start: { deep: true } } })).toBe(false);
+    expect(isPeriodTimes({ AM: ['08:00'] })).toBe(false);
+    expect(isPeriodTimes(['08:00'])).toBe(false);
+  });
+
+  it('is applied by the DTO, and expectedUpdatedAt must be an ISO instant', () => {
+    const body = (period: any, extra: any = {}) =>
+      validateSync(
+        plainToInstance(PutSchoolTimetableDto, {
+          branchId: 115,
+          periods: [period],
+          slots: [],
+          ...extra,
+        }),
+      );
+    expect(
+      body({ code: 'P1', times: { '*': { start: '08:00', end: '08:40' } } }),
+    ).toHaveLength(0);
+    expect(
+      body({ code: 'P1', times: { '*': { start: '25:00' } } }).length,
+    ).toBeGreaterThan(0);
+    expect(
+      body({ code: 'P1' }, { expectedUpdatedAt: 'yesterday' }).length,
+    ).toBeGreaterThan(0);
   });
 });
 

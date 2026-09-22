@@ -8,6 +8,25 @@ import {
 import { Request, Response } from 'express';
 import * as Sentry from '@sentry/node';
 import * as crypto from 'crypto';
+import { QueryFailedError } from 'typeorm';
+
+/**
+ * A unique-index refusal from Postgres (SQLSTATE 23505).
+ *
+ * Two tablets saving the same thing at the same moment — a lesson plan, a
+ * register, a folio re-save — both pass every check the service makes and
+ * the second INSERT then hits the index that exists precisely to stop the
+ * duplicate. That is the database doing its job, not a server fault: the
+ * first save stood. Reporting it as a 500 told a teacher their work was lost
+ * (and paged Sentry) when it was, in fact, already saved.
+ */
+function isUniqueViolation(exception: unknown): boolean {
+  if (!(exception instanceof QueryFailedError)) return false;
+  const driverCode =
+    (exception as { driverError?: { code?: unknown } }).driverError?.code ??
+    (exception as { code?: unknown }).code;
+  return String(driverCode ?? '') === '23505';
+}
 
 @Catch()
 export class GlobalExceptionFilter implements ExceptionFilter {
@@ -51,10 +70,20 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     if ((request as any)?.aborted) {
       return;
     }
-    const status =
-      exception instanceof HttpException ? exception.getStatus() : 500;
-    const responseBody =
-      exception instanceof HttpException ? exception.getResponse() : exception;
+    const duplicate = isUniqueViolation(exception);
+    const status = duplicate
+      ? 409
+      : exception instanceof HttpException
+        ? exception.getStatus()
+        : 500;
+    const responseBody = duplicate
+      ? {
+          code: 'DUPLICATE',
+          message: 'That was already saved — refresh to see it.',
+        }
+      : exception instanceof HttpException
+        ? exception.getResponse()
+        : exception;
     let code = 'INTERNAL_ERROR';
     let message =
       typeof responseBody === 'string'

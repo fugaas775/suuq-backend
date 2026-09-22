@@ -24,6 +24,7 @@ import { RetailModulesGuard } from '../retail/retail-modules.guard';
 import { ClosePosRegisterSessionDto } from './dto/close-pos-register-session.dto';
 import { CreatePosRegisterSessionDto } from './dto/create-pos-register-session.dto';
 import { CreatePosSuspendedCartDto } from './dto/create-pos-suspended-cart.dto';
+import { GetPosSuspendedCartQueryDto } from './dto/get-pos-suspended-cart-query.dto';
 import { ListPosRegisterSessionsQueryDto } from './dto/list-pos-register-sessions-query.dto';
 import { ListPosSuspendedCartsQueryDto } from './dto/list-pos-suspended-carts-query.dto';
 import {
@@ -115,6 +116,40 @@ export class PosRegisterController {
     return this.posRegisterService.findSuspendedCarts(query);
   }
 
+  /**
+   * One folio, read fresh — any status — behind exactly the list's door.
+   *
+   * The office plans every write against the row as it stands NOW: a roll
+   * loaded an hour ago no longer holds the payment the till took since, and
+   * re-reading one pupil used to mean re-paging the whole list (SMAG's runner
+   * scripts did exactly that, because this route 404'd). Answered only for a
+   * row on the branch named in the query; anything else is a 404, so an id
+   * guessed from another school reads nothing.
+   *
+   * Declared after the list and on GET only, so it shadows no literal route:
+   * every other `suspended-carts/:id/...` path is a POST or a PATCH.
+   */
+  @Get('suspended-carts/:id')
+  @UseGuards(JwtAuthGuard, RolesGuard, RetailModulesGuard, PosBranchAccessGuard)
+  @Roles(
+    UserRole.SUPER_ADMIN,
+    UserRole.ADMIN,
+    UserRole.POS_MANAGER,
+    UserRole.POS_OPERATOR,
+  )
+  @RequireRetailModules(RetailOsModule.POS_CORE)
+  @RetailBranchContext('query.branchId')
+  @ApiOkResponse({ type: PosSuspendedCartResponseDto })
+  findSuspendedCart(
+    @Param('id', ParseIntPipe) id: number,
+    @Query() query: GetPosSuspendedCartQueryDto,
+  ) {
+    return this.posRegisterService.findSuspendedCartOnBranch(
+      id,
+      query.branchId,
+    );
+  }
+
   @Post('suspended-carts')
   @UseGuards(JwtAuthGuard, RolesGuard, RetailModulesGuard, PosBranchAccessGuard)
   // ENROL_STUDENT is the SCHOOL fee-desk equivalent: a school operator holding
@@ -194,11 +229,19 @@ export class PosRegisterController {
   @RequireRetailModules(RetailOsModule.POS_CORE)
   @RetailBranchContext('body.branchId')
   @ApiOkResponse({ type: PosSuspendedCartResponseDto })
+  // The actor rides along for one reason: turning a stored PUPIL into
+  // something that is not a pupil (another format, or no name) is the first
+  // half of a withdrawal, and it needs the withdrawer's right — see
+  // PosRegisterService.updateSuspendedCart.
   updateSuspendedCart(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdatePosSuspendedCartDto,
+    @Req() req,
   ) {
-    return this.posRegisterService.updateSuspendedCart(id, dto);
+    return this.posRegisterService.updateSuspendedCart(id, dto, {
+      id: req.user?.id ?? null,
+      email: req.user?.email ?? null,
+    });
   }
 
   @Post('suspended-carts/:id/resume')

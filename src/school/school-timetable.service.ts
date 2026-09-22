@@ -1,4 +1,8 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { BranchEmployee } from '../payroll/entities/branch-employee.entity';
@@ -43,6 +47,27 @@ export function normalizePersonName(value: unknown): string {
 function dayName(day: number) {
   return DAY_NAMES[day] || `day ${day}`;
 }
+
+/** 'HH:MM' → minutes after midnight. Only ever handed a TIME_RE match. */
+function minutesOf(value: string): number {
+  const [h, m] = value.split(':').map(Number);
+  return h * 60 + m;
+}
+
+/**
+ * A slot's place in the day, for the teacher clash.
+ *
+ * `key` is the old rule, kept wherever a bell has no end time: the resolved
+ * START time when the bell has one, else shift + period code. `interval` is
+ * [start, end) in minutes when the bell has BOTH times (and they are in
+ * order) — two of those clash when they overlap at all, not only when they
+ * start together.
+ */
+type SlotWhen = {
+  key: string;
+  interval: [number, number] | null;
+  label: string;
+};
 
 /**
  * The branch's weekly period schedule.
@@ -166,13 +191,15 @@ export class SchoolTimetableService {
         string,
         { start: string | null; end: string | null }
       > = {};
-      for (const [shiftRaw, t] of Object.entries(p.times || {})) {
+      for (const [shiftRaw, raw] of Object.entries(p.times || {})) {
         const shift =
           String(shiftRaw || '')
             .trim()
             .toUpperCase() || '*';
-        const start = t?.start ? String(t.start).trim() : null;
-        const end = t?.end ? String(t.end).trim() : null;
+        // A bare 'HH:MM' is a start time with no end — the DTO allows it.
+        const t = typeof raw === 'string' ? { start: raw, end: null } : raw;
+        const start = t?.start ? String(t.start).trim() || null : null;
+        const end = t?.end ? String(t.end).trim() || null : null;
         for (const value of [start, end]) {
           if (value && !TIME_RE.test(value)) {
             throw new BadRequestException(
@@ -291,7 +318,11 @@ export class SchoolTimetableService {
     }
 
     const classSeen = new Map<string, SchoolTimetableSlot>();
-    const teacherSeen = new Map<string, SchoolTimetableSlot>();
+    // Per teacher per day, every lesson placed so far and when it runs.
+    const teacherDay = new Map<
+      string,
+      Array<{ slot: SchoolTimetableSlot; when: SlotWhen }>
+    >();
     const slots: SchoolTimetableSlot[] = [];
 
     for (const raw of dto.slots || []) {
@@ -365,14 +396,29 @@ export class SchoolTimetableService {
          holding both is not double-booked — the first import was refused for
          exactly this. So the clash is keyed on the resolved START TIME when the
          bell has one, and on shift + period code when it does not; a period
-         code alone is only "the same time" inside one shift. */
+         code alone is only "the same time" inside one shift.
+
+         And where the bell has an END as well, two lessons clash when their
+         hours OVERLAP, not only when they start together: the afternoon
+         shift's P1 at 12:20–13:00 and the morning's P6 at 12:00–12:40 put one
+         teacher in two rooms for twenty minutes, and equal start times alone
+         never saw it. */
       const shift = shiftOfClass.get(classCode.toLowerCase()) || null;
       const times = period
         ? period.times[shift || '*'] || period.times['*'] || null
         : null;
-      const whenKey = times?.start
-        ? `t:${times.start}`
-        : `p:${shift || '*'}|${slot.period.toUpperCase()}`;
+      const start = times?.start || null;
+      const end = times?.end || null;
+      const when: SlotWhen = {
+        key: start
+          ? `t:${start}`
+          : `p:${shift || '*'}|${slot.period.toUpperCase()}`,
+        interval:
+          start && end && minutesOf(start) < minutesOf(end)
+            ? [minutesOf(start), minutesOf(end)]
+            : null,
+        label: `${slot.period}${start ? ` ${start}${end ? `–${end}` : ''}` : ''}`,
+      };
       const teacherKey =
         employeeId != null
           ? `e:${employeeId}`
@@ -380,14 +426,30 @@ export class SchoolTimetableService {
             ? `n:${normalizePersonName(teacherName)}`
             : null;
       if (teacherKey) {
-        const key = `${day}|${whenKey}|${teacherKey}`;
-        const busy = teacherSeen.get(key);
-        if (busy && busy.classCode.toLowerCase() !== classCode.toLowerCase()) {
+        const key = `${day}|${teacherKey}`;
+        const placed = teacherDay.get(key) || [];
+        const busy = placed.find(
+          (p) =>
+            p.slot.classCode.toLowerCase() !== classCode.toLowerCase() &&
+            (p.when.key === when.key ||
+              (p.when.interval &&
+                when.interval &&
+                p.when.interval[0] < when.interval[1] &&
+                when.interval[0] < p.when.interval[1])),
+        );
+        if (busy) {
+          const who = teacherName || busy.slot.teacherName || 'A teacher';
+          // Same period: the message the office has always read. Different
+          // periods whose hours overlap: both named, with their hours, since
+          // "at the same time on Monday P1" would point at only one of them.
           throw new BadRequestException(
-            `${teacherName} is in ${busy.classCode} and ${classCode} at the same time on ${dayName(day)} ${slot.period}.`,
+            busy.slot.period.toUpperCase() === slot.period.toUpperCase()
+              ? `${who} is in ${busy.slot.classCode} and ${classCode} at the same time on ${dayName(day)} ${slot.period}.`
+              : `${who} is in ${busy.slot.classCode} (${busy.when.label}) and ${classCode} (${when.label}) at the same time on ${dayName(day)}.`,
           );
         }
-        teacherSeen.set(key, slot);
+        placed.push({ slot, when });
+        teacherDay.set(key, placed);
       }
 
       slots.push(slot);
@@ -408,15 +470,40 @@ export class SchoolTimetableService {
         a.classCode.localeCompare(b.classCode),
     );
 
-    const existing = await this.repo.findOne({ where: { branchId } });
-    const row = existing ?? this.repo.create({ branchId });
-    row.title = dto.title ? String(dto.title).trim() || null : null;
-    row.periods = periods;
-    row.shifts = shifts;
-    row.slots = slots;
-    row.notes = dto.notes ? String(dto.notes).trim() || null : null;
-    row.updatedByUserId = actorUserId ?? null;
+    // The document is replaced under a row lock, and — when the caller says
+    // which version it read — only over that version. Two offices editing
+    // the week at once used to end with whichever saved second, the other's
+    // afternoon of changes silently gone; now the second is told, and handed
+    // the week as it stands to re-apply its edit to.
+    return this.repo.manager.transaction(async (em) => {
+      const repo = em.getRepository(SchoolTimetable);
+      const existing = await repo.findOne({
+        where: { branchId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (dto.expectedUpdatedAt) {
+        const expected = Date.parse(dto.expectedUpdatedAt);
+        const current = existing?.updatedAt
+          ? new Date(existing.updatedAt).getTime()
+          : NaN;
+        if (expected !== current) {
+          throw new ConflictException({
+            code: 'TIMETABLE_CHANGED',
+            message:
+              'The timetable changed since it was read — it has been reloaded; check it and save again.',
+            details: { current: this.toResponse(existing, branchId) },
+          });
+        }
+      }
+      const row = existing ?? repo.create({ branchId });
+      row.title = dto.title ? String(dto.title).trim() || null : null;
+      row.periods = periods;
+      row.shifts = shifts;
+      row.slots = slots;
+      row.notes = dto.notes ? String(dto.notes).trim() || null : null;
+      row.updatedByUserId = actorUserId ?? null;
 
-    return this.toResponse(await this.repo.save(row), branchId);
+      return this.toResponse(await repo.save(row), branchId);
+    });
   }
 }

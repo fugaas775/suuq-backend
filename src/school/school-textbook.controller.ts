@@ -33,6 +33,7 @@ import {
   SchoolTextbookSubjectsQueryDto,
   SchoolTextbooksOutstandingQueryDto,
   SeedSchoolTextbooksDto,
+  UnbillSchoolTextbookLoanDto,
   UpdateSchoolTextbookLoanDto,
   UpdateSchoolTextbookTitleDto,
 } from './dto/school-textbook.dto';
@@ -73,12 +74,20 @@ export class SchoolTextbookController {
     return Number((req.user as { id?: number })?.id) || null;
   }
 
-  /** A teacher hands out books in their own classes only; the office anywhere. */
+  /**
+   * A teacher hands out books in their own classes only; the office anywhere.
+   * And whoever issues, only to pupils of this branch sitting in the class
+   * named — the same integrity rule the class register holds.
+   */
   private async classScope(branchId: number, req: AuthenticatedRequest) {
     const scope = await this.scope.resolve(branchId, req.user);
     return {
       assert: (classCode: unknown) =>
         this.scope.assertInScope(scope, classCode),
+      assertPupils: (classCode: string, folioIds: number[]) =>
+        this.scope.assertPupilsInClass(branchId, classCode, folioIds, {
+          requireOnRoll: true,
+        }),
     };
   }
 
@@ -245,6 +254,23 @@ export class SchoolTextbookController {
     @Req() req: AuthenticatedRequest,
   ) {
     return this.svc.markBilled(id, dto, this.actorId(req));
+  }
+
+  /**
+   * A billed lost book that turned up — the office's, after it has taken the
+   * charge off the pupil's fees. ENROL_STUDENT alone, and NOT class-scoped:
+   * it undoes a money record, which is the office's desk, not a teacher's
+   * register.
+   */
+  @Patch('loans/:id/unbill')
+  @RetailBranchContext('body.branchId')
+  @RequirePosPermissions(PosSchoolPermission.ENROL_STUDENT)
+  unbill(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UnbillSchoolTextbookLoanDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.svc.unbill(id, dto, this.actorId(req));
   }
 
   @Get('outstanding')

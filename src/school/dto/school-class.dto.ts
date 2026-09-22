@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
   IsArray,
   IsInt,
   IsOptional,
@@ -242,8 +243,11 @@ export class ReorderSchoolClassesDto {
   @IsInt()
   branchId!: number;
 
+  // Far above any school's class list (the registry itself lists 500 at
+  // most), far below a body that would make one drag a denial of service.
   @ApiProperty({ type: [ReorderEntryDto] })
   @IsArray()
+  @ArrayMaxSize(500)
   @ValidateNested({ each: true })
   @Type(() => ReorderEntryDto)
   order!: ReorderEntryDto[];

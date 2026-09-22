@@ -100,6 +100,14 @@ export class LessonAttendanceMark {
   @Column({ type: 'int', nullable: true })
   recordedByUserId!: number | null;
 
+  /**
+   * Who marked it, by name — denormalised like `subjectName`, so the lesson
+   * grid still says "taken by Hibo" after Hibo leaves. Nullable: lessons
+   * marked before 2026-09-22 carry none.
+   */
+  @Column({ type: 'varchar', length: 120, nullable: true })
+  recordedByName!: string | null;
+
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt!: Date;
 

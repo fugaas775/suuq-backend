@@ -101,14 +101,18 @@ export class AttendanceStaffController {
 
   @Post('staff/lessons/mark')
   @RetailBranchContext('body.branchId')
-  markLessons(
+  async markLessons(
     @Body() dto: MarkLessonAttendanceDto,
     @Req() req: AuthenticatedRequest,
   ) {
+    // The recorder's name, the same way the day register stamps it: the
+    // staff register's spelling, else the account.
+    const scope = await this.scope.resolve(dto.branchId, req?.user);
     return this.svc.markLessons(
       AttendanceSubjectType.STAFF,
       dto,
       req?.user?.id ?? null,
+      { recordedByName: scope.recordedBy },
     );
   }
 }

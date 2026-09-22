@@ -5,6 +5,7 @@ import {
   IsArray,
   IsIn,
   IsInt,
+  IsISO8601,
   IsObject,
   IsOptional,
   IsString,
@@ -13,7 +14,59 @@ import {
   Min,
   MinLength,
   ValidateNested,
+  ValidationOptions,
+  registerDecorator,
 } from 'class-validator';
+
+const CLOCK_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+const MAX_TIME_KEYS = 12;
+const MAX_TIME_KEY_LENGTH = 32;
+
+/** Blank, or a 24-hour 'HH:MM'. */
+function isClockOrBlank(value: unknown): boolean {
+  if (value === undefined || value === null || value === '') return true;
+  return typeof value === 'string' && CLOCK_RE.test(value.trim());
+}
+
+/**
+ * A period's `times`: at most twelve shift keys of at most 32 characters,
+ * each mapped to `{ start, end }` in HH:MM (either may be blank), or to a
+ * bare 'HH:MM' start. The service re-checks the clock; this stops a body of
+ * ten thousand keys, or of nested objects, before it is walked at all.
+ * Exported for the spec.
+ */
+export function isPeriodTimes(value: unknown): boolean {
+  if (value === undefined || value === null) return true;
+  if (typeof value !== 'object' || Array.isArray(value)) return false;
+  const entries = Object.entries(value as Record<string, unknown>);
+  if (entries.length > MAX_TIME_KEYS) return false;
+  return entries.every(([key, t]) => {
+    if (key.length > MAX_TIME_KEY_LENGTH) return false;
+    if (t === null) return true;
+    if (typeof t === 'string') return CLOCK_RE.test(t.trim());
+    if (typeof t !== 'object' || Array.isArray(t)) return false;
+    const fields = Object.keys(t);
+    if (fields.some((f) => f !== 'start' && f !== 'end')) return false;
+    const { start, end } = t as { start?: unknown; end?: unknown };
+    return isClockOrBlank(start) && isClockOrBlank(end);
+  });
+}
+
+function IsPeriodTimes(options?: ValidationOptions) {
+  return (object: object, propertyName: string) => {
+    registerDecorator({
+      name: 'isPeriodTimes',
+      target: object.constructor,
+      propertyName,
+      options: {
+        message:
+          'times must map at most 12 shift codes (32 characters each) to { start, end } in HH:MM',
+        ...options,
+      },
+      validator: { validate: (value: unknown) => isPeriodTimes(value) },
+    });
+  };
+}
 
 export class GetSchoolTimetableQueryDto {
   @ApiProperty({ example: 115 })
@@ -68,7 +121,11 @@ export class SchoolTimetablePeriodDto {
   })
   @IsOptional()
   @IsObject()
-  times?: Record<string, { start?: string | null; end?: string | null }>;
+  @IsPeriodTimes()
+  times?: Record<
+    string,
+    { start?: string | null; end?: string | null } | string | null
+  >;
 }
 
 export class SchoolTimetableShiftDto {
@@ -181,4 +238,15 @@ export class PutSchoolTimetableDto {
   @IsString()
   @MaxLength(4000)
   notes?: string | null;
+
+  @ApiPropertyOptional({
+    example: '2026-09-22T08:14:05.123Z',
+    description:
+      "The document's `updatedAt` as the caller read it. When given, the week " +
+      'is replaced only if nobody has saved it since: otherwise 409 { code: ' +
+      "'TIMETABLE_CHANGED', details: { current } } with the week as it stands.",
+  })
+  @IsOptional()
+  @IsISO8601({ strict: true })
+  expectedUpdatedAt?: string;
 }

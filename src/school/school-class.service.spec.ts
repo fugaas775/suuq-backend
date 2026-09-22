@@ -4,7 +4,13 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { SchoolClassService } from './school-class.service';
-import { SchoolClassStatus } from './entities/school-class.entity';
+import { SchoolClass, SchoolClassStatus } from './entities/school-class.entity';
+import { SchoolTimetable } from './entities/school-timetable.entity';
+import { SchoolTextbookTitle } from './entities/school-textbook-title.entity';
+import { SchoolTextbookLoan } from './entities/school-textbook-loan.entity';
+import { SchoolLessonPlan } from './entities/school-lesson-plan.entity';
+import { LessonAttendanceMark } from '../attendance/entities/lesson-attendance-mark.entity';
+import { BranchStaffAssignment } from '../branch-staff/entities/branch-staff-assignment.entity';
 
 /**
  * The registry's rules, which exist because the product-attribute model it
@@ -29,9 +35,21 @@ function makeService({
   employees = [],
   // What the "which classes am I home room teacher of" query answers.
   homeroomRows = null,
+  // What a rename finds to carry across: the timetable document, the staff
+  // assignments, and how many rows each class-keyed table reports moved.
+  timetable = null as any,
+  staff = [] as any[],
+  movedRows = {} as Record<string, number>,
 }: any = {}) {
   const saved: any[] = [];
   const deleted: any[] = [];
+  // Everything the rename transaction wrote beyond the class row itself.
+  const rekey: any = {
+    timetableSaved: null as any,
+    staffUpdates: [] as any[],
+    updates: [] as Array<{ table: any; set: any; where: any[] }>,
+    committed: false,
+  };
 
   const makeQb = () => {
     const conds: string[] = [];
@@ -104,10 +122,66 @@ function makeService({
           Number(e.userId) === Number(where.userId),
       ),
   };
+  const em: any = {
+    getRepository: (entity: any) => {
+      if (entity === SchoolClass) return repo;
+      if (entity === SchoolTimetable)
+        return {
+          findOne: async () => timetable,
+          save: async (doc: any) => {
+            rekey.timetableSaved = doc;
+            return doc;
+          },
+        };
+      if (entity === BranchStaffAssignment)
+        return {
+          find: async () => staff,
+          update: async (criteria: any, partial: any) => {
+            rekey.staffUpdates.push({ ...criteria, ...partial });
+            return { affected: 1 };
+          },
+        };
+      throw new Error(`unexpected repository ${entity?.name}`);
+    },
+    createQueryBuilder: () => {
+      const op: any = { where: [] };
+      const qb: any = {
+        update: (table: any) => {
+          op.table = table;
+          return qb;
+        },
+        set: (v: any) => {
+          op.set = v;
+          return qb;
+        },
+        where: (sql: string, params: any) => {
+          op.where.push([sql, params]);
+          return qb;
+        },
+        andWhere: (sql: string, params: any) => {
+          op.where.push([sql, params]);
+          return qb;
+        },
+        execute: async () => {
+          rekey.updates.push(op);
+          return { affected: movedRows[op.table?.name] ?? 0 };
+        },
+      };
+      return qb;
+    },
+  };
+  repo.manager = {
+    transaction: async (fn: any) => {
+      const out = await fn(em);
+      rekey.committed = true;
+      return out;
+    },
+  };
   return {
     service: new SchoolClassService(repo, cartRepo, employeeRepo),
     saved,
     deleted,
+    rekey,
   };
 }
 
@@ -609,5 +683,112 @@ describe('SchoolClassService.mine — a teacher’s own classes', () => {
     const out = await service.mine(115, 900);
     expect(out.employee?.id).toBe(30);
     expect(out.items).toEqual([]);
+  });
+});
+
+describe('SchoolClassService — a rename carries everything keyed by the code', () => {
+  const TIMETABLE = () => ({
+    id: 3,
+    branchId: 115,
+    slots: [
+      { day: 1, period: 'P1', classCode: '3a', subject: 'Maths' },
+      { day: 1, period: 'P1', classCode: '4aad', subject: 'Maths' },
+      { day: 2, period: 'P2', classCode: '3A', subject: 'English' },
+    ],
+    shifts: [
+      { code: 'AM', classCodes: ['1aad', '3a'] },
+      { code: 'PM', classCodes: ['7th'] },
+    ],
+  });
+
+  it('moves the timetable, the teachers’ grants and every lowercased table, in one transaction', async () => {
+    const { service, rekey } = makeService({
+      rows: [row({ id: 1, code: '3a' })],
+      timetable: TIMETABLE(),
+      staff: [
+        { id: 70, capabilities: ['ENTER_MARKS', 'school_class:3A'] },
+        { id: 71, capabilities: ['SCHOOL_CLASS:4aad'] },
+        // Already granted the new code: one grant survives, not two.
+        { id: 72, capabilities: ['SCHOOL_CLASS:3a', 'SCHOOL_CLASS:3aad'] },
+      ],
+      movedRows: {
+        SchoolTextbookTitle: 4,
+        SchoolTextbookLoan: 120,
+        SchoolLessonPlan: 9,
+        LessonAttendanceMark: 31,
+      },
+    });
+    const out: any = await service.update(1, { branchId: 115, code: '3aad' });
+
+    expect(out.code).toBe('3aad');
+    expect(rekey.committed).toBe(true);
+    expect(rekey.timetableSaved.slots.map((s: any) => s.classCode)).toEqual([
+      '3aad',
+      '4aad',
+      '3aad',
+    ]);
+    expect(rekey.timetableSaved.shifts[0].classCodes).toEqual(['1aad', '3aad']);
+    expect(rekey.staffUpdates).toEqual([
+      { id: 70, capabilities: ['ENTER_MARKS', 'SCHOOL_CLASS:3aad'] },
+      { id: 72, capabilities: ['SCHOOL_CLASS:3aad'] },
+    ]);
+    expect(rekey.updates.map((u: any) => u.table)).toEqual([
+      SchoolTextbookTitle,
+      SchoolTextbookLoan,
+      SchoolLessonPlan,
+      LessonAttendanceMark,
+    ]);
+    for (const u of rekey.updates) {
+      expect(u.set).toEqual({ classCode: '3aad' });
+      expect(u.where).toEqual(
+        expect.arrayContaining([
+          ['"branchId" = :branchId', { branchId: 115 }],
+          ['"classCode" = :fromKey', { fromKey: '3a' }],
+        ]),
+      );
+    }
+    // Loans have no class in their unique key; the other three skip a row
+    // the new code already holds rather than fail the rename on the index.
+    expect(
+      rekey.updates.map((u: any) =>
+        u.where.some(([sql]: any) => /NOT EXISTS/.test(sql)),
+      ),
+    ).toEqual([true, false, true, true]);
+    expect(out.rekeyed).toEqual({
+      timetableSlots: 2,
+      timetableShifts: 1,
+      staffGrants: 2,
+      textbookTitles: 4,
+      textbookLoans: 120,
+      lessonPlans: 9,
+      lessonAttendance: 31,
+    });
+  });
+
+  it('on a re-case, rewrites the spelled copies and leaves the lowercased tables alone', async () => {
+    const target = row({ id: 1, code: '3a' });
+    const { service, rekey } = makeService({
+      rows: [target],
+      existingByCode: target,
+      timetable: TIMETABLE(),
+      staff: [{ id: 70, capabilities: ['SCHOOL_CLASS:3a'] }],
+    });
+    const out: any = await service.update(1, { branchId: 115, code: '3A' });
+    expect(rekey.timetableSaved.slots[0].classCode).toBe('3A');
+    expect(rekey.staffUpdates).toEqual([
+      { id: 70, capabilities: ['SCHOOL_CLASS:3A'] },
+    ]);
+    expect(rekey.updates).toEqual([]);
+    expect(out.rekeyed.textbookLoans).toBe(0);
+  });
+
+  it('opens no transaction and moves nothing when the code is not changed', async () => {
+    const { service, rekey } = makeService({
+      rows: [row({ id: 1, code: '3a' })],
+      timetable: TIMETABLE(),
+    });
+    const out: any = await service.update(1, { branchId: 115, capacity: 40 });
+    expect(rekey.committed).toBe(false);
+    expect(out.rekeyed).toBeUndefined();
   });
 });

@@ -4,10 +4,10 @@ import {
   IsInt,
   IsOptional,
   IsString,
-  Matches,
   MaxLength,
   MinLength,
 } from 'class-validator';
+import { IsCalendarDay } from '../../common/validators/is-calendar-day.validator';
 
 export const LESSON_PLAN_STATUSES = [
   'PLANNED',
@@ -17,19 +17,17 @@ export const LESSON_PLAN_STATUSES = [
   'CANCELLED',
 ] as const;
 
-const DAY = /^\d{4}-\d{2}-\d{2}$/;
-
 export class ListSchoolLessonPlansQueryDto {
   @Type(() => Number)
   @IsInt()
   branchId!: number;
 
   @IsString()
-  @Matches(DAY)
+  @IsCalendarDay()
   from!: string;
 
   @IsString()
-  @Matches(DAY)
+  @IsCalendarDay()
   to!: string;
 
   /** '1' — the signed-in teacher's own plans (any login with a staff row). */
@@ -55,7 +53,7 @@ export class SaveSchoolLessonPlanDto {
   branchId!: number;
 
   @IsString()
-  @Matches(DAY)
+  @IsCalendarDay()
   lessonDate!: string;
 
   @IsString()
@@ -109,7 +107,7 @@ export class SetSchoolLessonPlanStatusDto {
 
   @IsOptional()
   @IsString()
-  @Matches(DAY)
+  @IsCalendarDay()
   taughtOn?: string;
 
   @IsOptional()
@@ -135,10 +133,10 @@ export class SchoolLessonPlanSummaryQueryDto {
   branchId!: number;
 
   @IsString()
-  @Matches(DAY)
+  @IsCalendarDay()
   from!: string;
 
   @IsString()
-  @Matches(DAY)
+  @IsCalendarDay()
   to!: string;
 }

@@ -12,7 +12,10 @@ import { RetailBranchContext } from '../retail/decorators/retail-branch-context.
 import { RetailModule as RetailOsModule } from '../retail/entities/tenant-module-entitlement.entity';
 import { RetailModulesGuard } from '../retail/retail-modules.guard';
 import { PosSchoolPermission } from './permissions/pos-school-permission.enum';
-import { SaveSchoolMarksDto } from './dto/school-marks.dto';
+import {
+  SaveSchoolMarkReportsDto,
+  SaveSchoolMarksDto,
+} from './dto/school-marks.dto';
 import { SchoolMarksService } from './school-marks.service';
 
 /**
@@ -45,6 +48,27 @@ export class SchoolMarksController {
     return this.svc.save(dto, {
       id: Number(user?.id) || null,
       email: user?.email ?? null,
+    });
+  }
+
+  /**
+   * The office's whole-report write: a hand correction of a pupil's term, a
+   * marks import. The same door, and again the decision is the service's —
+   * the owner, the platform's super-admin, or a manager granted ENTER_MARKS
+   * (a teacher's grant enters sheets, never whole reports).
+   */
+  @Patch('marks/reports')
+  @RetailBranchContext('body.branchId')
+  @RequirePosPermissions(PosSchoolPermission.VIEW_CLASS_BOARD)
+  saveReports(
+    @Body() dto: SaveSchoolMarkReportsDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const user = req.user as { id?: number; email?: string; roles?: string[] };
+    return this.svc.saveReports(dto, {
+      id: Number(user?.id) || null,
+      email: user?.email ?? null,
+      roles: Array.isArray(user?.roles) ? user.roles : [],
     });
   }
 }

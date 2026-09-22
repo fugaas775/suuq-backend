@@ -2,12 +2,14 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import { Branch } from '../branches/entities/branch.entity';
 import { BranchStaffAssignment } from '../branch-staff/entities/branch-staff-assignment.entity';
 import { PosSuspendedCart } from '../pos-sync/entities/pos-suspended-cart.entity';
+import { isSchoolPupilFolio } from '../pos-sync/school-withdrawal.policy';
 import { SchoolClassService } from './school-class.service';
 import { SchoolTimetableService } from './school-timetable.service';
 import {
@@ -108,19 +110,44 @@ export class SchoolClassScopeService {
    * this branch that sits in a different class from `classCode`. Applies to
    * everyone, scoped or not: it is about the register's integrity, not about
    * who is taking it. See `pupilsOutsideClass`.
+   *
+   * `requireOnRoll` is the stricter form a textbook issue wants: there every
+   * id must BE a pupil's folio on this branch (404 / 400 naming it). A
+   * register tolerates an id it cannot find — a child withdrawn since the
+   * morning was on that register — but a book handed to a folio that is not
+   * a pupil here is a loan nobody can ever collect or bill.
    */
   async assertPupilsInClass(
     branchId: number,
     classCode: unknown,
     subjectRefs: Array<string | number>,
+    { requireOnRoll = false }: { requireOnRoll?: boolean } = {},
   ): Promise<void> {
     const ids = [...new Set((subjectRefs ?? []).map((r) => Number(r)))].filter(
       (n) => Number.isFinite(n) && n > 0,
     );
-    if (!ids.length || !String(classCode ?? '').trim()) return;
+    if (!ids.length) return;
+    if (!requireOnRoll && !String(classCode ?? '').trim()) return;
     const carts = await this.carts.find({
       where: { id: In(ids), branchId },
     });
+    if (requireOnRoll) {
+      const found = new Set(carts.map((c) => Number(c.id)));
+      const missing = ids.filter((id) => !found.has(id));
+      if (missing.length) {
+        throw new NotFoundException({
+          code: 'SCHOOL_PUPIL_NOT_FOUND',
+          message: `No pupil on this branch for folio ${missing.join(', ')}.`,
+        });
+      }
+      const notPupils = carts.filter((c) => !isSchoolPupilFolio(c));
+      if (notPupils.length) {
+        throw new BadRequestException({
+          code: 'SCHOOL_NOT_A_PUPIL',
+          message: `Folio ${notPupils.map((c) => c.id).join(', ')} ${notPupils.length === 1 ? 'is' : 'are'} not a pupil.`,
+        });
+      }
+    }
     const outside = pupilsOutsideClass(carts, classCode);
     if (!outside.length) return;
     throw new BadRequestException({

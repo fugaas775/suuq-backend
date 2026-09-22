@@ -6,7 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { EntityManager, Repository } from 'typeorm';
 import { BranchStaffAssignment } from '../branch-staff/entities/branch-staff-assignment.entity';
 import { Branch } from '../branches/entities/branch.entity';
 import { PosRegisterReportService } from './pos-register-report.service';
@@ -252,6 +252,22 @@ export class PosRegisterService {
       perPage,
       totalPages: Math.ceil(total / perPage),
     };
+  }
+
+  /** One row, any status, only when it sits on `branchId` — see the GET route. */
+  async findSuspendedCartOnBranch(
+    id: number,
+    branchId: number,
+  ): Promise<PosSuspendedCartResponseDto> {
+    const cart = await this.suspendedCartsRepository.findOne({
+      where: { id, branchId },
+    });
+    if (!cart) {
+      throw new NotFoundException(
+        `Suspended cart ${id} not found on branch ${branchId}`,
+      );
+    }
+    return this.toSuspendedCartResponse(cart);
   }
 
   async suspendCart(
@@ -596,59 +612,137 @@ export class PosRegisterService {
   async updateSuspendedCart(
     id: number,
     dto: UpdatePosSuspendedCartDto,
+    actor: { id?: number | null; email?: string | null } = {},
   ): Promise<PosSuspendedCartResponseDto> {
-    const cart = await this.findSuspendedCart(id);
-    if (cart.branchId !== dto.branchId) {
-      throw new BadRequestException(
-        `Suspended cart ${id} does not belong to branch ${dto.branchId}`,
-      );
-    }
-    if (cart.status !== PosSuspendedCartStatus.SUSPENDED) {
-      throw new BadRequestException(
-        `Suspended cart ${id} is ${cart.status} and cannot be updated`,
-      );
-    }
-
-    if (dto.metadata && typeof dto.metadata === 'object') {
-      cart.metadata = {
-        ...(cart.metadata ?? {}),
-        ...dto.metadata,
-      };
-    }
-
-    // Replaced wholesale, unlike metadata above: the snapshot is a self-contained
-    // document (guest context, line items, payment state), so a shallow merge
-    // would leave stale nested keys behind whenever the caller sends a shorter
-    // one. Callers send the whole snapshot they want persisted.
+    // Read, decide and write under a row lock. Two tills writing one folio
+    // used to read the same row, each lay its own copy over it, and the second
+    // save silently erased the first — a fee payment and a marks save, or two
+    // desks taking a payment each. The lock makes the second writer wait for
+    // the first and then see its result; `expectedUpdatedAt` lets it notice.
     //
-    // Without this the endpoint accepted a cartSnapshot and silently discarded
-    // it — 200 OK, nothing written — so a board wanting to edit a parked folio
-    // had to create a replacement row and discard the original, churning the id
-    // (and with it every folioId reference) on each edit.
-    if (dto.cartSnapshot && typeof dto.cartSnapshot === 'object') {
-      // The same three rules as a create, with this row excused from the
-      // collision check: a settle re-saves the pupil's own snapshot, and a
-      // pupil cannot collide with themselves.
-      await this.assertSchoolRollAccepts(
-        cart.branchId,
-        dto.cartSnapshot as Record<string, unknown>,
-        Number(cart.id),
-      );
-      cart.cartSnapshot = dto.cartSnapshot;
-    }
-    if (typeof dto.label === 'string' && dto.label.trim()) {
-      cart.label = dto.label.trim();
-    }
-    if (typeof dto.itemCount === 'number' && Number.isFinite(dto.itemCount)) {
-      cart.itemCount = dto.itemCount;
-    }
-    if (typeof dto.total === 'number' && Number.isFinite(dto.total)) {
-      cart.total = dto.total;
-    }
+    // Every read inside runs on the transaction's own connection (see the
+    // `em` passed to the helpers below): a transaction that holds one pooled
+    // connection while waiting for a second is how a busy worker drains its
+    // ten-connection pool.
+    const saved = await this.suspendedCartsRepository.manager.transaction(
+      async (em) => {
+        const repo = em.getRepository(PosSuspendedCart);
+        const cart = await repo.findOne({
+          where: { id },
+          lock: { mode: 'pessimistic_write' },
+        });
+        if (!cart) {
+          throw new NotFoundException(`Suspended cart ${id} not found`);
+        }
+        if (cart.branchId !== dto.branchId) {
+          throw new BadRequestException(
+            `Suspended cart ${id} does not belong to branch ${dto.branchId}`,
+          );
+        }
+        if (cart.status !== PosSuspendedCartStatus.SUSPENDED) {
+          throw new BadRequestException(
+            `Suspended cart ${id} is ${cart.status} and cannot be updated`,
+          );
+        }
 
-    return this.toSuspendedCartResponse(
-      await this.suspendedCartsRepository.save(cart),
+        // The optional precondition: "write this only over the row I read".
+        // Compared at millisecond grain, which is what the caller was handed.
+        // Absent, the write is unconditional, exactly as before — every till
+        // and board that never sends it behaves as it always did.
+        if (dto.expectedUpdatedAt) {
+          const expected = Date.parse(dto.expectedUpdatedAt);
+          const current =
+            cart.updatedAt instanceof Date
+              ? cart.updatedAt.getTime()
+              : Date.parse(String(cart.updatedAt ?? ''));
+          if (expected !== current) {
+            throw new ConflictException({
+              code: 'FOLIO_CHANGED',
+              message:
+                'This record changed since it was read — it has been reloaded; check it and save again.',
+              details: { current: this.toSuspendedCartResponse(cart) },
+            });
+          }
+        }
+
+        if (dto.metadata && typeof dto.metadata === 'object') {
+          cart.metadata = {
+            ...(cart.metadata ?? {}),
+            ...dto.metadata,
+          };
+        }
+
+        // Replaced wholesale, unlike metadata above: the snapshot is a self-contained
+        // document (guest context, line items, payment state), so a shallow merge
+        // would leave stale nested keys behind whenever the caller sends a shorter
+        // one. Callers send the whole snapshot they want persisted.
+        //
+        // Without this the endpoint accepted a cartSnapshot and silently discarded
+        // it — 200 OK, nothing written — so a board wanting to edit a parked folio
+        // had to create a replacement row and discard the original, churning the id
+        // (and with it every folioId reference) on each edit.
+        if (dto.cartSnapshot && typeof dto.cartSnapshot === 'object') {
+          let incoming = dto.cartSnapshot as Record<string, unknown>;
+
+          if (isSchoolPupilFolio(cart)) {
+            // A stored pupil turned into something that is not a pupil — moved
+            // to another format, or its name blanked — is the first half of a
+            // withdrawal: the very next discard of the row no longer looks like
+            // a pupil's, so it would pass without WITHDRAW_STUDENT and without
+            // the owner's email. The right is asked for HERE, on the change,
+            // exactly as the discard asks for it.
+            if (!isSchoolPupilFolio({ cartSnapshot: incoming })) {
+              await this.assertCanWithdrawStudent(cart, actor, em);
+            }
+
+            // Marks are not this route's to write. Every till save carries a
+            // copy of the pupil's marks as they were when the till last read
+            // the list — up to minutes earlier on the list poll — so a fee
+            // payment laid that copy back over the row and erased whatever a
+            // teacher had saved in between. The stored record is kept, whatever
+            // the caller sent (stored absent ⇒ absent); marks are written only
+            // through PATCH school/marks and school/marks/reports, which lock
+            // this row and merge into it.
+            const stored = (cart.cartSnapshot ?? {}) as Record<string, unknown>;
+            const rest = { ...incoming };
+            delete rest.schoolAcademicRecord;
+            incoming = Object.prototype.hasOwnProperty.call(
+              stored,
+              'schoolAcademicRecord',
+            )
+              ? { ...rest, schoolAcademicRecord: stored.schoolAcademicRecord }
+              : rest;
+          }
+
+          // The same three rules as a create, with this row excused from the
+          // collision check: a settle re-saves the pupil's own snapshot, and a
+          // pupil cannot collide with themselves.
+          await this.assertSchoolRollAccepts(
+            cart.branchId,
+            incoming,
+            Number(cart.id),
+            em,
+          );
+          cart.cartSnapshot = incoming;
+        }
+        if (typeof dto.label === 'string' && dto.label.trim()) {
+          cart.label = dto.label.trim();
+        }
+        if (
+          typeof dto.itemCount === 'number' &&
+          Number.isFinite(dto.itemCount)
+        ) {
+          cart.itemCount = dto.itemCount;
+        }
+        if (typeof dto.total === 'number' && Number.isFinite(dto.total)) {
+          cart.total = dto.total;
+        }
+
+        return repo.save(cart);
+      },
     );
+
+    return this.toSuspendedCartResponse(saved);
   }
 
   async ackKitchenCancellations(
@@ -703,14 +797,19 @@ export class PosRegisterService {
   private async assertCanWithdrawStudent(
     cart: PosSuspendedCart,
     actor: { id?: number | null; email?: string | null },
+    em?: EntityManager,
   ): Promise<void> {
-    const branch = await this.branchesRepository.findOne({
+    const branches = em ? em.getRepository(Branch) : this.branchesRepository;
+    const assignments = em
+      ? em.getRepository(BranchStaffAssignment)
+      : this.staffAssignmentsRepository;
+    const branch = await branches.findOne({
       where: { id: cart.branchId },
       select: { id: true, ownerId: true },
     });
     const assignment =
       actor.id != null
-        ? await this.staffAssignmentsRepository.findOne({
+        ? await assignments.findOne({
             where: { branchId: cart.branchId, userId: actor.id },
           })
         : null;
@@ -744,6 +843,7 @@ export class PosRegisterService {
     branchId: number,
     snapshot: Record<string, unknown>,
     exceptId: number | null,
+    em?: EntityManager,
   ): Promise<void> {
     const cart = { cartSnapshot: snapshot };
     if (isEmptySchoolBasket(cart)) {
@@ -757,7 +857,10 @@ export class PosRegisterService {
     const admissionNo = schoolAdmissionNoOf(cart);
     if (!admissionNo) return;
 
-    const qb = this.suspendedCartsRepository
+    const carts = em
+      ? em.getRepository(PosSuspendedCart)
+      : this.suspendedCartsRepository;
+    const qb = carts
       .createQueryBuilder('c')
       .select(['c.id', 'c.cartSnapshot'])
       .where('c."branchId" = :branchId', { branchId })

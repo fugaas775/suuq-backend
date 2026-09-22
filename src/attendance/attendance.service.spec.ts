@@ -16,6 +16,9 @@ function makeService({
   rawOne = { days: 0 } as any,
   deleteAffected = 0,
   updateAffected = 0,
+  // How many rows an ON CONFLICT DO NOTHING insert reports as inserted;
+  // negative means every row it was handed.
+  ignoredInsertCount = -1,
 } = {}) {
   const captured: any = {
     where: [] as Array<[string, any]>,
@@ -23,6 +26,7 @@ function makeService({
     orUpdate: null as any,
     deleted: false,
     updated: null as any,
+    inserts: [] as Array<{ values: any[]; mode?: string }>,
   };
 
   const readQb: any = {
@@ -51,10 +55,16 @@ function makeService({
     into: () => writeQb,
     values: (v: any) => {
       captured.inserted = v;
+      captured.inserts.push({ values: v });
       return writeQb;
     },
     orUpdate: (cols: string[], conflict: string[]) => {
       captured.orUpdate = { cols, conflict };
+      captured.inserts[captured.inserts.length - 1].mode = 'upsert';
+      return writeQb;
+    },
+    orIgnore: () => {
+      captured.inserts[captured.inserts.length - 1].mode = 'ignore';
       return writeQb;
     },
     delete: () => {
@@ -75,9 +85,24 @@ function makeService({
       captured.where.push([sql, params]);
       return writeQb;
     },
-    execute: async () => ({
-      affected: captured.deleted ? deleteAffected : updateAffected,
-    }),
+    execute: async () => {
+      const last = captured.inserts[captured.inserts.length - 1];
+      const raw =
+        last?.mode === 'ignore'
+          ? last.values
+              .slice(
+                0,
+                ignoredInsertCount < 0
+                  ? last.values.length
+                  : ignoredInsertCount,
+              )
+              .map((_: any, i: number) => ({ id: i + 1 }))
+          : [];
+      return {
+        affected: captured.deleted ? deleteAffected : updateAffected,
+        raw,
+      };
+    },
   };
 
   const repo: any = {
@@ -90,6 +115,7 @@ function makeService({
     inserted: null,
     orUpdate: null,
     deleted: false,
+    inserts: [] as Array<{ values: any[]; mode?: string }>,
   };
   const lessonReadQb: any = {
     where: (sql: string, params: any) => {
@@ -115,10 +141,16 @@ function makeService({
     into: () => lessonWriteQb,
     values: (v: any) => {
       lessonCaptured.inserted = v;
+      lessonCaptured.inserts.push({ values: v });
       return lessonWriteQb;
     },
     orUpdate: (cols: string[], conflict: string[]) => {
       lessonCaptured.orUpdate = { cols, conflict };
+      lessonCaptured.inserts[lessonCaptured.inserts.length - 1].mode = 'upsert';
+      return lessonWriteQb;
+    },
+    orIgnore: () => {
+      lessonCaptured.inserts[lessonCaptured.inserts.length - 1].mode = 'ignore';
       return lessonWriteQb;
     },
     delete: () => {
@@ -134,9 +166,24 @@ function makeService({
       lessonCaptured.where.push([sql, params]);
       return lessonWriteQb;
     },
-    execute: async () => ({
-      affected: lessonCaptured.deleted ? deleteAffected : 0,
-    }),
+    execute: async () => {
+      const last = lessonCaptured.inserts[lessonCaptured.inserts.length - 1];
+      const raw =
+        last?.mode === 'ignore'
+          ? last.values
+              .slice(
+                0,
+                ignoredInsertCount < 0
+                  ? last.values.length
+                  : ignoredInsertCount,
+              )
+              .map((_: any, i: number) => ({ id: i + 1 }))
+          : [];
+      return {
+        affected: lessonCaptured.deleted ? deleteAffected : 0,
+        raw,
+      };
+    },
   };
   const lessonRepo: any = {
     createQueryBuilder: (alias?: string) =>
@@ -473,7 +520,12 @@ describe('AttendanceService', () => {
         }),
         9,
       );
-      expect(result).toEqual({ saved: 2, cleared: 0, date: '2026-09-16' });
+      expect(result).toEqual({
+        saved: 2,
+        cleared: 0,
+        skipped: 0,
+        date: '2026-09-16',
+      });
       expect(lessonCaptured.inserted).toHaveLength(2);
       expect(lessonCaptured.inserted[0]).toMatchObject({
         subjectType: 'STAFF',
@@ -537,7 +589,12 @@ describe('AttendanceService', () => {
         }),
         null,
       );
-      expect(result).toEqual({ saved: 0, cleared: 1, date: '2026-09-16' });
+      expect(result).toEqual({
+        saved: 0,
+        cleared: 1,
+        skipped: 0,
+        date: '2026-09-16',
+      });
       expect(lessonCaptured.inserted).toBeNull();
       expect(lessonCaptured.deleted).toBe(true);
       const sql = lessonCaptured.where
@@ -852,6 +909,167 @@ describe('AttendanceService.rekey — a duplicate pupil’s marks follow the chi
         days: [],
         lessons: [],
       });
+    });
+  });
+
+  describe('a teacher’s own register is filtered in the database, not after', () => {
+    it('asks both registers for the employee alone, whatever the query said', async () => {
+      const { svc, captured, lessonCaptured } = makeService();
+      await svc.mine('30', {
+        branchId: 115,
+        from: '2026-09-01',
+        to: '2026-09-30',
+        subjectRef: '31',
+      });
+      const bound = (where: Array<[string, any]>) =>
+        where
+          .filter(([sql]) => String(sql).includes('"subjectRef"'))
+          .map(([, params]) => params.subjectRef);
+      expect(bound(captured.where)).toEqual(['30']);
+      expect(bound(lessonCaptured.where)).toEqual(['30']);
+    });
+  });
+
+  describe('onlyIfUnmarked — a replayed register never overwrites a mark', () => {
+    it('inserts flagged entries with ON CONFLICT DO NOTHING and upserts the rest, counting what was skipped', async () => {
+      const { svc, captured } = makeService({ ignoredInsertCount: 1 });
+      const out = await svc.mark(
+        AttendanceSubjectType.STUDENT,
+        dto({
+          entries: [
+            { subjectRef: '1', status: AttendanceStatus.PRESENT },
+            {
+              subjectRef: '2',
+              status: AttendanceStatus.ABSENT,
+              onlyIfUnmarked: true,
+            },
+            {
+              subjectRef: '3',
+              status: AttendanceStatus.ABSENT,
+              onlyIfUnmarked: true,
+            },
+          ],
+        }),
+        7,
+      );
+      expect(captured.inserts.map((i: any) => i.mode)).toEqual([
+        'upsert',
+        'ignore',
+      ]);
+      expect(captured.inserts[0].values.map((r: any) => r.subjectRef)).toEqual([
+        '1',
+      ]);
+      expect(captured.inserts[1].values.map((r: any) => r.subjectRef)).toEqual([
+        '2',
+        '3',
+      ]);
+      // One of the two already had a mark: it stands, and is reported skipped.
+      expect(out).toMatchObject({ saved: 2, skipped: 1, cleared: 0 });
+    });
+
+    it('never clears on a flagged null — clearing IS overwriting', async () => {
+      const { svc, captured } = makeService({ deleteAffected: 1 });
+      const out = await svc.mark(
+        AttendanceSubjectType.STAFF,
+        dto({
+          entries: [{ subjectRef: '9', status: null, onlyIfUnmarked: true }],
+        }),
+        7,
+      );
+      expect(captured.deleted).toBe(false);
+      expect(captured.inserts).toEqual([]);
+      expect(out).toMatchObject({ saved: 0, cleared: 0, skipped: 1 });
+    });
+
+    it('holds flagged pupils to the class like any other', async () => {
+      const { svc } = makeService();
+      const assertPupils = jest.fn();
+      await svc.mark(
+        AttendanceSubjectType.STUDENT,
+        dto({
+          entries: [
+            {
+              subjectRef: '5',
+              status: AttendanceStatus.PRESENT,
+              onlyIfUnmarked: true,
+            },
+          ],
+        }),
+        7,
+        { scope: { assert: jest.fn(), assertPupils } },
+      );
+      expect(assertPupils).toHaveBeenCalledWith('4aad', ['5']);
+    });
+
+    it('does the same for lessons', async () => {
+      const { svc, lessonCaptured } = makeService({ ignoredInsertCount: 0 });
+      const out = await svc.markLessons(
+        AttendanceSubjectType.STAFF,
+        {
+          branchId: 115,
+          date: '2026-09-21',
+          entries: [
+            {
+              subjectRef: '5',
+              periodCode: 'P1',
+              classCode: '3aad',
+              status: AttendanceStatus.PRESENT,
+              onlyIfUnmarked: true,
+            },
+          ],
+        },
+        7,
+      );
+      expect(lessonCaptured.inserts.map((i: any) => i.mode)).toEqual([
+        'ignore',
+      ]);
+      expect(out).toMatchObject({ saved: 0, skipped: 1 });
+    });
+  });
+
+  describe('who marked a lesson is known by name', () => {
+    it('stamps the recorder on every lesson row, on the upsert, and answers it back', async () => {
+      const { svc, lessonCaptured } = makeService({
+        rows: [
+          {
+            id: 1,
+            branchId: 115,
+            attendanceDate: '2026-09-21',
+            subjectType: 'STAFF',
+            subjectRef: '5',
+            periodCode: 'P1',
+            classCode: '3aad',
+            status: 'PRESENT',
+            recordedByUserId: 7,
+            recordedByName: 'Hibo',
+            updatedAt: new Date(),
+          },
+        ],
+      });
+      await svc.markLessons(
+        AttendanceSubjectType.STAFF,
+        {
+          branchId: 115,
+          date: '2026-09-21',
+          entries: [
+            {
+              subjectRef: '5',
+              periodCode: 'P1',
+              classCode: '3aad',
+              status: AttendanceStatus.PRESENT,
+            },
+          ],
+        },
+        7,
+        { recordedByName: '  Hibo Cali  ' },
+      );
+      expect(lessonCaptured.inserted[0].recordedByName).toBe('Hibo Cali');
+      expect(lessonCaptured.orUpdate.cols).toContain('recordedByName');
+      const listed = await svc.listLessons(AttendanceSubjectType.STAFF, {
+        branchId: 115,
+        date: '2026-09-21',
+      });
+      expect(listed.items[0].recordedByName).toBe('Hibo');
     });
   });
 });

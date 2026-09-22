@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  ForbiddenException,
   Get,
   Patch,
   Post,
@@ -148,21 +149,47 @@ export class AttendanceController {
    * this rewrites a whole class's history and belongs with whoever may define
    * the classes, not with whoever may mark them.
    */
+  //
+  // A login held to its classes (the Teacher lane, which may carry
+  // ENROL_STUDENT beside it) moves a register only between two classes that
+  // are both its own: otherwise "rename 4aad to 3aad" is a way to write into
+  // — or empty out — another teacher's register. The office is not scoped.
   @Patch('students/reclass')
   @RetailBranchContext('body.branchId')
   @RequirePosPermissions(PosSchoolPermission.ENROL_STUDENT)
-  reclass(@Body() dto: ReclassAttendanceDto) {
+  async reclass(
+    @Body() dto: ReclassAttendanceDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const scope = await this.scope.resolve(dto.branchId, req?.user);
+    if (scope.scoped) {
+      this.scope.assertInScope(scope, dto.from);
+      this.scope.assertInScope(scope, dto.to);
+    }
     return this.svc.reclass(dto);
   }
 
   /**
    * Re-file a pupil's marks from a duplicate folio onto the surviving one.
-   * Same door as reclass: it is a fact about the roll, not about marking.
+   * Same door as reclass: it is a fact about the roll, not about marking —
+   * and it names no class at all, so there is nothing to hold a teacher to.
+   * The office's alone: a class-scoped login is refused outright.
    */
   @Patch('students/rekey')
   @RetailBranchContext('body.branchId')
   @RequirePosPermissions(PosSchoolPermission.ENROL_STUDENT)
-  rekey(@Body() dto: RekeyAttendanceDto) {
+  async rekey(
+    @Body() dto: RekeyAttendanceDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const scope = await this.scope.resolve(dto.branchId, req?.user);
+    if (scope.scoped) {
+      throw new ForbiddenException({
+        code: 'SCHOOL_OFFICE_ONLY',
+        message:
+          "Moving a pupil's register between records is the school office's — ask the office to merge the duplicate.",
+      });
+    }
     return this.svc.rekey(dto);
   }
 }

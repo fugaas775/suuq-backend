@@ -3,15 +3,16 @@ import { Type } from 'class-transformer';
 import {
   ArrayMaxSize,
   IsArray,
+  IsBoolean,
   IsIn,
   IsInt,
-  IsISO8601,
   IsOptional,
   IsString,
   MaxLength,
   Min,
   ValidateNested,
 } from 'class-validator';
+import { IsCalendarDay } from '../../common/validators/is-calendar-day.validator';
 import { AttendanceStatus } from '../entities/attendance-mark.entity';
 
 const STATUSES = Object.values(AttendanceStatus);
@@ -33,17 +34,17 @@ export class ListAttendanceQueryDto {
 
   @ApiPropertyOptional({ example: '2026-08-16' })
   @IsOptional()
-  @IsISO8601()
+  @IsCalendarDay()
   date?: string;
 
   @ApiPropertyOptional({ example: '2026-08-01' })
   @IsOptional()
-  @IsISO8601()
+  @IsCalendarDay()
   from?: string;
 
   @ApiPropertyOptional({ example: '2026-08-31' })
   @IsOptional()
-  @IsISO8601()
+  @IsCalendarDay()
   to?: string;
 
   @ApiPropertyOptional({ example: '4aad' })
@@ -101,6 +102,20 @@ class AttendanceEntryDto {
   @IsString()
   @MaxLength(200)
   note?: string | null;
+
+  /**
+   * Write this mark only where the day holds none yet — never over one.
+   *
+   * A tablet that took the register offline replays it on reconnect; by then
+   * the office may have corrected a child to EXCUSED, and a plain upsert would
+   * lay the morning's ABSENT back over the correction. Entries flagged so are
+   * inserted with ON CONFLICT DO NOTHING; an existing mark always stands. A
+   * flagged entry with a null status clears nothing, for the same reason.
+   */
+  @ApiPropertyOptional({ example: true })
+  @IsOptional()
+  @IsBoolean()
+  onlyIfUnmarked?: boolean;
 }
 
 /**
@@ -120,7 +135,7 @@ export class MarkAttendanceDto {
   branchId!: number;
 
   @ApiProperty({ example: '2026-08-16' })
-  @IsISO8601()
+  @IsCalendarDay()
   date!: string;
 
   @ApiPropertyOptional({ example: '4aad', description: 'Students only.' })
@@ -193,6 +208,20 @@ class LessonAttendanceEntryDto {
   @IsString()
   @MaxLength(200)
   note?: string | null;
+
+  /**
+   * Write this mark only where the lesson holds none yet — never over one.
+   *
+   * A tablet that took the register offline replays it on reconnect; by then
+   * the office may have corrected a child to EXCUSED, and a plain upsert would
+   * lay the morning's ABSENT back over the correction. Entries flagged so are
+   * inserted with ON CONFLICT DO NOTHING; an existing mark always stands. A
+   * flagged entry with a null status clears nothing, for the same reason.
+   */
+  @ApiPropertyOptional({ example: true })
+  @IsOptional()
+  @IsBoolean()
+  onlyIfUnmarked?: boolean;
 }
 
 /**
@@ -207,7 +236,7 @@ export class MarkLessonAttendanceDto {
   branchId!: number;
 
   @ApiProperty({ example: '2026-09-16' })
-  @IsISO8601()
+  @IsCalendarDay()
   date!: string;
 
   @ApiProperty({ type: [LessonAttendanceEntryDto] })
@@ -255,7 +284,9 @@ export class ReclassAttendanceDto {
   @ApiPropertyOptional({ type: [String], example: ['4821', '4822'] })
   @IsOptional()
   @IsArray()
+  @ArrayMaxSize(2000)
   @IsString({ each: true })
+  @MaxLength(64, { each: true })
   subjectRefs?: string[];
 }
 

@@ -162,15 +162,21 @@ export class AttendanceService {
    */
   async mine(subjectRef: string | null, query: ListAttendanceQueryDto) {
     if (!subjectRef) return { days: [], lessons: [] };
+    // Filtered in the database, on the person: the whole branch's register
+    // for a month is thousands of rows, read on every teacher's tap of
+    // "My attendance" only to keep a few dozen. Any subjectRef the caller put
+    // on the query is overridden — this is the caller's own, never a
+    // colleague's.
+    const own = { ...query, subjectRef: String(subjectRef) };
     const [days, lessons] = await Promise.all([
-      this.list(AttendanceSubjectType.STAFF, query),
-      this.listLessons(AttendanceSubjectType.STAFF, query),
+      this.list(AttendanceSubjectType.STAFF, own),
+      this.listLessons(AttendanceSubjectType.STAFF, own),
     ]);
-    const own = (row: { subjectRef?: unknown }) =>
+    const isOwn = (row: { subjectRef?: unknown }) =>
       String(row?.subjectRef ?? '') === String(subjectRef);
     return {
-      days: (days?.items ?? []).filter(own),
-      lessons: (lessons?.items ?? []).filter(own),
+      days: (days?.items ?? []).filter(isOwn),
+      lessons: (lessons?.items ?? []).filter(isOwn),
     };
   }
 
@@ -264,6 +270,9 @@ export class AttendanceService {
 
     const clearing: string[] = [];
     const upserting: Partial<AttendanceMark>[] = [];
+    // Entries that may only fill a blank — see `onlyIfUnmarked` on the DTO.
+    const filling: Partial<AttendanceMark>[] = [];
+    let skipped = 0;
     const seen = new Set<string>();
 
     for (const entry of dto.entries || []) {
@@ -272,11 +281,13 @@ export class AttendanceService {
       seen.add(subjectRef);
 
       if (!entry.status) {
-        clearing.push(subjectRef);
+        // A guarded clear would overwrite whatever mark is there — skipped.
+        if (entry.onlyIfUnmarked) skipped += 1;
+        else clearing.push(subjectRef);
         continue;
       }
 
-      upserting.push({
+      (entry.onlyIfUnmarked ? filling : upserting).push({
         branchId: dto.branchId,
         attendanceDate: day,
         subjectType,
@@ -304,10 +315,11 @@ export class AttendanceService {
     if (
       subjectType === AttendanceSubjectType.STUDENT &&
       who.scope?.assertPupils &&
-      (upserting.length || clearing.length)
+      (upserting.length || filling.length || clearing.length)
     ) {
       await who.scope.assertPupils(dto.classCode, [
         ...upserting.map((row) => String(row.subjectRef)),
+        ...filling.map((row) => String(row.subjectRef)),
         ...clearing,
       ]);
     }
@@ -336,6 +348,21 @@ export class AttendanceService {
         .execute();
     }
 
+    // ON CONFLICT DO NOTHING: an existing mark for the day always stands.
+    // What comes back is the rows actually inserted; the rest were skipped.
+    let filled = 0;
+    if (filling.length) {
+      const result = await this.repo
+        .createQueryBuilder()
+        .insert()
+        .into(AttendanceMark)
+        .values(filling)
+        .orIgnore()
+        .execute();
+      filled = Array.isArray(result?.raw) ? result.raw.length : filling.length;
+      skipped += filling.length - filled;
+    }
+
     let cleared = 0;
     if (clearing.length) {
       const result = await this.repo
@@ -350,7 +377,12 @@ export class AttendanceService {
       cleared = result.affected ?? 0;
     }
 
-    return { saved: upserting.length, cleared, date: day };
+    return {
+      saved: upserting.length + filled,
+      cleared,
+      skipped,
+      date: day,
+    };
   }
 
   /**
@@ -463,6 +495,7 @@ export class AttendanceService {
       minutesLate: row.minutesLate ?? null,
       note: row.note ?? null,
       recordedByUserId: row.recordedByUserId ?? null,
+      recordedByName: row.recordedByName ?? null,
       updatedAt: row.updatedAt.toISOString(),
     };
   }
@@ -582,9 +615,17 @@ export class AttendanceService {
     subjectType: AttendanceSubjectType,
     dto: MarkLessonAttendanceDto,
     recordedByUserId: number | null,
+    /* The recorder's name, resolved by the controller (the staff register's
+       spelling, else the account) — a head teacher reads "taken by Hibo" off
+       the lesson grid, not a user id. */
+    who: { recordedByName?: string | null } = {},
   ) {
     const day = dayOf(dto.date);
     if (!day) throw new BadRequestException('date must be YYYY-MM-DD.');
+    const recordedByName =
+      String(who.recordedByName ?? '')
+        .trim()
+        .slice(0, 120) || null;
 
     const clearing: {
       subjectRef: string;
@@ -592,6 +633,8 @@ export class AttendanceService {
       classCode: string;
     }[] = [];
     const upserting: Partial<LessonAttendanceMark>[] = [];
+    const filling: Partial<LessonAttendanceMark>[] = [];
+    let skipped = 0;
     const seen = new Set<string>();
 
     for (const entry of dto.entries || []) {
@@ -610,10 +653,11 @@ export class AttendanceService {
       seen.add(key);
 
       if (!entry.status) {
-        clearing.push({ subjectRef, periodCode, classCode: code });
+        if (entry.onlyIfUnmarked) skipped += 1;
+        else clearing.push({ subjectRef, periodCode, classCode: code });
         continue;
       }
-      upserting.push({
+      (entry.onlyIfUnmarked ? filling : upserting).push({
         branchId: dto.branchId,
         attendanceDate: day,
         subjectType,
@@ -633,6 +677,7 @@ export class AttendanceService {
             : null,
         note: entry.note ? String(entry.note).trim().slice(0, 200) : null,
         recordedByUserId,
+        recordedByName,
         updatedAt: new Date(),
       });
     }
@@ -651,6 +696,7 @@ export class AttendanceService {
             'minutesLate',
             'note',
             'recordedByUserId',
+            'recordedByName',
             'updatedAt',
           ],
           [
@@ -663,6 +709,19 @@ export class AttendanceService {
           ],
         )
         .execute();
+    }
+
+    let filled = 0;
+    if (filling.length) {
+      const result = await this.lessons
+        .createQueryBuilder()
+        .insert()
+        .into(LessonAttendanceMark)
+        .values(filling)
+        .orIgnore()
+        .execute();
+      filled = Array.isArray(result?.raw) ? result.raw.length : filling.length;
+      skipped += filling.length - filled;
     }
 
     let cleared = 0;
@@ -692,6 +751,11 @@ export class AttendanceService {
       cleared = result.affected ?? 0;
     }
 
-    return { saved: upserting.length, cleared, date: day };
+    return {
+      saved: upserting.length + filled,
+      cleared,
+      skipped,
+      date: day,
+    };
   }
 }

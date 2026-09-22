@@ -1,3 +1,4 @@
+import { BadRequestException, ConflictException } from '@nestjs/common';
 import { SchoolTextbookService } from './school-textbook.service';
 
 /** The textbook register: titles per class, one loan row per book per pupil. */
@@ -323,13 +324,30 @@ describe('SchoolTextbookService', () => {
           7,
         ),
       ).rejects.toThrow(/already billed/);
-      // A lost book that turns up again keeps its bill: the till reverses money.
+      // A billed lost book cannot be filed found from the register: the
+      // charge would stand on a book the school has. The office unbills it.
+      for (const status of ['ISSUED', 'RETURNED'] as const) {
+        const err = await svc
+          .updateLoan(Number(loans[0].id), { branchId: 128, status }, 1)
+          .catch((e) => e);
+        expect(err).toBeInstanceOf(ConflictException);
+        expect(err.getResponse()).toMatchObject({
+          code: 'LOST_BOOK_BILLED',
+          message: expect.stringMatching(
+            /billed 250 on \d{4}-\d{2}-\d{2}\. The office takes the charge off/,
+          ),
+        });
+      }
+      expect(loans[0]).toMatchObject({
+        status: 'LOST',
+        billedLineId: 'line-a',
+      });
+      // Re-saving it LOST (a note) is not leaving LOST.
       await svc.updateLoan(
         Number(loans[0].id),
-        { branchId: 128, status: 'ISSUED' },
+        { branchId: 128, status: 'LOST', note: 'still missing' },
         1,
       );
-      expect(loans[0].billedLineId).toBe('line-a');
       await expect(
         svc.markBilled(
           Number(loans[1].id),
@@ -512,6 +530,126 @@ describe('SchoolTextbookService', () => {
       expect(classes[0].missingSubjects).toEqual([]);
       expect(classes[1].titles).toEqual([]);
       expect(classes[1].missingSubjects).toEqual(['Science']);
+    });
+  });
+
+  describe('a billed lost book turns up: the office unbills it, and a new copy is a new loan', () => {
+    async function billedLoss() {
+      const made = makeService();
+      await made.svc.issue(
+        { branchId: 128, classCode: '3aad', title: 'Maths', folioIds: [1] },
+        1,
+      );
+      await made.svc.updateLoan(
+        Number(made.loans[0].id),
+        { branchId: 128, status: 'LOST' },
+        1,
+      );
+      await made.svc.markBilled(
+        Number(made.loans[0].id),
+        { branchId: 128, amount: 250, lineId: 'line-a' },
+        7,
+      );
+      return made;
+    }
+
+    it('clears the bill and files the book returned today', async () => {
+      const { svc, loans } = await billedLoss();
+      const row = await svc.unbill(Number(loans[0].id), { branchId: 128 }, 8);
+      expect(row).toMatchObject({
+        status: 'RETURNED',
+        billedAt: null,
+        billedAmount: null,
+        billedLineId: null,
+        updatedByUserId: 8,
+      });
+      expect(row.returnedAt).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    });
+
+    it('unbills only a lost book, and only on its own branch', async () => {
+      const { svc, loans } = await billedLoss();
+      await svc.unbill(Number(loans[0].id), { branchId: 128 }, 8);
+      await expect(
+        svc.unbill(Number(loans[0].id), { branchId: 128 }, 8),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      await expect(
+        svc.unbill(Number(loans[0].id), { branchId: 999 }, 8),
+      ).rejects.toThrow(/not found/);
+    });
+
+    it('re-issuing a billed lost copy starts a fresh loan — the old bill stays on the folio line, not on the new book', async () => {
+      const { svc, loans } = await billedLoss();
+      await svc.issue(
+        {
+          branchId: 128,
+          classCode: '3aad',
+          title: 'maths',
+          folioIds: [1],
+          issuedAt: '2026-10-02',
+        },
+        1,
+      );
+      expect(loans).toHaveLength(1);
+      expect(loans[0]).toMatchObject({
+        status: 'ISSUED',
+        issuedAt: '2026-10-02',
+        billedAt: null,
+        billedAmount: null,
+        billedLineId: null,
+      });
+    });
+  });
+
+  describe('a book goes only to a pupil of this school, in the class named', () => {
+    it('asks the controller’s pupil check with the class and the ids, before a row is written', async () => {
+      const { svc, loans } = makeService();
+      const assertPupils = jest.fn(async (_cls: string, ids: number[]) => {
+        if (ids.includes(9)) throw new Error('Bilan (4aad) is not in 3aad');
+      });
+      const scope = { assert: jest.fn(), assertPupils };
+      await expect(
+        svc.issue(
+          {
+            branchId: 128,
+            classCode: '3AAD',
+            title: 'Maths',
+            folioIds: [1, 9],
+          },
+          1,
+          scope,
+        ),
+      ).rejects.toThrow(/not in 3aad/);
+      expect(assertPupils).toHaveBeenCalledWith('3aad', [1, 9]);
+      expect(loans).toHaveLength(0);
+      await svc.issue(
+        { branchId: 128, classCode: '3aad', title: 'Maths', folioIds: [1] },
+        1,
+        scope,
+      );
+      expect(loans).toHaveLength(1);
+    });
+
+    it('holds a teacher to the class a re-issued loan sits in now', async () => {
+      const { svc, loans } = makeService();
+      // The office issued Maths to pupil 1 while they were in 4aad.
+      await svc.issue(
+        { branchId: 128, classCode: '4aad', title: 'Maths', folioIds: [1] },
+        1,
+      );
+      const scope = {
+        assert: (classCode: unknown) => {
+          if (String(classCode).toLowerCase() !== '3aad')
+            throw new Error(`${classCode} is not one of your classes`);
+        },
+      };
+      await expect(
+        svc.issue(
+          { branchId: 128, classCode: '3aad', title: 'Maths', folioIds: [1] },
+          1,
+          scope,
+        ),
+      ).rejects.toThrow(/4aad is not one of your classes/);
+      expect(loans[0].classCode).toBe('4aad');
     });
   });
 });

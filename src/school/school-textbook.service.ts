@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -15,13 +16,24 @@ import {
   CreateSchoolTextbookTitleDto,
   IssueSchoolTextbooksDto,
   MarkSchoolTextbookLoanBilledDto,
+  UnbillSchoolTextbookLoanDto,
   UpdateSchoolTextbookLoanDto,
   UpdateSchoolTextbookTitleDto,
 } from './dto/school-textbook.dto';
 
-/** A teacher's class scope, resolved by the controller; absent = unscoped. */
+/**
+ * A teacher's class scope, resolved by the controller; absent = unscoped.
+ * `assertPupils` refuses folio ids that are not pupils of this branch sitting
+ * in the named class — the controller always supplies it, for the office too.
+ */
 type ClassScopeCheck =
-  | { assert: (classCode: unknown) => void }
+  | {
+      assert: (classCode: unknown) => void;
+      assertPupils?: (
+        classCode: string,
+        folioIds: number[],
+      ) => Promise<void> | void;
+    }
   | null
   | undefined;
 
@@ -358,6 +370,11 @@ export class SchoolTextbookService {
       (n) => Number.isFinite(n) && n > 0,
     );
     if (!folioIds.length) throw new BadRequestException('No pupils named.');
+    // Every id a pupil of THIS school sitting in THIS class, refused by name
+    // before a row is written. A loan keyed to a folio of another branch (or
+    // to a pupil of another class, from a sheet that kept its ticks across a
+    // class switch) is a book the register can never collect or bill.
+    if (scope?.assertPupils) await scope.assertPupils(classCode, folioIds);
     const issuedAt = dto.issuedAt || today();
 
     const existing = await this.loans.find({
@@ -368,11 +385,27 @@ export class SchoolTextbookService {
       if (fold(row.title) === fold(title))
         byFolio.set(Number(row.folioId), row);
     }
+    // Re-issuing moves an existing loan row into this class, so the class it
+    // sits in now must be the teacher's too — otherwise issuing "Maths" in
+    // 3aad would quietly pull another class's loan (and its history) across.
+    for (const row of byFolio.values()) {
+      if (fold(row.classCode) !== classCode) scope?.assert(row.classCode);
+    }
 
     const rows: SchoolTextbookLoan[] = [];
     for (const folioId of folioIds) {
       const row = byFolio.get(folioId);
       if (row) {
+        // A lost copy that was billed, issued again, is a NEW copy and a new
+        // loan: the register's memory of the old bill is cleared so the new
+        // book can be lost and billed in its turn. The old loss stays billed
+        // where the money is — the LOST_BOOK line on the pupil's folio —
+        // because a replacement handed out does not un-lose the first book.
+        if (row.status === 'LOST' && row.billedLineId) {
+          row.billedAt = null;
+          row.billedAmount = null;
+          row.billedLineId = null;
+        }
         row.status = 'ISSUED';
         row.issuedAt = issuedAt;
         row.returnedAt = null;
@@ -412,6 +445,16 @@ export class SchoolTextbookService {
     if (!row) throw new NotFoundException(`Textbook loan ${id} not found.`);
     scope?.assert(row.classCode);
     const status = String(dto.status).toUpperCase() as TextbookLoanStatus;
+    // A billed loss is money on the pupil's fees. Filing the book found (or
+    // back out) from the register would leave that charge standing on a book
+    // the register says was never lost — the family pays for a book the
+    // school has. The office reverses the charge first (unbill, below).
+    if (row.status === 'LOST' && row.billedLineId && status !== 'LOST') {
+      throw new ConflictException({
+        code: 'LOST_BOOK_BILLED',
+        message: `This book was billed ${row.billedAmount ?? 0} on ${row.billedAt ?? 'the folio'}. The office takes the charge off the pupil's fees first, then files it found.`,
+      });
+    }
     row.status = status;
     if (status === 'RETURNED') row.returnedAt = today();
     else if (status === 'ISSUED') {
@@ -448,6 +491,34 @@ export class SchoolTextbookService {
     row.billedAt = row.billedAt ?? today();
     row.billedAmount = money(dto.amount) ?? 0;
     row.billedLineId = lineId;
+    row.updatedByUserId = userId;
+    return this.loans.save(row);
+  }
+
+  /**
+   * A billed lost book that turned up. The office has taken the charge off
+   * the pupil's folio (the money moved through the register's own folio
+   * write); this clears the register's memory of the bill and files the book
+   * returned today. Only a LOST book: anything else was never billed.
+   */
+  async unbill(
+    id: number,
+    dto: UnbillSchoolTextbookLoanDto,
+    userId: number | null,
+  ) {
+    const row = await this.loans.findOne({
+      where: { id, branchId: dto.branchId },
+    });
+    if (!row) throw new NotFoundException(`Textbook loan ${id} not found.`);
+    if (row.status !== 'LOST')
+      throw new BadRequestException(
+        'Only a lost book is unbilled — this one is not lost.',
+      );
+    row.billedAt = null;
+    row.billedAmount = null;
+    row.billedLineId = null;
+    row.status = 'RETURNED';
+    row.returnedAt = today();
     row.updatedByUserId = userId;
     return this.loans.save(row);
   }

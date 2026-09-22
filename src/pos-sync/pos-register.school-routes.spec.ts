@@ -1,5 +1,6 @@
 import 'reflect-metadata';
 import { POS_REQUIRED_PERMISSIONS_KEY } from '../auth/decorators/require-pos-permissions.decorator';
+import { RETAIL_BRANCH_CONTEXT_KEY } from '../retail/decorators/retail-branch-context.decorator';
 import { PosRegisterController } from './pos-register.controller';
 import { POS_SCHOOL_PERMISSION_VALUES } from '../school/permissions/pos-school-permission.enum';
 
@@ -96,5 +97,19 @@ describe('PosRegisterController — SCHOOL route permissions', () => {
       (p) => !EXEMPT.has(p) && !routed.has(p),
     );
     expect(unrouted).toEqual([]);
+  });
+
+  it('opens the one-row read behind exactly the list read’s door', () => {
+    // The office re-reads a pupil before every write; a door narrower than the
+    // list's would 403 a clerk who can see the whole roll.
+    expect(permissionsOn('findSuspendedCart')).toEqual(
+      permissionsOn('findSuspendedCarts'),
+    );
+    const contextOf = (method: keyof PosRegisterController) =>
+      Reflect.getMetadata(
+        RETAIL_BRANCH_CONTEXT_KEY,
+        PosRegisterController.prototype[method],
+      );
+    expect(contextOf('findSuspendedCart')).toBe('query.branchId');
   });
 });

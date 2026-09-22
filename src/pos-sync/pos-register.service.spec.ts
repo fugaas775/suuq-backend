@@ -1,5 +1,11 @@
+import { ConflictException, ForbiddenException } from '@nestjs/common';
 import { PosRegisterService } from './pos-register.service';
-import { PosSuspendedCartStatus } from './entities/pos-suspended-cart.entity';
+import {
+  PosSuspendedCart,
+  PosSuspendedCartStatus,
+} from './entities/pos-suspended-cart.entity';
+import { Branch } from '../branches/entities/branch.entity';
+import { BranchStaffAssignment } from '../branch-staff/entities/branch-staff-assignment.entity';
 
 // Focused coverage for the offline-park idempotency added to suspendCart: a
 // replay that carries a clientRef already seen for the branch must return the
@@ -104,7 +110,8 @@ describe('PosRegisterService.suspendCart (clientRef idempotency)', () => {
 // the collected-money carry-forward that goes with every supersede.
 describe('PosRegisterService.suspendCart (same-stay supersede without a backend folio)', () => {
   function makeService(priorRows: any[] = []) {
-    const query = jest.fn(async (sql: string) => {
+    const query = jest.fn(async (sql: string, _params?: unknown[]) => {
+      void _params;
       if (/SELECT id, total/i.test(sql)) return priorRows;
       return [];
     });
@@ -303,15 +310,22 @@ describe('PosRegisterService — a SCHOOL folio must be fit for the roll', () =>
       andWhere: jest.fn(() => qb),
       getOne: jest.fn(async () => clash),
     };
-    const suspendedCartsRepository = {
+    const suspendedCartsRepository: any = {
       findOne: jest.fn().mockResolvedValue(null),
       create: jest.fn((input) => input),
       save: jest.fn(async (input) => ({ id: 777, ...input })),
       createQueryBuilder: jest.fn(() => qb),
     };
+    // A re-save runs under a row lock, in a transaction whose manager hands
+    // back the same repository — so the collision query is still observable.
+    suspendedCartsRepository.manager = {
+      transaction: jest.fn(async (fn: any) =>
+        fn({ getRepository: () => suspendedCartsRepository }),
+      ),
+    };
     const service = new PosRegisterService(
       { findOne: jest.fn() } as any,
-      suspendedCartsRepository as any,
+      suspendedCartsRepository,
       { findOne: jest.fn().mockResolvedValue({ id: 115 }) } as any,
       { dispatchCloseReport: jest.fn() } as any,
       { findOne: jest.fn() } as any,
@@ -455,5 +469,293 @@ describe('PosRegisterService — a SCHOOL folio must be fit for the roll', () =>
       } as any),
     ).rejects.toThrow(/already on the roll/);
     expect(suspendedCartsRepository.save).not.toHaveBeenCalled();
+  });
+});
+
+describe('PosRegisterService — one folio, read fresh (GET suspended-carts/:id)', () => {
+  it('answers the row only when it sits on the branch asked about', async () => {
+    const row = {
+      id: 41,
+      branchId: 115,
+      status: PosSuspendedCartStatus.DISCARDED,
+      label: '3aad',
+      cartSnapshot: {},
+      createdAt: new Date('2026-09-22T08:00:00Z'),
+      updatedAt: new Date('2026-09-22T08:00:00Z'),
+    };
+    const findOne = jest.fn(async ({ where }: any) =>
+      where.id === row.id && where.branchId === row.branchId ? row : null,
+    );
+    const service = new PosRegisterService(
+      { findOne: jest.fn() } as any,
+      { findOne } as any,
+      { findOne: jest.fn() } as any,
+      { dispatchCloseReport: jest.fn() } as any,
+      { findOne: jest.fn() } as any,
+    );
+    // Any status: the office re-reads a withdrawn pupil too.
+    const out = await service.findSuspendedCartOnBranch(41, 115);
+    expect(out).toMatchObject({ id: 41, status: 'DISCARDED' });
+    await expect(service.findSuspendedCartOnBranch(41, 128)).rejects.toThrow(
+      /not found on branch 128/,
+    );
+  });
+});
+
+/**
+ * PATCH suspended-carts/:id under a lock, with an optional precondition, and
+ * with a stored pupil's marks and pupil-ness guarded.
+ */
+describe('PosRegisterService.updateSuspendedCart — the row as it stands now', () => {
+  const stamp = new Date('2026-09-22T08:14:05.123Z');
+  const MARKS = {
+    version: 1,
+    reports: [{ term: '2019-S1', subjects: [{ subject: 'Maths', total: 40 }] }],
+  };
+  function makeService({
+    stored,
+    ownerId = 1863,
+    assignment = null as any,
+  }: {
+    stored: any;
+    ownerId?: number;
+    assignment?: any;
+  }) {
+    const qb: any = {
+      select: jest.fn(() => qb),
+      where: jest.fn(() => qb),
+      andWhere: jest.fn(() => qb),
+      getOne: jest.fn(async () => null),
+    };
+    const carts: any = {
+      findOne: jest.fn(async () => stored),
+      save: jest.fn(async (row: any) => ({ ...row, updatedAt: new Date() })),
+      createQueryBuilder: jest.fn(() => qb),
+    };
+    const branches: any = {
+      findOne: jest.fn(async () => ({ id: 115, ownerId })),
+    };
+    const staff: any = { findOne: jest.fn(async () => assignment) };
+    const repos = new Map<any, any>([
+      [PosSuspendedCart, carts],
+      [Branch, branches],
+      [BranchStaffAssignment, staff],
+    ]);
+    carts.manager = {
+      transaction: jest.fn(async (fn: any) =>
+        fn({ getRepository: (entity: any) => repos.get(entity) }),
+      ),
+    };
+    // Repositories handed to the constructor are NOT the transaction's: a
+    // read that escapes the transaction would reach these and fail the test.
+    const outside: any = {
+      findOne: jest.fn(async () => {
+        throw new Error('read outside the transaction');
+      }),
+    };
+    const service = new PosRegisterService(
+      outside,
+      carts,
+      outside,
+      { dispatchCloseReport: jest.fn() } as any,
+      outside,
+    );
+    return { service, carts, staff };
+  }
+
+  const pupilRow = (snap: Record<string, unknown> = {}) => ({
+    id: 16867,
+    branchId: 115,
+    status: PosSuspendedCartStatus.SUSPENDED,
+    label: '3aad',
+    total: 2000,
+    itemCount: 1,
+    metadata: { partialPaidAmount: 0 },
+    createdAt: stamp,
+    updatedAt: stamp,
+    cartSnapshot: {
+      serviceFormat: 'SCHOOL',
+      hotelGuestName: 'Amina Cali',
+      hotelRoomNumber: '3aad',
+      schoolAcademicRecord: MARKS,
+      cartLines: [{ name: 'Tuition', quantity: 1, unitPrice: 2000 }],
+      ...snap,
+    },
+  });
+
+  it('locks the row it reads, and writes through the same transaction', async () => {
+    const { service, carts } = makeService({ stored: pupilRow() });
+    await service.updateSuspendedCart(16867, { branchId: 115, total: 1500 });
+    expect(carts.findOne).toHaveBeenCalledWith({
+      where: { id: 16867 },
+      lock: { mode: 'pessimistic_write' },
+    });
+    expect(carts.manager.transaction).toHaveBeenCalledTimes(1);
+    expect(carts.save.mock.calls[0][0].total).toBe(1500);
+  });
+
+  it('refuses a write planned over an older copy of the row — 409 FOLIO_CHANGED carrying the row as it stands', async () => {
+    const { service, carts } = makeService({ stored: pupilRow() });
+    const err = await service
+      .updateSuspendedCart(16867, {
+        branchId: 115,
+        total: 0,
+        expectedUpdatedAt: '2026-09-22T08:10:00.000Z',
+      })
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(ConflictException);
+    const body = err.getResponse();
+    expect(body.code).toBe('FOLIO_CHANGED');
+    expect(body.message).toMatch(/changed since it was read/);
+    expect(body.details.current).toMatchObject({ id: 16867, total: 2000 });
+    expect(carts.save).not.toHaveBeenCalled();
+  });
+
+  it('writes when the precondition matches to the millisecond, and unconditionally when none is sent', async () => {
+    const a = makeService({ stored: pupilRow() });
+    await a.service.updateSuspendedCart(16867, {
+      branchId: 115,
+      total: 1500,
+      expectedUpdatedAt: stamp.toISOString(),
+    });
+    expect(a.carts.save).toHaveBeenCalledTimes(1);
+    const b = makeService({ stored: pupilRow() });
+    await b.service.updateSuspendedCart(16867, { branchId: 115, total: 1500 });
+    expect(b.carts.save).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a stored pupil's marks, whatever copy the till sent", async () => {
+    // The till read the list minutes ago; a teacher has saved marks since.
+    const { service, carts } = makeService({ stored: pupilRow() });
+    await service.updateSuspendedCart(16867, {
+      branchId: 115,
+      cartSnapshot: {
+        ...pupilRow().cartSnapshot,
+        schoolAcademicRecord: { version: 1, reports: [] },
+        paid: true,
+      },
+    });
+    const written = carts.save.mock.calls[0][0].cartSnapshot;
+    expect(written.schoolAcademicRecord).toEqual(MARKS);
+    expect(written.paid).toBe(true);
+  });
+
+  it('adds no marks to a pupil who had none stored', async () => {
+    const stored = pupilRow();
+    delete (stored.cartSnapshot as any).schoolAcademicRecord;
+    const { service, carts } = makeService({ stored });
+    await service.updateSuspendedCart(16867, {
+      branchId: 115,
+      cartSnapshot: { ...pupilRow().cartSnapshot },
+    });
+    expect(
+      'schoolAcademicRecord' in carts.save.mock.calls[0][0].cartSnapshot,
+    ).toBe(false);
+  });
+
+  it('leaves every other format exactly as it was — the snapshot is replaced as sent', async () => {
+    const hotel = {
+      ...pupilRow(),
+      cartSnapshot: {
+        serviceFormat: 'HOTEL',
+        hotelGuestName: 'Guest',
+        hotelRoomNumber: '204',
+        cartLines: [],
+      },
+    };
+    const { service, carts } = makeService({ stored: hotel });
+    await service.updateSuspendedCart(16867, {
+      branchId: 115,
+      metadata: { qsrPrint: { count: 1 } },
+      cartSnapshot: {
+        serviceFormat: 'PROPERTY_RENTAL',
+        hotelGuestName: '',
+        cartLines: [{ name: 'Rent' }],
+      },
+      label: ' Unit 4 ',
+    });
+    const written = carts.save.mock.calls[0][0];
+    expect(written.cartSnapshot).toEqual({
+      serviceFormat: 'PROPERTY_RENTAL',
+      hotelGuestName: '',
+      cartLines: [{ name: 'Rent' }],
+    });
+    expect(written.metadata).toEqual({
+      partialPaidAmount: 0,
+      qsrPrint: { count: 1 },
+    });
+    expect(written.label).toBe('Unit 4');
+  });
+
+  it('refuses to turn a pupil into a non-pupil without the withdrawal right — the discard would slip past it next', async () => {
+    const clerk = {
+      role: 'OPERATOR',
+      isActive: true,
+      capabilities: [],
+    };
+    for (const change of [
+      { serviceFormat: 'RETAIL' },
+      { hotelGuestName: '  ' },
+    ]) {
+      const { service, carts } = makeService({
+        stored: pupilRow(),
+        assignment: clerk,
+      });
+      await expect(
+        service.updateSuspendedCart(
+          16867,
+          {
+            branchId: 115,
+            cartSnapshot: { ...pupilRow().cartSnapshot, ...change },
+          },
+          { id: 2465, email: 'clerk@x' },
+        ),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(carts.save).not.toHaveBeenCalled();
+    }
+  });
+
+  it('lets the owner, or an account granted WITHDRAW_STUDENT, make that change', async () => {
+    const owner = makeService({ stored: pupilRow() });
+    await owner.service.updateSuspendedCart(
+      16867,
+      {
+        branchId: 115,
+        cartSnapshot: { ...pupilRow().cartSnapshot, serviceFormat: 'RETAIL' },
+      },
+      { id: 1863 },
+    );
+    expect(owner.carts.save).toHaveBeenCalledTimes(1);
+    const granted = makeService({
+      stored: pupilRow(),
+      assignment: {
+        role: 'OPERATOR',
+        isActive: true,
+        capabilities: ['WITHDRAW_STUDENT'],
+      },
+    });
+    await granted.service.updateSuspendedCart(
+      16867,
+      {
+        branchId: 115,
+        cartSnapshot: { ...pupilRow().cartSnapshot, hotelGuestName: '' },
+      },
+      { id: 2465 },
+    );
+    expect(granted.carts.save).toHaveBeenCalledTimes(1);
+  });
+
+  it('asks nothing of an ordinary fee save that keeps the pupil a pupil', async () => {
+    const { service, carts, staff } = makeService({ stored: pupilRow() });
+    await service.updateSuspendedCart(
+      16867,
+      {
+        branchId: 115,
+        cartSnapshot: { ...pupilRow().cartSnapshot, paid: true },
+      },
+      { id: 2465 },
+    );
+    expect(staff.findOne).not.toHaveBeenCalled();
+    expect(carts.save).toHaveBeenCalledTimes(1);
   });
 });

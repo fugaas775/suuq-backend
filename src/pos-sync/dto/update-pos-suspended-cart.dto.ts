@@ -1,6 +1,12 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsNumber, IsObject, IsOptional, IsString } from 'class-validator';
+import {
+  IsISO8601,
+  IsNumber,
+  IsObject,
+  IsOptional,
+  IsString,
+} from 'class-validator';
 
 export class UpdatePosSuspendedCartDto {
   @ApiProperty({ example: 4 })
@@ -58,4 +64,17 @@ export class UpdatePosSuspendedCartDto {
   @Type(() => Number)
   @IsNumber()
   total?: number;
+
+  @ApiPropertyOptional({
+    example: '2026-09-22T08:14:05.123Z',
+    description:
+      "The row's `updatedAt` as the caller read it. When given, the write " +
+      'lands only if the row has not changed since: otherwise 409 ' +
+      "{ code: 'FOLIO_CHANGED', details: { current } } carrying the row as it " +
+      'stands, so the office re-plans its edit over the payment the till took ' +
+      'in the meantime instead of laying a stale snapshot over it.',
+  })
+  @IsOptional()
+  @IsISO8601({ strict: true })
+  expectedUpdatedAt?: string;
 }

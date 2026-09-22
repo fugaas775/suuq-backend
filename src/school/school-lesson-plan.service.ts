@@ -5,7 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Between, Repository } from 'typeorm';
+import { Between, QueryFailedError, Repository } from 'typeorm';
 import {
   LessonPlanStatus,
   SchoolLessonPlan,
@@ -29,6 +29,36 @@ const fold = (v: unknown) =>
     .toLowerCase();
 const text = (v: unknown) => String(v ?? '').trim();
 const orNull = (v: unknown, max: number) => text(v).slice(0, max) || null;
+
+/** What a plan SAYS — a change to any of these is a different plan. */
+const CONTENT_FIELDS = [
+  'subject',
+  'topic',
+  'objectives',
+  'activities',
+  'materials',
+  'assessment',
+] as const;
+
+const LESSON_UNIQUE_INDEX = 'uq_pos_school_lesson_plans_lesson';
+
+/**
+ * Two saves of one lesson racing to INSERT (a double tap, two tabs): the
+ * loser hits the lesson's unique index. Recognised by SQLSTATE 23505 — on
+ * that index when the driver names it — so it can be retried as an update of
+ * the row that won, instead of surfacing as a failure of a plan that was, in
+ * fact, saved.
+ */
+function isLessonUniqueViolation(err: unknown): boolean {
+  if (!(err instanceof QueryFailedError)) return false;
+  const driver = (
+    err as { driverError?: { code?: unknown; constraint?: unknown } }
+  ).driverError;
+  const code = driver?.code ?? (err as { code?: unknown }).code;
+  if (String(code ?? '') !== '23505') return false;
+  const constraint = driver?.constraint;
+  return !constraint || constraint === LESSON_UNIQUE_INDEX;
+}
 
 export type LessonPlanSummaryRow = {
   employeeId: number;
@@ -128,25 +158,57 @@ export class SchoolLessonPlanService {
       periodCode,
       classCode,
     };
-    const existing = await this.plans.findOne({ where: key });
-    const row =
-      existing ??
-      this.plans.create({
-        ...key,
-        status: 'PLANNED',
-        taughtOn: null,
-        statusNote: null,
-        createdByUserId: actor.id ?? null,
-      });
-    row.teacherName = employee.fullName ?? row.teacherName ?? null;
-    row.subject = subject;
-    row.topic = text(dto.topic).slice(0, 200);
-    row.objectives = orNull(dto.objectives, 4000);
-    row.activities = orNull(dto.activities, 4000);
-    row.materials = orNull(dto.materials, 2000);
-    row.assessment = orNull(dto.assessment, 2000);
-    row.updatedByUserId = actor.id ?? null;
-    return this.plans.save(row);
+    const content: Pick<SchoolLessonPlan, (typeof CONTENT_FIELDS)[number]> = {
+      subject,
+      topic: text(dto.topic).slice(0, 200),
+      objectives: orNull(dto.objectives, 4000),
+      activities: orNull(dto.activities, 4000),
+      materials: orNull(dto.materials, 2000),
+      assessment: orNull(dto.assessment, 2000),
+    };
+
+    // Twice at most: the second pass is the retry after losing an insert
+    // race, and by then the winner's row is there to be updated.
+    for (let attempt = 0; ; attempt += 1) {
+      const existing = await this.plans.findOne({ where: key });
+      const row =
+        existing ??
+        this.plans.create({
+          ...key,
+          status: 'PLANNED',
+          taughtOn: null,
+          statusNote: null,
+          createdByUserId: actor.id ?? null,
+        });
+      const changed =
+        !!existing &&
+        CONTENT_FIELDS.some(
+          (field) => (existing[field] ?? null) !== (content[field] ?? null),
+        );
+      row.teacherName = employee.fullName ?? row.teacherName ?? null;
+      Object.assign(row, content);
+      row.updatedByUserId = actor.id ?? null;
+      // A head's sign-off is on the plan they READ. Rewritten afterwards,
+      // the sign-off would sit on content the head never saw — "approved"
+      // beside a lesson the deputy has not looked at. So a real change of
+      // what the plan says clears it and the plan goes back for review; a
+      // re-save of the same words (a double tap, a copy of last week landing
+      // twice) keeps it.
+      if (changed) {
+        row.reviewedAt = null;
+        row.reviewedByName = null;
+        row.reviewedByUserId = null;
+        row.reviewComment = null;
+      }
+      try {
+        return await this.plans.save(row);
+      } catch (err) {
+        if (!existing && attempt === 0 && isLessonUniqueViolation(err)) {
+          continue;
+        }
+        throw err;
+      }
+    }
   }
 
   /** The teacher's own word on what became of the lesson. Own plans only. */

@@ -8,12 +8,12 @@ import {
   IsNumber,
   IsOptional,
   IsString,
-  Matches,
   MaxLength,
   Min,
   MinLength,
   ValidateIf,
 } from 'class-validator';
+import { IsCalendarDay } from '../../common/validators/is-calendar-day.validator';
 
 export const TEXTBOOK_LOAN_STATUSES = ['ISSUED', 'RETURNED', 'LOST'] as const;
 
@@ -124,7 +124,7 @@ export class IssueSchoolTextbooksDto {
   /** YYYY-MM-DD, the school's own day; today when omitted. */
   @IsOptional()
   @IsString()
-  @Matches(/^\d{4}-\d{2}-\d{2}$/)
+  @IsCalendarDay()
   issuedAt?: string;
 }
 
@@ -158,6 +158,15 @@ export class MarkSchoolTextbookLoanBilledDto {
   @MinLength(1)
   @MaxLength(64)
   lineId!: string;
+}
+
+/**
+ * The office has taken a lost book's charge off the pupil's fees; the loan is
+ * unbilled and filed returned.
+ */
+export class UnbillSchoolTextbookLoanDto {
+  @IsInt()
+  branchId!: number;
 }
 
 export class SchoolTextbooksOutstandingQueryDto {

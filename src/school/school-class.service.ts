@@ -5,13 +5,20 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { EntityManager, Repository } from 'typeorm';
+import { LessonAttendanceMark } from '../attendance/entities/lesson-attendance-mark.entity';
+import { BranchStaffAssignment } from '../branch-staff/entities/branch-staff-assignment.entity';
 import { BranchEmployee } from '../payroll/entities/branch-employee.entity';
 import {
   PosSuspendedCart,
   PosSuspendedCartStatus,
 } from '../pos-sync/entities/pos-suspended-cart.entity';
 import { SchoolClass, SchoolClassStatus } from './entities/school-class.entity';
+import { SchoolLessonPlan } from './entities/school-lesson-plan.entity';
+import { SchoolTextbookLoan } from './entities/school-textbook-loan.entity';
+import { SchoolTextbookTitle } from './entities/school-textbook-title.entity';
+import { SchoolTimetable } from './entities/school-timetable.entity';
+import { SCHOOL_CLASS_CAPABILITY_PREFIX } from './school-class-scope.policy';
 import {
   CreateSchoolClassDto,
   ListSchoolClassesQueryDto,
@@ -19,6 +26,22 @@ import {
   UpdateSchoolClassDto,
 } from './dto/school-class.dto';
 import { SchoolRoomService } from './school-room.service';
+
+const foldCode = (v: unknown) =>
+  String(v ?? '')
+    .trim()
+    .toLowerCase();
+
+/** What a class rename carried across, table by table. */
+export type ClassRekeyCounts = {
+  timetableSlots: number;
+  timetableShifts: number;
+  staffGrants: number;
+  textbookTitles: number;
+  textbookLoans: number;
+  lessonPlans: number;
+  lessonAttendance: number;
+};
 
 /**
  * The branch's class registry.
@@ -377,6 +400,7 @@ export class SchoolClassService {
       where: { id, branchId: dto.branchId },
     });
     if (!row) throw new NotFoundException('Class not found for this branch.');
+    const previousCode = row.code;
 
     if (dto.code !== undefined) {
       const code = String(dto.code).trim();
@@ -429,7 +453,180 @@ export class SchoolClassService {
       }
     }
 
-    return this.toResponse(await this.repo.save(row));
+    if (String(previousCode) === String(row.code)) {
+      return this.toResponse(await this.repo.save(row));
+    }
+
+    // A RENAME: the class is now called something else, and everything this
+    // server keys by the class code has to follow it in the same transaction
+    // — otherwise the timetable names a class that no longer exists, a
+    // teacher's SCHOOL_CLASS grant points at nothing (and their register
+    // locks them out of their own class), the shelf and the loans sit under
+    // the old name, and a lesson plan or lesson mark can no longer be found
+    // from the class. All or nothing: a rename that half-moved is worse than
+    // one refused.
+    //
+    // NOT moved here: the pupils' folios and the pupils' DAY register. Seller
+    // HQ's rename re-tags every folio and calls attendance/students/reclass
+    // itself, and doing either twice would fight it.
+    const { saved, rekeyed } = await this.repo.manager.transaction(
+      async (em) => {
+        const saved = await em.getRepository(SchoolClass).save(row);
+        const rekeyed = await this.rekeyClassCode(
+          em,
+          row.branchId,
+          previousCode,
+          row.code,
+        );
+        return { saved, rekeyed };
+      },
+    );
+    return { ...this.toResponse(saved), rekeyed };
+  }
+
+  /**
+   * Move every class-keyed record on the branch from `from` to `to`.
+   *
+   * Two spellings are in play. The timetable and a staff grant carry the
+   * registry's own spelling, so a re-case ("3a" → "3A") rewrites them too.
+   * The textbook, lesson-plan and lesson-attendance tables store the code
+   * LOWERCASED, so a re-case changes nothing there and they are skipped.
+   *
+   * Where the new code already holds a row the old one would collide with
+   * (a lesson marked under both, a title listed under both — possible only
+   * for a code that was used before), the old row is left where it is
+   * rather than failing the rename on the table's unique index.
+   */
+  private async rekeyClassCode(
+    em: EntityManager,
+    branchId: number,
+    from: string,
+    to: string,
+  ): Promise<ClassRekeyCounts> {
+    const counts: ClassRekeyCounts = {
+      timetableSlots: 0,
+      timetableShifts: 0,
+      staffGrants: 0,
+      textbookTitles: 0,
+      textbookLoans: 0,
+      lessonPlans: 0,
+      lessonAttendance: 0,
+    };
+    const fromKey = foldCode(from);
+    const toKey = foldCode(to);
+
+    // The timetable: one document, locked and rewritten.
+    const timetables = em.getRepository(SchoolTimetable);
+    const doc = await timetables.findOne({
+      where: { branchId },
+      lock: { mode: 'pessimistic_write' },
+    });
+    if (doc) {
+      const slots = (Array.isArray(doc.slots) ? doc.slots : []).map((slot) => {
+        if (foldCode(slot?.classCode) !== fromKey) return slot;
+        counts.timetableSlots += 1;
+        return { ...slot, classCode: to };
+      });
+      const shifts = (Array.isArray(doc.shifts) ? doc.shifts : []).map(
+        (shift) => {
+          const codes = Array.isArray(shift?.classCodes)
+            ? shift.classCodes
+            : [];
+          if (!codes.some((c) => foldCode(c) === fromKey)) return shift;
+          counts.timetableShifts += 1;
+          const next: string[] = [];
+          for (const c of codes) {
+            const code = foldCode(c) === fromKey ? to : c;
+            if (!next.some((n) => foldCode(n) === foldCode(code)))
+              next.push(code);
+          }
+          return { ...shift, classCodes: next };
+        },
+      );
+      if (counts.timetableSlots || counts.timetableShifts) {
+        doc.slots = slots;
+        doc.shifts = shifts;
+        await timetables.save(doc);
+      }
+    }
+
+    // The teachers' class grants: `SCHOOL_CLASS:<code>` on the assignment.
+    const assignments = em.getRepository(BranchStaffAssignment);
+    const staff = await assignments.find({ where: { branchId } });
+    const prefix = SCHOOL_CLASS_CAPABILITY_PREFIX;
+    for (const assignment of staff) {
+      const caps = Array.isArray(assignment.capabilities)
+        ? assignment.capabilities
+        : [];
+      let touched = false;
+      const next: string[] = [];
+      for (const cap of caps) {
+        const raw = String(cap ?? '').trim();
+        const isOld =
+          raw.toUpperCase().startsWith(prefix) &&
+          foldCode(raw.slice(prefix.length)) === fromKey;
+        const value = isOld ? `${prefix}${to}` : cap;
+        if (isOld) touched = true;
+        // A login granted both the old and the new code keeps one grant.
+        if (!next.some((n) => String(n).trim() === String(value).trim()))
+          next.push(value);
+      }
+      if (touched) {
+        await assignments.update({ id: assignment.id }, { capabilities: next });
+        counts.staffGrants += 1;
+      }
+    }
+
+    if (fromKey === toKey) return counts;
+
+    const moved = async (
+      entity:
+        | typeof SchoolTextbookTitle
+        | typeof SchoolTextbookLoan
+        | typeof SchoolLessonPlan
+        | typeof LessonAttendanceMark,
+      clash: string | null,
+    ) => {
+      const qb = em
+        .createQueryBuilder()
+        .update(entity)
+        .set({ classCode: toKey })
+        .where('"branchId" = :branchId', { branchId })
+        .andWhere('"classCode" = :fromKey', { fromKey });
+      if (clash) qb.andWhere(clash, { toKey });
+      const result = await qb.execute();
+      return result.affected ?? 0;
+    };
+
+    counts.textbookTitles = await moved(
+      SchoolTextbookTitle,
+      `NOT EXISTS (SELECT 1 FROM "pos_school_textbook_titles" t2
+         WHERE t2."branchId" = "pos_school_textbook_titles"."branchId"
+           AND t2."classCode" = :toKey
+           AND LOWER(t2."title") = LOWER("pos_school_textbook_titles"."title"))`,
+    );
+    // A loan's unique key is (branch, pupil, title) — the class is not in it.
+    counts.textbookLoans = await moved(SchoolTextbookLoan, null);
+    counts.lessonPlans = await moved(
+      SchoolLessonPlan,
+      `NOT EXISTS (SELECT 1 FROM "pos_school_lesson_plans" p2
+         WHERE p2."branchId" = "pos_school_lesson_plans"."branchId"
+           AND p2."employeeId" = "pos_school_lesson_plans"."employeeId"
+           AND p2."lessonDate" = "pos_school_lesson_plans"."lessonDate"
+           AND p2."periodCode" = "pos_school_lesson_plans"."periodCode"
+           AND p2."classCode" = :toKey)`,
+    );
+    counts.lessonAttendance = await moved(
+      LessonAttendanceMark,
+      `NOT EXISTS (SELECT 1 FROM "pos_branch_lesson_attendance" l2
+         WHERE l2."branchId" = "pos_branch_lesson_attendance"."branchId"
+           AND l2."subjectType" = "pos_branch_lesson_attendance"."subjectType"
+           AND l2."subjectRef" = "pos_branch_lesson_attendance"."subjectRef"
+           AND l2."attendanceDate" = "pos_branch_lesson_attendance"."attendanceDate"
+           AND l2."periodCode" = "pos_branch_lesson_attendance"."periodCode"
+           AND l2."classCode" = :toKey)`,
+    );
+    return counts;
   }
 
   async reorder(dto: ReorderSchoolClassesDto) {

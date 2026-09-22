@@ -59,6 +59,45 @@ export function isScopedToTimetable({
   return String(assignment?.role ?? '').toUpperCase() !== 'MANAGER';
 }
 
+export const SCHOOL_MARK_REPORTS_REFUSED_MESSAGE =
+  "Whole reports are filed by the school's owner, or a manager the owner has granted ENTER_MARKS.";
+
+/**
+ * Who may file a pupil's WHOLE term report — the office's hand correction,
+ * the marks import — through `PATCH school/marks/reports`.
+ *
+ * Wider than a sheet in what it writes (every subject, the position, the
+ * remark), so narrower in who: the platform's SUPER_ADMIN, the branch's
+ * owner, or an account holding ENTER_MARKS that is NOT held to a timetable —
+ * i.e. a manager the owner named. A teacher granted ENTER_MARKS enters the
+ * marks of what they teach, one sheet at a time, and never rewrites a report.
+ */
+export function canFileMarkReports({
+  actorId,
+  ownerId,
+  roles,
+  assignment,
+}: {
+  actorId: number | null | undefined;
+  ownerId: number | null | undefined;
+  roles?: string[] | null;
+  assignment?: {
+    role?: string | null;
+    isActive?: boolean;
+    capabilities?: string[] | null;
+  } | null;
+}): boolean {
+  if ((roles ?? []).some((r) => String(r).toUpperCase() === 'SUPER_ADMIN')) {
+    return true;
+  }
+  if (actorId == null) return false;
+  if (ownerId != null && Number(ownerId) === Number(actorId)) return true;
+  return (
+    canEnterMarks({ actorId, ownerId, assignment }) &&
+    !isScopedToTimetable({ actorId, ownerId, assignment })
+  );
+}
+
 /** The (class, subject) pairs a timetable puts a teacher in front of. */
 export function taughtPairs(
   slots:
