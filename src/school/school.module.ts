@@ -26,6 +26,9 @@ import { SchoolRoomService } from './school-room.service';
 import { SchoolRoomController } from './school-room.controller';
 import { SchoolLessonPlanService } from './school-lesson-plan.service';
 import { SchoolLessonPlanController } from './school-lesson-plan.controller';
+import { SchoolLeaveRequest } from './entities/school-leave-request.entity';
+import { SchoolLeaveService } from './school-leave.service';
+import { SchoolLeaveController } from './school-leave.controller';
 
 /**
  * SCHOOL — a term-based POS format whose board unit is a CLASS: a container
@@ -55,6 +58,8 @@ import { SchoolLessonPlanController } from './school-lesson-plan.controller';
       SchoolLessonPlan,
       // Rooms and their desks — the seats a class can take.
       SchoolRoom,
+      // Staff leave: asked for by the person, decided by the heads.
+      SchoolLeaveRequest,
       // Marks: the policy reads the branch's owner and the caller's
       // assignment (its ENTER_MARKS capability), as withdrawal does.
       Branch,
@@ -69,6 +74,7 @@ import { SchoolLessonPlanController } from './school-lesson-plan.controller';
     SchoolLessonPlanController,
     SchoolRoomController,
     SchoolMarksController,
+    SchoolLeaveController,
   ],
   providers: [
     SchoolClassService,
@@ -76,6 +82,7 @@ import { SchoolLessonPlanController } from './school-lesson-plan.controller';
     SchoolClassScopeService,
     SchoolLessonPlanService,
     SchoolRoomService,
+    SchoolLeaveService,
     SchoolTextbookService,
     SchoolMarksService,
     PosBranchAccessGuard,
