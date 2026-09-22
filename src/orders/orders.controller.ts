@@ -15,9 +15,9 @@ import {
   ParseFilePipeBuilder,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-// import { RolesGuard } from '../auth/roles.guard';
-// import { Roles } from '../common/decorators/roles.decorator';
-// import { UserRole } from '../auth/roles.enum';
+import { RolesGuard } from '../auth/roles.guard';
+import { Roles } from '../common/decorators/roles.decorator';
+import { UserRole } from '../auth/roles.enum';
 import { OrdersService } from './orders.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -178,7 +178,14 @@ export class OrdersController {
     return this.ordersService.disputeOrder(id, reason, details);
   }
 
+  /* Deciding a dispute is the platform's call — the service records the
+     caller as `resolvedBy` (an admin id), and refund moves money: it credits
+     the buyer's wallet and claws the vendor's earnings back. Both routes sat
+     behind JwtAuthGuard alone, so any signed-in account could decide any
+     dispute, including in its own favour. The only caller is the admin panel. */
   @Post('dispute/:id/resolve')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
   @ApiParam({ name: 'id', type: Number, description: 'Dispute ID' })
   @ApiOkResponse({ description: 'Resolve dispute (Vendor wins)' })
   async resolveDispute(
@@ -190,6 +197,8 @@ export class OrdersController {
   }
 
   @Post('dispute/:id/refund')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
   @ApiParam({ name: 'id', type: Number, description: 'Dispute ID' })
   @ApiOkResponse({ description: 'Refund dispute (Buyer wins)' })
   async refundDispute(
