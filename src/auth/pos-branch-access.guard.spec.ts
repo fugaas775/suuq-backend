@@ -4,6 +4,7 @@ import { DataSource } from 'typeorm';
 import { HospitalityWorkflowsController } from '../hospitality/hospitality-workflows.controller';
 import { PosCheckoutController } from '../pos-sync/pos-checkout.controller';
 import { HotelFolioController } from '../hospitality/hotel-folio.controller';
+import { PayrollController } from '../payroll/payroll.controller';
 import { PosBranchAccessGuard } from './pos-branch-access.guard';
 import { PosSessionRevocationService } from './pos-session-revocation.service';
 
@@ -325,6 +326,119 @@ describe('PosBranchAccessGuard', () => {
       ForbiddenException,
     );
     expect(rosterFind).not.toHaveBeenCalled();
+  });
+
+  /* An account session's POS_MANAGER is GLOBAL — managing any branch, or
+     being a vendor, grants it — so it says nothing about THIS branch. A SMAG
+     manager who also has a login at SMAQ was a manager at SMAQ on her own
+     sign-in, salaries and staff register included. */
+  describe('an account session carrying a global POS_MANAGER', () => {
+    it('is not a manager of a branch whose roster does not say so', async () => {
+      rosterFind.mockResolvedValue([
+        { id: 1, role: 'OPERATOR', permissions: ['OPEN_REGISTER'] },
+      ]);
+      recordFindOne.mockResolvedValue({
+        id: 9,
+        ownerId: 999,
+        retailTenantId: null,
+      });
+      const context = createExecutionContext(
+        PosCheckoutController.prototype.voidCheckout,
+        PosCheckoutController,
+        {
+          query: { branchId: '9' },
+          user: { id: 2443, roles: ['VENDOR', 'POS_MANAGER'] },
+        },
+      );
+      await expect(guard.canActivate(context)).rejects.toThrow(
+        ForbiddenException,
+      );
+    });
+
+    it('is a manager of the branch its roster names it manager of', async () => {
+      rosterFind.mockResolvedValue([
+        { id: 2, role: 'MANAGER', permissions: [] },
+      ]);
+      const context = createExecutionContext(
+        PosCheckoutController.prototype.voidCheckout,
+        PosCheckoutController,
+        {
+          query: { branchId: '9' },
+          user: { id: 2443, roles: ['POS_MANAGER'] },
+        },
+      );
+      await expect(guard.canActivate(context)).resolves.toBe(true);
+    });
+
+    it('cannot open a managers-only route (payroll) on a branch it does not manage', async () => {
+      rosterFind.mockResolvedValue([
+        { id: 1, role: 'OPERATOR', permissions: [] },
+      ]);
+      recordFindOne.mockResolvedValue({
+        id: 115,
+        ownerId: 1863,
+        retailTenantId: null,
+      });
+      const context = createExecutionContext(
+        PayrollController.prototype.listEmployees,
+        PayrollController,
+        {
+          query: { branchId: '115' },
+          user: { id: 2443, roles: ['POS_MANAGER'] },
+        },
+      );
+      await expect(guard.canActivate(context)).rejects.toThrow(
+        "Only this branch's owner or one of its managers can open this.",
+      );
+    });
+
+    it('opens payroll for the branch owner on their own sign-in', async () => {
+      rosterFind.mockResolvedValue([]);
+      recordFindOne.mockResolvedValue({
+        id: 115,
+        ownerId: 1863,
+        retailTenantId: null,
+      });
+      const context = createExecutionContext(
+        PayrollController.prototype.listEmployees,
+        PayrollController,
+        {
+          query: { branchId: '115' },
+          user: { id: 1863, roles: ['POS_MANAGER'] },
+        },
+      );
+      await expect(guard.canActivate(context)).resolves.toBe(true);
+    });
+
+    it('leaves a POS token alone — the gate minted its POS_MANAGER for this branch', async () => {
+      const context = createExecutionContext(
+        PayrollController.prototype.listEmployees,
+        PayrollController,
+        {
+          query: { branchId: '115' },
+          user: {
+            id: 128,
+            tokenType: 'pos_operator',
+            branchId: 115,
+            branchRole: 'MANAGER',
+            roles: ['POS_MANAGER'],
+            permissions: [],
+          },
+        },
+      );
+      await expect(guard.canActivate(context)).resolves.toBe(true);
+      expect(rosterFind).not.toHaveBeenCalled();
+    });
+
+    it('still lets a platform admin through without a roster row', async () => {
+      const context = createExecutionContext(
+        PayrollController.prototype.listEmployees,
+        PayrollController,
+        { query: { branchId: '115' }, user: { id: 3, roles: ['ADMIN'] } },
+      );
+      await expect(guard.canActivate(context)).resolves.toBe(true);
+      expect(rosterFind).not.toHaveBeenCalled();
+    });
   });
 
   it('refuses a claimless session when no branch can be resolved', async () => {

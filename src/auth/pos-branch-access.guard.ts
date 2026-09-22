@@ -95,11 +95,39 @@ export class PosBranchAccessGuard implements CanActivate {
       }
     }
 
+    const isPosToken =
+      tokenType === 'pos_operator' || tokenType === 'pos_manager_approval';
+    const isPlatformAdmin = this.hasAnyRole(user, ['SUPER_ADMIN', 'ADMIN']);
+
+    /* A route whose role list names POS_MANAGER and not POS_OPERATOR — payroll,
+       the staff register — draws its line with the ROLE, which is exact on a
+       POS token (the gate stamps POS_MANAGER only on this branch's owner and
+       managers) and wrong on an account session, whose POS_MANAGER is GLOBAL:
+       EffectiveUserRoleService grants it for managing ANY branch, or for being
+       a vendor. So a teacher at one school who manages another — or runs a
+       shop — opened the first school's salaries and staff register on their
+       own sign-in. For an account session the question is asked of the roster
+       instead: owner or manager of THIS branch. */
+    // Only where the role IS the gate: a route that also names a permission
+    // (void a settled bill) lets a granted operator through by that permission.
+    if (
+      !isPosToken &&
+      !isPlatformAdmin &&
+      routeBranchId != null &&
+      !requiredPermissions?.length &&
+      this.isManagerOnlyRoute(context) &&
+      !(await this.isRosterManagerOrOwner(user.id, routeBranchId))
+    ) {
+      throw new ForbiddenException(
+        "Only this branch's owner or one of its managers can open this.",
+      );
+    }
+
     if (!requiredPermissions?.length) {
       return true;
     }
 
-    if (this.isManagerLike(user)) {
+    if (this.isManagerLike(user, isPosToken)) {
       return true;
     }
 
@@ -130,6 +158,19 @@ export class PosBranchAccessGuard implements CanActivate {
     const claimedPermissions = Array.isArray(user.permissions)
       ? this.normalizePermissionCodes(user.permissions)
       : null;
+
+    /* An account session carrying POS_MANAGER is most often the manager or
+       owner of this very branch — ask that first, one indexed lookup, rather
+       than walk the permission roster a manager's row does not fill in. The
+       role alone no longer answers it (see isManagerLike). */
+    let rosterManagerAsked = false;
+    if (claimedPermissions === null && this.hasAnyRole(user, ['POS_MANAGER'])) {
+      rosterManagerAsked = true;
+      if (await this.isRosterManagerOrOwner(user.id, routeBranchId)) {
+        return true;
+      }
+    }
+
     const effectivePermissions =
       claimedPermissions ??
       (await this.resolveRosterPermissions(user.id, routeBranchId));
@@ -165,6 +206,7 @@ export class PosBranchAccessGuard implements CanActivate {
        claims already answered it. */
     if (
       claimedPermissions === null &&
+      !rosterManagerAsked &&
       (await this.isRosterManagerOrOwner(user.id, routeBranchId))
     ) {
       return true;
@@ -287,16 +329,20 @@ export class PosBranchAccessGuard implements CanActivate {
     );
   }
 
-  private isManagerLike(user: PosScopedRequestUser): boolean {
-    const normalizedRoles = Array.isArray(user.roles)
-      ? user.roles
-          .map((role) =>
-            String(role || '')
-              .trim()
-              .toUpperCase(),
-          )
-          .filter(Boolean)
-      : [];
+  /**
+   * Manager-like on this branch by what the token says.
+   *
+   * A POS token is minted FOR a branch, so its claims — owner, manager,
+   * POS_MANAGER — are about that branch and are trusted. An account session's
+   * POS_MANAGER is global (managing any branch, or being a vendor, grants it),
+   * so it proves nothing about THIS branch and is not read here; the caller
+   * asks the roster instead. SUPER_ADMIN and ADMIN are platform roles — ADMIN
+   * is stored on real admins only now that VENDOR no longer derives it.
+   */
+  private isManagerLike(
+    user: PosScopedRequestUser,
+    isPosToken: boolean,
+  ): boolean {
     const branchRole = String(user.branchRole || '')
       .trim()
       .toUpperCase();
@@ -305,10 +351,30 @@ export class PosBranchAccessGuard implements CanActivate {
       user.isOwner === true ||
       user.isTenantOwner === true ||
       branchRole === 'MANAGER' ||
-      normalizedRoles.some((role) =>
-        ['SUPER_ADMIN', 'ADMIN', 'POS_MANAGER'].includes(role),
-      )
+      this.hasAnyRole(user, ['SUPER_ADMIN', 'ADMIN']) ||
+      (isPosToken && this.hasAnyRole(user, ['POS_MANAGER']))
     );
+  }
+
+  private hasAnyRole(user: PosScopedRequestUser, wanted: string[]): boolean {
+    return (Array.isArray(user.roles) ? user.roles : []).some((role) =>
+      wanted.includes(
+        String(role || '')
+          .trim()
+          .toUpperCase(),
+      ),
+    );
+  }
+
+  /** @Roles names POS_MANAGER but not POS_OPERATOR: a managers-only route. */
+  private isManagerOnlyRoute(context: ExecutionContext): boolean {
+    const roles =
+      this.reflector.getAllAndOverride<string[]>('roles', [
+        context.getHandler(),
+        context.getClass(),
+      ]) ?? [];
+    const set = new Set(roles.map((r) => String(r).toUpperCase()));
+    return set.has('POS_MANAGER') && !set.has('POS_OPERATOR');
   }
 
   private extractBranchId(

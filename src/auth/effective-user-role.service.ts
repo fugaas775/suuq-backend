@@ -32,9 +32,18 @@ export class EffectiveUserRoleService {
       new Set((Array.isArray(user.roles) ? user.roles : []) as UserRole[]),
     );
 
+    // A VENDOR runs its own shop's POS workspace, so it is a POS_MANAGER.
+    // It is NEVER a platform ADMIN. It used to be (b5070bd, April 2026), with
+    // no stated reason, and because any signed-in account can make itself a
+    // vendor (POST /users/me/upgrade/vendor) that handed every account every
+    // @Roles(ADMIN) route — platform bank details, withdrawal approval, wallet
+    // top-ups, branch ownership transfer, user deletion — and skipped the
+    // branch-membership check on every POS route, so a vendor could read any
+    // school's roll and any branch's payroll. A real admin holds ADMIN STORED
+    // on the user row, which this copies through above. Tokens minted before
+    // this change are stripped by JwtStrategy until they expire.
     if (roles.includes(UserRole.VENDOR)) {
       roles.push(UserRole.POS_MANAGER);
-      roles.push(UserRole.ADMIN);
     }
 
     if (!user?.id) {

@@ -1127,7 +1127,10 @@ export class PurchaseOrdersService {
     dto: DispatchPurchaseOrderDto,
     actor: PurchaseOrderActorContext = {},
   ): Promise<PurchaseOrder> {
-    const purchaseOrder = await this.assertSupplierAuthorizedForOrder(id, actor);
+    const purchaseOrder = await this.assertSupplierAuthorizedForOrder(
+      id,
+      actor,
+    );
 
     if (
       ![
@@ -1165,12 +1168,14 @@ export class PurchaseOrdersService {
     for (const line of dto.lines) {
       const increment = Number(line.shippedQuantity) || 0;
       if (increment <= 0) continue;
-      const item = itemById.get(line.itemId)!;
+      const item = itemById.get(line.itemId);
       item.shippedQuantity = (item.shippedQuantity ?? 0) + increment;
       shippedAnything = true;
     }
     if (!shippedAnything) {
-      throw new BadRequestException('No quantities were shipped in this dispatch');
+      throw new BadRequestException(
+        'No quantities were shipped in this dispatch',
+      );
     }
 
     // Stamp the first-dispatch time + tracking; persist the per-line shipped
@@ -1946,6 +1951,23 @@ export class PurchaseOrdersService {
       ].includes(targetStatus) ||
         isBuyerAcceptOfCounterOffer) &&
       this.hasAnyRole(roles, buyerRoles)
+    ) {
+      return;
+    }
+
+    /* A VENDOR buyer whose supplier is not on the portal advances its own
+       order through the supplier's two steps — the "Mark acknowledged" /
+       "Mark shipped" buttons on the buyer's order page — or it could never
+       reach RECEIVED. That used to ride on the ADMIN derived from VENDOR,
+       which also made every vendor a platform admin; this keeps exactly the
+       two moves and nothing else. */
+    if (
+      (isSupplierAcknowledge ||
+        [
+          PurchaseOrderStatus.PARTIALLY_SHIPPED,
+          PurchaseOrderStatus.SHIPPED,
+        ].includes(targetStatus)) &&
+      this.hasAnyRole(roles, [UserRole.VENDOR])
     ) {
       return;
     }

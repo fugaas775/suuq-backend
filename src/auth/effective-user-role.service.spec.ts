@@ -97,11 +97,7 @@ describe('EffectiveUserRoleService', () => {
       roles: [UserRole.VENDOR],
     });
 
-    expect(roles).toEqual([
-      UserRole.VENDOR,
-      UserRole.POS_MANAGER,
-      UserRole.ADMIN,
-    ]);
+    expect(roles).toEqual([UserRole.VENDOR, UserRole.POS_MANAGER]);
   });
 
   it('derives POS_OPERATOR for active POS operators without manager access', async () => {
@@ -128,9 +124,33 @@ describe('EffectiveUserRoleService', () => {
     expect(roles).toEqual([
       UserRole.VENDOR,
       UserRole.POS_MANAGER,
-      UserRole.ADMIN,
       UserRole.POS_OPERATOR,
     ]);
+  });
+
+  it('never makes a VENDOR a platform ADMIN — any account can become a vendor', async () => {
+    branchRepository.find.mockResolvedValue([]);
+    assignmentRepository.find.mockResolvedValue([]);
+
+    const roles = await service.resolveRoles({
+      id: 77,
+      roles: [UserRole.VENDOR],
+    });
+
+    expect(roles).not.toContain(UserRole.ADMIN);
+    expect(roles).toContain(UserRole.POS_MANAGER);
+  });
+
+  it('keeps an ADMIN that is STORED on the user', async () => {
+    branchRepository.find.mockResolvedValue([]);
+    assignmentRepository.find.mockResolvedValue([]);
+
+    const roles = await service.resolveRoles({
+      id: 3,
+      roles: [UserRole.VENDOR, UserRole.ADMIN],
+    });
+
+    expect(roles).toContain(UserRole.ADMIN);
   });
 
   /**

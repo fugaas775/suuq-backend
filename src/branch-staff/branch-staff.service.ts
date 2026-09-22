@@ -406,9 +406,20 @@ export class BranchStaffService {
       where: { branchId, userId: user.id, isActive: true },
       select: { id: true },
     });
-    if (!assignment) {
-      throw new ForbiddenException('Branch access denied.');
+    if (assignment) return;
+    /* The branch's owner is a member whether or not a roster row says so —
+       the same rule RetailEntitlementsService.isUserActiveBranchMember reads.
+       A vendor owner used to pass above on the ADMIN derived from VENDOR;
+       that derivation is gone, and an owner with no staff row must not lose
+       their own roster. */
+    const branch = await this.branchesRepository.findOne({
+      where: { id: branchId },
+      select: { id: true, ownerId: true },
+    });
+    if (branch?.ownerId != null && Number(branch.ownerId) === Number(user.id)) {
+      return;
     }
+    throw new ForbiddenException('Branch access denied.');
   }
 
   async invite(

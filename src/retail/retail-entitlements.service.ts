@@ -185,7 +185,7 @@ export class RetailEntitlementsService {
   ): Promise<boolean> {
     const branch = await this.branchesRepository.findOne({
       where: { id: branchId },
-      select: ['id', 'ownerId'],
+      select: ['id', 'ownerId', 'retailTenantId'],
     });
     if (!branch) return false;
     if (branch.ownerId === userId) return true;
@@ -194,7 +194,22 @@ export class RetailEntitlementsService {
       where: { branchId, userId, isActive: true },
       select: ['id'],
     });
-    return assignment != null;
+    if (assignment != null) return true;
+
+    /* The owner of the TENANT the branch belongs to, as PosBranchAccessGuard's
+       isRosterManagerOrOwner already reads it. Until VENDOR stopped deriving
+       ADMIN, every vendor skipped this check entirely, so a tenant owner who is
+       neither the branch's ownerId nor on its roster was never asked; now they
+       would be refused their own branch without this. */
+    if (branch.retailTenantId == null) return false;
+    const tenant = await this.retailTenantsRepository.findOne({
+      where: { id: branch.retailTenantId },
+      select: ['id', 'ownerUserId'],
+    });
+    return (
+      tenant?.ownerUserId != null &&
+      Number(tenant.ownerUserId) === Number(userId)
+    );
   }
 
   async createTenant(dto: CreateRetailTenantDto): Promise<RetailTenant> {
