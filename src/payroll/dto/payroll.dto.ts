@@ -11,6 +11,7 @@ import {
   Min,
   MinLength,
   ValidateNested,
+  IsObject,
 } from 'class-validator';
 
 /** Pay this person THIS amount — an advance, or a hand-set remainder. */
@@ -172,6 +173,16 @@ export class UpdateBranchEmployeeDto {
   @IsOptional()
   @IsString()
   note?: string | null;
+
+  /**
+   * Merged into the row's jsonb `metadata` — whatever the branch keeps
+   * beside the person (phone, next of kin, the leaving decision). Keys
+   * given replace the same keys; keys left out stay.
+   */
+  @ApiPropertyOptional({ example: { leaving: { reason: 'RESIGNED' } } })
+  @IsOptional()
+  @IsObject()
+  metadata?: Record<string, unknown> | null;
 }
 
 export class ListPayrollRunsQueryDto {

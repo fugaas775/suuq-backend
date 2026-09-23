@@ -233,6 +233,14 @@ export class PayrollService {
     if (dto.note !== undefined) {
       row.note = dto.note ? String(dto.note).trim() : null;
     }
+    // A merge, not a replace: the leaving decision must not erase a phone
+    // number the office typed beside the person last year.
+    if (dto.metadata !== undefined) {
+      row.metadata =
+        dto.metadata == null
+          ? row.metadata
+          : { ...(row.metadata ?? {}), ...dto.metadata };
+    }
 
     return this.toEmployee(await this.employees.save(row));
   }

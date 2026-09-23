@@ -167,3 +167,10 @@ export function rangesOverlap(
 
 /** A request that still stands in the way of another for the same days. */
 export const LIVE_LEAVE_STATUSES = ['PENDING', 'APPROVED'] as const;
+
+/**
+ * The same people decide leave, give warnings and confirm a dismissal —
+ * one rule, one name for it wherever staff matters are decided.
+ */
+export const isStaffHead = isLeaveApprover;
+
