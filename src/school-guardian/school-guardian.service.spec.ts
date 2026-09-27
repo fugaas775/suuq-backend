@@ -82,7 +82,7 @@ function qb(rows: any[], filter: (row: any, params: Record<string, any>) => bool
   return b;
 }
 
-function makeService({ folios = [] as any[], users = [] as any[], guardians = [] as any[], pupils = [] as any[], checkouts = [] as any[], loans = [] as any[], classes = [] as any[], employees = [] as any[], slots = [] as any[] } = {}) {
+function makeService({ folios = [] as any[], users = [] as any[], guardians = [] as any[], pupils = [] as any[], checkouts = [] as any[], loans = [] as any[], classes = [] as any[], employees = [] as any[], slots = [] as any[], notices = [] as any[] } = {}) {
   const seq = { n: 1000 };
   const cartRepo = memRepo(folios, seq);
   cartRepo.createQueryBuilder = () => qb(folios, (r, p) => Number(r.branchId) === Number(p.branchId) && r.status === 'SUSPENDED' && String(r.cartSnapshot?.serviceFormat).toUpperCase() === 'SCHOOL');
@@ -116,8 +116,9 @@ function makeService({ folios = [] as any[], users = [] as any[], guardians = []
       return { accessToken: 'at', refreshToken: 'rt', user };
     },
   };
-  const svc = new SchoolGuardianService(guardianRepo, pupilRepo, cartRepo, checkoutRepo, branchRepo, userRepo, classRepo, employeeRepo, loanRepo, attendance, timetable, auth);
-  return { svc, users, guardians, pupils };
+  const noticeRepo = memRepo(notices, seq);
+  const svc = new SchoolGuardianService(guardianRepo, pupilRepo, cartRepo, checkoutRepo, branchRepo, userRepo, classRepo, employeeRepo, loanRepo, noticeRepo, attendance, timetable, auth);
+  return { svc, users, guardians, pupils, notices };
 }
 
 const OFFICE = { id: 1, email: 'o@x', roles: ['POS_MANAGER'] };
@@ -256,5 +257,52 @@ describe('SchoolGuardianService — the parent', () => {
     await expect(svc.changePassword(me, { currentPassword: 'sunny-2019', newPassword: 'longer-1' })).resolves.toEqual({ status: 'PASSWORD_CHANGED' });
     expect(await bcrypt.compare('longer-1', users[0].password)).toBe(true);
     await expect(svc.changePassword(4242, { currentPassword: 'x', newPassword: 'longer-1' })).rejects.toBeInstanceOf(ForbiddenException);
+  });
+});
+
+describe('SchoolGuardianService — notices and the issued-password nudge', () => {
+  it('the office posts a notice to the whole school or to classes; a family reads only what reaches their children, live and unexpired', async () => {
+    const { svc, users } = makeService({ folios: [folio(10, 128), folio(11, 128, { hotelRoomNumber: '4aad' })] });
+    await svc.create({ branchId: 128, username: 'cali', password: 'sunny-2019', folioIds: [10, 11] }, OFFICE);
+    const all = await svc.createNotice({ branchId: 128, title: 'Holiday', body: 'Closed Monday' }, OFFICE);
+    expect(all).toMatchObject({ audience: 'ALL', classCodes: [], isActive: true, createdByName: null });
+    const cls = await svc.createNotice({ branchId: 128, title: 'Exam 4aad', body: 'Bring pencils', audience: 'CLASSES', classCodes: ['4AAD'] }, OFFICE);
+    expect(cls.classCodes).toEqual(['4aad']);
+    const other = await svc.createNotice({ branchId: 128, title: 'Exam 9aad', body: 'x', audience: 'CLASSES', classCodes: ['9aad'] }, OFFICE);
+    const expired = await svc.createNotice({ branchId: 128, title: 'Old', body: 'x', expiresAt: '2020-01-01' }, OFFICE);
+    await expect(svc.createNotice({ branchId: 128, title: 'x', body: 'x', audience: 'CLASSES', classCodes: [] }, OFFICE)).rejects.toBeInstanceOf(BadRequestException);
+    await svc.updateNotice(other.id, { branchId: 128, isActive: false });
+    await expect(svc.updateNotice(other.id, { branchId: 115 })).rejects.toBeInstanceOf(NotFoundException);
+    // The memory repo keeps insertion order (the real one sorts newest first).
+    expect((await svc.listNotices(128)).items.map((n: any) => [n.title, n.isActive]).sort()).toEqual([['Exam 4aad', true], ['Exam 9aad', false], ['Holiday', true], ['Old', true]]);
+
+    const me = await svc.me(users[0].id);
+    expect(me.notices.map((n: any) => n.title).sort()).toEqual(['Exam 4aad', 'Holiday']);
+    expect(me.notices.find((n: any) => n.title === 'Exam 4aad')).toMatchObject({ schoolName: 'SMAG School', audience: 'CLASSES', classCodes: ['4aad'] });
+    expect(me.notices.some((n: any) => n.title === 'Old')).toBe(false);
+
+    await svc.removeNotice(expired.id, 128);
+    expect((await svc.listNotices(128)).items).toHaveLength(3);
+  });
+
+  it('says a parent is still on the office’s password until they change it themselves, and again after a reset', async () => {
+    const { svc, users, guardians } = makeService({ folios: [folio(10, 128)] });
+    const created = await svc.create({ branchId: 128, username: 'cali', password: 'sunny-2019', folioIds: [10] }, OFFICE);
+    const me = users[0].id;
+    expect((await svc.me(me)).user.usingIssuedPassword).toBe(true);
+    await new Promise((r) => setTimeout(r, 5));
+    await svc.changePassword(me, { currentPassword: 'sunny-2019', newPassword: 'my-own-1' });
+    expect(guardians[0].passwordChangedAt).toBeInstanceOf(Date);
+    expect((await svc.me(me)).user.usingIssuedPassword).toBe(false);
+    await new Promise((r) => setTimeout(r, 5));
+    await svc.resetPassword(created.id, { branchId: 128, password: 'office-2' });
+    expect((await svc.me(me)).user.usingIssuedPassword).toBe(true);
+  });
+
+  it('hands a family only their own pupil’s attendance rows even if the register read were widened', async () => {
+    const { svc, users } = makeService({ folios: [folio(10, 128)] });
+    await svc.create({ branchId: 128, username: 'cali', password: 'sunny-2019', folioIds: [10] }, OFFICE);
+    const out = await svc.pupil(users[0].id, 10);
+    expect(out.attendance.days.map((d: any) => d.subjectRef)).toEqual(['10']);
   });
 });

@@ -4,6 +4,7 @@ import {
   ArrayMinSize,
   IsArray,
   IsBoolean,
+  IsIn,
   IsInt,
   IsNotEmpty,
   IsOptional,
@@ -134,4 +135,84 @@ export class GuardianPortalChangePasswordDto {
   @MinLength(6)
   @MaxLength(128)
   newPassword!: string;
+}
+
+/* ── Notices from the office to parents ─────────────────────────────────── */
+
+export const NOTICE_AUDIENCES = ['ALL', 'CLASSES'] as const;
+
+export class ListSchoolNoticesQueryDto {
+  @Type(() => Number)
+  @IsInt()
+  branchId!: number;
+}
+
+export class CreateSchoolNoticeDto {
+  @IsInt()
+  branchId!: number;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(200)
+  title!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(4000)
+  body!: string;
+
+  @IsOptional()
+  @IsIn(NOTICE_AUDIENCES as unknown as string[])
+  audience?: 'ALL' | 'CLASSES';
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(60)
+  @IsString({ each: true })
+  @MaxLength(64, { each: true })
+  classCodes?: string[];
+
+  /** YYYY-MM-DD, the last day it shows. */
+  @IsOptional()
+  @IsString()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/)
+  expiresAt?: string;
+}
+
+export class UpdateSchoolNoticeDto {
+  @IsInt()
+  branchId!: number;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(200)
+  title?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(4000)
+  body?: string;
+
+  @IsOptional()
+  @IsIn(NOTICE_AUDIENCES as unknown as string[])
+  audience?: 'ALL' | 'CLASSES';
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(60)
+  @IsString({ each: true })
+  @MaxLength(64, { each: true })
+  classCodes?: string[];
+
+  /** '' clears it. */
+  @IsOptional()
+  @IsString()
+  @Matches(/^(\d{4}-\d{2}-\d{2})?$/)
+  expiresAt?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
 }

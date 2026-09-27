@@ -26,9 +26,12 @@ import { RetailModulesGuard } from '../retail/retail-modules.guard';
 import { PosSchoolPermission } from '../school/permissions/pos-school-permission.enum';
 import {
   CreateSchoolGuardianDto,
+  CreateSchoolNoticeDto,
   ListSchoolGuardiansQueryDto,
+  ListSchoolNoticesQueryDto,
   ResetSchoolGuardianPasswordDto,
   UpdateSchoolGuardianDto,
+  UpdateSchoolNoticeDto,
 } from './dto/school-guardian.dto';
 import { SchoolGuardianService } from './school-guardian.service';
 
@@ -114,5 +117,56 @@ export class SchoolGuardianController {
     @Query('branchId', ParseIntPipe) branchId: number,
   ) {
     return this.svc.remove(id, branchId);
+  }
+}
+
+/**
+ * Notices from the office to the families — the other half of the same
+ * desk, on the same right (ENROL_STUDENT). A parent reads them through
+ * `guardian-portal/me`, filtered to the whole school's and their own
+ * children's classes'.
+ */
+@ApiTags('School Notices')
+@Controller('pos/v1/school/notices')
+@UseGuards(...GUARDS)
+@Roles(...ROLES)
+@RequireRetailModules(RetailOsModule.POS_CORE)
+export class SchoolNoticeController {
+  constructor(private readonly svc: SchoolGuardianService) {}
+
+  private actor(req: AuthenticatedRequest) {
+    const u = (req.user ?? {}) as { id?: number; email?: string; roles?: string[] };
+    return { id: u.id ?? null, email: u.email ?? null, roles: u.roles ?? [] };
+  }
+
+  @Get()
+  @RetailBranchContext('query.branchId')
+  @RequirePosPermissions(PosSchoolPermission.ENROL_STUDENT)
+  list(@Query() query: ListSchoolNoticesQueryDto) {
+    return this.svc.listNotices(query.branchId);
+  }
+
+  @Post()
+  @RetailBranchContext('body.branchId')
+  @RequirePosPermissions(PosSchoolPermission.ENROL_STUDENT)
+  create(@Body() dto: CreateSchoolNoticeDto, @Req() req: AuthenticatedRequest) {
+    return this.svc.createNotice(dto, this.actor(req));
+  }
+
+  @Patch(':id')
+  @RetailBranchContext('body.branchId')
+  @RequirePosPermissions(PosSchoolPermission.ENROL_STUDENT)
+  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateSchoolNoticeDto) {
+    return this.svc.updateNotice(id, dto);
+  }
+
+  @Delete(':id')
+  @RetailBranchContext('query.branchId')
+  @RequirePosPermissions(PosSchoolPermission.ENROL_STUDENT)
+  remove(
+    @Param('id', ParseIntPipe) id: number,
+    @Query('branchId', ParseIntPipe) branchId: number,
+  ) {
+    return this.svc.removeNotice(id, branchId);
   }
 }

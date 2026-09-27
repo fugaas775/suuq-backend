@@ -62,6 +62,10 @@ export class SchoolGuardian {
   @Column({ type: 'timestamptz', nullable: true })
   passwordIssuedAt!: Date | null;
 
+  /** When the PARENT last changed the password themselves (change-password). */
+  @Column({ type: 'timestamptz', nullable: true })
+  passwordChangedAt!: Date | null;
+
   @Column({ type: 'timestamptz', nullable: true })
   lastLoginAt!: Date | null;
 

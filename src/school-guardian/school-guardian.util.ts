@@ -126,7 +126,45 @@ const SNAPSHOT_DENYLIST = new Set([
   // Who at the office did what: not the family's business.
   'schoolStatusBy',
   'schoolStatusHistory',
+  // The till's actor stamps — the cashier who settled, opened, merged, voided.
+  'settledBy',
+  'paidBy',
+  'openedBy',
+  'mergedBy',
+  'voidedBy',
+  'createdBy',
 ]);
+
+/** A key that names WHO did something at the till: `xxxByName`, `xxxByUserId`. */
+const ACTOR_STAMP = /By(Name|UserId)$/;
+
+function isActorStamp(key: string): boolean {
+  return SNAPSHOT_DENYLIST.has(key) || ACTOR_STAMP.test(key);
+}
+
+/**
+ * Does a notice reach a family whose children sit in `classCodes`?
+ * ALL reaches everyone; CLASSES reaches a family with a child in any named
+ * class (codes folded, as every class reader folds them).
+ */
+export function noticeReaches(
+  notice: { audience?: string | null; classCodes?: string[] | null },
+  classCodes: Iterable<string>,
+): boolean {
+  if (String(notice?.audience ?? 'ALL').toUpperCase() !== 'CLASSES') return true;
+  const wanted = new Set([...classCodes].map((c) => text(c).toLowerCase()).filter(Boolean));
+  return (notice.classCodes ?? []).some((c) => wanted.has(text(c).toLowerCase()));
+}
+
+/** Is a notice live today? Active, and not past its last day. */
+export function noticeIsLive(
+  notice: { isActive?: boolean; expiresAt?: string | null },
+  today: string,
+): boolean {
+  if (notice.isActive === false) return false;
+  const until = text(notice.expiresAt).slice(0, 10);
+  return !until || until >= today;
+}
 
 /**
  * The pupil's record as the family may read it: the folio the FE money and
@@ -150,7 +188,7 @@ export function guardianFolioView(row: {
   const meta = (row?.metadata ?? {}) as Record<string, unknown>;
   const cartSnapshot: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(snap)) {
-    if (SNAPSHOT_DENYLIST.has(key)) continue;
+    if (isActorStamp(key)) continue;
     cartSnapshot[key] = value;
   }
   const stripBy = (list: unknown) =>

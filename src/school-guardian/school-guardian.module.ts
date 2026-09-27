@@ -14,8 +14,9 @@ import { SchoolModule } from '../school/school.module';
 import { User } from '../users/entities/user.entity';
 import { SchoolGuardianPupil } from './entities/school-guardian-pupil.entity';
 import { SchoolGuardian } from './entities/school-guardian.entity';
+import { SchoolNotice } from './entities/school-notice.entity';
 import { SchoolGuardianPortalController } from './school-guardian-portal.controller';
-import { SchoolGuardianController } from './school-guardian.controller';
+import { SchoolGuardianController, SchoolNoticeController } from './school-guardian.controller';
 import { SchoolGuardianService } from './school-guardian.service';
 
 /**
@@ -31,6 +32,7 @@ import { SchoolGuardianService } from './school-guardian.service';
     TypeOrmModule.forFeature([
       SchoolGuardian,
       SchoolGuardianPupil,
+      SchoolNotice,
       // Read-only: the pupils' records, the receipts settled against them,
       // the class registry (for the class teacher), the books out.
       PosSuspendedCart,
@@ -45,7 +47,7 @@ import { SchoolGuardianService } from './school-guardian.service';
     SchoolModule,
     AttendanceModule,
   ],
-  controllers: [SchoolGuardianController, SchoolGuardianPortalController],
+  controllers: [SchoolGuardianController, SchoolNoticeController, SchoolGuardianPortalController],
   providers: [SchoolGuardianService, PosBranchAccessGuard, RolesGuard],
   exports: [SchoolGuardianService],
 })

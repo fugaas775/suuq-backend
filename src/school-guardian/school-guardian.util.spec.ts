@@ -4,6 +4,8 @@ import {
   guardianFolioView,
   guardianReceiptView,
   isPupilRecord,
+  noticeIsLive,
+  noticeReaches,
   normalizePhoneKey,
   pupilOf,
   suggestGuardianUsername,
@@ -31,6 +33,7 @@ const pupil = (over: Record<string, unknown> = {}, meta: Record<string, unknown>
     schoolStatusHistory: [{ by: 'Office' }],
     schoolLeavingBills: [{ on: '2026-09-27', by: 'Suuq S', waived: 500 }],
     schoolClassHistory: [{ from: '2aad', to: '3aad', by: 'Fuad' }],
+    settledBy: 'Hibo', settledByName: 'Hibo', paidBy: 'Hibo', openedByName: 'Hibo', lastSettledByUserId: 77,
     ...over,
   },
 });
@@ -83,6 +86,7 @@ describe('school-guardian.util', () => {
     const view = guardianFolioView(pupil({}, { partialPaidAmount: 500, registerSessionId: 9 }));
     expect(view.cartSnapshot).not.toHaveProperty('schoolStatusBy');
     expect(view.cartSnapshot).not.toHaveProperty('schoolStatusHistory');
+    for (const k of ['settledBy', 'settledByName', 'paidBy', 'openedByName', 'lastSettledByUserId']) expect(view.cartSnapshot).not.toHaveProperty(k);
     expect(view.cartSnapshot.hotelGuestName).toBe('Faadumo Cali');
     expect(view.cartSnapshot.schoolLeavingBills).toEqual([{ on: '2026-09-27', waived: 500 }]);
     expect(view.cartSnapshot.schoolClassHistory).toEqual([{ from: '2aad', to: '3aad' }]);
@@ -103,5 +107,20 @@ describe('school-guardian.util', () => {
     expect(view.items[0].metadata).toEqual({ schoolClass: '3aad' });
     expect(view.metadata).toEqual({ folioId: 10422, backendFolioId: null, roomNumber: null, guestName: null, returnContext: { sourceReceiptNumber: 'POS-0' } });
     expect(view.sourceReceiptNumber).toBe('POS-0');
+  });
+});
+
+describe('notices', () => {
+  it('reach everyone when ALL, and a family with a child in a named class when CLASSES', () => {
+    expect(noticeReaches({ audience: 'ALL' }, [])).toBe(true);
+    expect(noticeReaches({ audience: 'CLASSES', classCodes: ['4aad'] }, ['3aad', '4AAD'])).toBe(true);
+    expect(noticeReaches({ audience: 'CLASSES', classCodes: ['4aad'] }, ['3aad'])).toBe(false);
+    expect(noticeReaches({ audience: 'CLASSES', classCodes: [] }, ['3aad'])).toBe(false);
+  });
+  it('are live while active and not past their last day', () => {
+    expect(noticeIsLive({ isActive: true, expiresAt: null }, '2026-09-27')).toBe(true);
+    expect(noticeIsLive({ isActive: true, expiresAt: '2026-09-27' }, '2026-09-27')).toBe(true);
+    expect(noticeIsLive({ isActive: true, expiresAt: '2026-09-26' }, '2026-09-27')).toBe(false);
+    expect(noticeIsLive({ isActive: false, expiresAt: null }, '2026-09-27')).toBe(false);
   });
 });

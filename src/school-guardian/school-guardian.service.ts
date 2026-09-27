@@ -28,18 +28,23 @@ import { SchoolTimetableService } from '../school/school-timetable.service';
 import { User } from '../users/entities/user.entity';
 import {
   CreateSchoolGuardianDto,
+  CreateSchoolNoticeDto,
   GuardianPortalChangePasswordDto,
   ResetSchoolGuardianPasswordDto,
   UpdateSchoolGuardianDto,
+  UpdateSchoolNoticeDto,
 } from './dto/school-guardian.dto';
 import { SchoolGuardianPupil } from './entities/school-guardian-pupil.entity';
 import { SchoolGuardian } from './entities/school-guardian.entity';
+import { SchoolNotice } from './entities/school-notice.entity';
 import {
   dedupeUsername,
   folioMoney,
   guardianFolioView,
   guardianReceiptView,
   isPupilRecord,
+  noticeIsLive,
+  noticeReaches,
   normalizePhoneKey,
   pupilOf,
   suggestGuardianUsername,
@@ -84,6 +89,8 @@ export class SchoolGuardianService {
     private readonly employees: Repository<BranchEmployee>,
     @InjectRepository(SchoolTextbookLoan)
     private readonly loans: Repository<SchoolTextbookLoan>,
+    @InjectRepository(SchoolNotice)
+    private readonly notices: Repository<SchoolNotice>,
     private readonly attendance: AttendanceService,
     private readonly timetable: SchoolTimetableService,
     private readonly auth: AuthService,
@@ -501,6 +508,117 @@ export class SchoolGuardianService {
     return { status: 'REMOVED', id: Number(g.id), userRemoved };
   }
 
+  // ── notices to parents (office) ──────────────────────────────────────────
+
+  private noticeView(n: SchoolNotice) {
+    return {
+      id: Number(n.id),
+      branchId: n.branchId,
+      title: n.title,
+      body: n.body,
+      audience: n.audience ?? 'ALL',
+      classCodes: n.classCodes ?? [],
+      publishedAt: n.publishedAt ?? n.createdAt ?? null,
+      expiresAt: n.expiresAt ?? null,
+      isActive: n.isActive !== false,
+      createdByName: n.createdByName ?? null,
+      createdAt: n.createdAt,
+      updatedAt: n.updatedAt,
+    };
+  }
+
+  private normalizeNoticeAudience(
+    audience: string | undefined,
+    classCodes: string[] | undefined,
+    current?: SchoolNotice,
+  ) {
+    const wanted = text(audience ?? current?.audience ?? 'ALL').toUpperCase();
+    const codes = [...new Set((classCodes ?? current?.classCodes ?? []).map((c) => fold(c)).filter(Boolean))];
+    if (wanted === 'CLASSES' && !codes.length) {
+      throw new BadRequestException('Name at least one class, or send the notice to the whole school.');
+    }
+    return { audience: (wanted === 'CLASSES' ? 'CLASSES' : 'ALL') as 'ALL' | 'CLASSES', classCodes: wanted === 'CLASSES' ? codes : null };
+  }
+
+  async listNotices(branchId: number) {
+    const rows = await this.notices.find({
+      where: { branchId },
+      order: { publishedAt: 'DESC', id: 'DESC' },
+      take: 200,
+    });
+    return { items: rows.map((n) => this.noticeView(n)) };
+  }
+
+  async createNotice(dto: CreateSchoolNoticeDto, actor: Actor) {
+    const { audience, classCodes } = this.normalizeNoticeAudience(dto.audience, dto.classCodes);
+    const row = this.notices.create({
+      branchId: dto.branchId,
+      title: text(dto.title),
+      body: text(dto.body),
+      audience,
+      classCodes,
+      publishedAt: new Date(),
+      expiresAt: text(dto.expiresAt) || null,
+      isActive: true,
+      createdByUserId: actor?.id ? Number(actor.id) : null,
+      createdByName: await this.actorName(actor),
+    });
+    return this.noticeView(await this.notices.save(row));
+  }
+
+  async updateNotice(id: number, dto: UpdateSchoolNoticeDto) {
+    const row = await this.notices.findOne({ where: { id, branchId: dto.branchId } });
+    if (!row) throw new NotFoundException('Notice not found on this school.');
+    if (dto.title !== undefined) row.title = text(dto.title);
+    if (dto.body !== undefined) row.body = text(dto.body);
+    if (dto.audience !== undefined || dto.classCodes !== undefined) {
+      const { audience, classCodes } = this.normalizeNoticeAudience(dto.audience, dto.classCodes, row);
+      row.audience = audience;
+      row.classCodes = classCodes;
+    }
+    if (dto.expiresAt !== undefined) row.expiresAt = text(dto.expiresAt) || null;
+    if (dto.isActive !== undefined) row.isActive = dto.isActive !== false;
+    return this.noticeView(await this.notices.save(row));
+  }
+
+  async removeNotice(id: number, branchId: number) {
+    const row = await this.notices.findOne({ where: { id, branchId } });
+    if (!row) throw new NotFoundException('Notice not found on this school.');
+    await this.notices.remove(row);
+    return { status: 'REMOVED', id };
+  }
+
+  /** The live notices a family sees: the whole school's, and their children's classes'. */
+  private async noticesFor(
+    held: { guardian: SchoolGuardian; branch: Branch }[],
+    classesByBranch: Map<number, Set<string>>,
+  ) {
+    if (!held.length) return [];
+    const branchIds = [...new Set(held.map((h) => Number(h.branch.id)))];
+    const rows = await this.notices.find({
+      where: { branchId: In(branchIds), isActive: true },
+      order: { publishedAt: 'DESC', id: 'DESC' },
+      take: 200,
+    });
+    const today = new Date().toISOString().slice(0, 10);
+    const names = new Map(held.map((h) => [Number(h.branch.id), h.branch.name]));
+    return rows
+      .filter((n) => noticeIsLive(n, today))
+      .filter((n) => noticeReaches(n, classesByBranch.get(Number(n.branchId)) ?? []))
+      .slice(0, 50)
+      .map((n) => ({
+        id: Number(n.id),
+        branchId: n.branchId,
+        schoolName: names.get(Number(n.branchId)) ?? null,
+        title: n.title,
+        body: n.body,
+        audience: n.audience ?? 'ALL',
+        classCodes: n.classCodes ?? [],
+        publishedAt: n.publishedAt ?? n.createdAt ?? null,
+        expiresAt: n.expiresAt ?? null,
+      }));
+  }
+
   // ── portal ───────────────────────────────────────────────────────────────
 
   private async activeGuardianships(userId: number) {
@@ -588,6 +706,25 @@ export class SchoolGuardianService {
     const folios = await this.foliosById(
       [...links.values()].flat().map((l) => Number(l.folioId)),
     );
+    // The classes this family's children sit in, per school — what decides
+    // which class notices reach them.
+    const classesByBranch = new Map<number, Set<string>>();
+    for (const { guardian, branch } of held) {
+      const set = classesByBranch.get(Number(branch.id)) ?? new Set<string>();
+      for (const l of links.get(Number(guardian.id)) ?? []) {
+        const row = folios.get(Number(l.folioId));
+        const code = row ? fold(pupilOf(row).classCode) : '';
+        if (code) set.add(code);
+      }
+      classesByBranch.set(Number(branch.id), set);
+    }
+    // Still on the password the office printed on the card? True until the
+    // parent changes it themselves AFTER the office last set it.
+    const usingIssuedPassword = held.every(({ guardian }) => {
+      const issued = guardian.passwordIssuedAt ? new Date(guardian.passwordIssuedAt).getTime() : 0;
+      const changed = guardian.passwordChangedAt ? new Date(guardian.passwordChangedAt).getTime() : 0;
+      return !changed || changed < issued;
+    });
     return {
       user: {
         id: userId,
@@ -597,7 +734,9 @@ export class SchoolGuardianService {
           user?.displayName ??
           null,
         canChangePassword: user?.authMode === 'MANUAL',
+        usingIssuedPassword: user?.authMode === 'MANUAL' && usingIssuedPassword,
       },
+      notices: await this.noticesFor(held, classesByBranch),
       schools: held.map(({ guardian, branch }) => ({
         ...this.schoolView(branch),
         guardian: {
@@ -737,8 +876,10 @@ export class SchoolGuardianService {
       folio: guardianFolioView(row),
       receipts,
       attendance: {
-        days: attendanceDays.items,
-        lessons: attendanceLessons.items,
+        // The query is scoped to this pupil in the database; the filter here
+        // is the belt, so a widened query can never hand a family the class.
+        days: attendanceDays.items.filter((r) => String(r.subjectRef) === String(folioId)),
+        lessons: attendanceLessons.items.filter((r) => String(r.subjectRef) === String(folioId)),
       },
       textbooks: loans.map((l) => ({
         id: Number(l.id),
@@ -785,6 +926,7 @@ export class SchoolGuardianService {
     }
     user.password = await bcrypt.hash(dto.newPassword, 10);
     await this.users.save(user);
+    await this.guardians.update({ userId }, { passwordChangedAt: new Date() });
     return { status: 'PASSWORD_CHANGED' };
   }
 }
