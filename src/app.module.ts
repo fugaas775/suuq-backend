@@ -84,6 +84,7 @@ import { VehicleRegistryModule } from './vehicle-registry/vehicle-registry.modul
 import { PayrollModule } from './payroll/payroll.module';
 import { PurchasingModule } from './purchasing/purchasing.module';
 import { AttendanceModule } from './attendance/attendance.module';
+import { SchoolGuardianModule } from './school-guardian/school-guardian.module';
 import { StorefrontModule } from './storefront/storefront.module';
 import { ConsumerModule } from './consumer/consumer.module';
 import { ParkedOrdersModule } from './parked-orders/parked-orders.module';
@@ -280,6 +281,7 @@ import { ParkedOrdersModule } from './parked-orders/parked-orders.module';
     PayrollModule,
     PurchasingModule,
     AttendanceModule,
+    SchoolGuardianModule,
     AccountingModule,
     StorefrontModule,
     ConsumerModule,

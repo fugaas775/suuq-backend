@@ -1,0 +1,107 @@
+import {
+  dedupeUsername,
+  folioMoney,
+  guardianFolioView,
+  guardianReceiptView,
+  isPupilRecord,
+  normalizePhoneKey,
+  pupilOf,
+  suggestGuardianUsername,
+  usernameFromName,
+} from './school-guardian.util';
+
+const pupil = (over: Record<string, unknown> = {}, meta: Record<string, unknown> = {}) => ({
+  id: 10422,
+  branchId: 128,
+  status: 'SUSPENDED',
+  total: 2500,
+  label: 'x',
+  currency: 'ETB',
+  itemCount: 2,
+  metadata: meta,
+  cartSnapshot: {
+    serviceFormat: 'SCHOOL',
+    hotelGuestName: 'Faadumo Cali',
+    hotelRoomNumber: '3aad',
+    schoolAdmissionNo: 'SMAG-0127',
+    schoolGuardianName: 'Cali Xasan',
+    hotelGuestPhone: '+251 915 333 513',
+    hotelCheckInAt: '2026-09-12T08:00:00.000Z',
+    schoolStatusBy: 'Office',
+    schoolStatusHistory: [{ by: 'Office' }],
+    schoolLeavingBills: [{ on: '2026-09-27', by: 'Suuq S', waived: 500 }],
+    schoolClassHistory: [{ from: '2aad', to: '3aad', by: 'Fuad' }],
+    ...over,
+  },
+});
+
+describe('school-guardian.util', () => {
+  it('folds a phone to digits, +251 to the local form, and suggests it as the username', () => {
+    expect(normalizePhoneKey('+251 915 333 513')).toBe('0915333513');
+    expect(normalizePhoneKey('0915-333-513')).toBe('0915333513');
+    expect(normalizePhoneKey('')).toBe('');
+    expect(suggestGuardianUsername({ phone: '+251915333513', guardianName: 'Cali Xasan' })).toBe('0915333513');
+    // Too short a phone → the name.
+    expect(suggestGuardianUsername({ phone: '1234', guardianName: 'Cali Xasan Warsame' })).toBe('cali.warsame');
+    expect(usernameFromName('  Ali ')).toBe('ali');
+    expect(suggestGuardianUsername({ phone: '', guardianName: 'Al' })).toBe('');
+  });
+
+  it('de-duplicates a taken username with a numeric suffix', () => {
+    const taken = new Set(['0915333513', '0915333513.2']);
+    expect(dedupeUsername('0915333513', taken)).toBe('0915333513.3');
+    expect(dedupeUsername('free', taken)).toBe('free');
+  });
+
+  it('reads a pupil the way the roll does, and knows a leaver and a withdrawn record', () => {
+    expect(pupilOf(pupil())).toMatchObject({
+      folioId: 10422, name: 'Faadumo Cali', classCode: '3aad', admissionNo: 'SMAG-0127',
+      guardianName: 'Cali Xasan', guardianPhone: '+251 915 333 513', enrolledAt: '2026-09-12', status: 'ACTIVE', leftOn: null,
+    });
+    expect(pupilOf(pupil({ schoolStatus: 'INACTIVE', schoolStatusOn: '2026-09-20' }))).toMatchObject({ status: 'INACTIVE', leftOn: '2026-09-20' });
+    expect(pupilOf({ ...pupil(), status: 'DISCARDED' })).toMatchObject({ status: 'WITHDRAWN' });
+  });
+
+  it('mirrors studentFolioMoney: a paid folio has paid its total, a partial reads the instalment, credit is paid beyond the bill', () => {
+    expect(folioMoney(pupil())).toEqual({ total: 2500, paidTotal: 0, outstanding: 2500, credit: 0 });
+    expect(folioMoney(pupil({ paid: true }))).toEqual({ total: 2500, paidTotal: 2500, outstanding: 0, credit: 0 });
+    expect(folioMoney(pupil({}, { partialPaidAmount: 1000 }))).toEqual({ total: 2500, paidTotal: 1000, outstanding: 1500, credit: 0 });
+    expect(folioMoney({ ...pupil({}, { partialPaidAmount: 2500 }), total: 0 })).toEqual({ total: 0, paidTotal: 2500, outstanding: 0, credit: 2500 });
+  });
+
+  it('counts a SCHOOL record with a name as a pupil, and not an application, a voided row or a shop cart', () => {
+    expect(isPupilRecord(pupil())).toBe(true);
+    expect(isPupilRecord(pupil({ paid: 'voided' }))).toBe(false);
+    expect(isPupilRecord(pupil({ hotelGuestName: '' }))).toBe(false);
+    expect(isPupilRecord(pupil({ serviceFormat: 'QSR' }))).toBe(false);
+    expect(isPupilRecord(pupil({}, { consumerSource: 'SUUQS', orderMode: 'QUOTE' }))).toBe(false);
+    // An accepted application that became a pupil is no longer QUOTE-mode.
+    expect(isPupilRecord(pupil({}, { consumerSource: 'SUUQS', orderMode: 'ORDER' }))).toBe(true);
+  });
+
+  it('hands the family the record minus who at the office did what', () => {
+    const view = guardianFolioView(pupil({}, { partialPaidAmount: 500, registerSessionId: 9 }));
+    expect(view.cartSnapshot).not.toHaveProperty('schoolStatusBy');
+    expect(view.cartSnapshot).not.toHaveProperty('schoolStatusHistory');
+    expect(view.cartSnapshot.hotelGuestName).toBe('Faadumo Cali');
+    expect(view.cartSnapshot.schoolLeavingBills).toEqual([{ on: '2026-09-27', waived: 500 }]);
+    expect(view.cartSnapshot.schoolClassHistory).toEqual([{ from: '2aad', to: '3aad' }]);
+    expect(view.metadata).toEqual({ partialPaidAmount: 500, paidReceiptNumber: null });
+    expect(view.total).toBe(2500);
+  });
+
+  it('hands the family a receipt without the cashier', () => {
+    const view = guardianReceiptView({
+      id: 5, receiptNumber: 'POS-128-1', transactionType: 'SALE', status: 'PROCESSED', currency: 'ETB',
+      total: 500, paidAmount: 500, changeDue: 0, occurredAt: '2026-09-20T09:00:00.000Z',
+      cashierUserId: 77, cashierName: 'Hibo', tenders: [{ method: 'CASH', amount: 500, reference: 'x' }],
+      items: [{ title: 'Registration', quantity: 1, unitPrice: 500, lineTotal: 500, metadata: { schoolClass: '3aad', internal: 1 } }],
+      metadata: { folioId: 10422, registerId: 'r1', returnContext: { sourceReceiptNumber: 'POS-0', refundMethod: 'CASH' } },
+    });
+    expect(view).not.toHaveProperty('cashierName');
+    expect(view.tenders).toEqual([{ method: 'CASH', amount: 500 }]);
+    expect(view.items[0].metadata).toEqual({ schoolClass: '3aad' });
+    expect(view.metadata).toEqual({ folioId: 10422, backendFolioId: null, roomNumber: null, guestName: null, returnContext: { sourceReceiptNumber: 'POS-0' } });
+    expect(view.sourceReceiptNumber).toBe('POS-0');
+  });
+});
