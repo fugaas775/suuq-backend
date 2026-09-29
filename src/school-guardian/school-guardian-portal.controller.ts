@@ -18,10 +18,13 @@ import {
   GuardianPortalChangePasswordDto,
   GuardianPortalLoginDto,
 } from './dto/school-guardian.dto';
+import { GuardianPortalSendMessageDto } from './dto/school-message.dto';
 import { SchoolGuardianService } from './school-guardian.service';
 
 // Same budget as the POS portal's sign-in: ten tries a minute per caller.
 const LOGIN_THROTTLE = { default: { ttl: 60_000, limit: 10 } };
+// A family writes a few lines, not a stream: twenty a minute is generous.
+const MESSAGE_THROTTLE = { default: { ttl: 60_000, limit: 20 } };
 
 /**
  * The parent's own door.
@@ -62,6 +65,28 @@ export class SchoolGuardianPortalController {
     @Req() req: AuthenticatedRequest,
   ) {
     return this.svc.pupil(this.userId(req), folioId);
+  }
+
+  /** The family's conversation with the school about this child. */
+  @Get('pupils/:folioId/messages')
+  @UseGuards(JwtAuthGuard)
+  messages(
+    @Param('folioId', ParseIntPipe) folioId: number,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.svc.pupilMessages(this.userId(req), folioId);
+  }
+
+  @Post('pupils/:folioId/messages')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard)
+  @Throttle(MESSAGE_THROTTLE)
+  sendMessage(
+    @Param('folioId', ParseIntPipe) folioId: number,
+    @Body() dto: GuardianPortalSendMessageDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.svc.sendPupilMessage(this.userId(req), folioId, dto.body);
   }
 
   @Post('change-password')

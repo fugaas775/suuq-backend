@@ -36,19 +36,28 @@ import {
 } from './dto/school-guardian.dto';
 import { SchoolGuardianPupil } from './entities/school-guardian-pupil.entity';
 import { SchoolGuardian } from './entities/school-guardian.entity';
-import { SchoolNotice } from './entities/school-notice.entity';
+import {
+  SchoolNotice,
+  SchoolNoticeAudience,
+} from './entities/school-notice.entity';
 import {
   dedupeUsername,
   folioMoney,
   guardianFolioView,
   guardianReceiptView,
   isPupilRecord,
+  localDayIn,
   noticeIsLive,
   noticeReaches,
   normalizePhoneKey,
   pupilOf,
+  rankClassByTerm,
+  readReports,
+  schoolTimeZone,
   suggestGuardianUsername,
 } from './school-guardian.util';
+import { SchoolHomeworkService } from './school-homework.service';
+import { SchoolMessageService } from './school-message.service';
 
 const text = (v: unknown) => String(v ?? '').trim();
 const fold = (v: unknown) => text(v).toLowerCase();
@@ -94,6 +103,8 @@ export class SchoolGuardianService {
     private readonly attendance: AttendanceService,
     private readonly timetable: SchoolTimetableService,
     private readonly auth: AuthService,
+    private readonly homework: SchoolHomeworkService,
+    private readonly messages: SchoolMessageService,
   ) {}
 
   // ── shared reads ─────────────────────────────────────────────────────────
@@ -114,7 +125,9 @@ export class SchoolGuardianService {
     return rows.filter((r) => isPupilRecord(r));
   }
 
-  private async foliosById(ids: number[]): Promise<Map<number, PosSuspendedCart>> {
+  private async foliosById(
+    ids: number[],
+  ): Promise<Map<number, PosSuspendedCart>> {
     const unique = [...new Set(ids.map((n) => Number(n)).filter((n) => n > 0))];
     if (!unique.length) return new Map();
     const rows = await this.carts.find({ where: { id: In(unique) } });
@@ -140,7 +153,7 @@ export class SchoolGuardianService {
     for (const row of rows) {
       const key = Number(row.guardianId);
       if (!out.has(key)) out.set(key, []);
-      out.get(key)!.push(row);
+      out.get(key).push(row);
     }
     return out;
   }
@@ -231,7 +244,9 @@ export class SchoolGuardianService {
       this.pupilRecords(branchId),
       this.guardians.find({ where: { branchId, isActive: true } }),
     ]);
-    const links = await this.pupilsByGuardian(guardians.map((g) => Number(g.id)));
+    const links = await this.pupilsByGuardian(
+      guardians.map((g) => Number(g.id)),
+    );
     const linked = new Set(
       [...links.values()].flat().map((l) => Number(l.folioId)),
     );
@@ -249,7 +264,8 @@ export class SchoolGuardianService {
       if (p.status !== 'ACTIVE') continue;
       if (linked.has(p.folioId)) continue;
       const phoneKey = normalizePhoneKey(p.guardianPhone);
-      const key = phoneKey.length >= 7 ? `phone:${phoneKey}` : `folio:${p.folioId}`;
+      const key =
+        phoneKey.length >= 7 ? `phone:${phoneKey}` : `folio:${p.folioId}`;
       if (!families.has(key)) {
         families.set(key, {
           key,
@@ -258,8 +274,9 @@ export class SchoolGuardianService {
           pupils: [],
         });
       }
-      const family = families.get(key)!;
-      if (!family.guardianName && p.guardianName) family.guardianName = p.guardianName;
+      const family = families.get(key);
+      if (!family.guardianName && p.guardianName)
+        family.guardianName = p.guardianName;
       family.pupils.push(p);
     }
 
@@ -307,9 +324,11 @@ export class SchoolGuardianService {
         })),
       };
     });
-    items.sort((a, b) =>
-      (a.pupils[0]?.classCode || '').localeCompare(b.pupils[0]?.classCode || '') ||
-      (a.pupils[0]?.name || '').localeCompare(b.pupils[0]?.name || ''),
+    items.sort(
+      (a, b) =>
+        (a.pupils[0]?.classCode || '').localeCompare(
+          b.pupils[0]?.classCode || '',
+        ) || (a.pupils[0]?.name || '').localeCompare(b.pupils[0]?.name || ''),
     );
     return {
       items,
@@ -347,7 +366,8 @@ export class SchoolGuardianService {
 
   private async findGuardianOnBranch(id: number, branchId: number) {
     const row = await this.guardians.findOne({ where: { id, branchId } });
-    if (!row) throw new NotFoundException('Parent login not found on this school.');
+    if (!row)
+      throw new NotFoundException('Parent login not found on this school.');
     return row;
   }
 
@@ -362,7 +382,9 @@ export class SchoolGuardianService {
     const folioIds = await this.assertPupilFolios(dto.branchId, dto.folioIds);
     const username = fold(dto.username);
 
-    const clash = await this.users.findOne({ where: { posUsername: username } });
+    const clash = await this.users.findOne({
+      where: { posUsername: username },
+    });
     if (clash) {
       throw new ConflictException({
         error: {
@@ -373,7 +395,9 @@ export class SchoolGuardianService {
       });
     }
     const internalEmail = `${GUARDIAN_INTERNAL_EMAIL_PREFIX}${username}@sys.internal`;
-    const staleByEmail = await this.users.findOne({ where: { email: internalEmail } });
+    const staleByEmail = await this.users.findOne({
+      where: { email: internalEmail },
+    });
     if (staleByEmail) {
       throw new ConflictException({
         error: {
@@ -411,7 +435,9 @@ export class SchoolGuardianService {
         passwordIssuedAt: new Date(),
         lastLoginAt: null,
       });
-      const savedGuardian = await em.getRepository(SchoolGuardian).save(guardian);
+      const savedGuardian = await em
+        .getRepository(SchoolGuardian)
+        .save(guardian);
       await em.getRepository(SchoolGuardianPupil).save(
         folioIds.map((folioId) =>
           em.getRepository(SchoolGuardianPupil).create({
@@ -428,7 +454,8 @@ export class SchoolGuardianService {
 
   private async view(id: number, branchId: number) {
     const g = await this.findGuardianOnBranch(id, branchId);
-    const links = (await this.pupilsByGuardian([Number(g.id)])).get(Number(g.id)) ?? [];
+    const links =
+      (await this.pupilsByGuardian([Number(g.id)])).get(Number(g.id)) ?? [];
     const [users, folios] = await Promise.all([
       this.usersById([g.userId]),
       this.foliosById(links.map((l) => Number(l.folioId))),
@@ -439,7 +466,8 @@ export class SchoolGuardianService {
   async update(id: number, dto: UpdateSchoolGuardianDto) {
     const g = await this.findGuardianOnBranch(id, dto.branchId);
     const patch: Partial<SchoolGuardian> = {};
-    if (dto.displayName !== undefined) patch.displayName = text(dto.displayName) || null;
+    if (dto.displayName !== undefined)
+      patch.displayName = text(dto.displayName) || null;
     if (dto.phone !== undefined) patch.phone = text(dto.phone) || null;
     if (dto.relationship !== undefined) {
       patch.relationship = text(dto.relationship).toUpperCase() || null;
@@ -456,7 +484,9 @@ export class SchoolGuardianService {
     }
     if (dto.folioIds) {
       const folioIds = await this.assertPupilFolios(dto.branchId, dto.folioIds);
-      const existing = await this.pupils.find({ where: { guardianId: Number(g.id) } });
+      const existing = await this.pupils.find({
+        where: { guardianId: Number(g.id) },
+      });
       const keep = new Set(folioIds);
       const drop = existing.filter((l) => !keep.has(Number(l.folioId)));
       const have = new Set(existing.map((l) => Number(l.folioId)));
@@ -483,7 +513,10 @@ export class SchoolGuardianService {
     }
     user.password = await bcrypt.hash(dto.password, 10);
     await this.users.save(user);
-    await this.guardians.update({ id: Number(g.id) }, { passwordIssuedAt: new Date() });
+    await this.guardians.update(
+      { id: Number(g.id) },
+      { passwordIssuedAt: new Date() },
+    );
     return { status: 'PASSWORD_RESET', id: Number(g.id) };
   }
 
@@ -496,7 +529,9 @@ export class SchoolGuardianService {
     const g = await this.findGuardianOnBranch(id, branchId);
     await this.pupils.delete({ guardianId: Number(g.id) });
     await this.guardians.delete({ id: Number(g.id) });
-    const elsewhere = await this.guardians.count({ where: { userId: g.userId } });
+    const elsewhere = await this.guardians.count({
+      where: { userId: g.userId },
+    });
     let userRemoved = false;
     if (!elsewhere) {
       const user = await this.users.findOne({ where: { id: g.userId } });
@@ -531,13 +566,24 @@ export class SchoolGuardianService {
     audience: string | undefined,
     classCodes: string[] | undefined,
     current?: SchoolNotice,
-  ) {
+  ): { audience: SchoolNoticeAudience; classCodes: string[] | null } {
     const wanted = text(audience ?? current?.audience ?? 'ALL').toUpperCase();
-    const codes = [...new Set((classCodes ?? current?.classCodes ?? []).map((c) => fold(c)).filter(Boolean))];
+    const codes = [
+      ...new Set(
+        (classCodes ?? current?.classCodes ?? [])
+          .map((c) => fold(c))
+          .filter(Boolean),
+      ),
+    ];
     if (wanted === 'CLASSES' && !codes.length) {
-      throw new BadRequestException('Name at least one class, or send the notice to the whole school.');
+      throw new BadRequestException(
+        'Name at least one class, or send the notice to the whole school.',
+      );
     }
-    return { audience: (wanted === 'CLASSES' ? 'CLASSES' : 'ALL') as 'ALL' | 'CLASSES', classCodes: wanted === 'CLASSES' ? codes : null };
+    return {
+      audience: wanted === 'CLASSES' ? 'CLASSES' : 'ALL',
+      classCodes: wanted === 'CLASSES' ? codes : null,
+    };
   }
 
   async listNotices(branchId: number) {
@@ -550,7 +596,10 @@ export class SchoolGuardianService {
   }
 
   async createNotice(dto: CreateSchoolNoticeDto, actor: Actor) {
-    const { audience, classCodes } = this.normalizeNoticeAudience(dto.audience, dto.classCodes);
+    const { audience, classCodes } = this.normalizeNoticeAudience(
+      dto.audience,
+      dto.classCodes,
+    );
     const row = this.notices.create({
       branchId: dto.branchId,
       title: text(dto.title),
@@ -567,16 +616,23 @@ export class SchoolGuardianService {
   }
 
   async updateNotice(id: number, dto: UpdateSchoolNoticeDto) {
-    const row = await this.notices.findOne({ where: { id, branchId: dto.branchId } });
+    const row = await this.notices.findOne({
+      where: { id, branchId: dto.branchId },
+    });
     if (!row) throw new NotFoundException('Notice not found on this school.');
     if (dto.title !== undefined) row.title = text(dto.title);
     if (dto.body !== undefined) row.body = text(dto.body);
     if (dto.audience !== undefined || dto.classCodes !== undefined) {
-      const { audience, classCodes } = this.normalizeNoticeAudience(dto.audience, dto.classCodes, row);
+      const { audience, classCodes } = this.normalizeNoticeAudience(
+        dto.audience,
+        dto.classCodes,
+        row,
+      );
       row.audience = audience;
       row.classCodes = classCodes;
     }
-    if (dto.expiresAt !== undefined) row.expiresAt = text(dto.expiresAt) || null;
+    if (dto.expiresAt !== undefined)
+      row.expiresAt = text(dto.expiresAt) || null;
     if (dto.isActive !== undefined) row.isActive = dto.isActive !== false;
     return this.noticeView(await this.notices.save(row));
   }
@@ -601,10 +657,14 @@ export class SchoolGuardianService {
       take: 200,
     });
     const today = new Date().toISOString().slice(0, 10);
-    const names = new Map(held.map((h) => [Number(h.branch.id), h.branch.name]));
+    const names = new Map(
+      held.map((h) => [Number(h.branch.id), h.branch.name]),
+    );
     return rows
       .filter((n) => noticeIsLive(n, today))
-      .filter((n) => noticeReaches(n, classesByBranch.get(Number(n.branchId)) ?? []))
+      .filter((n) =>
+        noticeReaches(n, classesByBranch.get(Number(n.branchId)) ?? []),
+      )
       .slice(0, 50)
       .map((n) => ({
         id: Number(n.id),
@@ -634,7 +694,7 @@ export class SchoolGuardianService {
     const byId = new Map(branches.map((b) => [Number(b.id), b]));
     return rows
       .filter((r) => byId.has(Number(r.branchId)))
-      .map((r) => ({ guardian: r, branch: byId.get(Number(r.branchId))! }));
+      .map((r) => ({ guardian: r, branch: byId.get(Number(r.branchId)) }));
   }
 
   private schoolView(branch: Branch) {
@@ -702,7 +762,9 @@ export class SchoolGuardianService {
       });
     }
     const user = await this.users.findOne({ where: { id: userId } });
-    const links = await this.pupilsByGuardian(held.map((h) => Number(h.guardian.id)));
+    const links = await this.pupilsByGuardian(
+      held.map((h) => Number(h.guardian.id)),
+    );
     const folios = await this.foliosById(
       [...links.values()].flat().map((l) => Number(l.folioId)),
     );
@@ -721,10 +783,54 @@ export class SchoolGuardianService {
     // Still on the password the office printed on the card? True until the
     // parent changes it themselves AFTER the office last set it.
     const usingIssuedPassword = held.every(({ guardian }) => {
-      const issued = guardian.passwordIssuedAt ? new Date(guardian.passwordIssuedAt).getTime() : 0;
-      const changed = guardian.passwordChangedAt ? new Date(guardian.passwordChangedAt).getTime() : 0;
+      const issued = guardian.passwordIssuedAt
+        ? new Date(guardian.passwordIssuedAt).getTime()
+        : 0;
+      const changed = guardian.passwordChangedAt
+        ? new Date(guardian.passwordChangedAt).getTime()
+        : 0;
       return !changed || changed < issued;
     });
+    // What the home page raises a flag for, per child: today's register
+    // mark (an absence a parent should hear of the same morning), a word
+    // from the school not yet opened, and homework falling due. Read per
+    // school in one query each, never per child.
+    const unread = await this.messages.unreadByFolio(
+      held.map((h) => Number(h.guardian.id)),
+    );
+    const todayByBranch = new Map<
+      number,
+      Map<string, { status: string; note: string | null }>
+    >();
+    const dueByBranch = new Map<number, Map<string, number>>();
+    await Promise.all(
+      held.map(async ({ branch }) => {
+        const branchId = Number(branch.id);
+        if (todayByBranch.has(branchId)) return;
+        const today = localDayIn(schoolTimeZone(branch));
+        const [marks, due] = await Promise.all([
+          this.attendance.list(AttendanceSubjectType.STUDENT, {
+            branchId,
+            date: today,
+          }),
+          this.homework.dueCounts(
+            branchId,
+            classesByBranch.get(branchId) ?? [],
+            today,
+          ),
+        ]);
+        todayByBranch.set(
+          branchId,
+          new Map(
+            marks.items.map((m) => [
+              String(m.subjectRef),
+              { status: String(m.status), note: m.note ?? null },
+            ]),
+          ),
+        );
+        dueByBranch.set(branchId, due);
+      }),
+    );
     return {
       user: {
         id: userId,
@@ -739,15 +845,29 @@ export class SchoolGuardianService {
       notices: await this.noticesFor(held, classesByBranch),
       schools: held.map(({ guardian, branch }) => ({
         ...this.schoolView(branch),
+        today: localDayIn(schoolTimeZone(branch)),
         guardian: {
           id: Number(guardian.id),
           displayName: guardian.displayName ?? null,
           phone: guardian.phone ?? null,
           relationship: guardian.relationship ?? null,
         },
-        pupils: (links.get(Number(guardian.id)) ?? []).map((l) =>
-          this.pupilSummary(folios.get(Number(l.folioId)), Number(l.folioId)),
-        ),
+        pupils: (links.get(Number(guardian.id)) ?? []).map((l) => {
+          const folioId = Number(l.folioId);
+          const row = folios.get(folioId);
+          const summary = this.pupilSummary(row, folioId);
+          const code = row ? fold(pupilOf(row).classCode) : '';
+          return {
+            ...summary,
+            todayMark:
+              todayByBranch.get(Number(branch.id))?.get(String(folioId)) ??
+              null,
+            unreadMessages: unread.get(folioId) ?? 0,
+            homeworkDue: code
+              ? (dueByBranch.get(Number(branch.id))?.get(code) ?? 0)
+              : 0,
+          };
+        }),
       })),
     };
   }
@@ -763,7 +883,9 @@ export class SchoolGuardianService {
       },
     });
     if (!link) return null;
-    const owner = held.find((h) => Number(h.guardian.id) === Number(link.guardianId));
+    const owner = held.find(
+      (h) => Number(h.guardian.id) === Number(link.guardianId),
+    );
     return owner ? { ...owner, link } : null;
   }
 
@@ -783,39 +905,45 @@ export class SchoolGuardianService {
     if (!row) throw new NotFoundException('No such pupil on this login.');
     const p = pupilOf(row);
 
-    const [attendanceDays, attendanceLessons, sales, loans, timetable, classRow] =
-      await Promise.all([
-        this.attendance.list(AttendanceSubjectType.STUDENT, {
-          branchId,
-          subjectRef: String(folioId),
-        }),
-        this.attendance.listLessons(AttendanceSubjectType.STUDENT, {
-          branchId,
-          subjectRef: String(folioId),
-        }),
-        this.checkouts
-          .createQueryBuilder('c')
-          .where('c."branchId" = :branchId', { branchId })
-          .andWhere(
-            `(c."metadata" ->> 'folioId' = :folioText OR c."suspendedCartId" = :folioId)`,
-            { folioText: String(folioId), folioId },
-          )
-          .orderBy('c."occurredAt"', 'DESC')
-          .take(300)
-          .getMany(),
-        this.loans.find({
-          where: { branchId, folioId },
-          order: { issuedAt: 'DESC', id: 'DESC' },
-        }),
-        this.timetable.get(branchId),
-        p.classCode
-          ? this.classes
-              .createQueryBuilder('k')
-              .where('k."branchId" = :branchId', { branchId })
-              .andWhere('lower(k.code) = :code', { code: fold(p.classCode) })
-              .getOne()
-          : Promise.resolve(null),
-      ]);
+    const [
+      attendanceDays,
+      attendanceLessons,
+      sales,
+      loans,
+      timetable,
+      classRow,
+    ] = await Promise.all([
+      this.attendance.list(AttendanceSubjectType.STUDENT, {
+        branchId,
+        subjectRef: String(folioId),
+      }),
+      this.attendance.listLessons(AttendanceSubjectType.STUDENT, {
+        branchId,
+        subjectRef: String(folioId),
+      }),
+      this.checkouts
+        .createQueryBuilder('c')
+        .where('c."branchId" = :branchId', { branchId })
+        .andWhere(
+          `(c."metadata" ->> 'folioId' = :folioText OR c."suspendedCartId" = :folioId)`,
+          { folioText: String(folioId), folioId },
+        )
+        .orderBy('c."occurredAt"', 'DESC')
+        .take(300)
+        .getMany(),
+      this.loans.find({
+        where: { branchId, folioId },
+        order: { issuedAt: 'DESC', id: 'DESC' },
+      }),
+      this.timetable.get(branchId),
+      p.classCode
+        ? this.classes
+            .createQueryBuilder('k')
+            .where('k."branchId" = :branchId', { branchId })
+            .andWhere('lower(k.code) = :code', { code: fold(p.classCode) })
+            .getOne()
+        : Promise.resolve(null),
+    ]);
 
     // Refunds are RETURN rows; the ones minted before the folio id was
     // stamped carry only the receipt they reverse. Fetch those by that.
@@ -839,7 +967,10 @@ export class SchoolGuardianService {
         .getMany();
     }
     const seen = new Set(sales.map((s) => Number(s.id)));
-    const receipts = [...sales, ...returns.filter((r) => !seen.has(Number(r.id)))]
+    const receipts = [
+      ...sales,
+      ...returns.filter((r) => !seen.has(Number(r.id))),
+    ]
       .sort((a, b) =>
         String(b.occurredAt ?? '').localeCompare(String(a.occurredAt ?? '')),
       )
@@ -848,19 +979,65 @@ export class SchoolGuardianService {
     // The class teacher: the home-room employee when the registry links
     // one, else the name the registry recorded. Never a phone — the school's
     // own number is the family's contact.
-    let classTeacher: { fullName: string; jobTitle: string | null } | null = null;
+    let classTeacher: { fullName: string; jobTitle: string | null } | null =
+      null;
     const homeroomId = Number(classRow?.homeroomEmployeeId);
     if (homeroomId > 0) {
-      const emp = await this.employees.findOne({ where: { id: homeroomId, branchId } });
-      if (emp) classTeacher = { fullName: emp.fullName, jobTitle: emp.jobTitle ?? null };
+      const emp = await this.employees.findOne({
+        where: { id: homeroomId, branchId },
+      });
+      if (emp)
+        classTeacher = {
+          fullName: emp.fullName,
+          jobTitle: emp.jobTitle ?? null,
+        };
     }
     if (!classTeacher && text(classRow?.homeroomTeacherName)) {
-      classTeacher = { fullName: text(classRow?.homeroomTeacherName), jobTitle: null };
+      classTeacher = {
+        fullName: text(classRow?.homeroomTeacherName),
+        jobTitle: null,
+      };
     }
 
     const wanted = fold(p.classCode);
+
+    // Homework set for the class, the family's unread count, and where the
+    // child stands in the class this term — ranked over the class's live
+    // pupils the way the office's result sheet ranks them. The classmates'
+    // records are read here and never handed over: only this child's place
+    // and the size of the field leave the server.
+    const [homework, unread, classmates] = await Promise.all([
+      wanted
+        ? this.homework.forClasses(branchId, [wanted])
+        : Promise.resolve([]),
+      this.messages.unreadByFolio([Number(held.guardian.id)]),
+      wanted
+        ? this.pupilRecords(branchId)
+        : Promise.resolve([] as PosSuspendedCart[]),
+    ]);
+    const field = classmates.filter((r) => {
+      const q = pupilOf(r);
+      return fold(q.classCode) === wanted && q.status === 'ACTIVE';
+    });
+    const rank = readReports(row).map((report) => {
+      const ranks = rankClassByTerm(field, report.term);
+      const mine = ranks.get(folioId) ?? null;
+      return {
+        term: report.term,
+        recordedPosition: report.position || null,
+        position: mine?.position ?? null,
+        of: mine?.of ?? null,
+        complete: mine?.complete ?? null,
+        subjectsMarked: mine?.subjectsMarked ?? null,
+        subjectsInClass: mine?.subjectsInClass ?? null,
+      };
+    });
+
     return {
       school: this.schoolView(branch),
+      homework,
+      unreadMessages: unread.get(folioId) ?? 0,
+      rank,
       guardian: {
         displayName: held.guardian.displayName ?? null,
         relationship: held.guardian.relationship ?? null,
@@ -878,8 +1055,12 @@ export class SchoolGuardianService {
       attendance: {
         // The query is scoped to this pupil in the database; the filter here
         // is the belt, so a widened query can never hand a family the class.
-        days: attendanceDays.items.filter((r) => String(r.subjectRef) === String(folioId)),
-        lessons: attendanceLessons.items.filter((r) => String(r.subjectRef) === String(folioId)),
+        days: attendanceDays.items.filter(
+          (r) => String(r.subjectRef) === String(folioId),
+        ),
+        lessons: attendanceLessons.items.filter(
+          (r) => String(r.subjectRef) === String(folioId),
+        ),
       },
       textbooks: loans.map((l) => ({
         id: Number(l.id),
@@ -900,6 +1081,47 @@ export class SchoolGuardianService {
           : [],
       },
     };
+  }
+
+  /** The family's conversation with the school about one child. */
+  async pupilMessages(userId: number, folioId: number) {
+    const held = await this.linkFor(userId, folioId);
+    if (!held) throw new NotFoundException('No such pupil on this login.');
+    const out = await this.messages.guardianThread(
+      Number(held.branch.id),
+      Number(held.guardian.id),
+      folioId,
+    );
+    return { ...out, school: this.schoolView(held.branch) };
+  }
+
+  /** The family writes to the school about one child; the class's teachers and the office read it. */
+  async sendPupilMessage(userId: number, folioId: number, body: string) {
+    const held = await this.linkFor(userId, folioId);
+    if (!held) throw new NotFoundException('No such pupil on this login.');
+    const clean = text(body);
+    if (!clean) throw new BadRequestException('Write a message first.');
+    const branchId = Number(held.branch.id);
+    const row = await this.carts.findOne({ where: { id: folioId, branchId } });
+    if (!row) throw new NotFoundException('No such pupil on this login.');
+    const user = await this.users.findOne({ where: { id: userId } });
+    const senderName =
+      held.guardian.displayName ||
+      user?.displayName ||
+      user?.posUsername ||
+      null;
+    const out = await this.messages.guardianSend(
+      branchId,
+      {
+        id: Number(held.guardian.id),
+        userId,
+        displayName: held.guardian.displayName,
+      },
+      row,
+      senderName,
+      clean,
+    );
+    return { ...out, school: this.schoolView(held.branch) };
   }
 
   async changePassword(userId: number, dto: GuardianPortalChangePasswordDto) {
