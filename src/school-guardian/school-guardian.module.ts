@@ -23,6 +23,8 @@ import { SchoolHomeworkService } from './school-homework.service';
 import { SchoolMessageController } from './school-message.controller';
 import { SchoolMessageService } from './school-message.service';
 import { SchoolStaffReachService } from './school-staff-reach.service';
+import { SchoolStatementCode } from './entities/school-statement-code.entity';
+import { SchoolStatementCodeService } from './school-statement-code.service';
 import { SchoolGuardianPortalController } from './school-guardian-portal.controller';
 import {
   SchoolGuardianController,
@@ -48,6 +50,8 @@ import { SchoolGuardianService } from './school-guardian.service';
       SchoolHomework,
       SchoolMessageThread,
       SchoolMessage,
+      // The fee statement's QR token, one per pupil.
+      SchoolStatementCode,
       // Read-only: the pupils' records, the receipts settled against them,
       // the class registry (for the class teacher), the books out.
       PosSuspendedCart,
@@ -74,9 +78,15 @@ import { SchoolGuardianService } from './school-guardian.service';
     SchoolStaffReachService,
     SchoolHomeworkService,
     SchoolMessageService,
+    SchoolStatementCodeService,
     PosBranchAccessGuard,
     RolesGuard,
   ],
-  exports: [SchoolGuardianService, SchoolHomeworkService, SchoolMessageService],
+  exports: [
+    SchoolGuardianService,
+    SchoolHomeworkService,
+    SchoolMessageService,
+    SchoolStatementCodeService,
+  ],
 })
 export class SchoolGuardianModule {}

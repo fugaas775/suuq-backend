@@ -15,6 +15,8 @@ import {
   formatReceiptVerificationCode,
   normalizeReceiptVerificationCode,
 } from './receipt-verification-code';
+import { SchoolStatementCode } from '../school-guardian/entities/school-statement-code.entity';
+import { folioMoney, pupilOf } from '../school-guardian/school-guardian.util';
 
 /**
  * What a scanned QR resolves to.
@@ -31,6 +33,12 @@ import {
  *   OPEN               the order stands, unpaid
  *   SETTLED            it was paid for; a receipt exists
  *   CANCELLED          the order was dropped without being paid
+ *
+ * For a school fee statement, which describes a pupil's account and is
+ * neither a receipt nor an order:
+ *   ON_ROLL            the pupil is on the roll; the figures are the books now
+ *   LEFT               the pupil has left the school; a closing account
+ *   WITHDRAWN          the record was withdrawn from the roll
  */
 export type PublicReceiptStatus =
   | 'VALID'
@@ -40,9 +48,15 @@ export type PublicReceiptStatus =
   | 'PENDING'
   | 'OPEN'
   | 'SETTLED'
-  | 'CANCELLED';
+  | 'CANCELLED'
+  | 'ON_ROLL'
+  | 'LEFT'
+  | 'WITHDRAWN';
 
-export type PublicDocumentType = PosCheckoutTransactionType | 'ORDER_SLIP';
+export type PublicDocumentType =
+  | PosCheckoutTransactionType
+  | 'ORDER_SLIP'
+  | 'FEE_STATEMENT';
 
 export interface PublicReceiptVerificationResult {
   found: boolean;
@@ -64,6 +78,17 @@ export interface PublicReceiptVerificationResult {
   /** For an ORDER_SLIP: the table, room or order it names, and its receipt once paid. */
   orderLabel?: string | null;
   settledReceiptNumber?: string | null;
+  /** For a FEE_STATEMENT: the pupil's account as the books hold it now. */
+  pupilName?: string | null;
+  className?: string | null;
+  admissionNo?: string | null;
+  enrolledOn?: string | null;
+  paidThrough?: string | null;
+  billedTotal?: number;
+  paidTotal?: number;
+  balanceDue?: number;
+  creditDue?: number;
+  leftOn?: string | null;
 }
 
 /**
@@ -85,6 +110,8 @@ export class PublicReceiptVerificationService {
     private readonly suspendedCartsRepository: Repository<PosSuspendedCart>,
     @InjectRepository(Branch)
     private readonly branchesRepository: Repository<Branch>,
+    @InjectRepository(SchoolStatementCode)
+    private readonly statementCodesRepository: Repository<SchoolStatementCode>,
   ) {}
 
   async verify(rawCode: string): Promise<PublicReceiptVerificationResult> {
@@ -101,6 +128,8 @@ export class PublicReceiptVerificationService {
       // making a much smaller claim.
       const slip = await this.verifyOrderSlip(code);
       if (slip) return slip;
+      const statement = await this.verifyFeeStatement(code);
+      if (statement) return statement;
       // Worth a breadcrumb: a well-formed token that resolves to nothing is
       // either a sale that never reached us, or someone probing.
       this.logger.debug(`Receipt verification miss for code ${code}`);
@@ -195,6 +224,67 @@ export class PublicReceiptVerificationService {
       branch: { name: branch?.name ?? 'SUUQ POS', city: branch?.city ?? null },
       orderLabel: cart.label ?? null,
       settledReceiptNumber: settledBy?.receiptNumber ?? null,
+    };
+  }
+
+  /**
+   * A school fee statement — the sheet a family holds about a pupil's
+   * account. Its token is a row of its own (see SchoolStatementCode), so it
+   * survives every rewrite of the pupil's record by the till.
+   *
+   * What it shows is the account as the books hold it NOW, which is the
+   * point: a statement printed in Meskerem checked in Tahsas says what has
+   * been paid since. It says the pupil's name and class, since the person
+   * scanning is holding a sheet with both on it — and nothing about the
+   * family's phone, the cashier, or any other child.
+   */
+  private async verifyFeeStatement(
+    code: string,
+  ): Promise<PublicReceiptVerificationResult | null> {
+    const token = await this.statementCodesRepository.findOne({
+      where: { code },
+    });
+    if (!token) return null;
+    const folio = await this.suspendedCartsRepository.findOne({
+      where: { id: token.folioId },
+    });
+    if (!folio) return null;
+    const branch = await this.branchesRepository.findOne({
+      where: { id: folio.branchId },
+      select: { id: true, name: true, city: true },
+    });
+    const pupil = pupilOf(folio);
+    const money = folioMoney(folio);
+    const snap = (folio.cartSnapshot ?? {}) as Record<string, unknown>;
+    const status: PublicReceiptStatus =
+      pupil.status === 'WITHDRAWN'
+        ? 'WITHDRAWN'
+        : pupil.status === 'INACTIVE'
+          ? 'LEFT'
+          : 'ON_ROLL';
+    return {
+      found: true,
+      code,
+      displayCode: formatReceiptVerificationCode(code),
+      status,
+      documentType: 'FEE_STATEMENT',
+      receiptNumber: null,
+      currency: folio.currency,
+      total: money.total,
+      itemCount: folio.itemCount ?? 0,
+      issuedAt: this.toIso(token.createdAt),
+      recordedAt: this.toIso(new Date()),
+      branch: { name: branch?.name ?? 'SUUQ POS', city: branch?.city ?? null },
+      pupilName: pupil.name || null,
+      className: pupil.classCode || null,
+      admissionNo: pupil.admissionNo || null,
+      enrolledOn: pupil.enrolledAt,
+      paidThrough: String(snap.hotelCheckOutAt ?? '').slice(0, 10) || null,
+      billedTotal: money.total,
+      paidTotal: money.paidTotal,
+      balanceDue: money.outstanding,
+      creditDue: money.credit,
+      leftOn: pupil.leftOn,
     };
   }
 

@@ -58,6 +58,7 @@ import {
 } from './school-guardian.util';
 import { SchoolHomeworkService } from './school-homework.service';
 import { SchoolMessageService } from './school-message.service';
+import { SchoolStatementCodeService } from './school-statement-code.service';
 
 const text = (v: unknown) => String(v ?? '').trim();
 const fold = (v: unknown) => text(v).toLowerCase();
@@ -105,6 +106,7 @@ export class SchoolGuardianService {
     private readonly auth: AuthService,
     private readonly homework: SchoolHomeworkService,
     private readonly messages: SchoolMessageService,
+    private readonly statementCodes: SchoolStatementCodeService,
   ) {}
 
   // ── shared reads ─────────────────────────────────────────────────────────
@@ -1006,7 +1008,7 @@ export class SchoolGuardianService {
     // pupils the way the office's result sheet ranks them. The classmates'
     // records are read here and never handed over: only this child's place
     // and the size of the field leave the server.
-    const [homework, unread, classmates] = await Promise.all([
+    const [homework, unread, classmates, verification] = await Promise.all([
       wanted
         ? this.homework.forClasses(branchId, [wanted])
         : Promise.resolve([]),
@@ -1014,6 +1016,10 @@ export class SchoolGuardianService {
       wanted
         ? this.pupilRecords(branchId)
         : Promise.resolve([] as PosSuspendedCart[]),
+      // The token the printed statement's QR carries — one per child, kept
+      // for good, so every statement the family ever prints scans to the
+      // record as it stands.
+      this.statementCodes.codeFor(branchId, folioId),
     ]);
     const field = classmates.filter((r) => {
       const q = pupilOf(r);
@@ -1038,6 +1044,7 @@ export class SchoolGuardianService {
       homework,
       unreadMessages: unread.get(folioId) ?? 0,
       rank,
+      verification,
       guardian: {
         displayName: held.guardian.displayName ?? null,
         relationship: held.guardian.relationship ?? null,

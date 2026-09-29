@@ -9,6 +9,7 @@ import * as bcrypt from 'bcrypt';
 import { SchoolGuardianService } from './school-guardian.service';
 import { SchoolHomeworkService } from './school-homework.service';
 import { SchoolMessageService } from './school-message.service';
+import { SchoolStatementCodeService } from './school-statement-code.service';
 import { memRepo, qb, reachStub } from './test/memory-repo';
 
 /* Parents' logins: the office hands a family a username; the parent then
@@ -187,6 +188,7 @@ function makeService({
     userRepo,
     reach,
   );
+  const statementCodes = new SchoolStatementCodeService(memRepo([], seq));
   const svc = new SchoolGuardianService(
     guardianRepo,
     pupilRepo,
@@ -203,6 +205,7 @@ function makeService({
     auth,
     homework,
     messages,
+    statementCodes,
   );
   return {
     svc,
@@ -876,6 +879,10 @@ describe('SchoolGuardianService — the teachers’ side on the family’s page'
     });
 
     const page = await svc.pupil(me, 10);
+    // The statement's QR token: minted once, the same on every read.
+    expect(page.verification.code).toMatch(/^[0-9A-HJKMNP-TV-Z]{14}$/);
+    expect((await svc.pupil(me, 10)).verification.code).toBe(page.verification.code);
+    expect((await svc.pupil(me, 11)).verification.code).not.toBe(page.verification.code);
     expect(page.homework.map((h: any) => h.title).sort()).toEqual([
       'Old',
       'Page 4',

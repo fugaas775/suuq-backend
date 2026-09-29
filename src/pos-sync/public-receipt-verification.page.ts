@@ -98,6 +98,38 @@ const STATUS_COPY: Record<
       so: 'Amarkan waa la joojiyay iyadoo aan la bixin.',
     },
   },
+  // A fee statement describes a pupil's account. The figures on the page are
+  // the books as they stand at the moment of the scan, not the paper's.
+  ON_ROLL: {
+    tone: 'ok',
+    mark: '✓',
+    title: { en: 'Fee statement — genuine', so: 'Warbixinta lacagta — sax' },
+    detail: {
+      en: 'This pupil is on the school’s roll. The figures below are the school’s books at this moment, which may be newer than the sheet you are holding.',
+      so: 'Ardaygani wuxuu ku jiraa diiwaanka iskuulka. Tirooyinka hoose waa buugaagta iskuulka hadda, waxayna ka cusbaanaan karaan warqadda aad haysato.',
+    },
+  },
+  LEFT: {
+    tone: 'warn',
+    mark: '🚪',
+    title: {
+      en: 'Fee statement — pupil has left',
+      so: 'Warbixinta lacagta — ardaygu wuu tegay',
+    },
+    detail: {
+      en: 'This is a genuine statement, and the pupil has since left the school. The figures below are the closing account.',
+      so: 'Tani waa warbixin sax ah, ardayguna wuu ka tegay iskuulka. Tirooyinka hoose waa xisaabta xiritaanka.',
+    },
+  },
+  WITHDRAWN: {
+    tone: 'bad',
+    mark: '⊘',
+    title: { en: 'Record withdrawn', so: 'Diiwaanka waa laga saaray' },
+    detail: {
+      en: 'The pupil’s record this statement was printed from has been withdrawn from the roll. Ask the school office.',
+      so: 'Diiwaanka ardayga ee warqaddan laga daabacay waa laga saaray. Xafiiska iskuulka weydii.',
+    },
+  },
   NOT_FOUND: {
     tone: 'bad',
     mark: '?',
@@ -122,6 +154,20 @@ function formatMoney(amount: number, currency: string): string {
     maximumFractionDigits: 2,
   }).format(Number(amount ?? 0));
   return `${currency} ${formatted}`;
+}
+
+/** A calendar day as the school writes it: "12 Sep 2026". */
+function formatDay(day?: string | null): string {
+  if (!day) return '—';
+  const iso = String(day).slice(0, 10);
+  const date = new Date(`${iso}T00:00:00Z`);
+  if (Number.isNaN(date.getTime())) return iso;
+  return new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'UTC',
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  }).format(date);
 }
 
 // Times are shown in East Africa Time and labelled as such — a customer
@@ -313,6 +359,86 @@ function renderOrderSlipPage(
   );
 }
 
+function renderFeeStatementPage(
+  result: PublicReceiptVerificationResult,
+  currency: string,
+): string {
+  const status = result.status ?? 'ON_ROLL';
+  const credit = Number(result.creditDue ?? 0);
+  const rows = [
+    row({ en: 'School', so: 'Iskuulka' }, result.branch?.name ?? '—'),
+    result.branch?.city
+      ? row({ en: 'Place', so: 'Goobta' }, result.branch.city)
+      : '',
+    row({ en: 'Pupil', so: 'Ardayga' }, result.pupilName ?? '—'),
+    result.className
+      ? row({ en: 'Class', so: 'Fasalka' }, result.className)
+      : '',
+    result.admissionNo
+      ? row(
+          { en: 'Admission no.', so: 'Lambarka diiwaanka' },
+          result.admissionNo,
+        )
+      : '',
+    result.enrolledOn
+      ? row(
+          { en: 'Enrolled', so: 'La diiwaangeliyay' },
+          formatDay(result.enrolledOn),
+        )
+      : '',
+    result.leftOn
+      ? row({ en: 'Left on', so: 'Wuxuu tegay' }, formatDay(result.leftOn))
+      : '',
+    result.paidThrough && status === 'ON_ROLL'
+      ? row(
+          { en: 'Fees paid through', so: 'Lacagta ilaa' },
+          formatDay(result.paidThrough),
+        )
+      : '',
+    row(
+      { en: 'Total billed', so: 'Wadarta la dalacay' },
+      formatMoney(result.billedTotal ?? 0, currency),
+    ),
+    row(
+      { en: 'Paid', so: 'La bixiyay' },
+      formatMoney(result.paidTotal ?? 0, currency),
+    ),
+  ]
+    .filter(Boolean)
+    .join('');
+
+  const totalRow =
+    credit > 0
+      ? `
+      <div class="row total">
+        <div class="label"><span>Owed back to the family</span><em>Lagu leeyahay qoyska</em></div>
+        <div class="value">${esc(formatMoney(credit, currency))}</div>
+      </div>`
+      : `
+      <div class="row total">
+        <div class="label"><span>Balance due</span><em>Lacagta hadhay</em></div>
+        <div class="value">${esc(formatMoney(result.balanceDue ?? 0, currency))}</div>
+      </div>`;
+
+  const asOfRow = `
+      <div class="row">
+        <div class="label"><span>Figures as of</span><em>Tirooyinka ilaa</em></div>
+        <div class="value">${esc(formatMoment(result.recordedAt))}</div>
+      </div>`;
+
+  const codeRow = `
+      <div class="row">
+        <div class="label"><span>Verification code</span><em>Koodhka xaqiijinta</em></div>
+        <div class="value code">${esc(result.displayCode ?? '')}</div>
+      </div>`;
+
+  return shell(
+    STATUS_COPY[status].title.en,
+    statusBlock(status) +
+      `<div class="rows">${rows}${totalRow}${asOfRow}${codeRow}</div>`,
+  );
+}
+
 export function renderVerificationResultPage(
   result: PublicReceiptVerificationResult,
 ): string {
@@ -329,6 +455,9 @@ export function renderVerificationResultPage(
   const isSlip = result.documentType === 'ORDER_SLIP';
 
   if (isSlip) return renderOrderSlipPage(result, currency);
+  if (result.documentType === 'FEE_STATEMENT') {
+    return renderFeeStatementPage(result, currency);
+  }
 
   const rows = [
     row({ en: 'Shop', so: 'Dukaanka' }, result.branch?.name ?? '—'),

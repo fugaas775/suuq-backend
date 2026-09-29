@@ -15,6 +15,7 @@ import {
   formatReceiptVerificationCode,
   normalizeReceiptVerificationCode,
 } from './receipt-verification-code';
+import { SchoolStatementCode } from '../school-guardian/entities/school-statement-code.entity';
 
 describe('normalizeReceiptVerificationCode', () => {
   it('folds the Crockford look-alikes so a typed code matches a scanned one', () => {
@@ -49,10 +50,16 @@ describe('PublicReceiptVerificationService', () => {
     findOne: jest.Mock;
     createQueryBuilder: jest.Mock;
   };
-  let suspendedCartsRepository: { createQueryBuilder: jest.Mock };
+  let suspendedCartsRepository: {
+    createQueryBuilder: jest.Mock;
+    findOne: jest.Mock;
+  };
   let branchesRepository: { findOne: jest.Mock };
+  let statementCodesRepository: { findOne: jest.Mock };
   let refundSum: number;
   let slipRow: Record<string, any> | null;
+  let statementRow: Record<string, any> | null;
+  let folioRow: Record<string, any> | null;
 
   const CODE = '9F3K7QP2WX0123';
 
@@ -87,12 +94,16 @@ describe('PublicReceiptVerificationService', () => {
         getRawOne: jest.fn(async () => ({ refunded: String(refundSum) })),
       })),
     };
+    statementRow = null;
+    folioRow = null;
     suspendedCartsRepository = {
       createQueryBuilder: jest.fn(() => ({
         where: jest.fn().mockReturnThis(),
         getOne: jest.fn(async () => slipRow),
       })),
+      findOne: jest.fn(async () => folioRow),
     };
+    statementCodesRepository = { findOne: jest.fn(async () => statementRow) };
     branchesRepository = {
       findOne: jest.fn(async () => ({
         id: 42,
@@ -115,6 +126,10 @@ describe('PublicReceiptVerificationService', () => {
         {
           provide: getRepositoryToken(Branch),
           useValue: branchesRepository,
+        },
+        {
+          provide: getRepositoryToken(SchoolStatementCode),
+          useValue: statementCodesRepository,
         },
       ],
     }).compile();
@@ -269,5 +284,106 @@ describe('PublicReceiptVerificationService', () => {
     expect(result.refundedAmount).toBe(0);
     expect(result.sourceReceiptNumber).toBe('POS-42-1769999999999');
     expect(posCheckoutsRepository.createQueryBuilder).not.toHaveBeenCalled();
+  });
+
+  describe('a school fee statement', () => {
+    const pupilFolio = (over: Record<string, unknown> = {}) => ({
+      id: 10422,
+      branchId: 42,
+      status: 'SUSPENDED',
+      currency: 'ETB',
+      total: 2300,
+      itemCount: 2,
+      metadata: { partialPaidAmount: 500 },
+      cartSnapshot: {
+        serviceFormat: 'SCHOOL',
+        hotelGuestName: 'Faadumo Cali',
+        hotelRoomNumber: '3aad',
+        schoolAdmissionNo: 'SMAG-0127',
+        hotelGuestPhone: '0915333513',
+        schoolGuardianName: 'Cali Xasan',
+        hotelCheckInAt: '2026-09-12',
+        hotelCheckOutAt: '2026-10-10',
+        ...over,
+      },
+    });
+
+    it('resolves the statement token to the pupil’s account as the books hold it now', async () => {
+      posCheckoutsRepository.findOne.mockResolvedValue(null);
+      statementRow = {
+        id: 1,
+        branchId: 42,
+        folioId: 10422,
+        code: CODE,
+        createdAt: new Date('2026-09-29T06:00:00.000Z'),
+      };
+      folioRow = pupilFolio();
+
+      const result = await service.verify(CODE);
+
+      expect(result).toMatchObject({
+        found: true,
+        documentType: 'FEE_STATEMENT',
+        status: 'ON_ROLL',
+        pupilName: 'Faadumo Cali',
+        className: '3aad',
+        admissionNo: 'SMAG-0127',
+        enrolledOn: '2026-09-12',
+        paidThrough: '2026-10-10',
+        billedTotal: 2300,
+        paidTotal: 500,
+        balanceDue: 1800,
+        creditDue: 0,
+        branch: { name: 'Blue Mall', city: 'Jigjiga' },
+      });
+      // Nothing about the family's phone or the guardian.
+      expect(JSON.stringify(result)).not.toMatch(/0915333513|Cali Xasan/);
+      expect(suspendedCartsRepository.findOne).toHaveBeenCalledWith({
+        where: { id: 10422 },
+      });
+    });
+
+    it('says when the pupil has left, and what the school owes back', async () => {
+      posCheckoutsRepository.findOne.mockResolvedValue(null);
+      statementRow = {
+        id: 1,
+        branchId: 42,
+        folioId: 10422,
+        code: CODE,
+        createdAt: new Date(),
+      };
+      folioRow = pupilFolio({
+        schoolStatus: 'INACTIVE',
+        schoolStatusOn: '2026-09-20',
+        total: 300,
+      });
+      folioRow.total = 300;
+
+      const result = await service.verify(CODE);
+      expect(result).toMatchObject({
+        status: 'LEFT',
+        leftOn: '2026-09-20',
+        billedTotal: 300,
+        paidTotal: 500,
+        balanceDue: 0,
+        creditDue: 200,
+      });
+    });
+
+    it('says when the record was withdrawn, and misses cleanly when the token is unknown', async () => {
+      posCheckoutsRepository.findOne.mockResolvedValue(null);
+      statementRow = {
+        id: 1,
+        branchId: 42,
+        folioId: 10422,
+        code: CODE,
+        createdAt: new Date(),
+      };
+      folioRow = { ...pupilFolio(), status: 'DISCARDED' };
+      expect((await service.verify(CODE)).status).toBe('WITHDRAWN');
+
+      statementRow = null;
+      expect(await service.verify(CODE)).toEqual({ found: false });
+    });
   });
 });

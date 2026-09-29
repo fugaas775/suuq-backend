@@ -27,6 +27,7 @@ import { PosRegisterService } from './pos-register.service';
 import { PosSyncController } from './pos-sync.controller';
 import { PublicReceiptVerificationController } from './public-receipt-verification.controller';
 import { PublicReceiptVerificationService } from './public-receipt-verification.service';
+import { SchoolStatementCode } from '../school-guardian/entities/school-statement-code.entity';
 import { PosSyncRequestAuthGuard } from './pos-sync-request-auth.guard';
 import { PosBranchAccessGuard } from '../auth/pos-branch-access.guard';
 import { PosCheckout } from './entities/pos-checkout.entity';
@@ -57,6 +58,9 @@ import { PosSyncJob } from './entities/pos-sync-job.entity';
       ProductAlias,
       PurchaseOrderItem,
       PosCashMovement,
+      // Read-only here: the fee statement's QR token resolves on the public
+      // verification page beside receipts and order slips.
+      SchoolStatementCode,
     ]),
   ],
   controllers: [
