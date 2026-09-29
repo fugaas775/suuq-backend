@@ -168,6 +168,9 @@ describe('SchoolMessageService — the school’s side', () => {
     expect(office.items.map((t: any) => t.folioId).sort()).toEqual([10, 12]);
     expect(office.head).toBe(true);
     expect(office.reachable.map((p: any) => p.folioId)).toEqual([10, 11, 12]);
+    expect(office.items.every((t: any) => t.guardianRemoved === false)).toBe(
+      true,
+    );
   });
 
   it('opening a thread clears the staff side’s unread; a reply raises the family’s; a teacher outside the class is refused', async () => {
@@ -280,5 +283,30 @@ describe('SchoolMessageService — the family’s side', () => {
       classCode: '5aad',
       staffUnread: 1,
     });
+  });
+
+  it('says when the family’s login has since been removed, and keeps the conversation as a record', async () => {
+    const { svc, threads } = make();
+    const opened = await svc.openThread(
+      { branchId: 128, folioId: 10, body: 'a' },
+      TEACHER,
+    );
+    // The office removes the login: the guardian row is gone, the thread stays.
+    const guardiansRepoRows: any[] = (svc as any).guardians.rows;
+    guardiansRepoRows.splice(
+      guardiansRepoRows.findIndex((g) => g.id === 7),
+      1,
+    );
+    const list = await svc.listThreads(128, HEAD);
+    expect(list.items).toHaveLength(1);
+    expect(list.items[0]).toMatchObject({
+      id: opened.thread.id,
+      guardianName: null,
+      guardianRemoved: true,
+    });
+    const read = await svc.getThread(opened.thread.id, 128, HEAD);
+    expect(read.thread.guardianRemoved).toBe(true);
+    expect(read.messages).toHaveLength(1);
+    expect(threads).toHaveLength(1);
   });
 });

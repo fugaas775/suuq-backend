@@ -484,16 +484,27 @@ export class SchoolGuardianService {
         { displayName: text(dto.displayName) || undefined },
       );
     }
+    if (dto.username !== undefined) {
+      await this.renameLogin(g, fold(dto.username));
+    }
     if (dto.folioIds) {
-      const folioIds = await this.assertPupilFolios(dto.branchId, dto.folioIds);
+      const wanted = [
+        ...new Set(dto.folioIds.map((n) => Number(n)).filter((n) => n > 0)),
+      ];
       const existing = await this.pupils.find({
         where: { guardianId: Number(g.id) },
       });
-      const keep = new Set(folioIds);
-      const drop = existing.filter((l) => !keep.has(Number(l.folioId)));
       const have = new Set(existing.map((l) => Number(l.folioId)));
+      const add = wanted.filter((f) => !have.has(f));
+      // Only what is ADDED must be a live pupil of this school. A child
+      // already linked stays linked after leaving or being withdrawn — the
+      // family's page says "withdrawn" for that child — so a change to the
+      // guardian's phone must not be refused over a record that is no longer
+      // on the roll. The office unticks that child to drop the link.
+      if (add.length) await this.assertPupilFolios(dto.branchId, add);
+      const keep = new Set(wanted);
+      const drop = existing.filter((l) => !keep.has(Number(l.folioId)));
       if (drop.length) await this.pupils.remove(drop);
-      const add = folioIds.filter((f) => !have.has(f));
       if (add.length) {
         await this.pupils.save(
           add.map((folioId) =>
@@ -503,6 +514,47 @@ export class SchoolGuardianService {
       }
     }
     return this.view(Number(g.id), dto.branchId);
+  }
+
+  /**
+   * A corrected username — the phone typed wrong at creation, or a family's
+   * number changed. The same rules as at creation: lowercased, no "@", and
+   * never one another login already holds. The internal e-mail the login
+   * was minted with follows the username, so the sign-in path finds it
+   * either way. One user may hold guardianships at two schools; the login
+   * is one, so the rename reaches both.
+   */
+  private async renameLogin(g: SchoolGuardian, username: string) {
+    if (!username) throw new BadRequestException('Give the login a username.');
+    const user = await this.users.findOne({ where: { id: g.userId } });
+    if (!user || user.authMode !== 'MANUAL') {
+      throw new ForbiddenException(
+        'Only a login the office created can have its username changed here.',
+      );
+    }
+    if (fold(user.posUsername) === username) return;
+    const internalEmail = `${GUARDIAN_INTERNAL_EMAIL_PREFIX}${username}@sys.internal`;
+    const [clash, staleByEmail] = await Promise.all([
+      this.users.findOne({ where: { posUsername: username } }),
+      this.users.findOne({ where: { email: internalEmail } }),
+    ]);
+    const taken = [clash, staleByEmail].some(
+      (row) => row && Number(row.id) !== Number(user.id),
+    );
+    if (taken) {
+      throw new ConflictException({
+        error: {
+          code: 'SCHOOL_GUARDIAN_USERNAME_CONFLICT',
+          message: 'This username is already in use.',
+          details: { field: 'username' },
+        },
+      });
+    }
+    user.posUsername = username;
+    if (String(user.email ?? '').startsWith(GUARDIAN_INTERNAL_EMAIL_PREFIX)) {
+      user.email = internalEmail;
+    }
+    await this.users.save(user);
   }
 
   async resetPassword(id: number, dto: ResetSchoolGuardianPasswordDto) {
@@ -733,12 +785,23 @@ export class SchoolGuardianService {
     const tokens = await this.auth.loginWithIdentifier(identifier, password);
     const held = await this.activeGuardianships(Number(tokens.user.id));
     if (!held.length) {
+      // A parent's login the office switched off is told so — not that it
+      // is no parent's login, which sends them to ask for one they have.
+      const everHeld = await this.guardians.count({
+        where: { userId: Number(tokens.user.id) },
+      });
       throw new ForbiddenException({
-        error: {
-          code: 'SCHOOL_GUARDIAN_ACCESS_DENIED',
-          message:
-            'This login is not a parent’s login at any school. Ask the school office for yours.',
-        },
+        error: everHeld
+          ? {
+              code: 'SCHOOL_GUARDIAN_SWITCHED_OFF',
+              message:
+                'The school office has switched this login off. Ask the office to switch it on again.',
+            }
+          : {
+              code: 'SCHOOL_GUARDIAN_ACCESS_DENIED',
+              message:
+                'This login is not a parent’s login at any school. Ask the school office for yours.',
+            },
       });
     }
     await this.guardians.update(

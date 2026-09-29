@@ -881,8 +881,12 @@ describe('SchoolGuardianService — the teachers’ side on the family’s page'
     const page = await svc.pupil(me, 10);
     // The statement's QR token: minted once, the same on every read.
     expect(page.verification.code).toMatch(/^[0-9A-HJKMNP-TV-Z]{14}$/);
-    expect((await svc.pupil(me, 10)).verification.code).toBe(page.verification.code);
-    expect((await svc.pupil(me, 11)).verification.code).not.toBe(page.verification.code);
+    expect((await svc.pupil(me, 10)).verification.code).toBe(
+      page.verification.code,
+    );
+    expect((await svc.pupil(me, 11)).verification.code).not.toBe(
+      page.verification.code,
+    );
     expect(page.homework.map((h: any) => h.title).sort()).toEqual([
       'Old',
       'Page 4',
@@ -926,5 +930,112 @@ describe('SchoolGuardianService — the teachers’ side on the family’s page'
     await expect(svc.sendPupilMessage(me, 11, '   ')).rejects.toBeInstanceOf(
       BadRequestException,
     );
+  });
+});
+
+describe('SchoolGuardianService — the desk’s four buttons', () => {
+  it('corrects a username, refusing one another login holds; the internal e-mail follows', async () => {
+    const { svc, users } = makeService({
+      folios: [folio(10, 128)],
+      users: [
+        {
+          id: 7,
+          posUsername: '0911000000',
+          email: 'pos.g.0911000000@sys.internal',
+          authMode: 'MANUAL',
+          password: 'x',
+        },
+      ],
+    });
+    const created = await svc.create(
+      {
+        branchId: 128,
+        username: '0915333513',
+        password: 'sunny-2019',
+        folioIds: [10],
+      },
+      OFFICE,
+    );
+    const renamed = await svc.update(created.id, {
+      branchId: 128,
+      username: '0915333514',
+    });
+    expect(renamed.username).toBe('0915333514');
+    const user = users.find((u) => u.posUsername === '0915333514');
+    expect(user.email).toBe('pos.g.0915333514@sys.internal');
+    // The same name again is a no-op; another login's is a conflict.
+    await expect(
+      svc.update(created.id, { branchId: 128, username: '0915333514' }),
+    ).resolves.toMatchObject({ username: '0915333514' });
+    await expect(
+      svc.update(created.id, { branchId: 128, username: '0911000000' }),
+    ).rejects.toBeInstanceOf(ConflictException);
+    await expect(
+      svc.update(created.id, {
+        branchId: 128,
+        username: '0911000000'.toUpperCase(),
+      }),
+    ).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it('keeps a withdrawn child linked through an unrelated edit, and only checks the children being ADDED', async () => {
+    const rows = [folio(10, 128), folio(11, 128), folio(12, 128)];
+    const { svc, pupils } = makeService({ folios: rows });
+    const created = await svc.create(
+      {
+        branchId: 128,
+        username: 'cali',
+        password: 'sunny-2019',
+        folioIds: [10, 11],
+      },
+      OFFICE,
+    );
+    // The second child is withdrawn from the roll after the login was made.
+    rows[1].status = 'DISCARDED';
+    // A phone correction that re-sends the same two children must not be refused over the withdrawn one.
+    const edited = await svc.update(created.id, {
+      branchId: 128,
+      phone: '0900',
+      folioIds: [10, 11],
+    });
+    expect(edited.phone).toBe('0900');
+    expect(pupils.map((l) => Number(l.folioId)).sort()).toEqual([10, 11]);
+    // Adding the withdrawn child fresh is refused; unticking it drops the link.
+    const again = await svc.update(created.id, {
+      branchId: 128,
+      folioIds: [10],
+    });
+    expect(again.pupils.map((p: any) => p.folioId)).toEqual([10]);
+    await expect(
+      svc.update(created.id, { branchId: 128, folioIds: [10, 11] }),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    // A live child is added as before.
+    expect(
+      (
+        await svc.update(created.id, { branchId: 128, folioIds: [10, 12] })
+      ).pupils.map((p: any) => p.folioId),
+    ).toEqual([10, 12]);
+  });
+
+  it('tells a switched-off family that the office switched them off, not that they are no parent', async () => {
+    const { svc, guardians } = makeService({ folios: [folio(10, 128)] });
+    const created = await svc.create(
+      {
+        branchId: 128,
+        username: 'cali',
+        password: 'sunny-2019',
+        folioIds: [10],
+      },
+      OFFICE,
+    );
+    await svc.update(created.id, { branchId: 128, isActive: false });
+    expect(guardians[0].isActive).toBe(false);
+    await expect(svc.login('cali', 'sunny-2019')).rejects.toMatchObject({
+      response: { error: { code: 'SCHOOL_GUARDIAN_SWITCHED_OFF' } },
+    });
+    await svc.update(created.id, { branchId: 128, isActive: true });
+    await expect(svc.login('cali', 'sunny-2019')).resolves.toMatchObject({
+      accessToken: 'at',
+    });
   });
 });

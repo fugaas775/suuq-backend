@@ -59,13 +59,19 @@ export class SchoolMessageService {
 
   // ── shared ───────────────────────────────────────────────────────────────
 
-  private threadView(t: SchoolMessageThread, guardianName?: string | null) {
+  private threadView(
+    t: SchoolMessageThread,
+    guardianName?: string | null,
+    guardianRemoved = false,
+  ) {
     return {
       id: Number(t.id),
       branchId: t.branchId,
       folioId: Number(t.folioId),
       guardianId: Number(t.guardianId),
       guardianName: guardianName ?? null,
+      /** The family's login was removed since; the conversation stands as a record. */
+      guardianRemoved,
       pupilName: t.pupilName ?? null,
       classCode: t.classCode ?? null,
       lastMessageAt: t.lastMessageAt ?? null,
@@ -287,7 +293,11 @@ export class SchoolMessageService {
       unread: visible.reduce((n, t) => n + (Number(t.staffUnread) || 0), 0),
       items: visible.map((t) => {
         const f = folioById.get(Number(t.folioId));
-        const view = this.threadView(t, names.get(Number(t.guardianId)));
+        const view = this.threadView(
+          t,
+          names.get(Number(t.guardianId)),
+          !names.has(Number(t.guardianId)),
+        );
         if (f) {
           const p = pupilOf(f);
           view.pupilName = p.name || view.pupilName;
@@ -318,7 +328,11 @@ export class SchoolMessageService {
     }
     const names = await this.guardianNames([Number(thread.guardianId)]);
     return {
-      thread: this.threadView(thread, names.get(Number(thread.guardianId))),
+      thread: this.threadView(
+        thread,
+        names.get(Number(thread.guardianId)),
+        !names.has(Number(thread.guardianId)),
+      ),
       messages: await this.messagesOf(Number(thread.id)),
       me: { name: reach.name, employee: reach.employee },
     };

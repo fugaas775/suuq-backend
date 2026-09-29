@@ -74,6 +74,17 @@ export class UpdateSchoolGuardianDto {
   @IsInt()
   branchId!: number;
 
+  /** A corrected username (the phone typed wrong) — the same rule as at creation. */
+  @IsOptional()
+  @IsString()
+  @MinLength(3)
+  @MaxLength(64)
+  @Matches(GUARDIAN_USERNAME_PATTERN, {
+    message:
+      'Username may contain letters, digits, dots, hyphens and underscores only — no "@" and no spaces.',
+  })
+  username?: string;
+
   @IsOptional()
   @IsString()
   @MaxLength(160)
@@ -162,7 +173,7 @@ export class CreateSchoolNoticeDto {
   body!: string;
 
   @IsOptional()
-  @IsIn(NOTICE_AUDIENCES as unknown as string[])
+  @IsIn(NOTICE_AUDIENCES)
   audience?: 'ALL' | 'CLASSES';
 
   @IsOptional()
@@ -196,7 +207,7 @@ export class UpdateSchoolNoticeDto {
   body?: string;
 
   @IsOptional()
-  @IsIn(NOTICE_AUDIENCES as unknown as string[])
+  @IsIn(NOTICE_AUDIENCES)
   audience?: 'ALL' | 'CLASSES';
 
   @IsOptional()
