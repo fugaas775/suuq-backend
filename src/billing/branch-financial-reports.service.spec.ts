@@ -5,6 +5,11 @@ import {
 } from '../pos-sync/entities/pos-checkout.entity';
 import { PosRegisterSessionStatus } from '../pos-sync/entities/pos-register-session.entity';
 
+/** The ingredient ledger's repository: answers the P&L's one query with `rows`. */
+function makeIngredientMovementsRepo(rows: any[]) {
+  return { createQueryBuilder: jest.fn(() => createBuilder(rows)) };
+}
+
 function createBuilder(result: any[], raw = false) {
   return {
     where: jest.fn().mockReturnThis(),
@@ -21,7 +26,7 @@ function createBuilder(result: any[], raw = false) {
 }
 
 describe('BranchFinancialReportsService', () => {
-  function createService() {
+  function createService(ingredientMovements: any[] = []) {
     const checkoutsRepo = {
       createQueryBuilder: jest.fn(),
     };
@@ -61,6 +66,9 @@ describe('BranchFinancialReportsService', () => {
     const productCost = {
       weightedAverageCosts: jest.fn().mockResolvedValue(new Map()),
     };
+    const ingredientMovementsRepo = makeIngredientMovementsRepo(
+      ingredientMovements,
+    );
 
     const service = new BranchFinancialReportsService(
       checkoutsRepo as any,
@@ -75,6 +83,7 @@ describe('BranchFinancialReportsService', () => {
       longTermDebtRepo as any,
       ledgerStatements as any,
       productCost as any,
+      ingredientMovementsRepo as any,
     );
 
     return {
@@ -891,13 +900,16 @@ describe('BranchFinancialReportsService', () => {
  * never quite agreed.
  */
 describe('BranchFinancialReportsService — profit-and-loss series', () => {
-  function createSeriesService() {
+  function createSeriesService(ingredientMovements: any[] = []) {
     const checkoutsRepo = { createQueryBuilder: jest.fn() };
     const expensesRepo = { createQueryBuilder: jest.fn() };
     const productCost = {
       weightedAverageCosts: jest.fn().mockResolvedValue(new Map()),
     };
     const repo = () => ({ createQueryBuilder: jest.fn() });
+    const ingredientMovementsRepo = makeIngredientMovementsRepo(
+      ingredientMovements,
+    );
     const service = new BranchFinancialReportsService(
       checkoutsRepo as any,
       repo() as any,
@@ -915,8 +927,15 @@ describe('BranchFinancialReportsService — profit-and-loss series', () => {
         getTrialBalance: jest.fn(),
       } as any,
       productCost as any,
+      ingredientMovementsRepo as any,
     );
-    return { service, checkoutsRepo, expensesRepo, productCost };
+    return {
+      service,
+      checkoutsRepo,
+      expensesRepo,
+      productCost,
+      ingredientMovementsRepo,
+    };
   }
 
   const sale = (over: any = {}) => ({
@@ -1042,6 +1061,115 @@ describe('BranchFinancialReportsService — profit-and-loss series', () => {
     expect(day.pl.purchases).toBe(640);
     expect(day.pl.totalExpenses).toBe(0);
     expect(day.pl.grossProfit).toBe(-640);
+  });
+
+  it('charges what the kitchen used to COGS and keeps stocked purchases out of goods bought', async () => {
+    const ingredientMovements = [
+      // The run: 10 kg of sugar for 1,200, received onto the shelf.
+      {
+        movementType: 'PURCHASE',
+        sourceType: 'PURCHASE_RUN',
+        costDelta: 1200,
+        occurredAt: new Date('2026-08-02T06:00:00.000Z'),
+      },
+      // Two teas' worth of sugar, at the average of the moment.
+      {
+        movementType: 'CONSUMPTION',
+        sourceType: 'POS_CHECKOUT',
+        costDelta: -10,
+        occurredAt: new Date('2026-08-02T09:00:00.000Z'),
+      },
+      // A voided sale's draw-down: reversed, so it never happened.
+      {
+        movementType: 'CONSUMPTION',
+        sourceType: 'POS_CHECKOUT',
+        costDelta: -5,
+        reversedByMovementId: 99,
+        occurredAt: new Date('2026-08-02T09:30:00.000Z'),
+      },
+    ];
+    const { service, checkoutsRepo, expensesRepo } =
+      createSeriesService(ingredientMovements);
+    checkoutsRepo.createQueryBuilder.mockReturnValue(
+      createBuilder([
+        sale({ occurredAt: new Date('2026-08-02T09:00:00.000Z'), total: 100 }),
+      ]),
+    );
+    expensesRepo.createQueryBuilder.mockReturnValue(
+      createBuilder([
+        // The same run's expense (1,200 of sugar) plus charcoal on the side.
+        {
+          amount: 1500,
+          category: 'INGREDIENTS',
+          occurredAt: new Date('2026-08-02T06:00:00.000Z'),
+        },
+      ]),
+    );
+
+    const pl = await service.getProfitAndLoss(7, {
+      from: new Date('2026-08-01T21:00:00.000Z'),
+      to: new Date('2026-08-02T20:59:59.999Z'),
+    });
+
+    expect(pl.ingredientConsumption).toBe(10);
+    expect(pl.cogs).toBe(10);
+    expect(pl.stockedPurchases).toBe(1200);
+    // 1,500 filed, 1,200 of it carried as stock: only the charcoal is a
+    // periodic cost today.
+    expect(pl.purchases).toBe(300);
+    expect(pl.grossProfit).toBe(100 - 10 - 300);
+    expect(pl.notes).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('Ingredient consumption of 10'),
+        expect.stringContaining('Purchases of 1200 were received into ingredient stock'),
+      ]),
+    );
+    // Consumption alone is not "both bases".
+    expect(pl.notes.some((n) => n.includes('counted twice'))).toBe(false);
+  });
+
+  it('floors goods bought at zero and says so when receipts exceed the expenses in range', async () => {
+    const { service, checkoutsRepo, expensesRepo } = createSeriesService([
+      {
+        movementType: 'PURCHASE',
+        sourceType: 'PURCHASE_RUN',
+        costDelta: 1200,
+        occurredAt: new Date('2026-08-02T06:00:00.000Z'),
+      },
+    ]);
+    checkoutsRepo.createQueryBuilder.mockReturnValue(createBuilder([]));
+    expensesRepo.createQueryBuilder.mockReturnValue(createBuilder([]));
+    const pl = await service.getProfitAndLoss(7, {
+      from: new Date('2026-08-01T21:00:00.000Z'),
+      to: new Date('2026-08-02T20:59:59.999Z'),
+    });
+    expect(pl.purchases).toBe(0);
+    expect(pl.stockedPurchases).toBe(1200);
+    expect(pl.notes).toEqual(
+      expect.arrayContaining([expect.stringContaining('exceed goods purchased')]),
+    );
+  });
+
+  it("buckets the kitchen's movements on the caller's day, like expenses", async () => {
+    const { service, checkoutsRepo, expensesRepo } = createSeriesService([
+      {
+        movementType: 'CONSUMPTION',
+        sourceType: 'POS_CHECKOUT',
+        costDelta: -40,
+        // 22:30Z is 01:30 on the 3rd in EAT.
+        occurredAt: new Date('2026-08-02T22:30:00.000Z'),
+      },
+    ]);
+    checkoutsRepo.createQueryBuilder.mockReturnValue(createBuilder([]));
+    expensesRepo.createQueryBuilder.mockReturnValue(createBuilder([]));
+
+    const rows = await service.getProfitAndLossSeries(7, {
+      ...AUG_2,
+      tzOffsetMinutes: EAT,
+    });
+    const byDay = Object.fromEntries(rows.map((r) => [r.day, r.pl.cogs]));
+    expect(byDay['2026-08-03']).toBe(40);
+    expect(byDay['2026-08-02']).toBe(0);
   });
 
   it('refuses a range that is inverted, empty or absurd', async () => {

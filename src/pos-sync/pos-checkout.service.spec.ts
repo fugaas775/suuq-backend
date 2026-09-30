@@ -5,6 +5,7 @@ import { InventoryLedgerService } from '../branches/inventory-ledger.service';
 import { VariantInventoryService } from '../branches/variant-inventory.service';
 import { GeneralLedgerService } from '../accounting/general-ledger.service';
 import { ProductCostService } from '../purchase-orders/product-cost.service';
+import { IngredientsService } from '../ingredients/ingredients.service';
 import { Branch } from '../branches/entities/branch.entity';
 import { BranchInventory } from '../branches/entities/branch-inventory.entity';
 import { BranchInventoryVariant } from '../branches/entities/branch-inventory-variant.entity';
@@ -55,6 +56,10 @@ describe('PosCheckoutService', () => {
     findEntryByIdempotencyKey: jest.Mock;
   };
   let productCostService: { weightedAverageCosts: jest.Mock };
+  let ingredientsService: {
+    consumeForCheckout: jest.Mock;
+    reverseForCheckout: jest.Mock;
+  };
 
   beforeEach(async () => {
     generalLedgerService = {
@@ -64,6 +69,14 @@ describe('PosCheckoutService', () => {
     };
     productCostService = {
       weightedAverageCosts: jest.fn().mockResolvedValue(new Map()),
+    };
+    ingredientsService = {
+      consumeForCheckout: jest
+        .fn()
+        .mockResolvedValue({ consumed: 0, duplicates: 0 }),
+      reverseForCheckout: jest
+        .fn()
+        .mockResolvedValue({ reversed: 0, duplicates: 0 }),
     };
     posCheckoutsRepository = {
       create: jest.fn((value) => ({ id: value.id ?? 71, ...value })),
@@ -201,6 +214,7 @@ describe('PosCheckoutService', () => {
         },
         { provide: GeneralLedgerService, useValue: generalLedgerService },
         { provide: ProductCostService, useValue: productCostService },
+        { provide: IngredientsService, useValue: ingredientsService },
       ],
     }).compile();
 
@@ -3143,6 +3157,155 @@ describe('PosCheckoutService', () => {
       const result = await service.getSalesSummary({ branchId: 3 });
       expect(result.firstAt).toBe('2026-08-02T06:00:00.000Z');
       expect(result.lastAt).toBe('2026-08-02T17:30:00.000Z');
+    });
+  });
+
+  describe("the kitchen's shelf", () => {
+    const processedSale = () => ({
+      id: 71,
+      branchId: 3,
+      registerSessionId: 11,
+      suspendedCartId: 91,
+      registerId: 'front-1',
+      transactionType: PosCheckoutTransactionType.SALE,
+      status: PosCheckoutStatus.PROCESSED,
+      currency: 'USD',
+      subtotal: 15,
+      discountAmount: 0,
+      taxAmount: 0,
+      total: 15,
+      paidAmount: 20,
+      changeDue: 5,
+      itemCount: 1,
+      occurredAt: new Date('2026-04-01T10:00:00.000Z'),
+      processedAt: new Date('2026-04-01T10:01:00.000Z'),
+      tenders: [{ method: 'CASH', amount: 20 }],
+      items: [
+        {
+          lineId: 'line-1',
+          productId: 55,
+          quantity: 2,
+          unitPrice: 7.5,
+          discountAmount: 0,
+          taxAmount: 0,
+          lineTotal: 15,
+        },
+      ],
+      createdAt: new Date('2026-04-01T10:00:00.000Z'),
+      updatedAt: new Date('2026-04-01T10:01:00.000Z'),
+    });
+
+    const ingestSale = () =>
+      service.ingest(
+        {
+          branchId: 3,
+          transactionType: PosCheckoutTransactionType.SALE,
+          externalCheckoutId: 'sale-shelf-1',
+          registerId: 'front-1',
+          registerSessionId: 11,
+          suspendedCartId: 91,
+          receiptNumber: 'R-2001',
+          currency: 'usd',
+          subtotal: 15,
+          total: 15,
+          paidAmount: 20,
+          changeDue: 5,
+          occurredAt: '2026-04-01T10:00:00.000Z',
+          items: [
+            {
+              lineId: 'line-1',
+              productId: 55,
+              quantity: 2,
+              unitPrice: 7.5,
+              lineTotal: 15,
+            },
+          ],
+          tenders: [{ method: 'CASH', amount: 20 }],
+        },
+        { id: 17, roles: ['POS_OPERATOR'] },
+      );
+
+    beforeEach(() => {
+      posCheckoutsRepository.findOne
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(processedSale());
+      registerSessionsRepository.findOne.mockResolvedValueOnce({
+        id: 11,
+        branchId: 3,
+        registerId: 'front-1',
+        status: PosRegisterSessionStatus.OPEN,
+      });
+      suspendedCartsRepository.findOne.mockResolvedValueOnce({
+        id: 91,
+        branchId: 3,
+        registerId: 'front-1',
+        registerSessionId: 11,
+        status: PosSuspendedCartStatus.SUSPENDED,
+        metadata: null,
+      });
+    });
+
+    it('draws the recipes down once the sale has committed, with the branch it loaded', async () => {
+      const result = await ingestSale();
+
+      expect(result.status).toBe(PosCheckoutStatus.PROCESSED);
+      expect(ingredientsService.consumeForCheckout).toHaveBeenCalledTimes(1);
+      const [checkout, branch] = ingredientsService.consumeForCheckout.mock
+        .calls[0];
+      // The post-commit row, not the DTO: items, occurredAt and status are
+      // the persisted ones.
+      expect(checkout).toMatchObject({
+        id: 71,
+        status: PosCheckoutStatus.PROCESSED,
+      });
+      expect(branch).toMatchObject({ id: 3 });
+    });
+
+    it('never fails the sale over the shelf', async () => {
+      ingredientsService.consumeForCheckout.mockRejectedValueOnce(
+        new Error('shelf is on fire'),
+      );
+      const result = await ingestSale();
+      expect(result.status).toBe(PosCheckoutStatus.PROCESSED);
+    });
+
+    it('does not touch the shelf when the sale itself failed', async () => {
+      registerSessionsRepository.findOne.mockReset();
+      registerSessionsRepository.findOne.mockResolvedValue({
+        id: 11,
+        branchId: 3,
+        registerId: 'front-1',
+        status: PosRegisterSessionStatus.CLOSED,
+      });
+      await ingestSale().catch(() => undefined);
+      expect(ingredientsService.consumeForCheckout).not.toHaveBeenCalled();
+    });
+
+    it('gives the shelf back when a processed sale is voided', async () => {
+      posCheckoutsRepository.findOne.mockReset();
+      branchesRepository.findOne.mockResolvedValue({
+        id: 3,
+        serviceFormat: 'QSR',
+      });
+      posCheckoutsRepository.findOne.mockResolvedValue({
+        id: 71,
+        branchId: 3,
+        transactionType: PosCheckoutTransactionType.SALE,
+        status: PosCheckoutStatus.PROCESSED,
+        receiptNumber: 'POS-3-1',
+        items: [{ productId: 55, quantity: 2, unitPrice: 10, lineTotal: 20 }],
+      });
+      posCheckoutsRepository.update = jest.fn().mockResolvedValue({});
+
+      await service.voidCheckout(71, { reason: 'keyed twice' }, 9, 3);
+
+      expect(ingredientsService.reverseForCheckout).toHaveBeenCalledTimes(1);
+      const [checkout, actorId, voidedAt] =
+        ingredientsService.reverseForCheckout.mock.calls[0];
+      expect(checkout).toMatchObject({ id: 71 });
+      expect(actorId).toBe(9);
+      expect(voidedAt).toBeInstanceOf(Date);
     });
   });
 });

@@ -13,6 +13,7 @@ import {
   BranchExpenseCategory,
 } from '../billing/entities/branch-expense.entity';
 import { InventoryLedgerService } from '../branches/inventory-ledger.service';
+import { IngredientsService } from '../ingredients/ingredients.service';
 import { User } from '../users/entities/user.entity';
 import { StockMovementType } from '../branches/entities/stock-movement.entity';
 import {
@@ -132,6 +133,8 @@ export class PurchasingService {
     private readonly expenses: Repository<BranchExpense>,
     private readonly billing: BranchBillingService,
     private readonly inventoryLedger: InventoryLedgerService,
+    // The kitchen's shelf: a line that names an ingredient receives it there.
+    private readonly ingredients: IngredientsService,
   ) {}
 
   // ------------------------------------------------------------------ shaping
@@ -149,6 +152,8 @@ export class PurchasingService {
       stockQuantity:
         row.stockQuantity == null ? null : Number(row.stockQuantity),
       stockMovementId: row.stockMovementId ?? null,
+      ingredientId: row.ingredientId ?? null,
+      ingredientMovementId: row.ingredientMovementId ?? null,
       note: row.note ?? null,
       sortOrder: row.sortOrder ?? 0,
       voidedAt: row.voidedAt?.toISOString?.() ?? null,
@@ -276,16 +281,46 @@ export class PurchasingService {
         unitLabel: dto.unitLabel ? String(dto.unitLabel).trim() : null,
         unitPrice: money(dto.unitPrice ?? 0),
         lineTotal: this.lineTotalOf(dto),
-        productId: dto.productId ?? null,
-        // A stock quantity with no product to add it to is meaningless, and a
-        // product with no quantity adds nothing — drop both rather than store a
-        // half-link that a later approval would have to guess about.
-        stockQuantity:
-          dto.productId && dto.stockQuantity ? qty(dto.stockQuantity) : null,
+        ...this.stockLinkOf(dto),
         note: dto.note ? String(dto.note).trim() : null,
         sortOrder: index,
       }),
     );
+  }
+
+  /**
+   * The line's optional link to stock: a store product on the till OR an
+   * ingredient on the kitchen's shelf, never both. A quantity with nothing to
+   * add it to is meaningless, and a target with no quantity adds nothing —
+   * the half-link keeps its target and drops the quantity rather than store
+   * one a later approval would have to guess about.
+   */
+  private stockLinkOf(
+    dto: PurchaseRunLineDto,
+  ): Pick<PurchaseRunLine, 'productId' | 'ingredientId' | 'stockQuantity'> {
+    if (dto.productId && dto.ingredientId) {
+      throw new BadRequestException(
+        'A line can add to a store product or to an ingredient, not both.',
+      );
+    }
+    const quantity = dto.stockQuantity ? qty(dto.stockQuantity) : 0;
+    return {
+      productId: dto.ingredientId ? null : (dto.productId ?? null),
+      ingredientId: dto.ingredientId ?? null,
+      stockQuantity:
+        (dto.productId || dto.ingredientId) && quantity > 0 ? quantity : null,
+    };
+  }
+
+  /** Every ingredient a run's lines name is on this branch's shelf. */
+  private async assertLineIngredients(
+    branchId: number,
+    dtos: PurchaseRunLineDto[] | undefined,
+  ): Promise<void> {
+    const ids = (dtos || [])
+      .map((dto) => Number(dto.ingredientId))
+      .filter((id) => Number.isFinite(id) && id > 0);
+    if (ids.length) await this.ingredients.assertBranchIngredients(branchId, ids);
   }
 
   private async loadLines(runId: number): Promise<PurchaseRunLine[]> {
@@ -617,6 +652,7 @@ export class PurchasingService {
       }
     }
 
+    await this.assertLineIngredients(dto.branchId, dto.lines);
     const occurredAt = this.parseDate(dto.occurredAt, 'occurredAt');
     let run: PurchaseRun;
     try {
@@ -696,6 +732,7 @@ export class PurchasingService {
          dropped between them left a run with no lines at all and a spentTotal
          that still claimed a number. Twelve lines typed at a stall, gone, and
          the run reading as if they had never been written. */
+      await this.assertLineIngredients(run.branchId, dto.lines);
       const replacements = dto.lines.length
         ? this.buildLines(run, dto.lines)
         : [];
@@ -1128,14 +1165,32 @@ export class PurchasingService {
   ): Promise<string[]> {
     const failed: string[] = [];
     for (const line of lines) {
-      if (
-        !isLive(line) ||
-        !line.productId ||
-        !line.stockQuantity ||
-        line.stockMovementId
-      ) {
+      if (!isLive(line) || !line.stockQuantity) continue;
+      if (line.ingredientId) {
+        // The shelf, not the till. Same shape: best-effort, recorded on the
+        // line so a retry cannot receive it twice.
+        if (line.ingredientMovementId) continue;
+        try {
+          const { movement } = await this.ingredients.receiveForPurchaseRunLine(
+            run,
+            line,
+            actor,
+          );
+          await this.lines.update(
+            { id: line.id },
+            { ingredientMovementId: Number(movement.id) },
+          );
+        } catch (error) {
+          this.logger.warn(
+            `Purchase run #${run.id} line ${line.id} could not receive ingredient ${line.ingredientId}: ${
+              (error as Error)?.message ?? error
+            }`,
+          );
+          failed.push(line.description);
+        }
         continue;
       }
+      if (!line.productId || line.stockMovementId) continue;
       try {
         const { movement } = await this.inventoryLedger.recordMovement({
           branchId: run.branchId,
@@ -1267,6 +1322,27 @@ export class PurchasingService {
       }
     }
 
+    if (target.ingredientMovementId && target.ingredientId) {
+      try {
+        await this.ingredients.reverseForPurchaseRunLine(
+          run,
+          target,
+          actor,
+          reason,
+        );
+        await this.lines.update(
+          { id: target.id },
+          { ingredientMovementId: null },
+        );
+      } catch (error) {
+        this.logger.warn(
+          `Purchase run #${run.id} line ${target.id} could not take its ingredient back off the shelf: ${
+            (error as Error)?.message ?? error
+          }`,
+        );
+      }
+    }
+
     const newTotal = this.liveTotal(liveAfter);
     await this.runs.update({ id: run.id }, { spentTotal: newTotal });
 
@@ -1386,6 +1462,26 @@ export class PurchasingService {
 
     const lines = await this.loadLines(run.id);
     for (const line of lines) {
+      if (line.ingredientMovementId && line.ingredientId) {
+        try {
+          await this.ingredients.reverseForPurchaseRunLine(
+            run,
+            line,
+            actor,
+            reason,
+          );
+          await this.lines.update(
+            { id: line.id },
+            { ingredientMovementId: null },
+          );
+        } catch (error) {
+          this.logger.warn(
+            `Purchase run #${run.id} line ${line.id} could not take its ingredient back off the shelf: ${
+              (error as Error)?.message ?? error
+            }`,
+          );
+        }
+      }
       if (!line.stockMovementId || !line.productId || !line.stockQuantity) {
         continue;
       }

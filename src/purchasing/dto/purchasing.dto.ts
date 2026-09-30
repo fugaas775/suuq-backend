@@ -73,6 +73,16 @@ export class PurchaseRunLineDto {
   productId?: number | null;
 
   @ApiPropertyOptional({
+    example: 7,
+    description:
+      "Optional link to an ingredient on the kitchen's shelf instead of a product. Not with productId.",
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  ingredientId?: number | null;
+
+  @ApiPropertyOptional({
     example: 12,
     description: "How many of the PRODUCT's own units this adds to stock.",
   })

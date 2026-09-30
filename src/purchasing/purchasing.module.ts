@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { BillingModule } from '../billing/billing.module';
 import { BranchesModule } from '../branches/branches.module';
 import { RetailModule } from '../retail/retail.module';
+import { IngredientsModule } from '../ingredients/ingredients.module';
 import { PosBranchAccessGuard } from '../auth/pos-branch-access.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { PosCashMovement } from './entities/pos-cash-movement.entity';
@@ -44,6 +45,8 @@ import { PurchasingService } from './purchasing.service';
     BillingModule,
     BranchesModule,
     RetailModule,
+    // A signed-off line that names an ingredient receives it on the shelf.
+    IngredientsModule,
   ],
   controllers: [PurchasingController],
   providers: [PurchasingService, PosBranchAccessGuard, RolesGuard],

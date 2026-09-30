@@ -7,6 +7,8 @@ import {
   LedgerProfitAndLoss,
 } from '../accounting/ledger-statements.service';
 import { ProductCostService } from '../purchase-orders/product-cost.service';
+import { IngredientMovement } from '../ingredients/entities/ingredient-movement.entity';
+import { summarizeIngredientCosts } from '../ingredients/ingredient-cost';
 import {
   PosCheckout,
   PosCheckoutStatus,
@@ -66,6 +68,20 @@ export interface ProfitAndLossReport {
    * a given branch is actually running on.
    */
   purchases: number;
+  /**
+   * What recipes drew off the kitchen's shelf in the range, valued at each
+   * ingredient's weighted-average cost at the time of sale. Already inside
+   * `cogs`; broken out so a reader can see how much of the cost line is the
+   * shelf and how much is purchase-order history.
+   */
+  ingredientConsumption: number;
+  /**
+   * Market-run purchases that were received INTO ingredient stock in the
+   * range. Their money was posted as an INGREDIENTS expense when the run was
+   * signed off; it is netted out of `purchases` here, because the shelf
+   * charges it to `cogs` as it is used. Shown so the netting is visible.
+   */
+  stockedPurchases: number;
   grossProfit: number;
   expensesByCategory: Record<string, number>;
   totalExpenses: number;
@@ -172,6 +188,9 @@ export class BranchFinancialReportsService {
     private readonly longTermDebtRepo: Repository<BranchLongTermDebt>,
     private readonly ledgerStatements: LedgerStatementsService,
     private readonly productCost: ProductCostService,
+    // The kitchen's shelf. Read here, never written; see BillingModule.
+    @InjectRepository(IngredientMovement)
+    private readonly ingredientMovementsRepo: Repository<IngredientMovement>,
   ) {}
 
   /**
@@ -216,6 +235,8 @@ export class BranchFinancialReportsService {
       // other cost of sales — so they are already inside `cogs` above. Reporting
       // them again here would show the same money twice on one statement.
       purchases: 0,
+      ingredientConsumption: 0,
+      stockedPurchases: 0,
       grossProfit: pl.grossProfit,
       expensesByCategory: pl.expensesByCategory,
       totalExpenses: pl.totalExpenses,
@@ -344,6 +365,11 @@ export class BranchFinancialReportsService {
 
     const checkouts = await this.findCheckouts(branchId, from, to);
     const expenses = await this.findExpenses(branchId, from, to);
+    const ingredientMovements = await this.findIngredientMovements(
+      branchId,
+      from,
+      to,
+    );
     const soldProductIds = new Set<number>();
     for (const checkout of checkouts) {
       if (
@@ -367,6 +393,7 @@ export class BranchFinancialReportsService {
       checkouts,
       expenses,
       wacByProduct,
+      ingredientMovements,
     });
   }
 
@@ -386,9 +413,18 @@ export class BranchFinancialReportsService {
       checkouts: PosCheckout[];
       expenses: BranchExpense[];
       wacByProduct: Map<number, number>;
+      /** The ingredient ledger's cost rows for the range. See findIngredientMovements. */
+      ingredientMovements?: IngredientMovement[];
     },
   ): ProfitAndLossReport {
-    const { from, to, checkouts, expenses, wacByProduct } = input;
+    const {
+      from,
+      to,
+      checkouts,
+      expenses,
+      wacByProduct,
+      ingredientMovements = [],
+    } = input;
     let gross = 0;
     let voided = 0;
     let tax = 0;
@@ -460,13 +496,30 @@ export class BranchFinancialReportsService {
       totalExpenses += amount;
     }
 
+    // The kitchen's shelf. Consumption is a direct cost of what was sold,
+    // valued at the average cost of the moment, so it joins COGS. The run
+    // receipts that stocked the shelf were already expensed as INGREDIENTS the
+    // day they were signed off — they come OUT of goods purchased here, or the
+    // same sugar would be charged on the day it was bought and again on the
+    // day it was used.
+    const { consumptionCost, stockedPurchaseCost } =
+      summarizeIngredientCosts(ingredientMovements);
+    cogs = this.round2(cogs + consumptionCost);
+    const purchasesGross = purchases;
+    purchases = Math.max(0, this.round2(purchases - stockedPurchaseCost));
+
     const netRevenue = gross - tax;
     const grossProfit = netRevenue - cogs - purchases;
     const netProfit = grossProfit - totalExpenses;
 
     const notes: string[] = [];
     if (!checkouts.length) notes.push('No POS checkouts in range.');
-    if (!wacByProduct.size && itemsByProduct.size && purchases < 0.01) {
+    if (
+      !wacByProduct.size &&
+      itemsByProduct.size &&
+      purchases < 0.01 &&
+      consumptionCost < 0.01
+    ) {
       notes.push(
         'Cost-of-goods-sold is 0 because no purchase-order history was found for the items sold.',
       );
@@ -480,7 +533,22 @@ export class BranchFinancialReportsService {
     // orders for its drinks and a cash market run for its vegetables — but a
     // reader comparing this to a hand-kept book needs to be told, because the
     // same tomato counted through both paths would be counted twice.
-    if (purchases >= 0.01 && cogs >= 0.01) {
+    if (consumptionCost >= 0.01) {
+      notes.push(
+        `Ingredient consumption of ${this.round2(consumptionCost)} is included in cost-of-goods-sold, valued at each ingredient's weighted-average cost at the time of sale.`,
+      );
+    }
+    if (stockedPurchaseCost >= 0.01) {
+      notes.push(
+        `Purchases of ${this.round2(stockedPurchaseCost)} were received into ingredient stock and are excluded from goods purchased, so they are not charged twice — they reach this statement as consumption when recipes use them.`,
+      );
+    }
+    if (stockedPurchaseCost > purchasesGross + 0.01) {
+      notes.push(
+        `Ingredient receipts (${this.round2(stockedPurchaseCost)}) exceed goods purchased (${this.round2(purchasesGross)}) in this range — a run approved in an earlier period, or a stocked line voided after its expense was re-posted. Goods purchased is floored at zero.`,
+      );
+    }
+    if (purchases >= 0.01 && cogs - consumptionCost >= 0.01) {
       notes.push(
         'This branch reports both cost-of-goods-sold from purchase-order history and goods purchased directly. Anything bought on a purchase order AND filed as a purchase would be counted twice.',
       );
@@ -508,6 +576,8 @@ export class BranchFinancialReportsService {
       revenue: { gross, voided, tax, net: netRevenue },
       cogs,
       purchases,
+      ingredientConsumption: consumptionCost,
+      stockedPurchases: stockedPurchaseCost,
       grossProfit,
       expensesByCategory,
       totalExpenses,
@@ -515,6 +585,30 @@ export class BranchFinancialReportsService {
       currency,
       notes,
     };
+  }
+
+  /**
+   * The ingredient ledger's cost rows for a range: unreversed consumption and
+   * receipts. VOID rows and the rows they undid are both left out — a voided
+   * sale's draw-down did not happen, and its expense vanishes from the range
+   * the same way rather than posting a dated negative.
+   */
+  private async findIngredientMovements(
+    branchId: number,
+    from: Date | null,
+    to: Date | null,
+  ): Promise<IngredientMovement[]> {
+    const qb = this.ingredientMovementsRepo
+      .createQueryBuilder('m')
+      .where('m."branchId" = :branchId', { branchId })
+      .andWhere('m."reversedByMovementId" IS NULL')
+      .andWhere('m."movementType" IN (:...types)', {
+        types: ['CONSUMPTION', 'PURCHASE'],
+      })
+      .orderBy('m."occurredAt"', 'ASC');
+    if (from) qb.andWhere('m."occurredAt" >= :from', { from });
+    if (to) qb.andWhere('m."occurredAt" <= :to', { to });
+    return qb.getMany();
   }
 
   /**
@@ -566,9 +660,10 @@ export class BranchFinancialReportsService {
       return rows;
     }
 
-    const [checkouts, expenses] = await Promise.all([
+    const [checkouts, expenses, ingredientMovements] = await Promise.all([
       this.findCheckouts(branchId, from, to),
       this.findExpenses(branchId, from, to),
+      this.findIngredientMovements(branchId, from, to),
     ]);
 
     // One cost basis for the whole range — see the note above.
@@ -585,9 +680,19 @@ export class BranchFinancialReportsService {
 
     const byDay = new Map<
       string,
-      { checkouts: PosCheckout[]; expenses: BranchExpense[] }
+      {
+        checkouts: PosCheckout[];
+        expenses: BranchExpense[];
+        ingredientMovements: IngredientMovement[];
+      }
     >();
-    for (const day of days) byDay.set(day.key, { checkouts: [], expenses: [] });
+    for (const day of days) {
+      byDay.set(day.key, {
+        checkouts: [],
+        expenses: [],
+        ingredientMovements: [],
+      });
+    }
 
     for (const checkout of checkouts) {
       const bucket = byDay.get(
@@ -601,6 +706,12 @@ export class BranchFinancialReportsService {
       );
       if (bucket) bucket.expenses.push(expense);
     }
+    for (const movement of ingredientMovements) {
+      const bucket = byDay.get(
+        this.localDayKey(movement.occurredAt, tzOffsetMinutes),
+      );
+      if (bucket) bucket.ingredientMovements.push(movement);
+    }
 
     return days.map((day) => {
       const bucket = byDay.get(day.key);
@@ -612,6 +723,7 @@ export class BranchFinancialReportsService {
           checkouts: bucket.checkouts,
           expenses: bucket.expenses,
           wacByProduct,
+          ingredientMovements: bucket.ingredientMovements,
         }),
       };
     });

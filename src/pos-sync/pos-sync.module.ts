@@ -12,6 +12,7 @@ import { ProductAlias } from '../product-aliases/entities/product-alias.entity';
 import { Product } from '../products/entities/product.entity';
 import { RetailModule } from '../retail/retail.module';
 import { AccountingModule } from '../accounting/accounting.module';
+import { IngredientsModule } from '../ingredients/ingredients.module';
 import { PurchaseOrderItem } from '../purchase-orders/entities/purchase-order.entity';
 import { ProductCostService } from '../purchase-orders/product-cost.service';
 import { PosCatalogController } from './pos-catalog.controller';
@@ -45,6 +46,8 @@ import { PosSyncJob } from './entities/pos-sync-job.entity';
     ProductAliasesModule,
     RetailModule,
     AccountingModule,
+    // A settled sale draws its recipes down off the kitchen's shelf.
+    IngredientsModule,
     TypeOrmModule.forFeature([
       PosSyncJob,
       PosCheckout,

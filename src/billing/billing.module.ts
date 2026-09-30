@@ -13,6 +13,10 @@ import { User } from '../users/entities/user.entity';
 // repositories to refuse a hand void of an expense a run posted.
 import { PayrollRun } from '../payroll/entities/payroll-run.entity';
 import { PurchaseRun } from '../purchasing/entities/purchase-run.entity';
+// Entity only, for the same reason: the P&L reads the ingredient ledger's
+// movements (consumption into COGS, stocked receipts out of purchases) and
+// IngredientsModule is imported by Purchasing, which imports this module.
+import { IngredientMovement } from '../ingredients/entities/ingredient-movement.entity';
 import { PosCheckout } from '../pos-sync/entities/pos-checkout.entity';
 import { PosRegisterSession } from '../pos-sync/entities/pos-register-session.entity';
 import {
@@ -57,6 +61,7 @@ import { BranchFinancialReportsController } from './branch-financial-reports.con
       User,
       PayrollRun,
       PurchaseRun,
+      IngredientMovement,
     ]),
   ],
   controllers: [OwnerBillingController, BranchFinancialReportsController],

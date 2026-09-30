@@ -177,6 +177,25 @@ function makeService({
   };
   const expensesRepo: any = { createQueryBuilder: () => expenseQb };
 
+  // The kitchen's shelf. Records what it was asked to do; a test reads it back.
+  const ingredientReceipts: any[] = [];
+  const ingredientReversals: any[] = [];
+  const ingredients: any = {
+    assertBranchIngredients: async () => undefined,
+    receiveForPurchaseRunLine: async (run: any, line: any) => {
+      ingredientReceipts.push({ runId: run.id, lineId: line.id, line });
+      return {
+        movement: { id: 900 + ingredientReceipts.length },
+        ingredient: {},
+        duplicate: false,
+      };
+    },
+    reverseForPurchaseRunLine: async (run: any, line: any, _actor: any, reason: any) => {
+      ingredientReversals.push({ runId: run.id, lineId: line.id, reason });
+      return { movement: { id: 950 }, ingredient: {}, duplicate: false };
+    },
+  };
+
   const service = new PurchasingService(
     runs,
     linesRepo,
@@ -185,6 +204,7 @@ function makeService({
     expensesRepo,
     billing,
     inventoryLedger,
+    ingredients,
   );
 
   return {
@@ -198,6 +218,8 @@ function makeService({
     postedExpenses,
     deletedExpenses,
     stockMovements,
+    ingredientReceipts,
+    ingredientReversals,
   };
 }
 
@@ -1205,5 +1227,131 @@ describe('PurchasingService — the balance a purchaser is holding', () => {
 
     const result = await ctx.service.getRun(14, 44, manager);
     expect(result.balance).toBeNull();
+  });
+});
+
+describe("PurchasingService — the kitchen's shelf", () => {
+  it('receives an ingredient line on sign-off and records the movement on the line', async () => {
+    const lines = [
+      lineRow({ id: 1, description: 'Charcoal' }),
+      lineRow({
+        id: 2,
+        description: 'Sugar',
+        lineTotal: 1200,
+        ingredientId: 7,
+        stockQuantity: 10,
+      }),
+      // An ingredient with no quantity is a half-link and receives nothing.
+      lineRow({ id: 3, description: 'Flour', ingredientId: 9 }),
+    ];
+    const ctx = makeService({ run: runRow(), lines });
+
+    const result = await ctx.service.approveRun(14, { branchId: 44 }, manager);
+
+    expect(ctx.ingredientReceipts).toHaveLength(1);
+    expect(ctx.ingredientReceipts[0]).toMatchObject({ runId: 14, lineId: 2 });
+    expect(lines[1].ingredientMovementId).toBe(901);
+    expect(ctx.stockMovements).toHaveLength(0);
+    expect(result.stockFailures).toEqual([]);
+  });
+
+  it('does not receive an ingredient line twice', async () => {
+    const lines = [
+      lineRow({
+        id: 2,
+        description: 'Sugar',
+        ingredientId: 7,
+        stockQuantity: 10,
+        ingredientMovementId: 901,
+      }),
+    ];
+    const ctx = makeService({ run: runRow(), lines });
+    await ctx.service.approveRun(14, { branchId: 44 }, manager);
+    expect(ctx.ingredientReceipts).toHaveLength(0);
+  });
+
+  it('names an ingredient line the shelf refused, without failing the approval', async () => {
+    const lines = [
+      lineRow({ id: 1, description: 'Charcoal' }),
+      lineRow({ id: 2, description: 'Sugar', ingredientId: 7, stockQuantity: 10 }),
+    ];
+    const ctx = makeService({ run: runRow(), lines });
+    (ctx.service as any).ingredients.receiveForPurchaseRunLine = async () => {
+      throw new Error('That ingredient was not found.');
+    };
+    const result = await ctx.service.approveRun(14, { branchId: 44 }, manager);
+    expect(result.status).toBe(PurchaseRunStatus.APPROVED);
+    expect(result.stockFailures).toEqual(['Sugar']);
+    expect(lines[1].ingredientMovementId).toBeUndefined();
+  });
+
+  it('refuses a line that names a product AND an ingredient', async () => {
+    const ctx = makeService({ run: runRow(), lines: [] });
+    await expect(
+      ctx.service.createRun(
+        {
+          branchId: 44,
+          lines: [
+            {
+              description: 'Sugar',
+              quantity: 10,
+              lineTotal: 1200,
+              productId: 77,
+              ingredientId: 7,
+              stockQuantity: 10,
+            },
+          ],
+        } as any,
+        purchaser,
+      ),
+    ).rejects.toThrow(/not both/);
+  });
+
+  it('gives a struck ingredient line back to the shelf', async () => {
+    const lines = [
+      lineRow({ id: 1, lineTotal: 540 }),
+      lineRow({
+        id: 2,
+        lineTotal: 1200,
+        ingredientId: 7,
+        stockQuantity: 10,
+        ingredientMovementId: 901,
+      }),
+    ];
+    const ctx = makeService({
+      run: runRow({ status: PurchaseRunStatus.APPROVED, expenseId: 900 }),
+      lines,
+    });
+
+    await ctx.service.voidLine(
+      14,
+      2,
+      { branchId: 44, reason: 'Bought Monday.' },
+      manager,
+    );
+
+    expect(ctx.ingredientReversals).toEqual([
+      { runId: 14, lineId: 2, reason: 'Bought Monday.' },
+    ]);
+    expect(lines[1].ingredientMovementId).toBeNull();
+    expect(ctx.stockMovements).toHaveLength(0);
+  });
+
+  it('gives every ingredient line back when the run is voided', async () => {
+    const lines = [
+      lineRow({ id: 2, ingredientId: 7, stockQuantity: 10, ingredientMovementId: 901 }),
+      lineRow({ id: 3, productId: 77, stockQuantity: 12, stockMovementId: 501 }),
+    ];
+    const ctx = makeService({
+      run: runRow({ status: PurchaseRunStatus.APPROVED, expenseId: 900 }),
+      lines,
+    });
+
+    await ctx.service.voidRun(14, { branchId: 44, reason: 'Bought twice' }, manager);
+
+    expect(ctx.ingredientReversals).toHaveLength(1);
+    expect(lines[0].ingredientMovementId).toBeNull();
+    expect(ctx.stockMovements).toHaveLength(1);
+    expect(lines[1].stockMovementId).toBeNull();
   });
 });

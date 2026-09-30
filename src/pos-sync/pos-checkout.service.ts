@@ -32,6 +32,7 @@ import { GlAccountCode } from '../accounting/gl-accounts.constant';
 import { GlJournalSourceType } from '../accounting/entities/gl-journal-entry.entity';
 import { splitTenders, extractBadDebt } from '../accounting/tender-split.util';
 import { ProductCostService } from '../purchase-orders/product-cost.service';
+import { IngredientsService } from '../ingredients/ingredients.service';
 import {
   IngestPosCheckoutDto,
   PosCheckoutItemDto,
@@ -218,6 +219,7 @@ export class PosCheckoutService {
     private readonly emailService: EmailService,
     private readonly generalLedger: GeneralLedgerService,
     private readonly productCost: ProductCostService,
+    private readonly ingredients: IngredientsService,
   ) {}
 
   private readonly logger = new Logger(PosCheckoutService.name);
@@ -881,6 +883,20 @@ export class PosCheckoutService {
         }`,
       );
     });
+
+    // Draw the recipes down off the kitchen's shelf (QSR). Best-effort and
+    // after the commit for the same reason as the ledger: the sale is the
+    // truth and the shelf is bookkeeping about it. The movement key is
+    // deterministic, so a re-synced checkout writes nothing twice.
+    await this.ingredients
+      .consumeForCheckout(processed, branch)
+      .catch((error) => {
+        this.logger.warn(
+          `Ingredient consumption failed for checkout ${checkout.id}: ${
+            error instanceof Error ? error.message : error
+          }`,
+        );
+      });
 
     // Fire receipt email to customer if email is available
     const customerEmail =
@@ -3418,6 +3434,22 @@ export class PosCheckoutService {
       } catch (error) {
         this.logger.warn(
           `Stock restore failed for void of checkout ${checkoutId}: ${
+            error instanceof Error ? error.message : error
+          }`,
+        );
+      }
+      // And the kitchen's shelf: whatever the sale's recipes drew down goes
+      // back, at the cost it left with. Not SALE-only — a voided return's
+      // put-back is undone the same way.
+      try {
+        await this.ingredients.reverseForCheckout(
+          checkout,
+          voidedByUserId,
+          voidedAt,
+        );
+      } catch (error) {
+        this.logger.warn(
+          `Ingredient reversal failed for void of checkout ${checkoutId}: ${
             error instanceof Error ? error.message : error
           }`,
         );

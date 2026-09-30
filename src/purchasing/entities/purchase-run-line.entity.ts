@@ -110,6 +110,20 @@ export class PurchaseRunLine {
   @Column({ type: 'int', nullable: true })
   stockMovementId?: number | null;
 
+  /**
+   * The OTHER optional link: an ingredient on the kitchen's shelf rather than
+   * a product on the till. A line names one or the other, never both.
+   * `stockQuantity` is reused and is then in the INGREDIENT's unit — 25 for
+   * a sack of sugar kept in kilos — and the line's total is the price the
+   * shelf blends into that ingredient's weighted-average cost.
+   */
+  @Column({ type: 'int', nullable: true })
+  ingredientId?: number | null;
+
+  /** The ingredient movement this line produced; cleared by a void. */
+  @Column({ type: 'int', nullable: true })
+  ingredientMovementId?: number | null;
+
   @Column({ type: 'text', nullable: true })
   note?: string | null;
 

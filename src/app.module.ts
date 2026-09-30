@@ -83,6 +83,7 @@ import { SchoolModule } from './school/school.module';
 import { VehicleRegistryModule } from './vehicle-registry/vehicle-registry.module';
 import { PayrollModule } from './payroll/payroll.module';
 import { PurchasingModule } from './purchasing/purchasing.module';
+import { IngredientsModule } from './ingredients/ingredients.module';
 import { AttendanceModule } from './attendance/attendance.module';
 import { SchoolGuardianModule } from './school-guardian/school-guardian.module';
 import { StorefrontModule } from './storefront/storefront.module';
@@ -280,6 +281,7 @@ import { ParkedOrdersModule } from './parked-orders/parked-orders.module';
     BillingModule,
     PayrollModule,
     PurchasingModule,
+    IngredientsModule,
     AttendanceModule,
     SchoolGuardianModule,
     AccountingModule,
