@@ -13,6 +13,7 @@ import {
   readReports,
   reportPercent,
   schoolTimeZone,
+  withoutRecorder,
   suggestGuardianUsername,
   usernameFromName,
 } from './school-guardian.util';
@@ -164,6 +165,49 @@ describe('school-guardian.util', () => {
       paidReceiptNumber: null,
     });
     expect(view.total).toBe(2500);
+  });
+
+  it('strips the actor stamps INSIDE the record too — the cashier on a refund — and keeps the teacher on a report', () => {
+    const view = guardianFolioView(
+      pupil({
+        schoolFeeRefunds: [
+          {
+            amount: 500,
+            receiptNumber: 'RET-1',
+            refundedBy: 'Ubax',
+            approvedByName: 'Hibo',
+            approvedByUserId: 7,
+          },
+        ],
+        schoolAcademicRecord: {
+          reports: [{ term: 'Semester 1', recordedBy: 'Mustafe' }],
+        },
+      }),
+    );
+    expect(view.cartSnapshot.schoolFeeRefunds).toEqual([
+      { amount: 500, receiptNumber: 'RET-1' },
+    ]);
+    expect(view.cartSnapshot.schoolAcademicRecord).toEqual({
+      reports: [{ term: 'Semester 1', recordedBy: 'Mustafe' }],
+    });
+  });
+
+  it('hands the family a register row without who took it', () => {
+    expect(
+      withoutRecorder({
+        id: 1,
+        attendanceDate: '2026-09-29',
+        status: 'ABSENT',
+        note: 'sick',
+        recordedByUserId: 30,
+        recordedByName: 'Mustafe',
+      }),
+    ).toEqual({
+      id: 1,
+      attendanceDate: '2026-09-29',
+      status: 'ABSENT',
+      note: 'sick',
+    });
   });
 
   it('hands the family a receipt without the cashier', () => {

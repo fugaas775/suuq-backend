@@ -12,6 +12,7 @@ import { PosSuspendedCart } from '../pos-sync/entities/pos-suspended-cart.entity
 import { isSchoolPupilFolio } from '../pos-sync/school-withdrawal.policy';
 import { SchoolClassService } from './school-class.service';
 import { SchoolTimetableService } from './school-timetable.service';
+import { actorNameFromEmail } from './school-actor-name.util';
 import {
   ClassScope,
   assignedClassCodes,
@@ -79,7 +80,7 @@ export class SchoolClassScopeService {
     const recordedBy =
       mine.employee?.fullName ||
       timetable.employee?.fullName ||
-      String(actor?.email ?? '').trim() ||
+      actorNameFromEmail(actor?.email) ||
       (actorId != null ? `user ${actorId}` : '');
 
     if (!scoped) return { scoped: false, codes: null, recordedBy };

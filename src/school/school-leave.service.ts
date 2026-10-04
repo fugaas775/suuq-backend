@@ -27,6 +27,7 @@ import {
   ListSchoolLeaveQueryDto,
 } from './dto/school-leave.dto';
 import { SchoolTimetableService } from './school-timetable.service';
+import { actorNameFromEmail } from './school-actor-name.util';
 import { ScopeActor } from './school-class-scope.service';
 import {
   LEAVE_MAX_CALENDAR_DAYS,
@@ -112,7 +113,7 @@ export class SchoolLeaveService {
     });
     const name =
       employee?.fullName ||
-      text(actor?.email) ||
+      actorNameFromEmail(actor?.email) ||
       (actorId != null ? `user ${actorId}` : '');
     return { actorId, employee, approver, name };
   }
@@ -130,13 +131,14 @@ export class SchoolLeaveService {
     const where: FindOptionsWhere<SchoolLeaveRequest> = {
       branchId: query.branchId,
     };
-    if (text(query.status)) where.status = text(query.status).toUpperCase() as LeaveStatus;
+    if (text(query.status))
+      where.status = text(query.status).toUpperCase() as LeaveStatus;
     if (text(query.on)) {
-      where.startDate = LessThanOrEqual(query.on as string);
-      where.endDate = MoreThanOrEqual(query.on as string);
+      where.startDate = LessThanOrEqual(query.on);
+      where.endDate = MoreThanOrEqual(query.on);
     } else if (text(query.from) && text(query.to)) {
-      where.startDate = LessThanOrEqual(query.to as string);
-      where.endDate = MoreThanOrEqual(query.from as string);
+      where.startDate = LessThanOrEqual(query.to);
+      where.endDate = MoreThanOrEqual(query.from);
     }
     if (String(query.mine ?? '') === '1') {
       if (!who.employee) {
@@ -241,7 +243,11 @@ export class SchoolLeaveService {
     }
 
     const doc = await this.timetable.get(dto.branchId);
-    const schoolDays = schoolDaysBetween(start, end, bellWeekdays(doc?.periods));
+    const schoolDays = schoolDaysBetween(
+      start,
+      end,
+      bellWeekdays(doc?.periods),
+    );
     if (schoolDays === 0) {
       throw new BadRequestException(
         'No school day falls between these dates — the school is closed on every one of them.',
@@ -385,7 +391,9 @@ export class SchoolLeaveService {
       from,
       to,
       people: [...byPerson.values()].sort((a, b) =>
-        String(a.employeeName ?? '').localeCompare(String(b.employeeName ?? '')),
+        String(a.employeeName ?? '').localeCompare(
+          String(b.employeeName ?? ''),
+        ),
       ),
     };
   }

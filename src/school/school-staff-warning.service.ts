@@ -25,6 +25,7 @@ import {
   defaultExpiry,
   summarizeWarnings,
 } from './school-staff-warning.policy';
+import { actorNameFromEmail } from './school-actor-name.util';
 
 const text = (v: unknown) => String(v ?? '').trim();
 const orNull = (v: unknown, max: number) => text(v).slice(0, max) || null;
@@ -89,7 +90,7 @@ export class SchoolStaffWarningService {
     });
     const name =
       employee?.fullName ||
-      text(actor?.email) ||
+      actorNameFromEmail(actor?.email) ||
       (actorId != null ? `user ${actorId}` : '');
     return { actorId, employee, head, name };
   }
@@ -110,7 +111,8 @@ export class SchoolStaffWarningService {
     if (text(query.status))
       where.status = text(query.status).toUpperCase() as 'ACTIVE' | 'WITHDRAWN';
     if (String(query.mine ?? '') === '1') {
-      if (!who.employee) return { employee: null, canIssue: who.head, items: [] };
+      if (!who.employee)
+        return { employee: null, canIssue: who.head, items: [] };
       where.employeeId = Number(who.employee.id);
       const items = await this.warnings.find({
         where,
@@ -118,7 +120,10 @@ export class SchoolStaffWarningService {
         take: 100,
       });
       return {
-        employee: { id: Number(who.employee.id), fullName: who.employee.fullName },
+        employee: {
+          id: Number(who.employee.id),
+          fullName: who.employee.fullName,
+        },
         canIssue: who.head,
         items,
       };

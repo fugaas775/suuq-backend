@@ -183,10 +183,10 @@ export class CreateSchoolNoticeDto {
   @MaxLength(64, { each: true })
   classCodes?: string[];
 
-  /** YYYY-MM-DD, the last day it shows. */
+  /** YYYY-MM-DD, the last day it shows; '' or absent = until taken down. */
   @IsOptional()
   @IsString()
-  @Matches(/^\d{4}-\d{2}-\d{2}$/)
+  @Matches(/^(\d{4}-\d{2}-\d{2})?$/)
   expiresAt?: string;
 }
 

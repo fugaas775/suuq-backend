@@ -146,6 +146,40 @@ function isActorStamp(key: string): boolean {
 }
 
 /**
+ * Actor stamps that sit INSIDE the snapshot's lists and objects — the cashier
+ * on a fee refund (`schoolFeeRefunds[].refundedBy`), `by` on a leaving bill
+ * or a class move, any `…ByName` / `…ByUserId` on a line. The top-level sweep
+ * above never reached them. Deliberately narrow: `recordedBy` on a report is
+ * the teacher's name the report card prints, and stays.
+ */
+const NESTED_ACTOR_KEYS = new Set(['by', 'refundedBy']);
+
+function scrubNestedActors(value: unknown, depth = 0): unknown {
+  if (depth > 8 || value === null || typeof value !== 'object') return value;
+  if (Array.isArray(value))
+    return value.map((entry) => scrubNestedActors(entry, depth + 1));
+  const out: Record<string, unknown> = {};
+  for (const [key, inner] of Object.entries(value as Record<string, unknown>)) {
+    if (NESTED_ACTOR_KEYS.has(key) || ACTOR_STAMP.test(key)) continue;
+    out[key] = scrubNestedActors(inner, depth + 1);
+  }
+  return out;
+}
+
+/**
+ * A register row as a family reads it — the day, the mark, the note — and
+ * not which member of staff took it (their user id and name).
+ */
+export function withoutRecorder<T extends Record<string, unknown>>(
+  row: T,
+): Omit<T, 'recordedByUserId' | 'recordedByName'> {
+  const { recordedByUserId: _id, recordedByName: _name, ...rest } = row;
+  void _id;
+  void _name;
+  return rest;
+}
+
+/**
  * Does a notice reach a family whose children sit in `classCodes`?
  * ALL reaches everyone; CLASSES reaches a family with a child in any named
  * class (codes folded, as every class reader folds them).
@@ -197,25 +231,9 @@ export function guardianFolioView(row: {
   const cartSnapshot: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(snap)) {
     if (isActorStamp(key)) continue;
-    cartSnapshot[key] = value;
-  }
-  const stripBy = (list: unknown) =>
-    Array.isArray(list)
-      ? list.map((entry) =>
-          entry && typeof entry === 'object'
-            ? Object.fromEntries(
-                Object.entries(entry as Record<string, unknown>).filter(
-                  ([k]) => k !== 'by',
-                ),
-              )
-            : entry,
-        )
-      : list;
-  if ('schoolLeavingBills' in cartSnapshot) {
-    cartSnapshot.schoolLeavingBills = stripBy(cartSnapshot.schoolLeavingBills);
-  }
-  if ('schoolClassHistory' in cartSnapshot) {
-    cartSnapshot.schoolClassHistory = stripBy(cartSnapshot.schoolClassHistory);
+    // Every list and object under it too: leaving bills, class moves, fee
+    // refunds, lines.
+    cartSnapshot[key] = scrubNestedActors(value);
   }
   return {
     id: Number(row.id),

@@ -45,6 +45,7 @@ import {
   folioMoney,
   guardianFolioView,
   guardianReceiptView,
+  withoutRecorder,
   isPupilRecord,
   localDayIn,
   noticeIsLive,
@@ -242,9 +243,13 @@ export class SchoolGuardianService {
    * this is the office's to-do list, and a child who has left is not on it.
    */
   async suggestions(branchId: number) {
+    // EVERY login counts as "has a login", switched off or not. Counting only
+    // the active ones put a family the office had deliberately switched off
+    // back on this list, and "Create logins for all" then made them a second,
+    // working login (`<phone>.2`) — undoing the switch-off.
     const [records, guardians] = await Promise.all([
       this.pupilRecords(branchId),
-      this.guardians.find({ where: { branchId, isActive: true } }),
+      this.guardians.find({ where: { branchId } }),
     ]);
     const links = await this.pupilsByGuardian(
       guardians.map((g) => Number(g.id)),
@@ -710,12 +715,26 @@ export class SchoolGuardianService {
       order: { publishedAt: 'DESC', id: 'DESC' },
       take: 200,
     });
-    const today = new Date().toISOString().slice(0, 10);
+    // "Today" is the school's, like every other date a family reads here. On
+    // the UTC day a notice that ended yesterday went on showing until three
+    // in the morning in Addis.
+    const todayOf = new Map(
+      held.map((h) => [
+        Number(h.branch.id),
+        localDayIn(schoolTimeZone(h.branch)),
+      ]),
+    );
     const names = new Map(
       held.map((h) => [Number(h.branch.id), h.branch.name]),
     );
     return rows
-      .filter((n) => noticeIsLive(n, today))
+      .filter((n) =>
+        noticeIsLive(
+          n,
+          todayOf.get(Number(n.branchId)) ??
+            new Date().toISOString().slice(0, 10),
+        ),
+      )
       .filter((n) =>
         noticeReaches(n, classesByBranch.get(Number(n.branchId)) ?? []),
       )
@@ -1036,8 +1055,13 @@ export class SchoolGuardianService {
       ...sales,
       ...returns.filter((r) => !seen.has(Number(r.id))),
     ]
-      .sort((a, b) =>
-        String(b.occurredAt ?? '').localeCompare(String(a.occurredAt ?? '')),
+      // By the instant, newest first. `occurredAt` is a Date here, and its
+      // string form opens with the weekday — sorted as text, a Friday
+      // receipt sat above a Monday one whatever the dates were.
+      .sort(
+        (a, b) =>
+          (new Date(b.occurredAt ?? 0).getTime() || 0) -
+          (new Date(a.occurredAt ?? 0).getTime() || 0),
       )
       .map((co) => guardianReceiptView(co as unknown as Record<string, any>));
 
@@ -1125,12 +1149,14 @@ export class SchoolGuardianService {
       attendance: {
         // The query is scoped to this pupil in the database; the filter here
         // is the belt, so a widened query can never hand a family the class.
-        days: attendanceDays.items.filter(
-          (r) => String(r.subjectRef) === String(folioId),
-        ),
-        lessons: attendanceLessons.items.filter(
-          (r) => String(r.subjectRef) === String(folioId),
-        ),
+        // And without who took the register: the user id and name of the
+        // member of staff are the school's, not the family's.
+        days: attendanceDays.items
+          .filter((r) => String(r.subjectRef) === String(folioId))
+          .map((r) => withoutRecorder(r)),
+        lessons: attendanceLessons.items
+          .filter((r) => String(r.subjectRef) === String(folioId))
+          .map((r) => withoutRecorder(r)),
       },
       textbooks: loans.map((l) => ({
         id: Number(l.id),

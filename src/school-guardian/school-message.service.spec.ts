@@ -75,7 +75,7 @@ function make() {
     memRepo(users),
     reach,
   );
-  return { svc, threads, messages, folios };
+  return { svc, threads, messages, folios, guardians, links, users };
 }
 
 describe('SchoolMessageService — the school’s side', () => {
@@ -221,6 +221,50 @@ describe('SchoolMessageService — the school’s side', () => {
     await expect(
       svc.reply(opened.thread.id, { branchId: 128, body: 'x' }, OTHER),
     ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+});
+
+describe('SchoolMessageService — a reply the family can read', () => {
+  it('refuses a reply once the login is switched off or no longer covers the child, instead of answering Sent', async () => {
+    const { svc, guardians, links, messages } = make();
+    const opened = await svc.openThread(
+      { branchId: 128, folioId: 10, body: 'a' },
+      TEACHER,
+    );
+    guardians[0].isActive = false;
+    await expect(
+      svc.reply(opened.thread.id, { branchId: 128, body: 'b' }, TEACHER),
+    ).rejects.toMatchObject({
+      response: { code: 'SCHOOL_NO_PARENT_LOGIN' },
+    });
+    guardians[0].isActive = true;
+    links.splice(0, 1); // the office unticked this child
+    await expect(
+      svc.reply(opened.thread.id, { branchId: 128, body: 'c' }, TEACHER),
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect(messages.map((m: any) => m.body)).toEqual(['a']);
+  });
+
+  it('signs a message with the account’s display name when no staff row is joined — never a sign-in address', async () => {
+    const { svc, users } = make();
+    users.push({
+      id: 40,
+      posUsername: 'guuleed.shukri',
+      displayName: 'Guuleed',
+    });
+    const office = {
+      id: 40,
+      email: 'pos.m.guuleed.shukri@sys.internal',
+      roles: ['POS_MANAGER'],
+    };
+    const named = await svc.openThread(
+      { branchId: 128, folioId: 10, body: 'from the office' },
+      office,
+    );
+    // The stub's reach names nobody for this login but "Suuq S" (a staff
+    // register name), which wins; an address-derived name would not.
+    expect(named.messages[0].senderName).toBe('Suuq S');
+    expect(String(named.messages[0].senderName)).not.toContain('@');
   });
 });
 

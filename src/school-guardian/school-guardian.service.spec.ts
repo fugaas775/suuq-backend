@@ -332,6 +332,19 @@ describe('SchoolGuardianService — the office', () => {
       OFFICE,
     );
     expect((await svc.suggestions(128)).familiesWithoutLogin).toBe(2);
+
+    // Switched off is still "has a login": the office cut that family off on
+    // purpose, and offering them again made "Create logins for all" hand them
+    // a second, working one.
+    const made = (await svc.list(128)).items.find(
+      (g: any) => g.username === '0915333513',
+    );
+    await svc.update(made.id, { branchId: 128, isActive: false }, OFFICE);
+    const after = await svc.suggestions(128);
+    expect(after.familiesWithoutLogin).toBe(2);
+    expect(after.items.map((f: any) => f.key)).not.toContain(
+      'phone:0915333513',
+    );
   });
 
   it('updates the pupils as a set, switches the login off and on, resets the password, and removes it (freeing the username)', async () => {

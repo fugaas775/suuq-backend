@@ -29,6 +29,7 @@ import {
   teachesSubjectIn,
 } from './school-marks.policy';
 import { SchoolTimetableService } from './school-timetable.service';
+import { actorNameFromEmail } from './school-actor-name.util';
 
 const text = (v: unknown) => String(v ?? '').trim();
 const fold = (v: unknown) => text(v).toLowerCase();
@@ -523,7 +524,7 @@ export class SchoolMarksService {
     // The scope: a teacher writes only what their timetable puts them in
     // front of. Resolved once, off the same join `timetable/mine` makes, and
     // BEFORE the transaction — the lock is held only for the write itself.
-    let recordedBy = text(actor.email) || `user ${actorId}`;
+    let recordedBy = actorNameFromEmail(actor.email) || `user ${actorId}`;
     let pairs: Set<string> | null = null;
     if (isScopedToTimetable({ actorId, ownerId, assignment })) {
       const mine = await this.timetable.mine(dto.branchId, actorId);
@@ -625,7 +626,7 @@ export class SchoolMarksService {
 
     // The name on the report: the staff register's spelling when this login
     // is on it, the account otherwise.
-    let recordedBy = text(actor.email) || `user ${actorId}`;
+    let recordedBy = actorNameFromEmail(actor.email) || `user ${actorId}`;
     if (actorId != null) {
       const mine = await this.timetable.mine(dto.branchId, actorId);
       if (mine.employee?.fullName) recordedBy = mine.employee.fullName;

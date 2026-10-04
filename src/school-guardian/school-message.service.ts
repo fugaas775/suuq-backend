@@ -10,6 +10,7 @@ import {
   PosSuspendedCart,
   PosSuspendedCartStatus,
 } from '../pos-sync/entities/pos-suspended-cart.entity';
+import { actorNameFromEmail } from '../school/school-actor-name.util';
 import { ScopeActor } from '../school/school-class-scope.service';
 import { User } from '../users/entities/user.entity';
 import { SchoolGuardianPupil } from './entities/school-guardian-pupil.entity';
@@ -94,13 +95,44 @@ export class SchoolMessageService {
     };
   }
 
+  /**
+   * The NEWEST messages of a thread, oldest first. Taken from the end: read
+   * from the start, a thread past the cap went on storing every new message
+   * and showing neither side any of them — the sender's own included.
+   */
   private async messagesOf(threadId: number) {
     const rows = await this.messages.find({
       where: { threadId },
-      order: { id: 'ASC' },
+      order: { id: 'DESC' },
       take: MESSAGES_PER_THREAD,
     });
-    return rows.map((m) => this.messageView(m));
+    return rows
+      .slice()
+      .sort((a, b) => Number(a.id) - Number(b.id))
+      .map((m) => this.messageView(m));
+  }
+
+  /**
+   * The name a family reads over a message from the school. The staff
+   * register's when the login is joined to it; else the account's own display
+   * name; never a sign-in address (see actorNameFromEmail).
+   */
+  private async staffSender(
+    reach: StaffReach,
+    actor: ScopeActor,
+  ): Promise<string | null> {
+    if (reach.employee?.fullName) return reach.employee.fullName;
+    // `reach.name` is the staff register's name when one is joined, and
+    // otherwise what could be made of the sign-in address. Only the second
+    // is worth improving on.
+    const name = text(reach.name);
+    const fromAddress = actorNameFromEmail(actor?.email);
+    if (name && name !== fromAddress && !/^user \d+$/.test(name)) return name;
+    const user =
+      actor?.id != null
+        ? await this.users.findOne({ where: { id: Number(actor.id) } })
+        : null;
+    return text(user?.displayName) || name || null;
   }
 
   private async pupilRow(branchId: number, folioId: number) {
@@ -141,7 +173,20 @@ export class SchoolMessageService {
         guardianUnread: 0,
         staffUnread: 0,
       });
-      row = await this.threads.save(row);
+      try {
+        row = await this.threads.save(row);
+      } catch (err) {
+        // Two first messages about the same child crossed (the family and a
+        // teacher, or two teachers): the thread is unique per child and
+        // guardian, so the loser reads the winner's row and posts on it —
+        // its message used to be dropped with a "that was already saved".
+        if ((err as { code?: string })?.code !== '23505') throw err;
+        const existing = await this.threads.findOne({
+          where: { branchId, folioId: Number(folio.id), guardianId },
+        });
+        if (!existing) throw err;
+        row = existing;
+      }
     } else {
       row.pupilName = p.name || row.pupilName;
       row.classCode = fold(p.classCode) || row.classCode;
@@ -369,16 +414,11 @@ export class SchoolMessageService {
         message: `${p.name || 'This pupil'}’s family has no parents’ login yet. The office gives them one under Students → Parents’ logins.`,
       });
     }
+    const sender = await this.staffSender(reach, actor);
     let first: SchoolMessageThread | null = null;
     for (const g of guardians) {
       const thread = await this.threadFor(dto.branchId, folio, Number(g.id));
-      await this.post(
-        thread,
-        'STAFF',
-        actor?.id ?? null,
-        reach.name || null,
-        dto.body,
-      );
+      await this.post(thread, 'STAFF', actor?.id ?? null, sender, dto.body);
       if (!first) first = thread;
     }
     return this.getThread(Number(first.id), dto.branchId, actor);
@@ -406,11 +446,31 @@ export class SchoolMessageService {
     } else {
       this.assertReach(reach, thread.classCode);
     }
+    // A reply nobody can read is worse than a refusal: the teacher is told
+    // "Sent", the family — switched off, removed, or no longer linked to the
+    // child — never sees it, and the unread count climbs for good.
+    const [guardian, link] = await Promise.all([
+      this.guardians.findOne({
+        where: { id: Number(thread.guardianId), branchId: dto.branchId },
+      }),
+      this.links.findOne({
+        where: {
+          guardianId: Number(thread.guardianId),
+          folioId: Number(thread.folioId),
+        },
+      }),
+    ]);
+    if (!guardian || guardian.isActive === false || !link) {
+      throw new ConflictException({
+        code: 'SCHOOL_NO_PARENT_LOGIN',
+        message: `${thread.pupilName || 'This pupil'}’s family can no longer read this conversation — their parents’ login was switched off, removed, or no longer covers this child. The office restores it under Students → Parents’ logins.`,
+      });
+    }
     await this.post(
       thread,
       'STAFF',
       actor?.id ?? null,
-      reach.name || null,
+      await this.staffSender(reach, actor),
       dto.body,
     );
     return this.getThread(Number(thread.id), dto.branchId, actor);

@@ -222,15 +222,22 @@ describe('SchoolHomeworkService', () => {
       },
       TEACHER,
     );
+    await svc.create(
+      { branchId: 128, classCode: '3aad', subject: 'Maths', title: 'No date' },
+      TEACHER,
+    );
     const items = await svc.forClasses(128, ['3AAD']);
     // "Long past" is within the window by creation date, so it still shows; the taken-down one does not.
     expect(items.map((h) => h.title).sort()).toEqual([
       'Due later',
       'Due today',
       'Long past',
+      'No date',
     ]);
     const due = await svc.dueCounts(128, ['3aad', '4aad'], '2099-01-01');
-    expect(due.get('3aad')).toBe(2);
+    // The undated one is still to do — the family's list shows it under
+    // "to do", so the count on their home page includes it.
+    expect(due.get('3aad')).toBe(3);
     expect(due.get('4aad')).toBe(1);
     expect(await svc.forClasses(128, [])).toEqual([]);
   });

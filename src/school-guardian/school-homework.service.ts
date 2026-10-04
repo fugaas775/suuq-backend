@@ -207,7 +207,13 @@ export class SchoolHomeworkService {
       .map((r) => this.view(r));
   }
 
-  /** Per class, how many live entries fall due today or later. */
+  /**
+   * Per class, how many live entries are still to do: due today or later, or
+   * set with no date. The family's list shows the undated ones under "to do"
+   * too, so counting only the dated ones had the home page say "1 homework"
+   * over a list of three — and nothing at all for a class given only undated
+   * work.
+   */
   async dueCounts(
     branchId: number,
     classCodes: Iterable<string>,
@@ -216,7 +222,7 @@ export class SchoolHomeworkService {
     const items = await this.forClasses(branchId, classCodes);
     const out = new Map<string, number>();
     for (const h of items) {
-      if (!h.dueOn || h.dueOn < today) continue;
+      if (h.dueOn && h.dueOn < today) continue;
       out.set(h.classCode, (out.get(h.classCode) ?? 0) + 1);
     }
     return out;
