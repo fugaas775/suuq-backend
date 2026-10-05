@@ -115,6 +115,43 @@ describe('PosRegisterReportService.buildReport', () => {
     expect(r.variance).toBe(8120);
   });
 
+  it('does not count change handed back as money taken', async () => {
+    // SMAK's fee desk, 2026-08-19: a 6,000 tender against a 2,000 bill.
+    const { service } = makeService([
+      {
+        ...sale(2000, [{ method: 'MOBILE_MONEY', amount: 6000 }]),
+        changeDue: 4000,
+      },
+      { ...sale(380, [{ method: 'CASH', amount: 500 }]), changeDue: 120 },
+    ]);
+    const r = await service.buildReport(session);
+
+    expect(r.grossSales).toBe(2380);
+    expect(r.paymentMix.map((m) => [m.method, m.amount])).toEqual([
+      ['MOBILE_MONEY', 2000],
+      ['CASH', 380],
+    ]);
+    // opening 500 + the 380 the drawer kept, not the 500 held out
+    expect(r.expectedCash).toBe(880);
+  });
+
+  it('takes a refund with no tender rows off the method it was paid out on', async () => {
+    const { service } = makeService([
+      sale(1000, [{ method: 'CASH', amount: 1000 }]),
+      {
+        ...ret(400, []),
+        metadata: { returnContext: { refundMethod: 'cash' } },
+      },
+    ]);
+    const r = await service.buildReport(session);
+
+    expect(r.cashNet).toBe(600);
+    expect(r.expectedCash).toBe(1100);
+    expect(r.paymentMix.map((m) => [m.method, m.amount])).toEqual([
+      ['CASH', 600],
+    ]);
+  });
+
   it('leaves expected cash / variance null when floats are absent', async () => {
     const { service } = makeService([
       sale(100, [{ method: 'CASH', amount: 100 }]),
@@ -131,9 +168,16 @@ describe('PosRegisterReportService.buildReport', () => {
 // to HTML + a PDF attachment that must decode to a valid PDF (the attachment
 // previously double-base64-encoded and would not open).
 describe('PosRegisterReportService.dispatchCloseReport (client report)', () => {
-  function makeService() {
+  // `checkouts` is what the books hold for the session. Empty by default: the
+  // till's sales have not synced yet, so the till's report is the fuller one.
+  function makeService(checkouts: any[] = []) {
+    const qb: any = {
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      getMany: jest.fn().mockResolvedValue(checkouts),
+    };
     const checkoutsRepository = {
-      createQueryBuilder: jest.fn(),
+      createQueryBuilder: jest.fn().mockReturnValue(qb),
       // resolveCurrency()
       findOne: jest.fn().mockResolvedValue({ currency: 'ETB' }),
     };
@@ -263,6 +307,119 @@ describe('PosRegisterReportService.dispatchCloseReport (client report)', () => {
     const decoded = Buffer.from(att.content, 'base64');
     expect(decoded.slice(0, 5).toString()).toBe('%PDF-');
     expect(decoded.slice(-6).toString()).toContain('EOF');
+  });
+
+  // A fee payment as the books hold it: the class rides `roomNumber`, the
+  // pupil `guestName`, and the person who took it `cashierName`.
+  function feePayment(
+    id: number,
+    total: number,
+    pupil: string,
+    tenders: any[],
+    extra: Record<string, any> = {},
+  ) {
+    return {
+      id,
+      transactionType: PosCheckoutTransactionType.SALE,
+      status: PosCheckoutStatus.PROCESSED,
+      currency: 'ETB',
+      total,
+      tipAmount: 0,
+      changeDue: 0,
+      itemCount: 1,
+      receiptNumber: `R-${id}`,
+      cashierName: 'Sagal Hassan',
+      occurredAt: new Date(`2026-10-05T04:${10 + id}:00Z`),
+      metadata: { roomNumber: '7A', guestName: pupil, folioId: 900 + id },
+      tenders,
+      ...extra,
+    };
+  }
+
+  const emptyTillReport = {
+    summary: {
+      grossSales: 0,
+      returnsTotal: 0,
+      netSales: 0,
+      receiptCount: 0,
+      averageTicket: 0,
+      readyTicketCount: 0,
+    },
+    paymentMix: [],
+    waiters: [],
+    cooks: [],
+    settledRooms: [],
+    settlers: [],
+    settledReceipts: [],
+    counts: {},
+    hasSales: false,
+    hasKitchenActivity: false,
+  };
+
+  it('draws the report from the books when the closing till holds none of the receipts', async () => {
+    // SMAQ School session #51: opened by the cashier, closed by the bursar from
+    // her own sign-in, whose till held none of the morning's fee receipts.
+    const { service, sent } = makeService([
+      feePayment(1, 2000, 'Ahmed Ali', [{ method: 'CASH', amount: 2000 }]),
+      feePayment(2, 1500, 'Hodan Yusuf', [
+        { method: 'MOBILE_MONEY', amount: 1500 },
+      ]),
+      feePayment(3, 500, 'Ahmed Ali', [{ method: 'CASH', amount: 500 }]),
+    ]);
+
+    await service.dispatchCloseReport(
+      { ...session, openingFloat: null, closingFloat: null },
+      { report: emptyTillReport, serviceFormat: 'SCHOOL' },
+    );
+
+    const mail = sent[0];
+    expect(mail.subject).toContain('Net 4,000.00 ETB');
+    expect(mail.html).toContain('4,000.00 ETB'); // gross + net
+    expect(mail.html).not.toContain('No payments recorded');
+    expect(mail.html).toContain('Mobile money');
+    expect(mail.html).toContain('2,500.00 ETB'); // cash: 2,000 + 500
+    // Who paid, by pupil — two payments by one child are one row.
+    expect(mail.html).toContain('Settled student fees');
+    expect(mail.html).toContain('7A · Ahmed Ali');
+    expect(mail.html).toContain('7A · Hodan Yusuf');
+    expect(mail.html).toContain('Sagal Hassan');
+    expect(mail.html).toContain('R-3');
+    expect(mail.text).toContain('Receipts      : 3');
+  });
+
+  it('keeps the kitchen figures of a till whose receipts were short', async () => {
+    const { service, sent } = makeService([
+      feePayment(1, 300, 'Table 4', [{ method: 'CASH', amount: 300 }]),
+    ]);
+
+    await service.dispatchCloseReport(session, {
+      report: {
+        ...emptyTillReport,
+        summary: { ...emptyTillReport.summary, readyTicketCount: 5 },
+        cooks: clientReport.cooks,
+      },
+      serviceFormat: 'QSR',
+    });
+
+    expect(sent[0].html).toContain('Mulu');
+    expect(sent[0].html).toContain('Ready tickets (KDS)');
+    expect(sent[0].html).toContain('300.00 ETB');
+  });
+
+  it("keeps the till's report when it holds at least what the books do", async () => {
+    // One of the till's 37 sales has reached the books; the rest are still on
+    // their way. The till knows more, and its report is the one that is sent.
+    const { service, sent } = makeService([
+      feePayment(1, 500, 'Jon', [{ method: 'CASH', amount: 500 }]),
+    ]);
+
+    await service.dispatchCloseReport(session, {
+      report: clientReport,
+      serviceFormat: 'HOTEL',
+    });
+
+    expect(sent[0].subject).toContain('Net 12,150.00 ETB');
+    expect(sent[0].html).toContain('Sara');
   });
 
   it('skips silently when the branch has no owner email', async () => {

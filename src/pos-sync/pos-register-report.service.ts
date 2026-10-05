@@ -110,6 +110,12 @@ const n = (value: unknown): number => {
 };
 const s = (value: unknown): string =>
   value == null ? '' : String(value).trim();
+const round2 = (value: number): number => Math.round(value * 100) / 100;
+
+// List caps for a report rebuilt from the books — the same ones the till
+// applies to the report it posts (serializeSessionReportForEmail).
+const MAX_LIST_ROWS = 40;
+const MAX_RECEIPT_ROWS = 60;
 
 /**
  * Builds an end-of-shift report for a closed register session and emails it
@@ -181,17 +187,46 @@ export class PosRegisterReportService {
         return;
       }
 
-      const model = opts.report
-        ? await this.modelFromClientReport(
-            session,
-            opts.report,
-            opts.serviceFormat ?? null,
-          )
-        : this.modelFromServerAggregation(
-            session,
-            await this.buildReport(session),
-            opts.serviceFormat ?? null,
-          );
+      // The till's report is only as whole as the receipts that till holds. It
+      // is built from the closing device's own copies, kept per signed-in
+      // operator — so a shift closed by anyone but the person who took the
+      // money (a bursar closing the cashier's session, a second front-desk
+      // tablet, a browser whose storage was cleared) arrives reading no sales
+      // at all, and the owner was emailed that zero as the shift's takings.
+      // The books are the authority on what was sold: when they hold more than
+      // the till reported, the report is drawn from them instead.
+      const serviceFormat = opts.serviceFormat ?? null;
+      const checkouts = await this.sessionCheckouts(session);
+      const books = await this.aggregate(session, checkouts);
+      const tillModel = opts.report
+        ? await this.modelFromClientReport(session, opts.report, serviceFormat)
+        : null;
+      const tillIsShort =
+        tillModel != null &&
+        (books.receiptCount > tillModel.summary.receiptCount ||
+          books.returnsTotal >
+            Math.abs(tillModel.summary.returnsTotal) + 0.005);
+
+      let model: RenderModel;
+      if (tillModel && !tillIsShort) {
+        model = tillModel;
+      } else {
+        model = this.modelFromServerAggregation(
+          session,
+          books,
+          serviceFormat,
+          checkouts,
+        );
+        if (tillModel) {
+          // Kitchen tickets never reach a checkout row — they are the till's
+          // alone, and a till missing receipts still counted its own kitchen.
+          model.cooks = tillModel.cooks;
+          model.summary.readyTicketCount = tillModel.summary.readyTicketCount;
+          if (tillModel.counts.cooks) {
+            model.counts.cooks = tillModel.counts.cooks;
+          }
+        }
+      }
 
       const pdf = await this.renderPdf(session, branch, model);
 
@@ -215,10 +250,13 @@ export class PosRegisterReportService {
           },
         ],
       });
+      const source = !tillModel
+        ? 'server'
+        : tillIsShort
+          ? `server — the till reported ${tillModel.summary.receiptCount} of ${books.receiptCount} receipts`
+          : 'client';
       this.logger.log(
-        `Queued session ${session.id} close report (${
-          opts.report ? 'client' : 'server'
-        }) to branch ${session.branchId} owner.`,
+        `Queued session ${session.id} close report (${source}) to branch ${session.branchId} owner.`,
       );
     } catch (err: any) {
       this.logger.error(
@@ -447,12 +485,117 @@ export class PosRegisterReportService {
     };
   }
 
+  /**
+   * The settled-work lists of the Today tab — settled units, who settled them,
+   * and every receipt — rebuilt from the session's own checkout rows, for a
+   * report the till could not supply whole. A unit is whatever the format
+   * settles against (a room, a table, a pupil's fee folio): it rides the
+   * checkout's metadata, and a sale that carries none appears in the receipts
+   * list alone. Rows are grouped by STAY, as the till groups them, so a room
+   * re-let to a second guest in one shift is two rows rather than a "×2".
+   */
+  private settledListsFrom(
+    checkouts: PosCheckout[],
+  ): Pick<
+    RenderModel,
+    'settledRooms' | 'settlers' | 'settledReceipts' | 'counts'
+  > {
+    const stamp = (c: PosCheckout) =>
+      new Date(c.occurredAt || c.createdAt || 0).getTime() || 0;
+    // Newest first, so each stay's row carries its latest settlement's names.
+    const sales = checkouts
+      .filter((c) => c.transactionType === PosCheckoutTransactionType.SALE)
+      .sort((a, b) => stamp(b) - stamp(a));
+
+    const stays = new Map<string, RenderModel['settledRooms'][number]>();
+    const settlers = new Map<
+      string,
+      {
+        name: string;
+        settled: number;
+        receiptCount: number;
+        rooms: Set<string>;
+      }
+    >();
+    const settledReceipts: RenderModel['settledReceipts'] = [];
+
+    for (const c of sales) {
+      const total = n(c.total);
+      const operatorName =
+        s(c.cashierName) || s(c.metadata?.operatorName) || 'Unassigned';
+      const label = s(c.receiptNumber) || `#${c.id}`;
+      settledReceipts.push({
+        label,
+        total,
+        operatorName,
+        paymentMethods: (c.tenders || [])
+          .filter((tender) => n(tender?.amount) > 0)
+          .map((tender) => s(tender?.method).toUpperCase())
+          .filter(Boolean),
+        itemCount: n(c.itemCount),
+      });
+
+      const room = s(c.metadata?.roomNumber || c.metadata?.hotelRoomNumber);
+      if (!room || total <= 0) continue;
+      const guestName = s(c.metadata?.guestName || c.metadata?.hotelGuestName);
+      const folioId = s(c.metadata?.folioId);
+      const roomKey = room.toLowerCase();
+      const stayKey = `${roomKey}|${
+        guestName
+          ? `g:${guestName.toLowerCase()}`
+          : folioId
+            ? `f:${folioId}`
+            : `r:${label}`
+      }`;
+      const stay = stays.get(stayKey) || {
+        room,
+        settled: 0,
+        receiptCount: 0,
+        guestName,
+        settledBy: operatorName,
+      };
+      stay.settled += total;
+      stay.receiptCount += 1;
+      stays.set(stayKey, stay);
+
+      const settler = settlers.get(operatorName) || {
+        name: operatorName,
+        settled: 0,
+        receiptCount: 0,
+        rooms: new Set<string>(),
+      };
+      settler.settled += total;
+      settler.receiptCount += 1;
+      settler.rooms.add(roomKey);
+      settlers.set(operatorName, settler);
+    }
+
+    const settlerRows = Array.from(settlers.values())
+      .map(({ rooms, ...row }) => ({ ...row, roomCount: rooms.size }))
+      .sort((a, b) => b.settled - a.settled);
+
+    // Same caps the till applies before it posts its report; `counts` keeps the
+    // true lengths so the email can say "+N more".
+    return {
+      settledRooms: Array.from(stays.values()).slice(0, MAX_LIST_ROWS),
+      settlers: settlerRows.slice(0, MAX_LIST_ROWS),
+      settledReceipts: settledReceipts.slice(0, MAX_RECEIPT_ROWS),
+      counts: {
+        settledRooms: stays.size,
+        settlers: settlerRows.length,
+        settledReceipts: settledReceipts.length,
+      },
+    };
+  }
+
   /** Map the server-side aggregation onto the render model (fallback path). */
   private modelFromServerAggregation(
     session: PosRegisterSession,
     r: SessionReportData,
     serviceFormat: string | null,
+    checkouts: PosCheckout[] = [],
   ): RenderModel {
+    const lists = this.settledListsFrom(checkouts);
     return {
       currency: r.currency,
       serviceFormat: serviceFormat || null,
@@ -468,12 +611,14 @@ export class PosRegisterReportService {
         label: row.label,
         amount: row.amount,
       })),
+      // Who SERVED a sale is decided line by line on the till and is not
+      // rebuilt here; the receipts list below names who rang each one.
       waiters: [],
       cooks: [],
-      settledRooms: [],
-      settlers: [],
-      settledReceipts: [],
-      counts: {},
+      settledRooms: lists.settledRooms,
+      settlers: lists.settlers,
+      settledReceipts: lists.settledReceipts,
+      counts: lists.counts,
       cash: {
         openingFloat: r.openingFloat,
         closingFloat: r.closingFloat,
@@ -494,9 +639,11 @@ export class PosRegisterReportService {
     return row?.currency || 'ETB';
   }
 
-  /** Aggregate the session's checkouts into a sales summary (fallback source). */
-  async buildReport(session: PosRegisterSession): Promise<SessionReportData> {
-    const checkouts = await this.checkoutsRepository
+  /** Every checkout the books hold for this session that counts as trading. */
+  private sessionCheckouts(
+    session: PosRegisterSession,
+  ): Promise<PosCheckout[]> {
+    return this.checkoutsRepository
       .createQueryBuilder('c')
       .where('c.branchId = :branchId', { branchId: session.branchId })
       .andWhere('c.registerSessionId = :sessionId', { sessionId: session.id })
@@ -504,7 +651,17 @@ export class PosRegisterReportService {
         statuses: [PosCheckoutStatus.RECEIVED, PosCheckoutStatus.PROCESSED],
       })
       .getMany();
+  }
 
+  /** Aggregate the session's checkouts into a sales summary (fallback source). */
+  async buildReport(session: PosRegisterSession): Promise<SessionReportData> {
+    return this.aggregate(session, await this.sessionCheckouts(session));
+  }
+
+  private async aggregate(
+    session: PosRegisterSession,
+    checkouts: PosCheckout[],
+  ): Promise<SessionReportData> {
     let grossSales = 0;
     let returnsTotal = 0;
     let receiptCount = 0;
@@ -530,9 +687,33 @@ export class PosRegisterReportService {
         returnsTotal += total;
         returnCount += 1;
       }
-      for (const tender of c.tenders || []) {
-        const method = (tender?.method || 'OTHER').toUpperCase();
-        const amount = Number(tender?.amount) || 0;
+      const tenders = (c.tenders || []).map((tender) => ({
+        method: (tender?.method || 'OTHER').toUpperCase(),
+        amount: Number(tender?.amount) || 0,
+      }));
+      if (isSale) {
+        // A tender is stored as PRESENTED — 500 held out for a 380 sale — with
+        // the difference in `changeDue`. Summed raw, the change handed back
+        // reads as money taken, in the mix and in the cash the drawer is
+        // expected to hold. It comes off the last tender first, which is how
+        // the till's own report nets it.
+        let change = Math.max(0, Number(c.changeDue) || 0);
+        for (let i = tenders.length - 1; i >= 0 && change > 0; i -= 1) {
+          const taken = Math.min(Math.max(tenders[i].amount, 0), change);
+          tenders[i].amount = round2(tenders[i].amount - taken);
+          change = round2(change - taken);
+        }
+      } else if (!tenders.some((tender) => tender.amount !== 0) && total > 0) {
+        // A refund may carry no tender rows at all, only the method it was
+        // paid out on. Without this a fee refunded in cash never left the
+        // drawer's expected figure.
+        tenders.push({
+          method:
+            s(c.metadata?.returnContext?.refundMethod).toUpperCase() || 'OTHER',
+          amount: total,
+        });
+      }
+      for (const { method, amount } of tenders) {
         mix.set(method, (mix.get(method) || 0) + sign * amount);
         if (method === 'CASH') cashNet += sign * amount;
       }
