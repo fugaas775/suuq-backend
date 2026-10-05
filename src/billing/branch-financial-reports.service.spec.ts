@@ -66,9 +66,8 @@ describe('BranchFinancialReportsService', () => {
     const productCost = {
       weightedAverageCosts: jest.fn().mockResolvedValue(new Map()),
     };
-    const ingredientMovementsRepo = makeIngredientMovementsRepo(
-      ingredientMovements,
-    );
+    const ingredientMovementsRepo =
+      makeIngredientMovementsRepo(ingredientMovements);
 
     const service = new BranchFinancialReportsService(
       checkoutsRepo as any,
@@ -230,6 +229,11 @@ describe('BranchFinancialReportsService', () => {
     expect(report.assets.cash).toBe(165);
     expect(report.assets.tenderClearing).toBe(200);
     expect(report.assets.total).toBe(365);
+    // What the branch is holding by EVERY money tender: 185 cash + 200 mobile
+    // money − 20 paid out. `cash` alone (165) is the cash-tender share — shown
+    // by itself it left the wallet half of a school's fees off the page.
+    expect(report.assets.current.nonCashMoney).toBe(200);
+    expect(report.assets.current.moneyInHand).toBe(365);
     expect(report.notes).toEqual(
       expect.arrayContaining([
         expect.stringContaining('register sessions were estimated'),
@@ -237,6 +241,104 @@ describe('BranchFinancialReportsService', () => {
         expect.stringContaining('linked register session'),
       ]),
     );
+  });
+
+  it('counts money, not promises, as in hand — and does not hide a balance paid out past zero', async () => {
+    const {
+      service,
+      checkoutsRepo,
+      registerSessionsRepo,
+      purchaseOrdersRepo,
+      purchaseOrderItemsRepo,
+      expensesRepo,
+      fixedAssetsRepo,
+      depreciationEntriesRepo,
+      accruedLiabilitiesRepo,
+      longTermDebtRepo,
+    } = createService();
+
+    const sale = (
+      id: number,
+      method: string,
+      amount: number,
+      type = 'SALE',
+    ) => ({
+      id,
+      currency: 'ETB',
+      total: amount,
+      status: PosCheckoutStatus.PROCESSED,
+      transactionType:
+        type === 'RETURN'
+          ? PosCheckoutTransactionType.RETURN
+          : PosCheckoutTransactionType.SALE,
+      registerSessionId: 1,
+      tenders: [{ method, amount }],
+      items: [],
+    });
+    checkoutsRepo.createQueryBuilder.mockReturnValue(
+      createBuilder([
+        sale(1, 'CASH', 100),
+        sale(2, 'MOBILE_MONEY', 300),
+        sale(3, 'BANK_TRANSFER', 50),
+        // Promises: nothing reached anyone's hand.
+        sale(4, 'ACCOUNT_CREDIT', 400),
+        sale(5, 'BAD_DEBT', 70),
+        // A refund paid back by wallet nets off the wallet.
+        sale(6, 'MOBILE_MONEY', 30, 'RETURN'),
+      ]),
+    );
+    registerSessionsRepo.createQueryBuilder.mockReturnValue(
+      createBuilder([
+        {
+          id: 1,
+          registerId: 'pos-s-web',
+          status: PosRegisterSessionStatus.CLOSED,
+          openedAt: new Date('2026-05-01T08:00:00.000Z'),
+          closedAt: new Date('2026-05-01T10:00:00.000Z'),
+          openingFloat: null,
+          closingFloat: null,
+        },
+      ]),
+    );
+    expensesRepo.createQueryBuilder.mockReturnValue(
+      createBuilder([
+        {
+          amount: 600,
+          category: 'PAYROLL',
+          occurredAt: new Date('2026-05-01T12:30:00.000Z'),
+        },
+        {
+          amount: 40,
+          category: 'OWNER_CONTRIBUTION',
+          occurredAt: new Date('2026-05-01T12:40:00.000Z'),
+        },
+      ]),
+    );
+    fixedAssetsRepo.createQueryBuilder.mockReturnValue(createBuilder([]));
+    depreciationEntriesRepo.createQueryBuilder.mockReturnValue(
+      createBuilder([]),
+    );
+    accruedLiabilitiesRepo.createQueryBuilder.mockReturnValue(
+      createBuilder([]),
+    );
+    longTermDebtRepo.createQueryBuilder.mockReturnValue(createBuilder([]));
+    purchaseOrdersRepo.createQueryBuilder.mockReturnValue(createBuilder([]));
+    purchaseOrderItemsRepo.createQueryBuilder.mockReturnValue(
+      createBuilder([], true),
+    );
+
+    const report = await service.getBalanceSheet(44, {
+      asOfAt: new Date('2026-05-01T18:00:00.000Z'),
+    });
+
+    // Mobile 300 + bank 50 − the 30 refunded by wallet; the 470 of promises
+    // stay in tender clearing and out of the money.
+    expect(report.assets.current.nonCashMoney).toBe(320);
+    expect(report.assets.tenderClearing).toBe(790);
+    // 100 cash + 320 by wallet and bank + 40 the owner put in − 600 paid out.
+    // Below zero, and said so: `cash` clamps at 0 and would have hidden it.
+    expect(report.assets.current.moneyInHand).toBe(-140);
+    expect(report.assets.cash).toBe(0);
   });
 
   it('balances the trial balance with tender clearing and pre-earnings owner capital', async () => {
@@ -907,9 +1009,8 @@ describe('BranchFinancialReportsService — profit-and-loss series', () => {
       weightedAverageCosts: jest.fn().mockResolvedValue(new Map()),
     };
     const repo = () => ({ createQueryBuilder: jest.fn() });
-    const ingredientMovementsRepo = makeIngredientMovementsRepo(
-      ingredientMovements,
-    );
+    const ingredientMovementsRepo =
+      makeIngredientMovementsRepo(ingredientMovements);
     const service = new BranchFinancialReportsService(
       checkoutsRepo as any,
       repo() as any,
@@ -1121,7 +1222,9 @@ describe('BranchFinancialReportsService — profit-and-loss series', () => {
     expect(pl.notes).toEqual(
       expect.arrayContaining([
         expect.stringContaining('Ingredient consumption of 10'),
-        expect.stringContaining('Purchases of 1200 were received into ingredient stock'),
+        expect.stringContaining(
+          'Purchases of 1200 were received into ingredient stock',
+        ),
       ]),
     );
     // Consumption alone is not "both bases".
@@ -1146,7 +1249,9 @@ describe('BranchFinancialReportsService — profit-and-loss series', () => {
     expect(pl.purchases).toBe(0);
     expect(pl.stockedPurchases).toBe(1200);
     expect(pl.notes).toEqual(
-      expect.arrayContaining([expect.stringContaining('exceed goods purchased')]),
+      expect.arrayContaining([
+        expect.stringContaining('exceed goods purchased'),
+      ]),
     );
   });
 

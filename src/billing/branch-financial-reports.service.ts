@@ -104,6 +104,21 @@ export interface BalanceSheetReport {
     current: {
       cash: number;
       tenderClearing: number;
+      /**
+       * Money received by a tender that is not cash — mobile money, card,
+       * bank — and so sitting in a wallet or an account rather than the cash
+       * box. The part of `tenderClearing` that is MONEY: an on-account sale
+       * and a bad-debt write-off are promises and are not in it.
+       */
+      nonCashMoney?: number;
+      /**
+       * What the branch is holding, by every tender that moves money: cash and
+       * `nonCashMoney` taken, plus owner capital in, less everything paid out.
+       * The figure an owner means by "cash in hand" on a counter where fees
+       * arrive by wallet as much as by note — and the one the Dashboard's cash
+       * book states. `cash` alone is the cash-tender share of it.
+       */
+      moneyInHand?: number;
       accountsReceivable?: number;
       inventoryValue: number;
       total: number;
@@ -806,6 +821,7 @@ export class BranchFinancialReportsService {
     const {
       cashOnHand,
       tenderClearing,
+      nonCashMoney,
       notes: cashNotes,
     } = await this.computeLiquidAssetBalances(branchId, asOfAt, checkouts);
 
@@ -826,6 +842,15 @@ export class BranchFinancialReportsService {
       }
     }
     const cash = Math.max(0, cashOnHand + contributionsIn - cashOut);
+    // What the branch is HOLDING, whichever tender it came in by. `cash` above
+    // is the cash-tender share only, so a school whose fees arrive by mobile
+    // money read "Cash on hand 88,930" in Financials beside a Dashboard cash
+    // book saying 179,430 — the same books, one of them leaving the wallet
+    // out. Not clamped: paying out more than was taken in is a real state,
+    // and reading it as zero is how a balance once vanished from this page.
+    const moneyInHand = this.round2(
+      cashOnHand + nonCashMoney + contributionsIn - cashOut,
+    );
     // Tax already handed to the authority is no longer owed. Without this the
     // liability only ever grew: cash fell when the branch paid, the payable
     // stayed, and equity absorbed the same tax twice.
@@ -945,6 +970,8 @@ export class BranchFinancialReportsService {
         current: {
           cash,
           tenderClearing,
+          nonCashMoney: this.round2(nonCashMoney),
+          moneyInHand,
           inventoryValue,
           total: currentAssetsTotal,
         },
@@ -1145,6 +1172,7 @@ export class BranchFinancialReportsService {
   ): Promise<{
     cashOnHand: number;
     tenderClearing: number;
+    nonCashMoney: number;
     notes: string[];
   }> {
     const sessions = await this.findRegisterSessions(branchId, asOfAt);
@@ -1152,6 +1180,7 @@ export class BranchFinancialReportsService {
     const cashBySessionId = new Map<number, number>();
     let orphanCash = 0;
     let tenderClearing = 0;
+    let nonCashMoney = 0;
 
     for (const checkout of checkouts) {
       if (
@@ -1164,6 +1193,7 @@ export class BranchFinancialReportsService {
       const cashAmount = this.sumTenderAmount(checkout, true);
       const nonCashAmount = this.sumTenderAmount(checkout, false);
       tenderClearing += nonCashAmount;
+      nonCashMoney += this.sumNonCashMoney(checkout);
 
       if (Math.abs(cashAmount) < 0.0001) {
         continue;
@@ -1248,8 +1278,31 @@ export class BranchFinancialReportsService {
     return {
       cashOnHand,
       tenderClearing: Math.max(0, tenderClearing),
+      nonCashMoney,
       notes,
     };
+  }
+
+  /**
+   * The non-cash tenders of a checkout that are MONEY — mobile money, card,
+   * bank. Not a promise: an on-account sale (ACCOUNT_CREDIT) put nothing in
+   * anyone's hand, and a BAD_DEBT tender is a write-off. Signed like every
+   * other tender sum here, so a refund paid back by wallet nets off.
+   */
+  private sumNonCashMoney(checkout: PosCheckout): number {
+    const sign = this.getCheckoutSign(checkout);
+    return (checkout.tenders || []).reduce((sum, tender) => {
+      if (!tender) return sum;
+      const method = String(tender.method || '').toUpperCase();
+      if (
+        method.includes('CASH') ||
+        method === 'ACCOUNT_CREDIT' ||
+        method === 'BAD_DEBT'
+      ) {
+        return sum;
+      }
+      return sum + sign * (Number(tender.amount) || 0);
+    }, 0);
   }
 
   private sumTenderAmount(checkout: PosCheckout, cashOnly: boolean): number {
