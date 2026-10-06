@@ -38,7 +38,9 @@ function makeService({
   roster = [] as any[],
   existingByName = null as any,
   runRows = [] as any[],
+  runTotal = null as number | null,
   memberRows = [] as any[],
+  paidRaw = [] as any[],
   expenseThrows = false,
   memberInsertThrows = false,
 } = {}) {
@@ -47,6 +49,11 @@ function makeService({
   const insertedMembers: any[] = [];
   const expenses: any[] = [];
   const deletedExpenses: any[] = [];
+  // What listRuns asked for — the page it took and the claim-query bounds.
+  const listed: { runQuery: any; paidWhere: any[] } = {
+    runQuery: null,
+    paidWhere: [],
+  };
 
   // The service filters an explicit selection in SQL; the mock honours the
   // `ids` param so an advance for one person yields a one-person roster.
@@ -90,6 +97,10 @@ function makeService({
 
   const runs: any = {
     find: async () => runRows,
+    findAndCount: async (criteria: any) => {
+      listed.runQuery = criteria;
+      return [runRows, runTotal ?? runRows.length];
+    },
     findOne: async ({ where }: any) =>
       runRows.find(
         (r: any) =>
@@ -109,8 +120,25 @@ function makeService({
     },
   };
 
+  const paidQb: any = {
+    select: () => paidQb,
+    addSelect: () => paidQb,
+    where: (_sql: string, params?: any) => {
+      listed.paidWhere.push(params);
+      return paidQb;
+    },
+    andWhere: (_sql: string, params?: any) => {
+      listed.paidWhere.push(params);
+      return paidQb;
+    },
+    groupBy: () => paidQb,
+    addGroupBy: () => paidQb,
+    getRawMany: async () => paidRaw,
+  };
+
   const members: any = {
     find: async () => memberRows,
+    createQueryBuilder: () => paidQb,
     manager: {
       // The claim phase runs inside a branch-locked transaction; the mock
       // hands the service an entity-manager with the same three calls it uses.
@@ -156,6 +184,7 @@ function makeService({
     insertedMembers,
     expenses,
     deletedExpenses,
+    listed,
   };
 }
 
@@ -506,6 +535,74 @@ describe('PayrollService — running a month', () => {
     await expect(
       noPay.createRun(115, 42, { branchId: 115, periodKey: '2026-09' }),
     ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('reports "already paid" from the claim table, not from the runs it happens to list', async () => {
+    // A roster paying advances posts several runs a month. With the list
+    // capped, the oldest month still offered for payment could fall past it
+    // and read as unpaid on the screen — the server refused the double
+    // payment, but offered it. `paid` is summed from the member rows, which
+    // is the table the locked re-check decides on.
+    const { service, listed } = makeService({
+      runRows: [
+        {
+          id: 400,
+          branchId: 115,
+          periodKey: '2026-10',
+          label: 'October 2026',
+          total: 11000,
+          currency: 'ETB',
+          headcount: 1,
+          lines: [],
+          expenseId: 900,
+          occurredAt: stamp,
+          createdAt: stamp,
+        },
+      ],
+      runTotal: 340,
+      paidRaw: [
+        // Raw rows come back as strings from pg; the service numbers them.
+        { periodKey: '2025-09', employeeId: '1', amount: '11000.00' },
+        { periodKey: '2025-09', employeeId: '2', amount: '40000.00' },
+        { periodKey: '2026-10', employeeId: '1', amount: '11000.00' },
+      ],
+    });
+
+    const res = await service.listRuns({
+      branchId: 115,
+      periodFrom: '2025-09',
+      limit: 50,
+    });
+
+    expect(res.items).toHaveLength(1);
+    expect(res.total).toBe(340);
+    expect(res.limit).toBe(50);
+    expect(listed.runQuery.take).toBe(50);
+    expect(res.paid).toEqual([
+      { periodKey: '2025-09', employeeId: 1, amount: 11000 },
+      { periodKey: '2025-09', employeeId: 2, amount: 40000 },
+      { periodKey: '2026-10', employeeId: 1, amount: 11000 },
+    ]);
+    // The claim query is bounded to the branch and the months asked for.
+    expect(listed.paidWhere).toEqual([
+      { branchId: 115 },
+      { periodFrom: '2025-09' },
+    ]);
+  });
+
+  it('pages the runs at 120 by default and never past 1000, with no month floor unless asked', async () => {
+    const { service, listed } = makeService({ runRows: [], runTotal: 0 });
+
+    const bare = await service.listRuns({ branchId: 115 });
+    expect(bare.limit).toBe(120);
+    expect(listed.runQuery.take).toBe(120);
+    expect(bare.paid).toEqual([]);
+    // Only the branch bound — every month the branch has ever paid.
+    expect(listed.paidWhere).toEqual([{ branchId: 115 }]);
+
+    const greedy = await service.listRuns({ branchId: 115, limit: 5000 });
+    expect(greedy.limit).toBe(1000);
+    expect(listed.runQuery.take).toBe(1000);
   });
 
   it('takes the expense with it when a run is deleted', async () => {

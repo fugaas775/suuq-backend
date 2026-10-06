@@ -7,6 +7,7 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  Max,
   MaxLength,
   Min,
   MinLength,
@@ -190,6 +191,26 @@ export class ListPayrollRunsQueryDto {
   @Type(() => Number)
   @IsInt()
   branchId!: number;
+
+  /**
+   * Oldest month ('YYYY-MM', inclusive) whose paid claims the client wants
+   * back in `paid`. Omit for every month the branch has ever paid.
+   */
+  @ApiPropertyOptional({ example: '2025-09' })
+  @IsOptional()
+  @IsString()
+  @MinLength(4)
+  @MaxLength(32)
+  periodFrom?: string;
+
+  /** How many runs to list, newest first. Default 120, at most 1000. */
+  @ApiPropertyOptional({ example: 120 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(1000)
+  limit?: number;
 }
 
 export class CreatePayrollRunDto {

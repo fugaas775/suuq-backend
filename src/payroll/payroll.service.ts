@@ -37,6 +37,10 @@ function money(value: number): number {
 /** Advisory-lock namespace for payroll writes — arbitrary, but never reused. */
 const PAYROLL_LOCK_NAMESPACE = 812_640;
 
+/** Runs listed when the client names no page size, and the most it may ask. */
+const RUNS_PAGE = 120;
+const RUNS_PAGE_MAX = 1000;
+
 /**
  * The branch's people and what they cost.
  *
@@ -263,14 +267,62 @@ export class PayrollService {
 
   // --------------------------------------------------------------------- runs
 
+  /**
+   * The runs, newest first — and beside them what each person has ALREADY
+   * been paid per month, read from the claim table.
+   *
+   * The run list is a page: `total` says how many there are, `limit` how many
+   * came. What a client must never do is reconstruct "already paid" from that
+   * page. A roster paying advances posts several runs a month, and once the
+   * oldest month still offered for payment fell past the page, its runs were
+   * simply absent and the month read as unpaid. The server refused the double
+   * payment, but the screen offered it. `paid` is summed from
+   * `pos_payroll_run_members` — the very table the locked re-check in
+   * {@link createRun} decides on — so the two agree by construction.
+   * `periodFrom` ('YYYY-MM', inclusive) bounds it to the months the client
+   * offers; without it, every month the branch has ever paid comes back.
+   */
   async listRuns(query: ListPayrollRunsQueryDto) {
-    const rows = await this.runs.find({
+    const limit = Math.min(
+      Math.max(Number(query.limit) || RUNS_PAGE, 1),
+      RUNS_PAGE_MAX,
+    );
+    const periodFrom = String(query.periodFrom || '').trim() || null;
+
+    const [rows, total] = await this.runs.findAndCount({
       where: { branchId: query.branchId },
       // A month may hold several runs now — newest wave first within it.
       order: { periodKey: 'DESC', createdAt: 'DESC' },
-      take: 120,
+      take: limit,
     });
-    return { items: rows.map((r) => this.toRun(r)) };
+
+    const paidQb = this.members
+      .createQueryBuilder('m')
+      .select('m."periodKey"', 'periodKey')
+      .addSelect('m."employeeId"', 'employeeId')
+      .addSelect('SUM(m.amount)', 'amount')
+      .where('m."branchId" = :branchId', { branchId: query.branchId })
+      .groupBy('m."periodKey"')
+      .addGroupBy('m."employeeId"');
+    if (periodFrom) {
+      paidQb.andWhere('m."periodKey" >= :periodFrom', { periodFrom });
+    }
+    const paidRows: {
+      periodKey: string;
+      employeeId: string | number;
+      amount: string | number;
+    }[] = await paidQb.getRawMany();
+
+    return {
+      items: rows.map((r) => this.toRun(r)),
+      total,
+      limit,
+      paid: paidRows.map((p) => ({
+        periodKey: String(p.periodKey),
+        employeeId: Number(p.employeeId),
+        amount: money(Number(p.amount)),
+      })),
+    };
   }
 
   async createRun(branchId: number, userId: number, dto: CreatePayrollRunDto) {
