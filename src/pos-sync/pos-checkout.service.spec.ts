@@ -1213,6 +1213,7 @@ describe('PosCheckoutService', () => {
       updatedAt: new Date('2026-06-17T00:29:43.000Z'),
     };
     const folioQb = {
+      getMany: jest.fn().mockResolvedValue([]),
       where: jest.fn().mockReturnThis(),
       andWhere: jest.fn().mockReturnThis(),
       orderBy: jest.fn().mockReturnThis(),
@@ -1242,6 +1243,7 @@ describe('PosCheckoutService', () => {
 
   it('lets a distinct-amount payment on the same folio through (3,500 deposit then 14,000 balance)', async () => {
     const folioQb = {
+      getMany: jest.fn().mockResolvedValue([]),
       where: jest.fn().mockReturnThis(),
       andWhere: jest.fn().mockReturnThis(),
       orderBy: jest.fn().mockReturnThis(),
@@ -1295,6 +1297,7 @@ describe('PosCheckoutService', () => {
       updatedAt: new Date('2026-08-25T06:50:58.000Z'),
     };
     const folioQb = {
+      getMany: jest.fn().mockResolvedValue([]),
       where: jest.fn().mockReturnThis(),
       andWhere: jest.fn().mockReturnThis(),
       orderBy: jest.fn().mockReturnThis(),
@@ -1335,6 +1338,7 @@ describe('PosCheckoutService', () => {
     // HOTEL stamps both. The backend folio is the authoritative one — it
     // survives the suspended-cart row being replaced — so it keeps precedence.
     const folioQb = {
+      getMany: jest.fn().mockResolvedValue([]),
       where: jest.fn().mockReturnThis(),
       andWhere: jest.fn().mockReturnThis(),
       orderBy: jest.fn().mockReturnThis(),
@@ -1383,14 +1387,14 @@ describe('PosCheckoutService', () => {
       where: jest.fn().mockReturnThis(),
       andWhere: jest.fn().mockReturnThis(),
       orderBy: jest.fn().mockReturnThis(),
-      getOne: jest
+      // findExistingFolioSettlement — no same-amount settlement in the window
+      getOne: jest.fn().mockResolvedValue(null),
+      // readFolioBooks — the folio's sales (its full 16,000, one standing
+      // sale), then its returns (none); the cap collapses onto that sale
+      getMany: jest
         .fn()
-        // 1) findExistingFolioSettlement — no same-amount settlement in the window
-        .mockResolvedValueOnce(null)
-        // 2) findFullyPaidFolioDuplicate — the original settlement to collapse onto
-        .mockResolvedValueOnce(original),
-      // findFullyPaidFolioDuplicate — folio already collected its full 16,000
-      getRawOne: jest.fn().mockResolvedValue({ collected: '16000' }),
+        .mockResolvedValueOnce([original])
+        .mockResolvedValueOnce([]),
     };
     posCheckoutsRepository.createQueryBuilder.mockReturnValue(folioQb);
 
@@ -1427,7 +1431,18 @@ describe('PosCheckoutService', () => {
       andWhere: jest.fn().mockReturnThis(),
       orderBy: jest.fn().mockReturnThis(),
       getOne: jest.fn().mockResolvedValue(null), // no same-amount dup
-      getRawOne: jest.fn().mockResolvedValue({ collected: '4000' }),
+      // readFolioBooks — 4,000 collected in one sale, nothing returned
+      getMany: jest
+        .fn()
+        .mockResolvedValueOnce([
+          {
+            id: 900,
+            receiptNumber: 'POS-3-1',
+            total: 4000,
+            metadata: { backendFolioId: 787 },
+          },
+        ])
+        .mockResolvedValueOnce([]),
     };
     posCheckoutsRepository.createQueryBuilder.mockReturnValue(folioQb);
 
@@ -1448,6 +1463,216 @@ describe('PosCheckoutService', () => {
     });
 
     expect(posCheckoutsRepository.save).toHaveBeenCalled();
+  });
+
+  // SMAQ School, folio 16863 (2026-10-06): ETB 600 + 1,400 were taken from one
+  // family on 2026-08-27 and refunded fourteen minutes later. The cap summed the
+  // sales alone, read the folio as fully collected, and collapsed every payment
+  // the family tried to make for a week — the cashier three times, the owner
+  // twice — while the roll correctly showed them owing the whole bill.
+  const munoPart = {
+    id: 20159,
+    branchId: 115,
+    receiptNumber: 'POS-115-1787833270694',
+    transactionType: PosCheckoutTransactionType.SALE,
+    status: PosCheckoutStatus.PROCESSED,
+    total: 600,
+    paidAmount: 600,
+    metadata: { folioId: 16863, guestName: 'Muno A/nasir A/lahi' },
+    items: [],
+  };
+  const munoRest = {
+    ...munoPart,
+    id: 20160,
+    receiptNumber: 'POS-115-1787833286856',
+    total: 1400,
+    paidAmount: 2000,
+  };
+  const munoRefunds = [
+    {
+      id: 20164,
+      branchId: 115,
+      receiptNumber: 'RET-115-1787834102121',
+      transactionType: PosCheckoutTransactionType.RETURN,
+      status: PosCheckoutStatus.PROCESSED,
+      total: 1400,
+      metadata: {
+        folioId: 16863,
+        returnContext: { sourceReceiptNumber: 'POS-115-1787833286856' },
+      },
+    },
+    {
+      id: 20165,
+      branchId: 115,
+      receiptNumber: 'RET-115-1787834121854',
+      transactionType: PosCheckoutTransactionType.RETURN,
+      status: PosCheckoutStatus.PROCESSED,
+      total: 600,
+      metadata: {
+        folioId: 16863,
+        returnContext: { sourceReceiptNumber: 'POS-115-1787833270694' },
+      },
+    },
+  ];
+  const munoRetake = (over: Record<string, unknown> = {}) => ({
+    branchId: 115,
+    transactionType: PosCheckoutTransactionType.SALE,
+    idempotencyKey: 'receipt-1791191009430-retake',
+    receiptNumber: 'POS-115-1791191009430',
+    currency: 'ETB',
+    subtotal: 2000,
+    total: 2000,
+    paidAmount: 2000,
+    occurredAt: '2026-10-05T09:03:32.000Z',
+    metadata: {
+      folioId: 16863,
+      guestName: 'Muno A/nasir A/lahi',
+      folioGrandTotal: 2000,
+    },
+    items: [{ productId: null, quantity: 1, unitPrice: 2000, lineTotal: 2000 }],
+    ...over,
+  });
+
+  it('lets a family pay again after their money was handed back (refunds net off the cap)', async () => {
+    posCheckoutsRepository.findOne.mockResolvedValueOnce(null); // idempotency: no match; the final re-read keeps its default;
+    const folioQb = {
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      // no same-amount sale inside the window
+      getOne: jest.fn().mockResolvedValue(null),
+      // the books: both sales, then both refunds
+      getMany: jest
+        .fn()
+        .mockResolvedValueOnce([munoPart, munoRest])
+        .mockResolvedValueOnce(munoRefunds),
+    };
+    posCheckoutsRepository.createQueryBuilder.mockReturnValue(folioQb);
+
+    const result = await service.ingest(munoRetake());
+
+    expect(posCheckoutsRepository.save).toHaveBeenCalled();
+    expect(result.collapsedDuplicate).toBeUndefined();
+    // The refunds are found by the folio key AND by the receipts they reverse,
+    // so a refund minted before the folio stamp existed is netted as well.
+    expect(
+      folioQb.andWhere.mock.calls.some((call) =>
+        String(call[0]).includes("returnContext'->>'sourceReceiptNumber'"),
+      ),
+    ).toBe(true);
+  });
+
+  it('does not read a refunded sale inside the window as a duplicate', async () => {
+    // The same 600 taken again twenty minutes after it was handed back: the
+    // same-amount guard finds the earlier sale, and must see it was refunded.
+    posCheckoutsRepository.findOne.mockResolvedValueOnce(null); // idempotency: no match; the final re-read keeps its default;
+    const folioQb = {
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      getOne: jest.fn().mockResolvedValue(munoPart),
+      getMany: jest
+        .fn()
+        .mockResolvedValueOnce([munoPart])
+        .mockResolvedValueOnce([munoRefunds[1]]),
+    };
+    posCheckoutsRepository.createQueryBuilder.mockReturnValue(folioQb);
+
+    const result = await service.ingest(
+      munoRetake({
+        subtotal: 600,
+        total: 600,
+        paidAmount: 600,
+        items: [
+          { productId: null, quantity: 1, unitPrice: 600, lineTotal: 600 },
+        ],
+      }),
+    );
+
+    expect(posCheckoutsRepository.save).toHaveBeenCalled();
+    expect(result.collapsedDuplicate).toBeUndefined();
+  });
+
+  it('tells the till what the books hold when it does collapse a payment', async () => {
+    // Two 600 instalments already stand against a 1,200 bill; a third is a
+    // duplicate, and the answer carries the folio's net collection so the till
+    // can put the roll on that figure instead of only unwinding its own write.
+    posCheckoutsRepository.findOne.mockResolvedValue(null);
+    const second = {
+      ...munoPart,
+      id: 20170,
+      receiptNumber: 'POS-115-1787900000000',
+    };
+    const folioQb = {
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      getOne: jest.fn().mockResolvedValue(null),
+      getMany: jest
+        .fn()
+        .mockResolvedValueOnce([munoPart, second])
+        .mockResolvedValueOnce([]),
+    };
+    posCheckoutsRepository.createQueryBuilder.mockReturnValue(folioQb);
+
+    const result = await service.ingest(
+      munoRetake({
+        subtotal: 600,
+        total: 600,
+        paidAmount: 600,
+        metadata: {
+          folioId: 16863,
+          guestName: 'Muno A/nasir A/lahi',
+          folioGrandTotal: 1200,
+        },
+        items: [
+          { productId: null, quantity: 1, unitPrice: 600, lineTotal: 600 },
+        ],
+      }),
+    );
+
+    expect(posCheckoutsRepository.save).not.toHaveBeenCalled();
+    expect(result.id).toBe(20159);
+    expect(result.collapsedDuplicate).toBe(true);
+    expect(result.folioCollected).toBe(1200);
+  });
+
+  it('collapses onto the earliest sale that still stands, not one handed back', async () => {
+    // 600 refunded, then 600 + 1,400 taken again: the folio is fully collected
+    // (net 2,000) and a further 600 is a duplicate — of a sale that stands.
+    posCheckoutsRepository.findOne.mockResolvedValue(null);
+    const again = {
+      ...munoPart,
+      id: 20171,
+      receiptNumber: 'POS-115-1787950000000',
+    };
+    const folioQb = {
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      getOne: jest.fn().mockResolvedValue(null),
+      getMany: jest
+        .fn()
+        .mockResolvedValueOnce([munoPart, again, munoRest])
+        .mockResolvedValueOnce([munoRefunds[1]]),
+    };
+    posCheckoutsRepository.createQueryBuilder.mockReturnValue(folioQb);
+
+    const result = await service.ingest(
+      munoRetake({
+        subtotal: 600,
+        total: 600,
+        paidAmount: 600,
+        items: [
+          { productId: null, quantity: 1, unitPrice: 600, lineTotal: 600 },
+        ],
+      }),
+    );
+
+    expect(posCheckoutsRepository.save).not.toHaveBeenCalled();
+    expect(result.id).toBe(20171);
+    expect(result.duplicateOfReceiptNumber).toBe('POS-115-1787950000000');
+    expect(result.folioCollected).toBe(2000);
   });
 
   // A sale that already happened cannot be un-happened by refusing to record it.
@@ -3251,8 +3476,8 @@ describe('PosCheckoutService', () => {
 
       expect(result.status).toBe(PosCheckoutStatus.PROCESSED);
       expect(ingredientsService.consumeForCheckout).toHaveBeenCalledTimes(1);
-      const [checkout, branch] = ingredientsService.consumeForCheckout.mock
-        .calls[0];
+      const [checkout, branch] =
+        ingredientsService.consumeForCheckout.mock.calls[0];
       // The post-commit row, not the DTO: items, occurredAt and status are
       // the persisted ones.
       expect(checkout).toMatchObject({

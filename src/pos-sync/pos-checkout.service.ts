@@ -93,6 +93,20 @@ import {
 // instalments on one folio spaced further apart than this window still post.
 const FOLIO_SETTLE_DEDUPE_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
 
+/** A folio's money as the settlement guards read it — see readFolioBooks. */
+type FolioBooks = {
+  sales: PosCheckout[];
+  returns: PosCheckout[];
+  /** Σ total of the forward SALEs on the folio (non-void, non-failed). */
+  collected: number;
+  /** Σ total of the RETURNs that reverse them. */
+  returned: number;
+  /** collected − returned: what the school actually kept. */
+  net: number;
+  /** receipt number → how much of that sale has been handed back. */
+  reversedBy: Map<string, number>;
+};
+
 const POS_PROMO_CODES = {
   SAVE5: {
     code: 'SAVE5',
@@ -601,11 +615,12 @@ export class PosCheckoutService {
           dto.branchId,
           folioLockId,
         ]);
+        const books = await this.readFolioBooks(dto, manager);
         const duplicate =
-          (await this.findExistingFolioSettlement(dto, manager)) ??
-          (await this.findFullyPaidFolioDuplicate(dto, manager));
+          (await this.findExistingFolioSettlement(dto, manager, books)) ??
+          this.findFullyPaidFolioDuplicate(dto, books);
         if (duplicate) {
-          return { duplicate };
+          return { duplicate, folioCollected: books?.net ?? null };
         }
         const saved = await manager
           .getRepository(PosCheckout)
@@ -625,6 +640,9 @@ export class PosCheckoutService {
         return {
           ...this.toResponse(result.duplicate),
           collapsedDuplicate: true,
+          // What the books hold for this folio net of refunds — the figure the
+          // till puts the roll on, rather than only unwinding its own write.
+          folioCollected: result.folioCollected ?? null,
           duplicateOfReceiptNumber: result.duplicate.receiptNumber ?? null,
           submittedReceiptNumber:
             this.normalizeOptionalString(dto.receiptNumber) ?? null,
@@ -1806,15 +1824,109 @@ export class PosCheckoutService {
   }
 
   /**
+   * The folio's books, read under the advisory lock: its forward SALEs and the
+   * RETURNs that reverse them, so the guards below reason about money the
+   * school actually KEPT rather than money that once crossed the counter.
+   *
+   * Both guards used to sum sales alone. SMAQ School took ETB 600 + 1,400 from
+   * one family on 2026-08-27 and refunded both fourteen minutes later; from
+   * then on the cap read folio 16863 as fully collected and collapsed every
+   * payment the family tried to make — the cashier three times, the owner
+   * twice — while the roll correctly showed them owing the whole bill, and the
+   * till unwound its own credit each time. A refund is a RETURN row: stamped
+   * with the folio key since 2026-08-26, and pointing at the receipt it
+   * reverses (`metadata.returnContext.sourceReceiptNumber`) since the
+   * beginning, which is how the back-history is netted as well.
+   *
+   * Returns null when the folio-scoped dedupe does not apply.
+   */
+  private async readFolioBooks(
+    dto: IngestPosCheckoutDto,
+    manager: EntityManager,
+  ): Promise<FolioBooks | null> {
+    const anchor = this.resolveFolioSettlementAnchor(dto);
+    if (!anchor) {
+      return null;
+    }
+    const excluded = [PosCheckoutStatus.VOIDED, PosCheckoutStatus.FAILED];
+    const folioId = String(anchor.id);
+    const sales = await manager
+      .getRepository(PosCheckout)
+      .createQueryBuilder('c')
+      .where('c.branchId = :branchId', { branchId: dto.branchId })
+      .andWhere(`(c.metadata->>'${anchor.key}') = :folioId`, { folioId })
+      .andWhere('c.transactionType = :tt', {
+        tt: PosCheckoutTransactionType.SALE,
+      })
+      .andWhere('c.status NOT IN (:...excluded)', { excluded })
+      .orderBy('c.id', 'ASC')
+      .getMany();
+    const receipts = sales
+      .map((sale) => this.normalizeOptionalString(sale.receiptNumber))
+      .filter((receipt): receipt is string => Boolean(receipt));
+    const returnsQb = manager
+      .getRepository(PosCheckout)
+      .createQueryBuilder('c')
+      .where('c.branchId = :branchId', { branchId: dto.branchId })
+      .andWhere('c.transactionType = :rt', {
+        rt: PosCheckoutTransactionType.RETURN,
+      })
+      .andWhere('c.status NOT IN (:...excluded)', { excluded });
+    if (receipts.length) {
+      returnsQb.andWhere(
+        `((c.metadata->>'${anchor.key}') = :folioId OR (c.metadata->'returnContext'->>'sourceReceiptNumber') IN (:...receipts))`,
+        { folioId, receipts },
+      );
+    } else {
+      returnsQb.andWhere(`(c.metadata->>'${anchor.key}') = :folioId`, {
+        folioId,
+      });
+    }
+    const returns = await returnsQb.getMany();
+    const reversedBy = new Map<string, number>();
+    for (const row of returns) {
+      const source = this.normalizeOptionalString(
+        row.metadata?.returnContext?.sourceReceiptNumber,
+      );
+      if (!source) continue;
+      reversedBy.set(
+        source,
+        (reversedBy.get(source) ?? 0) + Number(row.total || 0),
+      );
+    }
+    const collected = sales.reduce((sum, c) => sum + Number(c.total || 0), 0);
+    const returned = returns.reduce((sum, c) => sum + Number(c.total || 0), 0);
+    return {
+      sales,
+      returns,
+      collected,
+      returned,
+      net: Math.round((collected - returned) * 100) / 100,
+      reversedBy,
+    };
+  }
+
+  /** Does this sale still stand — not handed back in full? */
+  private saleStands(sale: PosCheckout, books: FolioBooks): boolean {
+    const receipt = this.normalizeOptionalString(sale.receiptNumber);
+    const reversed = receipt ? (books.reversedBy.get(receipt) ?? 0) : 0;
+    return reversed < Number(sale.total || 0) - 0.005;
+  }
+
+  /**
    * Finds a recent non-voided, non-failed SALE settlement for the same folio and
    * the same amount inside the dedupe window — i.e. a duplicate of the incoming
    * settlement. Must run inside the advisory-locked transaction so concurrent
    * taps on one folio are serialised. Anchors on metadata.backendFolioId (which
    * the client stamps reliably), never on the fragile client idempotencyKey.
+   *
+   * A sale the school has since handed back is NOT a payment being taken
+   * twice: the family owes it again, and the re-take is theirs to make.
    */
   private async findExistingFolioSettlement(
     dto: IngestPosCheckoutDto,
     manager: EntityManager,
+    books: FolioBooks | null,
   ): Promise<PosCheckout | null> {
     const anchor = this.resolveFolioSettlementAnchor(dto);
     if (!anchor) {
@@ -1822,7 +1934,7 @@ export class PosCheckoutService {
     }
     const amountCents = Math.round(Number(dto.total || 0) * 100);
     const windowStart = new Date(Date.now() - FOLIO_SETTLE_DEDUPE_WINDOW_MS);
-    return manager
+    const candidate = await manager
       .getRepository(PosCheckout)
       .createQueryBuilder('c')
       .where('c.branchId = :branchId', { branchId: dto.branchId })
@@ -1839,6 +1951,13 @@ export class PosCheckoutService {
       .andWhere('c.createdAt >= :windowStart', { windowStart })
       .orderBy('c.id', 'ASC')
       .getOne();
+    if (!candidate) {
+      return null;
+    }
+    if (books && !this.saleStands(candidate, books)) {
+      return null;
+    }
+    return candidate;
   }
 
   /**
@@ -1848,72 +1967,40 @@ export class PosCheckoutService {
    * landing minutes-to-hours later because a stale board showed the room "unpaid"
    * (prod: Blue Hotel folios collected well past their stay total). The client
    * stamps `metadata.folioGrandTotal` — the folio's full billed total at settle
-   * time — so once the folio's cumulative non-voided SALE collection meets that
-   * total, an incoming settlement is a duplicate and is collapsed onto the original.
+   * time — so once the folio's cumulative collection NET OF REFUNDS meets that
+   * total, an incoming settlement is a duplicate and is collapsed onto the
+   * earliest sale that still stands.
    *
    * Additive and safe:
    *  - Skipped when the client omits folioGrandTotal (legacy bundles) — behaviour
    *    is then exactly as before.
    *  - Legitimate instalments accrue toward the total and are allowed while the
    *    folio still owes; ONLY collection beyond the full total is collapsed.
-   *  - Never drops revenue without a target: collapses only when a prior settlement
-   *    exists to fold the duplicate onto.
-   * Anchors on the same folio key as the window guard above (backendFolioId,
-   * else folioId); must run inside the advisory-locked txn.
+   *  - Money handed back is owed again, so a refunded folio is open to
+   *    collection — the trap SMAQ's folio 16863 sat in for a week.
+   *  - Never drops revenue without a target: collapses only when a prior
+   *    settlement still stands to fold the duplicate onto.
+   * Reads `readFolioBooks`, taken under the same advisory lock; the books sum
+   * `total` — the amount APPLIED to the folio — not `paidAmount`, which
+   * includes the change handed back (a 500 fee paid with a 1,000 note would
+   * otherwise reach the cap at half the money).
    */
-  private async findFullyPaidFolioDuplicate(
+  private findFullyPaidFolioDuplicate(
     dto: IngestPosCheckoutDto,
-    manager: EntityManager,
-  ): Promise<PosCheckout | null> {
-    const anchor = this.resolveFolioSettlementAnchor(dto);
-    if (!anchor) {
+    books: FolioBooks | null,
+  ): PosCheckout | null {
+    if (!books) {
       return null;
     }
     const declaredTotal = Number(dto.metadata?.folioGrandTotal);
     if (!Number.isFinite(declaredTotal) || declaredTotal <= 0) {
       return null;
     }
-    // Common predicate: this folio's non-voided forward SALEs.
-    const scopeFolioSales = <T>(
-      qb: SelectQueryBuilder<T>,
-    ): SelectQueryBuilder<T> =>
-      qb
-        .where('c.branchId = :branchId', { branchId: dto.branchId })
-        .andWhere(`(c.metadata->>'${anchor.key}') = :folioId`, {
-          folioId: String(anchor.id),
-        })
-        .andWhere('c.transactionType = :tt', {
-          tt: PosCheckoutTransactionType.SALE,
-        })
-        .andWhere('c.status NOT IN (:...excluded)', {
-          excluded: [PosCheckoutStatus.VOIDED, PosCheckoutStatus.FAILED],
-        });
-
-    // Summed on `total`, the amount APPLIED to the folio — not on `paidAmount`,
-    // which is what was handed across the counter and includes the change given
-    // back. A parent paying a 500 fee with a 1,000 note books paidAmount 1,000
-    // and changeDue 500, so summing tenders reached the folio's cap at half the
-    // money and would have collapsed the family's next legitimate instalment.
-    // Harmless where no change is given (the two are equal), and always the
-    // conservative direction: it can only ever let a payment through.
-    const sumRow = await scopeFolioSales(
-      manager
-        .getRepository(PosCheckout)
-        .createQueryBuilder('c')
-        .select('COALESCE(SUM(c.total), 0)', 'collected'),
-    ).getRawOne<{ collected: string }>();
-    const priorCollected = Number(sumRow?.collected ?? 0);
     // 1-unit tolerance for rounding. Still owes → legitimate instalment, allow it.
-    if (priorCollected < declaredTotal - 1) {
+    if (books.net < declaredTotal - 1) {
       return null;
     }
-    // Folio already fully collected — this is a re-collection. Collapse onto the
-    // earliest prior settlement (a target always exists when priorCollected > 0).
-    return scopeFolioSales(
-      manager.getRepository(PosCheckout).createQueryBuilder('c'),
-    )
-      .orderBy('c.id', 'ASC')
-      .getOne();
+    return books.sales.find((sale) => this.saleStands(sale, books)) ?? null;
   }
 
   private async findOneById(id: number): Promise<PosCheckout> {

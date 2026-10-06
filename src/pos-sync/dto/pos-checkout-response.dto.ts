@@ -208,6 +208,20 @@ export class PosCheckoutResponseDto extends PosCheckoutListItemResponseDto {
   /** The receipt number the caller submitted, which was NOT written. */
   @ApiPropertyOptional()
   submittedReceiptNumber?: string | null;
+
+  /**
+   * On a collapse: what the books hold for the folio NET of refunds — sales
+   * minus the RETURNs that reverse them. The till puts the pupil's record on
+   * this figure rather than only unwinding its own credit, which is how a
+   * folio that had lost its credit (or carried one nobody banked) comes back
+   * to the truth from a till.
+   */
+  @ApiPropertyOptional({
+    description:
+      "On a collapse: the folio's collection net of refunds, per the books.",
+    nullable: true,
+  })
+  folioCollected?: number | null;
 }
 
 export class PosCheckoutPageResponseDto {
