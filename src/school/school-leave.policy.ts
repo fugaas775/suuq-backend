@@ -65,9 +65,7 @@ export function isLeaveApprover({
 }): boolean {
   if (actorId == null) return false;
   if (ownerId != null && Number(ownerId) === Number(actorId)) return true;
-  if (
-    (roles ?? []).some((r) => GLOBAL_ROLES.includes(String(r).toUpperCase()))
-  )
+  if ((roles ?? []).some((r) => GLOBAL_ROLES.includes(String(r).toUpperCase())))
     return true;
   if (assignment && assignment.isActive !== false) {
     if (String(assignment.role ?? '').toUpperCase() === 'MANAGER') return true;
@@ -174,3 +172,193 @@ export const LIVE_LEAVE_STATUSES = ['PENDING', 'APPROVED'] as const;
  */
 export const isStaffHead = isLeaveApprover;
 
+/* ── The year's allowance ─────────────────────────────────────────────
+ *
+ * Owner 2026-10-06: "Teachers should only have a 10% annual leave, if it
+ * is more than it should not be tolerated." A person's leave for a school
+ * year is capped at a tenth of the school days in it, and a request or an
+ * approval that would go past the cap is refused — not flagged, refused —
+ * whether the teacher asks or the office records it for them.
+ *
+ * Annual, personal, study, unpaid and other leave draw on the allowance.
+ * Sick, maternity, paternity and bereavement leave are outside it: nobody
+ * chooses when they fall ill, and a maternity leave is longer than a tenth
+ * of any year. They still show on the heads' board.
+ *
+ * The year is the school's own: Meskerem 1 to the end of Pagume for an
+ * Ethiopian school, 1 September to 31 August otherwise. Its school days
+ * are counted on the same bell as a request's.
+ */
+export const LEAVE_ALLOWANCE_RATE = 0.1;
+
+export const ALLOWANCE_LEAVE_TYPES = [
+  'ANNUAL',
+  'PERSONAL',
+  'STUDY',
+  'UNPAID',
+  'OTHER',
+] as const;
+
+export function countsAgainstAllowance(leaveType: unknown): boolean {
+  return (ALLOWANCE_LEAVE_TYPES as readonly string[]).includes(
+    String(leaveType ?? '')
+      .trim()
+      .toUpperCase(),
+  );
+}
+
+/** A tenth of the year's school days, whole days only. */
+export function leaveAllowanceDays(yearSchoolDays: number): number {
+  const days = Math.max(0, Number(yearSchoolDays) || 0);
+  return Math.floor(days * LEAVE_ALLOWANCE_RATE + 1e-9);
+}
+
+/* The same spellings the till accepts (shared/ethiopianSchoolCalendar). */
+const ETHIOPIA_NAMES = new Set([
+  'ethiopia',
+  'et',
+  'eth',
+  'itoobiya',
+  'itoobiyaa',
+  'ityopiya',
+  'ኢትዮጵያ',
+]);
+
+export function isEthiopianCountry(country: unknown): boolean {
+  return ETHIOPIA_NAMES.has(
+    String(country ?? '')
+      .trim()
+      .toLowerCase(),
+  );
+}
+
+const isGregorianLeap = (y: number) =>
+  (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
+
+/**
+ * Meskerem 1 of the Ethiopian year that opens in a Gregorian year: 11
+ * September, or the 12th when the Gregorian year that follows is a leap
+ * year (so 2027-09-12 opens 2020 E.C., as 2023-09-12 opened 2016 E.C.).
+ */
+export function ethiopianNewYear(gregorianYear: number): string {
+  return `${gregorianYear}-09-${isGregorianLeap(gregorianYear + 1) ? '12' : '11'}`;
+}
+
+export type SchoolYearRange = { from: string; to: string; label: string };
+
+/** The school year a day falls in. */
+export function schoolYearRangeOf(
+  day: string,
+  ethiopian: boolean,
+): SchoolYearRange {
+  const d = String(day).slice(0, 10);
+  const year = Number(d.slice(0, 4));
+  if (ethiopian) {
+    const start = d >= ethiopianNewYear(year) ? year : year - 1;
+    return {
+      from: ethiopianNewYear(start),
+      to: addCalendarDays(ethiopianNewYear(start + 1), -1),
+      label: `${start - 7} E.C.`,
+    };
+  }
+  const month = Number(d.slice(5, 7));
+  const start = month >= 9 ? year : year - 1;
+  return {
+    from: `${start}-09-01`,
+    to: `${start + 1}-08-31`,
+    label: `${start}/${start + 1}`,
+  };
+}
+
+/** The school years a range touches, first to last — one, or two for a request over the New Year. */
+export function schoolYearsTouched(
+  start: string,
+  end: string,
+  ethiopian: boolean,
+): SchoolYearRange[] {
+  const out = [schoolYearRangeOf(start, ethiopian)];
+  let cursor = out[0].to;
+  while (cursor < end && out.length < 4) {
+    const next = schoolYearRangeOf(addCalendarDays(cursor, 1), ethiopian);
+    out.push(next);
+    cursor = next.to;
+  }
+  return out;
+}
+
+/**
+ * The school days of a request that fall inside a window. A request wholly
+ * inside keeps the count frozen on it; one over the window's edge is
+ * counted again on the bell for the part inside.
+ */
+export function schoolDaysWithin(
+  row: { startDate: string; endDate: string; schoolDays?: number | null },
+  window: { from: string; to: string },
+  weekdays: Set<number> | null | undefined,
+): number {
+  if (row.startDate >= window.from && row.endDate <= window.to) {
+    return Number(row.schoolDays) || 0;
+  }
+  const start = row.startDate > window.from ? row.startDate : window.from;
+  const end = row.endDate < window.to ? row.endDate : window.to;
+  if (end < start) return 0;
+  return schoolDaysBetween(start, end, weekdays);
+}
+
+export type LeaveAllowanceStanding = {
+  year: SchoolYearRange;
+  yearDays: number;
+  allowanceDays: number;
+  rate: number;
+  approvedDays: number;
+  pendingDays: number;
+  leftDays: number;
+};
+
+/**
+ * Where a person stands against a year's allowance: the school days of
+ * their approved and their still-pending requests of the kinds that draw
+ * on it, inside that year. `leftDays` is what a new request may still
+ * take — pending ones are spoken for.
+ */
+export function leaveAllowanceStanding({
+  rows,
+  year,
+  weekdays,
+  excludeId,
+}: {
+  rows: ReadonlyArray<{
+    id?: number | null;
+    status: string;
+    leaveType: string;
+    startDate: string;
+    endDate: string;
+    schoolDays?: number | null;
+  }>;
+  year: SchoolYearRange;
+  weekdays: Set<number> | null | undefined;
+  excludeId?: number | null;
+}): LeaveAllowanceStanding {
+  const yearDays = schoolDaysBetween(year.from, year.to, weekdays);
+  const allowanceDays = leaveAllowanceDays(yearDays);
+  let approvedDays = 0;
+  let pendingDays = 0;
+  for (const row of rows) {
+    if (excludeId != null && Number(row.id) === Number(excludeId)) continue;
+    const status = String(row.status).toUpperCase();
+    if (!(LIVE_LEAVE_STATUSES as readonly string[]).includes(status)) continue;
+    if (!countsAgainstAllowance(row.leaveType)) continue;
+    const days = schoolDaysWithin(row, year, weekdays);
+    if (status === 'APPROVED') approvedDays += days;
+    else pendingDays += days;
+  }
+  return {
+    year,
+    yearDays,
+    allowanceDays,
+    rate: LEAVE_ALLOWANCE_RATE,
+    approvedDays,
+    pendingDays,
+    leftDays: Math.max(0, allowanceDays - approvedDays - pendingDays),
+  };
+}

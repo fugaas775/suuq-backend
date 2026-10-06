@@ -4,6 +4,7 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  UnprocessableEntityException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import {
@@ -30,17 +31,29 @@ import { SchoolTimetableService } from './school-timetable.service';
 import { actorNameFromEmail } from './school-actor-name.util';
 import { ScopeActor } from './school-class-scope.service';
 import {
+  ALLOWANCE_LEAVE_TYPES,
+  LEAVE_ALLOWANCE_RATE,
   LEAVE_MAX_CALENDAR_DAYS,
   LIVE_LEAVE_STATUSES,
+  LeaveAllowanceStanding,
+  SchoolYearRange,
   bellWeekdays,
   calendarDaysBetween,
+  countsAgainstAllowance,
+  isEthiopianCountry,
   isLeaveApprover,
+  leaveAllowanceDays,
+  leaveAllowanceStanding,
   schoolDaysBetween,
+  schoolDaysWithin,
+  schoolYearRangeOf,
+  schoolYearsTouched,
 } from './school-leave.policy';
 
 const text = (v: unknown) => String(v ?? '').trim();
 const orNull = (v: unknown, max: number) => text(v).slice(0, max) || null;
 const today = () => new Date().toISOString().slice(0, 10);
+const plural = (n: number, noun: string) => `${n} ${noun}${n === 1 ? '' : 's'}`;
 
 export type LeaveSummaryRow = {
   employeeId: number;
@@ -49,6 +62,10 @@ export type LeaveSummaryRow = {
   approved: number;
   pending: number;
   byType: Record<string, number>;
+  /** Approved school days of the kinds that draw on the allowance, inside the window. */
+  countedDays: number;
+  /** The same, still awaiting a decision. */
+  pendingCountedDays: number;
 };
 
 type Who = {
@@ -56,6 +73,8 @@ type Who = {
   employee: BranchEmployee | null;
   approver: boolean;
   name: string;
+  /** The branch keeps the Ethiopian calendar: its school year opens at Meskerem. */
+  ethiopian: boolean;
 };
 
 /**
@@ -66,6 +85,10 @@ type Who = {
  * rejects it, and can record leave for somebody who phoned in. A request
  * that still stands (pending or approved) blocks another for the same
  * days. Nobody decides their own.
+ *
+ * Leave for a school year is capped at a tenth of its school days
+ * (`LEAVE_ALLOWANCE_RATE`): a request, a record on somebody's behalf or
+ * an approval that would go past it is refused with the figures.
  */
 @Injectable()
 export class SchoolLeaveService {
@@ -90,7 +113,7 @@ export class SchoolLeaveService {
     const [branch, assignment, rows] = await Promise.all([
       this.branches.findOne({
         where: { id: branchId },
-        select: { id: true, ownerId: true },
+        select: { id: true, ownerId: true, country: true },
       }),
       actorId != null
         ? this.assignments.findOne({ where: { branchId, userId: actorId } })
@@ -104,6 +127,9 @@ export class SchoolLeaveService {
       rows[0] ??
       null;
     const ownerId = (branch as { ownerId?: number } | null)?.ownerId ?? null;
+    const ethiopian = isEthiopianCountry(
+      (branch as { country?: string | null } | null)?.country,
+    );
     const approver = isLeaveApprover({
       actorId,
       ownerId,
@@ -115,7 +141,115 @@ export class SchoolLeaveService {
       employee?.fullName ||
       actorNameFromEmail(actor?.email) ||
       (actorId != null ? `user ${actorId}` : '');
-    return { actorId, employee, approver, name };
+    return { actorId, employee, approver, name, ethiopian };
+  }
+
+  /** A person's live requests touching a window — what an allowance is counted over. */
+  private liveRows(
+    branchId: number,
+    employeeId: number,
+    window: { from: string; to: string },
+  ) {
+    return this.leaves.find({
+      where: {
+        branchId,
+        employeeId,
+        status: In([...LIVE_LEAVE_STATUSES]),
+        startDate: LessThanOrEqual(window.to),
+        endDate: MoreThanOrEqual(window.from),
+      },
+    });
+  }
+
+  private async standingFor(
+    branchId: number,
+    employeeId: number,
+    year: SchoolYearRange,
+    weekdays: Set<number>,
+    excludeId?: number | null,
+  ): Promise<LeaveAllowanceStanding> {
+    const rows = await this.liveRows(branchId, employeeId, year);
+    return leaveAllowanceStanding({ rows, year, weekdays, excludeId });
+  }
+
+  /**
+   * "If it is more than it should not be tolerated." Refused with the
+   * figures: what stands, what was asked, what the year allows.
+   */
+  private refuseOverAllowance(
+    name: string | null | undefined,
+    standing: LeaveAllowanceStanding,
+    requestedDays: number,
+    atDecision: boolean,
+  ): never {
+    const who = text(name) || 'This person';
+    const pending =
+      !atDecision && standing.pendingDays > 0
+        ? ` and ${plural(standing.pendingDays, 'school day')} awaiting decision`
+        : '';
+    const total =
+      standing.approvedDays +
+      (atDecision ? 0 : standing.pendingDays) +
+      requestedDays;
+    throw new UnprocessableEntityException({
+      code: 'SCHOOL_LEAVE_OVER_ALLOWANCE',
+      message:
+        `Over the year's leave allowance. ${who} has ${plural(standing.approvedDays, 'school day')} of leave approved${pending} of the ${standing.allowanceDays} allowed for ${standing.year.label}; ` +
+        `these ${plural(requestedDays, 'school day')} would make ${total}. ` +
+        `Leave for a school year is at most ${Math.round(standing.rate * 100)}% of its ${standing.yearDays} school days — annual, personal, study, unpaid and other leave; sick, maternity, paternity and bereavement leave are outside it.`,
+      details: {
+        year: standing.year,
+        yearDays: standing.yearDays,
+        allowanceDays: standing.allowanceDays,
+        approvedDays: standing.approvedDays,
+        pendingDays: atDecision ? 0 : standing.pendingDays,
+        requestedDays,
+        total,
+      },
+    });
+  }
+
+  /**
+   * Hold a request against the allowance of every school year it touches.
+   * At the request, pending days are spoken for too; at the decision only
+   * what is approved counts, so approving one pending request never fails
+   * for another still waiting.
+   */
+  private async assertWithinAllowance(
+    branchId: number,
+    target: { id: number; fullName?: string | null },
+    row: { startDate: string; endDate: string; schoolDays: number },
+    leaveType: string,
+    weekdays: Set<number>,
+    ethiopian: boolean,
+    opts: { atDecision: boolean; excludeId?: number | null },
+  ) {
+    if (!countsAgainstAllowance(leaveType)) return;
+    for (const year of schoolYearsTouched(
+      row.startDate,
+      row.endDate,
+      ethiopian,
+    )) {
+      const portion = schoolDaysWithin(row, year, weekdays);
+      if (!portion) continue;
+      const standing = await this.standingFor(
+        branchId,
+        Number(target.id),
+        year,
+        weekdays,
+        opts.excludeId,
+      );
+      const spoken =
+        standing.approvedDays + (opts.atDecision ? 0 : standing.pendingDays);
+      if (spoken + portion > standing.allowanceDays) {
+        this.refuseOverAllowance(
+          target.fullName,
+          standing,
+          portion,
+          opts.atDecision,
+        );
+      }
+    }
   }
 
   private refuseNotApprover(): never {
@@ -145,11 +279,20 @@ export class SchoolLeaveService {
         return { employee: null, canApprove: who.approver, items: [] };
       }
       where.employeeId = Number(who.employee.id);
-      const items = await this.leaves.find({
-        where,
-        order: { startDate: 'DESC', id: 'DESC' },
-        take: 200,
-      });
+      const [items, doc] = await Promise.all([
+        this.leaves.find({
+          where,
+          order: { startDate: 'DESC', id: 'DESC' },
+          take: 200,
+        }),
+        this.timetable.get(query.branchId),
+      ]);
+      const allowance = await this.standingFor(
+        query.branchId,
+        Number(who.employee.id),
+        schoolYearRangeOf(today(), who.ethiopian),
+        bellWeekdays(doc?.periods),
+      );
       return {
         employee: {
           id: Number(who.employee.id),
@@ -157,6 +300,7 @@ export class SchoolLeaveService {
           jobTitle: who.employee.jobTitle ?? null,
         },
         canApprove: who.approver,
+        allowance,
         items,
       };
     }
@@ -243,16 +387,22 @@ export class SchoolLeaveService {
     }
 
     const doc = await this.timetable.get(dto.branchId);
-    const schoolDays = schoolDaysBetween(
-      start,
-      end,
-      bellWeekdays(doc?.periods),
-    );
+    const weekdays = bellWeekdays(doc?.periods);
+    const schoolDays = schoolDaysBetween(start, end, weekdays);
     if (schoolDays === 0) {
       throw new BadRequestException(
         'No school day falls between these dates — the school is closed on every one of them.',
       );
     }
+    await this.assertWithinAllowance(
+      dto.branchId,
+      { id: Number(target.id), fullName: target.fullName },
+      { startDate: start, endDate: end, schoolDays },
+      String(dto.leaveType),
+      weekdays,
+      who.ethiopian,
+      { atDecision: false },
+    );
 
     const now = new Date();
     const row = this.leaves.create({
@@ -303,7 +453,24 @@ export class SchoolLeaveService {
         message: `This request is already ${row.status.toLowerCase()}.`,
       });
     }
-    row.status = String(dto.decision).toUpperCase() as LeaveStatus;
+    const decision = String(dto.decision).toUpperCase() as LeaveStatus;
+    if (decision === 'APPROVED') {
+      const doc = await this.timetable.get(dto.branchId);
+      await this.assertWithinAllowance(
+        dto.branchId,
+        { id: Number(row.employeeId), fullName: row.employeeName },
+        {
+          startDate: row.startDate,
+          endDate: row.endDate,
+          schoolDays: Number(row.schoolDays) || 0,
+        },
+        row.leaveType,
+        bellWeekdays(doc?.periods),
+        who.ethiopian,
+        { atDecision: true, excludeId: Number(row.id) },
+      );
+    }
+    row.status = decision;
     row.decidedByUserId = who.actorId;
     row.decidedByName = who.name || null;
     row.decidedAt = new Date();
@@ -351,21 +518,30 @@ export class SchoolLeaveService {
   /**
    * Per person, the leave that overlaps a window — the heads' "this school
    * year" board. A request counts whole: its frozen `schoolDays`, even when
-   * a day or two fall outside the window.
+   * a day or two fall outside the window. Beside it, what the window allows
+   * (a tenth of its school days) and each person's days against it —
+   * those counted inside the window, so a straddling request is not held
+   * against two years at once.
    */
   async summary(branchId: number, from: string, to: string, actor: ScopeActor) {
     if (!from || !to)
       throw new BadRequestException('from and to are required.');
     const who = await this.whoIs(branchId, actor);
     if (!who.approver) this.refuseNotApprover();
-    const rows = await this.leaves.find({
-      where: {
-        branchId,
-        status: In([...LIVE_LEAVE_STATUSES]),
-        startDate: LessThanOrEqual(to),
-        endDate: MoreThanOrEqual(from),
-      },
-    });
+    const [rows, doc] = await Promise.all([
+      this.leaves.find({
+        where: {
+          branchId,
+          status: In([...LIVE_LEAVE_STATUSES]),
+          startDate: LessThanOrEqual(to),
+          endDate: MoreThanOrEqual(from),
+        },
+      }),
+      this.timetable.get(branchId),
+    ]);
+    const weekdays = bellWeekdays(doc?.periods);
+    const window = { from, to };
+    const yearDays = schoolDaysBetween(from, to, weekdays);
     const byPerson = new Map<number, LeaveSummaryRow>();
     for (const row of rows) {
       const id = Number(row.employeeId);
@@ -376,20 +552,33 @@ export class SchoolLeaveService {
         approved: 0,
         pending: 0,
         byType: {},
+        countedDays: 0,
+        pendingCountedDays: 0,
       };
+      const counted = countsAgainstAllowance(row.leaveType)
+        ? schoolDaysWithin(row, window, weekdays)
+        : 0;
       if (row.status === 'APPROVED') {
         entry.approved += 1;
         entry.approvedDays += Number(row.schoolDays) || 0;
         entry.byType[row.leaveType] =
           (entry.byType[row.leaveType] ?? 0) + (Number(row.schoolDays) || 0);
+        entry.countedDays += counted;
       } else {
         entry.pending += 1;
+        entry.pendingCountedDays += counted;
       }
       byPerson.set(id, entry);
     }
     return {
       from,
       to,
+      allowance: {
+        rate: LEAVE_ALLOWANCE_RATE,
+        yearDays,
+        days: leaveAllowanceDays(yearDays),
+        kinds: [...ALLOWANCE_LEAVE_TYPES],
+      },
       people: [...byPerson.values()].sort((a, b) =>
         String(a.employeeName ?? '').localeCompare(
           String(b.employeeName ?? ''),

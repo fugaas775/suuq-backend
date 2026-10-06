@@ -2,6 +2,7 @@ import {
   ConflictException,
   ForbiddenException,
   NotFoundException,
+  UnprocessableEntityException,
 } from '@nestjs/common';
 import { SchoolLeaveService } from './school-leave.service';
 
@@ -23,7 +24,7 @@ const opMatch = (op: any, actual: string) => {
   return true;
 };
 
-function makeService({ leaves = [] as any[], employees = [TEACHER, DEPUTY, OTHER, CLEANER], ownerId = 1, assignments = [] as any[], periods = null as any } = {}) {
+function makeService({ leaves = [] as any[], employees = [TEACHER, DEPUTY, OTHER, CLEANER], ownerId = 1, assignments = [] as any[], periods = null as any, country = null as string | null } = {}) {
   let nextId = 100;
   const matches = (row: any, where: any) =>
     Object.entries(where).every(([k, v]) => {
@@ -39,7 +40,7 @@ function makeService({ leaves = [] as any[], employees = [TEACHER, DEPUTY, OTHER
       return row;
     },
   };
-  const branchRepo: any = { findOne: async () => ({ id: 115, ownerId }) };
+  const branchRepo: any = { findOne: async () => ({ id: 115, ownerId, country }) };
   const assignmentRepo: any = {
     findOne: async ({ where }: any) => assignments.find((a) => a.userId === where.userId) || null,
   };
@@ -123,6 +124,9 @@ describe('SchoolLeaveService', () => {
     expect(mine.employee?.id).toBe(30);
     expect(mine.canApprove).toBe(false);
     expect(mine.items).toHaveLength(1);
+    // Where the person stands against this year's allowance rides along.
+    expect(mine.allowance).toMatchObject({ rate: 0.1, approvedDays: 0, pendingDays: 0 });
+    expect(mine.allowance.allowanceDays).toBe(Math.floor(mine.allowance.yearDays / 10));
     const deputyMine = await svc.list({ branchId: 115, mine: '1' }, AS_DEPUTY);
     expect(deputyMine.canApprove).toBe(true);
     expect(deputyMine.items).toHaveLength(0);
@@ -162,8 +166,68 @@ describe('SchoolLeaveService', () => {
     await expect(svc.summary(115, '2026-09-01', '2026-12-31', AS_TEACHER)).rejects.toBeInstanceOf(ForbiddenException);
     const board = await svc.summary(115, '2026-09-01', '2026-12-31', AS_DEPUTY);
     expect(board.people).toEqual([
-      { employeeId: 40, employeeName: 'Faadumo', approvedDays: 2, approved: 1, pending: 0, byType: { ANNUAL: 2 } },
-      { employeeId: 30, employeeName: 'Mustafe', approvedDays: 3, approved: 1, pending: 1, byType: { SICK: 3 } },
+      { employeeId: 40, employeeName: 'Faadumo', approvedDays: 2, approved: 1, pending: 0, byType: { ANNUAL: 2 }, countedDays: 2, pendingCountedDays: 0 },
+      // Sick leave is approved but draws nothing; the pending annual week is spoken for.
+      { employeeId: 30, employeeName: 'Mustafe', approvedDays: 3, approved: 1, pending: 1, byType: { SICK: 3 }, countedDays: 0, pendingCountedDays: 5 },
     ]);
+    // What the window allows: a tenth of its school days (88 weekdays, Sept to Dec 2026).
+    expect(board.allowance).toEqual({ rate: 0.1, yearDays: 88, days: 8, kinds: ['ANNUAL', 'PERSONAL', 'STUDY', 'UNPAID', 'OTHER'] });
+  });
+
+  /* Owner 2026-10-06: "Teachers should only have a 10% annual leave, if it
+     is more than it should not be tolerated." 2026/2027 holds 261 school
+     days Monday to Friday, so the allowance is 26. */
+  it('refuses leave past a tenth of the year’s school days — asked for, recorded by the office, or approved — and leaves sick leave outside it', async () => {
+    const { svc } = makeService();
+    // The office records four weeks of annual leave for the cleaner: 20 of 26.
+    await expect(svc.create({ branchId: 115, employeeId: 40, leaveType: 'ANNUAL', startDate: '2026-10-05', endDate: '2026-10-30' }, AS_DEPUTY)).resolves.toMatchObject({ schoolDays: 20, status: 'APPROVED' });
+    // Seven more would make 27: refused, with the figures.
+    const seven = svc.create({ branchId: 115, employeeId: 40, leaveType: 'ANNUAL', startDate: '2026-11-02', endDate: '2026-11-10' }, AS_DEPUTY);
+    await expect(seven).rejects.toBeInstanceOf(UnprocessableEntityException);
+    await expect(seven).rejects.toThrow(/Faadumo has 20 school days of leave approved of the 26 allowed for 2026\/2027; these 7 school days would make 27/);
+    await expect(seven).rejects.toMatchObject({ response: { code: 'SCHOOL_LEAVE_OVER_ALLOWANCE', details: { allowanceDays: 26, approvedDays: 20, requestedDays: 7, total: 27, yearDays: 261 } } });
+    // Six fit exactly.
+    await expect(svc.create({ branchId: 115, employeeId: 40, leaveType: 'ANNUAL', startDate: '2026-11-02', endDate: '2026-11-09' }, AS_DEPUTY)).resolves.toMatchObject({ schoolDays: 6 });
+    // Sick leave is outside the allowance; a personal day is not.
+    await expect(svc.create({ branchId: 115, employeeId: 40, leaveType: 'SICK', startDate: '2026-12-01', endDate: '2026-12-04' }, AS_DEPUTY)).resolves.toMatchObject({ schoolDays: 4 });
+    await expect(svc.create({ branchId: 115, employeeId: 40, leaveType: 'PERSONAL', startDate: '2026-12-07', endDate: '2026-12-07' }, AS_DEPUTY)).rejects.toThrow(/these 1 school day would make 27/);
+    // Next school year starts afresh.
+    await expect(svc.create({ branchId: 115, employeeId: 40, leaveType: 'ANNUAL', startDate: '2027-09-06', endDate: '2027-09-10' }, AS_DEPUTY)).resolves.toMatchObject({ schoolDays: 5 });
+
+    // The teacher asks: a pending request is spoken for too.
+    const asked = await svc.create({ branchId: 115, leaveType: 'ANNUAL', startDate: '2026-10-05', endDate: '2026-11-06' }, AS_TEACHER);
+    expect(asked).toMatchObject({ schoolDays: 25, status: 'PENDING' });
+    await expect(svc.create({ branchId: 115, leaveType: 'PERSONAL', startDate: '2026-11-09', endDate: '2026-11-10' }, AS_TEACHER)).rejects.toThrow(/Mustafe has 0 school days of leave approved and 25 school days awaiting decision of the 26 allowed/);
+    await expect(svc.create({ branchId: 115, leaveType: 'PERSONAL', startDate: '2026-11-09', endDate: '2026-11-09' }, AS_TEACHER)).resolves.toMatchObject({ schoolDays: 1 });
+    const mine = await svc.list({ branchId: 115, mine: '1' }, AS_TEACHER);
+    expect(mine.allowance).toMatchObject({ yearDays: 261, allowanceDays: 26, approvedDays: 0, pendingDays: 26, leftDays: 0 });
+    await svc.decide(Number(asked.id), { branchId: 115, decision: 'APPROVED' }, AS_DEPUTY);
+    expect((await svc.list({ branchId: 115, mine: '1' }, AS_TEACHER)).allowance).toMatchObject({ approvedDays: 25, pendingDays: 1, leftDays: 0 });
+  });
+
+  it('refuses an approval that would go past the allowance — a request filed before the rule — and still lets it be rejected', async () => {
+    const { svc } = makeService({ leaves: [
+      { id: 1, branchId: 115, employeeId: 30, employeeName: 'Mustafe', leaveType: 'ANNUAL', startDate: '2026-10-05', endDate: '2026-11-06', schoolDays: 25, status: 'APPROVED' },
+      { id: 2, branchId: 115, employeeId: 30, employeeName: 'Mustafe', leaveType: 'STUDY', startDate: '2026-11-09', endDate: '2026-11-10', schoolDays: 2, status: 'PENDING' },
+      { id: 3, branchId: 115, employeeId: 30, employeeName: 'Mustafe', leaveType: 'SICK', startDate: '2026-11-16', endDate: '2026-11-20', schoolDays: 5, status: 'PENDING' },
+    ] });
+    const over = svc.decide(2, { branchId: 115, decision: 'APPROVED' }, AS_DEPUTY);
+    await expect(over).rejects.toBeInstanceOf(UnprocessableEntityException);
+    await expect(over).rejects.toThrow(/Mustafe has 25 school days of leave approved of the 26 allowed for 2026\/2027; these 2 school days would make 27/);
+    // Sick leave is approved regardless; the study days can still be rejected.
+    await expect(svc.decide(3, { branchId: 115, decision: 'APPROVED' }, AS_DEPUTY)).resolves.toMatchObject({ status: 'APPROVED' });
+    await expect(svc.decide(2, { branchId: 115, decision: 'REJECTED', note: 'Over the allowance' }, AS_DEPUTY)).resolves.toMatchObject({ status: 'REJECTED' });
+  });
+
+  it('counts an Ethiopian school’s year from Meskerem 1, and a request over the New Year against each year it touches', async () => {
+    const { svc } = makeService({ country: 'Ethiopia' });
+    // 2019 E.C.: 2026-09-11 to 2027-09-11, 261 school days, allowance 26.
+    const mine = await svc.list({ branchId: 115, mine: '1' }, AS_TEACHER);
+    expect(mine.allowance).toMatchObject({ year: { from: '2026-09-11', to: '2027-09-11', label: '2019 E.C.' }, yearDays: 261, allowanceDays: 26 });
+    await svc.create({ branchId: 115, employeeId: 40, leaveType: 'ANNUAL', startDate: '2026-10-05', endDate: '2026-11-06' }, AS_DEPUTY); // 25
+    // Monday 2027-09-06 to Friday 2027-09-17: five days in 2019 E.C. (one left) and five in 2020 E.C. (26 free).
+    const straddle = svc.create({ branchId: 115, employeeId: 40, leaveType: 'ANNUAL', startDate: '2027-09-06', endDate: '2027-09-17' }, AS_DEPUTY);
+    await expect(straddle).rejects.toThrow(/of the 26 allowed for 2019 E\.C\.; these 5 school days would make 30/);
+    await expect(svc.create({ branchId: 115, employeeId: 40, leaveType: 'ANNUAL', startDate: '2027-09-10', endDate: '2027-09-17', }, AS_DEPUTY)).resolves.toMatchObject({ schoolDays: 6 });
   });
 });
