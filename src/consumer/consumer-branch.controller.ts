@@ -29,6 +29,7 @@ import { ConsumerBranchQueryDto } from './dto/consumer-branch-query.dto';
 import {
   ConsumerShelfService,
   photographRankSql,
+  thumbnailOf,
 } from './consumer-shelf.service';
 import { serviceFormatLabel } from '../common/service-formats';
 import { resolveBranchPresence } from '../common/operating-hours';
@@ -404,6 +405,9 @@ export class ConsumerBranchController {
       // into that sub-select's ORDER BY. A raw expression there is dropped.
       const products = await baseQb
         .leftJoinAndSelect('p.tags', 'tag')
+        // `images` is an eager relation, but the query builder does not honour
+        // eager loading — it has to be joined to reach the thumbnails.
+        .leftJoinAndSelect('p.images', 'image')
         .addSelect(photographRankSql('p'), 'photo_rank')
         .orderBy('photo_rank', 'ASC')
         .addOrderBy('p.name', 'ASC')
@@ -433,6 +437,7 @@ export class ConsumerBranchController {
           price: this.shelf.effectivePrice(link, p),
           currency: p.currency ?? null,
           imageUrl: p.imageUrl ?? null,
+          thumbnailUrl: thumbnailOf(p.images),
           productType: p.productType ?? null,
           browseCategory:
             resolveProductCatalogMetadata(p).browseCategory ?? null,
@@ -482,6 +487,7 @@ export class ConsumerBranchController {
 
     const products = await baseQb
       .leftJoinAndSelect('p.tags', 'tag')
+      .leftJoinAndSelect('p.images', 'image')
       .addSelect(photographRankSql('p'), 'photo_rank')
       .orderBy('photo_rank', 'ASC')
       .addOrderBy('p.name', 'ASC')
@@ -498,6 +504,7 @@ export class ConsumerBranchController {
       price: Number(p.price),
       currency: p.currency ?? null,
       imageUrl: p.imageUrl ?? null,
+      thumbnailUrl: thumbnailOf(p.images),
       productType: p.productType ?? null,
       browseCategory: resolveProductCatalogMetadata(p).browseCategory ?? null,
       tags: (p.tags ?? [])

@@ -92,6 +92,50 @@ describe('ConsumerBranchController.getBranchProducts', () => {
     );
   });
 
+  it('serves a thumbnail for a tile, from the product’s first image', async () => {
+    const { controller, baseQb } = buildController({
+      store: { id: 99 },
+      count: 2,
+      products: [
+        {
+          id: 1,
+          name: 'Samsung',
+          price: 67000,
+          currency: 'ETB',
+          imageUrl: 'https://cdn/original.png',
+          images: [
+            {
+              id: 5,
+              sortOrder: 1,
+              thumbnailSrc: 'https://cdn/thumb_second.png',
+            },
+            {
+              id: 4,
+              sortOrder: 0,
+              thumbnailSrc: 'https://cdn/thumb_first.png',
+            },
+          ],
+          tags: [],
+        },
+        {
+          id: 2,
+          name: 'Monogram',
+          price: 10,
+          currency: 'ETB',
+          imageUrl: null,
+          images: [],
+          tags: [],
+        },
+      ],
+    });
+    const res = await controller.getBranchProducts(7);
+
+    expect(baseQb.leftJoinAndSelect).toHaveBeenCalledWith('p.images', 'image');
+    expect(res.items[0].thumbnailUrl).toBe('https://cdn/thumb_first.png');
+    expect(res.items[0].imageUrl).toBe('https://cdn/original.png');
+    expect(res.items[1].thumbnailUrl).toBeNull();
+  });
+
   it('returns productType and lower-cased tags for each product', async () => {
     const { controller } = buildController({
       store: { id: 99 },
@@ -127,6 +171,7 @@ describe('ConsumerBranchController.getBranchProducts', () => {
       price: 3500,
       currency: 'ETB',
       imageUrl: 'https://cdn/standard.webp',
+      thumbnailUrl: null,
       productType: 'service',
       // Null: this fixture's product carries no attributes, which is the shape
       // of a shop that never grouped its menu.

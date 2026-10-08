@@ -61,6 +61,42 @@ export function photographRankSql(productAlias = 'p'): string {
   return `CASE WHEN ${column} IS NOT NULL AND btrim(${column}) <> '' AND ${column} !~* '/img/initials([/?#]|$)' THEN 0 ELSE 1 END`;
 }
 
+/**
+ * The thumbnail a tile should show for a product, from its images.
+ *
+ * The first image by the merchant's own order (`sortOrder`, then the row's
+ * age), the same choice the gallery makes. Null when there is no picture, so
+ * a client falls through to `imageUrl` and then to its monogram — never to a
+ * thumbnail of some other image.
+ */
+export function thumbnailOf(
+  images:
+    | Array<{
+        id?: number;
+        sortOrder?: number | null;
+        thumbnailSrc?: string | null;
+      }>
+    | null
+    | undefined,
+): string | null {
+  if (!images?.length) return null;
+  const ordered = [...images].sort(
+    (a, b) =>
+      (a.sortOrder ?? Number.MAX_SAFE_INTEGER) -
+        (b.sortOrder ?? Number.MAX_SAFE_INTEGER) || (a.id ?? 0) - (b.id ?? 0),
+  );
+  const first = ordered.find((image) => image.thumbnailSrc?.trim());
+  return first?.thumbnailSrc?.trim() || null;
+}
+
+/**
+ * The same choice as `thumbnailOf`, for a raw query that cannot hydrate the
+ * images relation: a correlated subquery against `product_image`.
+ */
+export function thumbnailSubquerySql(productAlias = 'p'): string {
+  return `(SELECT pi."thumbnailSrc" FROM product_image pi WHERE pi."productId" = ${productAlias}.id AND pi."thumbnailSrc" IS NOT NULL AND btrim(pi."thumbnailSrc") <> '' ORDER BY pi."sortOrder" ASC NULLS LAST, pi.id ASC LIMIT 1)`;
+}
+
 /** Composite key for a shelf entry, which is per (branch, product). */
 function pairKey(branchId: number, productId: number): string {
   return `${branchId}:${productId}`;

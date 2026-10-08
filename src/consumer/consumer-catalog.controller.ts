@@ -19,6 +19,7 @@ import { ConsumerCatalogQueryDto } from './dto/consumer-catalog-query.dto';
 import {
   ConsumerShelfService,
   photographRankSql,
+  thumbnailSubquerySql,
 } from './consumer-shelf.service';
 import { serviceFormatLabel } from '../common/service-formats';
 import { resolveBranchPresence } from '../common/operating-hours';
@@ -37,6 +38,7 @@ interface CatalogRow {
   productPrice: string | number;
   currency: string | null;
   imageUrl: string | null;
+  thumbnailUrl: string | null;
   productType: string | null;
   attributes: unknown;
   retailPrice: string | number | null;
@@ -157,6 +159,7 @@ export class ConsumerCatalogController {
       'p.price AS "productPrice"',
       'p.currency AS "currency"',
       'p."imageUrl" AS "imageUrl"',
+      `${thumbnailSubquerySql('p')} AS "thumbnailUrl"`,
       'p.product_type AS "productType"',
       'p.attributes AS "attributes"',
       'bcl.retail_price AS "retailPrice"',
@@ -225,6 +228,7 @@ export class ConsumerCatalogController {
         ),
         currency: row.currency ?? null,
         imageUrl: row.imageUrl ?? null,
+        thumbnailUrl: row.thumbnailUrl ?? null,
         productType: row.productType ?? null,
         // Tags need a to-many join that would break the flat row read; the shop
         // page carries them, and a grid tile has nowhere to show them anyway.

@@ -62,6 +62,13 @@ describe('ConsumerCatalogController.search ordering', () => {
       'shop_rank',
     );
     expect(qb.orderBy).toHaveBeenCalledWith('"photo_rank"', 'ASC');
+    // A tile's thumbnail rides along as a correlated subquery, since rows are raw.
+    const selected = qb.select.mock.calls.flat(2);
+    expect(selected).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/FROM product_image pi .* AS "thumbnailUrl"$/),
+      ]),
+    );
     const tail = qb.addOrderBy.mock.calls.map((call) => call[0]);
     expect(tail).toEqual(['"shop_rank"', 'b.name', 'p.name', 'bcl.id']);
   });

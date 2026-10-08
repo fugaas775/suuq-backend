@@ -129,6 +129,15 @@ export class ConsumerBranchProductItemDto {
   price!: number;
   currency!: string | null;
   imageUrl!: string | null;
+  /**
+   * A small rendition of the product's first picture, for a tile.
+   *
+   * The upload pipeline writes a `thumb_` variant beside every original, but
+   * `imageUrl` is the original — on one shop that was a 1.3 MB PNG painted
+   * into a 160px tile over a 2G link. Null when the product has no picture
+   * of its own (clients fall back to `imageUrl`, then to a monogram).
+   */
+  thumbnailUrl!: string | null;
   /** physical | digital | service | property (null when unset). */
   productType!: string | null;
   /**
@@ -212,6 +221,8 @@ export class ConsumerCatalogItemDto {
   price!: number;
   currency!: string | null;
   imageUrl!: string | null;
+  /** A small rendition of the first picture, for a tile — see the shelf DTO. */
+  thumbnailUrl!: string | null;
   productType!: string | null;
   tags!: string[];
   /**

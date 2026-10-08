@@ -1,6 +1,8 @@
 import {
   ConsumerShelfService,
   photographRankSql,
+  thumbnailOf,
+  thumbnailSubquerySql,
 } from './consumer-shelf.service';
 
 /**
@@ -162,5 +164,43 @@ describe('photographRankSql', () => {
 
   it('is written against whatever alias the query gave the product', () => {
     expect(photographRankSql('product')).toContain('product."imageUrl"');
+  });
+});
+
+describe('thumbnailOf', () => {
+  it('takes the first image by the merchant’s order, then by age', () => {
+    expect(
+      thumbnailOf([
+        { id: 9, sortOrder: 2, thumbnailSrc: 'thumb-later' },
+        { id: 4, sortOrder: null, thumbnailSrc: 'thumb-unsorted' },
+        { id: 7, sortOrder: 1, thumbnailSrc: 'thumb-first' },
+      ]),
+    ).toBe('thumb-first');
+    expect(
+      thumbnailOf([
+        { id: 9, thumbnailSrc: 'thumb-newer' },
+        { id: 3, thumbnailSrc: 'thumb-older' },
+      ]),
+    ).toBe('thumb-older');
+  });
+
+  it('skips an image with no thumbnail rather than inventing one', () => {
+    expect(
+      thumbnailOf([
+        { id: 1, sortOrder: 0, thumbnailSrc: '  ' },
+        { id: 2, sortOrder: 1, thumbnailSrc: 'thumb-2' },
+      ]),
+    ).toBe('thumb-2');
+    expect(thumbnailOf([{ id: 1, sortOrder: 0 }])).toBeNull();
+    expect(thumbnailOf([])).toBeNull();
+    expect(thumbnailOf(undefined)).toBeNull();
+  });
+
+  it('asks the database the same question for a raw read', () => {
+    const sql = thumbnailSubquerySql('p');
+    expect(sql).toContain('FROM product_image pi WHERE pi."productId" = p.id');
+    expect(sql).toContain(
+      'ORDER BY pi."sortOrder" ASC NULLS LAST, pi.id ASC LIMIT 1',
+    );
   });
 });
