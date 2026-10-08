@@ -25,6 +25,7 @@ describe('ConsumerBranchController.getBranchProducts', () => {
     // separate builder used purely for the count query.
     const baseQb: Record<string, jest.Mock> = {};
     for (const m of [
+      'innerJoin',
       'where',
       'andWhere',
       'leftJoinAndSelect',
