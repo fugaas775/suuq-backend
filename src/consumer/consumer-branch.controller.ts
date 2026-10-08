@@ -28,6 +28,9 @@ import {
 import { ConsumerBranchQueryDto } from './dto/consumer-branch-query.dto';
 import {
   ConsumerShelfService,
+  distanceKmSql,
+  findableBranchSql,
+  hasLocationSql,
   photographRankSql,
   thumbnailOf,
 } from './consumer-shelf.service';
@@ -64,6 +67,7 @@ function toBranchItem(
     latitude: branch.latitude != null ? Number(branch.latitude) : null,
     longitude: branch.longitude != null ? Number(branch.longitude) : null,
     isActive: branch.isActive,
+    sellerType: branch.supplierOutletProfileId != null ? 'SUPPLIER' : 'BRANCH',
     ownerId: owner?.id ?? branch.ownerId ?? null,
     ownerName: owner ? (owner.storeName ?? owner.displayName ?? null) : null,
     /**
@@ -154,14 +158,9 @@ export class ConsumerBranchController {
       .createQueryBuilder('branch')
       .leftJoinAndSelect('branch.owner', 'owner')
       .where('branch.isActive = true')
-      // Only show branches that have a consumer-visible store profile
-      .andWhere(
-        `EXISTS (
-          SELECT 1 FROM vendor_stores vs
-          WHERE vs."branchId" = branch.id
-          AND vs."isConsumerVisible" = true
-        )`,
-      );
+      // A storefront switched on, or no storefront and a public shelf — the
+      // same rule the catalog applies, see `findableBranchSql`.
+      .andWhere(findableBranchSql('branch'));
 
     if (query.serviceFormat?.length) {
       qb.andWhere('branch.serviceFormat IN (:...formats)', {
@@ -177,32 +176,31 @@ export class ConsumerBranchController {
     }
 
     if (query.lat != null && query.lng != null && query.radius != null) {
-      // Haversine proximity filter (radius in km)
+      // Within the radius, and only of shops that have a location — the
+      // clamp inside the distance treats a missing coordinate as distance
+      // zero, so without the guard every unplaced shop is "near" everyone.
       qb.andWhere(
-        `(
-          6371 * ACOS(
-            COS(RADIANS(:lat)) * COS(RADIANS(CAST(branch.latitude AS DOUBLE PRECISION)))
-            * COS(RADIANS(CAST(branch.longitude AS DOUBLE PRECISION)) - RADIANS(:lng))
-            + SIN(RADIANS(:lat)) * SIN(RADIANS(CAST(branch.latitude AS DOUBLE PRECISION)))
-          )
-        ) <= :radius`,
+        `${hasLocationSql('branch')} AND ${distanceKmSql('branch')} <= :radius`,
         { lat: query.lat, lng: query.lng, radius: query.radius },
       );
     }
 
-    // Sort by proximity when coordinates are supplied, otherwise alphabetically.
-    // GREATEST/LEAST guards against floating-point ACOS domain errors on edge rows.
+    // Nearest first when coordinates are supplied, otherwise alphabetically.
+    //
+    // The distance is a selected alias, not a bare ORDER BY expression. This
+    // query pages across the owner join, and TypeORM then reads each ORDER BY
+    // key as `alias.column` — the expression's `branch.latitude` made it hunt
+    // for an alias named `(6371 * ACOS(…` and throw, so every "near me" call
+    // was a 500 and the app's nearby rail has been falling back ever since.
     if (query.lat != null && query.lng != null) {
-      qb.setParameter('latSort', query.lat);
-      qb.setParameter('lngSort', query.lng);
-      qb.orderBy(
-        `(6371 * ACOS(GREATEST(-1, LEAST(1,
-          COS(RADIANS(:latSort)) * COS(RADIANS(CAST(branch.latitude AS DOUBLE PRECISION)))
-          * COS(RADIANS(CAST(branch.longitude AS DOUBLE PRECISION)) - RADIANS(:lngSort))
-          + SIN(RADIANS(:latSort)) * SIN(RADIANS(CAST(branch.latitude AS DOUBLE PRECISION)))
-        ))))`,
-        'ASC',
+      qb.setParameter('lat', query.lat);
+      qb.setParameter('lng', query.lng);
+      qb.addSelect(
+        `CASE WHEN ${hasLocationSql('branch')} THEN ${distanceKmSql('branch')} ELSE NULL END`,
+        'distance_km',
       );
+      qb.orderBy('distance_km', 'ASC', 'NULLS LAST');
+      qb.addOrderBy('branch.name', 'ASC');
     } else {
       qb.orderBy('branch.name', 'ASC');
     }

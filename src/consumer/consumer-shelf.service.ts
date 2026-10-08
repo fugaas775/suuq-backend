@@ -97,6 +97,62 @@ export function thumbnailSubquerySql(productAlias = 'p'): string {
   return `(SELECT pi."thumbnailSrc" FROM product_image pi WHERE pi."productId" = ${productAlias}.id AND pi."thumbnailSrc" IS NOT NULL AND btrim(pi."thumbnailSrc") <> '' ORDER BY pi."sortOrder" ASC NULLS LAST, pi.id ASC LIMIT 1)`;
 }
 
+/**
+ * SQL for "this branch may be found by shoppers", given the branch alias.
+ *
+ * A storefront (`vendor_stores`) is the merchant's publish switch: switched
+ * on, the shop is findable; switched off, it is not. A branch that was never
+ * given a storefront has flipped nothing — and seven live shops, one with 419
+ * public items and printed QR codes, were invisible to search for exactly that
+ * reason, while their QR pages worked. So a branch with no storefront at all
+ * counts as findable provided it has a public shelf: something the merchant
+ * did put in front of shoppers. The off switch still hides; only the absence
+ * of a switch no longer does.
+ */
+export function findableBranchSql(branchAlias = 'b'): string {
+  return `(
+    EXISTS (SELECT 1 FROM vendor_stores vs WHERE vs."branchId" = ${branchAlias}.id AND vs."isConsumerVisible" = true)
+    OR (
+      NOT EXISTS (SELECT 1 FROM vendor_stores vs WHERE vs."branchId" = ${branchAlias}.id)
+      AND EXISTS (SELECT 1 FROM branch_catalog_product_links l WHERE l."branchId" = ${branchAlias}.id AND l.consumer_visible = true)
+    )
+  )`;
+}
+
+/** Whether a branch has a location at all, for the distance filters below. */
+export function hasLocationSql(branchAlias = 'b'): string {
+  return `(${branchAlias}.latitude IS NOT NULL AND ${branchAlias}.longitude IS NOT NULL)`;
+}
+
+/**
+ * Great-circle distance in km from `:lat`/`:lng` to the branch, written once
+ * for both readers. GREATEST/LEAST clamp floating-point drift out of ACOS's
+ * domain — and they also skip NULLs, which is why every caller must guard with
+ * `hasLocationSql` first: a branch with no coordinates otherwise clamps to
+ * ACOS(1) and sits at distance zero from everywhere on earth. That is how
+ * "near me" returned the whole marketplace, Kelafo included, from Jigjiga.
+ */
+export function distanceKmSql(branchAlias = 'b'): string {
+  const lat = `CAST(${branchAlias}.latitude AS DOUBLE PRECISION)`;
+  const lng = `CAST(${branchAlias}.longitude AS DOUBLE PRECISION)`;
+  return `(6371 * ACOS(GREATEST(-1, LEAST(1,
+    COS(RADIANS(:lat)) * COS(RADIANS(${lat})) * COS(RADIANS(${lng}) - RADIANS(:lng))
+    + SIN(RADIANS(:lat)) * SIN(RADIANS(${lat}))
+  ))))`;
+}
+
+/**
+ * Charges staff apply, not things a shopper browses for. They stay on the
+ * shelf — `consumer_visible` is the merchant's decision — but a chip reading
+ * "Table charges" on the marketplace is noise, and the QR page already drops
+ * them from its own rail. Mirrors STAFF_ONLY_CATEGORIES in publicStorefront.js.
+ */
+export const STAFF_ONLY_CATEGORIES: readonly string[] = [
+  'TABLE_CHARGES',
+  'CHAIR_CHARGES',
+  'ROOM_CHARGES',
+];
+
 /** Composite key for a shelf entry, which is per (branch, product). */
 function pairKey(branchId: number, productId: number): string {
   return `${branchId}:${productId}`;
@@ -145,12 +201,7 @@ export class ConsumerShelfService {
       .andWhere('bcl.consumer_visible = true')
       .andWhere('p.deleted_at IS NULL')
       .andWhere('b."isActive" = true')
-      .andWhere(
-        `EXISTS (
-          SELECT 1 FROM vendor_stores vs
-          WHERE vs."branchId" = b.id AND vs."isConsumerVisible" = true
-        )`,
-      )
+      .andWhere(findableBranchSql('b'))
       .andWhere('b."serviceFormat" IN (:...catalogFormats)', {
         catalogFormats: CATALOG_SERVICE_FORMATS,
       })

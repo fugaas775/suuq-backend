@@ -18,6 +18,9 @@ import {
 import { ConsumerCatalogQueryDto } from './dto/consumer-catalog-query.dto';
 import {
   ConsumerShelfService,
+  STAFF_ONLY_CATEGORIES,
+  distanceKmSql,
+  hasLocationSql,
   photographRankSql,
   thumbnailSubquerySql,
 } from './consumer-shelf.service';
@@ -130,16 +133,12 @@ export class ConsumerCatalogController {
     }
 
     if (query.lat != null && query.lng != null && query.radius != null) {
-      // Same Haversine filter the branch list uses, so "within 5 km" means the
-      // same thing whether a shopper is browsing shops or things.
+      // The same distance the branch list uses, so "within 25 km" means the
+      // same thing whether a shopper is browsing shops or things — and the
+      // same guard: a shop with no location is not near anyone. Without it
+      // "near me" from Jigjiga returned the whole marketplace, Kelafo included.
       qb.andWhere(
-        `(
-          6371 * ACOS(GREATEST(-1, LEAST(1,
-            COS(RADIANS(:lat)) * COS(RADIANS(CAST(b.latitude AS DOUBLE PRECISION)))
-            * COS(RADIANS(CAST(b.longitude AS DOUBLE PRECISION)) - RADIANS(:lng))
-            + SIN(RADIANS(:lat)) * SIN(RADIANS(CAST(b.latitude AS DOUBLE PRECISION)))
-          )))
-        ) <= :radius`,
+        `${hasLocationSql('b')} AND ${distanceKmSql('b')} <= :radius`,
         { lat: query.lat, lng: query.lng, radius: query.radius },
       );
     }
@@ -334,6 +333,12 @@ export class ConsumerCatalogController {
       .select("p.attributes->>'browseCategory'", 'category')
       .andWhere("p.attributes->>'browseCategory' IS NOT NULL")
       .andWhere("btrim(p.attributes->>'browseCategory') <> ''")
+      // Charges staff apply are not sections a shopper browses — see
+      // STAFF_ONLY_CATEGORIES. The items stay; the chip goes.
+      .andWhere(
+        "upper(btrim(p.attributes->>'browseCategory')) NOT IN (:...staffOnlyCategories)",
+        { staffOnlyCategories: STAFF_ONLY_CATEGORIES },
+      )
       .groupBy("p.attributes->>'browseCategory'")
       .orderBy('COUNT(*)', 'DESC')
       .limit(24)

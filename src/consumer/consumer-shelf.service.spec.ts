@@ -1,5 +1,8 @@
 import {
   ConsumerShelfService,
+  distanceKmSql,
+  findableBranchSql,
+  hasLocationSql,
   photographRankSql,
   thumbnailOf,
   thumbnailSubquerySql,
@@ -201,6 +204,31 @@ describe('thumbnailOf', () => {
     expect(sql).toContain('FROM product_image pi WHERE pi."productId" = p.id');
     expect(sql).toContain(
       'ORDER BY pi."sortOrder" ASC NULLS LAST, pi.id ASC LIMIT 1',
+    );
+  });
+});
+
+describe('findableBranchSql', () => {
+  it('lets a switched-on storefront through, and a shop that was never given one but has a shelf', () => {
+    const sql = findableBranchSql('b');
+    expect(sql).toContain(
+      'vs."branchId" = b.id AND vs."isConsumerVisible" = true',
+    );
+    expect(sql).toContain(
+      'NOT EXISTS (SELECT 1 FROM vendor_stores vs WHERE vs."branchId" = b.id)',
+    );
+    expect(sql).toContain('l."branchId" = b.id AND l.consumer_visible = true');
+  });
+});
+
+describe('distanceKmSql', () => {
+  it('is written for the alias it is given, with the location guard beside it', () => {
+    expect(distanceKmSql('branch')).toContain(
+      'CAST(branch.latitude AS DOUBLE PRECISION)',
+    );
+    expect(distanceKmSql('branch')).toContain(':lat');
+    expect(hasLocationSql('branch')).toBe(
+      '(branch.latitude IS NOT NULL AND branch.longitude IS NOT NULL)',
     );
   });
 });

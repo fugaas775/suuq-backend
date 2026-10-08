@@ -48,6 +48,9 @@ The shelf response carries `browseCategory` — the merchant's own menu grouping
 free merchant text, not the `Category` relation, and `null` means "render a flat list". Both the
 branch shelf and the cross-shop catalog serve photographed items first, then by name; the API's
 generated initials image counts as no photograph (`photographRankSql` in `consumer-shelf.service.ts`).
+A branch is findable (branch list and catalog) when its storefront is switched on, or when it was
+never given a storefront but has a public shelf; a storefront switched off still hides it
+(`findableBranchSql`). "Near me" ignores shops with no location rather than treating them as nearby.
 
 That document also records which consumer→POS surfaces are frozen — `POST /api/consumer/v1/orders`,
 `GET /api/consumer/v1/orders/:orderId/status`, and the parked-order pair — and the known defects in

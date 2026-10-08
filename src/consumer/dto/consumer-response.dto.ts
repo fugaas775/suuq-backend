@@ -88,6 +88,12 @@ export class ConsumerBranchItemDto {
   latitude!: number | null;
   longitude!: number | null;
   isActive!: boolean;
+  /**
+   * Whether this is a shop or a wholesaler's counter — the same distinction
+   * the catalog's items carry, so a client filtering the grid by seller can
+   * filter the shop rail the same way.
+   */
+  sellerType!: ConsumerSellerType;
   /** Owning vendor/business — lets clients group branches by parent store. */
   ownerId!: number | null;
   ownerName!: string | null;

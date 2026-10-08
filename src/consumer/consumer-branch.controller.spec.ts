@@ -823,3 +823,86 @@ describe('ConsumerBranchController.getBranchSchoolClasses', () => {
     expect(res.items.map((i) => i.code)).toEqual(['KG II', '1aad', '10th']);
   });
 });
+
+describe('ConsumerBranchController.listBranches', () => {
+  function build() {
+    const qb: Record<string, jest.Mock> = {};
+    for (const m of [
+      'leftJoinAndSelect',
+      'where',
+      'andWhere',
+      'addSelect',
+      'orderBy',
+      'addOrderBy',
+      'setParameter',
+      'skip',
+      'take',
+    ]) {
+      qb[m] = jest.fn().mockReturnValue(qb);
+    }
+    qb.getManyAndCount = jest.fn().mockResolvedValue([[], 0]);
+    const controller = new ConsumerBranchController(
+      { createQueryBuilder: jest.fn().mockReturnValue(qb) } as never,
+      { find: jest.fn().mockResolvedValue([]) } as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+    );
+    return { controller, qb };
+  }
+
+  it('lists a shop with a public shelf and no storefront, and never a switched-off one', async () => {
+    const { controller, qb } = build();
+    await controller.listBranches({});
+    const rule = String(qb.andWhere.mock.calls[0][0]);
+    expect(rule).toContain(
+      'vs."branchId" = branch.id AND vs."isConsumerVisible" = true',
+    );
+    expect(rule).toContain(
+      'NOT EXISTS (SELECT 1 FROM vendor_stores vs WHERE vs."branchId" = branch.id)',
+    );
+    expect(rule).toContain(
+      'l."branchId" = branch.id AND l.consumer_visible = true',
+    );
+  });
+
+  it('sorts "near me" by a selected distance, nearest first, unplaced shops last', async () => {
+    // The old ORDER BY expression contained `branch.latitude`, which TypeORM
+    // read as an alias path and threw — every near-me call was a 500.
+    const { controller, qb } = build();
+    await controller.listBranches({
+      lat: 9.35,
+      lng: 42.79,
+      radius: 50,
+    });
+
+    const wheres = qb.andWhere.mock.calls.map((call) => String(call[0]));
+    expect(wheres).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(
+          /branch\.latitude IS NOT NULL AND branch\.longitude IS NOT NULL\) AND \(6371/,
+        ),
+      ]),
+    );
+    expect(qb.addSelect).toHaveBeenCalledWith(
+      expect.stringMatching(/^CASE WHEN \(branch\.latitude IS NOT NULL/),
+      'distance_km',
+    );
+    expect(qb.orderBy).toHaveBeenCalledWith('distance_km', 'ASC', 'NULLS LAST');
+    expect(qb.addOrderBy).toHaveBeenCalledWith('branch.name', 'ASC');
+  });
+
+  it('says whether a listed branch is a shop or a wholesaler', async () => {
+    const { controller, qb } = build();
+    qb.getManyAndCount.mockResolvedValue([
+      [
+        { id: 1, name: 'Shop', isActive: true, supplierOutletProfileId: null },
+        { id: 2, name: 'Counter', isActive: true, supplierOutletProfileId: 7 },
+      ],
+      2,
+    ]);
+    const res = await controller.listBranches({});
+    expect(res.items.map((b) => b.sellerType)).toEqual(['BRANCH', 'SUPPLIER']);
+  });
+});

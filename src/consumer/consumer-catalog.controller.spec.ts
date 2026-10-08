@@ -72,4 +72,42 @@ describe('ConsumerCatalogController.search ordering', () => {
     const tail = qb.addOrderBy.mock.calls.map((call) => call[0]);
     expect(tail).toEqual(['"shop_rank"', 'b.name', 'p.name', 'bcl.id']);
   });
+
+  it('is near nobody when a shop has no location, and keeps staff charges off the chips', async () => {
+    const { controller, qb } = build();
+    await controller.search({ lat: 9.35, lng: 42.79, radius: 25 });
+
+    const wheres = qb.andWhere.mock.calls.map((call) => String(call[0]));
+    expect(wheres).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(
+          /b\.latitude IS NOT NULL AND b\.longitude IS NOT NULL\) AND \(6371 \* ACOS/,
+        ),
+      ]),
+    );
+    expect(wheres).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/NOT IN \(:\.\.\.staffOnlyCategories\)/),
+      ]),
+    );
+  });
+
+  it('finds a shop with a public shelf and no storefront, and never a switched-off one', async () => {
+    const { controller, qb } = build();
+    await controller.search({});
+
+    const wheres = qb.andWhere.mock.calls.map((call) => String(call[0]));
+    expect(wheres).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(
+          /NOT EXISTS \(SELECT 1 FROM vendor_stores vs WHERE vs\."branchId" = b\.id\)/,
+        ),
+      ]),
+    );
+    expect(wheres).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/vs\."isConsumerVisible" = true/),
+      ]),
+    );
+  });
 });
