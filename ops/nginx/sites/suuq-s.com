@@ -62,10 +62,43 @@ server {
     # applied heuristic caching and returning visitors kept getting the previous
     # site after a deploy. pos.suuq-s.com has carried the same rule for exactly
     # this reason.
+    #
+    # `no-cache` rather than `no-store`: both make the browser revalidate the
+    # document on every visit, which is the protection above. `no-store` also
+    # bars the page from the back/forward cache, so "back" from a product
+    # re-ran the whole app instead of restoring the page in place.
+    #
+    # The security headers are repeated here on purpose. nginx's add_header is
+    # not inherited into a location that sets its own, so the document itself
+    # — the one response they matter most on — was leaving without HSTS, the
+    # frame rule or the CSP while every asset carried them.
     location = /index.html {
-        add_header Cache-Control "no-cache, no-store, must-revalidate";
-        add_header Pragma "no-cache";
+        add_header Cache-Control "no-cache, must-revalidate";
         expires 0;
+        add_header X-Frame-Options "SAMEORIGIN" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-XSS-Protection "1; mode=block" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
+        add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob: https:; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' https://api.suuq-s.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" always;
+    }
+
+    # The marketplace's own root files: the icon, the manifest, robots. Not
+    # hashed like /assets, so not immutable — a week, then revalidate.
+    location ~* ^/(logo\.svg|icon-[a-z0-9-]+\.png|apple-touch-icon\.png|manifest\.webmanifest|robots\.txt)$ {
+        # nginx 1.18 predates the .webmanifest type and served it as an octet
+        # stream. A `types` block replaces the inherited map inside this
+        # location, so every extension the pattern admits is listed.
+        types {
+            application/manifest+json webmanifest;
+            image/svg+xml svg;
+            image/png png;
+            text/plain txt;
+        }
+        expires 7d;
+        add_header Cache-Control "public, max-age=604800";
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
     }
 
     # Receipt verification — the page behind the QR printed on every POS
