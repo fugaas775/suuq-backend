@@ -26,7 +26,10 @@ import {
   ConsumerSchoolClassesDto,
 } from './dto/consumer-response.dto';
 import { ConsumerBranchQueryDto } from './dto/consumer-branch-query.dto';
-import { ConsumerShelfService } from './consumer-shelf.service';
+import {
+  ConsumerShelfService,
+  photographRankSql,
+} from './consumer-shelf.service';
 import { serviceFormatLabel } from '../common/service-formats';
 import { resolveBranchPresence } from '../common/operating-hours';
 import { resolveProductCatalogMetadata } from '../common/utils/media-url.util';
@@ -394,9 +397,16 @@ export class ConsumerBranchController {
 
       const total = await baseQb.clone().getCount();
 
+      // Photographs first, then name — see `photographRankSql`. The rank is a
+      // selected alias rather than a bare ORDER BY expression because this
+      // query pages (`skip`/`take`) across a to-many join: TypeORM then pages
+      // over a DISTINCT sub-select of ids, and only a selected alias survives
+      // into that sub-select's ORDER BY. A raw expression there is dropped.
       const products = await baseQb
         .leftJoinAndSelect('p.tags', 'tag')
-        .orderBy('p.name', 'ASC')
+        .addSelect(photographRankSql('p'), 'photo_rank')
+        .orderBy('photo_rank', 'ASC')
+        .addOrderBy('p.name', 'ASC')
         .skip(skip)
         .take(limit)
         .getMany();
@@ -472,7 +482,9 @@ export class ConsumerBranchController {
 
     const products = await baseQb
       .leftJoinAndSelect('p.tags', 'tag')
-      .orderBy('p.name', 'ASC')
+      .addSelect(photographRankSql('p'), 'photo_rank')
+      .orderBy('photo_rank', 'ASC')
+      .addOrderBy('p.name', 'ASC')
       .skip(skip)
       .take(limit)
       .getMany();

@@ -26,7 +26,9 @@ describe('ConsumerBranchController.getBranchProducts', () => {
       'where',
       'andWhere',
       'leftJoinAndSelect',
+      'addSelect',
       'orderBy',
+      'addOrderBy',
       'skip',
       'take',
     ]) {
@@ -67,6 +69,28 @@ describe('ConsumerBranchController.getBranchProducts', () => {
     );
     return { controller, baseQb, getCount, vendorStoreRepo };
   }
+
+  it('serves photographed items first, then by name, as a selected rank', async () => {
+    // The rank must be a selected alias: this query pages across the to-many
+    // tag join, and TypeORM pages over a DISTINCT sub-select of ids in which
+    // only a selected alias can be ordered by — a bare expression is dropped.
+    const { controller, baseQb } = buildController({
+      store: { id: 99 },
+      count: 0,
+      products: [],
+    });
+    await controller.getBranchProducts(7);
+
+    expect(baseQb.addSelect).toHaveBeenCalledWith(
+      expect.stringMatching(/img\/initials/),
+      'photo_rank',
+    );
+    expect(baseQb.orderBy).toHaveBeenCalledWith('photo_rank', 'ASC');
+    expect(baseQb.addOrderBy).toHaveBeenCalledWith('p.name', 'ASC');
+    expect(baseQb.orderBy.mock.invocationCallOrder[0]).toBeLessThan(
+      baseQb.addOrderBy.mock.invocationCallOrder[0],
+    );
+  });
 
   it('returns productType and lower-cased tags for each product', async () => {
     const { controller } = buildController({
@@ -402,7 +426,9 @@ describe('ConsumerBranchController shelf truth', () => {
       'andWhere',
       'innerJoin',
       'leftJoinAndSelect',
+      'addSelect',
       'orderBy',
+      'addOrderBy',
       'skip',
       'take',
     ]) {

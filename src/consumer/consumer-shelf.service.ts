@@ -40,6 +40,27 @@ const DEFAULT_LOW_STOCK_THRESHOLD = 5;
 export const CATALOG_SERVICE_FORMATS: readonly string[] =
   CATALOG_LISTABLE_SERVICE_FORMAT_CODES;
 
+/**
+ * SQL for "this product carries a photograph of its own", as a sort rank:
+ * 0 for a photograph, 1 for none.
+ *
+ * The API stands in for a missing photo with a generated initials image
+ * (`/img/initials?name=…`), which every client draws locally as a monogram
+ * instead of fetching. For ordering, that placeholder is no picture: a shelf
+ * served "photographs first" must not put a monogram ahead of a photograph
+ * because its URL happens to be non-empty. The pattern is the one
+ * `productMedia.isGeneratedInitialsImage` matches on the clients, so the two
+ * sides agree about what counts.
+ *
+ * Both shelf readers order by this, then by name: a shopper's eye lands on a
+ * picture, and a menu that opens on its photographed dishes reads as a menu
+ * rather than a grid of coloured initials with a photo buried in row six.
+ */
+export function photographRankSql(productAlias = 'p'): string {
+  const column = `${productAlias}."imageUrl"`;
+  return `CASE WHEN ${column} IS NOT NULL AND btrim(${column}) <> '' AND ${column} !~* '/img/initials([/?#]|$)' THEN 0 ELSE 1 END`;
+}
+
 /** Composite key for a shelf entry, which is per (branch, product). */
 function pairKey(branchId: number, productId: number): string {
   return `${branchId}:${productId}`;

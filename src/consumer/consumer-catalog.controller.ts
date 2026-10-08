@@ -16,7 +16,10 @@ import {
   ConsumerCatalogListDto,
 } from './dto/consumer-response.dto';
 import { ConsumerCatalogQueryDto } from './dto/consumer-catalog-query.dto';
-import { ConsumerShelfService } from './consumer-shelf.service';
+import {
+  ConsumerShelfService,
+  photographRankSql,
+} from './consumer-shelf.service';
 import { serviceFormatLabel } from '../common/service-formats';
 import { resolveBranchPresence } from '../common/operating-hours';
 import { resolveProductCatalogMetadata } from '../common/utils/media-url.util';
@@ -260,23 +263,32 @@ export class ConsumerCatalogController {
     const rowsQb = this.baseQuery();
     this.applyFilters(rowsQb, query);
     const rows = await this.selectRowColumns(rowsQb)
-      // Round-robin across shops, not alphabetical by shop.
+      // Photographs first, then a round-robin across shops.
       //
-      // Ordering by `b.name` put every one of a café's 128 items ahead of the
-      // next shop's first, so page one of a 347-item marketplace held two shops
-      // and the other six were unreachable without guessing a search term. The
-      // window function takes each shop's first item, then each shop's second,
-      // so a page is a spread rather than one merchant's menu.
+      // A picture is what a shopper's eye lands on, so every photographed
+      // entry on the marketplace comes before any monogram — and the web page
+      // can no longer re-sort a page on its own, since the server pages. Each
+      // shop's own rank is photographs-first too, so the spread below opens on
+      // pictures from every shop that has them.
+      //
+      // Round-robin across shops, not alphabetical by shop: ordering by
+      // `b.name` put every one of a café's 128 items ahead of the next shop's
+      // first, so page one of a 347-item marketplace held two shops and the
+      // other six were unreachable without guessing a search term. The window
+      // function takes each shop's first item, then each shop's second, so a
+      // page is a spread rather than one merchant's menu.
       //
       // The link id stays last: without a total tiebreak two rows with equal
       // names can swap between pages and a shopper sees one item twice and
       // another never. Stock state cannot join the sort — it is resolved after
       // the query, from inventory and the kitchen 86-list.
+      .addSelect(photographRankSql('p'), 'photo_rank')
       .addSelect(
-        'ROW_NUMBER() OVER (PARTITION BY b.id ORDER BY p.name, bcl.id)',
+        `ROW_NUMBER() OVER (PARTITION BY b.id ORDER BY ${photographRankSql('p')}, p.name, bcl.id)`,
         'shop_rank',
       )
-      .orderBy('"shop_rank"', 'ASC')
+      .orderBy('"photo_rank"', 'ASC')
+      .addOrderBy('"shop_rank"', 'ASC')
       .addOrderBy('b.name', 'ASC')
       .addOrderBy('p.name', 'ASC')
       .addOrderBy('bcl.id', 'ASC')

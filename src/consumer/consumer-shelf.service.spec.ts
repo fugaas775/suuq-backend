@@ -1,4 +1,7 @@
-import { ConsumerShelfService } from './consumer-shelf.service';
+import {
+  ConsumerShelfService,
+  photographRankSql,
+} from './consumer-shelf.service';
 
 /**
  * The shelf rules, tested where they now live.
@@ -145,5 +148,19 @@ describe('ConsumerShelfService.shelfVersion', () => {
     expect(shelf.shelfVersion(base)).not.toBe(shelf.shelfVersion(repriced));
     expect(shelf.shelfVersion(base)).not.toBe(shelf.shelfVersion(extraItem));
     expect(shelf.shelfVersion([])).toBe('0-0');
+  });
+});
+
+describe('photographRankSql', () => {
+  it('ranks a real picture ahead and the generated initials image as none', () => {
+    const sql = photographRankSql('p');
+    expect(sql).toContain('p."imageUrl" IS NOT NULL');
+    // The same pattern the clients match in productMedia.isGeneratedInitialsImage.
+    expect(sql).toContain("!~* '/img/initials([/?#]|$)'");
+    expect(sql).toMatch(/THEN 0 ELSE 1 END$/);
+  });
+
+  it('is written against whatever alias the query gave the product', () => {
+    expect(photographRankSql('product')).toContain('product."imageUrl"');
   });
 });
