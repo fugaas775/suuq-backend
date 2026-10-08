@@ -31,6 +31,7 @@ import {
   distanceKmSql,
   findableBranchSql,
   hasLocationSql,
+  noWholesalePriceSql,
   photographRankSql,
   thumbnailOf,
 } from './consumer-shelf.service';
@@ -392,7 +393,9 @@ export class ConsumerBranchController {
           { branchId },
         )
         .where('bcl."consumer_visible" = true')
-        .andWhere('p.deleted_at IS NULL');
+        .andWhere('p.deleted_at IS NULL')
+        // Never a wholesaler's trade price — the same guard the catalog applies.
+        .andWhere(noWholesalePriceSql('bcl'));
 
       const total = await baseQb.clone().getCount();
 

@@ -114,9 +114,28 @@ export function findableBranchSql(branchAlias = 'b'): string {
     EXISTS (SELECT 1 FROM vendor_stores vs WHERE vs."branchId" = ${branchAlias}.id AND vs."isConsumerVisible" = true)
     OR (
       NOT EXISTS (SELECT 1 FROM vendor_stores vs WHERE vs."branchId" = ${branchAlias}.id)
-      AND EXISTS (SELECT 1 FROM branch_catalog_product_links l WHERE l."branchId" = ${branchAlias}.id AND l.consumer_visible = true)
+      AND EXISTS (
+        SELECT 1 FROM branch_catalog_product_links l
+        WHERE l."branchId" = ${branchAlias}.id AND l.consumer_visible = true
+          AND (${branchAlias}."supplierOutletProfileId" IS NULL OR l.retail_price IS NOT NULL)
+      )
     )
   )`;
+}
+
+/**
+ * The wholesale-price guard, for a shelf read that joins links as `bcl`.
+ *
+ * A supplier's `Product.price` is their wholesale price, and the shelf falls
+ * back to it when the branch set no retail price. The catalog has refused such
+ * rows since the guard was written; the single-branch shelf had not, so a
+ * wholesaler's QR page quoted trade prices to whoever scanned it. One guard,
+ * both readers.
+ */
+export function noWholesalePriceSql(linkAlias = 'bcl'): string {
+  return `(${linkAlias}.retail_price IS NOT NULL OR NOT EXISTS (
+    SELECT 1 FROM branches sb WHERE sb.id = ${linkAlias}."branchId" AND sb."supplierOutletProfileId" IS NOT NULL
+  ))`;
 }
 
 /** Whether a branch has a location at all, for the distance filters below. */

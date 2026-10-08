@@ -3,6 +3,7 @@ import {
   distanceKmSql,
   findableBranchSql,
   hasLocationSql,
+  noWholesalePriceSql,
   photographRankSql,
   thumbnailOf,
   thumbnailSubquerySql,
@@ -218,6 +219,21 @@ describe('findableBranchSql', () => {
       'NOT EXISTS (SELECT 1 FROM vendor_stores vs WHERE vs."branchId" = b.id)',
     );
     expect(sql).toContain('l."branchId" = b.id AND l.consumer_visible = true');
+    // A wholesaler with no retail prices has nothing a shopper may buy, so a
+    // public shelf of trade prices does not make it findable.
+    expect(sql).toContain(
+      '(b."supplierOutletProfileId" IS NULL OR l.retail_price IS NOT NULL)',
+    );
+  });
+});
+
+describe('noWholesalePriceSql', () => {
+  it('admits a retail-priced link, or any link of a shop that is not a wholesaler', () => {
+    const sql = noWholesalePriceSql('bcl');
+    expect(sql).toContain('bcl.retail_price IS NOT NULL');
+    expect(sql).toContain(
+      'sb.id = bcl."branchId" AND sb."supplierOutletProfileId" IS NOT NULL',
+    );
   });
 });
 

@@ -15,6 +15,8 @@ describe('ConsumerBranchController.getBranchProducts', () => {
     count: number;
     /** manage_stock per product; anything omitted counts as tracked. */
     stockManagedRows?: unknown[];
+    /** Catalog links on the branch; above zero takes the POS-shelf path. */
+    linkedCount?: number;
   }) {
     const getMany = jest.fn().mockResolvedValue(opts.products);
     const getCount = jest.fn().mockResolvedValue(opts.count);
@@ -48,7 +50,7 @@ describe('ConsumerBranchController.getBranchProducts', () => {
     };
     const branchesRepository = { findOne: jest.fn() };
     const catalogLinkRepo = {
-      count: jest.fn().mockResolvedValue(0),
+      count: jest.fn().mockResolvedValue(opts.linkedCount ?? 0),
       find: jest.fn().mockResolvedValue([]),
     };
     const branchInventoryRepo = { find: jest.fn().mockResolvedValue([]) };
@@ -89,6 +91,20 @@ describe('ConsumerBranchController.getBranchProducts', () => {
     expect(baseQb.addOrderBy).toHaveBeenCalledWith('p.name', 'ASC');
     expect(baseQb.orderBy.mock.invocationCallOrder[0]).toBeLessThan(
       baseQb.addOrderBy.mock.invocationCallOrder[0],
+    );
+  });
+
+  it('never quotes a wholesaler’s trade price on its own shelf', async () => {
+    // Linked products exist, so the POS-shelf path is taken.
+    const { controller, baseQb } = buildController({
+      store: null,
+      count: 0,
+      products: [],
+      linkedCount: 5,
+    });
+    await controller.getBranchProducts(104);
+    expect(baseQb.andWhere).toHaveBeenCalledWith(
+      expect.stringMatching(/bcl\.retail_price IS NOT NULL OR NOT EXISTS/),
     );
   });
 
