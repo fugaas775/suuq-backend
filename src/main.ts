@@ -10,6 +10,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { GlobalExceptionFilter } from './common/global-exception.filter';
+import { cacheControlFor, noStoreAllFromEnv } from './common/cache-policy';
 import { Reflector } from '@nestjs/core';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import helmet from 'helmet';
@@ -316,7 +317,12 @@ async function bootstrap() {
     },
   );
 
-  // Enforce no-store on admin API responses to avoid stale data via proxies/browsers
+  // What a browser may do with a response, by URL: admin and the POS
+  // portal's auth are never stored; a signed-in POS or retail read must ask
+  // the server before a kept copy is reused (see cache-policy.ts for why —
+  // a lesson plan saved and then not shown for five minutes). The global
+  // EtagInterceptor leaves a Cache-Control set here alone.
+  const noStoreAll = noStoreAllFromEnv();
   app.use(
     (
       req: import('express').Request,
@@ -324,19 +330,10 @@ async function bootstrap() {
       next: import('express').NextFunction,
     ) => {
       try {
-        const url = (req.originalUrl || req.url || '').toString();
-        // Consider both with and without global prefix
-        const noStoreAll = (process.env.NO_STORE_ALL_API || '').toLowerCase();
-        const enableAll = noStoreAll === '1' || noStoreAll === 'true';
-        if (enableAll) {
-          if (url.startsWith('/api') || url.startsWith('api')) {
-            res.setHeader('Cache-Control', 'no-store');
-          }
-        } else {
-          if (url.startsWith('/api/admin') || url.startsWith('/admin')) {
-            res.setHeader('Cache-Control', 'no-store');
-          }
-        }
+        const header = cacheControlFor(req.originalUrl || req.url, {
+          noStoreAll,
+        });
+        if (header) res.setHeader('Cache-Control', header);
       } catch {
         // ignore
       }
