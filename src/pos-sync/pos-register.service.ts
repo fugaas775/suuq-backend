@@ -274,6 +274,7 @@ export class PosRegisterService {
     dto: CreatePosSuspendedCartDto,
     actor: { id?: number | null; email?: string | null } = {},
   ): Promise<PosSuspendedCartResponseDto> {
+    const actorName = await this.resolveActorName(actor, dto.branchId);
     await this.assertBranch(dto.branchId);
     if (dto.registerSessionId != null) {
       const session = await this.findSession(dto.registerSessionId);
@@ -328,7 +329,7 @@ export class PosRegisterService {
             ? overrides.metadata
             : (dto.metadata ?? null),
         suspendedByUserId: actor.id ?? null,
-        suspendedByName: actor.email ?? null,
+        suspendedByName: actorName,
       });
 
     // Single-live-row invariant for folio re-saves. Editing a folio (adding a
@@ -519,6 +520,71 @@ export class PosRegisterService {
     return this.toSuspendedCartResponse(saved);
   }
 
+  /**
+   * A resume or a discard of a basket that is no longer on hold is refused.
+   *
+   * It used to answer 200 with the row as it stood, so two tills that both
+   * listed "Faadumo" could both resume her: the second till loaded the lines
+   * from its own stale copy and the basket was sold twice. 409 names the
+   * state and who has it, so the till can say "another till took it".
+   */
+  private refuseUnlessSuspended(cart: PosSuspendedCart): void {
+    if (cart.status === PosSuspendedCartStatus.SUSPENDED) {
+      return;
+    }
+    const discarded = cart.status === PosSuspendedCartStatus.DISCARDED;
+    throw new ConflictException({
+      code: 'SUSPENDED_CART_NOT_SUSPENDED',
+      message: discarded
+        ? 'This sale is no longer on hold — it was discarded.'
+        : 'This sale is no longer on hold — another till resumed it.',
+      details: {
+        status: cart.status,
+        resumedByUserId: cart.resumedByUserId ?? null,
+        resumedByName: cart.resumedByName ?? null,
+        resumedAt: cart.resumedAt ?? null,
+        discardedByUserId: cart.discardedByUserId ?? null,
+        discardedAt: cart.discardedAt ?? null,
+      },
+    });
+  }
+
+  /**
+   * The name a held sale is signed with. The request carries the actor's
+   * e-mail, which the till's card ellipsised to "fugaas775@gm…"; the staff
+   * roster knows the person's display name. Owners and anyone without a
+   * roster row fall back to the part of the e-mail before the @. Never
+   * throws: a name is worth one lookup, not a failed hold.
+   */
+  private async resolveActorName(
+    actor: { id?: number | null; email?: string | null },
+    branchId: number,
+  ): Promise<string | null> {
+    const email = String(actor?.email ?? '').trim();
+    const emailLocal = email.includes('@')
+      ? email.slice(0, email.indexOf('@'))
+      : email;
+    if (actor?.id == null) {
+      return emailLocal || null;
+    }
+    try {
+      const assignment = await this.staffAssignmentsRepository.findOne({
+        where: { branchId, userId: actor.id },
+        relations: ['user'],
+      });
+      const user = assignment?.user as
+        | { displayName?: string | null; storeName?: string | null }
+        | undefined;
+      const name = String(user?.displayName || user?.storeName || '').trim();
+      if (name) {
+        return name;
+      }
+    } catch {
+      /* a name is best effort */
+    }
+    return emailLocal || null;
+  }
+
   async resumeSuspendedCart(
     id: number,
     dto: TransitionPosSuspendedCartDto,
@@ -530,14 +596,12 @@ export class PosRegisterService {
         `Suspended cart ${id} does not belong to branch ${dto.branchId}`,
       );
     }
-    if (cart.status !== PosSuspendedCartStatus.SUSPENDED) {
-      return this.toSuspendedCartResponse(cart);
-    }
+    this.refuseUnlessSuspended(cart);
 
     cart.status = PosSuspendedCartStatus.RESUMED;
     cart.resumedAt = new Date();
     cart.resumedByUserId = actor.id ?? null;
-    cart.resumedByName = actor.email ?? null;
+    cart.resumedByName = await this.resolveActorName(actor, cart.branchId);
     return this.toSuspendedCartResponse(
       await this.suspendedCartsRepository.save(cart),
     );
@@ -554,9 +618,7 @@ export class PosRegisterService {
         `Suspended cart ${id} does not belong to branch ${dto.branchId}`,
       );
     }
-    if (cart.status !== PosSuspendedCartStatus.SUSPENDED) {
-      return this.toSuspendedCartResponse(cart);
-    }
+    this.refuseUnlessSuspended(cart);
 
     // Every discard of a pupil's folio is a withdrawal, whether it arrives
     // flagged as one from Seller HQ or as a write-off from the till, so the
@@ -568,7 +630,7 @@ export class PosRegisterService {
     cart.status = PosSuspendedCartStatus.DISCARDED;
     cart.discardedAt = new Date();
     cart.discardedByUserId = actor.id ?? null;
-    cart.discardedByName = actor.email ?? null;
+    cart.discardedByName = await this.resolveActorName(actor, cart.branchId);
 
     // A guest is watching this row, and discarding is how BOTH outcomes look:
     // a settled order and a refused one are the same DISCARDED row. Stamping
