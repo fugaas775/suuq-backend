@@ -75,6 +75,8 @@ export class PosRegisterController {
     return this.posRegisterService.openSession(dto, {
       id: req.user?.id ?? null,
       email: req.user?.email ?? null,
+      // The opening-time rule lets a manager through; see openSession.
+      roles: Array.isArray(req.user?.roles) ? req.user.roles : [],
     });
   }
 

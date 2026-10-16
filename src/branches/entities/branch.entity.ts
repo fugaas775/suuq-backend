@@ -97,6 +97,17 @@ export class Branch {
   checkoutPolicyTime?: string | null;
 
   /**
+   * Register schedule, "HH:MM" 24h EAT. At registerClosesAt the server closes
+   * every session still open; before registerOpensAt (from the closing time,
+   * or midnight) an operator cannot start one. Null = no schedule.
+   */
+  @Column({ type: 'varchar', length: 5, nullable: true })
+  registerOpensAt?: string | null;
+
+  @Column({ type: 'varchar', length: 5, nullable: true })
+  registerClosesAt?: string | null;
+
+  /**
    * Brand logo URL for this branch (uploaded via /media). Shown in the register
    * branch badge across all service formats and on receipts. Null = no logo.
    */

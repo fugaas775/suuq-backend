@@ -86,6 +86,8 @@ export interface PosBranchSummary {
   tinNumber: string | null;
   defaultCategoryId: number | null;
   checkoutPolicyTime: string | null;
+  registerOpensAt: string | null;
+  registerClosesAt: string | null;
   logoUrl: string | null;
   notificationEmail: string | null;
   taxEnabled: boolean;
@@ -109,6 +111,8 @@ export interface PosWorkspaceActivationCandidate {
   tinNumber: string | null;
   defaultCategoryId: number | null;
   checkoutPolicyTime: string | null;
+  registerOpensAt: string | null;
+  registerClosesAt: string | null;
   logoUrl: string | null;
   notificationEmail: string | null;
   taxEnabled: boolean;
@@ -736,6 +740,8 @@ export class BranchStaffService {
           tinNumber: summary.tinNumber ?? null,
           defaultCategoryId: summary.defaultCategoryId ?? null,
           checkoutPolicyTime: summary.checkoutPolicyTime ?? null,
+          registerOpensAt: summary.registerOpensAt ?? null,
+          registerClosesAt: summary.registerClosesAt ?? null,
           logoUrl: summary.logoUrl ?? null,
           notificationEmail: summary.notificationEmail ?? null,
           taxEnabled: Boolean(summary.taxEnabled),
@@ -1143,6 +1149,8 @@ export class BranchStaffService {
         tinNumber: branch.tinNumber ?? null,
         defaultCategoryId: branch.defaultCategoryId ?? null,
         checkoutPolicyTime: branch.checkoutPolicyTime ?? null,
+        registerOpensAt: branch.registerOpensAt ?? null,
+        registerClosesAt: branch.registerClosesAt ?? null,
         logoUrl: branch.logoUrl ?? null,
         notificationEmail: branch.notificationEmail ?? null,
         taxEnabled: Boolean(branch.taxEnabled),
@@ -1201,6 +1209,8 @@ export class BranchStaffService {
           tinNumber: branch.tinNumber ?? null,
           defaultCategoryId: branch.defaultCategoryId ?? null,
           checkoutPolicyTime: branch.checkoutPolicyTime ?? null,
+          registerOpensAt: branch.registerOpensAt ?? null,
+          registerClosesAt: branch.registerClosesAt ?? null,
           logoUrl: branch.logoUrl ?? null,
           notificationEmail: branch.notificationEmail ?? null,
           taxEnabled: Boolean(branch.taxEnabled),
@@ -1265,6 +1275,14 @@ export class BranchStaffService {
         checkoutPolicyTime:
           existing?.checkoutPolicyTime ??
           assignment.branch.checkoutPolicyTime ??
+          null,
+        registerOpensAt:
+          existing?.registerOpensAt ??
+          assignment.branch.registerOpensAt ??
+          null,
+        registerClosesAt:
+          existing?.registerClosesAt ??
+          assignment.branch.registerClosesAt ??
           null,
         logoUrl: existing?.logoUrl ?? assignment.branch.logoUrl ?? null,
         notificationEmail:

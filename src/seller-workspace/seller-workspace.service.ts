@@ -458,6 +458,8 @@ export class SellerWorkspaceService {
           tinNumber: branch.tinNumber ?? null,
           defaultCategoryId: branch.defaultCategoryId ?? null,
           checkoutPolicyTime: branch.checkoutPolicyTime ?? null,
+          registerOpensAt: branch.registerOpensAt ?? null,
+          registerClosesAt: branch.registerClosesAt ?? null,
           logoUrl: branch.logoUrl ?? null,
           notificationEmail: branch.notificationEmail ?? null,
           taxEnabled: Boolean(branch.taxEnabled),
@@ -533,6 +535,8 @@ export class SellerWorkspaceService {
           tinNumber: candidate.tinNumber ?? null,
           defaultCategoryId: candidate.defaultCategoryId ?? null,
           checkoutPolicyTime: candidate.checkoutPolicyTime ?? null,
+          registerOpensAt: candidate.registerOpensAt ?? null,
+          registerClosesAt: candidate.registerClosesAt ?? null,
           logoUrl: candidate.logoUrl ?? null,
           notificationEmail: candidate.notificationEmail ?? null,
           taxEnabled: Boolean(candidate.taxEnabled),
@@ -2450,6 +2454,10 @@ export class SellerWorkspaceService {
       updates.defaultCategoryId = dto.defaultCategoryId;
     if (dto.checkoutPolicyTime !== undefined)
       updates.checkoutPolicyTime = dto.checkoutPolicyTime;
+    if (dto.registerOpensAt !== undefined)
+      updates.registerOpensAt = dto.registerOpensAt;
+    if (dto.registerClosesAt !== undefined)
+      updates.registerClosesAt = dto.registerClosesAt;
     if (dto.logoUrl !== undefined) updates.logoUrl = dto.logoUrl;
     // Empty string clears it back to "email the owner's account" rather than
     // storing an address nothing can deliver to.

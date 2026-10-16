@@ -225,6 +225,39 @@ export class UpdateBranchWorkspaceDto {
   checkoutPolicyTime?: string | null;
 
   @ApiPropertyOptional({
+    description:
+      'Register opening time "HH:MM" 24h EAT. Before it (from the closing ' +
+      'time, or midnight) an operator cannot start a session; a manager can. ' +
+      'Send null to clear.',
+    nullable: true,
+    example: '07:00',
+  })
+  @Transform(({ value }) => trimString(value))
+  @IsOptional()
+  @ValidateIf((o) => o.registerOpensAt !== null)
+  @IsString()
+  @Matches(/^([01]\d|2[0-3]):[0-5]\d$/, {
+    message: 'registerOpensAt must be a valid "HH:MM" 24h time',
+  })
+  registerOpensAt?: string | null;
+
+  @ApiPropertyOptional({
+    description:
+      'Register closing time "HH:MM" 24h EAT. Every session still open at ' +
+      'this time is closed automatically. Send null to clear.',
+    nullable: true,
+    example: '22:00',
+  })
+  @Transform(({ value }) => trimString(value))
+  @IsOptional()
+  @ValidateIf((o) => o.registerClosesAt !== null)
+  @IsString()
+  @Matches(/^([01]\d|2[0-3]):[0-5]\d$/, {
+    message: 'registerClosesAt must be a valid "HH:MM" 24h time',
+  })
+  registerClosesAt?: string | null;
+
+  @ApiPropertyOptional({
     description: 'Brand logo URL for this branch. Send null to clear.',
     nullable: true,
     example: 'https://cdn.example.com/branch-logo.png',

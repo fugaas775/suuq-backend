@@ -759,3 +759,103 @@ describe('PosRegisterService.updateSuspendedCart — the row as it stands now', 
     expect(carts.save).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('PosRegisterService.openSession (branch opening time)', () => {
+  // 05:00 EAT — inside closed hours for a 22:00–07:00 branch.
+  const early = new Date('2026-10-16T02:00:00Z');
+  const midday = new Date('2026-10-16T09:00:00Z');
+
+  function makeService(managerRow: unknown = null) {
+    const registerSessionsRepository = {
+      findOne: jest.fn().mockResolvedValue(null),
+      count: jest.fn().mockResolvedValue(4),
+      create: jest.fn((input) => input),
+      save: jest.fn(async (input) => ({ id: 77, ...input })),
+    };
+    const branchesRepository = {
+      findOne: jest.fn().mockResolvedValue({
+        id: 3,
+        name: 'SMAK QSR',
+        ownerId: 900,
+        registerOpensAt: '07:00',
+        registerClosesAt: '22:00',
+      }),
+    };
+    const staffAssignmentsRepository = {
+      findOne: jest.fn().mockResolvedValue(managerRow),
+    };
+    const service = new PosRegisterService(
+      registerSessionsRepository as any,
+      {} as any,
+      branchesRepository as any,
+      { dispatchCloseReport: jest.fn() } as any,
+      staffAssignmentsRepository as any,
+    );
+    return { service, registerSessionsRepository };
+  }
+  const dto = { branchId: 3, registerId: 'till-1' };
+  const operator = { id: 51, roles: ['POS_OPERATOR'] };
+
+  it('refuses an operator a new session before the opening time', async () => {
+    const { service, registerSessionsRepository } = makeService();
+    await expect(
+      service.openSession(dto, operator, { now: early }),
+    ).rejects.toMatchObject({
+      response: {
+        error: expect.objectContaining({
+          code: 'POS_REGISTER_OUTSIDE_HOURS',
+          message:
+            'SMAK QSR opens its registers at 07:00. A manager can open one earlier.',
+        }),
+      },
+    });
+    expect(registerSessionsRepository.save).not.toHaveBeenCalled();
+  });
+
+  it('opens for the operator once the branch is open', async () => {
+    const { service } = makeService();
+    await expect(
+      service.openSession(dto, operator, { now: midday }),
+    ).resolves.toMatchObject({ id: 77 });
+  });
+
+  it('lets a manager, the owner and a manager-token through early', async () => {
+    await expect(
+      makeService({ id: 1 }).service.openSession(dto, operator, { now: early }),
+    ).resolves.toMatchObject({ id: 77 });
+    await expect(
+      makeService().service.openSession(
+        dto,
+        { id: 900, roles: [] },
+        { now: early },
+      ),
+    ).resolves.toMatchObject({ id: 77 });
+    await expect(
+      makeService().service.openSession(
+        dto,
+        { id: 5, roles: ['POS_MANAGER'] },
+        { now: early },
+      ),
+    ).resolves.toMatchObject({ id: 77 });
+  });
+
+  it('hands back a session already open, whatever the hour', async () => {
+    const { service, registerSessionsRepository } = makeService();
+    registerSessionsRepository.findOne.mockResolvedValue({
+      id: 12,
+      branchId: 3,
+      registerId: 'till-1',
+      status: 'OPEN',
+    });
+    await expect(
+      service.openSession(dto, operator, { now: early }),
+    ).resolves.toMatchObject({ id: 12 });
+  });
+
+  it('lets a partner integration through', async () => {
+    const { service } = makeService();
+    await expect(
+      service.openSession(dto, {}, { now: early, ignoreOpeningHours: true }),
+    ).resolves.toMatchObject({ id: 77 });
+  });
+});

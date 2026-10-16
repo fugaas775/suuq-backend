@@ -360,6 +360,19 @@ export class SellerWorkspaceBranchWorkspaceDto {
 
   @ApiPropertyOptional({
     nullable: true,
+    description: 'Register opening time "HH:MM" 24h EAT. Null = none.',
+  })
+  registerOpensAt?: string | null;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description:
+      'Register closing time "HH:MM" 24h EAT; open sessions close automatically. Null = none.',
+  })
+  registerClosesAt?: string | null;
+
+  @ApiPropertyOptional({
+    nullable: true,
     description:
       'Brand logo URL for this branch, shown in the register and on receipts.',
   })

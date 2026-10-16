@@ -185,10 +185,13 @@ export class PosPartnerRegisterController {
       dto.branchId,
     );
 
-    return this.posRegisterService.openSession(dto, {
-      id: null,
-      email: null,
-    });
+    // A partner integration is a machine, not an operator: the branch's
+    // opening time does not apply to it.
+    return this.posRegisterService.openSession(
+      dto,
+      { id: null, email: null },
+      { ignoreOpeningHours: true },
+    );
   }
 
   @Post('partner-sessions/:id/close')

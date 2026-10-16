@@ -82,6 +82,7 @@ describe('PosPartnerRegisterController', () => {
     expect(posRegisterService.openSession).toHaveBeenCalledWith(
       { branchId: 3, registerId: 'front-1' },
       { id: null, email: null },
+      { ignoreOpeningHours: true },
     );
   });
 
