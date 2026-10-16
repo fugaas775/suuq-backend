@@ -1133,9 +1133,10 @@ export class SchoolGuardianService {
     // records are read here and never handed over: only this child's place
     // and the size of the field leave the server.
     // The pupil's grade — the registry's word for the class first, else the
-    // leading number of the class code — cuts the platform's curriculum
-    // shelf (textbooks, slides, item banks) to what this pupil studies. The
-    // teachers' links on that shelf stay on the server.
+    // leading number of the class code — and the subjects on the class's
+    // timetable cut the platform's curriculum shelf (textbooks, slides,
+    // item banks) to what this pupil studies. The teachers' links on that
+    // shelf stay on the server.
     const grade =
       gradeNumberOf(classRow?.gradeCode) ?? gradeNumberOf(p.classCode);
     const [homework, classmates, verification, curriculum] = await Promise.all([
@@ -1150,7 +1151,14 @@ export class SchoolGuardianService {
       // record as it stands.
       this.statementCodes.codeFor(branchId, folioId),
       this.curriculum
-        ? this.curriculum.forGrade(grade)
+        ? this.curriculum.forPupil(
+            grade,
+            wanted
+              ? timetable.slots
+                  .filter((s) => fold(s.classCode) === wanted)
+                  .map((s) => s.subject)
+              : [],
+          )
         : Promise.resolve([]),
     ]);
     const field = classmates.filter((r) => {

@@ -2,7 +2,10 @@ import { BadRequestException, NotFoundException } from '@nestjs/common';
 import {
   SchoolCurriculumService,
   gradeNumberOf,
+  gradeSubjectsOfPairs,
   gradesOfClasses,
+  subjectKey,
+  subjectMatches,
 } from './school-curriculum.service';
 import { memRepo, reachStub } from './test/memory-repo';
 
@@ -74,6 +77,29 @@ describe('gradeNumberOf', () => {
   });
 });
 
+describe('subjectKey / subjectMatches', () => {
+  it('folds the spellings of one subject to one key', () => {
+    expect(['Mathematics', 'Maths', 'MATH', 'Xisaab', 'Xisaabta', 'ሒሳብ', 'الرياضيات'].map(subjectKey)).toEqual(Array(7).fill('mathematics'));
+    expect(['English', 'Ingiriisi', 'Af-Ingiriisi', 'Kiingereza'].map(subjectKey)).toEqual(Array(4).fill('english'));
+    expect(subjectKey('Af-Soomaali')).toBe('somali');
+    expect(subjectKey('  Social   Studies ')).toBe('social studies');
+    expect(subjectKey('Physics II')).toBe('physics ii');
+    expect(subjectKey('')).toBe('');
+  });
+  it('matches the same subject, a subject inside a longer name, and never a short word inside another', () => {
+    expect(subjectMatches('Maths', 'Mathematics')).toBe(true);
+    expect(subjectMatches('Science', 'Integrated Science')).toBe(true);
+    expect(subjectMatches('English', 'English Literature')).toBe(true);
+    expect(subjectMatches('Art', 'Cartography')).toBe(false);
+    expect(subjectMatches('Maths', 'English')).toBe(false);
+    expect(subjectMatches('', 'Maths')).toBe(false);
+  });
+  it('turns timetable pairs into grade → subjects', () => {
+    const m = gradeSubjectsOfPairs(['8th|maths', '7th|maths', '8th b|english', 'kg ii|art', '7th|xisaab']);
+    expect([...m.entries()]).toEqual([[7, ['maths']], [8, ['maths', 'english']]]);
+  });
+});
+
 describe('SchoolCurriculumService', () => {
   it('cuts the shelf to the pupil’s grade and keeps the teachers’ link back', async () => {
     const { svc } = make([
@@ -92,23 +118,41 @@ describe('SchoolCurriculumService', () => {
     expect(await svc.forGrade(null)).toEqual([]);
   });
 
-  it('hands the staff the whole live shelf with the teachers’ links, and the grades their classes span', async () => {
+  it('cuts a pupil’s shelf to the subjects on the class’s timetable, whole grade when the class has no timetable', async () => {
     const { svc } = make([
-      row({ id: 1, title: 'G7 U1', grades: [7, 8] }),
-      row({ id: 2, title: 'G8 U1', grades: [8] }),
-      row({ id: 3, title: 'G3', grades: [3] }),
-      row({ id: 4, title: 'Off', grades: [8], isActive: false }),
+      row({ id: 1, title: 'Maths U1', subject: 'Mathematics', grades: [8] }),
+      row({ id: 2, title: 'Reader', subject: 'English', grades: [8], kind: 'TEXTBOOK_PDF' }),
+      row({ id: 3, title: 'Science', subject: 'Science', grades: [8] }),
     ]);
+    // Shelf order: by subject, so English's reader before Mathematics.
+    expect((await svc.forPupil(8, ['Xisaab', 'Af-Soomaali', 'Ingiriisi'])).map((r) => r.title)).toEqual(['Reader', 'Maths U1']);
+    expect((await svc.forPupil(8, [])).map((r) => r.title)).toEqual(['Reader', 'Maths U1', 'Science']);
+    expect(await svc.forPupil(7, ['Maths'])).toEqual([]);
+    expect((await svc.forPupil(8, ['Maths']))[0]).not.toHaveProperty('teacherUrl');
+  });
+
+  it('cuts a teacher’s shelf to the subjects and grades on their timetable, and names the pairs; the heads read it all', async () => {
+    const { svc } = make([
+      row({ id: 1, title: 'G7 U1', subject: 'Mathematics', grades: [7, 8] }),
+      row({ id: 2, title: 'G8 U1', subject: 'Mathematics', grades: [8] }),
+      row({ id: 3, title: 'G8 Reader', subject: 'English', grades: [8], kind: 'TEXTBOOK_PDF' }),
+      row({ id: 4, title: 'G3', subject: 'Mathematics', grades: [3] }),
+      row({ id: 5, title: 'Off', subject: 'Mathematics', grades: [8], isActive: false }),
+    ]);
+    // Maths in 7th and 8th A: both Maths shelves, no English, no Grade 3.
     const teacher = await svc.forStaff(128, { id: 30, email: 't@x', roles: ['POS_OPERATOR'] });
-    expect(teacher.grades).toEqual([7, 8]);
-    // Shelf order: subject, series, sortOrder, then the order listed.
-    expect(teacher.items.map((r) => r.title)).toEqual(['G7 U1', 'G8 U1', 'G3']);
+    expect(teacher.items.map((r) => r.title)).toEqual(['G7 U1', 'G8 U1']);
     expect(teacher.items[0].teacherUrl).toBe('https://forms.example/edit');
-    // A KG teacher spans no grade — the page shows the whole shelf.
+    expect(teacher.scope).toEqual({ grades: [7, 8], pairs: [{ grade: 7, subject: 'maths' }, { grade: 8, subject: 'maths' }], hasTimetable: true });
+    expect(teacher.grades).toEqual([7, 8]);
+    // A KG teacher's timetable spans no grade: an empty cut, and the page is told why.
     const kg = await svc.forStaff(128, { id: 31, email: 'k@x', roles: ['POS_OPERATOR'] });
-    expect(kg.grades).toEqual([]);
-    // The heads reach every class: no grades to lead with.
+    expect(kg.items).toEqual([]);
+    expect(kg.scope).toEqual({ grades: [], pairs: [], hasTimetable: false });
+    // The heads reach every class: the whole live shelf, no scope.
     const head = await svc.forStaff(128, { id: 1, email: 'o@x', roles: ['POS_MANAGER'] });
+    expect(head.items.map((r) => r.title)).toEqual(['G8 Reader', 'G7 U1', 'G8 U1', 'G3']);
+    expect(head.scope).toBeNull();
     expect(head.grades).toBeNull();
   });
 

@@ -46,6 +46,104 @@ export function gradesOfClasses(codes: Iterable<unknown>): number[] {
   return [...out].sort((a, b) => a - b);
 }
 
+/**
+ * One subject, many spellings. The shelf says "Mathematics"; a timetable
+ * says "Maths", "Math" or "Xisaab"; a Grade 3 timetable in Godey says
+ * "Af-Soomaali". The reader's cut must not fail on the spelling, so every
+ * subject name folds to a key — lowercase, accents and punctuation gone —
+ * and the common names of a subject fold to ONE key through this table.
+ */
+const SUBJECT_ALIASES: Record<string, string[]> = {
+  mathematics: ['maths', 'math', 'mathematic', 'xisaab', 'xisaabta', 'hisab', 'hisaab', 'herrega', 'hesabu', 'mathematiques', 'ሒሳብ', 'رياضيات', 'الرياضيات'],
+  english: ['english language', 'ingiriis', 'ingiriisi', 'ingiriisiga', 'af ingiriisi', 'af ingiriis', 'kiingereza', 'anglais', 'afaan ingilizii', 'እንግሊዝኛ', 'إنجليزي', 'انجليزي', 'الإنجليزية'],
+  somali: ['af soomaali', 'soomaali', 'af somali', 'kisomali', 'somalien', 'الصومالية', 'ሶማልኛ'],
+  amharic: ['amaariga', 'amharik', 'amxaari', 'amxaariga', 'afaan amaaraa', 'አማርኛ', 'الأمهرية'],
+  arabic: ['carabi', 'af carabi', 'carabiga', 'kiarabu', 'arabe', 'afaan arabaa', 'ዓረብኛ', 'عربي', 'عربية', 'العربية', 'اللغة العربية'],
+  oromo: ['afaan oromoo', 'afan oromo', 'oromiffa', 'oromifa', 'ኦሮምኛ'],
+  science: ['general science', 'saynis', 'sayniska', 'saynis guud', 'sayansi', 'sciences', 'ሳይንስ', 'علوم', 'العلوم'],
+  physics: ['fiisikis', 'fisikis', 'fizikia', 'physique', 'ፊዚክስ', 'فيزياء', 'الفيزياء'],
+  chemistry: ['kimistari', 'kiimiko', 'kemia', 'chimie', 'ኬሚስትሪ', 'كيمياء', 'الكيمياء'],
+  biology: ['bayooloji', 'bayoloji', 'baiolojia', 'biologie', 'ባዮሎጂ', 'أحياء', 'الأحياء'],
+  'social studies': ['social', 'social study', 'cilmiga bulshada', 'bulsho', 'maaddooyinka bulshada', 'maarifa ya jamii', 'ማህበራዊ ሳይንስ', 'ማኅበራዊ ሳይንስ', 'دراسات اجتماعية', 'الدراسات الاجتماعية'],
+  civics: ['civic', 'civics and ethics', 'civic and ethical education', 'waxbarashada dhaqanka', 'ሥነ ዜጋ', 'ስነ ዜጋ', 'تربية مدنية'],
+  geography: ['juqraafi', 'jiyoografi', 'jiografia', 'geographie', 'ጂኦግራፊ', 'جغرافيا', 'الجغرافيا'],
+  history: ['taariikh', 'taariikhda', 'historia', 'histoire', 'ታሪክ', 'تاريخ', 'التاريخ'],
+  ict: ['computer', 'computers', 'computing', 'information technology', 'information and communication technology', 'kombuyuutar', 'teknolojia ya habari', 'informatique', 'ኮምፒውተር', 'حاسوب', 'الحاسوب'],
+  'islamic studies': ['islamic', 'islamic education', 'diin', 'diinta', 'tarbiya', 'tarbiyah', 'quran', 'quraan', 'التربية الإسلامية', 'تربية إسلامية', 'دين'],
+  'physical education': ['pe', 'sport', 'sports', 'ciyaaraha', 'jimicsi', 'elimu ya viungo', 'eps', 'ስፖርት', 'تربية بدنية', 'التربية البدنية'],
+  art: ['arts', 'fine art', 'fine arts', 'farshaxan', 'sanaa', 'dessin', 'ሥነ ጥበብ', 'ስነ ጥበብ', 'فنون', 'الفنون'],
+  music: ['muusik', 'muusikada', 'muziki', 'musique', 'ሙዚቃ', 'موسيقى'],
+  tigrinya: ['tigrigna', 'tigrinia', 'ትግርኛ', 'التغرينية'],
+  french: ['faransiis', 'faransiiska', 'kifaransa', 'francais', 'ፈረንሳይኛ', 'فرنسي', 'الفرنسية'],
+  swahili: ['kiswahili', 'sawaaxili', 'ስዋሂሊ', 'السواحلية'],
+};
+const SUBJECT_KEY_OF = new Map<string, string>();
+
+/** Lowercase, accents and punctuation gone, one space between words. */
+export function foldSubject(name: unknown): string {
+  return String(name ?? '')
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim();
+}
+for (const [canon, aliases] of Object.entries(SUBJECT_ALIASES)) {
+  SUBJECT_KEY_OF.set(foldSubject(canon), canon);
+  for (const a of aliases) SUBJECT_KEY_OF.set(foldSubject(a), canon);
+}
+
+/** The one key a subject's spellings share: "Maths", "Math", "Xisaab" → "mathematics". */
+export function subjectKey(name: unknown): string {
+  const folded = foldSubject(name);
+  if (!folded) return '';
+  return SUBJECT_KEY_OF.get(folded) ?? folded;
+}
+
+/**
+ * Whether a resource's subject and a timetable's are the same subject: the
+ * same key, or one key inside the other ("science" / "integrated science",
+ * "english" / "english literature") — never on a word under four letters,
+ * so "art" does not reach "cartography".
+ */
+export function subjectMatches(a: unknown, b: unknown): boolean {
+  const x = subjectKey(a);
+  const y = subjectKey(b);
+  if (!x || !y) return false;
+  if (x === y) return true;
+  const [short, long] = x.length <= y.length ? [x, y] : [y, x];
+  if (short.length < 4) return false;
+  return new RegExp(`(^|\\s)${short.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(\\s|$)`).test(long);
+}
+
+/** (grade → subjects) off a set of `class|subject` timetable pairs. */
+export function gradeSubjectsOfPairs(pairs: Iterable<string>): Map<number, string[]> {
+  const out = new Map<number, string[]>();
+  for (const pair of pairs) {
+    const at = pair.indexOf('|');
+    if (at < 0) continue;
+    const grade = gradeNumberOf(pair.slice(0, at));
+    const subject = pair.slice(at + 1).trim();
+    if (grade == null || !subject) continue;
+    const list = out.get(grade) ?? [];
+    if (!list.some((s) => subjectKey(s) === subjectKey(subject))) list.push(subject);
+    out.set(grade, list);
+  }
+  return new Map([...out.entries()].sort((a, b) => a[0] - b[0]));
+}
+
+/** The items a (grade → subjects) map reaches: the grade on the item, and its subject taught in that grade. */
+export function cutToTaught(
+  rows: SchoolCurriculumResource[],
+  taught: Map<number, string[]>,
+): SchoolCurriculumResource[] {
+  return rows.filter((r) =>
+    (r.grades ?? []).some((g) =>
+      (taught.get(Number(g)) ?? []).some((s) => subjectMatches(s, r.subject)),
+    ),
+  );
+}
+
 export type CurriculumResourceView = {
   id: number;
   kind: CurriculumResourceKind;
@@ -116,19 +214,47 @@ export class SchoolCurriculumService {
     return rows.sort(byShelf);
   }
 
-  /** The pupil's (and the family's) cut: their grade, no teachers' links. */
-  async forGrade(grade: number | null): Promise<CurriculumResourceView[]> {
+  /** The live items listed for a grade, in shelf order. */
+  private async rowsForGrade(grade: number | null) {
     if (grade == null) return [];
     const rows = await this.listActive();
-    return rows
-      .filter((r) => (r.grades ?? []).some((g) => Number(g) === grade))
-      .map((r) => this.view(r));
+    return rows.filter((r) => (r.grades ?? []).some((g) => Number(g) === grade));
+  }
+
+  /** The pupil's (and the family's) cut by grade alone, no teachers' links. */
+  async forGrade(grade: number | null): Promise<CurriculumResourceView[]> {
+    const rows = await this.rowsForGrade(grade);
+    return rows.map((r) => this.view(r));
   }
 
   /**
-   * A member of staff's cut: the whole live shelf with the teachers' links,
-   * and the grades the classes they reach span (null for the heads, who
-   * reach every class) so the page can lead with their own.
+   * The pupil's (and the family's) cut: their grade, and only the subjects
+   * their class's timetable teaches — a Grade 8 pupil whose class has no
+   * Mathematics lesson is not shown the Mathematics quizzes. A class with
+   * no timetable yet falls back to the grade's whole shelf: an unpublished
+   * timetable is not a decision that the class studies nothing.
+   */
+  async forPupil(
+    grade: number | null,
+    subjects: Iterable<unknown>,
+  ): Promise<CurriculumResourceView[]> {
+    const rows = await this.rowsForGrade(grade);
+    const taught = [...subjects].map((s) => String(s ?? '').trim()).filter(Boolean);
+    const cut = taught.length
+      ? rows.filter((r) => taught.some((s) => subjectMatches(s, r.subject)))
+      : rows;
+    return cut.map((r) => this.view(r));
+  }
+
+  /**
+   * A member of staff's cut, with the teachers' links.
+   *
+   * The heads (whoever is not held to a class scope) read the whole shelf.
+   * A teacher reads ONLY the subjects and grades their timetable puts them
+   * in front of — Ahmed, who takes Mathematics in 7th and 8th, sees the
+   * Grade 7 and 8 Mathematics shelves and nothing of English; change his
+   * timetable and his shelf changes with it. `scope` names those pairs so
+   * the page can say what decided the cut; null = unscoped.
    */
   async forStaff(branchId: number, actor: ScopeActor) {
     const [rows, reach] = await Promise.all([
@@ -137,12 +263,24 @@ export class SchoolCurriculumService {
         ? this.reachSvc.resolve(branchId, actor)
         : Promise.resolve(null),
     ]);
-    const grades =
-      !reach || reach.head || !reach.classes
-        ? null
-        : gradesOfClasses(reach.classes);
+    if (!reach || reach.head || !reach.classes) {
+      return {
+        items: rows.map((r) => this.view(r, { teacher: true })),
+        scope: null,
+        grades: null,
+      };
+    }
+    const taught = gradeSubjectsOfPairs(reach.pairs ?? []);
+    const grades = [...taught.keys()];
     return {
-      items: rows.map((r) => this.view(r, { teacher: true })),
+      items: cutToTaught(rows, taught).map((r) => this.view(r, { teacher: true })),
+      scope: {
+        grades,
+        pairs: [...taught.entries()].flatMap(([grade, subjects]) =>
+          subjects.map((subject) => ({ grade, subject })),
+        ),
+        hasTimetable: (reach.pairs?.size ?? 0) > 0,
+      },
       grades,
     };
   }
