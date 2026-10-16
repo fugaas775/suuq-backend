@@ -25,6 +25,12 @@ import { SchoolMessageService } from './school-message.service';
 import { SchoolStaffReachService } from './school-staff-reach.service';
 import { SchoolStatementCode } from './entities/school-statement-code.entity';
 import { SchoolStudentAccount } from './entities/school-student-account.entity';
+import { SchoolCurriculumResource } from './entities/school-curriculum-resource.entity';
+import {
+  AdminSchoolCurriculumController,
+  SchoolCurriculumController,
+} from './school-curriculum.controller';
+import { SchoolCurriculumService } from './school-curriculum.service';
 import { SchoolStudentAccountController } from './school-student-account.controller';
 import { SchoolStudentAccountService } from './school-student-account.service';
 import { SchoolStudentPortalController } from './school-student-portal.controller';
@@ -58,6 +64,8 @@ import { SchoolGuardianService } from './school-guardian.service';
       SchoolStatementCode,
       // The pupils' own logins — one per record.
       SchoolStudentAccount,
+      // The platform's curriculum shelf — textbooks, slides, item banks.
+      SchoolCurriculumResource,
       // Read-only: the pupils' records, the receipts settled against them,
       // the class registry (for the class teacher), the books out.
       PosSuspendedCart,
@@ -80,6 +88,8 @@ import { SchoolGuardianService } from './school-guardian.service';
     SchoolGuardianPortalController,
     SchoolStudentAccountController,
     SchoolStudentPortalController,
+    SchoolCurriculumController,
+    AdminSchoolCurriculumController,
   ],
   providers: [
     SchoolGuardianService,
@@ -88,6 +98,7 @@ import { SchoolGuardianService } from './school-guardian.service';
     SchoolMessageService,
     SchoolStatementCodeService,
     SchoolStudentAccountService,
+    SchoolCurriculumService,
     PosBranchAccessGuard,
     RolesGuard,
   ],
@@ -97,6 +108,7 @@ import { SchoolGuardianService } from './school-guardian.service';
     SchoolMessageService,
     SchoolStatementCodeService,
     SchoolStudentAccountService,
+    SchoolCurriculumService,
   ],
 })
 export class SchoolGuardianModule {}

@@ -4,6 +4,7 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  Optional,
   UnauthorizedException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -58,6 +59,10 @@ import {
   suggestGuardianUsername,
 } from './school-guardian.util';
 import { SchoolHomeworkService } from './school-homework.service';
+import {
+  SchoolCurriculumService,
+  gradeNumberOf,
+} from './school-curriculum.service';
 import { SchoolMessageService } from './school-message.service';
 import { SchoolStatementCodeService } from './school-statement-code.service';
 
@@ -108,6 +113,8 @@ export class SchoolGuardianService {
     private readonly homework: SchoolHomeworkService,
     private readonly messages: SchoolMessageService,
     private readonly statementCodes: SchoolStatementCodeService,
+    // Optional so the spec's hand-built service needs no shelf.
+    @Optional() private readonly curriculum?: SchoolCurriculumService,
   ) {}
 
   // ── shared reads ─────────────────────────────────────────────────────────
@@ -1125,7 +1132,13 @@ export class SchoolGuardianService {
     // pupils the way the office's result sheet ranks them. The classmates'
     // records are read here and never handed over: only this child's place
     // and the size of the field leave the server.
-    const [homework, classmates, verification] = await Promise.all([
+    // The pupil's grade — the registry's word for the class first, else the
+    // leading number of the class code — cuts the platform's curriculum
+    // shelf (textbooks, slides, item banks) to what this pupil studies. The
+    // teachers' links on that shelf stay on the server.
+    const grade =
+      gradeNumberOf(classRow?.gradeCode) ?? gradeNumberOf(p.classCode);
+    const [homework, classmates, verification, curriculum] = await Promise.all([
       wanted
         ? this.homework.forClasses(branchId, [wanted])
         : Promise.resolve([]),
@@ -1136,6 +1149,9 @@ export class SchoolGuardianService {
       // for good, so every statement the family ever prints scans to the
       // record as it stands.
       this.statementCodes.codeFor(branchId, folioId),
+      this.curriculum
+        ? this.curriculum.forGrade(grade)
+        : Promise.resolve([]),
     ]);
     const field = classmates.filter((r) => {
       const q = pupilOf(r);
@@ -1160,10 +1176,12 @@ export class SchoolGuardianService {
       homework,
       rank,
       verification,
+      curriculum,
       pupil: {
         ...p,
         className: classRow?.name ?? null,
         gradeCode: classRow?.gradeCode ?? null,
+        grade,
         section: classRow?.section ?? null,
         money: folioMoney(row),
       },
