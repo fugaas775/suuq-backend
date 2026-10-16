@@ -313,9 +313,14 @@ export class BranchStaffController {
   @Get('linkable')
   async findLinkable(
     @Param('branchId', ParseIntPipe) branchId: number,
+    @Query('q') q: string | undefined,
     @Req() req: AuthenticatedRequest,
   ) {
-    return this.branchStaffService.findLinkableStaff(branchId, req.user);
+    return this.branchStaffService.searchLinkableStaff(
+      branchId,
+      req.user,
+      q ?? '',
+    );
   }
 
   /** Gives one of those existing logins access to this branch too. */

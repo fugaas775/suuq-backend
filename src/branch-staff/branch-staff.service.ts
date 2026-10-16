@@ -1597,6 +1597,35 @@ export class BranchStaffService {
    * userId, this one never does.
    */
   /**
+   * What the Create Login form's "Existing account" search reads. Searched by
+   * NAME and never listed: nothing comes back until two letters are typed,
+   * at most ten matches, and no total — the roster of the owner's other
+   * branches is not something to browse. Matches the display name, or the
+   * username for an account that has no display name.
+   */
+  async searchLinkableStaff(
+    branchId: number,
+    actor: { id?: number | null; roles?: string[] },
+    query: string,
+  ) {
+    const needle = String(query || '')
+      .trim()
+      .toLowerCase();
+    if (needle.length < 2) {
+      await this.assertCanManageBranchStaff(actor, branchId);
+      return [];
+    }
+    const linkable = await this.findLinkableStaff(branchId, actor);
+    return linkable
+      .filter((entry) =>
+        (entry.displayName || entry.username || '')
+          .toLowerCase()
+          .includes(needle),
+      )
+      .slice(0, 10);
+  }
+
+  /**
    * The bare assign route takes a userId and nothing else, so on its own it
    * would let anyone who runs a branch attach ANY account in the system —
    * another business's cashier, a shopper — to it. A platform admin may; a

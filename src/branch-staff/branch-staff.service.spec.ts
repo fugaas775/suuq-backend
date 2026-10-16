@@ -349,6 +349,21 @@ describe('BranchStaffService', () => {
       expect(assignmentsRepository.save).not.toHaveBeenCalled();
     });
 
+    it('searches by name only, and returns nothing before two letters', async () => {
+      await expect(service.searchLinkableStaff(8, owner, '')).resolves.toEqual(
+        [],
+      );
+      await expect(service.searchLinkableStaff(8, owner, 'h')).resolves.toEqual(
+        [],
+      );
+      const found = await service.searchLinkableStaff(8, owner, 'hotel man');
+      expect(found.map((entry) => entry.userId)).toEqual([51]);
+      // A branch name is not a person's name.
+      await expect(
+        service.searchLinkableStaff(8, owner, 'muntaha'),
+      ).resolves.toEqual([]);
+    });
+
     describe('the bare assign route', () => {
       it("refuses a stranger to the owner's branches", async () => {
         assignmentsRepository.findOne.mockResolvedValue(null);
