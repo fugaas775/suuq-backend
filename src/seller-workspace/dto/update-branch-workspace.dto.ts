@@ -4,7 +4,6 @@ import {
   ArrayMaxSize,
   IsArray,
   IsBoolean,
-  IsEmail,
   IsInt,
   IsNumber,
   IsOptional,
@@ -14,9 +13,11 @@ import {
   MaxLength,
   Min,
   MinLength,
+  Validate,
   ValidateIf,
   ValidateNested,
 } from 'class-validator';
+import { NotificationEmailListConstraint } from '../../branches/notification-emails';
 
 function trimString(value: unknown) {
   return typeof value === 'string' ? value.trim() : value;
@@ -271,15 +272,17 @@ export class UpdateBranchWorkspaceDto {
   @ApiPropertyOptional({
     description:
       "Where this branch's own operational email goes — enrolment applications " +
-      'today. Null clears it and the owner’s account address is used instead. ' +
+      'today. One address or several, comma-separated. Null clears it and the ' +
+      'owner’s account address is used instead. ' +
       'Not published anywhere: this is where the platform writes TO the branch.',
     nullable: true,
-    example: 'office@school.example',
+    example: 'office@school.example, head@school.example',
   })
   @Transform(({ value }) => trimString(value))
   @IsOptional()
   @ValidateIf((_, value) => value !== null && value !== '')
-  @IsEmail({}, { message: 'notificationEmail must be a valid email address' })
+  // One address or several, comma-separated: the office and the head.
+  @Validate(NotificationEmailListConstraint)
   @MaxLength(255)
   notificationEmail?: string | null;
 

@@ -1,3 +1,4 @@
+import { formatNotificationEmails } from '../branches/notification-emails';
 import {
   BadRequestException,
   ConflictException,
@@ -2462,7 +2463,10 @@ export class SellerWorkspaceService {
     // Empty string clears it back to "email the owner's account" rather than
     // storing an address nothing can deliver to.
     if (dto.notificationEmail !== undefined) {
-      updates.notificationEmail = dto.notificationEmail?.trim() || null;
+      // Stored tidy — "a@x.com, b@y.com" — whatever separators were typed.
+      updates.notificationEmail = formatNotificationEmails(
+        dto.notificationEmail,
+      );
     }
     if (dto.taxEnabled !== undefined) updates.taxEnabled = dto.taxEnabled;
     if (dto.taxRate !== undefined) updates.taxRate = dto.taxRate;

@@ -610,6 +610,19 @@ describe('emailing a school about an application', () => {
     ]);
   });
 
+  it('tells every desk address when the branch lists several', async () => {
+    const { service, send } = buildService({
+      notificationEmail: 'office@smag.example, bursar@smag.example',
+    });
+    await service.placeOrder(APPLICATION);
+    await settle();
+    expect(send.mock.calls[0][0].to).toEqual([
+      'office@smag.example',
+      'bursar@smag.example',
+      'head@smag.example',
+    ]);
+  });
+
   it('sends one email when the desk address IS the owner’s', async () => {
     const { service, send } = buildService({
       notificationEmail: 'HEAD@smag.example',

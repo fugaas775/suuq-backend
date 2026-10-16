@@ -1,3 +1,4 @@
+import { parseNotificationEmails } from '../branches/notification-emails';
 import {
   BadRequestException,
   Injectable,
@@ -228,7 +229,11 @@ export class ConsumerOrderService {
        * was told. Deduped case-insensitively so one address set to the other is
        * one email rather than two identical ones.
        */
-      const recipients = [withOwner?.notificationEmail, withOwner?.owner?.email]
+      // The branch's address may be several, comma-separated.
+      const recipients = [
+        ...parseNotificationEmails(withOwner?.notificationEmail),
+        withOwner?.owner?.email,
+      ]
         .map((address) => String(address ?? '').trim())
         .filter(Boolean);
       const to = [
