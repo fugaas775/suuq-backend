@@ -1608,7 +1608,11 @@ export class BranchStaffService {
     actor: { id?: number | null; roles?: string[] },
     query: string,
   ) {
+    // The results show "@username", so people type the "@" back — it is
+    // never part of a name.
     const needle = String(query || '')
+      .trim()
+      .replace(/^@+/, '')
       .trim()
       .toLowerCase();
     if (needle.length < 2) {

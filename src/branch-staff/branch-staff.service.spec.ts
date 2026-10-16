@@ -358,6 +358,11 @@ describe('BranchStaffService', () => {
       );
       const found = await service.searchLinkableStaff(8, owner, 'hotel man');
       expect(found.map((entry) => entry.userId)).toEqual([51]);
+      const typedAt = await service.searchLinkableStaff(8, owner, '@hot');
+      expect(typedAt.map((entry) => entry.userId)).toEqual([51]);
+      await expect(
+        service.searchLinkableStaff(8, owner, '@h'),
+      ).resolves.toEqual([]);
       // A branch name is not a person's name.
       await expect(
         service.searchLinkableStaff(8, owner, 'muntaha'),
