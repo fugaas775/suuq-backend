@@ -1596,6 +1596,52 @@ export class BranchStaffService {
    * findLinkableStaff offers can be linked — the bare assign route takes any
    * userId, this one never does.
    */
+  /**
+   * The bare assign route takes a userId and nothing else, so on its own it
+   * would let anyone who runs a branch attach ANY account in the system —
+   * another business's cashier, a shopper — to it. A platform admin may; a
+   * branch owner or manager may only touch someone already on this branch
+   * (re-activating, changing their role) or someone findLinkableStaff offers.
+   * Every refusal reads the same, so the route cannot tell a caller which
+   * user ids exist.
+   */
+  async assertCanAssignUserToBranch(
+    actor: { id?: number | null; roles?: string[] },
+    branchId: number,
+    userId: number,
+  ) {
+    await this.assertCanManageBranchStaff(actor, branchId);
+    const roles = Array.isArray(actor?.roles)
+      ? actor.roles.map((role) => String(role || '').toUpperCase())
+      : [];
+    if (roles.includes('SUPER_ADMIN') || roles.includes('ADMIN')) {
+      return;
+    }
+    const onThisBranch = await this.assignmentsRepository.findOne({
+      where: { branchId, userId },
+      select: { id: true },
+    });
+    if (onThisBranch) {
+      return;
+    }
+    const linkable = await this.findLinkableStaff(branchId, actor);
+    if (linkable.some((entry) => entry.userId === Number(userId))) {
+      return;
+    }
+    throw this.notLinkableError();
+  }
+
+  private notLinkableError() {
+    return new BadRequestException({
+      error: {
+        code: 'POS_BRANCH_STAFF_NOT_LINKABLE',
+        message:
+          'This account cannot be added here. It may already be on this branch, or it does not work at any of your other branches.',
+        details: { field: 'userId' },
+      },
+    });
+  }
+
   async linkExistingStaff(
     branchId: number,
     dto: LinkExistingBranchStaffDto,
@@ -1605,14 +1651,7 @@ export class BranchStaffService {
     const userId = Number(dto.userId);
     const candidate = linkable.find((entry) => entry.userId === userId);
     if (!candidate) {
-      throw new BadRequestException({
-        error: {
-          code: 'POS_BRANCH_STAFF_NOT_LINKABLE',
-          message:
-            'This account cannot be added here. It may already be on this branch, or it does not work at any of your other branches.',
-          details: { field: 'userId' },
-        },
-      });
+      throw this.notLinkableError();
     }
 
     const laneCode = dto.posExperienceProfileCode?.trim().toUpperCase() || null;

@@ -349,6 +349,40 @@ describe('BranchStaffService', () => {
       expect(assignmentsRepository.save).not.toHaveBeenCalled();
     });
 
+    describe('the bare assign route', () => {
+      it("refuses a stranger to the owner's branches", async () => {
+        assignmentsRepository.findOne.mockResolvedValue(null);
+        await expect(
+          service.assertCanAssignUserToBranch(owner, 8, 4242),
+        ).rejects.toBeInstanceOf(BadRequestException);
+      });
+
+      it('allows someone from a sibling branch', async () => {
+        assignmentsRepository.findOne.mockResolvedValue(null);
+        await expect(
+          service.assertCanAssignUserToBranch(owner, 8, 51),
+        ).resolves.toBeUndefined();
+      });
+
+      it('allows someone already on this branch (re-activate, change role)', async () => {
+        assignmentsRepository.findOne.mockResolvedValue({ id: 70 });
+        await expect(
+          service.assertCanAssignUserToBranch(owner, 8, 4242),
+        ).resolves.toBeUndefined();
+      });
+
+      it('leaves a platform admin unrestricted', async () => {
+        await expect(
+          service.assertCanAssignUserToBranch(
+            { id: 1, roles: ['SUPER_ADMIN'] },
+            8,
+            4242,
+          ),
+        ).resolves.toBeUndefined();
+        expect(assignmentsRepository.findOne).not.toHaveBeenCalled();
+      });
+    });
+
     it("refuses a caller who cannot manage this branch's staff", async () => {
       await expect(
         service.findLinkableStaff(8, { id: 1, roles: [] }),

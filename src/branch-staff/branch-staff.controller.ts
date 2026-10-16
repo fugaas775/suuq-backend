@@ -164,9 +164,10 @@ export class BranchStaffController {
     @Req() req: AuthenticatedRequest,
   ) {
     const resolvedBranchId = Number(branchId);
-    await this.branchStaffService.assertCanManageBranchStaff(
+    await this.branchStaffService.assertCanAssignUserToBranch(
       req.user,
       resolvedBranchId,
+      Number(dto.userId),
     );
 
     const assignment = await this.branchStaffService.assign(
