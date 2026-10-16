@@ -363,6 +363,12 @@ describe('BranchStaffService', () => {
       await expect(
         service.searchLinkableStaff(8, owner, '@h'),
       ).resolves.toEqual([]);
+      // From the start of a word only: "otel" is inside the name, not a word of it.
+      await expect(
+        service.searchLinkableStaff(8, owner, 'otel'),
+      ).resolves.toEqual([]);
+      const secondWord = await service.searchLinkableStaff(8, owner, 'man');
+      expect(secondWord.map((entry) => entry.userId)).toEqual([51]);
       // A branch name is not a person's name.
       await expect(
         service.searchLinkableStaff(8, owner, 'muntaha'),

@@ -1620,11 +1620,17 @@ export class BranchStaffService {
       return [];
     }
     const linkable = await this.findLinkableStaff(branchId, actor);
+    // From the start of a word of the name: "ub" finds Ubax, not Mubashir.
+    const words = (name: string) =>
+      ' ' +
+      name
+        .toLowerCase()
+        .replace(/[._-]+/g, ' ')
+        .replace(/\s+/g, ' ');
+    const wanted = ' ' + needle.replace(/[._-]+/g, ' ').replace(/\s+/g, ' ');
     return linkable
       .filter((entry) =>
-        (entry.displayName || entry.username || '')
-          .toLowerCase()
-          .includes(needle),
+        words(entry.displayName || entry.username || '').includes(wanted),
       )
       .slice(0, 10);
   }
