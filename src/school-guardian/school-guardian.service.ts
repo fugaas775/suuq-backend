@@ -112,8 +112,8 @@ export class SchoolGuardianService {
 
   // ── shared reads ─────────────────────────────────────────────────────────
 
-  /** Every SUSPENDED SCHOOL pupil record on the branch (leavers included). */
-  private async pupilRecords(branchId: number): Promise<PosSuspendedCart[]> {
+  /** Every SUSPENDED SCHOOL pupil record on the branch (leavers included). Public: the pupils' own logins read the roll through it too. */
+  async pupilRecords(branchId: number): Promise<PosSuspendedCart[]> {
     const rows = await this.carts
       .createQueryBuilder('c')
       .where('c."branchId" = :branchId', { branchId })
@@ -703,9 +703,13 @@ export class SchoolGuardianService {
     return { status: 'REMOVED', id };
   }
 
-  /** The live notices a family sees: the whole school's, and their children's classes'. */
-  private async noticesFor(
-    held: { guardian: SchoolGuardian; branch: Branch }[],
+  /**
+   * The live notices a family sees: the whole school's, and their children's
+   * classes'. Public, keyed by branch alone: a pupil's own login reads the
+   * notices that reach their class through the same door.
+   */
+  async noticesFor(
+    held: { branch: Branch }[],
     classesByBranch: Map<number, Set<string>>,
   ) {
     if (!held.length) return [];
@@ -770,7 +774,7 @@ export class SchoolGuardianService {
       .map((r) => ({ guardian: r, branch: byId.get(Number(r.branchId)) }));
   }
 
-  private schoolView(branch: Branch) {
+  schoolView(branch: Branch) {
     return {
       branchId: Number(branch.id),
       name: branch.name,
@@ -987,6 +991,32 @@ export class SchoolGuardianService {
     const branchId = Number(branch.id);
     const row = await this.carts.findOne({ where: { id: folioId, branchId } });
     if (!row) throw new NotFoundException('No such pupil on this login.');
+    const [dossier, unread] = await Promise.all([
+      this.pupilDossier(branch, row),
+      this.messages.unreadByFolio([Number(held.guardian.id)]),
+    ]);
+    return {
+      ...dossier,
+      unreadMessages: unread.get(folioId) ?? 0,
+      guardian: {
+        displayName: held.guardian.displayName ?? null,
+        relationship: held.guardian.relationship ?? null,
+      },
+    };
+  }
+
+  /**
+   * Everything the school holds about one pupil that the pupil's own side
+   * may read — the family's page and the pupil's page are the same dossier:
+   * the record (the FE's statement and money helpers read it as the office's
+   * copy), the receipts settled against it, the day register, the books out,
+   * the class's week, its homework and the pupil's place in the class. Every
+   * read is filtered to this pupil in the query, never in the response. The
+   * caller has already established that its user may read THIS row.
+   */
+  async pupilDossier(branch: Branch, row: PosSuspendedCart) {
+    const branchId = Number(branch.id);
+    const folioId = Number(row.id);
     const p = pupilOf(row);
 
     const [
@@ -1090,16 +1120,15 @@ export class SchoolGuardianService {
 
     const wanted = fold(p.classCode);
 
-    // Homework set for the class, the family's unread count, and where the
-    // child stands in the class this term — ranked over the class's live
+    // Homework set for the class, and where the pupil stands in the class
+    // this term — ranked over the class's live
     // pupils the way the office's result sheet ranks them. The classmates'
     // records are read here and never handed over: only this child's place
     // and the size of the field leave the server.
-    const [homework, unread, classmates, verification] = await Promise.all([
+    const [homework, classmates, verification] = await Promise.all([
       wanted
         ? this.homework.forClasses(branchId, [wanted])
         : Promise.resolve([]),
-      this.messages.unreadByFolio([Number(held.guardian.id)]),
       wanted
         ? this.pupilRecords(branchId)
         : Promise.resolve([] as PosSuspendedCart[]),
@@ -1129,13 +1158,8 @@ export class SchoolGuardianService {
     return {
       school: this.schoolView(branch),
       homework,
-      unreadMessages: unread.get(folioId) ?? 0,
       rank,
       verification,
-      guardian: {
-        displayName: held.guardian.displayName ?? null,
-        relationship: held.guardian.relationship ?? null,
-      },
       pupil: {
         ...p,
         className: classRow?.name ?? null,

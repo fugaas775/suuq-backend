@@ -24,6 +24,10 @@ import { SchoolMessageController } from './school-message.controller';
 import { SchoolMessageService } from './school-message.service';
 import { SchoolStaffReachService } from './school-staff-reach.service';
 import { SchoolStatementCode } from './entities/school-statement-code.entity';
+import { SchoolStudentAccount } from './entities/school-student-account.entity';
+import { SchoolStudentAccountController } from './school-student-account.controller';
+import { SchoolStudentAccountService } from './school-student-account.service';
+import { SchoolStudentPortalController } from './school-student-portal.controller';
 import { SchoolStatementCodeService } from './school-statement-code.service';
 import { SchoolGuardianPortalController } from './school-guardian-portal.controller';
 import {
@@ -33,7 +37,7 @@ import {
 import { SchoolGuardianService } from './school-guardian.service';
 
 /**
- * Parents' logins for the SCHOOL format.
+ * Parents' and pupils' logins for the SCHOOL format.
  *
  * Its own module rather than a corner of SchoolModule because the parent's
  * page reads the day register (AttendanceModule, which itself imports
@@ -52,6 +56,8 @@ import { SchoolGuardianService } from './school-guardian.service';
       SchoolMessage,
       // The fee statement's QR token, one per pupil.
       SchoolStatementCode,
+      // The pupils' own logins — one per record.
+      SchoolStudentAccount,
       // Read-only: the pupils' records, the receipts settled against them,
       // the class registry (for the class teacher), the books out.
       PosSuspendedCart,
@@ -72,6 +78,8 @@ import { SchoolGuardianService } from './school-guardian.service';
     SchoolHomeworkController,
     SchoolMessageController,
     SchoolGuardianPortalController,
+    SchoolStudentAccountController,
+    SchoolStudentPortalController,
   ],
   providers: [
     SchoolGuardianService,
@@ -79,6 +87,7 @@ import { SchoolGuardianService } from './school-guardian.service';
     SchoolHomeworkService,
     SchoolMessageService,
     SchoolStatementCodeService,
+    SchoolStudentAccountService,
     PosBranchAccessGuard,
     RolesGuard,
   ],
@@ -87,6 +96,7 @@ import { SchoolGuardianService } from './school-guardian.service';
     SchoolHomeworkService,
     SchoolMessageService,
     SchoolStatementCodeService,
+    SchoolStudentAccountService,
   ],
 })
 export class SchoolGuardianModule {}

@@ -15,6 +15,8 @@ import {
   schoolTimeZone,
   withoutRecorder,
   suggestGuardianUsername,
+  suggestStudentUsername,
+  generateIssuedPassword,
   usernameFromName,
 } from './school-guardian.util';
 
@@ -381,5 +383,37 @@ describe('class position — rankClassByTerm (a port of the office’s result sh
       'Africa/Nairobi',
     );
     expect(schoolTimeZone({ timezone: '', country: 'KE' })).toBe('UTC');
+  });
+});
+
+describe('suggestStudentUsername', () => {
+  it('folds the admission number, else the name, else nothing', () => {
+    expect(
+      suggestStudentUsername({
+        admissionNo: 'SMAG-0127',
+        name: 'Faadumo Cali',
+      }),
+    ).toBe('smag-0127');
+    expect(
+      suggestStudentUsername({ admissionNo: ' SMAQ/2019/44 ', name: 'x' }),
+    ).toBe('smaq-2019-44');
+    expect(
+      suggestStudentUsername({
+        admissionNo: '--7--',
+        name: 'Hodan Nuur Warsame',
+      }),
+    ).toBe('hodan.warsame');
+    expect(suggestStudentUsername({ admissionNo: '', name: 'Al' })).toBe('');
+    expect(suggestStudentUsername({ admissionNo: '12', name: '' })).toBe('');
+  });
+});
+
+describe('generateIssuedPassword', () => {
+  it('is eight unambiguous characters, different each time', () => {
+    const a = generateIssuedPassword();
+    const b = generateIssuedPassword();
+    expect(a).toMatch(/^[abcdefghjkmnpqrstuvwxyz23456789]{8}$/);
+    expect(a).not.toBe(b);
+    expect(generateIssuedPassword(12)).toHaveLength(12);
   });
 });

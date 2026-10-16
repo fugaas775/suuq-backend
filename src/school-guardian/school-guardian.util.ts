@@ -454,3 +454,45 @@ export function schoolTimeZone(branch: {
   if (country === 'ET' || country === 'ETHIOPIA') return 'Africa/Addis_Ababa';
   return 'UTC';
 }
+
+/* ── pupils' own logins ──────────────────────────────────────────────────── */
+
+/**
+ * The username the office is offered for a pupil: the admission number
+ * (`SMAG-0127` → `smag-0127` — what is printed on every card the school
+ * already hands them), otherwise their name. May still collide; the caller
+ * de-duplicates.
+ */
+export function suggestStudentUsername({
+  admissionNo,
+  name,
+}: {
+  admissionNo?: unknown;
+  name?: unknown;
+}): string {
+  const fromNo = text(admissionNo)
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .replace(/^[._-]+|[._-]+$/g, '')
+    .replace(/[._-]{2,}/g, '-');
+  if (fromNo.length >= 3 && /^[a-z0-9]/.test(fromNo)) return fromNo;
+  const byName = usernameFromName(name);
+  return byName.length >= 3 ? byName : '';
+}
+
+// No 0/O, 1/l/I: a pupil types this off a printed card. The same alphabet
+// the office desk draws from in the browser.
+const ISSUED_PASSWORD_ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789';
+
+/** Eight unambiguous lowercase letters and digits, e.g. "k7mp3wqa". */
+export function generateIssuedPassword(length = 8): string {
+  // Dynamic require keeps this file free of a top-level node import for the
+  // pure helpers' sake; `crypto` is always there on Node.
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { randomInt } = require('crypto') as typeof import('crypto');
+  let out = '';
+  for (let i = 0; i < length; i += 1) {
+    out += ISSUED_PASSWORD_ALPHABET[randomInt(ISSUED_PASSWORD_ALPHABET.length)];
+  }
+  return out;
+}
