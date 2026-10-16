@@ -30,6 +30,7 @@ import {
 import { ChangeStaffPasswordDto } from './dto/change-staff-password.dto';
 import { CreateBranchStaffManualAccountDto } from './dto/create-branch-staff-manual-account.dto';
 import { InviteBranchStaffDto } from './dto/invite-branch-staff.dto';
+import { LinkExistingBranchStaffDto } from './dto/link-existing-branch-staff.dto';
 import { SetStaffUnlockPinDto } from './dto/set-staff-unlock-pin.dto';
 import { UpdateBranchStaffAssignmentDto } from './dto/update-branch-staff-assignment.dto';
 import { BranchStaffAssignment } from './entities/branch-staff-assignment.entity';
@@ -301,6 +302,37 @@ export class BranchStaffController {
       },
     );
 
+    return this.serializeAssignment(assignment);
+  }
+
+  /** Logins at the owner's other branches that could also work here. */
+  @ApiForbiddenResponse({
+    description: 'Branch staff management access was denied.',
+  })
+  @Get('linkable')
+  async findLinkable(
+    @Param('branchId', ParseIntPipe) branchId: number,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.branchStaffService.findLinkableStaff(branchId, req.user);
+  }
+
+  /** Gives one of those existing logins access to this branch too. */
+  @ApiCreatedResponse({ type: BranchStaffAssignmentResponseDto })
+  @ApiForbiddenResponse({
+    description: 'Branch staff management access was denied.',
+  })
+  @Post('link-existing')
+  async linkExisting(
+    @Param('branchId', ParseIntPipe) branchId: number,
+    @Body() dto: LinkExistingBranchStaffDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const assignment = await this.branchStaffService.linkExistingStaff(
+      branchId,
+      dto,
+      req.user,
+    );
     return this.serializeAssignment(assignment);
   }
 

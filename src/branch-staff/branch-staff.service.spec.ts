@@ -1,3 +1,4 @@
+import { BadRequestException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { AuditService } from '../audit/audit.service';
@@ -246,6 +247,113 @@ describe('BranchStaffService', () => {
         isActive: true,
       }),
     );
+  });
+
+  describe('linking an existing login to a sibling branch', () => {
+    const owner = { id: 900, roles: [] as string[] };
+    const hotelManagerRow = {
+      id: 11,
+      branchId: 7,
+      userId: 51,
+      role: BranchStaffRole.MANAGER,
+      posExperienceProfileCode: null,
+      isActive: true,
+      user: {
+        id: 51,
+        displayName: 'Hotel Manager',
+        posUsername: 'hotel.manager',
+        email: 'pos.m.hotel.manager@sys.internal',
+        authMode: 'MANUAL',
+        isActive: true,
+      },
+      branch: { id: 7, name: 'Muntaha Hotel', isActive: true },
+    };
+
+    beforeEach(() => {
+      // assertCanManageBranchStaff: the caller owns the cafeteria (#8).
+      branchesRepository.findOne.mockImplementation(async ({ where }) =>
+        where.id === 8 && (where.ownerId === undefined || where.ownerId === 900)
+          ? { id: 8, ownerId: 900 }
+          : null,
+      );
+      branchesRepository.find.mockResolvedValue([{ id: 7 }, { id: 8 }]);
+      assignmentsRepository.find.mockImplementation(async ({ where }) => {
+        if (where.userId === 900) return [];
+        if (where.branchId === 8) return [];
+        return [hotelManagerRow];
+      });
+    });
+
+    it("offers staff of the owner's other branches, hiding the internal email", async () => {
+      const result = await service.findLinkableStaff(8, owner);
+      expect(result).toEqual([
+        {
+          userId: 51,
+          displayName: 'Hotel Manager',
+          username: 'hotel.manager',
+          email: null,
+          authMode: 'MANUAL',
+          branches: [
+            {
+              branchId: 7,
+              branchName: 'Muntaha Hotel',
+              role: BranchStaffRole.MANAGER,
+              posExperienceProfileCode: null,
+            },
+          ],
+        },
+      ]);
+    });
+
+    it('leaves out someone already active on this branch', async () => {
+      assignmentsRepository.find.mockImplementation(async ({ where }) => {
+        if (where.userId === 900) return [];
+        if (where.branchId === 8) return [{ id: 12, userId: 51 }];
+        return [hotelManagerRow];
+      });
+      await expect(service.findLinkableStaff(8, owner)).resolves.toEqual([]);
+    });
+
+    it("adds a second assignment for the same user with this branch's role and lane", async () => {
+      assignmentsRepository.findOne.mockResolvedValue(null);
+      await service.linkExistingStaff(
+        8,
+        {
+          userId: 51,
+          role: BranchStaffRole.OPERATOR,
+          posExperienceProfileCode: 'QSR_CASHIER',
+          permissions: ['OPEN_REGISTER'] as any,
+        },
+        owner,
+      );
+      expect(assignmentsRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          branchId: 8,
+          userId: 51,
+          role: BranchStaffRole.OPERATOR,
+          posExperienceProfileCode: 'QSR_CASHIER',
+          permissions: ['OPEN_REGISTER'],
+          isActive: true,
+        }),
+      );
+    });
+
+    it("refuses an account that works at none of the owner's branches", async () => {
+      await expect(
+        service.linkExistingStaff(
+          8,
+          { userId: 4242, role: BranchStaffRole.OPERATOR },
+          owner,
+        ),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(assignmentsRepository.save).not.toHaveBeenCalled();
+    });
+
+    it("refuses a caller who cannot manage this branch's staff", async () => {
+      await expect(
+        service.findLinkableStaff(8, { id: 1, roles: [] }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
   });
 
   it('deactivates an active branch assignment when unassigning a POS user', async () => {

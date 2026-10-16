@@ -13,6 +13,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import { AssignBranchStaffDto } from './dto/assign-branch-staff.dto';
 import { CreateBranchStaffManualAccountDto } from './dto/create-branch-staff-manual-account.dto';
+import { LinkExistingBranchStaffDto } from './dto/link-existing-branch-staff.dto';
 import { InviteBranchStaffDto } from './dto/invite-branch-staff.dto';
 import {
   BranchStaffAssignment,
@@ -1455,6 +1456,214 @@ export class BranchStaffService {
         `Failed to queue POS branch invite email for ${params.email}: ${message}`,
       );
     }
+  }
+
+  /**
+   * The accounts that could be given access to this branch without minting a
+   * new login: people already active at one of the same owner's other
+   * branches, or at a branch the caller runs. Muntaha Hotel's manager shows
+   * up on Muntaha Cafeteria's list; nobody from another business ever does.
+   * Anyone already active here is left out — they need an edit, not a link.
+   */
+  async findLinkableStaff(
+    branchId: number,
+    actor: { id?: number | null; roles?: string[] },
+  ) {
+    await this.assertCanManageBranchStaff(actor, branchId);
+
+    const target = await this.branchesRepository.findOne({
+      where: { id: branchId, isActive: true },
+      select: { id: true, ownerId: true },
+    });
+    if (!target) {
+      throw new NotFoundException('Branch not found.');
+    }
+
+    const sourceBranchIds = new Set<number>();
+    const actorId = Number(actor?.id) || null;
+    const [siblingBranches, actorOwnedBranches, actorManagerRows] =
+      await Promise.all([
+        target.ownerId != null
+          ? this.branchesRepository.find({
+              where: { ownerId: target.ownerId, isActive: true },
+              select: { id: true },
+            })
+          : Promise.resolve([] as Branch[]),
+        actorId
+          ? this.branchesRepository.find({
+              where: { ownerId: actorId, isActive: true },
+              select: { id: true },
+            })
+          : Promise.resolve([] as Branch[]),
+        actorId
+          ? this.assignmentsRepository.find({
+              where: {
+                userId: actorId,
+                isActive: true,
+                role: BranchStaffRole.MANAGER,
+              },
+              select: { id: true, branchId: true, capabilities: true },
+            })
+          : Promise.resolve([] as BranchStaffAssignment[]),
+      ]);
+    for (const b of [...siblingBranches, ...actorOwnedBranches]) {
+      sourceBranchIds.add(Number(b.id));
+    }
+    for (const row of actorManagerRows) {
+      if (
+        Array.isArray(row.capabilities) &&
+        row.capabilities.includes(BranchStaffCapability.MANAGE_BRANCH_STAFF)
+      ) {
+        sourceBranchIds.add(Number(row.branchId));
+      }
+    }
+    sourceBranchIds.delete(branchId);
+    if (sourceBranchIds.size === 0) {
+      return [];
+    }
+
+    const [sourceRows, hereRows] = await Promise.all([
+      this.assignmentsRepository.find({
+        where: { branchId: In([...sourceBranchIds]), isActive: true },
+        relations: { user: true, branch: true },
+        order: { createdAt: 'ASC' },
+      }),
+      this.assignmentsRepository.find({
+        where: { branchId, isActive: true },
+        select: { id: true, userId: true },
+      }),
+    ]);
+    const alreadyHere = new Set(hereRows.map((row) => Number(row.userId)));
+
+    const byUser = new Map<
+      number,
+      {
+        userId: number;
+        displayName: string | null;
+        username: string | null;
+        email: string | null;
+        authMode: string | null;
+        branches: {
+          branchId: number;
+          branchName: string;
+          role: BranchStaffRole;
+          posExperienceProfileCode: string | null;
+        }[];
+      }
+    >();
+    for (const row of sourceRows) {
+      const userId = Number(row.userId);
+      if (alreadyHere.has(userId)) continue;
+      if (!row.user || row.user.isActive === false) continue;
+      if (row.branch && row.branch.isActive === false) continue;
+      let entry = byUser.get(userId);
+      if (!entry) {
+        const isInternalEmail = /@sys\.internal$/i.test(row.user.email || '');
+        entry = {
+          userId,
+          displayName: row.user.displayName?.trim() || null,
+          username: row.user.posUsername?.trim() || null,
+          // The synthetic pos.m.*@sys.internal address is plumbing, not
+          // something the owner should read as this person's email.
+          email: isInternalEmail ? null : row.user.email || null,
+          authMode: row.user.authMode ?? null,
+          branches: [],
+        };
+        byUser.set(userId, entry);
+      }
+      entry.branches.push({
+        branchId: Number(row.branchId),
+        branchName: row.branch?.name || `Branch #${row.branchId}`,
+        role: row.role,
+        posExperienceProfileCode: row.posExperienceProfileCode ?? null,
+      });
+    }
+
+    const label = (e: {
+      displayName: string | null;
+      username: string | null;
+      email: string | null;
+    }) => (e.displayName || e.username || e.email || '').toLowerCase();
+    return [...byUser.values()].sort((a, b) =>
+      label(a).localeCompare(label(b)),
+    );
+  }
+
+  /**
+   * Gives an existing login access to this branch: one more assignment row
+   * for the same user, so they sign in with the username and password they
+   * already have and pick the branch from the switcher. Only an account
+   * findLinkableStaff offers can be linked — the bare assign route takes any
+   * userId, this one never does.
+   */
+  async linkExistingStaff(
+    branchId: number,
+    dto: LinkExistingBranchStaffDto,
+    actor: { id?: number | null; email?: string | null; roles?: string[] },
+  ) {
+    const linkable = await this.findLinkableStaff(branchId, actor);
+    const userId = Number(dto.userId);
+    const candidate = linkable.find((entry) => entry.userId === userId);
+    if (!candidate) {
+      throw new BadRequestException({
+        error: {
+          code: 'POS_BRANCH_STAFF_NOT_LINKABLE',
+          message:
+            'This account cannot be added here. It may already be on this branch, or it does not work at any of your other branches.',
+          details: { field: 'userId' },
+        },
+      });
+    }
+
+    const laneCode = dto.posExperienceProfileCode?.trim().toUpperCase() || null;
+    const existing = await this.assignmentsRepository.findOne({
+      where: { branchId, userId },
+    });
+
+    const assignment = this.assignmentsRepository.create({
+      ...(existing ?? {}),
+      branchId,
+      userId,
+      role: dto.role,
+      posExperienceProfileCode: laneCode,
+      permissions: this.normalizePermissions(dto.permissions),
+      assignedSurfaces:
+        dto.role === BranchStaffRole.MANAGER &&
+        dto.assignedSurfaces &&
+        dto.assignedSurfaces.length > 0
+          ? dto.assignedSurfaces
+          : null,
+      capabilities: this.normalizeCapabilities(dto.capabilities, dto.role),
+      isActive: true,
+    });
+    // A quick-unlock PIN belongs to the lane it was set on (see
+    // updateAssignment). An old row coming back on a different lane must not
+    // carry its PIN with it.
+    if (
+      existing?.unlockPinHash &&
+      (existing.posExperienceProfileCode ?? null) !== laneCode
+    ) {
+      assignment.unlockPinHash = null;
+      assignment.unlockPinFingerprint = null;
+      assignment.unlockPinSetAt = null;
+    }
+    const saved = await this.assignmentsRepository.save(assignment);
+
+    await this.logManagerChangeIfNeeded({
+      branchId,
+      actor,
+      userId,
+      previousRole: existing?.isActive ? existing.role : null,
+      nextRole: saved.role,
+      changeType: 'ASSIGNED',
+    });
+
+    return (
+      (await this.assignmentsRepository.findOne({
+        where: { id: saved.id },
+        relations: { user: true },
+      })) ?? saved
+    );
   }
 
   async createManualAccount(
