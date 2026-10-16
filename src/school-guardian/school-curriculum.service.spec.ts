@@ -101,7 +101,7 @@ describe('subjectKey / subjectMatches', () => {
 });
 
 describe('SchoolCurriculumService', () => {
-  it('cuts the shelf to the pupil’s grade and keeps the teachers’ link back', async () => {
+  it('cuts the shelf to the pupil’s grade and keeps the edit link back', async () => {
     const { svc } = make([
       row({ id: 1, title: 'G7 U1', grades: [7, 8], series: 'Grade 7 Mathematics', sortOrder: 10 }),
       row({ id: 2, title: 'G8 U1', grades: [8], series: 'Grade 8 Mathematics', sortOrder: 10 }),
@@ -131,7 +131,7 @@ describe('SchoolCurriculumService', () => {
     expect((await svc.forPupil(8, ['Maths']))[0]).not.toHaveProperty('teacherUrl');
   });
 
-  it('cuts a teacher’s shelf to the subjects and grades on their timetable, and names the pairs; the heads read it all', async () => {
+  it('cuts a teacher’s shelf to the subjects and grades on their timetable, names the pairs, and never hands out the edit link; the heads read it all', async () => {
     const { svc } = make([
       row({ id: 1, title: 'G7 U1', subject: 'Mathematics', grades: [7, 8] }),
       row({ id: 2, title: 'G8 U1', subject: 'Mathematics', grades: [8] }),
@@ -142,7 +142,8 @@ describe('SchoolCurriculumService', () => {
     // Maths in 7th and 8th A: both Maths shelves, no English, no Grade 3.
     const teacher = await svc.forStaff(128, { id: 30, email: 't@x', roles: ['POS_OPERATOR'] });
     expect(teacher.items.map((r) => r.title)).toEqual(['G7 U1', 'G8 U1']);
-    expect(teacher.items[0].teacherUrl).toBe('https://forms.example/edit');
+    // The edit link is the platform's: never on a teacher's read.
+    expect(teacher.items[0]).not.toHaveProperty('teacherUrl');
     expect(teacher.scope).toEqual({ grades: [7, 8], pairs: [{ grade: 7, subject: 'maths' }, { grade: 8, subject: 'maths' }], hasTimetable: true });
     expect(teacher.grades).toEqual([7, 8]);
     // A KG teacher's timetable spans no grade: an empty cut, and the page is told why.
@@ -154,6 +155,7 @@ describe('SchoolCurriculumService', () => {
     expect(head.items.map((r) => r.title)).toEqual(['G8 Reader', 'G7 U1', 'G8 U1', 'G3']);
     expect(head.scope).toBeNull();
     expect(head.grades).toBeNull();
+    expect(head.items[0]).not.toHaveProperty('teacherUrl');
   });
 
   it('an admin lists, adds, edits, takes down and removes — and a student link is listed once', async () => {

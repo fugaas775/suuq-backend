@@ -184,9 +184,14 @@ export class SchoolCurriculumService {
     @Optional() private readonly reachSvc?: SchoolStaffReachService,
   ) {}
 
+  /**
+   * The reader's copy. `teacherUrl` — a quiz's edit link, with its answers
+   * — leaves the server for the platform's admins ONLY: the shelf is kept
+   * centrally, so neither a teacher nor a school's office edits a quiz.
+   */
   view(
     row: SchoolCurriculumResource,
-    opts: { teacher?: boolean; admin?: boolean } = {},
+    opts: { admin?: boolean } = {},
   ): CurriculumResourceView {
     const out: CurriculumResourceView = {
       id: Number(row.id),
@@ -200,8 +205,8 @@ export class SchoolCurriculumService {
       note: row.note ?? null,
       sortOrder: Number(row.sortOrder) || 0,
     };
-    if (opts.teacher || opts.admin) out.teacherUrl = row.teacherUrl ?? null;
     if (opts.admin) {
+      out.teacherUrl = row.teacherUrl ?? null;
       out.isActive = row.isActive !== false;
       out.updatedAt = row.updatedAt;
     }
@@ -247,7 +252,8 @@ export class SchoolCurriculumService {
   }
 
   /**
-   * A member of staff's cut, with the teachers' links.
+   * A member of staff's cut — the student links, as the pupils read them;
+   * the edit links are the platform's and stay here.
    *
    * The heads (whoever is not held to a class scope) read the whole shelf.
    * A teacher reads ONLY the subjects and grades their timetable puts them
@@ -265,7 +271,7 @@ export class SchoolCurriculumService {
     ]);
     if (!reach || reach.head || !reach.classes) {
       return {
-        items: rows.map((r) => this.view(r, { teacher: true })),
+        items: rows.map((r) => this.view(r)),
         scope: null,
         grades: null,
       };
@@ -273,7 +279,7 @@ export class SchoolCurriculumService {
     const taught = gradeSubjectsOfPairs(reach.pairs ?? []);
     const grades = [...taught.keys()];
     return {
-      items: cutToTaught(rows, taught).map((r) => this.view(r, { teacher: true })),
+      items: cutToTaught(rows, taught).map((r) => this.view(r)),
       scope: {
         grades,
         pairs: [...taught.entries()].flatMap(([grade, subjects]) =>
