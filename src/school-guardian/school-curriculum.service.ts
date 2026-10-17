@@ -65,7 +65,9 @@ const SUBJECT_ALIASES: Record<string, string[]> = {
   chemistry: ['kimistari', 'kiimiko', 'kemia', 'chimie', 'ኬሚስትሪ', 'كيمياء', 'الكيمياء'],
   biology: ['bayooloji', 'bayoloji', 'baiolojia', 'biologie', 'ባዮሎጂ', 'أحياء', 'الأحياء'],
   'social studies': ['social', 'social study', 'cilmiga bulshada', 'bulsho', 'maaddooyinka bulshada', 'maarifa ya jamii', 'ማህበራዊ ሳይንስ', 'ማኅበራዊ ሳይንስ', 'دراسات اجتماعية', 'الدراسات الاجتماعية'],
-  civics: ['civic', 'civics and ethics', 'civic and ethical education', 'waxbarashada dhaqanka', 'ሥነ ዜጋ', 'ስነ ዜጋ', 'تربية مدنية'],
+  // One subject under three generations of names: Civics, Civics and
+  // Ethical Education, and the current curriculum's Citizenship Education.
+  citizenship: ['citizenship education', 'citizenship and ethics', 'civics', 'civic', 'civic education', 'civics and ethics', 'civics and ethical education', 'civic and ethical education', 'civic and ethics', 'ethics', 'ethical education', 'moral education', 'moral and civic education', 'waxbarashada dhaqanka', 'muwaadinnimo', 'muwaadin', 'akhlaaq', 'dhaqan iyo akhlaaq', 'uraia', 'elimu ya uraia', 'barnoota lammummaa', 'lammummaa', 'ሥነ ዜጋ', 'ስነ ዜጋ', 'ሥነ ዜጋ እና ሥነ ምግባር', 'ዜግነት', 'ትምህርተ ዜግነት', 'ስነ ዜጋን ስነ ምግባርን', 'تربية مدنية', 'التربية المدنية', 'المواطنة', 'التربية الوطنية'],
   geography: ['juqraafi', 'jiyoografi', 'jiografia', 'geographie', 'ጂኦግራፊ', 'جغرافيا', 'الجغرافيا'],
   history: ['taariikh', 'taariikhda', 'historia', 'histoire', 'ታሪክ', 'تاريخ', 'التاريخ'],
   ict: ['computer', 'computers', 'computing', 'information technology', 'information and communication technology', 'kombuyuutar', 'teknolojia ya habari', 'informatique', 'ኮምፒውተር', 'حاسوب', 'الحاسوب'],

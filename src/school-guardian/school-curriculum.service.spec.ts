@@ -82,6 +82,7 @@ describe('subjectKey / subjectMatches', () => {
     expect(['Mathematics', 'Maths', 'MATH', 'Xisaab', 'Xisaabta', 'ሒሳብ', 'الرياضيات'].map(subjectKey)).toEqual(Array(7).fill('mathematics'));
     expect(['English', 'Ingiriisi', 'Af-Ingiriisi', 'Kiingereza'].map(subjectKey)).toEqual(Array(4).fill('english'));
     expect(subjectKey('Af-Soomaali')).toBe('somali');
+    expect(['Citizenship Education', 'Civics', 'Civic and Ethical Education', 'Ethics', 'Akhlaaq', 'ሥነ ዜጋ'].map(subjectKey)).toEqual(Array(6).fill('citizenship'));
     expect(subjectKey('  Social   Studies ')).toBe('social studies');
     expect(subjectKey('Physics II')).toBe('physics ii');
     expect(subjectKey('')).toBe('');
