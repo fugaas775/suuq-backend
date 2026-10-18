@@ -831,15 +831,105 @@ describe('PosRegisterService.updateSuspendedCart — the row as it stands now', 
           cartSnapshot: {
             ...pupilRow().cartSnapshot,
             paid: true,
-            hotelGuestPhone: '0911000000',
+            hotelGuestNotes: 'moved house',
           },
         },
         CASHIER,
       );
       const written = carts.save.mock.calls[0][0].cartSnapshot;
       expect(written.schoolGuardianName).toBe('Cali Xasan');
-      expect('hotelGuestPhone' in written).toBe(false);
+      // Notes are the office's; the phone alone is the logins desk's (next test).
+      expect('hotelGuestNotes' in written).toBe(false);
       expect(written.paid).toBe(true);
+    });
+
+    it("lets the logins desk set and change the guardian's phone — and nothing else", async () => {
+      // Owner 2026-10-18: "Cashier must also be allowed to add or update parent phone".
+      const filled = makeService({
+        stored: pupilRow(),
+        assignment: cashierRow,
+      });
+      await filled.service.updateSuspendedCart(
+        16867,
+        {
+          branchId: 115,
+          cartSnapshot: {
+            ...pupilRow().cartSnapshot,
+            hotelGuestPhone: '0915333513',
+          },
+        },
+        CASHIER,
+      );
+      expect(
+        filled.carts.save.mock.calls[0][0].cartSnapshot.hotelGuestPhone,
+      ).toBe('0915333513');
+
+      const changed = makeService({
+        stored: pupilRow({ hotelGuestPhone: '0911000000' }),
+        assignment: cashierRow,
+      });
+      await changed.service.updateSuspendedCart(
+        16867,
+        {
+          branchId: 115,
+          cartSnapshot: {
+            ...pupilRow().cartSnapshot,
+            hotelGuestPhone: '0915333513',
+          },
+        },
+        CASHIER,
+      );
+      expect(
+        changed.carts.save.mock.calls[0][0].cartSnapshot.hotelGuestPhone,
+      ).toBe('0915333513');
+
+      const both = makeService({
+        stored: pupilRow({ hotelGuestPhone: '0911000000' }),
+        assignment: cashierRow,
+      });
+      const err = await both.service
+        .updateSuspendedCart(
+          16867,
+          {
+            branchId: 115,
+            cartSnapshot: {
+              ...pupilRow().cartSnapshot,
+              hotelGuestPhone: '0915333513',
+              hotelGuestName: 'Someone Else',
+            },
+          },
+          CASHIER,
+        )
+        .catch((e) => e);
+      expect(err).toBeInstanceOf(ForbiddenException);
+      expect(err.getResponse().details.fields).toEqual(['hotelGuestName']);
+      expect(both.carts.save).not.toHaveBeenCalled();
+    });
+
+    it('keeps the phone from anyone without the logins desk — a fee-only clerk', async () => {
+      const feeOnly = {
+        ...cashierRow,
+        permissions: ['POST_FEE_CHARGE', 'SETTLE_FEE_PAYMENT'],
+      };
+      const { service, carts } = makeService({
+        stored: pupilRow({ hotelGuestPhone: '0911000000' }),
+        assignment: feeOnly,
+      });
+      const err = await service
+        .updateSuspendedCart(
+          16867,
+          {
+            branchId: 115,
+            cartSnapshot: {
+              ...pupilRow().cartSnapshot,
+              hotelGuestPhone: '0915333513',
+            },
+          },
+          CASHIER,
+        )
+        .catch((e) => e);
+      expect(err).toBeInstanceOf(ForbiddenException);
+      expect(carts.save).not.toHaveBeenCalled();
     });
 
     it('lets the office, a manager and the owner change the record — written as sent', async () => {

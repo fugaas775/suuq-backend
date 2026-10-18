@@ -189,7 +189,55 @@ export const PUPIL_RECORD_REFUSED_CODE = 'SCHOOL_PUPIL_RECORD_OFFICE_ONLY';
 /** The refusal, naming what was changed in the school's words. */
 export function pupilRecordRefusal(fields: string[]): string {
   const words = [...new Set(fields.map((f) => FIELD_WORDS[f] || f))];
-  return `Only the school office can change a student's details (${words.join(', ')}). Fees can still be charged and taken.`;
+  return `Only the school office can change a student's details (${words.join(', ')}). Fees can still be charged and taken, and the parent's phone can be set from the logins desk.`;
+}
+
+/**
+ * The guardian's phone is the one pupil field the LOGIN desk may write.
+ *
+ * Owner 2026-10-18, after the cashier was held to logins: "Cashier must also
+ * be allowed to add or update parent phone and/or to group parent students to
+ * their respective parent." A family's login, the roll's "families without a
+ * login" and the absence message all key on the phone on the pupil's record,
+ * so whoever hands out parents' logins (MANAGE_SCHOOL_LOGINS) must be able to
+ * put it there. Every other pupil field stays the office's.
+ */
+export const GUARDIAN_PHONE_FIELD = 'hotelGuestPhone';
+
+export type PupilEditScope = 'ALL' | 'GUARDIAN_PHONE' | 'NONE';
+
+/** How much of a pupil's own record this actor may change. */
+export function pupilEditScope(
+  args: Parameters<typeof canEditPupilRecord>[0],
+): PupilEditScope {
+  if (canEditPupilRecord(args)) return 'ALL';
+  const a = args.assignment;
+  if (!a || a.isActive === false) return 'NONE';
+  return (a.permissions ?? [])
+    .map((p) => String(p).trim().toUpperCase())
+    .includes('MANAGE_SCHOOL_LOGINS')
+    ? 'GUARDIAN_PHONE'
+    : 'NONE';
+}
+
+/**
+ * The delta with what this scope MAY do taken out: for GUARDIAN_PHONE, a
+ * changed or newly filled phone is theirs to write (a phone left out is still
+ * kept — clearing one is not "add or update"). ALL owes nothing; NONE keeps
+ * the delta whole.
+ */
+export function deltaBeyondScope(
+  delta: { changed: string[]; filled: string[]; dropped: string[] },
+  scope: PupilEditScope,
+): { changed: string[]; filled: string[]; dropped: string[] } {
+  if (scope === 'ALL') return { changed: [], filled: [], dropped: [] };
+  if (scope === 'NONE') return delta;
+  const notPhone = (f: string) => f !== GUARDIAN_PHONE_FIELD;
+  return {
+    changed: delta.changed.filter(notPhone),
+    filled: delta.filled.filter(notPhone),
+    dropped: delta.dropped,
+  };
 }
 
 /**

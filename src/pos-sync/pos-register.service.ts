@@ -19,8 +19,9 @@ import {
   PUPIL_CREATE_REFUSED_MESSAGE,
   PUPIL_RECORD_REFUSED_CODE,
   canCreatePupilRecord,
-  canEditPupilRecord,
+  deltaBeyondScope,
   keepStoredPupilRecord,
+  pupilEditScope,
   pupilRecordDelta,
   pupilRecordRefusal,
 } from './school-pupil-record.policy';
@@ -820,29 +821,31 @@ export class PosRegisterService {
             // not allow cashiers to edit the whole student list, except login
             // only"). A fee and a rename travel in this one PATCH, so what
             // moved decides — see school-pupil-record.policy. A plain fee save
-            // moves nothing and costs no lookup; someone who may not edit is
-            // refused a CHANGE, and a field they filled or left out keeps its
-            // stored value. The office's snapshot is written as sent.
+            // moves nothing and costs no lookup. Beyond the actor's scope (the
+            // logins desk may write the guardian's phone and nothing else), a
+            // CHANGE is refused and a field filled or left out keeps its stored
+            // value. The office's snapshot is written as sent.
             if (isSchoolPupilFolio({ cartSnapshot: incoming })) {
               const delta = pupilRecordDelta(stored, incoming);
               const touched =
                 delta.changed.length +
                 delta.filled.length +
                 delta.dropped.length;
-              if (
-                touched &&
-                !(await this.mayEditPupilRecord(cart, actor, em))
-              ) {
-                if (delta.changed.length) {
+              if (touched) {
+                const beyond = deltaBeyondScope(
+                  delta,
+                  await this.pupilEditScopeOf(cart, actor, em),
+                );
+                if (beyond.changed.length) {
                   throw new ForbiddenException({
                     code: PUPIL_RECORD_REFUSED_CODE,
-                    message: pupilRecordRefusal(delta.changed),
-                    details: { fields: delta.changed },
+                    message: pupilRecordRefusal(beyond.changed),
+                    details: { fields: beyond.changed },
                   });
                 }
                 incoming = keepStoredPupilRecord(stored, incoming, [
-                  ...delta.filled,
-                  ...delta.dropped,
+                  ...beyond.filled,
+                  ...beyond.dropped,
                 ]);
               }
             }
@@ -952,12 +955,12 @@ export class PosRegisterService {
     });
   }
 
-  /** The office, a manager, the owner or a platform admin — read off the roster. */
-  private async mayEditPupilRecord(
+  /** ALL for the office, a manager, the owner or a platform admin; GUARDIAN_PHONE for the logins desk — read off the roster. */
+  private async pupilEditScopeOf(
     cart: PosSuspendedCart,
     actor: { id?: number | null; roles?: string[] | null },
     em?: EntityManager,
-  ): Promise<boolean> {
+  ) {
     const branches = em ? em.getRepository(Branch) : this.branchesRepository;
     const assignments = em
       ? em.getRepository(BranchStaffAssignment)
@@ -972,7 +975,7 @@ export class PosRegisterService {
             where: { branchId: cart.branchId, userId: actor.id },
           })
         : null;
-    return canEditPupilRecord({
+    return pupilEditScope({
       actorId: actor.id ?? null,
       ownerId: branch?.ownerId ?? null,
       roles: actor.roles ?? [],

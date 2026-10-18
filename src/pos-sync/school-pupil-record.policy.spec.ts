@@ -197,7 +197,56 @@ describe('school-pupil-record.policy', () => {
         'scholarship',
       ]),
     ).toBe(
-      "Only the school office can change a student's details (name, scholarship). Fees can still be charged and taken.",
+      "Only the school office can change a student's details (name, scholarship). Fees can still be charged and taken, and the parent's phone can be set from the logins desk.",
     );
+  });
+
+  it('gives the logins desk the guardian phone and nothing else', () => {
+    const {
+      deltaBeyondScope,
+      pupilEditScope,
+    } = require('./school-pupil-record.policy');
+    const op = (permissions: string[]) => ({
+      isActive: true,
+      role: 'OPERATOR',
+      permissions,
+    });
+    expect(
+      pupilEditScope({
+        actorId: 9,
+        ownerId: 7,
+        assignment: op(['MANAGE_SCHOOL_LOGINS']),
+      }),
+    ).toBe('GUARDIAN_PHONE');
+    expect(
+      pupilEditScope({
+        actorId: 9,
+        ownerId: 7,
+        assignment: op(['ENROL_STUDENT']),
+      }),
+    ).toBe('ALL');
+    expect(
+      pupilEditScope({
+        actorId: 9,
+        ownerId: 7,
+        assignment: op(['POST_FEE_CHARGE']),
+      }),
+    ).toBe('NONE');
+    const delta = {
+      changed: ['hotelGuestPhone', 'hotelGuestName'],
+      filled: ['hotelGuestPhone', 'schoolGuardianName'],
+      dropped: ['hotelGuestPhone'],
+    };
+    expect(deltaBeyondScope(delta, 'GUARDIAN_PHONE')).toEqual({
+      changed: ['hotelGuestName'],
+      filled: ['schoolGuardianName'],
+      dropped: ['hotelGuestPhone'],
+    });
+    expect(deltaBeyondScope(delta, 'ALL')).toEqual({
+      changed: [],
+      filled: [],
+      dropped: [],
+    });
+    expect(deltaBeyondScope(delta, 'NONE')).toBe(delta);
   });
 });
