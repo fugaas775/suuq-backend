@@ -48,7 +48,7 @@ const folio = (
   cartSnapshot: {
     serviceFormat: 'SCHOOL',
     hotelGuestName: `Pupil ${id}`,
-    hotelRoomNumber: '3aad',
+    hotelRoomNumber: '7th',
     schoolAdmissionNo: `SMAG-${id}`,
     schoolGuardianName: 'Cali Xasan',
     hotelGuestPhone: '0915333513',
@@ -213,6 +213,41 @@ function makeService({
 const OFFICE = { id: 1, email: 'o@x', roles: ['POS_MANAGER'] };
 
 describe('SchoolStudentAccountService — the office', () => {
+  it('gives no pupil below Grade 6 a login of their own — one refused by name, the bulk call skipping them with the reason', async () => {
+    const { svc, accounts } = makeService({
+      folios: [
+        folio(20, 128, {
+          schoolAdmissionNo: 'SMAG-20',
+          hotelRoomNumber: '1aad',
+        }),
+        folio(21, 128, {
+          schoolAdmissionNo: 'SMAG-21',
+          hotelRoomNumber: '6aad',
+        }),
+      ],
+    });
+    await expect(
+      svc.create(
+        {
+          branchId: 128,
+          folioId: 20,
+          username: 'smag-20',
+          password: 'sunny-2019',
+        },
+        OFFICE,
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    const out = await svc.createMany(
+      { branchId: 128, folioIds: [20, 21], password: '12345678' },
+      OFFICE,
+    );
+    expect(out.created.map((c: any) => c.folioId)).toEqual([21]);
+    expect(out.skipped).toEqual([
+      expect.objectContaining({ folioId: 20, reason: 'BELOW_LOGIN_GRADE' }),
+    ]);
+    expect(accounts.map((a: any) => Number(a.folioId))).toEqual([21]);
+  });
+
   it('creates a login for one pupil, refuses a second for the same pupil, another school’s pupil, a taken username and a non-school branch', async () => {
     const { svc, users, accounts } = makeService({
       folios: [folio(10, 128), folio(12, 115)],
@@ -235,7 +270,7 @@ describe('SchoolStudentAccountService — the office', () => {
     });
     expect(view.pupil).toMatchObject({
       name: 'Pupil 10',
-      classCode: '3aad',
+      classCode: '7th',
       status: 'ACTIVE',
       money: { total: 2500, outstanding: 2500 },
     });
@@ -300,9 +335,18 @@ describe('SchoolStudentAccountService — the office', () => {
         folio(11, 128, { schoolAdmissionNo: '', hotelGuestName: 'Hodan Nuur' }),
         folio(13, 128, {
           schoolAdmissionNo: 'SMAG-13',
-          hotelRoomNumber: '1aad',
+          hotelRoomNumber: '8th',
         }),
         folio(15, 128, { schoolStatus: 'INACTIVE' }),
+        // Below Grade 6 — not offered a login of their own (owner 2026-10-18).
+        folio(16, 128, {
+          schoolAdmissionNo: 'SMAG-16',
+          hotelRoomNumber: '1aad',
+        }),
+        folio(17, 128, {
+          schoolAdmissionNo: 'SMAG-17',
+          hotelRoomNumber: 'KG II',
+        }),
       ],
       users: [{ id: 7, posUsername: 'smag-13', password: 'x' }],
     });
@@ -314,8 +358,11 @@ describe('SchoolStudentAccountService — the office', () => {
     expect(byFolio[10]).toBe('smag-10');
     expect(byFolio[11]).toBe('hodan.nuur');
     expect(byFolio[13]).toBe('smag-13.2');
-    // Sorted by class then name.
-    expect(out.items[0].folioId).toBe(13);
+    // Sorted by class then name: 7th before 8th.
+    expect(out.items.map((p: any) => p.folioId)).toEqual([11, 10, 13]);
+    // Grade 1 and KG are not offered (STUDENT_LOGIN_MIN_GRADE).
+    expect(byFolio[16]).toBeUndefined();
+    expect(byFolio[17]).toBeUndefined();
 
     await svc.create(
       {
@@ -482,7 +529,7 @@ describe('SchoolStudentAccountService — the pupil', () => {
           id: 5,
           branchId: 128,
           folioId: 10,
-          classCode: '3aad',
+          classCode: '7th',
           title: 'Maths',
           status: 'ISSUED',
           issuedAt: '2026-09-13',
@@ -493,9 +540,9 @@ describe('SchoolStudentAccountService — the pupil', () => {
         {
           id: 3,
           branchId: 128,
-          code: '3aad',
+          code: '7th',
           name: 'Grade 3',
-          gradeCode: '3aad',
+          gradeCode: '7th',
           section: 'A',
           homeroomEmployeeId: 30,
           homeroomTeacherName: null,
@@ -508,7 +555,7 @@ describe('SchoolStudentAccountService — the pupil', () => {
         {
           day: 1,
           period: 'P1',
-          classCode: '3AAD',
+          classCode: '7TH',
           subject: 'Maths',
           teacherName: 'Mustafe',
           employeeId: 30,
@@ -529,7 +576,7 @@ describe('SchoolStudentAccountService — the pupil', () => {
           title: 'Exam week',
           body: 'Bring pencils.',
           audience: 'CLASSES',
-          classCodes: ['3aad'],
+          classCodes: ['7th'],
           publishedAt: new Date('2026-09-20'),
           expiresAt: null,
           isActive: true,
@@ -596,13 +643,13 @@ describe('SchoolStudentAccountService — the pupil', () => {
     expect(out.schools[0].pupil).toMatchObject({
       folioId: 10,
       name: 'Pupil 10',
-      classCode: '3aad',
+      classCode: '7th',
       status: 'ACTIVE',
       money: { total: 2500, paidTotal: 2500, outstanding: 0 },
       todayMark: { status: 'LATE', note: null },
       homeworkDue: 0,
     });
-    // Only the notices that reach a 3aad pupil: the class's and the school's.
+    // Only the notices that reach a 7th pupil: the class's and the school's.
     expect(out.notices.map((n: any) => n.id)).toEqual([3, 1]);
     expect(accounts[0].lastLoginAt).toBeInstanceOf(Date);
 

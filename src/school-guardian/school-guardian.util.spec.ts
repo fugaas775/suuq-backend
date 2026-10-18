@@ -418,3 +418,17 @@ describe('generateIssuedPassword', () => {
     expect(generateIssuedPassword(12)).toHaveLength(12);
   });
 });
+
+describe('students’ logins start at Grade 6', () => {
+  const {
+    studentLoginGradeAllowed,
+    STUDENT_LOGIN_MIN_GRADE,
+  } = require('./school-guardian.util');
+  it('offers 6aad, 7th, 8aad B, Grade 9, 10th — and not 5aad, 1aad, KG II or a blank', () => {
+    expect(STUDENT_LOGIN_MIN_GRADE).toBe(6);
+    for (const code of ['6aad', '7th', '8aad B', 'Grade 9', '10th'])
+      expect(studentLoginGradeAllowed(code)).toBe(true);
+    for (const code of ['5aad', '1aad', 'KG II', '', null])
+      expect(studentLoginGradeAllowed(code)).toBe(false);
+  });
+});

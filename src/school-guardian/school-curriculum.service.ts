@@ -16,25 +16,13 @@ import {
   SchoolCurriculumResource,
 } from './entities/school-curriculum-resource.entity';
 import { SchoolStaffReachService } from './school-staff-reach.service';
+import { gradeNumberOf } from './school-guardian.util';
 
 const text = (v: unknown) => String(v ?? '').trim();
 
-/**
- * The grade a class code names: its leading number, after an optional word
- * for "grade" in the languages the schools write it in — "7th", "8aad",
- * "3aad B", "Grade 7", "G7", "Fasalka 9", "10th". A nursery or KG code has
- * no number and belongs to no grade's shelf.
- */
-export function gradeNumberOf(code: unknown): number | null {
-  const s = text(code);
-  if (!s) return null;
-  const m = s.match(
-    /^(?:grade|gr|g|class|fasalka|fasal|kutaa|kifil|std|standard|form)?\s*[-.]?\s*(\d{1,2})(?!\d)/i,
-  );
-  if (!m) return null;
-  const n = Number(m[1]);
-  return n >= 1 && n <= 14 ? n : null;
-}
+// Lives in school-guardian.util (the students' logins read it too); kept
+// exported from here for every existing import.
+export { gradeNumberOf };
 
 /** The distinct grades a set of class codes spans, ascending. */
 export function gradesOfClasses(codes: Iterable<unknown>): number[] {
@@ -54,29 +42,233 @@ export function gradesOfClasses(codes: Iterable<unknown>): number[] {
  * and the common names of a subject fold to ONE key through this table.
  */
 const SUBJECT_ALIASES: Record<string, string[]> = {
-  mathematics: ['maths', 'math', 'mathematic', 'xisaab', 'xisaabta', 'hisab', 'hisaab', 'herrega', 'hesabu', 'mathematiques', 'ሒሳብ', 'رياضيات', 'الرياضيات'],
-  english: ['english language', 'ingiriis', 'ingiriisi', 'ingiriisiga', 'af ingiriisi', 'af ingiriis', 'kiingereza', 'anglais', 'afaan ingilizii', 'እንግሊዝኛ', 'إنجليزي', 'انجليزي', 'الإنجليزية'],
-  somali: ['af soomaali', 'soomaali', 'af somali', 'kisomali', 'somalien', 'الصومالية', 'ሶማልኛ'],
-  amharic: ['amaariga', 'amharik', 'amxaari', 'amxaariga', 'afaan amaaraa', 'አማርኛ', 'الأمهرية'],
-  arabic: ['carabi', 'af carabi', 'carabiga', 'kiarabu', 'arabe', 'afaan arabaa', 'ዓረብኛ', 'عربي', 'عربية', 'العربية', 'اللغة العربية'],
+  mathematics: [
+    'maths',
+    'math',
+    'mathematic',
+    'xisaab',
+    'xisaabta',
+    'hisab',
+    'hisaab',
+    'herrega',
+    'hesabu',
+    'mathematiques',
+    'ሒሳብ',
+    'رياضيات',
+    'الرياضيات',
+  ],
+  english: [
+    'english language',
+    'ingiriis',
+    'ingiriisi',
+    'ingiriisiga',
+    'af ingiriisi',
+    'af ingiriis',
+    'kiingereza',
+    'anglais',
+    'afaan ingilizii',
+    'እንግሊዝኛ',
+    'إنجليزي',
+    'انجليزي',
+    'الإنجليزية',
+  ],
+  somali: [
+    'af soomaali',
+    'soomaali',
+    'af somali',
+    'kisomali',
+    'somalien',
+    'الصومالية',
+    'ሶማልኛ',
+  ],
+  amharic: [
+    'amaariga',
+    'amharik',
+    'amxaari',
+    'amxaariga',
+    'afaan amaaraa',
+    'አማርኛ',
+    'الأمهرية',
+  ],
+  arabic: [
+    'carabi',
+    'af carabi',
+    'carabiga',
+    'kiarabu',
+    'arabe',
+    'afaan arabaa',
+    'ዓረብኛ',
+    'عربي',
+    'عربية',
+    'العربية',
+    'اللغة العربية',
+  ],
   oromo: ['afaan oromoo', 'afan oromo', 'oromiffa', 'oromifa', 'ኦሮምኛ'],
-  science: ['general science', 'saynis', 'sayniska', 'saynis guud', 'sayansi', 'sciences', 'ሳይንስ', 'علوم', 'العلوم'],
-  physics: ['fiisikis', 'fisikis', 'fizikia', 'physique', 'ፊዚክስ', 'فيزياء', 'الفيزياء'],
-  chemistry: ['kimistari', 'kiimiko', 'kemia', 'chimie', 'ኬሚስትሪ', 'كيمياء', 'الكيمياء'],
-  biology: ['bayooloji', 'bayoloji', 'baiolojia', 'biologie', 'ባዮሎጂ', 'أحياء', 'الأحياء'],
-  'social studies': ['social', 'social study', 'cilmiga bulshada', 'bulsho', 'maaddooyinka bulshada', 'maarifa ya jamii', 'ማህበራዊ ሳይንስ', 'ማኅበራዊ ሳይንስ', 'دراسات اجتماعية', 'الدراسات الاجتماعية'],
+  science: [
+    'general science',
+    'saynis',
+    'sayniska',
+    'saynis guud',
+    'sayansi',
+    'sciences',
+    'ሳይንስ',
+    'علوم',
+    'العلوم',
+  ],
+  physics: [
+    'fiisikis',
+    'fisikis',
+    'fizikia',
+    'physique',
+    'ፊዚክስ',
+    'فيزياء',
+    'الفيزياء',
+  ],
+  chemistry: [
+    'kimistari',
+    'kiimiko',
+    'kemia',
+    'chimie',
+    'ኬሚስትሪ',
+    'كيمياء',
+    'الكيمياء',
+  ],
+  biology: [
+    'bayooloji',
+    'bayoloji',
+    'baiolojia',
+    'biologie',
+    'ባዮሎጂ',
+    'أحياء',
+    'الأحياء',
+  ],
+  'social studies': [
+    'social',
+    'social study',
+    'cilmiga bulshada',
+    'bulsho',
+    'maaddooyinka bulshada',
+    'maarifa ya jamii',
+    'ማህበራዊ ሳይንስ',
+    'ማኅበራዊ ሳይንስ',
+    'دراسات اجتماعية',
+    'الدراسات الاجتماعية',
+  ],
   // One subject under three generations of names: Civics, Civics and
   // Ethical Education, and the current curriculum's Citizenship Education.
-  citizenship: ['citizenship education', 'citizenship and ethics', 'civics', 'civic', 'civic education', 'civics and ethics', 'civics and ethical education', 'civic and ethical education', 'civic and ethics', 'ethics', 'ethical education', 'moral education', 'moral and civic education', 'waxbarashada dhaqanka', 'muwaadinnimo', 'muwaadin', 'akhlaaq', 'dhaqan iyo akhlaaq', 'uraia', 'elimu ya uraia', 'barnoota lammummaa', 'lammummaa', 'ሥነ ዜጋ', 'ስነ ዜጋ', 'ሥነ ዜጋ እና ሥነ ምግባር', 'ዜግነት', 'ትምህርተ ዜግነት', 'ስነ ዜጋን ስነ ምግባርን', 'تربية مدنية', 'التربية المدنية', 'المواطنة', 'التربية الوطنية'],
-  geography: ['juqraafi', 'jiyoografi', 'jiografia', 'geographie', 'ጂኦግራፊ', 'جغرافيا', 'الجغرافيا'],
-  history: ['taariikh', 'taariikhda', 'historia', 'histoire', 'ታሪክ', 'تاريخ', 'التاريخ'],
-  ict: ['computer', 'computers', 'computing', 'information technology', 'information and communication technology', 'kombuyuutar', 'teknolojia ya habari', 'informatique', 'ኮምፒውተር', 'حاسوب', 'الحاسوب'],
-  'islamic studies': ['islamic', 'islamic education', 'diin', 'diinta', 'tarbiya', 'tarbiyah', 'quran', 'quraan', 'التربية الإسلامية', 'تربية إسلامية', 'دين'],
-  'physical education': ['pe', 'sport', 'sports', 'ciyaaraha', 'jimicsi', 'elimu ya viungo', 'eps', 'ስፖርት', 'تربية بدنية', 'التربية البدنية'],
-  art: ['arts', 'fine art', 'fine arts', 'farshaxan', 'sanaa', 'dessin', 'ሥነ ጥበብ', 'ስነ ጥበብ', 'فنون', 'الفنون'],
+  citizenship: [
+    'citizenship education',
+    'citizenship and ethics',
+    'civics',
+    'civic',
+    'civic education',
+    'civics and ethics',
+    'civics and ethical education',
+    'civic and ethical education',
+    'civic and ethics',
+    'ethics',
+    'ethical education',
+    'moral education',
+    'moral and civic education',
+    'waxbarashada dhaqanka',
+    'muwaadinnimo',
+    'muwaadin',
+    'akhlaaq',
+    'dhaqan iyo akhlaaq',
+    'uraia',
+    'elimu ya uraia',
+    'barnoota lammummaa',
+    'lammummaa',
+    'ሥነ ዜጋ',
+    'ስነ ዜጋ',
+    'ሥነ ዜጋ እና ሥነ ምግባር',
+    'ዜግነት',
+    'ትምህርተ ዜግነት',
+    'ስነ ዜጋን ስነ ምግባርን',
+    'تربية مدنية',
+    'التربية المدنية',
+    'المواطنة',
+    'التربية الوطنية',
+  ],
+  geography: [
+    'juqraafi',
+    'jiyoografi',
+    'jiografia',
+    'geographie',
+    'ጂኦግራፊ',
+    'جغرافيا',
+    'الجغرافيا',
+  ],
+  history: [
+    'taariikh',
+    'taariikhda',
+    'historia',
+    'histoire',
+    'ታሪክ',
+    'تاريخ',
+    'التاريخ',
+  ],
+  ict: [
+    'computer',
+    'computers',
+    'computing',
+    'information technology',
+    'information and communication technology',
+    'kombuyuutar',
+    'teknolojia ya habari',
+    'informatique',
+    'ኮምፒውተር',
+    'حاسوب',
+    'الحاسوب',
+  ],
+  'islamic studies': [
+    'islamic',
+    'islamic education',
+    'diin',
+    'diinta',
+    'tarbiya',
+    'tarbiyah',
+    'quran',
+    'quraan',
+    'التربية الإسلامية',
+    'تربية إسلامية',
+    'دين',
+  ],
+  'physical education': [
+    'pe',
+    'sport',
+    'sports',
+    'ciyaaraha',
+    'jimicsi',
+    'elimu ya viungo',
+    'eps',
+    'ስፖርት',
+    'تربية بدنية',
+    'التربية البدنية',
+  ],
+  art: [
+    'arts',
+    'fine art',
+    'fine arts',
+    'farshaxan',
+    'sanaa',
+    'dessin',
+    'ሥነ ጥበብ',
+    'ስነ ጥበብ',
+    'فنون',
+    'الفنون',
+  ],
   music: ['muusik', 'muusikada', 'muziki', 'musique', 'ሙዚቃ', 'موسيقى'],
   tigrinya: ['tigrigna', 'tigrinia', 'ትግርኛ', 'التغرينية'],
-  french: ['faransiis', 'faransiiska', 'kifaransa', 'francais', 'ፈረንሳይኛ', 'فرنسي', 'الفرنسية'],
+  french: [
+    'faransiis',
+    'faransiiska',
+    'kifaransa',
+    'francais',
+    'ፈረንሳይኛ',
+    'فرنسي',
+    'الفرنسية',
+  ],
   swahili: ['kiswahili', 'sawaaxili', 'ስዋሂሊ', 'السواحلية'],
 };
 const SUBJECT_KEY_OF = new Map<string, string>();
@@ -115,11 +307,15 @@ export function subjectMatches(a: unknown, b: unknown): boolean {
   if (x === y) return true;
   const [short, long] = x.length <= y.length ? [x, y] : [y, x];
   if (short.length < 4) return false;
-  return new RegExp(`(^|\\s)${short.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(\\s|$)`).test(long);
+  return new RegExp(
+    `(^|\\s)${short.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(\\s|$)`,
+  ).test(long);
 }
 
 /** (grade → subjects) off a set of `class|subject` timetable pairs. */
-export function gradeSubjectsOfPairs(pairs: Iterable<string>): Map<number, string[]> {
+export function gradeSubjectsOfPairs(
+  pairs: Iterable<string>,
+): Map<number, string[]> {
   const out = new Map<number, string[]>();
   for (const pair of pairs) {
     const at = pair.indexOf('|');
@@ -128,7 +324,8 @@ export function gradeSubjectsOfPairs(pairs: Iterable<string>): Map<number, strin
     const subject = pair.slice(at + 1).trim();
     if (grade == null || !subject) continue;
     const list = out.get(grade) ?? [];
-    if (!list.some((s) => subjectKey(s) === subjectKey(subject))) list.push(subject);
+    if (!list.some((s) => subjectKey(s) === subjectKey(subject)))
+      list.push(subject);
     out.set(grade, list);
   }
   return new Map([...out.entries()].sort((a, b) => a[0] - b[0]));
@@ -225,7 +422,9 @@ export class SchoolCurriculumService {
   private async rowsForGrade(grade: number | null) {
     if (grade == null) return [];
     const rows = await this.listActive();
-    return rows.filter((r) => (r.grades ?? []).some((g) => Number(g) === grade));
+    return rows.filter((r) =>
+      (r.grades ?? []).some((g) => Number(g) === grade),
+    );
   }
 
   /** The pupil's (and the family's) cut by grade alone, no teachers' links. */
@@ -246,7 +445,9 @@ export class SchoolCurriculumService {
     subjects: Iterable<unknown>,
   ): Promise<CurriculumResourceView[]> {
     const rows = await this.rowsForGrade(grade);
-    const taught = [...subjects].map((s) => String(s ?? '').trim()).filter(Boolean);
+    const taught = [...subjects]
+      .map((s) => String(s ?? '').trim())
+      .filter(Boolean);
     const cut = taught.length
       ? rows.filter((r) => taught.some((s) => subjectMatches(s, r.subject)))
       : rows;
@@ -297,7 +498,9 @@ export class SchoolCurriculumService {
 
   async adminList() {
     const rows = await this.repo.find();
-    return { items: rows.sort(byShelf).map((r) => this.view(r, { admin: true })) };
+    return {
+      items: rows.sort(byShelf).map((r) => this.view(r, { admin: true })),
+    };
   }
 
   private async assertUrlFree(studentUrl: string, exceptId: number | null) {

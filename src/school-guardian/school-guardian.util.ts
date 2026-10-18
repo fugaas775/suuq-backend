@@ -500,3 +500,33 @@ export function generateIssuedPassword(length = 8): string {
   }
   return out;
 }
+
+/**
+ * The grade a class code names: its leading number, after an optional word
+ * for "grade" in the languages the schools write it in — "7th", "8aad",
+ * "3aad B", "Grade 7", "G7", "Fasalka 9", "10th". A nursery or KG code has
+ * no number and belongs to no grade's shelf.
+ */
+export function gradeNumberOf(code: unknown): number | null {
+  const s = text(code);
+  if (!s) return null;
+  const m = s.match(
+    /^(?:grade|gr|g|class|fasalka|fasal|kutaa|kifil|std|standard|form)?\s*[-.]?\s*(\d{1,2})(?!\d)/i,
+  );
+  if (!m) return null;
+  const n = Number(m[1]);
+  return n >= 1 && n <= 14 ? n : null;
+}
+
+/**
+ * Pupils get their OWN login from this grade up (owner 2026-10-16: "Students
+ * from Grade 6+ should have usernames"; 2026-10-18: the younger ones are not
+ * to be offered one at all). A KG or nursery class names no grade, so it is
+ * below the line. Logins already made are left alone.
+ */
+export const STUDENT_LOGIN_MIN_GRADE = 6;
+
+export function studentLoginGradeAllowed(classCode: unknown): boolean {
+  const grade = gradeNumberOf(classCode);
+  return grade != null && grade >= STUDENT_LOGIN_MIN_GRADE;
+}

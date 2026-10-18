@@ -36,6 +36,8 @@ import {
   pupilOf,
   schoolTimeZone,
   suggestStudentUsername,
+  STUDENT_LOGIN_MIN_GRADE,
+  studentLoginGradeAllowed,
 } from './school-guardian.util';
 import { SchoolHomeworkService } from './school-homework.service';
 
@@ -212,9 +214,16 @@ export class SchoolStudentAccountService {
       this.accounts.find({ where: { branchId } }),
     ]);
     const linked = new Set(accounts.map((a) => Number(a.folioId)));
+    // Grade 6 and up only — the younger ones are not offered a login of their
+    // own (see STUDENT_LOGIN_MIN_GRADE); their family's login reads them.
     const pupils = records
       .map((row) => pupilOf(row))
-      .filter((p) => p.status === 'ACTIVE' && !linked.has(p.folioId));
+      .filter(
+        (p) =>
+          p.status === 'ACTIVE' &&
+          !linked.has(p.folioId) &&
+          studentLoginGradeAllowed(p.classCode),
+      );
     const bases = new Map<number, string>();
     for (const p of pupils) {
       bases.set(
@@ -352,6 +361,15 @@ export class SchoolStudentAccountService {
   async create(dto: CreateSchoolStudentAccountDto, actor: Actor) {
     await this.assertSchool(dto.branchId);
     const row = await this.assertPupilFolio(dto.branchId, dto.folioId);
+    if (!studentLoginGradeAllowed(pupilOf(row).classCode)) {
+      throw new BadRequestException({
+        error: {
+          code: 'SCHOOL_STUDENT_BELOW_LOGIN_GRADE',
+          message: `Pupils get their own login from Grade ${STUDENT_LOGIN_MIN_GRADE}. A younger child is read through their family's login.`,
+          details: { field: 'folioId' },
+        },
+      });
+    }
     const username = fold(dto.username);
     const createdByName = await this.actorName(actor);
     const saved = await this.mint(
@@ -413,6 +431,10 @@ export class SchoolStudentAccountService {
       const p = pupilOf(row);
       if (already.has(folioId)) {
         skipped.push({ folioId, name: p.name, reason: 'HAS_LOGIN' });
+        continue;
+      }
+      if (!studentLoginGradeAllowed(p.classCode)) {
+        skipped.push({ folioId, name: p.name, reason: 'BELOW_LOGIN_GRADE' });
         continue;
       }
       const base = suggestStudentUsername({
