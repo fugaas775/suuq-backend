@@ -212,6 +212,55 @@ function makeService({
 
 const OFFICE = { id: 1, email: 'o@x', roles: ['POS_MANAGER'] };
 
+describe('SchoolStudentAccountService — a pupil who leaves (owner 2026-10-18)', () => {
+  it('closes their own login on leaving — sign-in and an open session both told why — and opens it again on their return', async () => {
+    const rows = [folio(10, 128)];
+    const { svc, accounts } = makeService({ folios: rows });
+    await svc.create(
+      {
+        branchId: 128,
+        folioId: 10,
+        username: 'smag-10',
+        password: 'sunny-2019',
+      },
+      OFFICE,
+    );
+    const first = await svc.login('smag-10', 'sunny-2019');
+    const userId = Number(accounts[0].userId);
+    expect(first.schools).toHaveLength(1);
+
+    // Marked LEFT by the office.
+    rows[0].cartSnapshot = {
+      ...rows[0].cartSnapshot,
+      schoolStatus: 'INACTIVE',
+    };
+    const refused = await svc.login('smag-10', 'sunny-2019').catch((e) => e);
+    expect(refused).toBeInstanceOf(ForbiddenException);
+    expect(refused.getResponse()).toMatchObject({
+      error: { code: 'SCHOOL_STUDENT_LEFT' },
+    });
+    // A session opened before they left closes on its next read.
+    const open = await svc.me(userId).catch((e) => e);
+    expect(open.getResponse()).toMatchObject({
+      error: { code: 'SCHOOL_STUDENT_LEFT' },
+    });
+
+    // Withdrawn altogether — still closed, still told the same.
+    rows[0].status = 'DISCARDED';
+    const gone = await svc.login('smag-10', 'sunny-2019').catch((e) => e);
+    expect(gone.getResponse()).toMatchObject({
+      error: { code: 'SCHOOL_STUDENT_LEFT' },
+    });
+
+    // Re-activated: the same login works again — nothing to switch back on.
+    rows[0].status = 'SUSPENDED';
+    rows[0].cartSnapshot = { ...rows[0].cartSnapshot, schoolStatus: 'ACTIVE' };
+    await expect(svc.login('smag-10', 'sunny-2019')).resolves.toMatchObject({
+      accessToken: 'at',
+    });
+  });
+});
+
 describe('SchoolStudentAccountService — the office', () => {
   it('gives no pupil below Grade 6 a login of their own — one refused by name, the bulk call skipping them with the reason', async () => {
     const { svc, accounts } = makeService({

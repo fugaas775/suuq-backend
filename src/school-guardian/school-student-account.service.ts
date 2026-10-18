@@ -576,7 +576,19 @@ export class SchoolStudentAccountService {
 
   // ── portal ───────────────────────────────────────────────────────────────
 
-  private async activeAccounts(userId: number) {
+  /**
+   * The accounts this user may sign in with: switched on, at an open branch,
+   * and — unless `includeLeft` — for a pupil still ON THE ROLL. Owner
+   * 2026-10-18: a pupil who leaves (marked left, withdrawn, record gone)
+   * loses their own login at once, and gets it back the moment the office
+   * re-activates them — nothing stored to switch off or forget to switch on.
+   * Every portal door (sign-in, `me`, the record, change-password) reads
+   * this, so a session already open closes on its next read too.
+   */
+  private async activeAccounts(
+    userId: number,
+    { includeLeft = false }: { includeLeft?: boolean } = {},
+  ) {
     if (!userId) return [];
     const rows = await this.accounts.find({
       where: { userId, isActive: true },
@@ -587,9 +599,21 @@ export class SchoolStudentAccountService {
       where: { id: In(rows.map((r) => r.branchId)), isActive: true },
     });
     const byId = new Map(branches.map((b) => [Number(b.id), b]));
-    return rows
+    const open = rows
       .filter((r) => byId.has(Number(r.branchId)))
       .map((r) => ({ account: r, branch: byId.get(Number(r.branchId)) }));
+    if (includeLeft || !open.length) return open;
+    const folios = await this.foliosById(
+      open.map((h) => Number(h.account.folioId)),
+    );
+    return open.filter(({ account }) => {
+      const row = folios.get(Number(account.folioId));
+      return (
+        Boolean(row) &&
+        Number(row.branchId) === Number(account.branchId) &&
+        pupilOf(row).status === 'ACTIVE'
+      );
+    });
   }
 
   /**
@@ -609,6 +633,18 @@ export class SchoolStudentAccountService {
     const tokens = await this.auth.loginWithIdentifier(identifier, password);
     const held = await this.activeAccounts(Number(tokens.user.id));
     if (!held.length) {
+      const left = await this.activeAccounts(Number(tokens.user.id), {
+        includeLeft: true,
+      });
+      if (left.length) {
+        throw new ForbiddenException({
+          error: {
+            code: 'SCHOOL_STUDENT_LEFT',
+            message:
+              'You are no longer on this school’s roll, so this login is closed. If you have come back to the school, ask the office.',
+          },
+        });
+      }
       const everHeld = await this.accounts.count({
         where: { userId: Number(tokens.user.id) },
       });
@@ -641,6 +677,17 @@ export class SchoolStudentAccountService {
   async me(userId: number) {
     const held = await this.activeAccounts(userId);
     if (!held.length) {
+      // A session opened before the pupil left closes here, told why.
+      const left = await this.activeAccounts(userId, { includeLeft: true });
+      if (left.length) {
+        throw new ForbiddenException({
+          error: {
+            code: 'SCHOOL_STUDENT_LEFT',
+            message:
+              'You are no longer on this school’s roll, so this login is closed. If you have come back to the school, ask the office.',
+          },
+        });
+      }
       throw new ForbiddenException({
         error: {
           code: 'SCHOOL_STUDENT_ACCESS_DENIED',
