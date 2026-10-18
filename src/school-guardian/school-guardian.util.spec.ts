@@ -58,6 +58,14 @@ describe('school-guardian.util', () => {
     expect(normalizePhoneKey('+251 915 333 513')).toBe('0915333513');
     expect(normalizePhoneKey('0915-333-513')).toBe('0915333513');
     expect(normalizePhoneKey('')).toBe('');
+    // However the family's number was written, one number — one family.
+    expect(normalizePhoneKey('915333513')).toBe('0915333513');
+    expect(normalizePhoneKey('00251915333513')).toBe('0915333513');
+    expect(normalizePhoneKey('+251 0915 333 513')).toBe('0915333513');
+    expect(normalizePhoneKey('+251 715 333 513')).toBe('0715333513');
+    // Not an Ethiopian mobile: left as its digits.
+    expect(normalizePhoneKey('115333513')).toBe('115333513');
+    expect(normalizePhoneKey('+254 712 345 678')).toBe('254712345678');
     expect(
       suggestGuardianUsername({
         phone: '+251915333513',
@@ -430,5 +438,9 @@ describe('students’ logins start at Grade 6', () => {
       expect(studentLoginGradeAllowed(code)).toBe(true);
     for (const code of ['5aad', '1aad', 'KG II', '', null])
       expect(studentLoginGradeAllowed(code)).toBe(false);
+    // The class registry's grade first: a section named "Bilal" in Grade 8.
+    expect(studentLoginGradeAllowed('Bilal', 'Grade 8')).toBe(true);
+    expect(studentLoginGradeAllowed('Bilal', 'Grade 4')).toBe(false);
+    expect(studentLoginGradeAllowed('7A', null)).toBe(true);
   });
 });

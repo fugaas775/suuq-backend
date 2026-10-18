@@ -268,11 +268,19 @@ export class SchoolGuardianService {
     return out;
   }
 
-  /** A teacher may touch a family only when it holds — or its number is — a child of theirs. */
+  /**
+   * A teacher may touch a family only when it holds a child of theirs. A
+   * family whose NUMBER is a child of theirs — not yet ticked on — may only
+   * have that child linked (`linkOnly`): its password, name, phone and on/off
+   * stay the office's until one of the teacher's own pupils is on it. Without
+   * that, a phone match was the whole key — reset the password of a family
+   * whose children are all in another class and sign in as them.
+   */
   private async assertGuardianInScope(
     g: SchoolGuardian,
     branchId: number,
     scope: LoginScope,
+    { linkOnly = false }: { linkOnly?: boolean } = {},
   ) {
     if (!scope) return;
     const links = await this.pupils.find({
@@ -284,10 +292,60 @@ export class SchoolGuardianService {
       return row ? classOk(scope, pupilOf(row).classCode) : false;
     });
     if (own) return;
-    const user = await this.users.findOne({ where: { id: g.userId } });
-    const phones = await this.inScopePhones(branchId, scope);
-    if (phones.has(String(user?.posUsername ?? '').toLowerCase())) return;
+    if (linkOnly) {
+      const user = await this.users.findOne({ where: { id: g.userId } });
+      const phones = await this.inScopePhones(branchId, scope);
+      if (phones.has(String(user?.posUsername ?? '').toLowerCase())) return;
+    }
     throw outOfClassScope(scope, 'This family has no child in your class');
+  }
+
+  /**
+   * A teacher may not make another class's family number theirs: put it on
+   * their pupil's record, or a login's username. It is another class's when
+   * a live pupil outside their classes carries it, or a login of that number
+   * holds such a child — and none of their own live pupils already carries it
+   * (siblings across classes, as the office recorded them, stay fine). That
+   * number was the key to the family: the scope checks trust a phone on a
+   * teacher's own pupil as proof the family is theirs.
+   */
+  private async assertPhoneNotAnotherClass(
+    branchId: number,
+    key: string,
+    scope: LoginScope,
+  ) {
+    if (!scope || !key) return;
+    let inside = false;
+    let outside = false;
+    for (const row of await this.pupilRecords(branchId)) {
+      const p = pupilOf(row);
+      if (p.status !== 'ACTIVE') continue;
+      if (guardianUsernameFromPhone(p.guardianPhone) !== key) continue;
+      if (classOk(scope, p.classCode)) inside = true;
+      else outside = true;
+    }
+    if (inside) return;
+    if (!outside) {
+      const user = await this.users.findOne({ where: { posUsername: key } });
+      const families = user
+        ? await this.guardians.find({ where: { userId: user.id, branchId } })
+        : [];
+      const links = families.length
+        ? await this.pupils.find({
+            where: { guardianId: In(families.map((f) => Number(f.id))) },
+          })
+        : [];
+      const rows = await this.foliosById(links.map((l) => Number(l.folioId)));
+      outside = links.some((l) => {
+        const row = rows.get(Number(l.folioId));
+        return row ? !classOk(scope, pupilOf(row).classCode) : false;
+      });
+    }
+    if (outside)
+      throw outOfClassScope(
+        scope,
+        'This phone number belongs to a family in another class',
+      );
   }
 
   /**
@@ -496,6 +554,7 @@ export class SchoolGuardianService {
     // The username IS the phone (owner 2026-10-18) — whatever was sent as a
     // username is not consulted.
     const username = this.usernameForPhone(dto.phone);
+    await this.assertPhoneNotAnotherClass(dto.branchId, username, scope);
     await this.assertLinkableByScope(folioIds, username, scope);
 
     const clash = await this.users.findOne({
@@ -569,30 +628,40 @@ export class SchoolGuardianService {
     scope: LoginScope = null,
   ) {
     const g = await this.findGuardianOnBranch(id, dto.branchId);
-    await this.assertGuardianInScope(g, dto.branchId, scope);
+    const user = await this.users.findOne({ where: { id: g.userId } });
     const patch: Partial<SchoolGuardian> = {};
     if (dto.displayName !== undefined)
       patch.displayName = text(dto.displayName) || null;
     // A new phone is a new username — the family signs in with the number
-    // the school has for them. Checked before anything is written.
+    // the school has for them.
     const renameTo =
       dto.phone !== undefined ? this.usernameForPhone(dto.phone) : null;
+    const renaming = renameTo != null && fold(user?.posUsername) !== renameTo;
     if (dto.phone !== undefined) patch.phone = text(dto.phone) || null;
     if (dto.relationship !== undefined) {
       patch.relationship = text(dto.relationship).toUpperCase() || null;
     }
     if (dto.isActive !== undefined) patch.isActive = dto.isActive !== false;
-    if (Object.keys(patch).length) {
-      await this.guardians.update({ id: Number(g.id) }, patch);
+    // The desk's edit form sends name, phone and relationship every time, so
+    // what decides is whether any of them MOVED: a teacher ticking their
+    // pupil onto a sibling's family (`linkOnly`) changes none of them.
+    const moves = (Object.keys(patch) as Array<keyof SchoolGuardian>).some(
+      (k) => (patch[k] ?? null) !== (g[k] ?? null),
+    );
+    await this.assertGuardianInScope(g, dto.branchId, scope, {
+      linkOnly: !moves && !renaming,
+    });
+
+    // Everything is checked before anything is written: a refused rename or
+    // a refused child used to land after the name, phone and on/off had —
+    // the record named a number the login did not sign in with.
+    if (renaming) {
+      this.assertRenamable(user);
+      await this.assertPhoneNotAnotherClass(dto.branchId, renameTo, scope);
+      await this.assertUsernameFreeFor(user, renameTo);
     }
-    if (dto.displayName !== undefined) {
-      await this.users.update(
-        { id: g.userId },
-        { displayName: text(dto.displayName) || undefined },
-      );
-    }
-    // `dto.username` is no longer consulted: the username follows the phone.
-    if (renameTo) await this.renameLogin(g, renameTo);
+    let add: number[] = [];
+    let drop: SchoolGuardianPupil[] = [];
     if (dto.folioIds) {
       const wanted = [
         ...new Set(dto.folioIds.map((n) => Number(n)).filter((n) => n > 0)),
@@ -614,12 +683,11 @@ export class SchoolGuardianService {
         }
       }
       const have = new Set(existing.map((l) => Number(l.folioId)));
-      const add = wanted.filter((f) => !have.has(f));
+      add = wanted.filter((f) => !have.has(f));
       if (scope && add.length) {
-        const loginUser = await this.users.findOne({ where: { id: g.userId } });
         await this.assertLinkableByScope(
           add,
-          renameTo || String(loginUser?.posUsername ?? '').toLowerCase(),
+          renameTo || String(user?.posUsername ?? '').toLowerCase(),
           scope,
           { needOwn: false },
         );
@@ -631,27 +699,40 @@ export class SchoolGuardianService {
       // on the roll. The office unticks that child to drop the link.
       if (add.length) await this.assertPupilFolios(dto.branchId, add);
       const keep = new Set(wanted);
-      const drop = existing.filter((l) => !keep.has(Number(l.folioId)));
-      if (drop.length) await this.pupils.remove(drop);
+      drop = existing.filter((l) => !keep.has(Number(l.folioId)));
+    }
+
+    await this.guardians.manager.transaction(async (em) => {
+      if (Object.keys(patch).length) {
+        await em
+          .getRepository(SchoolGuardian)
+          .update({ id: Number(g.id) }, patch);
+      }
+      if (dto.displayName !== undefined || renaming) {
+        const users = em.getRepository(User);
+        const fresh = await users.findOne({ where: { id: g.userId } });
+        if (fresh) {
+          // A blank name leaves the login's own name as it was.
+          const name = text(dto.displayName);
+          if (name) fresh.displayName = name;
+          // `dto.username` is no longer consulted: the username follows the phone.
+          if (renaming) this.applyRename(fresh, renameTo);
+          await users.save(fresh);
+        }
+      }
+      const links = em.getRepository(SchoolGuardianPupil);
+      if (drop.length) await links.remove(drop);
       if (add.length) {
-        await this.pupils.save(
+        await links.save(
           add.map((folioId) =>
-            this.pupils.create({ guardianId: Number(g.id), folioId }),
+            links.create({ guardianId: Number(g.id), folioId }),
           ),
         );
       }
-    }
+    });
     return this.view(Number(g.id), dto.branchId);
   }
 
-  /**
-   * A corrected username — the phone typed wrong at creation, or a family's
-   * number changed. The same rules as at creation: lowercased, no "@", and
-   * never one another login already holds. The internal e-mail the login
-   * was minted with follows the username, so the sign-in path finds it
-   * either way. One user may hold guardianships at two schools; the login
-   * is one, so the rename reaches both.
-   */
   /** The username a phone makes, or a 400 naming the phone as what is missing. */
   private usernameForPhone(phone: unknown): string {
     const username = guardianUsernameFromPhone(phone);
@@ -680,15 +761,23 @@ export class SchoolGuardianService {
     });
   }
 
-  private async renameLogin(g: SchoolGuardian, username: string) {
-    if (!username) throw new BadRequestException('Give the login a username.');
-    const user = await this.users.findOne({ where: { id: g.userId } });
+  /**
+   * A corrected username — the phone typed wrong at creation, or a family's
+   * number changed. The same rules as at creation: lowercased, no "@", and
+   * never one another login already holds. The internal e-mail the login
+   * was minted with follows the username, so the sign-in path finds it
+   * either way. One user may hold guardianships at two schools; the login
+   * is one, so the rename reaches both.
+   */
+  private assertRenamable(user: User | null): asserts user is User {
     if (!user || user.authMode !== 'MANUAL') {
       throw new ForbiddenException(
         'Only a login the office created can have its username changed here.',
       );
     }
-    if (fold(user.posUsername) === username) return;
+  }
+
+  private async assertUsernameFreeFor(user: User, username: string) {
     const internalEmail = `${GUARDIAN_INTERNAL_EMAIL_PREFIX}${username}@sys.internal`;
     const [clash, staleByEmail] = await Promise.all([
       this.users.findOne({ where: { posUsername: username } }),
@@ -698,11 +787,13 @@ export class SchoolGuardianService {
       (row) => row && Number(row.id) !== Number(user.id),
     );
     if (taken) throw this.phoneInUse();
+  }
+
+  private applyRename(user: User, username: string) {
     user.posUsername = username;
     if (String(user.email ?? '').startsWith(GUARDIAN_INTERNAL_EMAIL_PREFIX)) {
-      user.email = internalEmail;
+      user.email = `${GUARDIAN_INTERNAL_EMAIL_PREFIX}${username}@sys.internal`;
     }
-    await this.users.save(user);
   }
 
   async resetPassword(
@@ -792,6 +883,7 @@ export class SchoolGuardianService {
         },
       });
     }
+    await this.assertPhoneNotAnotherClass(dto.branchId, key, scope);
     const ids = [
       ...new Set((dto.folioIds ?? []).map(Number).filter((n) => n > 0)),
     ];
@@ -1035,7 +1127,16 @@ export class SchoolGuardianService {
         message: 'Invalid credentials',
       });
     }
-    const tokens = await this.auth.loginWithIdentifier(identifier, password);
+    // The username is the phone, and a parent types it as they write it —
+    // "+251 911…", "0911 234 567". The username as typed first (a login made
+    // before the phone was folded keeps working), then the folded phone.
+    const asPhone = guardianUsernameFromPhone(identifier);
+    const tokens = await this.auth
+      .loginWithIdentifier(identifier, password)
+      .catch((err: unknown) => {
+        if (!asPhone || asPhone === identifier) throw err;
+        return this.auth.loginWithIdentifier(asPhone, password);
+      });
     const held = await this.activeGuardianships(Number(tokens.user.id));
     if (!held.length) {
       // A parent's login the office switched off is told so — not that it

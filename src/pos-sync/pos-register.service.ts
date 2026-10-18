@@ -788,6 +788,20 @@ export class PosRegisterService {
         if (dto.cartSnapshot && typeof dto.cartSnapshot === 'object') {
           let incoming = dto.cartSnapshot as Record<string, unknown>;
 
+          // A row that was NOT a pupil and now is one is an enrolment, the
+          // same as a create: park an ordinary basket, then PATCH a name and
+          // class onto it, and a new pupil was on the roll with no right asked.
+          if (
+            !isSchoolPupilFolio(cart) &&
+            isSchoolPupilFolio({ cartSnapshot: incoming }) &&
+            !(await this.mayCreatePupilRecord(cart.branchId, actor))
+          ) {
+            throw new ForbiddenException({
+              code: PUPIL_RECORD_REFUSED_CODE,
+              message: PUPIL_CREATE_REFUSED_MESSAGE,
+            });
+          }
+
           if (isSchoolPupilFolio(cart)) {
             // A stored pupil turned into something that is not a pupil — moved
             // to another format, or its name blanked — is the first half of a

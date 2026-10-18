@@ -1066,6 +1066,47 @@ describe('SchoolGuardianService — the desk’s four buttons', () => {
     ).toEqual([10, 12]);
   });
 
+  it('signs a parent in with the phone as they write it, and writes nothing when a rename is refused', async () => {
+    const { svc, guardians } = makeService({
+      folios: [
+        folio(10, 128),
+        folio(11, 128, { hotelGuestPhone: '0911000000' }),
+      ],
+    });
+    const a = await svc.create(
+      {
+        branchId: 128,
+        phone: '0915333599',
+        password: 'sunny-2019',
+        folioIds: [10],
+      },
+      OFFICE,
+    );
+    await svc.create(
+      {
+        branchId: 128,
+        phone: '0911000000',
+        password: 'sunny-2019',
+        folioIds: [11],
+      },
+      OFFICE,
+    );
+    await expect(
+      svc.login('+251 915 333 599', 'sunny-2019'),
+    ).resolves.toMatchObject({ accessToken: 'at' });
+    await expect(
+      svc.update(a.id, {
+        branchId: 128,
+        displayName: 'Changed',
+        phone: '0911 000 000',
+        isActive: false,
+      } as any),
+    ).rejects.toBeInstanceOf(ConflictException);
+    const row = guardians.find((g: any) => Number(g.id) === Number(a.id));
+    expect(row).toMatchObject({ phone: '0915333599', isActive: true });
+    expect(row.displayName).not.toBe('Changed');
+  });
+
   it('tells a switched-off family that the office switched them off, not that they are no parent', async () => {
     const { svc, guardians } = makeService({ folios: [folio(10, 128)] });
     const created = await svc.create(
@@ -1181,7 +1222,7 @@ describe('SchoolGuardianService — a teacher manages their own class’s famili
     const { svc } = makeService({ folios: all });
     all[0].cartSnapshot.hotelGuestPhone = '';
     const out = await svc.setPupilPhones(
-      { branchId: 128, folioIds: [10, 12], phone: '0915 333 513' },
+      { branchId: 128, folioIds: [10, 12], phone: '0920 444 555' },
       TEACHER,
     );
     expect(out.saved).toEqual([10]);
@@ -1189,12 +1230,89 @@ describe('SchoolGuardianService — a teacher manages their own class’s famili
       expect.objectContaining({ folioId: 12, reason: 'OUT_OF_SCOPE' }),
     ]);
     expect(all[0].cartSnapshot).toMatchObject({
-      hotelGuestPhone: '0915 333 513',
+      hotelGuestPhone: '0920 444 555',
       hotelGuestName: 'Pupil 10',
       hotelRoomNumber: '3aad',
     });
     await expect(
       svc.setPupilPhones({ branchId: 128, folioIds: [10], phone: '12' }),
     ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('may not make another class’s family number theirs — on a pupil, or as a login', async () => {
+    // Writing 5aad's family number onto a 3aad pupil made that family the
+    // teacher's: reset its password, sign in, read the 5aad children.
+    const { svc } = makeService({ folios: rows() });
+    await expect(
+      svc.setPupilPhones(
+        { branchId: 128, folioIds: [10], phone: '+251 911 000 000' },
+        TEACHER,
+      ),
+    ).rejects.toMatchObject({
+      response: { error: { code: 'SCHOOL_CLASS_OUT_OF_SCOPE' } },
+    });
+    await expect(
+      svc.create(
+        make({ phone: '0911000000', folioIds: [10] }),
+        OFFICE,
+        TEACHER,
+      ),
+    ).rejects.toMatchObject({
+      response: { error: { code: 'SCHOOL_CLASS_OUT_OF_SCOPE' } },
+    });
+    // The office may.
+    await expect(
+      svc.setPupilPhones({
+        branchId: 128,
+        folioIds: [10],
+        phone: '0911000000',
+      }),
+    ).resolves.toMatchObject({ saved: [10] });
+  });
+
+  it('only TICKS their pupil onto a family their pupil’s number names — its password stays the office’s until then', async () => {
+    const { svc } = makeService({ folios: rows() });
+    // The office made the 5aad sibling's login; the 3aad child shares the number.
+    const fam = await svc.create(
+      make({ phone: '0915333513', displayName: 'Hodan', folioIds: [11] }),
+      OFFICE,
+    );
+    await expect(
+      svc.resetPassword(
+        fam.id,
+        { branchId: 128, password: '12345678' } as any,
+        TEACHER,
+      ),
+    ).rejects.toMatchObject({
+      response: { error: { code: 'SCHOOL_CLASS_OUT_OF_SCOPE' } },
+    });
+    await expect(
+      svc.update(
+        fam.id,
+        { branchId: 128, displayName: 'Someone else', folioIds: [10, 11] },
+        TEACHER,
+      ),
+    ).rejects.toMatchObject({
+      response: { error: { code: 'SCHOOL_CLASS_OUT_OF_SCOPE' } },
+    });
+    // The desk's form re-sends the same name and phone: a tick, allowed.
+    const ticked = await svc.update(
+      fam.id,
+      {
+        branchId: 128,
+        displayName: 'Hodan',
+        phone: '0915333513',
+        folioIds: [10, 11],
+      },
+      TEACHER,
+    );
+    expect(ticked.pupils.map((p: any) => p.folioId).sort()).toEqual([10, 11]);
+    await expect(
+      svc.resetPassword(
+        fam.id,
+        { branchId: 128, password: '12345678' } as any,
+        TEACHER,
+      ),
+    ).resolves.toMatchObject({ status: 'PASSWORD_RESET' });
   });
 });

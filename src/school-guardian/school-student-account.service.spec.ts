@@ -202,6 +202,7 @@ function makeService({
     cartRepo,
     branchRepo,
     userRepo,
+    classRepo,
     attendance,
     auth,
     homework,

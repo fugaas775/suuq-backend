@@ -4,12 +4,22 @@
 
 const text = (v: unknown) => String(v ?? '').trim();
 
-/** Digits only; an Ethiopian +251 9xx… is folded to the local 09xx… form. */
+/**
+ * Digits only, an Ethiopian mobile folded to its local 09…/07… form — however
+ * it was written: +251 9…, 00251 9…, +251 0 9…, or the bare nine digits
+ * 9…. Folding only "+251" split one family into two: a sibling recorded as
+ * 911234567 and another as 0911234567 were two families, two logins.
+ * Mirrored in the till's SchoolGuardianDesk (phoneKey).
+ */
 export function normalizePhoneKey(value: unknown): string {
-  const digits = text(value).replace(/\D+/g, '');
+  let digits = text(value).replace(/\D+/g, '');
   if (!digits) return '';
-  if (digits.startsWith('251') && digits.length === 12)
-    return `0${digits.slice(3)}`;
+  if (digits.startsWith('00')) digits = digits.slice(2);
+  if (digits.startsWith('251')) {
+    const local = digits.slice(3).replace(/^0/, '');
+    if (local.length === 9) return `0${local}`;
+  }
+  if (digits.length === 9 && /^[79]/.test(digits)) return `0${digits}`;
   return digits;
 }
 
@@ -526,7 +536,13 @@ export function gradeNumberOf(code: unknown): number | null {
  */
 export const STUDENT_LOGIN_MIN_GRADE = 6;
 
-export function studentLoginGradeAllowed(classCode: unknown): boolean {
-  const grade = gradeNumberOf(classCode);
+export function studentLoginGradeAllowed(
+  classCode: unknown,
+  registryGrade?: unknown,
+): boolean {
+  // The class registry's grade first, as the pupil's own page reads it — a
+  // class named "Bilal" whose registry grade is "Grade 8" is Grade 8 — else
+  // the class code's leading number.
+  const grade = gradeNumberOf(registryGrade) ?? gradeNumberOf(classCode);
   return grade != null && grade >= STUDENT_LOGIN_MIN_GRADE;
 }

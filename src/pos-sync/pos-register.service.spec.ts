@@ -494,7 +494,7 @@ describe('PosRegisterService — a SCHOOL folio must be fit for the roll', () =>
       id: 25383,
       branchId: 115,
       status: PosSuspendedCartStatus.SUSPENDED,
-      cartSnapshot: {},
+      cartSnapshot: pupil().cartSnapshot,
       metadata: null,
     });
     await service.updateSuspendedCart(25383, {
@@ -520,7 +520,7 @@ describe('PosRegisterService — a SCHOOL folio must be fit for the roll', () =>
       id: 25383,
       branchId: 115,
       status: PosSuspendedCartStatus.SUSPENDED,
-      cartSnapshot: {},
+      cartSnapshot: pupil().cartSnapshot,
       metadata: null,
     });
     await expect(
@@ -529,6 +529,26 @@ describe('PosRegisterService — a SCHOOL folio must be fit for the roll', () =>
         cartSnapshot: pupil().cartSnapshot,
       } as any),
     ).rejects.toThrow(/already on the roll/);
+    expect(suspendedCartsRepository.save).not.toHaveBeenCalled();
+  });
+
+  it('refuses a PATCH that makes a basket a new pupil — an enrolment — from anyone but the office', async () => {
+    const { service, suspendedCartsRepository } = makeService(null);
+    suspendedCartsRepository.findOne.mockResolvedValue({
+      id: 25390,
+      branchId: 115,
+      status: PosSuspendedCartStatus.SUSPENDED,
+      cartSnapshot: { serviceFormat: 'SCHOOL', cartLines: [{ id: 'x' }] },
+      metadata: null,
+    });
+    jest.spyOn(service as any, 'mayCreatePupilRecord').mockResolvedValue(false);
+    await expect(
+      service.updateSuspendedCart(
+        25390,
+        { branchId: 115, cartSnapshot: pupil().cartSnapshot } as any,
+        { id: 9, roles: [] } as any,
+      ),
+    ).rejects.toThrow(/Only the school office can enrol/);
     expect(suspendedCartsRepository.save).not.toHaveBeenCalled();
   });
 });

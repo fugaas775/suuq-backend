@@ -17,6 +17,7 @@ import {
   PosSuspendedCart,
   PosSuspendedCartStatus,
 } from '../pos-sync/entities/pos-suspended-cart.entity';
+import { SchoolClass } from '../school/entities/school-class.entity';
 import { User } from '../users/entities/user.entity';
 import {
   CreateSchoolStudentAccountDto,
@@ -85,6 +86,8 @@ export class SchoolStudentAccountService {
     private readonly branches: Repository<Branch>,
     @InjectRepository(User)
     private readonly users: Repository<User>,
+    @InjectRepository(SchoolClass)
+    private readonly classes: Repository<SchoolClass>,
     private readonly attendance: AttendanceService,
     private readonly auth: AuthService,
     private readonly homework: SchoolHomeworkService,
@@ -92,6 +95,19 @@ export class SchoolStudentAccountService {
   ) {}
 
   // ── shared reads ─────────────────────────────────────────────────────────
+
+  /** Grade 6 and up, by the class registry's grade where it has one (see studentLoginGradeAllowed). */
+  private async loginGradeGate(
+    branchId: number,
+  ): Promise<(classCode: unknown) => boolean> {
+    const rows = await this.classes.find({
+      where: { branchId },
+      select: { code: true, gradeCode: true },
+    });
+    const gradeOf = new Map(rows.map((c) => [fold(c.code), c.gradeCode]));
+    return (classCode) =>
+      studentLoginGradeAllowed(classCode, gradeOf.get(fold(classCode)));
+  }
 
   private async foliosById(
     ids: number[],
@@ -215,9 +231,10 @@ export class SchoolStudentAccountService {
    * the office's to-do list.
    */
   async suggestions(branchId: number, scope: LoginScope = null) {
-    const [records, accounts] = await Promise.all([
+    const [records, accounts, gradeAllowed] = await Promise.all([
       this.guardians.pupilRecords(branchId),
       this.accounts.find({ where: { branchId } }),
+      this.loginGradeGate(branchId),
     ]);
     const linked = new Set(accounts.map((a) => Number(a.folioId)));
     // Grade 6 and up only — the younger ones are not offered a login of their
@@ -228,7 +245,7 @@ export class SchoolStudentAccountService {
         (p) =>
           p.status === 'ACTIVE' &&
           !linked.has(p.folioId) &&
-          studentLoginGradeAllowed(p.classCode) &&
+          gradeAllowed(p.classCode) &&
           classOk(scope, p.classCode),
       );
     const bases = new Map<number, string>();
@@ -390,7 +407,8 @@ export class SchoolStudentAccountService {
         `${pupilOf(row).name || 'This pupil'} is not in your class`,
       );
     }
-    if (!studentLoginGradeAllowed(pupilOf(row).classCode)) {
+    const gradeAllowed = await this.loginGradeGate(dto.branchId);
+    if (!gradeAllowed(pupilOf(row).classCode)) {
       throw new BadRequestException({
         error: {
           code: 'SCHOOL_STUDENT_BELOW_LOGIN_GRADE',
@@ -433,6 +451,7 @@ export class SchoolStudentAccountService {
       where: { branchId: dto.branchId, folioId: In(wanted) },
     });
     const already = new Set(existing.map((a) => Number(a.folioId)));
+    const gradeAllowed = await this.loginGradeGate(dto.branchId);
     const createdByName = await this.actorName(actor);
     const common = text(dto.password) || '';
 
@@ -466,7 +485,7 @@ export class SchoolStudentAccountService {
         skipped.push({ folioId, name: p.name, reason: 'HAS_LOGIN' });
         continue;
       }
-      if (!studentLoginGradeAllowed(p.classCode)) {
+      if (!gradeAllowed(p.classCode)) {
         skipped.push({ folioId, name: p.name, reason: 'BELOW_LOGIN_GRADE' });
         continue;
       }
@@ -656,6 +675,9 @@ export class SchoolStudentAccountService {
       return (
         Boolean(row) &&
         Number(row.branchId) === Number(account.branchId) &&
+        // A voided record, or one that is no longer a pupil's, is off the
+        // roll for the office and the parents — so for the pupil too.
+        isPupilRecord(row) &&
         pupilOf(row).status === 'ACTIVE'
       );
     });
