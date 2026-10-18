@@ -11,6 +11,12 @@ const eat = (hhmm: string, day = '2026-10-16') => {
 };
 
 describe('register schedule', () => {
+  it('finds the last opening time that has struck: 00:00 EAT is 21:00Z the day before', () => {
+    const { lastScheduledOpen } = require('./register-schedule');
+    expect(lastScheduledOpen('00:00', new Date('2026-10-18T07:15:00Z')).toISOString()).toBe('2026-10-17T21:00:00.000Z');
+    expect(lastScheduledOpen(null, new Date())).toBeNull();
+  });
+
   it('parses HH:MM and refuses anything else', () => {
     expect(parseScheduleTime('07:30')).toBe(450);
     expect(parseScheduleTime('24:00')).toBeNull();

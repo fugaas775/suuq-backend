@@ -26,10 +26,26 @@ export function lastScheduledClose(
   closesAt: string | null | undefined,
   now: Date,
 ): Date | null {
-  const close = parseScheduleTime(closesAt);
-  if (close == null) return null;
-  const sinceClose = (eatMinuteOfDay(now) - close + DAY) % DAY;
-  const at = new Date(now.getTime() - sinceClose * 60_000);
+  return lastStrike(closesAt, now);
+}
+
+/**
+ * The latest moment ≤ now at which the branch's opening time struck, or null
+ * when the branch has no opening time. The scheduler opens the day's register
+ * once from this moment on.
+ */
+export function lastScheduledOpen(
+  opensAt: string | null | undefined,
+  now: Date,
+): Date | null {
+  return lastStrike(opensAt, now);
+}
+
+function lastStrike(hhmm: string | null | undefined, now: Date): Date | null {
+  const minute = parseScheduleTime(hhmm);
+  if (minute == null) return null;
+  const since = (eatMinuteOfDay(now) - minute + DAY) % DAY;
+  const at = new Date(now.getTime() - since * 60_000);
   at.setUTCSeconds(0, 0);
   return at;
 }
