@@ -1,3 +1,4 @@
+import { parseNotificationEmails } from '../branches/notification-emails';
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -179,10 +180,26 @@ export class PosRegisterReportService {
         where: { id: session.branchId },
         relations: ['owner'],
       });
-      const ownerEmail = branch?.owner?.email?.trim();
-      if (!ownerEmail) {
+      // The owner AND every notification address in Branch settings (the
+      // field takes several, comma-separated) — additive, as the enrolment
+      // email: an office address is "tell us too", not "stop telling the
+      // owner". One address written twice is one email.
+      const recipients = [
+        branch?.owner?.email,
+        ...parseNotificationEmails(branch?.notificationEmail),
+      ]
+        .map((address) => String(address ?? '').trim())
+        .filter(Boolean);
+      const seen = new Set<string>();
+      const to = recipients.filter((a) => {
+        const key = a.toLowerCase();
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+      if (!to.length) {
         this.logger.warn(
-          `Session ${session.id} closed but branch ${session.branchId} has no owner email; skipping report email.`,
+          `Session ${session.id} closed but branch ${session.branchId} has no owner or notification email; skipping report email.`,
         );
         return;
       }
@@ -234,7 +251,7 @@ export class PosRegisterReportService {
       const branchName = branch?.name || `Branch ${session.branchId}`;
 
       await this.emailService.send({
-        to: ownerEmail,
+        to,
         subject: `Session ${sessionLabel} closed — ${branchName} — Net ${this.money(
           model.summary.netSales,
           model.currency,
@@ -256,7 +273,7 @@ export class PosRegisterReportService {
           ? `server — the till reported ${tillModel.summary.receiptCount} of ${books.receiptCount} receipts`
           : 'client';
       this.logger.log(
-        `Queued session ${session.id} close report (${source}) to branch ${session.branchId} owner.`,
+        `Queued session ${session.id} close report (${source}) to ${to.join(', ')} (branch ${session.branchId}).`,
       );
     } catch (err: any) {
       this.logger.error(

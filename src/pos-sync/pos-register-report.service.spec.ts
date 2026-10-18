@@ -291,7 +291,7 @@ describe('PosRegisterReportService.dispatchCloseReport (client report)', () => {
 
     expect(emailService.send).toHaveBeenCalledTimes(1);
     const mail = sent[0];
-    expect(mail.to).toBe('owner@x.com');
+    expect(mail.to).toEqual(['owner@x.com']);
     // HTML mirrors the Today tab sections
     expect(mail.html).toContain('Sara'); // waiter
     expect(mail.html).toContain('Mulu'); // cook
@@ -422,7 +422,29 @@ describe('PosRegisterReportService.dispatchCloseReport (client report)', () => {
     expect(sent[0].html).toContain('Sara');
   });
 
-  it('skips silently when the branch has no owner email', async () => {
+  it('emails the owner AND every notification address in Branch settings, one address once', async () => {
+    const { service, sent } = makeService();
+    (service as any).branchesRepository.findOne = jest.fn().mockResolvedValue({
+      id: 3,
+      name: 'SMAQ School',
+      owner: { email: 'owner@x.com' },
+      notificationEmail: 'office@smaq.com, Owner@x.com; head@smaq.com',
+    });
+    await service.dispatchCloseReport(session, { report: clientReport });
+    expect(sent).toHaveLength(1);
+    expect(sent[0].to).toEqual(['owner@x.com', 'office@smaq.com', 'head@smaq.com']);
+  });
+
+  it('emails the notification addresses alone when the owner has no email', async () => {
+    const { service, sent } = makeService();
+    (service as any).branchesRepository.findOne = jest.fn().mockResolvedValue({
+      id: 3, name: 'SMAG School', owner: null, notificationEmail: 'office@smag.com',
+    });
+    await service.dispatchCloseReport(session, { report: clientReport });
+    expect(sent[0].to).toEqual(['office@smag.com']);
+  });
+
+  it('skips silently when the branch has no owner and no notification email', async () => {
     const { service, emailService } = makeService();
     (service as any).branchesRepository.findOne = jest
       .fn()
