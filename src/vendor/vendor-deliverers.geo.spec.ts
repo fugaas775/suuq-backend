@@ -2,6 +2,8 @@ import { PosPortalOnboardingService } from '../branch-staff/pos-portal-onboardin
 import { SellerWorkspace } from '../seller-workspace/entities/seller-workspace.entity';
 import { VendorStore } from './entities/vendor-store.entity';
 import { BranchStaffAssignment } from '../branch-staff/entities/branch-staff-assignment.entity';
+import { ProductVariant } from '../products/entities/product-variant.entity';
+import { VariantInventoryService } from '../branches/variant-inventory.service';
 import { InventoryLedgerService } from '../branches/inventory-ledger.service';
 import { Test } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
@@ -77,6 +79,10 @@ describe('VendorService.searchDeliverers (geo)', () => {
         { provide: PosPortalOnboardingService, useValue: {} },
         { provide: getRepositoryToken(SellerWorkspace), useValue: {} },
         { provide: getRepositoryToken(VendorStore), useClass: Repository },
+        // Both injected by VendorService since the RETAIL variants work; a
+        // setup without them fails to build the service at all.
+        { provide: getRepositoryToken(ProductVariant), useValue: {} },
+        { provide: VariantInventoryService, useValue: {} },
         {
           provide: getRepositoryToken(BranchStaffAssignment),
           useClass: Repository,

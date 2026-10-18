@@ -2,6 +2,8 @@ import { PosPortalOnboardingService } from '../branch-staff/pos-portal-onboardin
 import { SellerWorkspace } from '../seller-workspace/entities/seller-workspace.entity';
 import { VendorStore } from './entities/vendor-store.entity';
 import { BranchStaffAssignment } from '../branch-staff/entities/branch-staff-assignment.entity';
+import { ProductVariant } from '../products/entities/product-variant.entity';
+import { VariantInventoryService } from '../branches/variant-inventory.service';
 import { InventoryLedgerService } from '../branches/inventory-ledger.service';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { Test, TestingModule } from '@nestjs/testing';
@@ -87,6 +89,10 @@ describe('Vendor private note access rules', () => {
         { provide: PosPortalOnboardingService, useValue: {} },
         { provide: getRepositoryToken(SellerWorkspace), useValue: {} },
         { provide: getRepositoryToken(VendorStore), useValue: {} },
+        // Both injected by VendorService since the RETAIL variants work; a
+        // setup without them fails to build the service at all.
+        { provide: getRepositoryToken(ProductVariant), useValue: {} },
+        { provide: VariantInventoryService, useValue: {} },
         { provide: getRepositoryToken(BranchStaffAssignment), useValue: {} },
         { provide: getRepositoryToken(User), useValue: userRepoMock },
         { provide: getRepositoryToken(Product), useValue: productRepoMock },

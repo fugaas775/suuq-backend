@@ -95,6 +95,9 @@ describe('EquityPartnerBnplService', () => {
   const supplierProfilesRepo = {
     findOne: jest.fn(),
     find: jest.fn(),
+    // The funded flow names the reused draft profile as the admin typed it
+    // (2664c1e), which is a save — re-armed in beforeEach after the reset.
+    save: jest.fn(),
   };
 
   const supplierOnboardingService = {
@@ -139,6 +142,7 @@ describe('EquityPartnerBnplService', () => {
     }));
     subscriptionsRepo.create.mockImplementation((value) => value);
     subscriptionsRepo.save.mockImplementation(async (value) => value);
+    supplierProfilesRepo.save.mockImplementation(async (value) => value);
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -353,7 +357,7 @@ describe('EquityPartnerBnplService', () => {
 
     await service.startBnplActivation(900, {
       accountKind: 'SUPPLIER',
-      supplierCompanyName: 'Ignored When Existing',
+      supplierCompanyName: 'Renamed Wholesale',
       targetOwnerEmail: 'wholesaler@example.com',
       period: 'ONE_YEAR',
     });
@@ -361,6 +365,11 @@ describe('EquityPartnerBnplService', () => {
     expect(
       supplierOnboardingService.createSupplierAccountForUser,
     ).not.toHaveBeenCalled();
+    // The draft is reused, and named as the admin typed it — not left on a
+    // stale name from an earlier draft (2664c1e, "fix BNPL name-reuse").
+    expect(supplierProfilesRepo.save).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 77, companyName: 'Renamed Wholesale' }),
+    );
     expect(
       supplierActivationService.activateForFundedFlow,
     ).toHaveBeenCalledWith(77, 'ONE_YEAR', expect.any(Object));
