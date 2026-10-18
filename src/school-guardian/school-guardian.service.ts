@@ -42,7 +42,6 @@ import {
   SchoolNoticeAudience,
 } from './entities/school-notice.entity';
 import {
-  dedupeUsername,
   folioMoney,
   guardianFolioView,
   guardianReceiptView,
@@ -56,6 +55,7 @@ import {
   rankClassByTerm,
   readReports,
   schoolTimeZone,
+  guardianUsernameFromPhone,
   suggestGuardianUsername,
 } from './school-guardian.util';
 import { SchoolHomeworkService } from './school-homework.service';
@@ -323,13 +323,17 @@ export class SchoolGuardianService {
     }
     const items = [...families.values()].map((family) => {
       const base = bases.get(family.key) || '';
-      const suggestedUsername = base ? dedupeUsername(base, taken) : '';
+      // One phone, one family: a number that already signs in is NOT offered
+      // a `.2` — the office adds these children to that login instead.
+      const phoneInUse = Boolean(base) && taken.has(base);
+      const suggestedUsername = base && !phoneInUse ? base : '';
       if (suggestedUsername) taken.add(suggestedUsername);
       return {
         key: family.key,
         phone: family.phone,
         guardianName: family.guardianName,
         suggestedUsername,
+        phoneInUse,
         pupils: family.pupils.map((p) => ({
           folioId: p.folioId,
           name: p.name,
@@ -394,33 +398,19 @@ export class SchoolGuardianService {
       throw new ConflictException('Parents’ logins are a SCHOOL feature.');
     }
     const folioIds = await this.assertPupilFolios(dto.branchId, dto.folioIds);
-    const username = fold(dto.username);
+    // The username IS the phone (owner 2026-10-18) — whatever was sent as a
+    // username is not consulted.
+    const username = this.usernameForPhone(dto.phone);
 
     const clash = await this.users.findOne({
       where: { posUsername: username },
     });
-    if (clash) {
-      throw new ConflictException({
-        error: {
-          code: 'SCHOOL_GUARDIAN_USERNAME_CONFLICT',
-          message: 'This username is already in use.',
-          details: { field: 'username' },
-        },
-      });
-    }
+    if (clash) throw this.phoneInUse();
     const internalEmail = `${GUARDIAN_INTERNAL_EMAIL_PREFIX}${username}@sys.internal`;
     const staleByEmail = await this.users.findOne({
       where: { email: internalEmail },
     });
-    if (staleByEmail) {
-      throw new ConflictException({
-        error: {
-          code: 'SCHOOL_GUARDIAN_USERNAME_CONFLICT',
-          message: 'This username is already in use.',
-          details: { field: 'username' },
-        },
-      });
-    }
+    if (staleByEmail) throw this.phoneInUse();
 
     const createdByName = await this.actorName(actor);
     const hashed = await bcrypt.hash(dto.password, 10);
@@ -482,6 +472,10 @@ export class SchoolGuardianService {
     const patch: Partial<SchoolGuardian> = {};
     if (dto.displayName !== undefined)
       patch.displayName = text(dto.displayName) || null;
+    // A new phone is a new username — the family signs in with the number
+    // the school has for them. Checked before anything is written.
+    const renameTo =
+      dto.phone !== undefined ? this.usernameForPhone(dto.phone) : null;
     if (dto.phone !== undefined) patch.phone = text(dto.phone) || null;
     if (dto.relationship !== undefined) {
       patch.relationship = text(dto.relationship).toUpperCase() || null;
@@ -496,9 +490,8 @@ export class SchoolGuardianService {
         { displayName: text(dto.displayName) || undefined },
       );
     }
-    if (dto.username !== undefined) {
-      await this.renameLogin(g, fold(dto.username));
-    }
+    // `dto.username` is no longer consulted: the username follows the phone.
+    if (renameTo) await this.renameLogin(g, renameTo);
     if (dto.folioIds) {
       const wanted = [
         ...new Set(dto.folioIds.map((n) => Number(n)).filter((n) => n > 0)),
@@ -536,6 +529,34 @@ export class SchoolGuardianService {
    * either way. One user may hold guardianships at two schools; the login
    * is one, so the rename reaches both.
    */
+  /** The username a phone makes, or a 400 naming the phone as what is missing. */
+  private usernameForPhone(phone: unknown): string {
+    const username = guardianUsernameFromPhone(phone);
+    if (!username) {
+      throw new BadRequestException({
+        error: {
+          code: 'SCHOOL_GUARDIAN_PHONE_REQUIRED',
+          message:
+            "Give the parent's phone number — it is the family's username.",
+          details: { field: 'phone' },
+        },
+      });
+    }
+    return username;
+  }
+
+  /** One phone, one family: a number already signing in is not given a second login. */
+  private phoneInUse() {
+    return new ConflictException({
+      error: {
+        code: 'SCHOOL_GUARDIAN_USERNAME_CONFLICT',
+        message:
+          'This phone number already has a login — open that login and tick these children on it instead.',
+        details: { field: 'phone' },
+      },
+    });
+  }
+
   private async renameLogin(g: SchoolGuardian, username: string) {
     if (!username) throw new BadRequestException('Give the login a username.');
     const user = await this.users.findOne({ where: { id: g.userId } });
@@ -553,15 +574,7 @@ export class SchoolGuardianService {
     const taken = [clash, staleByEmail].some(
       (row) => row && Number(row.id) !== Number(user.id),
     );
-    if (taken) {
-      throw new ConflictException({
-        error: {
-          code: 'SCHOOL_GUARDIAN_USERNAME_CONFLICT',
-          message: 'This username is already in use.',
-          details: { field: 'username' },
-        },
-      });
-    }
+    if (taken) throw this.phoneInUse();
     user.posUsername = username;
     if (String(user.email ?? '').startsWith(GUARDIAN_INTERNAL_EMAIL_PREFIX)) {
       user.email = internalEmail;

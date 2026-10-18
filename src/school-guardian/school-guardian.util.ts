@@ -27,21 +27,25 @@ export function usernameFromName(fullName: unknown): string {
 }
 
 /**
- * The username the office is offered for a family: the guardian's phone
- * (digits, at least nine of them — what a parent already knows by heart),
- * otherwise their name. May still collide; the caller de-duplicates.
+ * A family's username IS its phone (owner 2026-10-18: "Phone number and
+ * username of the parents should be one and same"): digits, +251 folded to
+ * 09…, at least nine of them. '' when the phone is not one — the caller
+ * refuses rather than inventing a name-based or `.2` variant, because one
+ * phone is one family and a second login for it splits the children.
  */
+export function guardianUsernameFromPhone(phone: unknown): string {
+  const digits = normalizePhoneKey(phone);
+  return digits.length >= 9 ? digits : '';
+}
+
+/** The username offered for a family — its phone, and only its phone. */
 export function suggestGuardianUsername({
   phone,
-  guardianName,
 }: {
   phone?: unknown;
   guardianName?: unknown;
 }): string {
-  const digits = normalizePhoneKey(phone);
-  if (digits.length >= 9) return digits;
-  const byName = usernameFromName(guardianName);
-  return byName.length >= 3 ? byName : '';
+  return guardianUsernameFromPhone(phone);
 }
 
 /** `base`, then `base.2`, `base.3`… — the first one `taken` does not hold. */

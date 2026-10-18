@@ -280,13 +280,26 @@ describe('SchoolGuardianService — the office', () => {
       svc.create(
         {
           branchId: 128,
-          username: '0915333513',
+          username: 'ignored-now',
+          phone: '+251 915 333 513',
           password: 'sunny-2019',
           folioIds: [10],
         },
         OFFICE,
       ),
     ).rejects.toBeInstanceOf(ConflictException);
+    // No phone, no login: the phone IS the username (owner 2026-10-18).
+    await expect(
+      svc.create(
+        {
+          branchId: 128,
+          username: 'cali',
+          password: 'sunny-2019',
+          folioIds: [10],
+        },
+        OFFICE,
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 
   it('suggests one login per phone with the siblings together, skipping families that have one and leavers', async () => {
@@ -317,15 +330,24 @@ describe('SchoolGuardianService — the office', () => {
       byPhone['phone:0915333513'].pupils.map((p: any) => p.folioId),
     ).toEqual([10, 11]);
     expect(byPhone['phone:0915333513'].suggestedUsername).toBe('0915333513');
-    // Taken by an existing login → suffixed.
-    expect(byPhone['phone:0911000000'].suggestedUsername).toBe('0911000000.2');
-    expect(byPhone['folio:14'].suggestedUsername).toBe('nobody.phone');
+    // One phone, one family: a number that already signs in is flagged, never
+    // offered a `.2` — the office adds the child to that login.
+    expect(byPhone['phone:0911000000']).toMatchObject({
+      suggestedUsername: '',
+      phoneInUse: true,
+    });
+    // No phone, no username — a name is no longer one.
+    expect(byPhone['folio:14']).toMatchObject({
+      suggestedUsername: '',
+      phoneInUse: false,
+    });
 
     // Once a family has a login, it leaves the list.
     await svc.create(
       {
         branchId: 128,
         username: '0915333513',
+        phone: '0915333513',
         password: 'sunny-2019',
         folioIds: [10, 11],
       },
@@ -354,7 +376,8 @@ describe('SchoolGuardianService — the office', () => {
     const created = await svc.create(
       {
         branchId: 128,
-        username: 'cali',
+        username: '0915333599',
+        phone: '0915333599',
         password: 'sunny-2019',
         folioIds: [10],
       },
@@ -363,11 +386,16 @@ describe('SchoolGuardianService — the office', () => {
     const updated = await svc.update(created.id, {
       branchId: 128,
       folioIds: [11, 16],
-      phone: '0900',
+      phone: '0900 111 222',
       isActive: false,
     });
     expect(updated.pupils.map((p: any) => p.folioId)).toEqual([11, 16]);
-    expect(updated).toMatchObject({ isActive: false, phone: '0900' });
+    // A new phone is a new username — the two are one and the same.
+    expect(updated).toMatchObject({
+      isActive: false,
+      phone: '0900 111 222',
+      username: '0900111222',
+    });
     expect(pupils.map((p) => Number(p.folioId)).sort()).toEqual([11, 16]);
 
     await svc.resetPassword(created.id, {
@@ -491,6 +519,7 @@ describe('SchoolGuardianService — the parent', () => {
       {
         branchId: 128,
         username: '0915333513',
+        phone: '0915333513',
         password: 'sunny-2019',
         displayName: 'Cali Xasan',
         folioIds: [10, 11],
@@ -629,7 +658,8 @@ describe('SchoolGuardianService — notices and the issued-password nudge', () =
     await svc.create(
       {
         branchId: 128,
-        username: 'cali',
+        username: '0915333599',
+        phone: '0915333599',
         password: 'sunny-2019',
         folioIds: [10, 11],
       },
@@ -719,7 +749,8 @@ describe('SchoolGuardianService — notices and the issued-password nudge', () =
     const created = await svc.create(
       {
         branchId: 128,
-        username: 'cali',
+        username: '0915333599',
+        phone: '0915333599',
         password: 'sunny-2019',
         folioIds: [10],
       },
@@ -747,7 +778,8 @@ describe('SchoolGuardianService — notices and the issued-password nudge', () =
     await svc.create(
       {
         branchId: 128,
-        username: 'cali',
+        username: '0915333599',
+        phone: '0915333599',
         password: 'sunny-2019',
         folioIds: [10],
       },
@@ -826,7 +858,8 @@ describe('SchoolGuardianService — the teachers’ side on the family’s page'
     await svc.create(
       {
         branchId: 128,
-        username: 'cali',
+        username: '0915333599',
+        phone: '0915333599',
         password: 'sunny-2019',
         displayName: 'Cali Xasan',
         folioIds: [10, 11],
@@ -947,7 +980,7 @@ describe('SchoolGuardianService — the teachers’ side on the family’s page'
 });
 
 describe('SchoolGuardianService — the desk’s four buttons', () => {
-  it('corrects a username, refusing one another login holds; the internal e-mail follows', async () => {
+  it('renames the login when the phone changes — the two are one — refusing a number another login holds; the internal e-mail follows', async () => {
     const { svc, users } = makeService({
       folios: [folio(10, 128)],
       users: [
@@ -963,32 +996,34 @@ describe('SchoolGuardianService — the desk’s four buttons', () => {
     const created = await svc.create(
       {
         branchId: 128,
-        username: '0915333513',
+        phone: '0915333513',
         password: 'sunny-2019',
         folioIds: [10],
       },
       OFFICE,
     );
+    expect(created.username).toBe('0915333513');
     const renamed = await svc.update(created.id, {
       branchId: 128,
-      username: '0915333514',
+      phone: '+251 915 333 514',
     });
     expect(renamed.username).toBe('0915333514');
     const user = users.find((u) => u.posUsername === '0915333514');
     expect(user.email).toBe('pos.g.0915333514@sys.internal');
-    // The same name again is a no-op; another login's is a conflict.
+    // The same number again is a no-op; another login's is a conflict; a
+    // username sent on its own is not consulted.
     await expect(
-      svc.update(created.id, { branchId: 128, username: '0915333514' }),
+      svc.update(created.id, { branchId: 128, phone: '0915333514' }),
     ).resolves.toMatchObject({ username: '0915333514' });
     await expect(
-      svc.update(created.id, { branchId: 128, username: '0911000000' }),
+      svc.update(created.id, { branchId: 128, phone: '0911000000' }),
     ).rejects.toBeInstanceOf(ConflictException);
     await expect(
-      svc.update(created.id, {
-        branchId: 128,
-        username: '0911000000'.toUpperCase(),
-      }),
-    ).rejects.toBeInstanceOf(ConflictException);
+      svc.update(created.id, { branchId: 128, username: 'something-else' }),
+    ).resolves.toMatchObject({ username: '0915333514' });
+    await expect(
+      svc.update(created.id, { branchId: 128, phone: '12' }),
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 
   it('keeps a withdrawn child linked through an unrelated edit, and only checks the children being ADDED', async () => {
@@ -997,7 +1032,8 @@ describe('SchoolGuardianService — the desk’s four buttons', () => {
     const created = await svc.create(
       {
         branchId: 128,
-        username: 'cali',
+        username: '0915333599',
+        phone: '0915333599',
         password: 'sunny-2019',
         folioIds: [10, 11],
       },
@@ -1008,10 +1044,10 @@ describe('SchoolGuardianService — the desk’s four buttons', () => {
     // A phone correction that re-sends the same two children must not be refused over the withdrawn one.
     const edited = await svc.update(created.id, {
       branchId: 128,
-      phone: '0900',
+      phone: '0900111222',
       folioIds: [10, 11],
     });
-    expect(edited.phone).toBe('0900');
+    expect(edited.phone).toBe('0900111222');
     expect(pupils.map((l) => Number(l.folioId)).sort()).toEqual([10, 11]);
     // Adding the withdrawn child fresh is refused; unticking it drops the link.
     const again = await svc.update(created.id, {
@@ -1035,7 +1071,8 @@ describe('SchoolGuardianService — the desk’s four buttons', () => {
     const created = await svc.create(
       {
         branchId: 128,
-        username: 'cali',
+        username: '0915333599',
+        phone: '0915333599',
         password: 'sunny-2019',
         folioIds: [10],
       },
@@ -1043,11 +1080,11 @@ describe('SchoolGuardianService — the desk’s four buttons', () => {
     );
     await svc.update(created.id, { branchId: 128, isActive: false });
     expect(guardians[0].isActive).toBe(false);
-    await expect(svc.login('cali', 'sunny-2019')).rejects.toMatchObject({
+    await expect(svc.login('0915333599', 'sunny-2019')).rejects.toMatchObject({
       response: { error: { code: 'SCHOOL_GUARDIAN_SWITCHED_OFF' } },
     });
     await svc.update(created.id, { branchId: 128, isActive: true });
-    await expect(svc.login('cali', 'sunny-2019')).resolves.toMatchObject({
+    await expect(svc.login('0915333599', 'sunny-2019')).resolves.toMatchObject({
       accessToken: 'at',
     });
   });

@@ -32,15 +32,18 @@ export class CreateSchoolGuardianDto {
   @IsInt()
   branchId!: number;
 
+  /**
+   * Accepted for older clients and IGNORED: the username is the phone
+   * (guardianUsernameFromPhone), whatever is sent here.
+   */
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  @MinLength(3)
   @MaxLength(64)
   @Matches(GUARDIAN_USERNAME_PATTERN, {
     message:
       'Username may contain letters, digits, dots, hyphens and underscores only — no "@" and no spaces.',
   })
-  username!: string;
+  username?: string;
 
   @IsString()
   @MinLength(6)

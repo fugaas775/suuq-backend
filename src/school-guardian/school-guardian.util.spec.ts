@@ -64,13 +64,14 @@ describe('school-guardian.util', () => {
         guardianName: 'Cali Xasan',
       }),
     ).toBe('0915333513');
-    // Too short a phone → the name.
+    // Too short a phone → NO username: the phone IS the username (owner
+    // 2026-10-18), a name never stands in for it.
     expect(
       suggestGuardianUsername({
         phone: '1234',
         guardianName: 'Cali Xasan Warsame',
       }),
-    ).toBe('cali.warsame');
+    ).toBe('');
     expect(usernameFromName('  Ali ')).toBe('ali');
     expect(suggestGuardianUsername({ phone: '', guardianName: 'Al' })).toBe('');
   });
