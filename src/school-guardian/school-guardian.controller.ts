@@ -51,8 +51,10 @@ const ROLES = [
 /**
  * The office's desk for parents' logins. Everything sits on ENROL_STUDENT —
  * the right that puts a child on the roll is the right that hands the
- * family a login to read it. A teacher's lane (VIEW_CLASS_BOARD) does not
- * pass: usernames are the office's, and so are password resets.
+ * family a login to read it. MANAGE_SCHOOL_LOGINS opens it too — the
+ * cashier's, who hands out logins but may not edit the roll (owner
+ * 2026-10-18). A teacher's lane (VIEW_CLASS_BOARD) does not pass. Notices,
+ * below, stay ENROL_STUDENT alone.
  */
 @ApiTags('School Guardians')
 @Controller('pos/v1/school/guardians')
@@ -63,13 +65,20 @@ export class SchoolGuardianController {
   constructor(private readonly svc: SchoolGuardianService) {}
 
   private actor(req: AuthenticatedRequest) {
-    const u = (req.user ?? {}) as { id?: number; email?: string; roles?: string[] };
+    const u = (req.user ?? {}) as {
+      id?: number;
+      email?: string;
+      roles?: string[];
+    };
     return { id: u.id ?? null, email: u.email ?? null, roles: u.roles ?? [] };
   }
 
   @Get()
   @RetailBranchContext('query.branchId')
-  @RequirePosPermissions(PosSchoolPermission.ENROL_STUDENT)
+  @RequirePosPermissions(
+    PosSchoolPermission.ENROL_STUDENT,
+    PosSchoolPermission.MANAGE_SCHOOL_LOGINS,
+  )
   list(@Query() query: ListSchoolGuardiansQueryDto) {
     return this.svc.list(query.branchId);
   }
@@ -77,21 +86,33 @@ export class SchoolGuardianController {
   /** Families on the roll with no login yet, grouped by the guardian's phone. */
   @Get('suggestions')
   @RetailBranchContext('query.branchId')
-  @RequirePosPermissions(PosSchoolPermission.ENROL_STUDENT)
+  @RequirePosPermissions(
+    PosSchoolPermission.ENROL_STUDENT,
+    PosSchoolPermission.MANAGE_SCHOOL_LOGINS,
+  )
   suggestions(@Query() query: ListSchoolGuardiansQueryDto) {
     return this.svc.suggestions(query.branchId);
   }
 
   @Post()
   @RetailBranchContext('body.branchId')
-  @RequirePosPermissions(PosSchoolPermission.ENROL_STUDENT)
-  create(@Body() dto: CreateSchoolGuardianDto, @Req() req: AuthenticatedRequest) {
+  @RequirePosPermissions(
+    PosSchoolPermission.ENROL_STUDENT,
+    PosSchoolPermission.MANAGE_SCHOOL_LOGINS,
+  )
+  create(
+    @Body() dto: CreateSchoolGuardianDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
     return this.svc.create(dto, this.actor(req));
   }
 
   @Patch(':id')
   @RetailBranchContext('body.branchId')
-  @RequirePosPermissions(PosSchoolPermission.ENROL_STUDENT)
+  @RequirePosPermissions(
+    PosSchoolPermission.ENROL_STUDENT,
+    PosSchoolPermission.MANAGE_SCHOOL_LOGINS,
+  )
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateSchoolGuardianDto,
@@ -101,7 +122,10 @@ export class SchoolGuardianController {
 
   @Post(':id/password')
   @RetailBranchContext('body.branchId')
-  @RequirePosPermissions(PosSchoolPermission.ENROL_STUDENT)
+  @RequirePosPermissions(
+    PosSchoolPermission.ENROL_STUDENT,
+    PosSchoolPermission.MANAGE_SCHOOL_LOGINS,
+  )
   resetPassword(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: ResetSchoolGuardianPasswordDto,
@@ -111,7 +135,10 @@ export class SchoolGuardianController {
 
   @Delete(':id')
   @RetailBranchContext('query.branchId')
-  @RequirePosPermissions(PosSchoolPermission.ENROL_STUDENT)
+  @RequirePosPermissions(
+    PosSchoolPermission.ENROL_STUDENT,
+    PosSchoolPermission.MANAGE_SCHOOL_LOGINS,
+  )
   remove(
     @Param('id', ParseIntPipe) id: number,
     @Query('branchId', ParseIntPipe) branchId: number,
@@ -135,7 +162,11 @@ export class SchoolNoticeController {
   constructor(private readonly svc: SchoolGuardianService) {}
 
   private actor(req: AuthenticatedRequest) {
-    const u = (req.user ?? {}) as { id?: number; email?: string; roles?: string[] };
+    const u = (req.user ?? {}) as {
+      id?: number;
+      email?: string;
+      roles?: string[];
+    };
     return { id: u.id ?? null, email: u.email ?? null, roles: u.roles ?? [] };
   }
 
@@ -156,7 +187,10 @@ export class SchoolNoticeController {
   @Patch(':id')
   @RetailBranchContext('body.branchId')
   @RequirePosPermissions(PosSchoolPermission.ENROL_STUDENT)
-  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateSchoolNoticeDto) {
+  update(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateSchoolNoticeDto,
+  ) {
     return this.svc.updateNotice(id, dto);
   }
 

@@ -49,9 +49,10 @@ const ROLES = [
 /**
  * The office's desk for pupils' own logins. Everything sits on
  * ENROL_STUDENT, as the parents' desk does — the right that puts a child on
- * the roll is the right that hands them a login to read it. A teacher's
- * lane (VIEW_CLASS_BOARD) does not pass: usernames and password resets are
- * the office's.
+ * the roll is the right that hands them a login to read it — or on
+ * MANAGE_SCHOOL_LOGINS, the cashier's: the logins alone, without the roll
+ * (owner 2026-10-18). A teacher's lane (VIEW_CLASS_BOARD) does not pass:
+ * usernames and password resets are the office's and the fee desk's.
  */
 @ApiTags('School Student Accounts')
 @Controller('pos/v1/school/student-accounts')
@@ -72,7 +73,10 @@ export class SchoolStudentAccountController {
 
   @Get()
   @RetailBranchContext('query.branchId')
-  @RequirePosPermissions(PosSchoolPermission.ENROL_STUDENT)
+  @RequirePosPermissions(
+    PosSchoolPermission.ENROL_STUDENT,
+    PosSchoolPermission.MANAGE_SCHOOL_LOGINS,
+  )
   list(@Query() query: ListSchoolStudentAccountsQueryDto) {
     return this.svc.list(query.branchId);
   }
@@ -80,14 +84,20 @@ export class SchoolStudentAccountController {
   /** Pupils on the roll with no login yet, each with a suggested username. */
   @Get('suggestions')
   @RetailBranchContext('query.branchId')
-  @RequirePosPermissions(PosSchoolPermission.ENROL_STUDENT)
+  @RequirePosPermissions(
+    PosSchoolPermission.ENROL_STUDENT,
+    PosSchoolPermission.MANAGE_SCHOOL_LOGINS,
+  )
   suggestions(@Query() query: ListSchoolStudentAccountsQueryDto) {
     return this.svc.suggestions(query.branchId);
   }
 
   @Post()
   @RetailBranchContext('body.branchId')
-  @RequirePosPermissions(PosSchoolPermission.ENROL_STUDENT)
+  @RequirePosPermissions(
+    PosSchoolPermission.ENROL_STUDENT,
+    PosSchoolPermission.MANAGE_SCHOOL_LOGINS,
+  )
   create(
     @Body() dto: CreateSchoolStudentAccountDto,
     @Req() req: AuthenticatedRequest,
@@ -98,7 +108,10 @@ export class SchoolStudentAccountController {
   /** Logins for a class or the whole roll in one call; passwords come back once. */
   @Post('bulk')
   @RetailBranchContext('body.branchId')
-  @RequirePosPermissions(PosSchoolPermission.ENROL_STUDENT)
+  @RequirePosPermissions(
+    PosSchoolPermission.ENROL_STUDENT,
+    PosSchoolPermission.MANAGE_SCHOOL_LOGINS,
+  )
   createMany(
     @Body() dto: CreateSchoolStudentAccountsBulkDto,
     @Req() req: AuthenticatedRequest,
@@ -108,7 +121,10 @@ export class SchoolStudentAccountController {
 
   @Patch(':id')
   @RetailBranchContext('body.branchId')
-  @RequirePosPermissions(PosSchoolPermission.ENROL_STUDENT)
+  @RequirePosPermissions(
+    PosSchoolPermission.ENROL_STUDENT,
+    PosSchoolPermission.MANAGE_SCHOOL_LOGINS,
+  )
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateSchoolStudentAccountDto,
@@ -118,7 +134,10 @@ export class SchoolStudentAccountController {
 
   @Post(':id/password')
   @RetailBranchContext('body.branchId')
-  @RequirePosPermissions(PosSchoolPermission.ENROL_STUDENT)
+  @RequirePosPermissions(
+    PosSchoolPermission.ENROL_STUDENT,
+    PosSchoolPermission.MANAGE_SCHOOL_LOGINS,
+  )
   resetPassword(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: ResetSchoolStudentAccountPasswordDto,
@@ -128,7 +147,10 @@ export class SchoolStudentAccountController {
 
   @Delete(':id')
   @RetailBranchContext('query.branchId')
-  @RequirePosPermissions(PosSchoolPermission.ENROL_STUDENT)
+  @RequirePosPermissions(
+    PosSchoolPermission.ENROL_STUDENT,
+    PosSchoolPermission.MANAGE_SCHOOL_LOGINS,
+  )
   remove(
     @Param('id', ParseIntPipe) id: number,
     @Query('branchId', ParseIntPipe) branchId: number,

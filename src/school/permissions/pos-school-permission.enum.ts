@@ -35,6 +35,14 @@ export enum PosSchoolPermission {
    * shipped without 22 staff accounts being edited first.
    */
   MARK_ATTENDANCE = 'MARK_ATTENDANCE',
+  /**
+   * Manage the parents' and students' logins — give one, reset a password,
+   * switch one off — and nothing else. The fee desk's (owner 2026-10-18:
+   * "do not allow cashiers to edit the whole student list, except login
+   * only"): ENROL_STUDENT, which both login desks also accept, carries the
+   * roll, the classes, the rooms, the timetable and the textbooks with it.
+   */
+  MANAGE_SCHOOL_LOGINS = 'MANAGE_SCHOOL_LOGINS',
 }
 
 export const POS_SCHOOL_PERMISSION_VALUES = Object.values(PosSchoolPermission);

@@ -86,6 +86,9 @@ export enum PosRegisterPermission {
   // Take a class register. A teacher's permission, not the fee desk's — which
   // is the whole reason it is separate from ENROL_STUDENT.
   MARK_ATTENDANCE = 'MARK_ATTENDANCE',
+  // The parents' and students' logins alone — the cashier's, who may hand a
+  // family a login but not edit the roll (see PosSchoolPermission).
+  MANAGE_SCHOOL_LOGINS = 'MANAGE_SCHOOL_LOGINS',
   // Vehicle-registry permissions (Somali Region Bureau of Trade and Transport).
   //
   // Split finely on purpose: a registry office separates the clerk who takes
