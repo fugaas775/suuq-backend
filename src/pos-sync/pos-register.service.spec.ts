@@ -796,20 +796,12 @@ describe('PosRegisterService.openSession (branch opening time)', () => {
   const dto = { branchId: 3, registerId: 'till-1' };
   const operator = { id: 51, roles: ['POS_OPERATOR'] };
 
-  it('refuses an operator a new session before the opening time', async () => {
+  it('opens for an operator at any hour — before the opening time too', async () => {
     const { service, registerSessionsRepository } = makeService();
     await expect(
       service.openSession(dto, operator, { now: early }),
-    ).rejects.toMatchObject({
-      response: {
-        error: expect.objectContaining({
-          code: 'POS_REGISTER_OUTSIDE_HOURS',
-          message:
-            'SMAK QSR opens its registers at 07:00. A manager can open one earlier.',
-        }),
-      },
-    });
-    expect(registerSessionsRepository.save).not.toHaveBeenCalled();
+    ).resolves.toMatchObject({ id: 77 });
+    expect(registerSessionsRepository.save).toHaveBeenCalled();
   });
 
   it('opens for the operator once the branch is open', async () => {

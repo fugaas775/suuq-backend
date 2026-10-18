@@ -9,11 +9,9 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, Repository } from 'typeorm';
 import {
   BranchStaffAssignment,
-  BranchStaffRole,
 } from '../branch-staff/entities/branch-staff-assignment.entity';
 import { Branch } from '../branches/entities/branch.entity';
 import { PosRegisterReportService } from './pos-register-report.service';
-import { isWithinOpeningHours } from './register-schedule';
 import {
   SCHOOL_WITHDRAWAL_REFUSED_MESSAGE,
   canWithdrawStudent,
@@ -114,9 +112,9 @@ export class PosRegisterService {
   async openSession(
     dto: CreatePosRegisterSessionDto,
     actor: { id?: number | null; email?: string | null; roles?: string[] } = {},
-    options: { now?: Date; ignoreOpeningHours?: boolean } = {},
+    // Kept for callers that still pass them; no opening-hours rule applies.
+    _options: { now?: Date; ignoreOpeningHours?: boolean } = {},
   ): Promise<PosRegisterSessionResponseDto> {
-    const now = options.now ?? new Date();
     const branch = await this.assertBranch(dto.branchId);
 
     // For shared-session formats (e.g. HOTEL): find any open session for the branch
@@ -145,11 +143,10 @@ export class PosRegisterService {
       return this.toSessionResponse(existingOpen);
     }
 
-    // Only a NEW session is held to the opening time: one already open is
-    // handed back above whatever the hour, so a shift is never cut off here.
-    if (!options.ignoreOpeningHours) {
-      await this.assertWithinOpeningHours(branch, actor, now);
-    }
+    // No opening-hours refusal (owner 2026-10-18: "Allow cashier or managers
+    // to open session with or without the schedule"). The schedule opens and
+    // closes the day's register on its own (PosRegisterScheduleService); a
+    // person may open one at any hour.
 
     // Compute the next per-branch sequential number so every device/browser
     // sees the same human-readable session number instead of a local counter.
@@ -857,54 +854,6 @@ export class PosRegisterService {
       throw new NotFoundException(`Branch with ID ${branchId} not found`);
     }
     return branch;
-  }
-
-  /**
-   * A branch with an opening time refuses an operator a new session in its
-   * closed hours. The owner, a branch manager and a platform admin are never
-   * refused — a late delivery or an early event is theirs to decide.
-   */
-  private async assertWithinOpeningHours(
-    branch: Branch,
-    actor: { id?: number | null; roles?: string[] },
-    now: Date,
-  ): Promise<void> {
-    const schedule = {
-      opensAt: branch.registerOpensAt ?? null,
-      closesAt: branch.registerClosesAt ?? null,
-    };
-    if (isWithinOpeningHours(schedule, now)) return;
-
-    const roles = (actor.roles ?? []).map((r) => String(r).toUpperCase());
-    if (
-      roles.includes('SUPER_ADMIN') ||
-      roles.includes('ADMIN') ||
-      roles.includes('POS_MANAGER')
-    ) {
-      return;
-    }
-    if (actor.id != null) {
-      if (branch.ownerId != null && Number(branch.ownerId) === Number(actor.id))
-        return;
-      const managerRow = await this.staffAssignmentsRepository.findOne({
-        where: {
-          branchId: branch.id,
-          userId: actor.id,
-          isActive: true,
-          role: BranchStaffRole.MANAGER,
-        },
-        select: { id: true },
-      });
-      if (managerRow) return;
-    }
-
-    throw new ConflictException({
-      error: {
-        code: 'POS_REGISTER_OUTSIDE_HOURS',
-        message: `${branch.name || 'This branch'} opens its registers at ${schedule.opensAt}. A manager can open one earlier.`,
-        details: { opensAt: schedule.opensAt, closesAt: schedule.closesAt },
-      },
-    });
   }
 
   private async findSession(id: number): Promise<PosRegisterSession> {
