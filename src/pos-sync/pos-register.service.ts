@@ -9,6 +9,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, Repository } from 'typeorm';
 import { BranchStaffAssignment } from '../branch-staff/entities/branch-staff-assignment.entity';
 import { Branch } from '../branches/entities/branch.entity';
+import { tenantOwnerOf } from '../school/school-branch-owner.util';
 import { PosRegisterReportService } from './pos-register-report.service';
 import {
   SCHOOL_WITHDRAWAL_REFUSED_MESSAGE,
@@ -953,7 +954,7 @@ export class PosRegisterService {
   ): Promise<boolean> {
     const branch = await this.branchesRepository.findOne({
       where: { id: branchId },
-      select: { id: true, ownerId: true },
+      select: { id: true, ownerId: true, retailTenantId: true },
     });
     const assignment =
       actor.id != null
@@ -964,6 +965,10 @@ export class PosRegisterService {
     return canCreatePupilRecord({
       actorId: actor.id ?? null,
       ownerId: branch?.ownerId ?? null,
+      tenantOwnerId: await tenantOwnerOf(
+        this.branchesRepository.manager,
+        branch?.retailTenantId,
+      ),
       roles: actor.roles ?? [],
       assignment,
     });
@@ -981,7 +986,7 @@ export class PosRegisterService {
       : this.staffAssignmentsRepository;
     const branch = await branches.findOne({
       where: { id: cart.branchId },
-      select: { id: true, ownerId: true },
+      select: { id: true, ownerId: true, retailTenantId: true },
     });
     const assignment =
       actor.id != null
@@ -992,6 +997,10 @@ export class PosRegisterService {
     return pupilEditScope({
       actorId: actor.id ?? null,
       ownerId: branch?.ownerId ?? null,
+      tenantOwnerId: await tenantOwnerOf(
+        em ?? this.branchesRepository.manager,
+        branch?.retailTenantId,
+      ),
       roles: actor.roles ?? [],
       assignment,
     });

@@ -477,6 +477,16 @@ export function schoolTimeZone(branch: {
  * already hands them), otherwise their name. May still collide; the caller
  * de-duplicates.
  */
+/**
+ * A username that reads as a phone: nine or more digits and nothing else. A family's username IS its phone, so these are the families' — a
+ * pupil's login holding 0915333513 left that family unable to get one (the
+ * phone "already has a login", which no family login was).
+ */
+export function isPhoneShaped(username: unknown): boolean {
+  const u = text(username);
+  return /^\+?\d+$/.test(u) && guardianUsernameFromPhone(u) !== '';
+}
+
 export function suggestStudentUsername({
   admissionNo,
   name,
@@ -489,7 +499,8 @@ export function suggestStudentUsername({
     .replace(/[^a-z0-9._-]+/g, '-')
     .replace(/^[._-]+|[._-]+$/g, '')
     .replace(/[._-]{2,}/g, '-');
-  if (fromNo.length >= 3 && /^[a-z0-9]/.test(fromNo)) return fromNo;
+  if (fromNo.length >= 3 && /^[a-z0-9]/.test(fromNo) && !isPhoneShaped(fromNo))
+    return fromNo;
   const byName = usernameFromName(name);
   return byName.length >= 3 ? byName : '';
 }
@@ -545,4 +556,23 @@ export function studentLoginGradeAllowed(
   // the class code's leading number.
   const grade = gradeNumberOf(registryGrade) ?? gradeNumberOf(classCode);
   return grade != null && grade >= STUDENT_LOGIN_MIN_GRADE;
+}
+
+/**
+ * Whether the login's owner chose their own password after the office last
+ * issued one — the logins sheet then prints "their own", not the issued
+ * password that no longer opens it.
+ */
+export function choseOwnPassword(row: {
+  passwordIssuedAt?: Date | string | null;
+  passwordChangedAt?: Date | string | null;
+}): boolean {
+  const changed = row.passwordChangedAt
+    ? new Date(row.passwordChangedAt).getTime()
+    : 0;
+  if (!changed) return false;
+  const issued = row.passwordIssuedAt
+    ? new Date(row.passwordIssuedAt).getTime()
+    : 0;
+  return changed >= issued;
 }

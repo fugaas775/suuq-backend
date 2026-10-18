@@ -12,10 +12,14 @@
  *
  * Pure: the resolver reads the rows, this decides. Mirrors school-marks.policy.
  */
+import { isSchoolOwner } from './school-branch-owner.util';
+
 export const SCHOOL_CLASS_CAPABILITY_PREFIX = 'SCHOOL_CLASS:';
 const OFFICE_PERMISSION = 'ENROL_STUDENT';
 const TEACHER_LANE = 'SCHOOL_TEACHER';
-const UNSCOPED_ROLES = ['SUPER_ADMIN', 'ADMIN', 'POS_MANAGER'];
+// Platform staff only. POS_MANAGER is NOT here: every VENDOR account holds it
+// globally — the owner is recognised by ownership (isSchoolOwner) instead.
+const UNSCOPED_ROLES = ['SUPER_ADMIN', 'ADMIN'];
 
 const fold = (v: unknown) =>
   String(v ?? '')
@@ -33,11 +37,13 @@ export type ClassScope = {
 export function isClassScoped({
   actorId,
   ownerId,
+  tenantOwnerId = null,
   roles,
   assignment,
 }: {
   actorId: number | null | undefined;
   ownerId: number | null | undefined;
+  tenantOwnerId?: number | null;
   roles?: string[] | null;
   assignment?: {
     role?: string | null;
@@ -47,7 +53,7 @@ export function isClassScoped({
   } | null;
 }): boolean {
   if (actorId == null) return true;
-  if (ownerId != null && Number(ownerId) === Number(actorId)) return false;
+  if (isSchoolOwner(actorId, ownerId, tenantOwnerId)) return false;
   // The Teacher lane is the office's own statement that this login is a
   // teacher — scoped whatever permissions were ticked beside it.
   if (

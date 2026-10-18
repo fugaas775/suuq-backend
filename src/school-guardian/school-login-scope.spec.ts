@@ -60,4 +60,23 @@ describe('school-login-scope', () => {
     expect(classOk(scope, '5aad')).toBe(false);
     expect(classOk(null, '5aad')).toBe(true);
   });
+
+  it('gives no global POS_MANAGER the whole school — the tenant owner, yes', () => {
+    expect(
+      loginsWholeSchool({
+        actorId: 9,
+        ownerId: 7,
+        roles: ['POS_MANAGER'],
+        assignment: null,
+      }),
+    ).toBe(false);
+    expect(
+      loginsWholeSchool({
+        actorId: 9,
+        ownerId: 7,
+        tenantOwnerId: 9,
+        assignment: null,
+      }),
+    ).toBe(true);
+  });
 });

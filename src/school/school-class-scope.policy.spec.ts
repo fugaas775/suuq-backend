@@ -177,4 +177,35 @@ describe('school-class-scope.policy', () => {
       'A (4aad), B (4aad), C (4aad) and 2 more are not in 3aad — this register cannot carry them.',
     );
   });
+
+  it('trusts no global POS_MANAGER — every vendor holds it; the owner is found by owning the branch or its tenant', () => {
+    // A vendor account with no place on this school's staff is not its head.
+    expect(
+      isClassScoped({
+        actorId: 42,
+        ownerId: 1863,
+        roles: ['POS_MANAGER'],
+        assignment: null,
+      }),
+    ).toBe(true);
+    // An operator off the Teacher lane who made themselves a vendor stays scoped.
+    expect(
+      isClassScoped({
+        actorId: 42,
+        ownerId: 1863,
+        roles: ['POS_MANAGER'],
+        assignment: { role: 'OPERATOR', isActive: true, permissions: [] },
+      }),
+    ).toBe(true);
+    // The tenant's owner is the school's owner.
+    expect(
+      isClassScoped({
+        actorId: 77,
+        ownerId: 1863,
+        tenantOwnerId: 77,
+        roles: ['POS_MANAGER'],
+        assignment: null,
+      }),
+    ).toBe(false);
+  });
 });

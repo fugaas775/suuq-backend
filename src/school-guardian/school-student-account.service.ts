@@ -32,6 +32,7 @@ import {
   dedupeUsername,
   folioMoney,
   generateIssuedPassword,
+  isPhoneShaped,
   isPupilRecord,
   localDayIn,
   pupilOf,
@@ -39,6 +40,7 @@ import {
   suggestStudentUsername,
   STUDENT_LOGIN_MIN_GRADE,
   studentLoginGradeAllowed,
+  choseOwnPassword,
 } from './school-guardian.util';
 import { SchoolHomeworkService } from './school-homework.service';
 import { LoginScope, classOk, outOfClassScope } from './school-login-scope';
@@ -166,6 +168,7 @@ export class SchoolStudentAccountService {
       isActive: a.isActive !== false && user?.isActive !== false,
       createdByName: a.createdByName ?? null,
       passwordIssuedAt: a.passwordIssuedAt ?? null,
+      ownPassword: choseOwnPassword(a),
       lastLoginAt: a.lastLoginAt ?? null,
       createdAt: a.createdAt,
       pupil: this.pupilSummary(folio, Number(a.folioId)),
@@ -331,6 +334,16 @@ export class SchoolStudentAccountService {
   }
 
   private async assertUsernameFree(username: string, exceptUserId?: number) {
+    if (isPhoneShaped(username)) {
+      throw new BadRequestException({
+        error: {
+          code: 'SCHOOL_STUDENT_USERNAME_IS_PHONE',
+          message:
+            'A phone number is a family’s username — give the pupil a username that is not a phone number.',
+          details: { field: 'username' },
+        },
+      });
+    }
     const internalEmail = `${STUDENT_INTERNAL_EMAIL_PREFIX}${username}@sys.internal`;
     const [clash, staleByEmail] = await Promise.all([
       this.users.findOne({ where: { posUsername: username } }),

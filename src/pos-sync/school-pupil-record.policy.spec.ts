@@ -187,6 +187,23 @@ describe('school-pupil-record.policy', () => {
       }),
     ).toBe(false);
     expect(canEditPupilRecord({ actorId: null, ownerId: 7 })).toBe(false);
+    // A global POS_MANAGER (every vendor) is not the office; the tenant owner is the owner.
+    expect(
+      canEditPupilRecord({
+        actorId: 9,
+        ownerId: 7,
+        roles: ['POS_MANAGER'],
+        assignment: null,
+      }),
+    ).toBe(false);
+    expect(
+      canEditPupilRecord({
+        actorId: 9,
+        ownerId: 7,
+        tenantOwnerId: 9,
+        assignment: null,
+      }),
+    ).toBe(true);
   });
 
   it('refuses in the school’s words', () => {

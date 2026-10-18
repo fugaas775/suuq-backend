@@ -7,6 +7,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import { Branch } from '../branches/entities/branch.entity';
+import { tenantOwnerOf } from './school-branch-owner.util';
 import { BranchStaffAssignment } from '../branch-staff/entities/branch-staff-assignment.entity';
 import { PosSuspendedCart } from '../pos-sync/entities/pos-suspended-cart.entity';
 import { isSchoolPupilFolio } from '../pos-sync/school-withdrawal.policy';
@@ -54,7 +55,7 @@ export class SchoolClassScopeService {
     const actorId = actor?.id ?? null;
     const branch = await this.branches.findOne({
       where: { id: branchId },
-      select: { id: true, ownerId: true },
+      select: { id: true, ownerId: true, retailTenantId: true },
     });
     const assignment =
       actorId != null
@@ -63,9 +64,14 @@ export class SchoolClassScopeService {
           })
         : null;
     const ownerId = (branch as { ownerId?: number } | null)?.ownerId ?? null;
+    const tenantOwnerId = await tenantOwnerOf(
+      this.branches.manager,
+      branch?.retailTenantId,
+    );
     const scoped = isClassScoped({
       actorId,
       ownerId,
+      tenantOwnerId,
       roles: actor?.roles ?? null,
       assignment,
     });

@@ -8,6 +8,7 @@ import {
   noticeIsLive,
   noticeReaches,
   normalizePhoneKey,
+  isPhoneShaped,
   pupilOf,
   rankClassByTerm,
   readReports,
@@ -438,6 +439,14 @@ describe('students’ logins start at Grade 6', () => {
       expect(studentLoginGradeAllowed(code)).toBe(true);
     for (const code of ['5aad', '1aad', 'KG II', '', null])
       expect(studentLoginGradeAllowed(code)).toBe(false);
+    // A phone is a family's username: never a pupil's, nor suggested as one.
+    expect(isPhoneShaped('0915333513')).toBe(true);
+    expect(isPhoneShaped('915333513')).toBe(true);
+    expect(isPhoneShaped('12345678-2')).toBe(false);
+    expect(isPhoneShaped('sm-1042')).toBe(false);
+    expect(
+      suggestStudentUsername({ admissionNo: '0915333513', name: 'Ayaan Ali' }),
+    ).toBe('ayaan.ali');
     // The class registry's grade first: a section named "Bilal" in Grade 8.
     expect(studentLoginGradeAllowed('Bilal', 'Grade 8')).toBe(true);
     expect(studentLoginGradeAllowed('Bilal', 'Grade 4')).toBe(false);

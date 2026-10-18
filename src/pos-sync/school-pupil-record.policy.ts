@@ -1,3 +1,4 @@
+import { isSchoolOwner } from '../school/school-branch-owner.util';
 /**
  * A pupil's own record is the office's — not the fee desk's.
  *
@@ -134,7 +135,8 @@ export function keepStoredPupilRecord(
   return out;
 }
 
-const PUPIL_EDITORS_GLOBAL = ['SUPER_ADMIN', 'ADMIN', 'POS_MANAGER'];
+// Not POS_MANAGER — every vendor holds it; the owner is found by ownership.
+const PUPIL_EDITORS_GLOBAL = ['SUPER_ADMIN', 'ADMIN'];
 
 /**
  * May this actor change a pupil's own record? The branch owner, a platform
@@ -145,11 +147,13 @@ const PUPIL_EDITORS_GLOBAL = ['SUPER_ADMIN', 'ADMIN', 'POS_MANAGER'];
 export function canEditPupilRecord({
   actorId,
   ownerId,
+  tenantOwnerId = null,
   roles,
   assignment,
 }: {
   actorId: number | null | undefined;
   ownerId: number | null | undefined;
+  tenantOwnerId?: number | null;
   roles?: string[] | null;
   assignment?: {
     isActive?: boolean;
@@ -160,7 +164,7 @@ export function canEditPupilRecord({
   const global = (roles ?? []).map((r) => String(r).trim().toUpperCase());
   if (global.some((r) => PUPIL_EDITORS_GLOBAL.includes(r))) return true;
   if (actorId == null) return false;
-  if (ownerId != null && Number(ownerId) === Number(actorId)) return true;
+  if (isSchoolOwner(actorId, ownerId, tenantOwnerId)) return true;
   if (!assignment || assignment.isActive === false) return false;
   if (String(assignment.role ?? '').toUpperCase() === 'MANAGER') return true;
   return (assignment.permissions ?? [])

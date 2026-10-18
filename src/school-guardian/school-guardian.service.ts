@@ -57,6 +57,7 @@ import {
   schoolTimeZone,
   guardianUsernameFromPhone,
   suggestGuardianUsername,
+  choseOwnPassword,
 } from './school-guardian.util';
 import { SchoolHomeworkService } from './school-homework.service';
 import {
@@ -211,6 +212,7 @@ export class SchoolGuardianService {
       isActive: g.isActive !== false && user?.isActive !== false,
       createdByName: g.createdByName ?? null,
       passwordIssuedAt: g.passwordIssuedAt ?? null,
+      ownPassword: choseOwnPassword(g),
       lastLoginAt: g.lastLoginAt ?? null,
       createdAt: g.createdAt,
       pupils: links.map((l) =>
@@ -560,12 +562,12 @@ export class SchoolGuardianService {
     const clash = await this.users.findOne({
       where: { posUsername: username },
     });
-    if (clash) throw this.phoneInUse();
+    if (clash) throw await this.phoneInUse(clash);
     const internalEmail = `${GUARDIAN_INTERNAL_EMAIL_PREFIX}${username}@sys.internal`;
     const staleByEmail = await this.users.findOne({
       where: { email: internalEmail },
     });
-    if (staleByEmail) throw this.phoneInUse();
+    if (staleByEmail) throw await this.phoneInUse(staleByEmail);
 
     const createdByName = await this.actorName(actor);
     const hashed = await bcrypt.hash(dto.password, 10);
@@ -749,14 +751,23 @@ export class SchoolGuardianService {
     return username;
   }
 
-  /** One phone, one family: a number already signing in is not given a second login. */
-  private phoneInUse() {
+  /**
+   * One phone, one family: a number already signing in is not given a second
+   * login. When what holds the number is NOT a family's login — a pupil's or
+   * a staff member's username — "open that login and tick these children"
+   * sent the desk looking for a login that does not exist; say what it is.
+   */
+  private async phoneInUse(holder?: User | null) {
+    const family = holder
+      ? await this.guardians.count({ where: { userId: Number(holder.id) } })
+      : 1;
     return new ConflictException({
       error: {
         code: 'SCHOOL_GUARDIAN_USERNAME_CONFLICT',
-        message:
-          'This phone number already has a login — open that login and tick these children on it instead.',
-        details: { field: 'phone' },
+        message: family
+          ? 'This phone number already has a login — open that login and tick these children on it instead.'
+          : 'This phone number is already the username of another login — a pupil’s or a staff member’s. Rename that login first, then give the family theirs.',
+        details: { field: 'phone', heldByFamily: Boolean(family) },
       },
     });
   }
@@ -783,10 +794,10 @@ export class SchoolGuardianService {
       this.users.findOne({ where: { posUsername: username } }),
       this.users.findOne({ where: { email: internalEmail } }),
     ]);
-    const taken = [clash, staleByEmail].some(
+    const holder = [clash, staleByEmail].find(
       (row) => row && Number(row.id) !== Number(user.id),
     );
-    if (taken) throw this.phoneInUse();
+    if (holder) throw await this.phoneInUse(holder);
   }
 
   private applyRename(user: User, username: string) {

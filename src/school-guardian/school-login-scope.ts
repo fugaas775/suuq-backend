@@ -4,6 +4,10 @@ import { Repository } from 'typeorm';
 import { Branch } from '../branches/entities/branch.entity';
 import { BranchStaffAssignment } from '../branch-staff/entities/branch-staff-assignment.entity';
 import {
+  isSchoolOwner,
+  tenantOwnerOf,
+} from '../school/school-branch-owner.util';
+import {
   ScopeActor,
   SchoolClassScopeService,
 } from '../school/school-class-scope.service';
@@ -29,18 +33,21 @@ const fold = (v: unknown) =>
   String(v ?? '')
     .trim()
     .toLowerCase();
-const WHOLE_SCHOOL_ROLES = ['SUPER_ADMIN', 'ADMIN', 'POS_MANAGER'];
+// Not POS_MANAGER — every vendor holds it; the owner is found by ownership.
+const WHOLE_SCHOOL_ROLES = ['SUPER_ADMIN', 'ADMIN'];
 const WHOLE_SCHOOL_PERMISSIONS = ['ENROL_STUDENT', 'MANAGE_SCHOOL_LOGINS'];
 
 /** True when this actor manages every family's and pupil's login. */
 export function loginsWholeSchool({
   actorId,
   ownerId,
+  tenantOwnerId = null,
   roles,
   assignment,
 }: {
   actorId: number | null | undefined;
   ownerId: number | null | undefined;
+  tenantOwnerId?: number | null;
   roles?: string[] | null;
   assignment?: {
     isActive?: boolean;
@@ -51,7 +58,7 @@ export function loginsWholeSchool({
   const global = (roles ?? []).map((r) => String(r).trim().toUpperCase());
   if (global.some((r) => WHOLE_SCHOOL_ROLES.includes(r))) return true;
   if (actorId == null) return false;
-  if (ownerId != null && Number(ownerId) === Number(actorId)) return true;
+  if (isSchoolOwner(actorId, ownerId, tenantOwnerId)) return true;
   if (!assignment || assignment.isActive === false) return false;
   if (String(assignment.role ?? '').toUpperCase() === 'MANAGER') return true;
   const perms = (assignment.permissions ?? []).map((p) =>
@@ -97,16 +104,21 @@ export class SchoolLoginScopeService {
     const [branch, assignment] = await Promise.all([
       this.branches.findOne({
         where: { id: branchId },
-        select: { id: true, ownerId: true },
+        select: { id: true, ownerId: true, retailTenantId: true },
       }),
       actorId != null
         ? this.assignments.findOne({ where: { branchId, userId: actorId } })
         : Promise.resolve(null),
     ]);
+    const tenantOwnerId = await tenantOwnerOf(
+      this.branches.manager,
+      branch?.retailTenantId,
+    );
     if (
       loginsWholeSchool({
         actorId,
         ownerId: (branch as { ownerId?: number } | null)?.ownerId ?? null,
+        tenantOwnerId,
         roles: actor?.roles ?? null,
         assignment,
       })
