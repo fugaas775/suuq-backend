@@ -361,7 +361,7 @@ describe('SchoolGuardianService — the office', () => {
     const made = (await svc.list(128)).items.find(
       (g: any) => g.username === '0915333513',
     );
-    await svc.update(made.id, { branchId: 128, isActive: false }, OFFICE);
+    await svc.update(made.id, { branchId: 128, isActive: false });
     const after = await svc.suggestions(128);
     expect(after.familiesWithoutLogin).toBe(2);
     expect(after.items.map((f: any) => f.key)).not.toContain(
@@ -1087,5 +1087,114 @@ describe('SchoolGuardianService — the desk’s four buttons', () => {
     await expect(svc.login('0915333599', 'sunny-2019')).resolves.toMatchObject({
       accessToken: 'at',
     });
+  });
+});
+
+describe('SchoolGuardianService — a teacher manages their own class’s families (owner 2026-10-18)', () => {
+  // Class 3aad's teacher. Folio 10 (3aad) and 11 (5aad) are siblings — one
+  // phone, 0915333513. Folio 12 (5aad) is another family, 0911000000.
+  const TEACHER = { codes: new Set(['3aad']) };
+  const rows = () => [
+    folio(10, 128),
+    folio(11, 128, { hotelRoomNumber: '5aad' }),
+    folio(12, 128, {
+      hotelRoomNumber: '5aad',
+      hotelGuestPhone: '0911000000',
+      schoolGuardianName: 'Nuur',
+    }),
+  ];
+  const make = (over = {}) =>
+    ({ branchId: 128, password: 'sunny-2019', ...over }) as any;
+
+  it('lists only the families with a child in their class, the whole family each', async () => {
+    const { svc } = makeService({ folios: rows() });
+    const out = await svc.suggestions(128, TEACHER);
+    expect(out.items.map((f: any) => f.key)).toEqual(['phone:0915333513']);
+    expect(out.items[0].pupils.map((p: any) => p.folioId)).toEqual([10, 11]);
+    await svc.create(make({ phone: '0911000000', folioIds: [12] }), OFFICE);
+    expect((await svc.list(128, TEACHER)).items).toEqual([]);
+    expect((await svc.list(128)).items).toHaveLength(1);
+  });
+
+  it('gives a login for their class, a sibling in another class riding on the same phone — and refuses a stranger’s child', async () => {
+    const { svc } = makeService({ folios: rows() });
+    await expect(
+      svc.create(
+        make({ phone: '0911000000', folioIds: [12] }),
+        OFFICE,
+        TEACHER,
+      ),
+    ).rejects.toMatchObject({
+      response: { error: { code: 'SCHOOL_CLASS_OUT_OF_SCOPE' } },
+    });
+    await expect(
+      svc.create(
+        make({ phone: '0915333513', folioIds: [10, 12] }),
+        OFFICE,
+        TEACHER,
+      ),
+    ).rejects.toMatchObject({
+      response: { error: { code: 'SCHOOL_CLASS_OUT_OF_SCOPE' } },
+    });
+    const made = await svc.create(
+      make({ phone: '0915333513', folioIds: [10, 11] }),
+      OFFICE,
+      TEACHER,
+    );
+    expect(made.pupils.map((p: any) => p.folioId)).toEqual([10, 11]);
+  });
+
+  it('keeps another class’s child linked through their edit, and may not remove a family that has one', async () => {
+    const { svc } = makeService({ folios: rows() });
+    const made = await svc.create(
+      make({ phone: '0915333513', folioIds: [10, 11] }),
+      OFFICE,
+    );
+    // The teacher's form sends only their own child: the 5aad sibling stays.
+    const edited = await svc.update(
+      made.id,
+      { branchId: 128, folioIds: [10] },
+      TEACHER,
+    );
+    expect(edited.pupils.map((p: any) => p.folioId).sort()).toEqual([10, 11]);
+    await expect(svc.remove(made.id, 128, TEACHER)).rejects.toMatchObject({
+      response: { error: { code: 'SCHOOL_CLASS_OUT_OF_SCOPE' } },
+    });
+    // Another class's family is not theirs to touch at all.
+    const other = await svc.create(
+      make({ phone: '0911000000', folioIds: [12] }),
+      OFFICE,
+    );
+    await expect(
+      svc.resetPassword(
+        other.id,
+        { branchId: 128, password: '12345678' } as any,
+        TEACHER,
+      ),
+    ).rejects.toMatchObject({
+      response: { error: { code: 'SCHOOL_CLASS_OUT_OF_SCOPE' } },
+    });
+  });
+
+  it('writes the parents’ phone onto their own class’s pupils only — the phone and nothing else', async () => {
+    const all = rows();
+    const { svc } = makeService({ folios: all });
+    all[0].cartSnapshot.hotelGuestPhone = '';
+    const out = await svc.setPupilPhones(
+      { branchId: 128, folioIds: [10, 12], phone: '0915 333 513' },
+      TEACHER,
+    );
+    expect(out.saved).toEqual([10]);
+    expect(out.skipped).toEqual([
+      expect.objectContaining({ folioId: 12, reason: 'OUT_OF_SCOPE' }),
+    ]);
+    expect(all[0].cartSnapshot).toMatchObject({
+      hotelGuestPhone: '0915 333 513',
+      hotelGuestName: 'Pupil 10',
+      hotelRoomNumber: '3aad',
+    });
+    await expect(
+      svc.setPupilPhones({ branchId: 128, folioIds: [10], phone: '12' }),
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 });

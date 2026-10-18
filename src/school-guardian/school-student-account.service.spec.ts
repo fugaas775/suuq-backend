@@ -798,3 +798,62 @@ describe('SchoolStudentAccountService — the pupil', () => {
     ).rejects.toBeInstanceOf(ForbiddenException);
   });
 });
+
+describe('SchoolStudentAccountService — a teacher manages their own class’s pupils (owner 2026-10-18)', () => {
+  const TEACHER = { codes: new Set(['7th']) };
+  const rows = () => [
+    folio(10, 128, { schoolAdmissionNo: 'SMAG-10' }),
+    folio(11, 128, { schoolAdmissionNo: 'SMAG-11', hotelRoomNumber: '8th' }),
+  ];
+
+  it('lists, offers, gives and resets only their own class’s logins', async () => {
+    const { svc } = makeService({ folios: rows() });
+    expect(
+      (await svc.suggestions(128, TEACHER)).items.map((p: any) => p.folioId),
+    ).toEqual([10]);
+    await expect(
+      svc.create(
+        {
+          branchId: 128,
+          folioId: 11,
+          username: 'smag-11',
+          password: 'sunny-2019',
+        },
+        OFFICE,
+        TEACHER,
+      ),
+    ).rejects.toMatchObject({
+      response: { error: { code: 'SCHOOL_CLASS_OUT_OF_SCOPE' } },
+    });
+    const bulk = await svc.createMany(
+      { branchId: 128, folioIds: [10, 11], password: '12345678' },
+      OFFICE,
+      TEACHER,
+    );
+    expect(bulk.created.map((c: any) => c.folioId)).toEqual([10]);
+    expect(bulk.skipped).toEqual([
+      expect.objectContaining({ folioId: 11, reason: 'OUT_OF_SCOPE' }),
+    ]);
+    const office = await svc.create(
+      {
+        branchId: 128,
+        folioId: 11,
+        username: 'smag-11',
+        password: 'sunny-2019',
+      },
+      OFFICE,
+    );
+    expect(
+      (await svc.list(128, TEACHER)).items.map((a: any) => a.folioId),
+    ).toEqual([10]);
+    await expect(
+      svc.resetPassword(
+        office.id,
+        { branchId: 128, password: '12345678' } as any,
+        TEACHER,
+      ),
+    ).rejects.toMatchObject({
+      response: { error: { code: 'SCHOOL_CLASS_OUT_OF_SCOPE' } },
+    });
+  });
+});

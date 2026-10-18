@@ -89,6 +89,8 @@ export enum PosRegisterPermission {
   // The parents' and students' logins alone — the cashier's, who may hand a
   // family a login but not edit the roll (see PosSchoolPermission).
   MANAGE_SCHOOL_LOGINS = 'MANAGE_SCHOOL_LOGINS',
+  // The same desks for a teacher, held to their own classes.
+  MANAGE_CLASS_LOGINS = 'MANAGE_CLASS_LOGINS',
   // Vehicle-registry permissions (Somali Region Bureau of Trade and Transport).
   //
   // Split finely on purpose: a registry office separates the clerk who takes

@@ -30,10 +30,23 @@ import {
   ListSchoolGuardiansQueryDto,
   ListSchoolNoticesQueryDto,
   ResetSchoolGuardianPasswordDto,
+  SetSchoolPupilPhonesDto,
   UpdateSchoolGuardianDto,
   UpdateSchoolNoticeDto,
 } from './dto/school-guardian.dto';
 import { SchoolGuardianService } from './school-guardian.service';
+import { SchoolLoginScopeService } from './school-login-scope';
+
+/**
+ * Who may open the two login desks: the office (ENROL_STUDENT), the cashier
+ * (MANAGE_SCHOOL_LOGINS) — the whole school — and a teacher
+ * (MANAGE_CLASS_LOGINS), held to their own classes by SchoolLoginScopeService.
+ */
+export const LOGIN_DESK_PERMISSIONS = [
+  PosSchoolPermission.ENROL_STUDENT,
+  PosSchoolPermission.MANAGE_SCHOOL_LOGINS,
+  PosSchoolPermission.MANAGE_CLASS_LOGINS,
+];
 
 const GUARDS = [
   JwtAuthGuard,
@@ -62,7 +75,10 @@ const ROLES = [
 @Roles(...ROLES)
 @RequireRetailModules(RetailOsModule.POS_CORE)
 export class SchoolGuardianController {
-  constructor(private readonly svc: SchoolGuardianService) {}
+  constructor(
+    private readonly svc: SchoolGuardianService,
+    private readonly loginScope: SchoolLoginScopeService,
+  ) {}
 
   private actor(req: AuthenticatedRequest) {
     const u = (req.user ?? {}) as {
@@ -73,77 +89,95 @@ export class SchoolGuardianController {
     return { id: u.id ?? null, email: u.email ?? null, roles: u.roles ?? [] };
   }
 
+  /** The whole school's families (null), or a teacher's own classes'. */
+  private scope(branchId: number, req: AuthenticatedRequest) {
+    return this.loginScope.resolve(Number(branchId), this.actor(req));
+  }
+
   @Get()
   @RetailBranchContext('query.branchId')
-  @RequirePosPermissions(
-    PosSchoolPermission.ENROL_STUDENT,
-    PosSchoolPermission.MANAGE_SCHOOL_LOGINS,
-  )
-  list(@Query() query: ListSchoolGuardiansQueryDto) {
-    return this.svc.list(query.branchId);
+  @RequirePosPermissions(...LOGIN_DESK_PERMISSIONS)
+  async list(
+    @Query() query: ListSchoolGuardiansQueryDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.svc.list(query.branchId, await this.scope(query.branchId, req));
   }
 
   /** Families on the roll with no login yet, grouped by the guardian's phone. */
   @Get('suggestions')
   @RetailBranchContext('query.branchId')
-  @RequirePosPermissions(
-    PosSchoolPermission.ENROL_STUDENT,
-    PosSchoolPermission.MANAGE_SCHOOL_LOGINS,
-  )
-  suggestions(@Query() query: ListSchoolGuardiansQueryDto) {
-    return this.svc.suggestions(query.branchId);
+  @RequirePosPermissions(...LOGIN_DESK_PERMISSIONS)
+  async suggestions(
+    @Query() query: ListSchoolGuardiansQueryDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.svc.suggestions(
+      query.branchId,
+      await this.scope(query.branchId, req),
+    );
   }
 
   @Post()
   @RetailBranchContext('body.branchId')
-  @RequirePosPermissions(
-    PosSchoolPermission.ENROL_STUDENT,
-    PosSchoolPermission.MANAGE_SCHOOL_LOGINS,
-  )
-  create(
+  @RequirePosPermissions(...LOGIN_DESK_PERMISSIONS)
+  async create(
     @Body() dto: CreateSchoolGuardianDto,
     @Req() req: AuthenticatedRequest,
   ) {
-    return this.svc.create(dto, this.actor(req));
+    return this.svc.create(
+      dto,
+      this.actor(req),
+      await this.scope(dto.branchId, req),
+    );
+  }
+
+  /**
+   * The parents' phone onto the children's own records — the guardian phone
+   * and nothing else of a pupil's folio (see SchoolGuardianService.setPupilPhones).
+   * Declared before ':id' so the path is not read as an id.
+   */
+  @Post('pupil-phones')
+  @RetailBranchContext('body.branchId')
+  @RequirePosPermissions(...LOGIN_DESK_PERMISSIONS)
+  async setPupilPhones(
+    @Body() dto: SetSchoolPupilPhonesDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.svc.setPupilPhones(dto, await this.scope(dto.branchId, req));
   }
 
   @Patch(':id')
   @RetailBranchContext('body.branchId')
-  @RequirePosPermissions(
-    PosSchoolPermission.ENROL_STUDENT,
-    PosSchoolPermission.MANAGE_SCHOOL_LOGINS,
-  )
-  update(
+  @RequirePosPermissions(...LOGIN_DESK_PERMISSIONS)
+  async update(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateSchoolGuardianDto,
+    @Req() req: AuthenticatedRequest,
   ) {
-    return this.svc.update(id, dto);
+    return this.svc.update(id, dto, await this.scope(dto.branchId, req));
   }
 
   @Post(':id/password')
   @RetailBranchContext('body.branchId')
-  @RequirePosPermissions(
-    PosSchoolPermission.ENROL_STUDENT,
-    PosSchoolPermission.MANAGE_SCHOOL_LOGINS,
-  )
-  resetPassword(
+  @RequirePosPermissions(...LOGIN_DESK_PERMISSIONS)
+  async resetPassword(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: ResetSchoolGuardianPasswordDto,
+    @Req() req: AuthenticatedRequest,
   ) {
-    return this.svc.resetPassword(id, dto);
+    return this.svc.resetPassword(id, dto, await this.scope(dto.branchId, req));
   }
 
   @Delete(':id')
   @RetailBranchContext('query.branchId')
-  @RequirePosPermissions(
-    PosSchoolPermission.ENROL_STUDENT,
-    PosSchoolPermission.MANAGE_SCHOOL_LOGINS,
-  )
-  remove(
+  @RequirePosPermissions(...LOGIN_DESK_PERMISSIONS)
+  async remove(
     @Param('id', ParseIntPipe) id: number,
     @Query('branchId', ParseIntPipe) branchId: number,
+    @Req() req: AuthenticatedRequest,
   ) {
-    return this.svc.remove(id, branchId);
+    return this.svc.remove(id, branchId, await this.scope(branchId, req));
   }
 }
 

@@ -41,6 +41,8 @@ import {
   SchoolNoticeController,
 } from './school-guardian.controller';
 import { SchoolGuardianService } from './school-guardian.service';
+import { BranchStaffAssignment } from '../branch-staff/entities/branch-staff-assignment.entity';
+import { SchoolLoginScopeService } from './school-login-scope';
 
 /**
  * Parents' and pupils' logins for the SCHOOL format.
@@ -75,6 +77,8 @@ import { SchoolGuardianService } from './school-guardian.service';
       SchoolClass,
       BranchEmployee,
       SchoolTextbookLoan,
+      // Whose logins a teacher may manage (SchoolLoginScopeService).
+      BranchStaffAssignment,
     ]),
     RetailModule,
     SchoolModule,
@@ -99,6 +103,7 @@ import { SchoolGuardianService } from './school-guardian.service';
     SchoolStatementCodeService,
     SchoolStudentAccountService,
     SchoolCurriculumService,
+    SchoolLoginScopeService,
     PosBranchAccessGuard,
     RolesGuard,
   ],

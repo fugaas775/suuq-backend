@@ -40,6 +40,7 @@ import {
   studentLoginGradeAllowed,
 } from './school-guardian.util';
 import { SchoolHomeworkService } from './school-homework.service';
+import { LoginScope, classOk, outOfClassScope } from './school-login-scope';
 
 const text = (v: unknown) => String(v ?? '').trim();
 const fold = (v: unknown) => text(v).toLowerCase();
@@ -157,7 +158,7 @@ export class SchoolStudentAccountService {
 
   // ── office ───────────────────────────────────────────────────────────────
 
-  async list(branchId: number) {
+  async list(branchId: number, scope: LoginScope = null) {
     const rows = await this.accounts.find({
       where: { branchId },
       order: { displayName: 'ASC', id: 'ASC' },
@@ -178,7 +179,12 @@ export class SchoolStudentAccountService {
         (x.pupil.classCode || '').localeCompare(y.pupil.classCode || '') ||
         (x.pupil.name || '').localeCompare(y.pupil.name || ''),
     );
-    return { items };
+    // A teacher sees their own classes' pupils' logins only.
+    return {
+      items: scope
+        ? items.filter((a) => classOk(scope, a.pupil.classCode))
+        : items,
+    };
   }
 
   /** The usernames already held that could collide with these candidates (exact, or `.N`-suffixed). */
@@ -208,7 +214,7 @@ export class SchoolStudentAccountService {
    * working login by "Create logins for all". Leavers are left out: this is
    * the office's to-do list.
    */
-  async suggestions(branchId: number) {
+  async suggestions(branchId: number, scope: LoginScope = null) {
     const [records, accounts] = await Promise.all([
       this.guardians.pupilRecords(branchId),
       this.accounts.find({ where: { branchId } }),
@@ -222,7 +228,8 @@ export class SchoolStudentAccountService {
         (p) =>
           p.status === 'ACTIVE' &&
           !linked.has(p.folioId) &&
-          studentLoginGradeAllowed(p.classCode),
+          studentLoginGradeAllowed(p.classCode) &&
+          classOk(scope, p.classCode),
       );
     const bases = new Map<number, string>();
     for (const p of pupils) {
@@ -276,10 +283,22 @@ export class SchoolStudentAccountService {
     return row?.displayName || row?.posUsername || row?.email || null;
   }
 
-  private async findOnBranch(id: number, branchId: number) {
+  private async findOnBranch(
+    id: number,
+    branchId: number,
+    scope: LoginScope = null,
+  ) {
     const row = await this.accounts.findOne({ where: { id, branchId } });
     if (!row)
       throw new NotFoundException('Student login not found on this school.');
+    if (scope) {
+      const folio = (await this.foliosById([Number(row.folioId)])).get(
+        Number(row.folioId),
+      );
+      if (!folio || !classOk(scope, pupilOf(folio).classCode)) {
+        throw outOfClassScope(scope, 'This pupil is not in your class');
+      }
+    }
     return row;
   }
 
@@ -358,9 +377,19 @@ export class SchoolStudentAccountService {
     });
   }
 
-  async create(dto: CreateSchoolStudentAccountDto, actor: Actor) {
+  async create(
+    dto: CreateSchoolStudentAccountDto,
+    actor: Actor,
+    scope: LoginScope = null,
+  ) {
     await this.assertSchool(dto.branchId);
     const row = await this.assertPupilFolio(dto.branchId, dto.folioId);
+    if (!classOk(scope, pupilOf(row).classCode)) {
+      throw outOfClassScope(
+        scope,
+        `${pupilOf(row).name || 'This pupil'} is not in your class`,
+      );
+    }
     if (!studentLoginGradeAllowed(pupilOf(row).classCode)) {
       throw new BadRequestException({
         error: {
@@ -390,7 +419,11 @@ export class SchoolStudentAccountService {
    * must not undo two hundred good logins, and the office is told who was
    * skipped and why. The passwords ride back in clear, once, for the cards.
    */
-  async createMany(dto: CreateSchoolStudentAccountsBulkDto, actor: Actor) {
+  async createMany(
+    dto: CreateSchoolStudentAccountsBulkDto,
+    actor: Actor,
+    scope: LoginScope = null,
+  ) {
     await this.assertSchool(dto.branchId);
     const wanted = [
       ...new Set(dto.folioIds.map((n) => Number(n)).filter((n) => n > 0)),
@@ -435,6 +468,10 @@ export class SchoolStudentAccountService {
       }
       if (!studentLoginGradeAllowed(p.classCode)) {
         skipped.push({ folioId, name: p.name, reason: 'BELOW_LOGIN_GRADE' });
+        continue;
+      }
+      if (!classOk(scope, p.classCode)) {
+        skipped.push({ folioId, name: p.name, reason: 'OUT_OF_SCOPE' });
         continue;
       }
       const base = suggestStudentUsername({
@@ -500,8 +537,12 @@ export class SchoolStudentAccountService {
     );
   }
 
-  async update(id: number, dto: UpdateSchoolStudentAccountDto) {
-    const a = await this.findOnBranch(id, dto.branchId);
+  async update(
+    id: number,
+    dto: UpdateSchoolStudentAccountDto,
+    scope: LoginScope = null,
+  ) {
+    const a = await this.findOnBranch(id, dto.branchId, scope);
     const patch: Partial<SchoolStudentAccount> = {};
     if (dto.displayName !== undefined)
       patch.displayName = text(dto.displayName) || null;
@@ -539,8 +580,12 @@ export class SchoolStudentAccountService {
     await this.users.save(user);
   }
 
-  async resetPassword(id: number, dto: ResetSchoolStudentAccountPasswordDto) {
-    const a = await this.findOnBranch(id, dto.branchId);
+  async resetPassword(
+    id: number,
+    dto: ResetSchoolStudentAccountPasswordDto,
+    scope: LoginScope = null,
+  ) {
+    const a = await this.findOnBranch(id, dto.branchId, scope);
     const user = await this.users.findOne({ where: { id: a.userId } });
     if (!user || user.authMode !== 'MANUAL') {
       throw new ForbiddenException(
@@ -557,8 +602,8 @@ export class SchoolStudentAccountService {
   }
 
   /** Remove the login; the user row goes too when no other school holds it, so the username is free again. */
-  async remove(id: number, branchId: number) {
-    const a = await this.findOnBranch(id, branchId);
+  async remove(id: number, branchId: number, scope: LoginScope = null) {
+    const a = await this.findOnBranch(id, branchId, scope);
     await this.accounts.delete({ id: Number(a.id) });
     const elsewhere = await this.accounts.count({
       where: { userId: a.userId },

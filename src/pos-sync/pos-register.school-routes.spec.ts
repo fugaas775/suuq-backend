@@ -92,6 +92,7 @@ describe('PosRegisterController — SCHOOL route permissions', () => {
       'IMPORT_STUDENT_ROSTER',
       'MARK_ATTENDANCE',
       'MANAGE_SCHOOL_LOGINS',
+      'MANAGE_CLASS_LOGINS',
     ]);
     const routed = new Set([
       ...permissionsOn('suspendCart'),

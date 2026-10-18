@@ -8,10 +8,10 @@ import { SchoolStudentAccountController } from './school-student-account.control
 import { PosRegisterPermission } from '../branch-staff/dto/create-branch-staff-manual-account.dto';
 
 /**
- * The cashier's logins-only right (owner 2026-10-18: "do not allow cashiers
- * to edit the whole student list, except login only"). MANAGE_SCHOOL_LOGINS
- * opens the two login desks and NOTHING else the office's ENROL_STUDENT
- * opens — notices included.
+ * Who opens the two login desks: the office (ENROL_STUDENT) and the cashier
+ * (MANAGE_SCHOOL_LOGINS) for the whole school, a teacher (MANAGE_CLASS_LOGINS)
+ * for their own classes — and nothing else those rights open: notices stay
+ * the office's alone.
  */
 const on = (ctrl: { prototype: object }, method: string): string[] =>
   Reflect.getMetadata(
@@ -19,10 +19,12 @@ const on = (ctrl: { prototype: object }, method: string): string[] =>
     (ctrl.prototype as Record<string, unknown>)[method],
   ) ?? [];
 
-describe('MANAGE_SCHOOL_LOGINS', () => {
-  it('is grantable — it sits in the allow-list', () => {
-    expect(Object.values(PosRegisterPermission)).toContain(
-      'MANAGE_SCHOOL_LOGINS',
+const DESK = ['ENROL_STUDENT', 'MANAGE_SCHOOL_LOGINS', 'MANAGE_CLASS_LOGINS'];
+
+describe('the login desks’ permissions', () => {
+  it('are grantable — both logins rights sit in the allow-list', () => {
+    expect(Object.values(PosRegisterPermission)).toEqual(
+      expect.arrayContaining(['MANAGE_SCHOOL_LOGINS', 'MANAGE_CLASS_LOGINS']),
     );
   });
 
@@ -30,14 +32,12 @@ describe('MANAGE_SCHOOL_LOGINS', () => {
     'list',
     'suggestions',
     'create',
+    'setPupilPhones',
     'update',
     'resetPassword',
     'remove',
-  ])("opens the parents' desk: %s", (method) => {
-    expect(on(SchoolGuardianController, method)).toEqual([
-      'ENROL_STUDENT',
-      'MANAGE_SCHOOL_LOGINS',
-    ]);
+  ])("open the parents' desk: %s", (method) => {
+    expect(on(SchoolGuardianController, method)).toEqual(DESK);
   });
 
   it.each([
@@ -48,18 +48,18 @@ describe('MANAGE_SCHOOL_LOGINS', () => {
     'update',
     'resetPassword',
     'remove',
-  ])("opens the students' desk: %s", (method) => {
-    expect(on(SchoolStudentAccountController, method)).toEqual([
-      'ENROL_STUDENT',
-      'MANAGE_SCHOOL_LOGINS',
-    ]);
+  ])("open the students' desk: %s", (method) => {
+    expect(on(SchoolStudentAccountController, method)).toEqual(DESK);
   });
 
   it.each(['create', 'update', 'remove'])(
-    'does not open notices: %s',
+    'do not open notices: %s',
     (method) => {
       expect(on(SchoolNoticeController, method)).not.toContain(
         'MANAGE_SCHOOL_LOGINS',
+      );
+      expect(on(SchoolNoticeController, method)).not.toContain(
+        'MANAGE_CLASS_LOGINS',
       );
     },
   );

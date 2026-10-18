@@ -65,6 +65,7 @@ import {
 } from './school-curriculum.service';
 import { SchoolMessageService } from './school-message.service';
 import { SchoolStatementCodeService } from './school-statement-code.service';
+import { LoginScope, classOk, outOfClassScope } from './school-login-scope';
 
 const text = (v: unknown) => String(v ?? '').trim();
 const fold = (v: unknown) => text(v).toLowerCase();
@@ -220,7 +221,7 @@ export class SchoolGuardianService {
 
   // ── office ───────────────────────────────────────────────────────────────
 
-  async list(branchId: number) {
+  async list(branchId: number, scope: LoginScope = null) {
     const rows = await this.guardians.find({
       where: { branchId },
       order: { displayName: 'ASC', id: 'ASC' },
@@ -231,16 +232,101 @@ export class SchoolGuardianService {
       this.usersById(rows.map((r) => r.userId)),
       this.foliosById(folioIds),
     ]);
+    const items = rows.map((g) =>
+      this.toOfficeView(
+        g,
+        users.get(Number(g.userId)),
+        links.get(Number(g.id)) ?? [],
+        folios,
+      ),
+    );
+    if (!scope) return { items };
+    // A teacher sees the families with a child in their classes — and the
+    // login a child of theirs could be ADDED to: the one their phone is.
+    const phones = await this.inScopePhones(branchId, scope);
     return {
-      items: rows.map((g) =>
-        this.toOfficeView(
-          g,
-          users.get(Number(g.userId)),
-          links.get(Number(g.id)) ?? [],
-          folios,
-        ),
+      items: items.filter(
+        (g) =>
+          g.pupils.some((p) => classOk(scope, p.classCode)) ||
+          phones.has(String(g.username ?? '').toLowerCase()),
       ),
     };
+  }
+
+  /** The guardian phones (as usernames) of the live pupils in `scope`'s classes. */
+  private async inScopePhones(
+    branchId: number,
+    scope: LoginScope,
+  ): Promise<Set<string>> {
+    const out = new Set<string>();
+    for (const row of await this.pupilRecords(branchId)) {
+      const p = pupilOf(row);
+      if (p.status !== 'ACTIVE' || !classOk(scope, p.classCode)) continue;
+      const key = guardianUsernameFromPhone(p.guardianPhone);
+      if (key) out.add(key);
+    }
+    return out;
+  }
+
+  /** A teacher may touch a family only when it holds — or its number is — a child of theirs. */
+  private async assertGuardianInScope(
+    g: SchoolGuardian,
+    branchId: number,
+    scope: LoginScope,
+  ) {
+    if (!scope) return;
+    const links = await this.pupils.find({
+      where: { guardianId: Number(g.id) },
+    });
+    const folios = await this.foliosById(links.map((l) => Number(l.folioId)));
+    const own = links.some((l) => {
+      const row = folios.get(Number(l.folioId));
+      return row ? classOk(scope, pupilOf(row).classCode) : false;
+    });
+    if (own) return;
+    const user = await this.users.findOne({ where: { id: g.userId } });
+    const phones = await this.inScopePhones(branchId, scope);
+    if (phones.has(String(user?.posUsername ?? '').toLowerCase())) return;
+    throw outOfClassScope(scope, 'This family has no child in your class');
+  }
+
+  /**
+   * The children a TEACHER may link: their own class's, and a sibling in
+   * another class whose phone on record IS this login's — one phone, one
+   * family. Anything else is refused by name.
+   */
+  private async assertLinkableByScope(
+    folioIds: number[],
+    loginPhoneKey: string,
+    scope: LoginScope,
+    { needOwn = true }: { needOwn?: boolean } = {},
+  ) {
+    if (!scope || !folioIds.length) return;
+    const rows = await this.foliosById(folioIds);
+    const own = folioIds.filter((id) => {
+      const row = rows.get(id);
+      return row ? classOk(scope, pupilOf(row).classCode) : false;
+    });
+    if (needOwn && !own.length) {
+      throw outOfClassScope(scope, 'None of these children is in your class');
+    }
+    const strangers = folioIds.filter((id) => {
+      if (own.includes(id)) return false;
+      const row = rows.get(id);
+      return (
+        !row ||
+        guardianUsernameFromPhone(pupilOf(row).guardianPhone) !== loginPhoneKey
+      );
+    });
+    if (strangers.length) {
+      const names = strangers
+        .map((id) => (rows.get(id) ? pupilOf(rows.get(id)).name : `#${id}`))
+        .join(', ');
+      throw outOfClassScope(
+        scope,
+        `${names} ${strangers.length === 1 ? 'is' : 'are'} not in your class`,
+      );
+    }
   }
 
   /**
@@ -249,7 +335,7 @@ export class SchoolGuardianService {
    * A pupil with no phone stands as a family of one. Leavers are left out:
    * this is the office's to-do list, and a child who has left is not on it.
    */
-  async suggestions(branchId: number) {
+  async suggestions(branchId: number, scope: LoginScope = null) {
     // EVERY login counts as "has a login", switched off or not. Counting only
     // the active ones put a family the office had deliberately switched off
     // back on this list, and "Create logins for all" then made them a second,
@@ -348,10 +434,15 @@ export class SchoolGuardianService {
           b.pupils[0]?.classCode || '',
         ) || (a.pupils[0]?.name || '').localeCompare(b.pupils[0]?.name || ''),
     );
+    // A teacher's list: the families with a child in their classes — the
+    // whole family, siblings in other classes included (one phone, one login).
+    const listed = scope
+      ? items.filter((f) => f.pupils.some((p) => classOk(scope, p.classCode)))
+      : items;
     return {
-      items,
-      familiesWithoutLogin: items.length,
-      pupilsWithoutLogin: items.reduce((n, f) => n + f.pupils.length, 0),
+      items: listed,
+      familiesWithoutLogin: listed.length,
+      pupilsWithoutLogin: listed.reduce((n, f) => n + f.pupils.length, 0),
     };
   }
 
@@ -389,7 +480,11 @@ export class SchoolGuardianService {
     return row;
   }
 
-  async create(dto: CreateSchoolGuardianDto, actor: Actor) {
+  async create(
+    dto: CreateSchoolGuardianDto,
+    actor: Actor,
+    scope: LoginScope = null,
+  ) {
     const branch = await this.branches.findOne({
       where: { id: dto.branchId, isActive: true },
     });
@@ -401,6 +496,7 @@ export class SchoolGuardianService {
     // The username IS the phone (owner 2026-10-18) — whatever was sent as a
     // username is not consulted.
     const username = this.usernameForPhone(dto.phone);
+    await this.assertLinkableByScope(folioIds, username, scope);
 
     const clash = await this.users.findOne({
       where: { posUsername: username },
@@ -467,8 +563,13 @@ export class SchoolGuardianService {
     return this.toOfficeView(g, users.get(Number(g.userId)), links, folios);
   }
 
-  async update(id: number, dto: UpdateSchoolGuardianDto) {
+  async update(
+    id: number,
+    dto: UpdateSchoolGuardianDto,
+    scope: LoginScope = null,
+  ) {
     const g = await this.findGuardianOnBranch(id, dto.branchId);
+    await this.assertGuardianInScope(g, dto.branchId, scope);
     const patch: Partial<SchoolGuardian> = {};
     if (dto.displayName !== undefined)
       patch.displayName = text(dto.displayName) || null;
@@ -499,8 +600,30 @@ export class SchoolGuardianService {
       const existing = await this.pupils.find({
         where: { guardianId: Number(g.id) },
       });
+      if (scope) {
+        // A teacher changes only their own class's links: a child of this
+        // family in another class stays linked whatever the form sent.
+        const linked = await this.foliosById(
+          existing.map((l) => Number(l.folioId)),
+        );
+        for (const l of existing) {
+          const row = linked.get(Number(l.folioId));
+          const theirs = row ? classOk(scope, pupilOf(row).classCode) : false;
+          if (!theirs && !wanted.includes(Number(l.folioId)))
+            wanted.push(Number(l.folioId));
+        }
+      }
       const have = new Set(existing.map((l) => Number(l.folioId)));
       const add = wanted.filter((f) => !have.has(f));
+      if (scope && add.length) {
+        const loginUser = await this.users.findOne({ where: { id: g.userId } });
+        await this.assertLinkableByScope(
+          add,
+          renameTo || String(loginUser?.posUsername ?? '').toLowerCase(),
+          scope,
+          { needOwn: false },
+        );
+      }
       // Only what is ADDED must be a live pupil of this school. A child
       // already linked stays linked after leaving or being withdrawn — the
       // family's page says "withdrawn" for that child — so a change to the
@@ -582,8 +705,13 @@ export class SchoolGuardianService {
     await this.users.save(user);
   }
 
-  async resetPassword(id: number, dto: ResetSchoolGuardianPasswordDto) {
+  async resetPassword(
+    id: number,
+    dto: ResetSchoolGuardianPasswordDto,
+    scope: LoginScope = null,
+  ) {
     const g = await this.findGuardianOnBranch(id, dto.branchId);
+    await this.assertGuardianInScope(g, dto.branchId, scope);
     const user = await this.users.findOne({ where: { id: g.userId } });
     if (!user || user.authMode !== 'MANUAL') {
       throw new ForbiddenException(
@@ -604,8 +732,26 @@ export class SchoolGuardianService {
    * the office created and no other school still holds it — so the username
    * is free again, as a deleted staff account's is.
    */
-  async remove(id: number, branchId: number) {
+  async remove(id: number, branchId: number, scope: LoginScope = null) {
     const g = await this.findGuardianOnBranch(id, branchId);
+    await this.assertGuardianInScope(g, branchId, scope);
+    if (scope) {
+      // Removing a login takes it from EVERY child on it — a teacher may do
+      // that only when all of them are theirs.
+      const links = await this.pupils.find({
+        where: { guardianId: Number(g.id) },
+      });
+      const rows = await this.foliosById(links.map((l) => Number(l.folioId)));
+      const elsewhere = links.some((l) => {
+        const row = rows.get(Number(l.folioId));
+        return row ? !classOk(scope, pupilOf(row).classCode) : false;
+      });
+      if (elsewhere)
+        throw outOfClassScope(
+          scope,
+          'This family also has children in other classes',
+        );
+    }
     await this.pupils.delete({ guardianId: Number(g.id) });
     await this.guardians.delete({ id: Number(g.id) });
     const elsewhere = await this.guardians.count({
@@ -620,6 +766,70 @@ export class SchoolGuardianService {
       }
     }
     return { status: 'REMOVED', id: Number(g.id), userRemoved };
+  }
+
+  /**
+   * The family's phone onto the children's own records — the logins desk's
+   * "Also save this phone on the ticked children's records". Its own route
+   * so that whoever hands out logins — the cashier, or a teacher for their
+   * own class — writes the guardian's phone and NOTHING else of a pupil's
+   * folio: each row is locked, re-read, and only `hotelGuestPhone` changes.
+   * A pupil outside a teacher's classes, one not on the roll, or one that
+   * already has the number is skipped with the reason.
+   */
+  async setPupilPhones(
+    dto: { branchId: number; folioIds: number[]; phone: string },
+    scope: LoginScope = null,
+  ) {
+    const phone = text(dto.phone);
+    const key = guardianUsernameFromPhone(phone);
+    if (!key) {
+      throw new BadRequestException({
+        error: {
+          code: 'SCHOOL_GUARDIAN_PHONE_REQUIRED',
+          message: "Give the parent's phone number.",
+          details: { field: 'phone' },
+        },
+      });
+    }
+    const ids = [
+      ...new Set((dto.folioIds ?? []).map(Number).filter((n) => n > 0)),
+    ];
+    const saved: number[] = [];
+    const skipped: Array<{ folioId: number; name: string; reason: string }> =
+      [];
+    for (const folioId of ids) {
+      const outcome = await this.carts.manager.transaction(async (em) => {
+        const repo = em.getRepository(PosSuspendedCart);
+        const row = await repo.findOne({
+          where: { id: folioId, branchId: dto.branchId },
+          lock: { mode: 'pessimistic_write' },
+        });
+        if (
+          !row ||
+          String(row.status).toUpperCase() !==
+            PosSuspendedCartStatus.SUSPENDED ||
+          !isPupilRecord(row)
+        ) {
+          return { reason: 'NOT_A_PUPIL', name: '' };
+        }
+        const p = pupilOf(row);
+        if (!classOk(scope, p.classCode))
+          return { reason: 'OUT_OF_SCOPE', name: p.name };
+        if (normalizePhoneKey(p.guardianPhone) === key)
+          return { reason: 'SAME', name: p.name };
+        row.cartSnapshot = {
+          ...(row.cartSnapshot ?? {}),
+          hotelGuestPhone: phone,
+        };
+        await repo.save(row);
+        return { reason: '', name: p.name };
+      });
+      if (outcome.reason)
+        skipped.push({ folioId, name: outcome.name, reason: outcome.reason });
+      else saved.push(folioId);
+    }
+    return { saved, skipped };
   }
 
   // ── notices to parents (office) ──────────────────────────────────────────

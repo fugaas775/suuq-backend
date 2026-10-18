@@ -230,3 +230,20 @@ export class UpdateSchoolNoticeDto {
   @IsBoolean()
   isActive?: boolean;
 }
+
+/** The parents' phone onto these pupils' own records (the logins desk). */
+export class SetSchoolPupilPhonesDto {
+  @IsInt()
+  branchId!: number;
+
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(50)
+  @IsInt({ each: true })
+  folioIds!: number[];
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(40)
+  phone!: string;
+}

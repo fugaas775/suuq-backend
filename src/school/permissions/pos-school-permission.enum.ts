@@ -43,6 +43,14 @@ export enum PosSchoolPermission {
    * roll, the classes, the rooms, the timetable and the textbooks with it.
    */
   MANAGE_SCHOOL_LOGINS = 'MANAGE_SCHOOL_LOGINS',
+  /**
+   * The same two login desks for a TEACHER — their own classes only (owner
+   * 2026-10-18: "Teachers should also manage Students' login and parents'
+   * login for their respective class like cashiers"). Held to the assigned
+   * classes by SchoolLoginScopeService; MANAGE_SCHOOL_LOGINS or ENROL_STUDENT
+   * beside it means the whole school.
+   */
+  MANAGE_CLASS_LOGINS = 'MANAGE_CLASS_LOGINS',
 }
 
 export const POS_SCHOOL_PERMISSION_VALUES = Object.values(PosSchoolPermission);
