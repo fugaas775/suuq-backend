@@ -7,9 +7,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, Repository } from 'typeorm';
-import {
-  BranchStaffAssignment,
-} from '../branch-staff/entities/branch-staff-assignment.entity';
+import { BranchStaffAssignment } from '../branch-staff/entities/branch-staff-assignment.entity';
 import { Branch } from '../branches/entities/branch.entity';
 import { PosRegisterReportService } from './pos-register-report.service';
 import {
@@ -17,6 +15,13 @@ import {
   canWithdrawStudent,
   isSchoolPupilFolio,
 } from './school-withdrawal.policy';
+import {
+  PUPIL_RECORD_REFUSED_CODE,
+  canEditPupilRecord,
+  keepStoredPupilRecord,
+  pupilRecordDelta,
+  pupilRecordRefusal,
+} from './school-pupil-record.policy';
 import {
   isEmptySchoolBasket,
   schoolAdmissionNoOf,
@@ -683,7 +688,11 @@ export class PosRegisterService {
   async updateSuspendedCart(
     id: number,
     dto: UpdatePosSuspendedCartDto,
-    actor: { id?: number | null; email?: string | null } = {},
+    actor: {
+      id?: number | null;
+      email?: string | null;
+      roles?: string[] | null;
+    } = {},
   ): Promise<PosSuspendedCartResponseDto> {
     // Read, decide and write under a row lock. Two tills writing one folio
     // used to read the same row, each lay its own copy over it, and the second
@@ -783,6 +792,37 @@ export class PosRegisterService {
             )
               ? { ...rest, schoolAcademicRecord: stored.schoolAcademicRecord }
               : rest;
+
+            // The pupil's own record is the office's (owner 2026-10-18: "do
+            // not allow cashiers to edit the whole student list, except login
+            // only"). A fee and a rename travel in this one PATCH, so what
+            // moved decides — see school-pupil-record.policy. A plain fee save
+            // moves nothing and costs no lookup; someone who may not edit is
+            // refused a CHANGE, and a field they filled or left out keeps its
+            // stored value. The office's snapshot is written as sent.
+            if (isSchoolPupilFolio({ cartSnapshot: incoming })) {
+              const delta = pupilRecordDelta(stored, incoming);
+              const touched =
+                delta.changed.length +
+                delta.filled.length +
+                delta.dropped.length;
+              if (
+                touched &&
+                !(await this.mayEditPupilRecord(cart, actor, em))
+              ) {
+                if (delta.changed.length) {
+                  throw new ForbiddenException({
+                    code: PUPIL_RECORD_REFUSED_CODE,
+                    message: pupilRecordRefusal(delta.changed),
+                    details: { fields: delta.changed },
+                  });
+                }
+                incoming = keepStoredPupilRecord(stored, incoming, [
+                  ...delta.filled,
+                  ...delta.dropped,
+                ]);
+              }
+            }
           }
 
           // The same three rules as a create, with this row excused from the
@@ -864,6 +904,34 @@ export class PosRegisterService {
       throw new NotFoundException(`Register session ${id} not found`);
     }
     return session;
+  }
+
+  /** The office, a manager, the owner or a platform admin — read off the roster. */
+  private async mayEditPupilRecord(
+    cart: PosSuspendedCart,
+    actor: { id?: number | null; roles?: string[] | null },
+    em?: EntityManager,
+  ): Promise<boolean> {
+    const branches = em ? em.getRepository(Branch) : this.branchesRepository;
+    const assignments = em
+      ? em.getRepository(BranchStaffAssignment)
+      : this.staffAssignmentsRepository;
+    const branch = await branches.findOne({
+      where: { id: cart.branchId },
+      select: { id: true, ownerId: true },
+    });
+    const assignment =
+      actor.id != null
+        ? await assignments.findOne({
+            where: { branchId: cart.branchId, userId: actor.id },
+          })
+        : null;
+    return canEditPupilRecord({
+      actorId: actor.id ?? null,
+      ownerId: branch?.ownerId ?? null,
+      roles: actor.roles ?? [],
+      assignment,
+    });
   }
 
   private async assertCanWithdrawStudent(

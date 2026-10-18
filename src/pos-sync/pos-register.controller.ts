@@ -243,6 +243,9 @@ export class PosRegisterController {
     return this.posRegisterService.updateSuspendedCart(id, dto, {
       id: req.user?.id ?? null,
       email: req.user?.email ?? null,
+      // A platform admin edits a pupil's record like the owner (see
+      // school-pupil-record.policy); the roles are how the service knows.
+      roles: Array.isArray(req.user?.roles) ? req.user.roles : [],
     });
   }
 

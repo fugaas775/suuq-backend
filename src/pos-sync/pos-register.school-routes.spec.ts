@@ -86,7 +86,13 @@ describe('PosRegisterController — SCHOOL route permissions', () => {
     // MARK_ATTENDANCE is absent for a different reason: its route is real, but
     // it lives on AttendanceController (`pos/v1/attendance/students/mark`), not
     // on this controller. A register touches no suspended cart.
-    const EXEMPT = new Set(['IMPORT_STUDENT_ROSTER', 'MARK_ATTENDANCE']);
+    // MANAGE_SCHOOL_LOGINS opens the two login desks and nothing here: the
+    // cashier who holds it must NOT reach a folio write through it.
+    const EXEMPT = new Set([
+      'IMPORT_STUDENT_ROSTER',
+      'MARK_ATTENDANCE',
+      'MANAGE_SCHOOL_LOGINS',
+    ]);
     const routed = new Set([
       ...permissionsOn('suspendCart'),
       ...permissionsOn('updateSuspendedCart'),

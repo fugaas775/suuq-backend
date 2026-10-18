@@ -653,6 +653,164 @@ describe('PosRegisterService.updateSuspendedCart — the row as it stands now', 
     ).toBe(false);
   });
 
+  describe("a pupil's own record is the office's (owner 2026-10-18)", () => {
+    const CASHIER = { id: 2470, email: 'cashier@x', roles: ['POS_OPERATOR'] };
+    const cashierRow = {
+      branchId: 115,
+      userId: 2470,
+      role: 'OPERATOR',
+      isActive: true,
+      permissions: [
+        'VIEW_CLASS_BOARD',
+        'POST_FEE_CHARGE',
+        'SETTLE_FEE_PAYMENT',
+        'MANAGE_SCHOOL_LOGINS',
+      ],
+    };
+    const officeRow = {
+      ...cashierRow,
+      permissions: [...cashierRow.permissions, 'ENROL_STUDENT'],
+    };
+
+    it('lets the cashier charge and take a fee — lines, totals, paid-through', async () => {
+      const { service, carts } = makeService({
+        stored: pupilRow({ hotelCheckOutAt: '2026-10-10' }),
+        assignment: cashierRow,
+      });
+      await service.updateSuspendedCart(
+        16867,
+        {
+          branchId: 115,
+          total: 4000,
+          cartSnapshot: {
+            ...pupilRow().cartSnapshot,
+            hotelCheckOutAt: '2026-11-09',
+            cartLines: [
+              { name: 'Tuition', quantity: 1, unitPrice: 2000 },
+              { name: 'Tuition — Tikimt', quantity: 1, unitPrice: 2000 },
+            ],
+            partialPaidAmount: 2000,
+          },
+        },
+        CASHIER,
+      );
+      expect(carts.save).toHaveBeenCalledTimes(1);
+      expect(carts.save.mock.calls[0][0].cartSnapshot.hotelCheckOutAt).toBe(
+        '2026-11-09',
+      );
+    });
+
+    it('refuses the cashier a rename or a class change, naming the fields — 403, nothing written', async () => {
+      const { service, carts } = makeService({
+        stored: pupilRow(),
+        assignment: cashierRow,
+      });
+      const err = await service
+        .updateSuspendedCart(
+          16867,
+          {
+            branchId: 115,
+            cartSnapshot: {
+              ...pupilRow().cartSnapshot,
+              hotelGuestName: 'Someone Else',
+              hotelRoomNumber: '4aad',
+            },
+          },
+          CASHIER,
+        )
+        .catch((e) => e);
+      expect(err).toBeInstanceOf(ForbiddenException);
+      expect(err.getResponse()).toMatchObject({
+        code: 'SCHOOL_PUPIL_RECORD_OFFICE_ONLY',
+        details: { fields: ['hotelGuestName', 'hotelRoomNumber'] },
+      });
+      expect(err.getResponse().message).toMatch(/name, class/);
+      expect(carts.save).not.toHaveBeenCalled();
+    });
+
+    it('refuses the cashier a scholarship granted through a crafted waiver line', async () => {
+      const { service, carts } = makeService({
+        stored: pupilRow(),
+        assignment: cashierRow,
+      });
+      const err = await service
+        .updateSuspendedCart(
+          16867,
+          {
+            branchId: 115,
+            cartSnapshot: {
+              ...pupilRow().cartSnapshot,
+              cartLines: [
+                { name: 'Tuition', quantity: 1, unitPrice: 2000 },
+                {
+                  name: 'Scholarship',
+                  quantity: 1,
+                  unitPrice: -2000,
+                  metadata: { schoolScholarship: true },
+                },
+              ],
+            },
+          },
+          CASHIER,
+        )
+        .catch((e) => e);
+      expect(err).toBeInstanceOf(ForbiddenException);
+      expect(carts.save).not.toHaveBeenCalled();
+    });
+
+    it("keeps the stored value of a pupil field the cashier's till left out or filled in — and still saves the fee", async () => {
+      const { service, carts } = makeService({
+        stored: pupilRow({ schoolGuardianName: 'Cali Xasan' }),
+        assignment: cashierRow,
+      });
+      await service.updateSuspendedCart(
+        16867,
+        {
+          branchId: 115,
+          cartSnapshot: {
+            ...pupilRow().cartSnapshot,
+            paid: true,
+            hotelGuestPhone: '0911000000',
+          },
+        },
+        CASHIER,
+      );
+      const written = carts.save.mock.calls[0][0].cartSnapshot;
+      expect(written.schoolGuardianName).toBe('Cali Xasan');
+      expect('hotelGuestPhone' in written).toBe(false);
+      expect(written.paid).toBe(true);
+    });
+
+    it('lets the office, a manager and the owner change the record — written as sent', async () => {
+      for (const [actor, assignment] of [
+        [CASHIER, officeRow],
+        [CASHIER, { ...cashierRow, role: 'MANAGER' }],
+        [{ id: 1863, roles: [] }, null],
+        [{ id: 9, roles: ['SUPER_ADMIN'] }, null],
+      ] as const) {
+        const { service, carts } = makeService({
+          stored: pupilRow({ schoolGuardianName: 'Cali Xasan' }),
+          assignment,
+        });
+        await service.updateSuspendedCart(
+          16867,
+          {
+            branchId: 115,
+            cartSnapshot: {
+              ...pupilRow().cartSnapshot,
+              hotelGuestName: 'Amina Cali Xasan',
+            },
+          },
+          actor as any,
+        );
+        const written = carts.save.mock.calls[0][0].cartSnapshot;
+        expect(written.hotelGuestName).toBe('Amina Cali Xasan');
+        // The office cleared the guardian by leaving it out: that stands.
+        expect('schoolGuardianName' in written).toBe(false);
+      }
+    });
+  });
+
   it('leaves every other format exactly as it was — the snapshot is replaced as sent', async () => {
     const hotel = {
       ...pupilRow(),
