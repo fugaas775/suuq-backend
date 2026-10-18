@@ -42,6 +42,7 @@ import {
   studentLoginGradeAllowed,
   choseOwnPassword,
 } from './school-guardian.util';
+import { removeMintedLogin } from './school-login-removal';
 import { SchoolHomeworkService } from './school-homework.service';
 import { LoginScope, classOk, outOfClassScope } from './school-login-scope';
 
@@ -636,18 +637,19 @@ export class SchoolStudentAccountService {
   /** Remove the login; the user row goes too when no other school holds it, so the username is free again. */
   async remove(id: number, branchId: number, scope: LoginScope = null) {
     const a = await this.findOnBranch(id, branchId, scope);
-    await this.accounts.delete({ id: Number(a.id) });
-    const elsewhere = await this.accounts.count({
-      where: { userId: a.userId },
-    });
-    let userRemoved = false;
-    if (!elsewhere) {
-      const user = await this.users.findOne({ where: { id: a.userId } });
-      if (user && user.authMode === 'MANUAL') {
-        await this.users.remove(user);
-        userRemoved = true;
-      }
-    }
+    const { userRemoved } = await removeMintedLogin(
+      this.accounts.manager,
+      Number(a.userId),
+      async (em) => {
+        await em
+          .getRepository(SchoolStudentAccount)
+          .delete({ id: Number(a.id) });
+      },
+      async (em) =>
+        (await em
+          .getRepository(SchoolStudentAccount)
+          .count({ where: { userId: a.userId } })) > 0,
+    );
     return { status: 'REMOVED', id: Number(a.id), userRemoved };
   }
 

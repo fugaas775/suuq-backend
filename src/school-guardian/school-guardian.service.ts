@@ -59,6 +59,7 @@ import {
   suggestGuardianUsername,
   choseOwnPassword,
 } from './school-guardian.util';
+import { removeMintedLogin } from './school-login-removal';
 import { SchoolHomeworkService } from './school-homework.service';
 import {
   SchoolCurriculumService,
@@ -854,19 +855,20 @@ export class SchoolGuardianService {
           'This family also has children in other classes',
         );
     }
-    await this.pupils.delete({ guardianId: Number(g.id) });
-    await this.guardians.delete({ id: Number(g.id) });
-    const elsewhere = await this.guardians.count({
-      where: { userId: g.userId },
-    });
-    let userRemoved = false;
-    if (!elsewhere) {
-      const user = await this.users.findOne({ where: { id: g.userId } });
-      if (user && user.authMode === 'MANUAL') {
-        await this.users.remove(user);
-        userRemoved = true;
-      }
-    }
+    const { userRemoved } = await removeMintedLogin(
+      this.guardians.manager,
+      Number(g.userId),
+      async (em) => {
+        await em
+          .getRepository(SchoolGuardianPupil)
+          .delete({ guardianId: Number(g.id) });
+        await em.getRepository(SchoolGuardian).delete({ id: Number(g.id) });
+      },
+      async (em) =>
+        (await em
+          .getRepository(SchoolGuardian)
+          .count({ where: { userId: g.userId } })) > 0,
+    );
     return { status: 'REMOVED', id: Number(g.id), userRemoved };
   }
 
