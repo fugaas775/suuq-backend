@@ -177,6 +177,8 @@ export class PosRegisterController {
     return this.posRegisterService.suspendCart(dto, {
       id: req.user?.id ?? null,
       email: req.user?.email ?? null,
+      // Enrolling a pupil is the office's — see suspendCart.
+      roles: Array.isArray(req.user?.roles) ? req.user.roles : [],
     });
   }
 

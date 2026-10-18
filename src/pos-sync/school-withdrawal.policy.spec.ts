@@ -1,4 +1,4 @@
-import { ForbiddenException } from '@nestjs/common';
+import { ConflictException, ForbiddenException } from '@nestjs/common';
 import { PosRegisterService } from './pos-register.service';
 import { PosSuspendedCartStatus } from './entities/pos-suspended-cart.entity';
 import {
@@ -244,21 +244,30 @@ describe('PosRegisterService.discardSuspendedCart (school withdrawal gate)', () 
     expect(branchesRepository.findOne).not.toHaveBeenCalled();
   });
 
-  it('does not gate a row that is no longer on the roll', async () => {
+  it('does not gate a row that is no longer on the roll — it is refused as no longer on hold', async () => {
+    // Since 2c5fa00 (2026-10-11) a second discard answers 409 rather than the
+    // row as it stood: two tills listing the same basket must not both act on
+    // it. What this test guards is unchanged — the withdrawal gate is never
+    // consulted for a row already off the roll, and nothing is written.
     const { service, suspendedCartsRepository, branchesRepository } =
       makeService({
         cart: pupil({ status: PosSuspendedCartStatus.DISCARDED }),
         assignment: null,
       });
-    const res = await service.discardSuspendedCart(
-      7,
-      { branchId: 3 },
-      {
-        id: 2381,
-        email: 'cashier@example.com',
-      },
-    );
-    expect(res.status).toBe(PosSuspendedCartStatus.DISCARDED);
+    const err = await service
+      .discardSuspendedCart(
+        7,
+        { branchId: 3 },
+        {
+          id: 2381,
+          email: 'cashier@example.com',
+        },
+      )
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(err.getResponse()).toMatchObject({
+      code: 'SUSPENDED_CART_NOT_SUSPENDED',
+    });
     expect(suspendedCartsRepository.save).not.toHaveBeenCalled();
     expect(branchesRepository.findOne).not.toHaveBeenCalled();
   });

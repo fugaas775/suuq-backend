@@ -16,7 +16,9 @@ import {
   isSchoolPupilFolio,
 } from './school-withdrawal.policy';
 import {
+  PUPIL_CREATE_REFUSED_MESSAGE,
   PUPIL_RECORD_REFUSED_CODE,
+  canCreatePupilRecord,
   canEditPupilRecord,
   keepStoredPupilRecord,
   pupilRecordDelta,
@@ -286,7 +288,11 @@ export class PosRegisterService {
 
   async suspendCart(
     dto: CreatePosSuspendedCartDto,
-    actor: { id?: number | null; email?: string | null } = {},
+    actor: {
+      id?: number | null;
+      email?: string | null;
+      roles?: string[] | null;
+    } = {},
   ): Promise<PosSuspendedCartResponseDto> {
     const actorName = await this.resolveActorName(actor, dto.branchId);
     await this.assertBranch(dto.branchId);
@@ -317,6 +323,23 @@ export class PosRegisterService {
       if (existing) {
         return this.toSuspendedCartResponse(existing);
       }
+    }
+
+    // A new pupil on the roll is an enrolment, and enrolling is the office's
+    // (owner 2026-10-18: "do not allow cashiers to edit the whole student
+    // list, except login only"). After the replay check above, so a till
+    // re-sending a park that already landed still gets its row back. Every
+    // other basket — and every format but SCHOOL — costs nothing here.
+    if (
+      isSchoolPupilFolio({
+        cartSnapshot: (dto.cartSnapshot ?? {}) as Record<string, unknown>,
+      }) &&
+      !(await this.mayCreatePupilRecord(dto.branchId, actor))
+    ) {
+      throw new ForbiddenException({
+        code: PUPIL_RECORD_REFUSED_CODE,
+        message: PUPIL_CREATE_REFUSED_MESSAGE,
+      });
     }
 
     const buildCart = (
@@ -904,6 +927,29 @@ export class PosRegisterService {
       throw new NotFoundException(`Register session ${id} not found`);
     }
     return session;
+  }
+
+  /** May this actor enrol: the pupil-record editors plus the roster importer. */
+  private async mayCreatePupilRecord(
+    branchId: number,
+    actor: { id?: number | null; roles?: string[] | null },
+  ): Promise<boolean> {
+    const branch = await this.branchesRepository.findOne({
+      where: { id: branchId },
+      select: { id: true, ownerId: true },
+    });
+    const assignment =
+      actor.id != null
+        ? await this.staffAssignmentsRepository.findOne({
+            where: { branchId, userId: actor.id },
+          })
+        : null;
+    return canCreatePupilRecord({
+      actorId: actor.id ?? null,
+      ownerId: branch?.ownerId ?? null,
+      roles: actor.roles ?? [],
+      assignment,
+    });
   }
 
   /** The office, a manager, the owner or a platform admin — read off the roster. */

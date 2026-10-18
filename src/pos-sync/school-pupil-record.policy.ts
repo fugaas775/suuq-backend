@@ -191,3 +191,23 @@ export function pupilRecordRefusal(fields: string[]): string {
   const words = [...new Set(fields.map((f) => FIELD_WORDS[f] || f))];
   return `Only the school office can change a student's details (${words.join(', ')}). Fees can still be charged and taken.`;
 }
+
+/**
+ * May this actor put a NEW pupil on the roll? Whoever may edit a pupil's
+ * record, and the roster importer (IMPORT_STUDENT_ROSTER) — an import IS a
+ * batch of enrolments. Never the fee desk: the cashier hands out logins and
+ * takes fees, and the till gives them no way to enrol (owner 2026-10-18).
+ */
+export function canCreatePupilRecord(
+  args: Parameters<typeof canEditPupilRecord>[0],
+): boolean {
+  if (canEditPupilRecord(args)) return true;
+  const a = args.assignment;
+  if (!a || a.isActive === false) return false;
+  return (a.permissions ?? [])
+    .map((p) => String(p).trim().toUpperCase())
+    .includes('IMPORT_STUDENT_ROSTER');
+}
+
+export const PUPIL_CREATE_REFUSED_MESSAGE =
+  'Only the school office can enrol a student. Fees can still be charged and taken on the students already enrolled.';

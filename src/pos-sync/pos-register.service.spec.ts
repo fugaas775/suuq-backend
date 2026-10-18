@@ -303,7 +303,7 @@ describe('PosRegisterService — a SCHOOL folio must be fit for the roll', () =>
    * was bypassed live at least once: two schools carried an admission number
    * three times over, and one carried a folio with no name, class or lines.
    */
-  function makeService(clash: any = null) {
+  function makeService(clash: any = null, assignment: any = null) {
     const qb: any = {
       select: jest.fn(() => qb),
       where: jest.fn(() => qb),
@@ -326,9 +326,10 @@ describe('PosRegisterService — a SCHOOL folio must be fit for the roll', () =>
     const service = new PosRegisterService(
       { findOne: jest.fn() } as any,
       suspendedCartsRepository,
-      { findOne: jest.fn().mockResolvedValue({ id: 115 }) } as any,
+      // The branch's owner is user 1 — the `actor` these tests enrol as.
+      { findOne: jest.fn().mockResolvedValue({ id: 115, ownerId: 1 }) } as any,
       { dispatchCloseReport: jest.fn() } as any,
-      { findOne: jest.fn() } as any,
+      { findOne: jest.fn().mockResolvedValue(assignment) } as any,
     );
     return { service, suspendedCartsRepository, qb };
   }
@@ -350,6 +351,66 @@ describe('PosRegisterService — a SCHOOL folio must be fit for the roll', () =>
     },
   });
   const actor = { id: 1, email: 'office@school' } as any;
+
+  describe('enrolling is the office’s (owner 2026-10-18)', () => {
+    const cashier = {
+      id: 2470,
+      email: 'cashier@school',
+      roles: ['POS_OPERATOR'],
+    } as any;
+    const row = (permissions: string[]) => ({
+      branchId: 115,
+      userId: 2470,
+      role: 'OPERATOR',
+      isActive: true,
+      permissions,
+    });
+
+    it('refuses the cashier a new pupil — 403, nothing written', async () => {
+      const { service, suspendedCartsRepository } = makeService(
+        null,
+        row(['POST_FEE_CHARGE', 'SUSPEND_SALE', 'MANAGE_SCHOOL_LOGINS']),
+      );
+      const err = await service
+        .suspendCart(pupil() as any, cashier)
+        .catch((e) => e);
+      expect(err).toBeInstanceOf(ForbiddenException);
+      expect(err.getResponse()).toMatchObject({
+        code: 'SCHOOL_PUPIL_RECORD_OFFICE_ONLY',
+      });
+      expect(err.getResponse().message).toMatch(
+        /Only the school office can enrol/,
+      );
+      expect(suspendedCartsRepository.save).not.toHaveBeenCalled();
+    });
+
+    it('lets the office, the roster importer and a platform admin enrol', async () => {
+      for (const [who, assignment] of [
+        [cashier, row(['ENROL_STUDENT'])],
+        [cashier, row(['IMPORT_STUDENT_ROSTER'])],
+        [{ id: 9, roles: ['SUPER_ADMIN'] }, null],
+      ] as const) {
+        const { service, suspendedCartsRepository } = makeService(
+          null,
+          assignment,
+        );
+        await service.suspendCart(pupil(), who);
+        expect(suspendedCartsRepository.save).toHaveBeenCalledTimes(1);
+      }
+    });
+
+    it('leaves a basket that is not a pupil to the cashier', async () => {
+      const { service, suspendedCartsRepository } = makeService(
+        null,
+        row(['SUSPEND_SALE']),
+      );
+      await service.suspendCart(
+        pupil({ hotelGuestName: '', schoolAdmissionNo: '' }),
+        cashier,
+      );
+      expect(suspendedCartsRepository.save).toHaveBeenCalledTimes(1);
+    });
+  });
 
   it('refuses an empty school basket', async () => {
     const { service, suspendedCartsRepository } = makeService();
