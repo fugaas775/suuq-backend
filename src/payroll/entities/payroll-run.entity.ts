@@ -13,12 +13,32 @@ const decimalTransformer = {
     value == null ? value : Number(value),
 };
 
+/** One tutorial lesson a TUTORIAL run paid — the run's claim on it. */
+export interface PayrollRunLesson {
+  /** 'YYYY-MM-DD', the day the lesson was taught. */
+  date: string;
+  /** The period code as the timetable spells it ('T1'). */
+  period: string;
+  classCode: string;
+  subject: string | null;
+  /** The rate paid for this lesson, frozen. */
+  rate: number;
+}
+
 /** One person as they were paid, frozen at the moment the run was posted. */
 export interface PayrollRunLine {
   employeeId: number | null;
   fullName: string;
   jobTitle: string | null;
   amount: number;
+  /** TUTORIAL runs only: every lesson this line pays, each paid once ever. */
+  lessons?: PayrollRunLesson[];
+}
+
+/** SALARY = the monthly salary (capped by it); TUTORIAL = per-period pay. */
+export enum PayrollRunKind {
+  SALARY = 'SALARY',
+  TUTORIAL = 'TUTORIAL',
 }
 
 /**
@@ -70,6 +90,14 @@ export class PayrollRun {
 
   @Column({ type: 'varchar', length: 8, default: 'ETB' })
   currency!: string;
+
+  /**
+   * What the run pays. A TUTORIAL run writes no `pos_payroll_run_members`
+   * row — its claim is the lessons in its lines — so it never counts toward
+   * (or is refused by) the month's salary cap.
+   */
+  @Column({ type: 'varchar', length: 16, default: PayrollRunKind.SALARY })
+  kind!: PayrollRunKind;
 
   @Column({ type: 'int', default: 0 })
   headcount!: number;

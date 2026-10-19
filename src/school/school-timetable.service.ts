@@ -175,6 +175,7 @@ export class SchoolTimetableService {
 
   private normalizePeriods(
     dto: PutSchoolTimetableDto,
+    canonicalClass: (code: string) => string,
   ): SchoolTimetablePeriod[] {
     const seen = new Set<string>();
     const out: SchoolTimetablePeriod[] = [];
@@ -215,15 +216,36 @@ export class SchoolTimetableService {
           ? [...new Set(p.days.map((d) => Number(d)))].sort((a, b) => a - b)
           : [1, 2, 3, 4, 5];
 
+      const kind = p.kind === 'BREAK' ? 'BREAK' : 'LESSON';
+      const classCodes = [
+        ...new Set((p.classCodes || []).map((c) => canonicalClass(c))),
+      ];
+      const rate =
+        p.payPerPeriod == null || p.payPerPeriod === ('' as unknown)
+          ? null
+          : Math.round(Number(p.payPerPeriod) * 100) / 100;
+      if (rate != null && !(rate >= 0)) {
+        throw new BadRequestException(
+          `Period "${code}" has an invalid pay per period.`,
+        );
+      }
+      if (kind === 'BREAK' && rate) {
+        throw new BadRequestException(
+          `${code} is a break — nobody is paid to teach on it.`,
+        );
+      }
+
       out.push({
         code,
         label: p.label ? String(p.label).trim() || null : null,
-        kind: p.kind === 'BREAK' ? 'BREAK' : 'LESSON',
+        kind,
         sortOrder: Number.isFinite(Number(p.sortOrder))
           ? Number(p.sortOrder)
           : index,
         days,
         times,
+        classCodes,
+        payPerPeriod: rate ? rate : null,
       });
     });
     return out.sort((a, b) => a.sortOrder - b.sortOrder);
@@ -303,7 +325,7 @@ export class SchoolTimetableService {
       activeByName.set(key, [...(activeByName.get(key) || []), e]);
     }
 
-    const periods = this.normalizePeriods(dto);
+    const periods = this.normalizePeriods(dto, canonicalClass);
     const periodByKey = new Map<string, SchoolTimetablePeriod>();
     periods.forEach((p) => periodByKey.set(p.code.toUpperCase(), p));
     const periodRank = new Map<string, number>();
@@ -346,6 +368,19 @@ export class SchoolTimetableService {
       }
 
       const classCode = canonicalClass(raw.classCode);
+      // A period kept for some classes (the exam grades' evening tutorial)
+      // takes no lesson for any other — the class's grid does not even show
+      // the row, so a lesson there would be one nobody could see or mark.
+      if (
+        period?.classCodes?.length &&
+        !period.classCodes.some(
+          (c) => c.toLowerCase() === classCode.toLowerCase(),
+        )
+      ) {
+        throw new BadRequestException(
+          `${period.code} is only for ${period.classCodes.join(', ')} — not ${classCode}.`,
+        );
+      }
       const subject = String(raw.subject || '').trim();
       if (!subject) {
         throw new BadRequestException(

@@ -13,6 +13,7 @@ import {
   MinLength,
   ValidateNested,
   IsObject,
+  Matches,
 } from 'class-validator';
 
 /** Pay this person THIS amount — an advance, or a hand-set remainder. */
@@ -266,6 +267,93 @@ export class CreatePayrollRunDto {
   amounts?: PayrollRunAmountDto[];
 
   @ApiPropertyOptional({ example: 'Paid in cash on the 10th.' })
+  @IsOptional()
+  @IsString()
+  note?: string | null;
+}
+
+const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** The tutorial pay a span of days owes, per teacher — read before a run. */
+export class TutorialPayQueryDto {
+  @ApiProperty({ example: 115 })
+  @Type(() => Number)
+  @IsInt()
+  branchId!: number;
+
+  @ApiProperty({
+    example: '2026-10-11',
+    description: "First day, 'YYYY-MM-DD'.",
+  })
+  @IsString()
+  @Matches(DAY_RE)
+  from!: string;
+
+  @ApiProperty({
+    example: '2026-11-09',
+    description: "Last day, 'YYYY-MM-DD'.",
+  })
+  @IsString()
+  @Matches(DAY_RE)
+  to!: string;
+
+  /**
+   * The branch's today. A scheduled lesson after it has not happened yet, so
+   * it is not "unmarked". Defaults to `to`.
+   */
+  @ApiPropertyOptional({ example: '2026-10-19' })
+  @IsOptional()
+  @IsString()
+  @Matches(DAY_RE)
+  asOf?: string;
+}
+
+/** Pay the tutorial lessons taught and not yet paid between two days. */
+export class CreateTutorialRunDto {
+  @ApiProperty({ example: 115 })
+  @Type(() => Number)
+  @IsInt()
+  branchId!: number;
+
+  @ApiProperty({
+    example: '2026-10',
+    description: "The month it books to, 'YYYY-MM'.",
+  })
+  @IsString()
+  @MinLength(4)
+  @MaxLength(32)
+  periodKey!: string;
+
+  @ApiProperty({ example: '2026-10-11' })
+  @IsString()
+  @Matches(DAY_RE)
+  from!: string;
+
+  @ApiProperty({ example: '2026-11-09' })
+  @IsString()
+  @Matches(DAY_RE)
+  to!: string;
+
+  @ApiPropertyOptional({ example: 'Tutorial — Tikimt 2019 E.C.' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  label?: string | null;
+
+  @ApiPropertyOptional({ example: '2026-11-09T12:00:00.000Z' })
+  @IsOptional()
+  @IsString()
+  occurredAt?: string;
+
+  /** Pay only these teachers. Omit to pay everyone with lessons owed. */
+  @ApiPropertyOptional({ type: [Number], example: [4, 6, 11] })
+  @IsOptional()
+  @IsArray()
+  @Type(() => Number)
+  @IsInt({ each: true })
+  employeeIds?: number[];
+
+  @ApiPropertyOptional({ example: 'Paid in cash.' })
   @IsOptional()
   @IsString()
   note?: string | null;

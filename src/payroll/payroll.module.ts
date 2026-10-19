@@ -9,6 +9,9 @@ import { PayrollRun } from './entities/payroll-run.entity';
 import { PayrollRunMember } from './entities/payroll-run-member.entity';
 import { PayrollController } from './payroll.controller';
 import { PayrollService } from './payroll.service';
+import { TutorialPayService } from './tutorial-pay.service';
+import { LessonAttendanceMark } from '../attendance/entities/lesson-attendance-mark.entity';
+import { SchoolTimetable } from '../school/entities/school-timetable.entity';
 
 /**
  * Who the branch employs, and what a month of them costs.
@@ -25,12 +28,25 @@ import { PayrollService } from './payroll.service';
  */
 @Module({
   imports: [
-    TypeOrmModule.forFeature([BranchEmployee, PayrollRun, PayrollRunMember]),
+    TypeOrmModule.forFeature([
+      BranchEmployee,
+      PayrollRun,
+      PayrollRunMember,
+      // Read-only, for tutorial pay: the rate is on the timetable's bell, the
+      // lessons taught are in the lesson register.
+      LessonAttendanceMark,
+      SchoolTimetable,
+    ]),
     BillingModule,
     RetailModule,
   ],
   controllers: [PayrollController],
-  providers: [PayrollService, PosBranchAccessGuard, RolesGuard],
+  providers: [
+    PayrollService,
+    TutorialPayService,
+    PosBranchAccessGuard,
+    RolesGuard,
+  ],
   exports: [PayrollService],
 })
 export class PayrollModule {}

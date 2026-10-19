@@ -25,11 +25,14 @@ import { RetailModulesGuard } from '../retail/retail-modules.guard';
 import {
   CreateBranchEmployeeDto,
   CreatePayrollRunDto,
+  CreateTutorialRunDto,
+  TutorialPayQueryDto,
   ListBranchEmployeesQueryDto,
   ListPayrollRunsQueryDto,
   UpdateBranchEmployeeDto,
 } from './dto/payroll.dto';
 import { PayrollService } from './payroll.service';
+import { TutorialPayService } from './tutorial-pay.service';
 
 const GUARDS = [
   JwtAuthGuard,
@@ -55,7 +58,10 @@ const GUARDS = [
 @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.POS_MANAGER)
 @RequireRetailModules(RetailOsModule.POS_CORE)
 export class PayrollController {
-  constructor(private readonly svc: PayrollService) {}
+  constructor(
+    private readonly svc: PayrollService,
+    private readonly tutorial: TutorialPayService,
+  ) {}
 
   @Get('employees')
   @RetailBranchContext('query.branchId')
@@ -101,6 +107,24 @@ export class PayrollController {
   ) {
     const userId = Number((req.user as { id?: number })?.id) || 0;
     return this.svc.createRun(dto.branchId, userId, dto);
+  }
+
+  /** Tutorial lessons taught between two days, per teacher, and what is owed. */
+  @Get('tutorial-pay')
+  @RetailBranchContext('query.branchId')
+  tutorialPay(@Query() query: TutorialPayQueryDto) {
+    return this.tutorial.preview(query);
+  }
+
+  /** Pay those lessons — one TUTORIAL run, one PAYROLL expense. */
+  @Post('tutorial-runs')
+  @RetailBranchContext('body.branchId')
+  createTutorialRun(
+    @Req() req: AuthenticatedRequest,
+    @Body() dto: CreateTutorialRunDto,
+  ) {
+    const userId = Number((req.user as { id?: number })?.id) || 0;
+    return this.tutorial.createRun(dto.branchId, userId, dto);
   }
 
   @Delete('runs/:id')

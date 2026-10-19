@@ -6,6 +6,7 @@ import {
   IsIn,
   IsInt,
   IsISO8601,
+  IsNumber,
   IsObject,
   IsOptional,
   IsString,
@@ -126,6 +127,29 @@ export class SchoolTimetablePeriodDto {
     string,
     { start?: string | null; end?: string | null } | string | null
   >;
+
+  @ApiPropertyOptional({
+    example: ['6aad', '8th'],
+    description: 'The classes this period is for. Empty = every class.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(200)
+  @IsString({ each: true })
+  @MaxLength(64, { each: true })
+  classCodes?: string[];
+
+  @ApiPropertyOptional({
+    example: 300,
+    description:
+      'Paid on top of salary for each lesson taught in this period (a tutorial). Null = covered by salary.',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  @Max(1_000_000)
+  payPerPeriod?: number | null;
 }
 
 export class SchoolTimetableShiftDto {

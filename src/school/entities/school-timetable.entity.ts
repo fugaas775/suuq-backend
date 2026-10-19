@@ -34,6 +34,21 @@ export interface SchoolTimetablePeriod {
   sortOrder: number;
   days: number[];
   times: Record<string, SchoolTimetableTimes>;
+  /**
+   * The classes this period is for. Empty (or absent, on documents saved
+   * before it existed) = every class. A school's evening TUTORIAL runs for
+   * the two exam grades only — SMAQ's 6aad and 8th, who sit the regional
+   * examination — and a period every other class showed as two empty rows
+   * a night was a period nobody could tell from a vacancy.
+   */
+  classCodes?: string[];
+  /**
+   * Paid ON TOP of salary for each lesson taught in this period — the
+   * tutorial rate (ETB 300 a period at SMAQ). Null = an ordinary lesson,
+   * covered by the monthly salary. Read by payroll's tutorial run, which pays
+   * each lesson the lesson register marks taught, once.
+   */
+  payPerPeriod?: number | null;
 }
 
 /** A shift and the classes that sit in it. Empty when a school runs one. */

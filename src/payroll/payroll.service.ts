@@ -83,7 +83,7 @@ export class PayrollService {
     };
   }
 
-  private toRun(row: PayrollRun) {
+  toRun(row: PayrollRun) {
     return {
       id: Number(row.id),
       branchId: row.branchId,
@@ -91,6 +91,7 @@ export class PayrollService {
       label: row.label ?? null,
       total: Number(row.total),
       currency: row.currency,
+      kind: row.kind || 'SALARY',
       headcount: row.headcount ?? 0,
       lines: Array.isArray(row.lines) ? row.lines : [],
       expenseId: row.expenseId ?? null,

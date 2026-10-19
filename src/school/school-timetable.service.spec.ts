@@ -538,6 +538,125 @@ describe('SchoolTimetableService', () => {
   });
 });
 
+describe('SchoolTimetableService — a tutorial period for some classes, paid per period', () => {
+  const TUTORIAL = [
+    ...PERIODS,
+    {
+      code: 'T1',
+      label: 'Tutorial',
+      sortOrder: 10,
+      classCodes: ['3AAD', '7th'],
+      payPerPeriod: 300,
+      times: { '*': { start: '19:00', end: '20:00' } },
+    },
+  ];
+
+  it('keeps the classes (registry spelling) and the rate, and an ordinary period carries neither', async () => {
+    const { svc } = makeService();
+    const doc = await svc.put(
+      {
+        branchId: 115,
+        periods: TUTORIAL,
+        slots: [
+          {
+            day: 1,
+            period: 'T1',
+            classCode: '3aad',
+            subject: 'English',
+            employeeId: 8,
+          },
+          {
+            day: 1,
+            period: 'P1',
+            classCode: '3aad',
+            subject: 'English',
+            employeeId: 8,
+          },
+        ],
+      } as any,
+      null,
+    );
+    const t1 = doc.periods.find((p) => p.code === 'T1');
+    expect(t1.classCodes).toEqual(['3aad', '7th']);
+    expect(t1.payPerPeriod).toBe(300);
+    const p1 = doc.periods.find((p) => p.code === 'P1');
+    expect(p1.classCodes).toEqual([]);
+    expect(p1.payPerPeriod).toBeNull();
+    expect(doc.slots).toHaveLength(2);
+  });
+
+  it('refuses a lesson for a class the period is not for, and a class the registry does not know', async () => {
+    const { svc } = makeService();
+    await expect(
+      svc.put(
+        {
+          branchId: 115,
+          periods: TUTORIAL,
+          slots: [
+            {
+              day: 1,
+              period: 'T1',
+              classCode: '1aad',
+              subject: 'English',
+              employeeId: 8,
+            },
+          ],
+        } as any,
+        null,
+      ),
+    ).rejects.toThrow('T1 is only for 3aad, 7th — not 1aad.');
+    await expect(
+      svc.put(
+        {
+          branchId: 115,
+          periods: [{ ...TUTORIAL[4], classCodes: ['9th'] }],
+          slots: [],
+        } as any,
+        null,
+      ),
+    ).rejects.toThrow(BadRequestException);
+  });
+
+  it('refuses a paid break, and one teacher in both tutorial classes at once', async () => {
+    const { svc } = makeService();
+    await expect(
+      svc.put(
+        {
+          branchId: 115,
+          periods: [{ code: 'Break', kind: 'BREAK', payPerPeriod: 300 }],
+          slots: [],
+        } as any,
+        null,
+      ),
+    ).rejects.toThrow('Break is a break — nobody is paid to teach on it.');
+    await expect(
+      svc.put(
+        {
+          branchId: 115,
+          periods: TUTORIAL,
+          slots: [
+            {
+              day: 2,
+              period: 'T1',
+              classCode: '3aad',
+              subject: 'Soomaali',
+              employeeId: 8,
+            },
+            {
+              day: 2,
+              period: 'T1',
+              classCode: '7th',
+              subject: 'Soomaali',
+              employeeId: 8,
+            },
+          ],
+        } as any,
+        null,
+      ),
+    ).rejects.toThrow('at the same time on Tuesday T1');
+  });
+});
+
 describe('SchoolTimetableService — overlapping hours, and a week saved over another', () => {
   const twoShift = [
     {
