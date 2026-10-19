@@ -11,6 +11,7 @@ import {
   IsOptional,
   IsString,
   Max,
+  Matches,
   MaxLength,
   Min,
   MinLength,
@@ -150,6 +151,15 @@ export class SchoolTimetablePeriodDto {
   @Min(0)
   @Max(1_000_000)
   payPerPeriod?: number | null;
+
+  @ApiPropertyOptional({
+    example: '2026-10-19',
+    description: 'First day a paid period runs. Null = no start recorded.',
+  })
+  @IsOptional()
+  @IsString()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/)
+  startsOn?: string | null;
 }
 
 export class SchoolTimetableShiftDto {

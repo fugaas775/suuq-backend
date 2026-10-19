@@ -246,6 +246,7 @@ export class SchoolTimetableService {
         times,
         classCodes,
         payPerPeriod: rate ? rate : null,
+        startsOn: rate && p.startsOn ? String(p.startsOn) : null,
       });
     });
     return out.sort((a, b) => a.sortOrder - b.sortOrder);

@@ -145,6 +145,7 @@ export class TutorialPayService {
         rate: money(Number(p.payPerPeriod)),
         classCodes: Array.isArray(p.classCodes) ? p.classCodes : [],
         days: Array.isArray(p.days) ? p.days : [],
+        startsOn: p.startsOn || null,
       }));
     const rateOf = new Map(paidPeriods.map((p) => [p.code.toUpperCase(), p]));
 
@@ -152,12 +153,15 @@ export class TutorialPayService {
       branchId,
       from,
       to,
-      paidPeriods: paidPeriods.map(({ code, label, rate, classCodes }) => ({
-        code,
-        label,
-        rate,
-        classCodes,
-      })),
+      paidPeriods: paidPeriods.map(
+        ({ code, label, rate, classCodes, startsOn }) => ({
+          code,
+          label,
+          rate,
+          classCodes,
+          startsOn,
+        }),
+      ),
       teachers: [] as TutorialTeacher[],
       totals: {
         scheduled: 0,
@@ -275,6 +279,8 @@ export class TutorialPayService {
         if (!period || (period.days.length && !period.days.includes(weekday))) {
           continue;
         }
+        // Before the tutorial began there was nothing to teach.
+        if (period.startsOn && day < period.startsOn) continue;
         const id = Number(slot.employeeId);
         const row = teacher(id, slot.teacherName);
         row.scheduled += 1;

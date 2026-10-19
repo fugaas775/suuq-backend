@@ -49,6 +49,14 @@ export interface SchoolTimetablePeriod {
    * each lesson the lesson register marks taught, once.
    */
   payPerPeriod?: number | null;
+  /**
+   * The first day a paid period runs ('YYYY-MM-DD'). Tutorial pay lays the
+   * week back over a month to say what SHOULD have been taught; without a
+   * start, a tutorial added mid-month read every earlier weekday as an
+   * unmarked lesson — and an office "clearing" them would pay for lessons
+   * that never happened. Null = no start recorded.
+   */
+  startsOn?: string | null;
 }
 
 /** A shift and the classes that sit in it. Empty when a school runs one. */

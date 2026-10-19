@@ -204,6 +204,25 @@ describe('TutorialPayService', () => {
     });
   });
 
+  it('counts nothing as scheduled before the tutorial began — a mid-month start is not a week of unmarked lessons', async () => {
+    const started = {
+      ...TIMETABLE,
+      periods: TIMETABLE.periods.map((p) =>
+        p.code.startsWith('T') ? { ...p, startsOn: '2026-10-19' } : p,
+      ),
+    };
+    const { svc } = makeService({ timetable: started });
+    const out = await svc.preview({
+      branchId: 115,
+      from: '2026-10-11',
+      to: '2026-11-09',
+      asOf: '2026-10-19',
+    });
+    // Monday 12 Oct is before the start; Monday 19 Oct is the first night.
+    expect(out.totals).toMatchObject({ scheduled: 3, unmarked: 3 });
+    expect(out.paidPeriods[0].startsOn).toBe('2026-10-19');
+  });
+
   it('answers empty when no period carries a rate', async () => {
     const { svc } = makeService({
       timetable: { ...TIMETABLE, periods: [TIMETABLE.periods[0]] },

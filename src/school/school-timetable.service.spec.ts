@@ -547,6 +547,7 @@ describe('SchoolTimetableService — a tutorial period for some classes, paid pe
       sortOrder: 10,
       classCodes: ['3AAD', '7th'],
       payPerPeriod: 300,
+      startsOn: '2026-10-19',
       times: { '*': { start: '19:00', end: '20:00' } },
     },
   ];
@@ -579,9 +580,11 @@ describe('SchoolTimetableService — a tutorial period for some classes, paid pe
     const t1 = doc.periods.find((p) => p.code === 'T1');
     expect(t1.classCodes).toEqual(['3aad', '7th']);
     expect(t1.payPerPeriod).toBe(300);
+    expect(t1.startsOn).toBe('2026-10-19');
     const p1 = doc.periods.find((p) => p.code === 'P1');
     expect(p1.classCodes).toEqual([]);
     expect(p1.payPerPeriod).toBeNull();
+    expect(p1.startsOn).toBeNull();
     expect(doc.slots).toHaveLength(2);
   });
 
