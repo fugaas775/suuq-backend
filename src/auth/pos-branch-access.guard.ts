@@ -30,6 +30,39 @@ type PosScopedRequestUser = {
   iat?: number; // JWT issued-at (seconds)
 };
 
+/**
+ * How PosBranchAccessGuard let a permission-gated request through, stamped on
+ * the request under POS_PERMISSION_GRANT_KEY. `managerLike` covers the owner,
+ * the tenant owner, a roster MANAGER and a platform admin; otherwise
+ * `permissions` is the caller's effective set on the route's branch.
+ */
+export type PosPermissionGrant = {
+  managerLike: boolean;
+  permissions: string[];
+};
+
+export const POS_PERMISSION_GRANT_KEY = 'posPermissionGrant';
+
+/**
+ * Whether a request came in on nothing but the listed low-tier permissions:
+ * not manager-like, and holding none of `higherTier`. A request the guard
+ * never stamped (no guard ran, or no permission was required) is NOT reported
+ * as low-tier — the restriction is opt-in where a handler asks for it.
+ */
+export function grantedOnlyLowTier(
+  request: any,
+  higherTier: readonly string[],
+): boolean {
+  const grant = request?.[POS_PERMISSION_GRANT_KEY] as
+    | PosPermissionGrant
+    | undefined;
+  if (!grant || grant.managerLike) {
+    return false;
+  }
+  const held = new Set(grant.permissions);
+  return !higherTier.some((permission) => held.has(permission));
+}
+
 @Injectable()
 export class PosBranchAccessGuard implements CanActivate {
   private readonly logger = new Logger(PosBranchAccessGuard.name);
@@ -128,6 +161,7 @@ export class PosBranchAccessGuard implements CanActivate {
     }
 
     if (this.isManagerLike(user, isPosToken)) {
+      this.stampGrant(request, { managerLike: true, permissions: [] });
       return true;
     }
 
@@ -167,6 +201,7 @@ export class PosBranchAccessGuard implements CanActivate {
     if (claimedPermissions === null && this.hasAnyRole(user, ['POS_MANAGER'])) {
       rosterManagerAsked = true;
       if (await this.isRosterManagerOrOwner(user.id, routeBranchId)) {
+        this.stampGrant(request, { managerLike: true, permissions: [] });
         return true;
       }
     }
@@ -184,6 +219,10 @@ export class PosBranchAccessGuard implements CanActivate {
     );
 
     if (hasPermission) {
+      this.stampGrant(request, {
+        managerLike: false,
+        permissions: Array.from(effectivePermissions),
+      });
       return true;
     }
 
@@ -209,6 +248,7 @@ export class PosBranchAccessGuard implements CanActivate {
       !rosterManagerAsked &&
       (await this.isRosterManagerOrOwner(user.id, routeBranchId))
     ) {
+      this.stampGrant(request, { managerLike: true, permissions: [] });
       return true;
     }
 
@@ -223,6 +263,20 @@ export class PosBranchAccessGuard implements CanActivate {
     throw new ForbiddenException(
       'Your POS operator token does not include the required branch permission.',
     );
+  }
+
+  /**
+   * Leave on the request HOW a permission-gated route was let through, for the
+   * handler that has to tell its callers apart. A route that names several
+   * permissions lets in anyone holding one of them, and some of those are far
+   * lighter than the rest — parking a sale (SUSPEND_SALE) opens the discard
+   * route that voiding one does. The guard cannot say which carts the lighter
+   * one may touch; the service can, if it knows the caller came in by it.
+   */
+  private stampGrant(request: any, grant: PosPermissionGrant): void {
+    if (request && typeof request === 'object') {
+      request[POS_PERMISSION_GRANT_KEY] = grant;
+    }
   }
 
   /**

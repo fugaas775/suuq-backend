@@ -5,7 +5,12 @@ import { HospitalityWorkflowsController } from '../hospitality/hospitality-workf
 import { PosCheckoutController } from '../pos-sync/pos-checkout.controller';
 import { HotelFolioController } from '../hospitality/hotel-folio.controller';
 import { PayrollController } from '../payroll/payroll.controller';
-import { PosBranchAccessGuard } from './pos-branch-access.guard';
+import { PosRegisterController } from '../pos-sync/pos-register.controller';
+import {
+  POS_PERMISSION_GRANT_KEY,
+  PosBranchAccessGuard,
+  grantedOnlyLowTier,
+} from './pos-branch-access.guard';
 import { PosSessionRevocationService } from './pos-session-revocation.service';
 
 type TestHandler = (...args: never[]) => unknown;
@@ -452,5 +457,89 @@ describe('PosBranchAccessGuard', () => {
       ForbiddenException,
     );
     expect(rosterFind).not.toHaveBeenCalled();
+  });
+
+  describe('stamps how a permission-gated request was let in', () => {
+    const HIGHER = ['DISCARD_SUSPENDED_SALE', 'SETTLE_TABLE_FOLIO'];
+    const discardRequest = (user: Record<string, unknown>) => ({
+      body: { branchId: 9 },
+      user,
+    });
+    const discardContext = (request: Record<string, unknown>) =>
+      createExecutionContext(
+        PosRegisterController.prototype.discardSuspendedCart,
+        PosRegisterController,
+        request,
+      );
+
+    it('marks a waiter who came in on SUSPEND_SALE alone as low-tier', async () => {
+      const request = discardRequest({
+        id: 70,
+        tokenType: 'pos_operator',
+        branchId: 9,
+        branchRole: 'OPERATOR',
+        permissions: ['OPEN_REGISTER', 'SUSPEND_SALE', 'RESUME_SUSPENDED_SALE'],
+        roles: ['POS_OPERATOR'],
+      });
+      await expect(guard.canActivate(discardContext(request))).resolves.toBe(
+        true,
+      );
+      expect(request[POS_PERMISSION_GRANT_KEY]).toEqual({
+        managerLike: false,
+        permissions: expect.arrayContaining(['SUSPEND_SALE']),
+      });
+      expect(grantedOnlyLowTier(request, HIGHER)).toBe(true);
+    });
+
+    it('does not restrict a cashier holding DISCARD_SUSPENDED_SALE too', async () => {
+      const request = discardRequest({
+        id: 71,
+        tokenType: 'pos_operator',
+        branchId: 9,
+        branchRole: 'OPERATOR',
+        permissions: ['SUSPEND_SALE', 'DISCARD_SUSPENDED_SALE'],
+        roles: ['POS_OPERATOR'],
+      });
+      await guard.canActivate(discardContext(request));
+      expect(grantedOnlyLowTier(request, HIGHER)).toBe(false);
+    });
+
+    it('does not restrict a manager token, whatever permissions it lists', async () => {
+      const request = discardRequest({
+        id: 72,
+        tokenType: 'pos_operator',
+        branchId: 9,
+        branchRole: 'MANAGER',
+        permissions: ['SUSPEND_SALE'],
+        roles: ['POS_MANAGER'],
+      });
+      await guard.canActivate(discardContext(request));
+      expect(request[POS_PERMISSION_GRANT_KEY]).toEqual({
+        managerLike: true,
+        permissions: [],
+      });
+      expect(grantedOnlyLowTier(request, HIGHER)).toBe(false);
+    });
+
+    it("does not restrict the owner's own account session", async () => {
+      rosterFind.mockResolvedValue([]);
+      recordFindOne.mockResolvedValueOnce({ id: 9, ownerId: 73 });
+      const request = discardRequest({ id: 73, roles: ['CUSTOMER'] });
+      await expect(guard.canActivate(discardContext(request))).resolves.toBe(
+        true,
+      );
+      expect(grantedOnlyLowTier(request, HIGHER)).toBe(false);
+    });
+
+    it('reads a claimless operator session from the roster', async () => {
+      rosterFind.mockResolvedValue([{ id: 1, permissions: ['SUSPEND_SALE'] }]);
+      const request = discardRequest({ id: 74, roles: ['POS_OPERATOR'] });
+      await guard.canActivate(discardContext(request));
+      expect(grantedOnlyLowTier(request, HIGHER)).toBe(true);
+    });
+
+    it('never reports an unstamped request as low-tier', () => {
+      expect(grantedOnlyLowTier({}, HIGHER)).toBe(false);
+    });
   });
 });

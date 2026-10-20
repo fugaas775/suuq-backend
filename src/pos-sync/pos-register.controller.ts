@@ -12,7 +12,10 @@ import {
 } from '@nestjs/common';
 import { ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
-import { PosBranchAccessGuard } from '../auth/pos-branch-access.guard';
+import {
+  PosBranchAccessGuard,
+  grantedOnlyLowTier,
+} from '../auth/pos-branch-access.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { UserRole } from '../auth/roles.enum';
 import { RequirePosPermissions } from '../auth/decorators/require-pos-permissions.decorator';
@@ -38,6 +41,20 @@ import {
 import { TransitionPosSuspendedCartDto } from './dto/transition-pos-suspended-cart.dto';
 import { UpdatePosSuspendedCartDto } from './dto/update-pos-suspended-cart.dto';
 import { PosRegisterService } from './pos-register.service';
+
+/**
+ * Every permission the discard route accepts EXCEPT parking a sale. Holding
+ * any one of these is the authority to void a held cart that is not yours; a
+ * caller who came in on SUSPEND_SALE alone (the QSR waiter preset, the vehicle
+ * desk) may only discard their own — see PosRegisterService.discardSuspendedCart.
+ */
+const DISCARD_ANY_CART_PERMISSIONS = [
+  'DISCARD_SUSPENDED_SALE',
+  'SETTLE_TABLE_FOLIO',
+  'SETTLE_ROOM_FOLIO',
+  'SETTLE_FEE_PAYMENT',
+  'VOID_STUDENT_FOLIO',
+] as const;
 
 @ApiTags('POS Register')
 @Controller('pos/v1/register')
@@ -300,14 +317,11 @@ export class PosRegisterController {
 
   @Post('suspended-carts/:id/discard')
   @UseGuards(JwtAuthGuard, RolesGuard, RetailModulesGuard, PosBranchAccessGuard)
-  @RequirePosPermissions(
-    'DISCARD_SUSPENDED_SALE',
-    'SETTLE_TABLE_FOLIO',
-    'SETTLE_ROOM_FOLIO',
-    'SUSPEND_SALE',
-    'SETTLE_FEE_PAYMENT',
-    'VOID_STUDENT_FOLIO',
-  )
+  // SUSPEND_SALE is here so a waiter can clear their OWN rows (the sources
+  // of a merge) and turn down a customer's pending order. It is not authority
+  // over anyone else's cart: a caller holding nothing but it is held to their
+  // own by the service (ownCartsOnly below).
+  @RequirePosPermissions(...DISCARD_ANY_CART_PERMISSIONS, 'SUSPEND_SALE')
   @Roles(
     UserRole.SUPER_ADMIN,
     UserRole.ADMIN,
@@ -325,6 +339,7 @@ export class PosRegisterController {
     return this.posRegisterService.discardSuspendedCart(id, dto, {
       id: req.user?.id ?? null,
       email: req.user?.email ?? null,
+      ownCartsOnly: grantedOnlyLowTier(req, DISCARD_ANY_CART_PERMISSIONS),
     });
   }
 }

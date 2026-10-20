@@ -649,7 +649,16 @@ export class PosRegisterService {
   async discardSuspendedCart(
     id: number,
     dto: TransitionPosSuspendedCartDto,
-    actor: { id?: number | null; email?: string | null } = {},
+    actor: {
+      id?: number | null;
+      email?: string | null;
+      /**
+       * The caller reached the route on SUSPEND_SALE alone — no discard, settle
+       * or void permission, and not the branch's owner or a manager. Set by the
+       * controller from what the guard stamped; absent means unrestricted.
+       */
+      ownCartsOnly?: boolean;
+    } = {},
   ): Promise<PosSuspendedCartResponseDto> {
     const cart = await this.findSuspendedCart(id);
     if (cart.branchId !== dto.branchId) {
@@ -658,6 +667,26 @@ export class PosRegisterService {
       );
     }
     this.refuseUnlessSuspended(cart);
+
+    // Parking a sale is not the right to void somebody else's. The QSR waiter
+    // preset is OPEN_REGISTER + SUSPEND_SALE + RESUME_SUSPENDED_SALE, and the
+    // route accepts SUSPEND_SALE so a waiter can clear the source rows of their
+    // own merge and turn down a customer's order nobody has accepted — which
+    // let any waiter wipe any open order in the branch with one direct call.
+    // The till only offers "Void entire order" to a manager.
+    if (
+      actor.ownCartsOnly &&
+      !this.isPendingConsumerOrder(cart) &&
+      !this.isCallersOwnCart(
+        cart,
+        actor,
+        await this.resolveActorName(actor, cart.branchId),
+      )
+    ) {
+      throw new ForbiddenException(
+        `Order #${cart.id} is not yours to remove. Parking sales lets you clear only your own orders — ask a manager, or someone who can void or settle orders, to remove it.`,
+      );
+    }
 
     // Every discard of a pupil's folio is a withdrawal, whether it arrives
     // flagged as one from Seller HQ or as a write-off from the till, so the
@@ -708,6 +737,69 @@ export class PosRegisterService {
     }
 
     return this.toSuspendedCartResponse(saved);
+  }
+
+  /**
+   * Whether a held cart belongs to the caller, read the way the waiter's own
+   * Orders board reads it: parked by them, sent to them (`waiterUserId`, which
+   * a transfer re-points), or a table they own (`tableOwnerUserId`). The ids in
+   * a snapshot are written by the till as strings or numbers, so both compare.
+   *
+   * The name fallback mirrors the board's for a QSR order that carries no
+   * waiter id at all (sent from the counter by name only) — the board lists it
+   * to the waiter it names, so their merge has to be able to clear it. Never
+   * used once an id is present: an id that names someone else is not theirs.
+   */
+  private isCallersOwnCart(
+    cart: PosSuspendedCart,
+    actor: { id?: number | null; email?: string | null },
+    actorName: string | null,
+  ): boolean {
+    const me = Number(actor.id);
+    if (!Number.isFinite(me) || me <= 0) {
+      return false;
+    }
+    const sameId = (value: unknown) =>
+      value != null && value !== '' && Number(value) === me;
+    const snapshot = (cart.cartSnapshot ?? {}) as Record<string, unknown>;
+    if (
+      sameId(cart.suspendedByUserId) ||
+      sameId(snapshot.waiterUserId) ||
+      sameId(snapshot.tableOwnerUserId)
+    ) {
+      return true;
+    }
+    const hasWaiterId =
+      snapshot.waiterUserId != null && snapshot.waiterUserId !== '';
+    if (
+      hasWaiterId ||
+      String(snapshot.serviceFormat ?? '').toUpperCase() !== 'QSR'
+    ) {
+      return false;
+    }
+    const tag = String(snapshot.hotelGuestName ?? '')
+      .trim()
+      .toLowerCase();
+    if (!tag) {
+      return false;
+    }
+    const email = String(actor.email ?? '')
+      .trim()
+      .toLowerCase();
+    const mine = [
+      String(actorName ?? '')
+        .trim()
+        .toLowerCase(),
+      email,
+      email.includes('@') ? email.slice(0, email.indexOf('@')) : '',
+    ].filter(Boolean);
+    return mine.includes(tag);
+  }
+
+  /** A customer's storefront order that no one at the branch has accepted. */
+  private isPendingConsumerOrder(cart: PosSuspendedCart): boolean {
+    const metadata = (cart.metadata ?? {}) as Record<string, unknown>;
+    return metadata.consumerSource === 'SUUQS' && !metadata.consumerAcceptedAt;
   }
 
   async updateSuspendedCart(
