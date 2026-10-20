@@ -63,6 +63,16 @@ export function grantedOnlyLowTier(
   return !higherTier.some((permission) => held.has(permission));
 }
 
+/** Whether the stamped grant names this permission (never for a manager-like grant, which lists none). */
+export function grantedPermission(request: any, permission: string): boolean {
+  const grant = request?.[POS_PERMISSION_GRANT_KEY] as
+    | PosPermissionGrant
+    | undefined;
+  return Boolean(
+    grant && !grant.managerLike && grant.permissions.includes(permission),
+  );
+}
+
 @Injectable()
 export class PosBranchAccessGuard implements CanActivate {
   private readonly logger = new Logger(PosBranchAccessGuard.name);

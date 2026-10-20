@@ -796,6 +796,163 @@ export class PosRegisterService {
     return mine.includes(tag);
   }
 
+  /**
+   * What a caller who can only park sales (the QSR waiter, the vehicle desk)
+   * or only mark food ready (the cook) may write with PATCH. The route has to
+   * accept them — a waiter amends, prints, asks for a settle or a void on
+   * their own orders, and takes over orders handed to them — but it replaces
+   * the snapshot wholesale and merges metadata key by key, so without this any
+   * of them could rewrite any order in the branch: its lines, its total, its
+   * paid flag, or its waiter (and then discard it as their own).
+   *
+   * Judged against the row as stored (under the lock), never the caller's copy.
+   */
+  private assertLimitedWriterMayPatch(
+    cart: PosSuspendedCart,
+    dto: UpdatePosSuspendedCartDto,
+    actor: { id?: number | null; email?: string | null },
+    limits: { mayMarkKitchen: boolean },
+    actorName: string | null,
+  ): void {
+    const stored = (cart.cartSnapshot ?? {}) as Record<string, unknown>;
+    const storedMeta = (cart.metadata ?? {}) as Record<string, unknown>;
+    const incoming =
+      dto.cartSnapshot && typeof dto.cartSnapshot === 'object'
+        ? (dto.cartSnapshot as Record<string, unknown>)
+        : null;
+    const meta =
+      dto.metadata && typeof dto.metadata === 'object'
+        ? (dto.metadata as Record<string, unknown>)
+        : null;
+    const money = (value: unknown) => {
+      const n = Number(value);
+      return Number.isFinite(n) ? n : 0;
+    };
+
+    // Taking money is the counter's, on anyone's order including your own. No
+    // waiter-lane write sets either: a re-park carries the stored payment
+    // state forward unchanged, and a settle request records the ASK, not a
+    // payment.
+    if (
+      (incoming && incoming.paid === true && stored.paid !== true) ||
+      (incoming &&
+        money(incoming.partialPaidAmount) > money(stored.partialPaidAmount)) ||
+      (meta &&
+        money(meta.partialPaidAmount) > money(storedMeta.partialPaidAmount))
+    ) {
+      throw new ForbiddenException(
+        `Order #${cart.id}: only someone who can settle orders can record a payment on it.`,
+      );
+    }
+
+    if (this.isCallersOwnCart(cart, actor, actorName)) {
+      return;
+    }
+
+    const me = Number(actor.id);
+    const sameId = (value: unknown) =>
+      Number.isFinite(me) &&
+      me > 0 &&
+      value != null &&
+      value !== '' &&
+      Number(value) === me;
+    const unchangedNumber = (sent: unknown, current: unknown) =>
+      sent === undefined || sent === null || Number(sent) === Number(current);
+    const sameLabel =
+      dto.label === undefined ||
+      dto.label === null ||
+      String(dto.label).trim() === '' ||
+      String(dto.label).trim() === String(cart.label ?? '').trim();
+    const untouchedTotals =
+      unchangedNumber(dto.total, cart.total) &&
+      unchangedNumber(dto.itemCount, cart.itemCount);
+
+    // (d) The cook's "this station's food is up": metadata under
+    // `qsrKitchen:<STATION>` and nothing else on the row.
+    if (
+      limits.mayMarkKitchen &&
+      meta &&
+      Object.keys(meta).length > 0 &&
+      Object.keys(meta).every((key) => key.startsWith('qsrKitchen:')) &&
+      !incoming &&
+      dto.label === undefined &&
+      dto.total === undefined &&
+      dto.itemCount === undefined
+    ) {
+      return;
+    }
+
+    const offer =
+      stored.orderTransfer && typeof stored.orderTransfer === 'object'
+        ? (stored.orderTransfer as Record<string, unknown>)
+        : null;
+    const offeredToMe = Boolean(offer && sameId(offer.toUserId));
+
+    if (offeredToMe && offer && incoming && !meta && untouchedTotals) {
+      // (a) Accepting a hand-over offered to me: the offer comes off, the order
+      // becomes mine, and the food on it is exactly what was offered.
+      if (
+        !offer.declinedAt &&
+        stored.paid !== true &&
+        incoming.orderTransfer == null &&
+        sameId(incoming.waiterUserId) &&
+        canonicalJson(incoming.cartLines ?? []) ===
+          canonicalJson(stored.cartLines ?? [])
+      ) {
+        return;
+      }
+
+      // (c) Declining it (or taking the offer off): nothing on the order moves
+      // but the offer itself, which keeps who it was from and to.
+      const nextOffer =
+        incoming.orderTransfer && typeof incoming.orderTransfer === 'object'
+          ? (incoming.orderTransfer as Record<string, unknown>)
+          : null;
+      const withoutOffer = (snapshot: Record<string, unknown>) => {
+        const rest = { ...snapshot };
+        delete rest.orderTransfer;
+        return rest;
+      };
+      if (
+        sameLabel &&
+        canonicalJson(withoutOffer(incoming)) ===
+          canonicalJson(withoutOffer(stored)) &&
+        (incoming.orderTransfer == null ||
+          (nextOffer !== null &&
+            Boolean(nextOffer.declinedAt) &&
+            sameId(nextOffer.toUserId) &&
+            String(nextOffer.fromUserId ?? '') ===
+              String(offer.fromUserId ?? '') &&
+            String(nextOffer.at ?? '') === String(offer.at ?? '')))
+      ) {
+        return;
+      }
+    }
+
+    // (b) A waiter taking a customer's order nobody has accepted: accepting
+    // IS taking it, so it is parked under the one who accepted.
+    const GUEST_ACCEPT_KEYS = new Set([
+      'consumerAcceptedAt',
+      'waiterUserId',
+      'waiterName',
+    ]);
+    if (
+      this.isPendingConsumerOrder(cart) &&
+      meta &&
+      Boolean(meta.consumerAcceptedAt) &&
+      Object.keys(meta).every((key) => GUEST_ACCEPT_KEYS.has(key)) &&
+      (meta.waiterUserId === undefined || sameId(meta.waiterUserId)) &&
+      incoming !== null &&
+      sameId(incoming.waiterUserId)
+    ) {
+      return;
+    }
+
+    throw new ForbiddenException(
+      `Order #${cart.id} is not yours to change. You can change your own orders, take over one handed to you, or accept a customer's new order — ask a manager or the counter for anything else.`,
+    );
+  }
+
   /** A customer's storefront order that no one at the branch has accepted. */
   private isPendingConsumerOrder(cart: PosSuspendedCart): boolean {
     const metadata = (cart.metadata ?? {}) as Record<string, unknown>;
@@ -809,8 +966,20 @@ export class PosRegisterService {
       id?: number | null;
       email?: string | null;
       roles?: string[] | null;
+      /**
+       * Set when the caller holds none of the permissions that write anyone's
+       * cart (see PATCH_ANY_CART_PERMISSIONS in the controller): their PATCH
+       * is judged by assertLimitedWriterMayPatch. Absent or null: unrestricted.
+       */
+      limitedWriter?: { mayMarkKitchen: boolean } | null;
     } = {},
   ): Promise<PosSuspendedCartResponseDto> {
+    // Resolved before the row lock, on the pooled connection, for the same
+    // reason every read inside the transaction uses its own: holding one
+    // connection while waiting for another is how the pool drains.
+    const limitedWriterName = actor.limitedWriter
+      ? await this.resolveActorName(actor, dto.branchId)
+      : null;
     // Read, decide and write under a row lock. Two tills writing one folio
     // used to read the same row, each lay its own copy over it, and the second
     // save silently erased the first — a fee payment and a marks save, or two
@@ -860,6 +1029,16 @@ export class PosRegisterService {
               details: { current: this.toSuspendedCartResponse(cart) },
             });
           }
+        }
+
+        if (actor.limitedWriter) {
+          this.assertLimitedWriterMayPatch(
+            cart,
+            dto,
+            actor,
+            actor.limitedWriter,
+            limitedWriterName,
+          );
         }
 
         if (dto.metadata && typeof dto.metadata === 'object') {
@@ -1254,4 +1433,25 @@ export class PosRegisterService {
       updatedAt: item.updatedAt,
     };
   }
+}
+
+/**
+ * JSON with object keys sorted at every depth, so two snapshots compare by
+ * content: a row read back from jsonb does not keep the key order it was
+ * written in.
+ */
+function canonicalJson(value: unknown): string {
+  const sort = (v: unknown): unknown => {
+    if (Array.isArray(v)) return v.map(sort);
+    if (v && typeof v === 'object' && !(v instanceof Date)) {
+      return Object.keys(v)
+        .sort()
+        .reduce<Record<string, unknown>>((out, key) => {
+          out[key] = sort((v as Record<string, unknown>)[key]);
+          return out;
+        }, {});
+    }
+    return v;
+  };
+  return JSON.stringify(sort(value)) ?? 'undefined';
 }

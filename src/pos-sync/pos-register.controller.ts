@@ -15,6 +15,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import {
   PosBranchAccessGuard,
   grantedOnlyLowTier,
+  grantedPermission,
 } from '../auth/pos-branch-access.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { UserRole } from '../auth/roles.enum';
@@ -54,6 +55,22 @@ const DISCARD_ANY_CART_PERMISSIONS = [
   'SETTLE_ROOM_FOLIO',
   'SETTLE_FEE_PAYMENT',
   'VOID_STUDENT_FOLIO',
+] as const;
+
+/**
+ * Holding any one of these is the authority to write a held cart that is not
+ * yours — the counter's settle and part payments, a folio desk, the school
+ * office and fee desk. A caller holding none of them (and not the owner or a
+ * manager) came in on SUSPEND_SALE or MARK_KITCHEN_TICKET_READY alone — the
+ * QSR waiter, the cook, the vehicle desk — and the service holds their PATCH
+ * to their own orders plus the few hand-overs the floor makes between staff.
+ */
+const PATCH_ANY_CART_PERMISSIONS = [
+  ...DISCARD_ANY_CART_PERMISSIONS,
+  'OPEN_ROOM_FOLIO',
+  'VIEW_FOLIO_BOARD',
+  'ENROL_STUDENT',
+  'POST_FEE_CHARGE',
 ] as const;
 
 @ApiTags('POS Register')
@@ -265,6 +282,11 @@ export class PosRegisterController {
       // A platform admin edits a pupil's record like the owner (see
       // school-pupil-record.policy); the roles are how the service knows.
       roles: Array.isArray(req.user?.roles) ? req.user.roles : [],
+      limitedWriter: grantedOnlyLowTier(req, PATCH_ANY_CART_PERMISSIONS)
+        ? {
+            mayMarkKitchen: grantedPermission(req, 'MARK_KITCHEN_TICKET_READY'),
+          }
+        : null,
     });
   }
 
