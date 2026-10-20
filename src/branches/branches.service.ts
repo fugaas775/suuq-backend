@@ -9,6 +9,12 @@ import { Branch } from './entities/branch.entity';
 import { CreateBranchDto } from './dto/create-branch.dto';
 import { User } from '../users/entities/user.entity';
 import { VendorStore } from '../vendor/entities/vendor-store.entity';
+import { TenantSubscription } from '../retail/entities/tenant-subscription.entity';
+import {
+  billingStateOf,
+  pickCurrentSubscription,
+  summarizeSubscription,
+} from '../retail/subscription-summary';
 
 export interface AdminListBranchesQuery {
   search?: string;
@@ -100,15 +106,21 @@ export class BranchesService {
       }),
     ]);
 
+    const currentSubscriptionOf = await this.loadCurrentSubscriptions(items);
+    const now = new Date();
+
     return {
       // Mutated in place rather than spread into a plain object on purpose: the
       // global ClassSerializerInterceptor relies on these staying Branch
       // instances so the nested owner's @Exclude()'d password is still stripped.
-      items: items.map((branch) =>
-        Object.assign(branch, {
+      items: items.map((branch) => {
+        const current = currentSubscriptionOf(branch);
+        return Object.assign(branch, {
           ownerNeverSignedIn: ownerHasNoCredentials(branch.owner),
-        }),
-      ),
+          billingState: billingStateOf(current, now),
+          subscription: current ? summarizeSubscription(current, now) : null,
+        });
+      }),
       total,
       page,
       limit,
@@ -116,6 +128,55 @@ export class BranchesService {
       activeCount,
       inactiveCount,
     };
+  }
+
+  /**
+   * Resolves each branch's current subscription for the admin list: its own
+   * per-branch row when it has one, else a legacy tenant-wide row from before
+   * billing moved to the branch.
+   */
+  private async loadCurrentSubscriptions(
+    branches: Branch[],
+  ): Promise<(branch: Branch) => TenantSubscription | null> {
+    if (!branches.length) return () => null;
+    const branchIds = branches.map((b) => b.id);
+    const tenantIds = [
+      ...new Set(
+        branches
+          .map((b) => b.retailTenantId)
+          .filter((id): id is number => id != null),
+      ),
+    ];
+    const qb = this.dataSource
+      .getRepository(TenantSubscription)
+      .createQueryBuilder('s')
+      .where('s.branchId IN (:...branchIds)', { branchIds });
+    if (tenantIds.length) {
+      qb.orWhere('(s.branchId IS NULL AND s.tenantId IN (:...tenantIds))', {
+        tenantIds,
+      });
+    }
+    const subs = await qb.getMany();
+
+    const byBranch = new Map<number, TenantSubscription[]>();
+    const legacyByTenant = new Map<number, TenantSubscription[]>();
+    for (const sub of subs) {
+      const [map, key] =
+        sub.branchId != null
+          ? [byBranch, sub.branchId]
+          : [legacyByTenant, sub.tenantId];
+      const list = map.get(key) ?? [];
+      list.push(sub);
+      map.set(key, list);
+    }
+
+    return (branch) =>
+      pickCurrentSubscription(byBranch.get(branch.id) ?? []) ??
+      (branch.retailTenantId != null
+        ? pickCurrentSubscription(
+            legacyByTenant.get(branch.retailTenantId) ?? [],
+          )
+        : null);
   }
 
   async patchAdminBranch(

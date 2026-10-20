@@ -20,6 +20,9 @@ import { PurchaseOrdersModule } from '../purchase-orders/purchase-orders.module'
 import { RedisModule } from '../redis/redis.module';
 import { SuppliersModule } from '../suppliers/suppliers.module';
 import { SupplierProfile } from '../suppliers/entities/supplier-profile.entity';
+import { SupplierSubscription } from '../suppliers/entities/supplier-subscription.entity';
+import { AdminPosOverviewController } from './admin-pos-overview.controller';
+import { AdminPosOverviewService } from './admin-pos-overview.service';
 import { Order } from '../orders/entities/order.entity';
 import { Product } from '../products/entities/product.entity';
 import { User } from '../users/entities/user.entity';
@@ -89,6 +92,7 @@ import { AdminEquityPartnersController } from './admin-equity-partners.controlle
       EquityPartnerBnplActivation,
       EquityPartnerBnplCreditLedgerEntry,
       SupplierProfile,
+      SupplierSubscription,
     ]),
   ],
   controllers: [
@@ -98,6 +102,7 @@ import { AdminEquityPartnersController } from './admin-equity-partners.controlle
     SellerEquityController,
     SellerEquityBnplController,
     AdminEquityPartnersController,
+    AdminPosOverviewController,
   ],
   providers: [
     RetailEntitlementsService,
@@ -109,6 +114,7 @@ import { AdminEquityPartnersController } from './admin-equity-partners.controlle
     EquityPartnerService,
     EquityPartnerBnplService,
     RetailSubscriptionLifecycleService,
+    AdminPosOverviewService,
     RolesGuard,
   ],
   exports: [

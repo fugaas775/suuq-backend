@@ -5,8 +5,14 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { ILike, Repository } from 'typeorm';
+import { ILike, In, Repository } from 'typeorm';
 import { AuditService } from '../audit/audit.service';
+import {
+  billingStateOf,
+  pickCurrentSubscription,
+  summarizeSubscription,
+} from '../retail/subscription-summary';
+import { SupplierSubscription } from './entities/supplier-subscription.entity';
 import {
   SupplierOnboardingStatus,
   SupplierProfile,
@@ -164,17 +170,32 @@ export class SuppliersService {
       take: limit,
     });
 
+    const subs = profiles.length
+      ? await this.profilesRepository.manager
+          .getRepository(SupplierSubscription)
+          .find({ where: { supplierProfileId: In(profiles.map((p) => p.id)) } })
+      : [];
+    const now = new Date();
+
     return {
-      items: profiles.map((p) => ({
-        id: p.id,
-        companyName: p.companyName,
-        legalName: p.legalName ?? null,
-        ownerId: p.userId,
-        ownerEmail: p.user?.email ?? null,
-        onboardingStatus: p.onboardingStatus,
-        activationStatus: p.activationStatus,
-        isActive: p.isActive,
-      })),
+      items: profiles.map((p) => {
+        const current = pickCurrentSubscription(
+          subs.filter((s) => s.supplierProfileId === p.id),
+        );
+        return {
+          id: p.id,
+          companyName: p.companyName,
+          legalName: p.legalName ?? null,
+          ownerId: p.userId,
+          ownerEmail: p.user?.email ?? null,
+          onboardingStatus: p.onboardingStatus,
+          activationStatus: p.activationStatus,
+          isActive: p.isActive,
+          createdAt: p.createdAt,
+          billingState: billingStateOf(current, now),
+          subscription: current ? summarizeSubscription(current, now) : null,
+        };
+      }),
       total,
       page,
       limit,
