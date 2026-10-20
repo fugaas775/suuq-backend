@@ -1,4 +1,4 @@
-import { ForbiddenException } from '@nestjs/common';
+import { ConflictException, ForbiddenException } from '@nestjs/common';
 import { PosRegisterController } from './pos-register.controller';
 import { PosRegisterService } from './pos-register.service';
 import { PosSuspendedCartStatus } from './entities/pos-suspended-cart.entity';
@@ -383,6 +383,83 @@ describe('PosRegisterService.updateSuspendedCart (limited writers)', () => {
       waiter,
     );
     expect(repo.save).toHaveBeenCalled();
+  });
+
+  describe('a payment already on the order', () => {
+    const partPaid = () => {
+      const r = mine();
+      r.metadata = { partialPaidAmount: 20 };
+      r.cartSnapshot = { ...r.cartSnapshot, partialPaidAmount: 20 };
+      return r;
+    };
+    const paidRow = () => {
+      const r = mine();
+      r.cartSnapshot = { ...r.cartSnapshot, paid: true };
+      return r;
+    };
+
+    it('cannot be wiped from the snapshot by a stale re-park', async () => {
+      const { service, repo } = makeService(partPaid());
+      const { partialPaidAmount: _drop, ...stale } = partPaid().cartSnapshot;
+      await expect(
+        service.updateSuspendedCart(
+          600,
+          patch({ cartSnapshot: stale }),
+          waiter,
+        ),
+      ).rejects.toThrow("this order's payment changed — refresh and try again");
+      expect(repo.save).not.toHaveBeenCalled();
+    });
+
+    it('cannot be lowered in metadata', async () => {
+      const { service } = makeService(partPaid());
+      await expect(
+        service.updateSuspendedCart(
+          600,
+          patch({ metadata: { partialPaidAmount: 0 } }),
+          waiter,
+        ),
+      ).rejects.toThrow(ConflictException);
+    });
+
+    it('cannot be un-paid', async () => {
+      const { service } = makeService(paidRow());
+      const { paid: _p, ...unpaid } = paidRow().cartSnapshot;
+      await expect(
+        service.updateSuspendedCart(
+          600,
+          patch({ cartSnapshot: unpaid }),
+          waiter,
+        ),
+      ).rejects.toThrow(ConflictException);
+      await expect(
+        service.updateSuspendedCart(
+          600,
+          patch({ cartSnapshot: { ...unpaid, paid: false } }),
+          waiter,
+        ),
+      ).rejects.toThrow(ConflictException);
+    });
+
+    it('is untouched by a metadata-only write that does not name it', async () => {
+      const { service, repo } = makeService(partPaid());
+      await service.updateSuspendedCart(
+        600,
+        patch({ metadata: { qsrPrint: { at: 'x' } } }),
+        waiter,
+      );
+      expect(repo.save).toHaveBeenCalled();
+    });
+
+    it('can still be lowered by an unrestricted caller', async () => {
+      const { service, repo } = makeService(partPaid());
+      await service.updateSuspendedCart(
+        600,
+        patch({ metadata: { partialPaidAmount: 0 } }),
+        { id: 1, email: 'm@x.test', limitedWriter: null },
+      );
+      expect(repo.save).toHaveBeenCalled();
+    });
   });
 
   describe('a hand-over offered to the waiter', () => {

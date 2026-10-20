@@ -845,6 +845,26 @@ export class PosRegisterService {
       );
     }
 
+    // …nor take one off. A waiter's re-park is planned over the board's copy,
+    // which can be a poll old: written back, it would wipe a part payment the
+    // counter took in between and the customer would be asked for it again.
+    // An absent field in a sent snapshot is a removal, as the snapshot is
+    // replaced wholesale.
+    if (
+      (incoming && stored.paid === true && incoming.paid !== true) ||
+      (incoming &&
+        money(incoming.partialPaidAmount) < money(stored.partialPaidAmount)) ||
+      (meta &&
+        Object.prototype.hasOwnProperty.call(meta, 'partialPaidAmount') &&
+        money(meta.partialPaidAmount) < money(storedMeta.partialPaidAmount))
+    ) {
+      throw new ConflictException({
+        code: 'FOLIO_PAYMENT_CHANGED',
+        message: `Order #${cart.id}: this order's payment changed — refresh and try again.`,
+        details: { current: this.toSuspendedCartResponse(cart) },
+      });
+    }
+
     if (this.isCallersOwnCart(cart, actor, actorName)) {
       return;
     }
