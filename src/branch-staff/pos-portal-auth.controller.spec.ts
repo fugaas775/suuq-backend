@@ -32,6 +32,7 @@ describe('PosPortalAuthController', () => {
     generateScopedAccessToken: jest.fn(),
     getUsersService: jest.fn(),
     buildAuthenticatedUser: jest.fn(),
+    issueTokensForUserId: jest.fn(),
   };
 
   const branchStaffServiceMock = {
@@ -106,6 +107,10 @@ describe('PosPortalAuthController', () => {
     authServiceMock.buildAuthenticatedUser.mockImplementation(
       async (value) => value,
     );
+    authServiceMock.issueTokensForUserId.mockResolvedValue({
+      accessToken: 'reissued-access',
+      refreshToken: 'reissued-refresh',
+    });
     branchStaffServiceMock.assertIsBranchMember.mockResolvedValue(undefined);
     branchShiftServiceMock.isUserAllowedNow.mockResolvedValue(true);
     pinThrottleServiceMock.getLockoutState.mockResolvedValue({
@@ -945,6 +950,43 @@ describe('PosPortalAuthController', () => {
         branchId: 9,
         tenantId: 31,
       },
+    });
+  });
+
+  it('hands back a token pair minted after the branch, carrying POS_MANAGER', async () => {
+    authServiceMock.getUsersService.mockReturnValue({
+      findById: jest.fn().mockResolvedValue(user),
+    });
+    const order: string[] = [];
+    posPortalOnboardingServiceMock.createWorkspaceForUser.mockImplementation(
+      async () => {
+        order.push('create');
+        return {
+          onboardingState: 'BRANCH_WORKSPACE_TRIAL_ACTIVE',
+          message: 'open',
+          workspace: { tenantId: 31, branchId: 9 },
+          trial: { planCode: 'POS_BRANCH_TRIAL_6M', endsAt: null },
+          activationCandidates: [],
+        };
+      },
+    );
+    authServiceMock.issueTokensForUserId.mockImplementation(async () => {
+      order.push('tokens');
+      return { accessToken: 'fresh-access', refreshToken: 'fresh-refresh' };
+    });
+
+    const result = await controller.createWorkspace(
+      { businessName: 'Airport Retail' },
+      { user: { id: 51 } } as any,
+    );
+
+    // Minted AFTER the role was granted, or the payload still lacks it.
+    expect(order).toEqual(['create', 'tokens']);
+    expect(authServiceMock.issueTokensForUserId).toHaveBeenCalledWith(user.id);
+    expect(result).toMatchObject({
+      accessToken: 'fresh-access',
+      refreshToken: 'fresh-refresh',
+      workspace: { branchId: 9 },
     });
   });
 

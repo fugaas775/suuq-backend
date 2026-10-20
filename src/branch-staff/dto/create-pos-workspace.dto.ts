@@ -168,6 +168,17 @@ export class PosWorkspaceTrialDto {
 }
 
 export class CreatePosWorkspaceResponseDto {
+  /**
+   * A token pair issued AFTER the branch was created, so it carries the
+   * POS_MANAGER role the creation granted. The client must switch to it — the
+   * token that made this call does not have the role.
+   */
+  @ApiPropertyOptional()
+  accessToken?: string;
+
+  @ApiPropertyOptional()
+  refreshToken?: string;
+
   @ApiProperty({ example: 'BRANCH_WORKSPACE_TRIAL_ACTIVE' })
   onboardingState!: string;
 

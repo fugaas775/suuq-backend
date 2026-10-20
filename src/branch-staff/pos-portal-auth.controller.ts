@@ -891,7 +891,17 @@ export class PosPortalAuthController {
       },
     });
 
-    return created;
+    // Creating the branch granted POS_MANAGER, but the caller's token was
+    // minted before it — and the @Roles guards read roles from the token. Left
+    // as it was, the owner walked into a register that could load no products
+    // until they signed out and in again. Hand back a pair carrying the grant.
+    const tokens = await this.authService.issueTokensForUserId(user.id);
+
+    return {
+      ...created,
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
+    };
   }
 
   @Post('supplier-workspace')
@@ -909,10 +919,19 @@ export class PosPortalAuthController {
     @Req() req: AuthenticatedRequest,
   ) {
     const user = await this.authService.getUsersService().findById(req.user.id);
-    return this.supplierOnboardingService.createSupplierAccountForUser(
-      user,
-      dto,
-    );
+    const created =
+      await this.supplierOnboardingService.createSupplierAccountForUser(
+        user,
+        dto,
+      );
+    // Same as createWorkspace: SUPPLIER_ACCOUNT was just granted, and the
+    // caller's token predates it.
+    const tokens = await this.authService.issueTokensForUserId(user.id);
+    return {
+      ...created,
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
+    };
   }
 
   @Post('supplier-activation/ebirr')

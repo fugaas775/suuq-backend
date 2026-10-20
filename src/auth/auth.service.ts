@@ -589,7 +589,7 @@ export class AuthService {
           secret: sec,
           // A tiny skew tolerance can reduce false negatives if clocks drift slightly
           clockTolerance: 5,
-        } as any);
+        });
         // If signature verified, stop trying others
         break;
       } catch {
@@ -620,6 +620,28 @@ export class AuthService {
       });
     }
 
+    return this.generateTokens(user);
+  }
+
+  /**
+   * A fresh token pair for an account whose ROLES just changed under a token
+   * it is still holding. Roles ride in the JWT and the guards read them from
+   * there, so a role granted mid-session (POS_MANAGER on creating a first
+   * branch, SUPPLIER_ACCOUNT on creating a supplier) is invisible to every
+   * @Roles endpoint until the token is re-issued. Re-reads the user row so the
+   * new grant is in the payload. Same trust as refreshToken(): the caller has
+   * already been authenticated as this user.
+   */
+  async issueTokensForUserId(
+    userId: number,
+  ): Promise<{ accessToken: string; refreshToken: string; user: User }> {
+    const user = await this.usersService.findById(userId);
+    if (!user || !user.isActive) {
+      throw new UnauthorizedException({
+        code: 'USER_INACTIVE',
+        message: 'User not found or inactive',
+      });
+    }
     return this.generateTokens(user);
   }
 
