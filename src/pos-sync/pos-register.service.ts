@@ -1171,6 +1171,11 @@ export class PosRegisterService {
         if (typeof dto.label === 'string' && dto.label.trim()) {
           cart.label = dto.label.trim();
         }
+        // The note is the one field an empty string may clear: "no note" is
+        // a thing a cashier says. A label is not — see above.
+        if (typeof dto.note === 'string') {
+          cart.note = dto.note.trim() || null;
+        }
         if (
           typeof dto.itemCount === 'number' &&
           Number.isFinite(dto.itemCount)

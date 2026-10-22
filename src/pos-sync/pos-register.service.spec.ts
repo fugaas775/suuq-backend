@@ -675,6 +675,35 @@ describe('PosRegisterService.updateSuspendedCart — the row as it stands now', 
     expect(carts.save.mock.calls[0][0].total).toBe(1500);
   });
 
+  it("writes the note on the hold, and an empty string clears it — the RETAIL held board's note", async () => {
+    // A fresh row each time: the mock hands back the same object it was
+    // given, written in place.
+    const retailRow = () => ({
+      ...pupilRow(),
+      label: 'Faadumo',
+      note: 'Back at 3',
+      cartSnapshot: {
+        serviceFormat: 'RETAIL',
+        cartLines: [{ name: 'Rice', quantity: 1, unitPrice: 100 }],
+      },
+    });
+    const written = async (dto: any) => {
+      const { service, carts } = makeService({ stored: retailRow() });
+      await service.updateSuspendedCart(16867, { branchId: 115, ...dto });
+      return carts.save.mock.calls[0][0];
+    };
+    const noted = await written({ note: '  Back after the bank  ' });
+    expect(noted.note).toBe('Back after the bank');
+    expect(noted.label).toBe('Faadumo');
+
+    expect((await written({ note: '' })).note).toBeNull();
+
+    // Absent: unchanged. A rename does not touch it.
+    const renamed = await written({ label: 'Faadumo Cali' });
+    expect(renamed.note).toBe('Back at 3');
+    expect(renamed.label).toBe('Faadumo Cali');
+  });
+
   it('refuses a write planned over an older copy of the row — 409 FOLIO_CHANGED carrying the row as it stands', async () => {
     const { service, carts } = makeService({ stored: pupilRow() });
     const err = await service

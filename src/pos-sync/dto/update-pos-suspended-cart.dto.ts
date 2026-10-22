@@ -6,6 +6,7 @@ import {
   IsObject,
   IsOptional,
   IsString,
+  MaxLength,
 } from 'class-validator';
 
 export class UpdatePosSuspendedCartDto {
@@ -46,6 +47,18 @@ export class UpdatePosSuspendedCartDto {
   @IsOptional()
   @IsString()
   label?: string;
+
+  @ApiPropertyOptional({
+    example: 'Coming back after the bank',
+    description:
+      'The note on the hold — what the board and the hold slip show whoever ' +
+      'picks it up. An empty string clears it; absent, it is unchanged. ' +
+      'Written from the RETAIL held board (rename / note on an open card).',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  note?: string;
 
   @ApiPropertyOptional({
     example: 3,
