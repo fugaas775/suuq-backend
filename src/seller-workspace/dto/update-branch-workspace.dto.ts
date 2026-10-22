@@ -348,4 +348,14 @@ export class UpdateBranchWorkspaceDto {
   @ValidateNested()
   @Type(() => BranchHomeConfigDto)
   homeConfig?: BranchHomeConfigDto | null;
+
+  @ApiPropertyOptional({
+    description:
+      'QSR: also print the customer copy every time an order is sent to the ' +
+      'kitchen. Off by default.',
+    example: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  qsrCustomerCopyOnSend?: boolean;
 }

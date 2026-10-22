@@ -468,6 +468,7 @@ export class SellerWorkspaceService {
           taxInclusive: Boolean(branch.taxInclusive),
           taxName: branch.taxName ?? null,
           homeConfig: branch.homeConfig ?? null,
+          qsrCustomerCopyOnSend: Boolean(branch.qsrCustomerCopyOnSend),
           vendorStoreId:
             vendorStoresByBranchId.get(branch.branchId)?.id ?? null,
           consumerStoreName:
@@ -545,6 +546,7 @@ export class SellerWorkspaceService {
           taxInclusive: Boolean(candidate.taxInclusive),
           taxName: candidate.taxName ?? null,
           homeConfig: candidate.homeConfig ?? null,
+          qsrCustomerCopyOnSend: Boolean(candidate.qsrCustomerCopyOnSend),
           vendorStoreId:
             vendorStoresByBranchId.get(candidate.branchId)?.id ?? null,
           consumerStoreName:
@@ -2475,6 +2477,8 @@ export class SellerWorkspaceService {
     // blank tax row.
     if (dto.taxName !== undefined)
       updates.taxName = dto.taxName ? dto.taxName.trim() || null : null;
+    if (dto.qsrCustomerCopyOnSend !== undefined)
+      updates.qsrCustomerCopyOnSend = dto.qsrCustomerCopyOnSend;
     if (dto.homeConfig !== undefined) {
       // firstRun is server-owned, and the client's Home normalizer only carries
       // the layout — so a layout save must not erase the milestones.

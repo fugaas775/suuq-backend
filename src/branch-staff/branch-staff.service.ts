@@ -95,6 +95,7 @@ export interface PosBranchSummary {
   taxInclusive: boolean;
   taxName: string | null;
   homeConfig: BranchHomeConfig | null;
+  qsrCustomerCopyOnSend: boolean;
   posExperienceProfileCode: string | null;
 }
 
@@ -120,6 +121,7 @@ export interface PosWorkspaceActivationCandidate {
   taxInclusive: boolean;
   taxName: string | null;
   homeConfig: BranchHomeConfig | null;
+  qsrCustomerCopyOnSend: boolean;
   role: BranchStaffRole;
   permissions: string[];
   assignedSurfaces: string[] | null;
@@ -749,6 +751,7 @@ export class BranchStaffService {
           taxInclusive: Boolean(summary.taxInclusive),
           taxName: summary.taxName ?? null,
           homeConfig: summary.homeConfig ?? null,
+          qsrCustomerCopyOnSend: Boolean(summary.qsrCustomerCopyOnSend),
           role: summary.role,
           isOwner: summary.isOwner,
           isTenantOwner: summary.isTenantOwner,
@@ -1158,6 +1161,7 @@ export class BranchStaffService {
         taxInclusive: Boolean(branch.taxInclusive),
         taxName: branch.taxName ?? null,
         homeConfig: branch.homeConfig ?? null,
+        qsrCustomerCopyOnSend: Boolean(branch.qsrCustomerCopyOnSend),
         role: BranchStaffRole.MANAGER,
         permissions: [],
         assignedSurfaces: null,
@@ -1218,6 +1222,7 @@ export class BranchStaffService {
           taxInclusive: Boolean(branch.taxInclusive),
           taxName: branch.taxName ?? null,
           homeConfig: branch.homeConfig ?? null,
+          qsrCustomerCopyOnSend: Boolean(branch.qsrCustomerCopyOnSend),
           role: BranchStaffRole.MANAGER,
           permissions: [],
           assignedSurfaces: null,
@@ -1299,6 +1304,11 @@ export class BranchStaffService {
         taxName: existing?.taxName ?? assignment.branch.taxName ?? null,
         homeConfig:
           existing?.homeConfig ?? assignment.branch.homeConfig ?? null,
+        qsrCustomerCopyOnSend: Boolean(
+          existing?.qsrCustomerCopyOnSend ??
+            assignment.branch.qsrCustomerCopyOnSend ??
+            false,
+        ),
         role: assignment.role ?? existing?.role ?? BranchStaffRole.OPERATOR,
         permissions: mergedPermissions,
         assignedSurfaces:

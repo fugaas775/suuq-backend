@@ -421,6 +421,12 @@ export class SellerWorkspaceBranchWorkspaceDto {
   homeConfig?: BranchHomeConfig | null;
 
   @ApiPropertyOptional({
+    description:
+      'QSR: also print the customer copy every time an order is sent to the kitchen.',
+  })
+  qsrCustomerCopyOnSend?: boolean;
+
+  @ApiPropertyOptional({
     nullable: true,
     description: 'Consumer store ID linked to this branch, if any.',
   })

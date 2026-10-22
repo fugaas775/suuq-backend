@@ -155,6 +155,12 @@ export class PosPortalBranchSummaryDto {
       'quick-links, welcome note, branding). Null = per-format default.',
   })
   homeConfig!: BranchHomeConfig | null;
+
+  @ApiPropertyOptional({
+    description:
+      'QSR: also print the customer copy every time an order is sent to the kitchen.',
+  })
+  qsrCustomerCopyOnSend!: boolean;
 }
 
 export class PosPortalSessionResponseDto {

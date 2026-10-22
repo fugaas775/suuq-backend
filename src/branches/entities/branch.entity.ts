@@ -216,6 +216,17 @@ export class Branch {
   taxName?: string | null;
 
   /**
+   * QSR only: when an order is sent to the kitchen, also print the customer's
+   * copy of it — the whole order at what it owes, headed CUSTOMER COPY / Not
+   * for the kitchen — on the same printer, in the same job.
+   *
+   * Off by default: plenty of branches do not want two papers on every order,
+   * and the board's 🧾 prints the customer's copy on demand either way.
+   */
+  @Column({ type: 'boolean', default: false })
+  qsrCustomerCopyOnSend!: boolean;
+
+  /**
    * Per-branch layout for the branch-customizable Home page (POS `/home`) — which
    * widgets show and in what order, custom quick-links, a welcome note and
    * branding. Null = never customized; the client renders a per-format default.
