@@ -169,6 +169,24 @@ type SellerWorkspaceSnapshot = {
   };
 };
 
+/**
+ * Formats on which an active branch MANAGER holds the whole of Branch Settings,
+ * not only the Tax card.
+ *
+ * HOTEL only, by design: the owner of a hotel is rarely at the desk and the
+ * manager runs the property — the standard checkout time, the phone and logo
+ * on every guest invoice, the register hours, who gets the close-of-day email.
+ * Keeping those owner-only meant the person who needed to change them could
+ * not. The service format itself, deletion and ownership transfer are on their
+ * own owner-only endpoints and are untouched by this.
+ *
+ * Mirrored by `managerRunsBranchSettings` in the POS Seller HQ page, which
+ * shows the Branch settings button on exactly these formats.
+ */
+const MANAGER_RUNS_BRANCH_SETTINGS_FORMATS: ReadonlySet<string> = new Set([
+  'HOTEL',
+]);
+
 @Injectable()
 export class SellerWorkspaceService {
   private readonly logger = new Logger(SellerWorkspaceService.name);
@@ -2382,6 +2400,17 @@ export class SellerWorkspaceService {
     );
   }
 
+  /** Whether a branch's format hands its managers Branch Settings outright. */
+  private managerRunsBranchSettings(
+    branch: Pick<Branch, 'serviceFormat'>,
+  ): boolean {
+    return MANAGER_RUNS_BRANCH_SETTINGS_FORMATS.has(
+      String(branch.serviceFormat || '')
+        .trim()
+        .toUpperCase(),
+    );
+  }
+
   /** An active MANAGER assignment on this branch — not an operator, not stale. */
   private async isActiveBranchManager(
     branchId: number,
@@ -2434,9 +2463,13 @@ export class SellerWorkspaceService {
       // default category, Home layout — stays owner-only, so a manager's patch
       // must touch tax and nothing else. Otherwise "let managers set the rate"
       // would quietly hand them the branch's whole identity.
+      //
+      // Except on the formats in MANAGER_RUNS_BRANCH_SETTINGS_FORMATS (HOTEL),
+      // where the manager runs the property and Branch Settings is theirs.
       const isTaxOnlyPatch = this.isTaxOnlyBranchWorkspacePatch(dto);
       const isBranchManager =
-        isTaxOnlyPatch && (await this.isActiveBranchManager(branchId, userId));
+        (isTaxOnlyPatch || this.managerRunsBranchSettings(branch)) &&
+        (await this.isActiveBranchManager(branchId, userId));
       if (!isBranchManager) {
         throw new ForbiddenException(
           isTaxOnlyPatch

@@ -1318,13 +1318,15 @@ describe('SellerWorkspaceService', () => {
   // its name, address, tax ID, logo — stays the owner's. The split is enforced
   // on the shape of the patch, so widening it by accident is a visible change.
   describe('updateBranchWorkspace tax authority', () => {
-    function stubBranchRepo() {
+    function stubBranchRepo(branchOverrides: Record<string, unknown> = {}) {
       const branchRepo = {
         findOne: jest.fn().mockResolvedValue({
           id: 11,
           ownerId: 41,
           retailTenantId: 13,
           retailTenant: { owner: { id: 41 } },
+          serviceFormat: 'QSR',
+          ...branchOverrides,
         }),
         update: jest.fn().mockResolvedValue(undefined),
       };
@@ -1404,6 +1406,74 @@ describe('SellerWorkspaceService', () => {
       ).rejects.toBeInstanceOf(ForbiddenException);
 
       expect(branchRepo.update).not.toHaveBeenCalled();
+    });
+
+    // A HOTEL is the one format where the manager runs the property and the
+    // owner is rarely at the desk, so Branch Settings is theirs there — the
+    // checkout time, the phone and logo on the guest invoice, the register
+    // hours. Every other format keeps the tax-only split above.
+    describe('on a HOTEL', () => {
+      it('lets the manager set the branch up, not only its tax', async () => {
+        const branchRepo = stubBranchRepo({ serviceFormat: 'HOTEL' });
+        asManager();
+        const workspaceItem = { branchId: 11, branchName: 'Blue Nile Hotel' };
+        const getBranchWorkspaces = jest
+          .spyOn(service, 'getBranchWorkspaces')
+          .mockResolvedValue({ items: [workspaceItem] } as any);
+
+        const result = await service.updateBranchWorkspace(
+          77,
+          11,
+          {
+            checkoutPolicyTime: '12:00',
+            phone: '+251 911 000 000',
+            logoUrl: 'https://cdn.example/crest.png',
+            registerClosesAt: '23:00',
+          },
+          ['POS_MANAGER'],
+        );
+
+        expect(branchRepo.update).toHaveBeenCalledWith(
+          11,
+          expect.objectContaining({
+            checkoutPolicyTime: '12:00',
+            phone: '+251 911 000 000',
+            logoUrl: 'https://cdn.example/crest.png',
+            registerClosesAt: '23:00',
+          }),
+        );
+        expect(result).toBe(workspaceItem);
+        getBranchWorkspaces.mockRestore();
+      });
+
+      it('still refuses someone with no active manager assignment', async () => {
+        const branchRepo = stubBranchRepo({ serviceFormat: 'HOTEL' });
+        branchStaffAssignmentsRepository.findOne.mockResolvedValue(null);
+
+        await expect(
+          service.updateBranchWorkspace(
+            77,
+            11,
+            { checkoutPolicyTime: '12:00' },
+            ['POS_OPERATOR'],
+          ),
+        ).rejects.toBeInstanceOf(ForbiddenException);
+
+        expect(branchRepo.update).not.toHaveBeenCalled();
+      });
+
+      it('does not leak into another format: a QSR manager is still tax-only', async () => {
+        const branchRepo = stubBranchRepo({ serviceFormat: 'QSR' });
+        asManager();
+
+        await expect(
+          service.updateBranchWorkspace(77, 11, { registerClosesAt: '23:00' }, [
+            'POS_MANAGER',
+          ]),
+        ).rejects.toBeInstanceOf(ForbiddenException);
+
+        expect(branchRepo.update).not.toHaveBeenCalled();
+      });
     });
   });
 
