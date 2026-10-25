@@ -763,6 +763,75 @@ describe('PosRegisterService.updateSuspendedCart — the row as it stands now', 
     ).toBe(false);
   });
 
+  describe("the teachers'-list excuse is the school owner's (owner 2026-10-25)", () => {
+    const EXCUSE = {
+      before: '2026-10-11',
+      reason: 'Mother pledged',
+      by: 'Owner',
+      at: '2026-10-25T06:00:00.000Z',
+    };
+    const write = async (
+      actor: any,
+      snap: Record<string, unknown>,
+      stored = pupilRow(),
+    ) => {
+      const { service, carts } = makeService({ stored });
+      await service.updateSuspendedCart(
+        16867,
+        {
+          branchId: 115,
+          cartSnapshot: { ...pupilRow().cartSnapshot, ...snap },
+        },
+        actor,
+      );
+      return carts.save.mock.calls[0][0].cartSnapshot;
+    };
+
+    it("writes the owner's excuse, and the owner's lift", async () => {
+      expect(
+        (await write({ id: 1863 }, { schoolFeeExcuse: EXCUSE }))
+          .schoolFeeExcuse,
+      ).toEqual(EXCUSE);
+      expect(
+        (
+          await write(
+            { id: 1863 },
+            { schoolFeeExcuse: null },
+            pupilRow({ schoolFeeExcuse: EXCUSE }),
+          )
+        ).schoolFeeExcuse,
+      ).toBeNull();
+    });
+
+    it('keeps the stored excuse against a manager or a platform admin', async () => {
+      const manager = { id: 2470, roles: ['POS_MANAGER'] };
+      expect(
+        'schoolFeeExcuse' in
+          (await write(manager, { schoolFeeExcuse: EXCUSE })),
+      ).toBe(false);
+      const admin = { id: 1, roles: ['SUPER_ADMIN'] };
+      expect(
+        (
+          await write(
+            admin,
+            { schoolFeeExcuse: null },
+            pupilRow({ schoolFeeExcuse: EXCUSE }),
+          )
+        ).schoolFeeExcuse,
+      ).toEqual(EXCUSE);
+    });
+
+    it("keeps it through a till save that left it out — even the owner's", async () => {
+      const snap = await write(
+        { id: 1863 },
+        { paid: true },
+        pupilRow({ schoolFeeExcuse: EXCUSE }),
+      );
+      expect(snap.schoolFeeExcuse).toEqual(EXCUSE);
+      expect(snap.paid).toBe(true);
+    });
+  });
+
   describe("a pupil's own record is the office's (owner 2026-10-18)", () => {
     const CASHIER = { id: 2470, email: 'cashier@x', roles: ['POS_OPERATOR'] };
     const cashierRow = {

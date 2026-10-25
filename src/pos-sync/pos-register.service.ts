@@ -9,13 +9,21 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, Repository } from 'typeorm';
 import { BranchStaffAssignment } from '../branch-staff/entities/branch-staff-assignment.entity';
 import { Branch } from '../branches/entities/branch.entity';
-import { tenantOwnerOf } from '../school/school-branch-owner.util';
+import {
+  isSchoolOwner,
+  tenantOwnerOf,
+} from '../school/school-branch-owner.util';
 import { PosRegisterReportService } from './pos-register-report.service';
 import {
   SCHOOL_WITHDRAWAL_REFUSED_MESSAGE,
   canWithdrawStudent,
   isSchoolPupilFolio,
 } from './school-withdrawal.policy';
+import {
+  SCHOOL_FEE_EXCUSE_KEY,
+  feeExcuseChanged,
+  keepStoredFeeExcuse,
+} from './school-fee-excuse.policy';
 import {
   PUPIL_CREATE_REFUSED_MESSAGE,
   PUPIL_RECORD_REFUSED_CODE,
@@ -342,6 +350,21 @@ export class PosRegisterService {
         code: PUPIL_RECORD_REFUSED_CODE,
         message: PUPIL_CREATE_REFUSED_MESSAGE,
       });
+    }
+    // A pupil enrolled already excused is the owner's to do, like the excuse.
+    if (
+      dto.cartSnapshot &&
+      typeof dto.cartSnapshot === 'object' &&
+      Object.prototype.hasOwnProperty.call(
+        dto.cartSnapshot,
+        SCHOOL_FEE_EXCUSE_KEY,
+      ) &&
+      !(await this.isSchoolOwnerActor(dto.branchId, actor))
+    ) {
+      dto.cartSnapshot = keepStoredFeeExcuse(
+        {},
+        dto.cartSnapshot as Record<string, unknown>,
+      );
     }
 
     const buildCart = (
@@ -1123,6 +1146,21 @@ export class PosRegisterService {
               ? { ...rest, schoolAcademicRecord: stored.schoolAcademicRecord }
               : rest;
 
+            // Excusing a pupil from the teachers' unpaid list is the school
+            // owner's alone (school-fee-excuse.policy). From anyone else — and
+            // from a write that leaves it out, like a till save from an older
+            // copy — the stored excuse is kept.
+            if (
+              !Object.prototype.hasOwnProperty.call(
+                incoming,
+                SCHOOL_FEE_EXCUSE_KEY,
+              ) ||
+              (feeExcuseChanged(stored, incoming) &&
+                !(await this.isSchoolOwnerActor(cart.branchId, actor, em)))
+            ) {
+              incoming = keepStoredFeeExcuse(stored, incoming);
+            }
+
             // The pupil's own record is the office's (owner 2026-10-18: "do
             // not allow cashiers to edit the whole student list, except login
             // only"). A fee and a rename travel in this one PATCH, so what
@@ -1241,6 +1279,28 @@ export class PosRegisterService {
       throw new NotFoundException(`Register session ${id} not found`);
     }
     return session;
+  }
+
+  /** Is this actor the school's owner — the branch's or its tenant's (`isSchoolOwner`)? */
+  private async isSchoolOwnerActor(
+    branchId: number,
+    actor: { id?: number | null },
+    em?: EntityManager,
+  ): Promise<boolean> {
+    if (actor.id == null) return false;
+    const branches = em ? em.getRepository(Branch) : this.branchesRepository;
+    const branch = await branches.findOne({
+      where: { id: branchId },
+      select: { id: true, ownerId: true, retailTenantId: true },
+    });
+    return isSchoolOwner(
+      actor.id,
+      branch?.ownerId ?? null,
+      await tenantOwnerOf(
+        em ?? this.branchesRepository.manager,
+        branch?.retailTenantId,
+      ),
+    );
   }
 
   /** May this actor enrol: the pupil-record editors plus the roster importer. */
