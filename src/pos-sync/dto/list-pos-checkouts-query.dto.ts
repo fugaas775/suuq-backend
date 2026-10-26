@@ -7,6 +7,7 @@ import {
   IsOptional,
   IsString,
   Max,
+  MaxLength,
   Min,
 } from 'class-validator';
 import {
@@ -58,6 +59,19 @@ export class ListPosCheckoutsQueryDto {
   @Type(() => Number)
   @IsNumber()
   registerSessionId?: number;
+
+  @ApiPropertyOptional({
+    example: 'Amina',
+    description:
+      'Free-text search: matches the receipt number, the customer / pupil / guest name on the receipt, or the cashier name (substring, case-insensitive). An all-digit term also matches the checkout id.',
+  })
+  @IsOptional()
+  @Transform(({ value }) =>
+    typeof value === 'string' ? value.trim() || undefined : value,
+  )
+  @IsString()
+  @MaxLength(120)
+  q?: string;
 
   @ApiPropertyOptional({
     example: '2026-04-01T00:00:00.000Z',

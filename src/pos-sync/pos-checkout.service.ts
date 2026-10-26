@@ -363,6 +363,30 @@ export class PosCheckoutService {
       }
     }
 
+    // Receipt lookup by number or by name. The name lives in metadata: the
+    // folio formats stamp their occupant (hotel guest, SCHOOL pupil) as
+    // `guestName`, an attached customer as `customerName` and
+    // `customerProfile.name`. `#` is stripped so "#R-104" finds "R-104".
+    const term = String(query.q || '')
+      .replace(/^#+/, '')
+      .trim();
+    if (term) {
+      const like = `%${term.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+      const clauses = [
+        'checkout.receiptNumber ILIKE :qLike',
+        "checkout.metadata->>'guestName' ILIKE :qLike",
+        "checkout.metadata->>'customerName' ILIKE :qLike",
+        "checkout.metadata->'customerProfile'->>'name' ILIKE :qLike",
+        'checkout.cashierName ILIKE :qLike',
+      ];
+      const params: Record<string, unknown> = { qLike: like };
+      if (/^\d{1,9}$/.test(term)) {
+        clauses.push('checkout.id = :qId');
+        params.qId = Number(term);
+      }
+      qb.andWhere(`(${clauses.join(' OR ')})`, params);
+    }
+
     const [items, total] = await qb.getManyAndCount();
 
     return {

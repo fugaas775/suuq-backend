@@ -1795,6 +1795,40 @@ describe('PosCheckoutService', () => {
     );
   });
 
+  // The History tab looks a receipt up by number or by the pupil's / guest's
+  // name, which the folio formats stamp on metadata as `guestName`.
+  it('searches checkout history by receipt number or name, and by id when all digits', async () => {
+    const queryBuilder = {
+      where: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      addOrderBy: jest.fn().mockReturnThis(),
+      skip: jest.fn().mockReturnThis(),
+      take: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      getManyAndCount: jest.fn().mockResolvedValue([[], 0]),
+    };
+    posCheckoutsRepository.createQueryBuilder.mockReturnValue(queryBuilder);
+
+    await service.findAll({ branchId: 3, page: 1, limit: 20, q: 'Amina_%' });
+    const [nameClause, nameParams] = queryBuilder.andWhere.mock.calls.find(
+      ([sql]) => String(sql).includes(':qLike'),
+    );
+    expect(nameClause).toContain(
+      "checkout.metadata->>'guestName' ILIKE :qLike",
+    );
+    expect(nameClause).toContain('checkout.receiptNumber ILIKE :qLike');
+    expect(nameClause).not.toContain(':qId');
+    expect(nameParams).toEqual({ qLike: '%Amina\\_\\%%' });
+
+    queryBuilder.andWhere.mockClear();
+    await service.findAll({ branchId: 3, page: 1, limit: 20, q: '#104' });
+    const [idClause, idParams] = queryBuilder.andWhere.mock.calls.find(
+      ([sql]) => String(sql).includes(':qLike'),
+    );
+    expect(idClause).toContain('checkout.id = :qId');
+    expect(idParams).toEqual({ qLike: '%104%', qId: 104 });
+  });
+
   // An idempotency key names a request. The till keyed every HOTEL full
   // settlement as `hotel-fullsettle-<branch>-<folio>|<amount>|F` — the same
   // string every night for a guest paying the same rate on one folio — so the
