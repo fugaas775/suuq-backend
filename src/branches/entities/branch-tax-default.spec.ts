@@ -1,19 +1,18 @@
-import { shouldEnableTaxForNewBranch } from './branch.entity';
+import { getMetadataArgsStorage } from 'typeorm';
+import { Branch } from './branch.entity';
 
-describe('shouldEnableTaxForNewBranch', () => {
-  it('starts a branch with a tax id charging tax', () => {
-    expect(shouldEnableTaxForNewBranch('0001234567')).toBe(true);
-  });
-
-  it('starts a branch with no tax id untaxed', () => {
-    // Charging VAT while unregistered is an offence, and there would be no TIN
-    // to print on the invoice. Self-serve signup collects neither.
-    expect(shouldEnableTaxForNewBranch(null)).toBe(false);
-    expect(shouldEnableTaxForNewBranch(undefined)).toBe(false);
-    expect(shouldEnableTaxForNewBranch('')).toBe(false);
-  });
-
-  it('does not count whitespace as a tax id', () => {
-    expect(shouldEnableTaxForNewBranch('   ')).toBe(false);
+/**
+ * A new branch starts untaxed, in every format. Pinned on the ENTITY's column
+ * default (what a raw INSERT without the column gets) because that is the one
+ * place a creation path that forgets the field falls back to — the admin
+ * `POST /pos/v1/branches` relied on it and produced a school charging VAT.
+ */
+describe('branches.taxEnabled default', () => {
+  it('is false on the entity column', () => {
+    const column = getMetadataArgsStorage().columns.find(
+      (c) => c.target === Branch && c.propertyName === 'taxEnabled',
+    );
+    expect(column).toBeDefined();
+    expect(column?.options.default).toBe(false);
   });
 });

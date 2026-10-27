@@ -61,7 +61,13 @@ export class BranchesService {
   ) {}
 
   async create(dto: CreateBranchDto): Promise<Branch> {
-    const branch = this.branchesRepository.create(dto);
+    // Untaxed to start, like every other creation path — the owner switches
+    // VAT on in Seller HQ. Written explicitly so the INSERT never depends on
+    // whatever the column default happens to be.
+    const branch = this.branchesRepository.create({
+      ...dto,
+      taxEnabled: false,
+    });
     return this.branchesRepository.save(branch);
   }
 

@@ -134,22 +134,23 @@ export class Branch {
   /**
    * Whether this branch charges tax (VAT) on sales. All service formats honour it.
    *
-   * Defaults to TRUE (2026-08-07): a branch created from here on starts charging
-   * tax at {@link taxRate}, added on top of the price ({@link taxInclusive} is
-   * false). Owners who should not be charging it turn it off in Seller HQ.
+   * Defaults to FALSE — in every service format, schools included (owner's
+   * policy, 2026-10-27). A branch that was created untaxed charges exactly what
+   * is on its shelf; its owner switches VAT on in Seller HQ, which asks for the
+   * TIN alongside the toggle. The 2026-08-07 default of TRUE, and the later
+   * "on when a TIN was typed at signup" rule, are both gone: a school with a tax
+   * id still charges no VAT on tuition, and a shop that is registered is one
+   * toggle away either way.
    *
-   * Changing this default deliberately did NOT touch the branches that already
-   * existed — they were created under `false` and keep it, because switching tax
-   * on for a trading business raises every price it charges by the rate, and on
-   * a multi-tenant platform that is somebody else's customers and somebody
-   * else's tax registration. Only ever flip an existing branch through Seller HQ,
-   * by its own owner.
+   * Branches that already exist are never touched by a default — a default only
+   * decides where a NEW row starts. Only ever flip an existing branch through
+   * Seller HQ, by its own owner.
    *
-   * Creation sites now set this explicitly, from
-   * {@link shouldEnableTaxForNewBranch} — the column default only still applies
-   * to rows inserted by a path that predates that call.
+   * Every creation site also writes `taxEnabled: false` explicitly, so a row
+   * inserted by a path that forgets the column still lands untaxed through the
+   * column default, and one that remembers it agrees with the default.
    */
-  @Column({ type: 'boolean', default: true })
+  @Column({ type: 'boolean', default: false })
   taxEnabled!: boolean;
 
   /**
@@ -257,25 +258,4 @@ export class Branch {
 
   @UpdateDateColumn()
   updatedAt!: Date;
-}
-
-/**
- * Whether a BRAND-NEW branch should start charging tax.
- *
- * Only if it has a tax identification number. A TIN is the closest thing the
- * signup flow has to proof of tax registration, and a business that is not
- * registered may not legally charge VAT — so defaulting an unidentified branch
- * to 15% points it at an offence on its very first sale. It also has nowhere to
- * print a TIN on the receipt, which a tax invoice requires.
- *
- * Deliberately not a hard block: an owner who is registered but has not typed
- * their number in yet can still switch tax on in Seller HQ, which prompts for
- * the TIN. This only decides where a new branch STARTS.
- *
- * Existing branches are untouched — this is consulted at creation only.
- */
-export function shouldEnableTaxForNewBranch(
-  tinNumber?: string | null,
-): boolean {
-  return Boolean(String(tinNumber ?? '').trim());
 }

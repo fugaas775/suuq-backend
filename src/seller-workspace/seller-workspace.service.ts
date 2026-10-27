@@ -16,10 +16,7 @@ import {
   BranchStaffAssignment,
   BranchStaffRole,
 } from '../branch-staff/entities/branch-staff-assignment.entity';
-import {
-  Branch,
-  shouldEnableTaxForNewBranch,
-} from '../branches/entities/branch.entity';
+import { Branch } from '../branches/entities/branch.entity';
 import { linkBranchToVendorStore } from '../branches/branch-store-link';
 import { BranchHomeConfig } from '../branches/entities/branch-home-config.type';
 import { BranchInventory } from '../branches/entities/branch-inventory.entity';
@@ -777,9 +774,9 @@ export class SellerWorkspaceService {
           country: normalizedCountry,
           phone: dto.phone?.trim() || null,
           tinNumber: dto.tinNumber?.trim() || null,
-          // A branch with no tax id starts untaxed — it cannot legally charge
-          // VAT unregistered, and has no TIN to print on the invoice.
-          taxEnabled: shouldEnableTaxForNewBranch(dto.tinNumber),
+          // Every new branch starts untaxed, in every format — a TIN typed at
+          // signup no longer switches VAT on. The owner turns it on in Seller HQ.
+          taxEnabled: false,
           isActive: true,
         });
 
