@@ -24,12 +24,18 @@ export class ListPosSuspendedCartsQueryDto {
   @Min(1)
   page = 1;
 
-  @ApiPropertyOptional({ example: 20, default: 20 })
+  /**
+   * Up to 500 a page. The register polls its WHOLE list every few seconds,
+   * and at 100 a page a thousand-pupil school was eleven requests a tick;
+   * at 500 it is three. The rows themselves are no bigger — the same bytes,
+   * fewer round trips, which is what a slow link pays for.
+   */
+  @ApiPropertyOptional({ example: 20, default: 20, maximum: 500 })
   @IsOptional()
   @Type(() => Number)
   @IsNumber()
   @Min(1)
-  @Max(100)
+  @Max(500)
   limit = 20;
 
   @ApiPropertyOptional({ enum: PosSuspendedCartStatus })

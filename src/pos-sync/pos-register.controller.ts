@@ -8,9 +8,11 @@ import {
   Post,
   Query,
   Req,
+  Res,
   UseGuards,
 } from '@nestjs/common';
 import { ApiOkResponse, ApiTags } from '@nestjs/swagger';
+import type { Response } from 'express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import {
   PosBranchAccessGuard,
@@ -148,8 +150,24 @@ export class PosRegisterController {
   @RequireRetailModules(RetailOsModule.POS_CORE)
   @RetailBranchContext('query.branchId')
   @ApiOkResponse({ type: PosSuspendedCartPageResponseDto })
-  findSuspendedCarts(@Query() query: ListPosSuspendedCartsQueryDto) {
-    return this.posRegisterService.findSuspendedCarts(query);
+  async findSuspendedCarts(
+    @Query() query: ListPosSuspendedCartsQueryDto,
+    @Req() req,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    // The register's poll: a tag from one aggregate, a 304 before any row
+    // is read when the till already holds this version. The ETag set here
+    // is the one the global interceptor leaves alone.
+    const result = await this.posRegisterService.findSuspendedCartsConditional(
+      query,
+      req?.headers?.['if-none-match'],
+    );
+    res.setHeader('ETag', result.etag);
+    if (result.notModified) {
+      res.status(304);
+      return undefined;
+    }
+    return result.page;
   }
 
   /**

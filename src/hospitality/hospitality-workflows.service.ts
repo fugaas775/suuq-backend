@@ -635,7 +635,8 @@ export class HospitalityWorkflowsService {
           .toUpperCase();
         await manager.query(
           `UPDATE pos_suspended_carts
-           SET "cartSnapshot" = jsonb_set(
+           SET "updatedAt" = now(),
+               "cartSnapshot" = jsonb_set(
              "cartSnapshot",
              '{cartLines}',
              (

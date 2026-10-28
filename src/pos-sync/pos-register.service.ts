@@ -54,6 +54,7 @@ import {
 } from './dto/pos-suspended-cart-response.dto';
 import { TransitionPosSuspendedCartDto } from './dto/transition-pos-suspended-cart.dto';
 import { UpdatePosSuspendedCartDto } from './dto/update-pos-suspended-cart.dto';
+import { etagMatches, suspendedCartsListEtag } from './suspended-carts-etag';
 import {
   PosRegisterSession,
   PosRegisterSessionStatus,
@@ -235,18 +236,11 @@ export class PosRegisterService {
     return this.toSessionResponse(saved);
   }
 
-  async findSuspendedCarts(
-    query: ListPosSuspendedCartsQueryDto,
-  ): Promise<PosSuspendedCartPageResponseDto> {
-    const page = Math.max(query.page ?? 1, 1);
-    const perPage = Math.min(Math.max(query.limit ?? 20, 1), 100);
+  /** The list's WHERE, shared by the page read and its version check. */
+  private suspendedCartsScope(query: ListPosSuspendedCartsQueryDto) {
     const qb = this.suspendedCartsRepository
       .createQueryBuilder('cart')
-      .where('cart.branchId = :branchId', { branchId: query.branchId })
-      .orderBy('cart.createdAt', 'DESC')
-      .addOrderBy('cart.id', 'DESC')
-      .skip((page - 1) * perPage)
-      .take(perPage);
+      .where('cart.branchId = :branchId', { branchId: query.branchId });
 
     if (query.status) {
       qb.andWhere('cart.status = :status', { status: query.status });
@@ -269,6 +263,29 @@ export class PosRegisterService {
         });
       }
     }
+    return qb;
+  }
+
+  /**
+   * Up to 500 a page (it was 100): the register polls its WHOLE list every
+   * few seconds, and a thousand-pupil school was eleven requests a tick.
+   */
+  private suspendedCartsPaging(query: ListPosSuspendedCartsQueryDto) {
+    return {
+      page: Math.max(query.page ?? 1, 1),
+      perPage: Math.min(Math.max(query.limit ?? 20, 1), 500),
+    };
+  }
+
+  async findSuspendedCarts(
+    query: ListPosSuspendedCartsQueryDto,
+  ): Promise<PosSuspendedCartPageResponseDto> {
+    const { page, perPage } = this.suspendedCartsPaging(query);
+    const qb = this.suspendedCartsScope(query)
+      .orderBy('cart.createdAt', 'DESC')
+      .addOrderBy('cart.id', 'DESC')
+      .skip((page - 1) * perPage)
+      .take(perPage);
 
     const [items, total] = await qb.getManyAndCount();
     return {
@@ -277,6 +294,45 @@ export class PosRegisterService {
       page,
       perPage,
       totalPages: Math.ceil(total / perPage),
+    };
+  }
+
+  /**
+   * The page, or "what you hold is current" — the register's poll.
+   *
+   * One aggregate over the list's scope (count, newest write) names the
+   * version; when the caller's If-None-Match already names it, no row is
+   * loaded, mapped or serialised. A till polling an unchanged school roll
+   * of a thousand folios every half minute used to cost the database that
+   * read, the API that JSON, and the link those bytes, every time. See
+   * suspendedCartsListEtag for why those two numbers are enough.
+   */
+  async findSuspendedCartsConditional(
+    query: ListPosSuspendedCartsQueryDto,
+    ifNoneMatch?: string | string[] | null,
+  ): Promise<{
+    etag: string;
+    notModified: boolean;
+    page: PosSuspendedCartPageResponseDto | null;
+  }> {
+    const { page, perPage } = this.suspendedCartsPaging(query);
+    const version = await this.suspendedCartsScope(query)
+      .select('COUNT(cart.id)', 'count')
+      .addSelect('MAX(cart.updatedAt)', 'latest')
+      .getRawOne<{ count?: string | number; latest?: Date | string | null }>();
+    const etag = suspendedCartsListEtag({
+      count: version?.count ?? 0,
+      latest: version?.latest ?? null,
+      page,
+      perPage,
+    });
+    if (etagMatches(ifNoneMatch, etag)) {
+      return { etag, notModified: true, page: null };
+    }
+    return {
+      etag,
+      notModified: false,
+      page: await this.findSuspendedCarts(query),
     };
   }
 
@@ -566,7 +622,8 @@ export class PosRegisterService {
         if (priorRows.length > 0) {
           await em.query(
             `UPDATE pos_suspended_carts
-                SET status = $1, "discardedAt" = now(), "discardedByName" = $2
+                SET status = $1, "discardedAt" = now(), "discardedByName" = $2,
+                    "updatedAt" = now()
               WHERE id = ANY($3::int[])`,
             [
               PosSuspendedCartStatus.DISCARDED,
