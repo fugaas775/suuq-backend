@@ -25,6 +25,8 @@ import { SchoolMessageService } from './school-message.service';
 import { SchoolStaffReachService } from './school-staff-reach.service';
 import { SchoolStatementCode } from './entities/school-statement-code.entity';
 import { SchoolStudentAccount } from './entities/school-student-account.entity';
+import { SchoolDefaultLoginMark } from './entities/school-default-login-mark.entity';
+import { SchoolDefaultLoginsService } from './school-default-logins.service';
 import { SchoolCurriculumResource } from './entities/school-curriculum-resource.entity';
 import {
   AdminSchoolCurriculumController,
@@ -66,6 +68,8 @@ import { SchoolLoginScopeService } from './school-login-scope';
       SchoolStatementCode,
       // The pupils' own logins — one per record.
       SchoolStudentAccount,
+      // Which pupils have had their default logins (SchoolDefaultLoginsService).
+      SchoolDefaultLoginMark,
       // The platform's curriculum shelf — textbooks, slides, item banks.
       SchoolCurriculumResource,
       // Read-only: the pupils' records, the receipts settled against them,
@@ -104,6 +108,7 @@ import { SchoolLoginScopeService } from './school-login-scope';
     SchoolStudentAccountService,
     SchoolCurriculumService,
     SchoolLoginScopeService,
+    SchoolDefaultLoginsService,
     PosBranchAccessGuard,
     RolesGuard,
   ],
