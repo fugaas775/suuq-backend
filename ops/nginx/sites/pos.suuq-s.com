@@ -17,6 +17,19 @@ server {
         expires 1y;
         add_header Cache-Control "public, immutable";
         access_log off;
+        # The build writes a .gz (level 9) and a .br (quality 11) beside every
+        # text asset (pos-s vite.config.js, precompressAssetsPlugin). gzip_static
+        # is built into this nginx: a browser that accepts gzip gets the
+        # pre-made file, no CPU spent, a little smaller than the level-6 on the
+        # fly copy above. brotli_static needs the ngx_brotli module, which the
+        # stock Ubuntu 1.18 does not carry; it lives in a snippet the glob
+        # include tolerates being absent, so this file loads either way:
+        #   /etc/nginx/snippets/pos-brotli-static.conf  ->  brotli_static on;
+        # created only once `nginx -V 2>&1 | grep -c brotli` says the module
+        # is loaded (libnginx-mod-http-brotli-static, or ngx_brotli built as a
+        # dynamic module). Brotli is about a fifth smaller again than gzip.
+        gzip_static on;
+        include snippets/pos-brotli-static*.conf;
     }
 
     location = /index.html {
