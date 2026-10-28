@@ -14,7 +14,7 @@ import { cacheControlFor, noStoreAllFromEnv } from './common/cache-policy';
 import { Reflector } from '@nestjs/core';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import helmet from 'helmet';
-import * as compression from 'compression';
+import { responseCompression } from './common/response-compression';
 import { json, urlencoded } from 'express';
 import { EtagInterceptor } from './common/interceptors/etag.interceptor';
 import * as crypto from 'crypto';
@@ -172,19 +172,13 @@ async function bootstrap() {
     }
     next();
   });
-  // Enable gzip compression for responses (disable by default in production; offload to Nginx)
-  // UPDATED: Enabled by default to ensure compression even if Nginx is misconfigured
+  // The API compresses its own responses — brotli to the browsers that take
+  // it, gzip to the rest; nginx has no brotli module and passes an encoded
+  // body through. Quality, window and threshold: common/response-compression.ts.
   const enableNodeCompression =
     (process.env.ENABLE_NODE_COMPRESSION || 'true').toLowerCase() === 'true';
   if (enableNodeCompression) {
-    const compressionFn: any =
-      (compression as any)?.default || (compression as any);
-
-    app.use(
-      compressionFn({
-        threshold: 1024,
-      }),
-    );
+    app.use(responseCompression());
   }
   // Ensure temp upload directory exists for Multer disk storage
   try {
