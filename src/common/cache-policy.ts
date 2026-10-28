@@ -12,17 +12,29 @@
  * - `/api/admin`      → no-store (as before: never kept anywhere).
  * - `/api/pos-portal` → no-store: login, session and token renewal carry
  *                       credentials; nothing of theirs belongs on a disk.
- * - `/api/pos`, `/api/retail` → private, no-cache: the browser may keep its
- *                       copy but must ask the server before using it. The
- *                       interceptor still sets the ETag and answers a
- *                       matching If-None-Match with a 304, so a slow link
- *                       pays headers, not the payload, when nothing changed.
+ * - `/api/pos`, `/api/retail`, `/api/seller`, `/api/hub`
+ *                     → private, no-cache: the browser may keep its copy but
+ *                       must ask the server before using it. The interceptor
+ *                       sets the ETag and answers a matching If-None-Match
+ *                       with a 304, so an unchanged poll costs headers, not
+ *                       the payload — and because the browser does the asking
+ *                       itself, the request keeps its cached CORS preflight
+ *                       (Chrome drops that cache for any fetch that bypasses
+ *                       its HTTP cache, a script-set If-None-Match included).
  *
- * `NO_STORE_ALL_API` (an existing switch) still turns the whole API to
- * no-store. Pure: the URL in, the header value (or null) out.
+ * `NO_STORE_ALL_API` (an existing switch, ON in production) turns the REST
+ * of the API to no-store. It used to run first and silently made every POS
+ * read no-store as well — no ETag, no 304, a full body on every poll tick —
+ * so the signed-in rule now comes before it. Pure: the URL in, the header
+ * value (or null) out.
  */
 const NO_STORE_PREFIXES = ['/api/admin', '/api/pos-portal'];
-const REVALIDATE_PREFIXES = ['/api/pos', '/api/retail'];
+const REVALIDATE_PREFIXES = [
+  '/api/pos',
+  '/api/retail',
+  '/api/seller',
+  '/api/hub',
+];
 
 const pathOf = (url: unknown): string => {
   const raw = String(url ?? '');
@@ -41,11 +53,11 @@ export function cacheControlFor(
 ): string | null {
   const path = pathOf(url);
   if (!underPrefix(path, '/api')) return null;
-  if (noStoreAll) return 'no-store';
   if (NO_STORE_PREFIXES.some((p) => underPrefix(path, p))) return 'no-store';
   if (REVALIDATE_PREFIXES.some((p) => underPrefix(path, p))) {
     return 'private, no-cache';
   }
+  if (noStoreAll) return 'no-store';
   return null;
 }
 

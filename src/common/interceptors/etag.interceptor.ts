@@ -30,6 +30,15 @@ export class EtagInterceptor implements NestInterceptor {
             return data;
           }
 
+          // No body to tag: a handler that wrote the response itself (a CSV
+          // export through @Res) or answered nothing. A tag of "" here would
+          // be the SAME for every such response, and a browser holding it
+          // would be told 304 — "what you have is current" — about bytes it
+          // never saw through this path.
+          if (data === undefined) {
+            return data;
+          }
+
           // Apply only for idempotent reads and successful responses
           const method = String(req?.method || '').toUpperCase();
           const statusCode: number =
