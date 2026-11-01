@@ -3,6 +3,7 @@ import {
   TenantSubscriptionStatus,
 } from './entities/tenant-subscription.entity';
 import {
+  addCalendarMonths,
   billingStateOf,
   monthlyEquivalent,
   pickCurrentSubscription,
@@ -123,5 +124,37 @@ describe('summarizeSubscription', () => {
     expect(
       summarizeSubscription(sub({ endsAt: null }), NOW).daysRemaining,
     ).toBeNull();
+  });
+});
+
+describe('addCalendarMonths', () => {
+  it('lands on the same day of the month, months later', () => {
+    expect(
+      addCalendarMonths(new Date('2026-05-01T14:34:01Z'), 6).toISOString(),
+    ).toBe('2026-11-01T14:34:01.000Z');
+    expect(
+      addCalendarMonths(new Date('2026-11-01T00:00:00Z'), 6).toISOString(),
+    ).toBe('2027-05-01T00:00:00.000Z');
+  });
+
+  it('crosses a year boundary', () => {
+    expect(
+      addCalendarMonths(new Date('2026-11-01T00:00:00Z'), 12).toISOString(),
+    ).toBe('2027-11-01T00:00:00.000Z');
+  });
+
+  it('clamps to the last day of a shorter month', () => {
+    expect(
+      addCalendarMonths(new Date('2026-01-31T00:00:00Z'), 1).toISOString(),
+    ).toBe('2026-02-28T00:00:00.000Z');
+    expect(
+      addCalendarMonths(new Date('2028-01-31T00:00:00Z'), 1).toISOString(),
+    ).toBe('2028-02-29T00:00:00.000Z');
+  });
+
+  it('leaves the input untouched', () => {
+    const from = new Date('2026-05-01T00:00:00Z');
+    addCalendarMonths(from, 6);
+    expect(from.toISOString()).toBe('2026-05-01T00:00:00.000Z');
   });
 });

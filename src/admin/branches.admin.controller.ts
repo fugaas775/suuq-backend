@@ -7,7 +7,9 @@ import {
   Param,
   ParseIntPipe,
   Patch,
+  Post,
   Query,
+  Req,
   UseGuards,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
@@ -16,7 +18,10 @@ import { ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { RolesGuard } from '../auth/roles.guard';
 import { UserRole } from '../auth/roles.enum';
 import { Roles } from '../common/decorators/roles.decorator';
+import { AuthenticatedRequest } from '../common/interfaces/authenticated-request.interface';
+import { AuditService } from '../audit/audit.service';
 import { BranchesService } from '../branches/branches.service';
+import { ExtendBranchSubscriptionDto } from '../branches/dto/extend-branch-subscription.dto';
 
 @UseGuards(AuthGuard('jwt'), RolesGuard)
 @SkipThrottle()
@@ -24,7 +29,10 @@ import { BranchesService } from '../branches/branches.service';
 @ApiTags('Admin — Suuq POS')
 @Controller('admin/branches')
 export class BranchesAdminController {
-  constructor(private readonly branchesService: BranchesService) {}
+  constructor(
+    private readonly branchesService: BranchesService,
+    private readonly auditService: AuditService,
+  ) {}
 
   /**
    * GET /api/admin/branches
@@ -82,6 +90,58 @@ export class BranchesAdminController {
       throw new BadRequestException('isActive must be a boolean');
     }
     return this.branchesService.patchAdminBranch(id, body);
+  }
+
+  /**
+   * POST /api/admin/branches/:id/subscription/extend
+   *
+   * Records a further paid term for the branch by hand — money taken outside
+   * Ebirr, or goodwill. Writes a new branch-scoped subscription row chained
+   * from the current period's end (see BranchesService) and an audit entry
+   * carrying the admin's reason. The branch is served from the new term at
+   * once; nothing is charged and no equity payouts are generated.
+   */
+  @Post(':id/subscription/extend')
+  @ApiOperation({ summary: 'Extend a branch subscription by N months (admin)' })
+  async extendSubscription(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: ExtendBranchSubscriptionDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const actor = {
+      id: req.user?.id ?? null,
+      email: req.user?.email ?? null,
+    };
+    const result = await this.branchesService.extendAdminBranchSubscription(
+      id,
+      dto,
+      actor,
+    );
+    await this.auditService.log({
+      action: 'branch.subscription.extend',
+      targetType: 'branch',
+      targetId: id,
+      actorId: actor.id,
+      actorEmail: actor.email,
+      reason: dto.reason,
+      meta: {
+        branchName: result.branch.name,
+        retailTenantId: result.branch.retailTenantId,
+        months: dto.months,
+        planCode: result.subscription.planCode,
+        subscriptionId: result.subscription.id,
+        startsAt: result.subscription.startsAt,
+        endsAt: result.subscription.endsAt,
+        amountTotal: result.amountTotal,
+        monthlyRate: result.monthlyRate,
+        currency: result.subscription.currency,
+        chainsFromPreviousEnd: result.chainsFromPreviousEnd,
+        previousSubscriptionId: result.previous?.id ?? null,
+        previousPlanCode: result.previous?.planCode ?? null,
+        previousEndsAt: result.previous?.endsAt ?? null,
+      },
+    });
+    return result;
   }
 
   /**

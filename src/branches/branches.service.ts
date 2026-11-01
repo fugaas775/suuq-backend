@@ -11,10 +11,18 @@ import { User } from '../users/entities/user.entity';
 import { VendorStore } from '../vendor/entities/vendor-store.entity';
 import { TenantSubscription } from '../retail/entities/tenant-subscription.entity';
 import {
+  addCalendarMonths,
   billingStateOf,
+  monthlyEquivalent,
   pickCurrentSubscription,
+  round2,
   summarizeSubscription,
 } from '../retail/subscription-summary';
+import {
+  TenantBillingInterval,
+  TenantSubscriptionStatus,
+} from '../retail/entities/tenant-subscription.entity';
+import { POS_BRANCH_SUBSCRIPTION_MONTHLY_EQUIVALENT } from '../branch-staff/pos-workspace-pricing';
 
 export interface AdminListBranchesQuery {
   search?: string;
@@ -22,6 +30,17 @@ export interface AdminListBranchesQuery {
   isActive?: boolean;
   page?: number;
   limit?: number;
+}
+
+export interface ExtendAdminBranchSubscriptionInput {
+  months: number;
+  reason: string;
+  amountTotal?: number | null;
+}
+
+export interface AdminActor {
+  id: number | null;
+  email: string | null;
 }
 
 /**
@@ -183,6 +202,149 @@ export class BranchesService {
             legacyByTenant.get(branch.retailTenantId) ?? [],
           )
         : null);
+  }
+
+  /**
+   * Grants a branch a further paid term by hand — the renewal an admin records
+   * when the owner paid outside Ebirr (bank transfer, cash) or is being carried
+   * as goodwill.
+   *
+   * Writes a NEW branch-scoped row rather than stretching the current one, so
+   * each term keeps its own dates and price and the history reads as a
+   * sequence. Every reader of "which row governs this branch" — the admin list
+   * (pickCurrentSubscription: latest startsAt) and the workspace gate
+   * (findSubscriptionForBranch: latest createdAt) — picks the newest row, so
+   * the branch is served from it at once. The old row lapses on its own.
+   *
+   * The new term chains from the current period's end while that end is still
+   * ahead: paying early never shortens what was already paid for. Once the
+   * period has lapsed the term starts now — the gap was not served, so it is
+   * not sold.
+   *
+   * Price: the branch's own monthly rate carries over (a branch on the retired
+   * 1,900 ETB six-month plan keeps it), the platform price applies to a branch
+   * that has never paid, and an explicit amountTotal — 0 for a free extension
+   * — overrides both. No Ebirr money moves and no equity payouts are generated:
+   * those follow a payment, not an admin grant.
+   */
+  async extendAdminBranchSubscription(
+    id: number,
+    input: ExtendAdminBranchSubscriptionInput,
+    actor: AdminActor,
+  ) {
+    const branch = await this.branchesRepository.findOne({
+      where: { id },
+      relations: { retailTenant: true },
+    });
+    if (!branch) throw new NotFoundException(`Branch #${id} not found`);
+    if (branch.retailTenantId == null) {
+      throw new BadRequestException(
+        `Branch #${id} is not assigned to a Retail OS tenant; assign it a workspace before extending its subscription.`,
+      );
+    }
+
+    const months = Number(input.months);
+    if (!Number.isInteger(months) || months < 1 || months > 24) {
+      throw new BadRequestException(
+        'months must be a whole number from 1 to 24',
+      );
+    }
+    const reason = String(input.reason ?? '').trim();
+    if (!reason) {
+      throw new BadRequestException('A reason is required');
+    }
+    const explicitTotal =
+      input.amountTotal === undefined || input.amountTotal === null
+        ? null
+        : Number(input.amountTotal);
+    if (explicitTotal !== null && !(explicitTotal >= 0)) {
+      throw new BadRequestException('amountTotal must be zero or more');
+    }
+
+    const currentOf = await this.loadCurrentSubscriptions([branch]);
+    const current = currentOf(branch);
+    const now = new Date();
+
+    const previousEndsAt = current?.endsAt ? new Date(current.endsAt) : null;
+    const chainsFromPreviousEnd =
+      previousEndsAt !== null && previousEndsAt.getTime() > now.getTime();
+    const startsAt = chainsFromPreviousEnd ? previousEndsAt : now;
+    const endsAt = addCalendarMonths(startsAt, months);
+
+    const inheritedMonthly =
+      current && current.status !== TenantSubscriptionStatus.TRIAL
+        ? monthlyEquivalent(current)
+        : 0;
+    const monthlyRate =
+      explicitTotal !== null
+        ? round2(explicitTotal / months)
+        : inheritedMonthly > 0
+          ? inheritedMonthly
+          : POS_BRANCH_SUBSCRIPTION_MONTHLY_EQUIVALENT;
+    const amountTotal =
+      explicitTotal !== null
+        ? round2(explicitTotal)
+        : round2(monthlyRate * months);
+
+    const planCode = months === 12 ? 'POS_BRANCH_1Y' : `POS_BRANCH_${months}M`;
+    const billingInterval =
+      months === 1
+        ? TenantBillingInterval.MONTHLY
+        : months === 6
+          ? TenantBillingInterval.SIX_MONTHS
+          : months === 12
+            ? TenantBillingInterval.ONE_YEAR
+            : TenantBillingInterval.CUSTOM;
+    const currency = current?.currency?.trim() || 'ETB';
+
+    const subscriptionsRepo = this.dataSource.getRepository(TenantSubscription);
+    const saved = await subscriptionsRepo.save(
+      subscriptionsRepo.create({
+        tenantId: branch.retailTenantId,
+        branchId: branch.id,
+        planCode,
+        status: TenantSubscriptionStatus.ACTIVE,
+        billingInterval,
+        amount: monthlyRate,
+        amountTotal,
+        periodMonths: months,
+        currency,
+        startsAt,
+        endsAt,
+        autoRenew: false,
+        metadata: {
+          posWorkspacePlanCode: planCode,
+          periodMonths: months,
+          amountTotal,
+          branchId: branch.id,
+          manualExtension: {
+            reason,
+            actorId: actor.id,
+            actorEmail: actor.email,
+            at: now.toISOString(),
+            extendsSubscriptionId: current?.id ?? null,
+            previousEndsAt: previousEndsAt
+              ? previousEndsAt.toISOString()
+              : null,
+            chainsFromPreviousEnd,
+          },
+        },
+      }),
+    );
+
+    return {
+      branch: {
+        id: branch.id,
+        name: branch.name,
+        retailTenantId: branch.retailTenantId,
+      },
+      previous: current ? summarizeSubscription(current, now) : null,
+      subscription: summarizeSubscription(saved, now),
+      billingState: billingStateOf(saved, now),
+      chainsFromPreviousEnd,
+      amountTotal,
+      monthlyRate,
+    };
   }
 
   async patchAdminBranch(

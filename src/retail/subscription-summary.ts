@@ -124,7 +124,7 @@ export function summarizeSubscription(
   };
 }
 
-function round2(n: number): number {
+export function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
@@ -144,4 +144,22 @@ export function billingStateOf(
   const ended = !!sub.endsAt && sub.endsAt.getTime() <= now.getTime();
   if (sub.status === TenantSubscriptionStatus.TRIAL && !ended) return 'TRIAL';
   return 'LAPSED';
+}
+
+/**
+ * The same day-of-month `months` later, clamped to the last day of a shorter
+ * month (31 Jan + 1 → 28/29 Feb). Calendar months, not 30-day blocks: a term
+ * sold as "six months from 1 May" ends on 1 November, which is what the owner
+ * was told and what the admin list shows.
+ */
+export function addCalendarMonths(from: Date, months: number): Date {
+  const result = new Date(from.getTime());
+  const day = result.getUTCDate();
+  result.setUTCDate(1);
+  result.setUTCMonth(result.getUTCMonth() + months);
+  const lastDay = new Date(
+    Date.UTC(result.getUTCFullYear(), result.getUTCMonth() + 1, 0),
+  ).getUTCDate();
+  result.setUTCDate(Math.min(day, lastDay));
+  return result;
 }
