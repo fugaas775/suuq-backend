@@ -94,6 +94,34 @@ import {
 const FOLIO_SETTLE_DEDUPE_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
 
 /** A folio's money as the settlement guards read it — see readFolioBooks. */
+/**
+ * What a folio settlement is deduped against: the folio row it names, or — for
+ * a HOTEL check-in that could not open its folio — the stay itself.
+ */
+type FolioSettlementAnchor =
+  | { key: 'backendFolioId' | 'folioId'; id: number }
+  | {
+      key: 'stay';
+      id: number;
+      roomNumber: string;
+      guestName: string;
+      checkInAt: string;
+    };
+
+/**
+ * FNV-1a 32-bit of a stay key, folded into the positive int4 range the
+ * advisory lock takes. A collision with a folio id only serialises two
+ * unrelated settles for a moment; it never merges them.
+ */
+function stayLockId(key: string): number {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < key.length; i += 1) {
+    hash ^= key.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash & 0x7fffffff || 1;
+}
+
 type FolioBooks = {
   sales: PosCheckout[];
   returns: PosCheckout[];
@@ -653,7 +681,7 @@ export class PosCheckoutService {
       });
       if (result.duplicate) {
         this.logger.warn(
-          `Collapsed duplicate folio settlement for branch ${dto.branchId} folio ${folioLockId} (amount ${dto.total}) onto checkout ${result.duplicate.id}`,
+          `Collapsed duplicate folio settlement for branch ${dto.branchId} ${this.describeFolioAnchor(dto)} (amount ${dto.total}) onto checkout ${result.duplicate.id}`,
         );
         // Say so, rather than handing back the original as though it were the
         // row just posted. The till cannot tell the two apart otherwise — it
@@ -1807,7 +1835,7 @@ export class PosCheckoutService {
    */
   private resolveFolioSettlementAnchor(
     dto: IngestPosCheckoutDto,
-  ): { key: 'backendFolioId' | 'folioId'; id: number } | null {
+  ): FolioSettlementAnchor | null {
     if (dto.transactionType !== PosCheckoutTransactionType.SALE) {
       return null;
     }
@@ -1818,7 +1846,7 @@ export class PosCheckoutService {
           ? ('folioId' as const)
           : null;
     if (!key) {
-      return null;
+      return this.resolveStaySettlementAnchor(dto);
     }
     const id = Number(dto.metadata?.[key]);
     // pg_advisory_xact_lock(int, int) needs an int4; folio ids are well within
@@ -1844,7 +1872,74 @@ export class PosCheckoutService {
     if (!anchor) {
       return null;
     }
-    return anchor.key === 'backendFolioId' ? anchor.id : -anchor.id;
+    return anchor.key === 'folioId' ? -anchor.id : anchor.id;
+  }
+
+  /**
+   * The stay as the anchor, for a HOTEL check-in settled without a folio id.
+   *
+   * A fresh check-in paid at step 2 opens its pos_hotel_folios row first and
+   * stamps the id on the receipt — unless that open is refused. Offline, or
+   * with every call answering 403 while the branch's term had lapsed, the
+   * receipt goes to the outbox with no folio id at all, and the folio guards
+   * never see it. Muntaha Room 204, 2026-11-01: the clerk tapped twice seven
+   * seconds apart, both receipts queued, both posted the moment the branch was
+   * renewed — 11,000 collected on a 5,500 stay. The stay still names the
+   * payment: room + check-in + guest, the same key suspendCart supersedes a
+   * folio-less row on. HOTEL only, and only when all three are present — a
+   * stay that cannot be named is left to the per-receipt key, as before.
+   */
+  private resolveStaySettlementAnchor(
+    dto: IngestPosCheckoutDto,
+  ): FolioSettlementAnchor | null {
+    const md = dto.metadata ?? {};
+    if (String(md.serviceFormat ?? '').toUpperCase() !== 'HOTEL') {
+      return null;
+    }
+    const roomNumber = this.normalizeOptionalString(md.roomNumber);
+    const guestName = this.normalizeOptionalString(md.guestName)?.toLowerCase();
+    const checkInAt = this.normalizeOptionalString(md.checkInAt);
+    if (!roomNumber || !guestName || !checkInAt) {
+      return null;
+    }
+    return {
+      key: 'stay',
+      id: stayLockId(`${roomNumber}|${checkInAt}|${guestName}`),
+      roomNumber,
+      guestName,
+      checkInAt,
+    };
+  }
+
+  /** The WHERE fragment that scopes a checkout query to the anchor. */
+  private folioAnchorWhere(anchor: FolioSettlementAnchor): {
+    clause: string;
+    params: Record<string, unknown>;
+  } {
+    if (anchor.key === 'stay') {
+      return {
+        clause:
+          "((c.metadata->>'serviceFormat') = 'HOTEL' AND (c.metadata->>'roomNumber') = :stayRoom AND lower(c.metadata->>'guestName') = :stayGuest AND (c.metadata->>'checkInAt') = :stayCheckIn)",
+        params: {
+          stayRoom: anchor.roomNumber,
+          stayGuest: anchor.guestName,
+          stayCheckIn: anchor.checkInAt,
+        },
+      };
+    }
+    return {
+      clause: `(c.metadata->>'${anchor.key}') = :folioId`,
+      params: { folioId: String(anchor.id) },
+    };
+  }
+
+  /** For the log line: which folio, or which stay, a duplicate collapsed onto. */
+  private describeFolioAnchor(dto: IngestPosCheckoutDto): string {
+    const anchor = this.resolveFolioSettlementAnchor(dto);
+    if (!anchor) return 'folio ?';
+    return anchor.key === 'stay'
+      ? `stay ${anchor.roomNumber}/${anchor.guestName}/${anchor.checkInAt}`
+      : `folio ${anchor.id}`;
   }
 
   /**
@@ -1873,12 +1968,12 @@ export class PosCheckoutService {
       return null;
     }
     const excluded = [PosCheckoutStatus.VOIDED, PosCheckoutStatus.FAILED];
-    const folioId = String(anchor.id);
+    const scope = this.folioAnchorWhere(anchor);
     const sales = await manager
       .getRepository(PosCheckout)
       .createQueryBuilder('c')
       .where('c.branchId = :branchId', { branchId: dto.branchId })
-      .andWhere(`(c.metadata->>'${anchor.key}') = :folioId`, { folioId })
+      .andWhere(scope.clause, scope.params)
       .andWhere('c.transactionType = :tt', {
         tt: PosCheckoutTransactionType.SALE,
       })
@@ -1898,13 +1993,11 @@ export class PosCheckoutService {
       .andWhere('c.status NOT IN (:...excluded)', { excluded });
     if (receipts.length) {
       returnsQb.andWhere(
-        `((c.metadata->>'${anchor.key}') = :folioId OR (c.metadata->'returnContext'->>'sourceReceiptNumber') IN (:...receipts))`,
-        { folioId, receipts },
+        `(${scope.clause} OR (c.metadata->'returnContext'->>'sourceReceiptNumber') IN (:...receipts))`,
+        { ...scope.params, receipts },
       );
     } else {
-      returnsQb.andWhere(`(c.metadata->>'${anchor.key}') = :folioId`, {
-        folioId,
-      });
+      returnsQb.andWhere(scope.clause, scope.params);
     }
     const returns = await returnsQb.getMany();
     const reversedBy = new Map<string, number>();
@@ -1958,13 +2051,12 @@ export class PosCheckoutService {
     }
     const amountCents = Math.round(Number(dto.total || 0) * 100);
     const windowStart = new Date(Date.now() - FOLIO_SETTLE_DEDUPE_WINDOW_MS);
+    const scope = this.folioAnchorWhere(anchor);
     const candidate = await manager
       .getRepository(PosCheckout)
       .createQueryBuilder('c')
       .where('c.branchId = :branchId', { branchId: dto.branchId })
-      .andWhere(`(c.metadata->>'${anchor.key}') = :folioId`, {
-        folioId: String(anchor.id),
-      })
+      .andWhere(scope.clause, scope.params)
       .andWhere('c.transactionType = :tt', {
         tt: PosCheckoutTransactionType.SALE,
       })

@@ -1266,6 +1266,108 @@ describe('PosCheckoutService', () => {
     expect(posCheckoutsRepository.save).toHaveBeenCalled();
   });
 
+  it('collapses a duplicate HOTEL check-in settlement that has no folio id, anchored on the stay (room + check-in + guest)', async () => {
+    // Muntaha Room 204, 2026-11-01: the folio open was refused (the branch's
+    // term had lapsed, every call 403), so neither receipt carried a folio id
+    // and both random per-receipt keys posted when the outbox flushed.
+    posCheckoutsRepository.findOne.mockResolvedValue(null);
+    const stay = {
+      serviceFormat: 'HOTEL',
+      roomNumber: '204',
+      guestName: 'famliy',
+      checkInAt: '2026-11-01',
+      folioGrandTotal: 5500,
+    };
+    const original = {
+      id: 42480,
+      branchId: 3,
+      externalCheckoutId: null,
+      idempotencyKey: 'receipt-1793545815872-ncu2eq-POS-3',
+      receiptNumber: 'POS-3-1793545815872',
+      transactionType: PosCheckoutTransactionType.SALE,
+      status: PosCheckoutStatus.PROCESSED,
+      currency: 'ETB',
+      subtotal: 5500,
+      discountAmount: 0,
+      taxAmount: 0,
+      total: 5500,
+      paidAmount: 5500,
+      changeDue: 0,
+      itemCount: 2,
+      occurredAt: new Date('2026-11-01T15:10:15.000Z'),
+      processedAt: new Date('2026-11-01T17:49:57.000Z'),
+      metadata: { ...stay },
+      tenders: [],
+      items: [],
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    const folioQb = {
+      getMany: jest.fn().mockResolvedValue([original]),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      getOne: jest.fn().mockResolvedValue(original),
+    };
+    posCheckoutsRepository.createQueryBuilder.mockReturnValue(folioQb);
+
+    const result = await service.ingest({
+      branchId: 3,
+      transactionType: PosCheckoutTransactionType.SALE,
+      idempotencyKey: 'receipt-1793545822983-e6j10k-POS-3',
+      currency: 'ETB',
+      subtotal: 5500,
+      total: 5500,
+      occurredAt: '2026-11-01T15:10:22.000Z',
+      metadata: { ...stay },
+      items: [{ productId: 55, quantity: 1, unitPrice: 4500, lineTotal: 4500 }],
+    });
+
+    expect(result.id).toBe(42480);
+    expect(result.collapsedDuplicate).toBe(true);
+    expect(posCheckoutsRepository.save).not.toHaveBeenCalled();
+    // The stay — not a folio id — is what the lookups were scoped to, and the
+    // guest is part of it: a different guest in the same room is another stay.
+    expect(folioQb.andWhere).toHaveBeenCalledWith(
+      expect.stringContaining("lower(c.metadata->>'guestName') = :stayGuest"),
+      expect.objectContaining({
+        stayRoom: '204',
+        stayGuest: 'famliy',
+        stayCheckIn: '2026-11-01',
+      }),
+    );
+  });
+
+  it('leaves a folio-less HOTEL settle to the per-receipt key when the stay cannot be named', async () => {
+    const folioQb = {
+      getMany: jest.fn().mockResolvedValue([]),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      getOne: jest.fn().mockResolvedValue(null),
+    };
+    posCheckoutsRepository.createQueryBuilder.mockReturnValue(folioQb);
+
+    await service.ingest({
+      branchId: 3,
+      transactionType: PosCheckoutTransactionType.SALE,
+      currency: 'ETB',
+      subtotal: 5500,
+      total: 5500,
+      occurredAt: '2026-11-01T15:10:22.000Z',
+      // No guest name: nothing to anchor on.
+      metadata: {
+        serviceFormat: 'HOTEL',
+        roomNumber: '204',
+        checkInAt: '2026-11-01',
+      },
+      items: [{ productId: 55, quantity: 1, unitPrice: 4500, lineTotal: 4500 }],
+    });
+
+    expect(posCheckoutsRepository.save).toHaveBeenCalled();
+    expect(folioQb.getOne).not.toHaveBeenCalled();
+  });
+
   it('collapses a duplicate SCHOOL fee settlement, which is anchored on folioId', async () => {
     // A school has no pos_hotel_folios row, so its settles carry `folioId` (the
     // suspended-cart id) and no `backendFolioId` at all — and the dedupe used to
