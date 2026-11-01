@@ -13,7 +13,6 @@ import { TenantSubscription } from '../retail/entities/tenant-subscription.entit
 import {
   addCalendarMonths,
   billingStateOf,
-  monthlyEquivalent,
   pickCurrentSubscription,
   round2,
   summarizeSubscription,
@@ -221,11 +220,11 @@ export class BranchesService {
    * period has lapsed the term starts now — the gap was not served, so it is
    * not sold.
    *
-   * Price: the branch's own monthly rate carries over (a branch on the retired
-   * 1,900 ETB six-month plan keeps it), the platform price applies to a branch
-   * that has never paid, and an explicit amountTotal — 0 for a free extension
-   * — overrides both. No Ebirr money moves and no equity payouts are generated:
-   * those follow a payment, not an admin grant.
+   * Price: the platform rate (3,900 ETB a month) × months — a branch that
+   * started on the retired 1,900 ETB six-month plan renews at today's price,
+   * not its old one. An explicit amountTotal (0 for a free extension) overrides
+   * it. No Ebirr money moves and no equity payouts are generated: those follow
+   * a payment, not an admin grant.
    */
   async extendAdminBranchSubscription(
     id: number,
@@ -271,16 +270,10 @@ export class BranchesService {
     const startsAt = chainsFromPreviousEnd ? previousEndsAt : now;
     const endsAt = addCalendarMonths(startsAt, months);
 
-    const inheritedMonthly =
-      current && current.status !== TenantSubscriptionStatus.TRIAL
-        ? monthlyEquivalent(current)
-        : 0;
     const monthlyRate =
       explicitTotal !== null
         ? round2(explicitTotal / months)
-        : inheritedMonthly > 0
-          ? inheritedMonthly
-          : POS_BRANCH_SUBSCRIPTION_MONTHLY_EQUIVALENT;
+        : POS_BRANCH_SUBSCRIPTION_MONTHLY_EQUIVALENT;
     const amountTotal =
       explicitTotal !== null
         ? round2(explicitTotal)

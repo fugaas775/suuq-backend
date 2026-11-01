@@ -276,13 +276,13 @@ describe('BranchesService.extendAdminBranchSubscription', () => {
     jest.useRealTimers();
   });
 
-  it("chains six months from the running period's end at the branch's own rate", async () => {
+  it("chains six months from the running period's end at the platform rate", async () => {
     branchesRepository.findOne.mockResolvedValue(muntaha());
     subscriptions = [sixMonthRow()];
 
     const result = await service.extendAdminBranchSubscription(
       47,
-      { months: 6, reason: 'Paid 11,400 ETB by bank transfer' },
+      { months: 6, reason: 'Paid 23,400 ETB by bank transfer' },
       actor,
     );
 
@@ -293,8 +293,8 @@ describe('BranchesService.extendAdminBranchSubscription', () => {
       planCode: 'POS_BRANCH_6M',
       status: TenantSubscriptionStatus.ACTIVE,
       billingInterval: TenantBillingInterval.SIX_MONTHS,
-      amount: 1900,
-      amountTotal: 11400,
+      amount: 3900,
+      amountTotal: 23400,
       periodMonths: 6,
       currency: 'ETB',
       autoRenew: false,
@@ -304,10 +304,10 @@ describe('BranchesService.extendAdminBranchSubscription', () => {
     expect(saved[0].metadata).toMatchObject({
       posWorkspacePlanCode: 'POS_BRANCH_6M',
       periodMonths: 6,
-      amountTotal: 11400,
+      amountTotal: 23400,
       branchId: 47,
       manualExtension: {
-        reason: 'Paid 11,400 ETB by bank transfer',
+        reason: 'Paid 23,400 ETB by bank transfer',
         actorId: 1,
         actorEmail: 'admin@suuq.test',
         at: NOW.toISOString(),
@@ -319,11 +319,11 @@ describe('BranchesService.extendAdminBranchSubscription', () => {
     expect(result).toMatchObject({
       branch: { id: 47, name: 'Muntaha Hotel', retailTenantId: 19 },
       previous: { id: 90, planCode: 'POS_BRANCH_6M' },
-      subscription: { id: 500, planCode: 'POS_BRANCH_6M', monthlyAmount: 1900 },
+      subscription: { id: 500, planCode: 'POS_BRANCH_6M', monthlyAmount: 3900 },
       billingState: 'PAYING',
       chainsFromPreviousEnd: true,
-      amountTotal: 11400,
-      monthlyRate: 1900,
+      amountTotal: 23400,
+      monthlyRate: 3900,
     });
     expect(result.subscription.daysRemaining).toBe(182);
   });
@@ -353,7 +353,7 @@ describe('BranchesService.extendAdminBranchSubscription', () => {
     expect(result.billingState).toBe('PAYING');
   });
 
-  it('charges the platform price when the branch has only a free trial, or no row at all', async () => {
+  it('charges the platform price for a free trial, and for a branch with no row at all', async () => {
     branchesRepository.findOne.mockResolvedValue(muntaha());
     subscriptions = [
       sixMonthRow({
@@ -454,8 +454,8 @@ describe('BranchesService.extendAdminBranchSubscription', () => {
     expect(result.previous?.id).toBe(10);
     expect(saved[0]).toMatchObject({
       branchId: 47,
-      amount: 2500,
-      amountTotal: 15000,
+      amount: 3900,
+      amountTotal: 23400,
     });
     expect(saved[0].startsAt.toISOString()).toBe('2026-11-10T00:00:00.000Z');
   });

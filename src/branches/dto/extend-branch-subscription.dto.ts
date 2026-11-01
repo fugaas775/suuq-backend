@@ -24,7 +24,7 @@ export class ExtendBranchSubscriptionDto {
   months!: number;
 
   @ApiProperty({
-    example: 'Paid 11,400 ETB by bank transfer on 1 Nov 2026',
+    example: 'Paid 23,400 ETB by bank transfer on 1 Nov 2026',
     description: 'Why the term is being granted; kept on the audit log.',
   })
   @IsString()
@@ -33,11 +33,10 @@ export class ExtendBranchSubscriptionDto {
   reason!: string;
 
   @ApiPropertyOptional({
-    example: 11400,
+    example: 23400,
     description:
-      'Amount collected for the whole term. Defaults to the branch’s own ' +
-      'monthly rate × months (the platform price for a branch that never ' +
-      'paid); 0 records a free extension.',
+      'Amount collected for the whole term. Defaults to the platform rate ' +
+      '(3,900 ETB a month) × months; 0 records a free extension.',
   })
   @IsOptional()
   @Type(() => Number)
