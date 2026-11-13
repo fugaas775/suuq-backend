@@ -228,6 +228,19 @@ export class Branch {
   qsrCustomerCopyOnSend!: boolean;
 
   /**
+   * SCHOOL only: a public school — it collects no fees from its pupils.
+   *
+   * Private and public schools run the one SCHOOL format; this is the whole
+   * difference between them. On, the fee desk, the fee runs, arrears,
+   * scholarships and the families' statements all stand down, and a pupil is
+   * enrolled without a fee line. The school's own books — expenses, payroll —
+   * are untouched. Off by default: every school that existed before this
+   * column collects fees.
+   */
+  @Column({ type: 'boolean', default: false })
+  schoolFeeFree!: boolean;
+
+  /**
    * Per-branch layout for the branch-customizable Home page (POS `/home`) — which
    * widgets show and in what order, custom quick-links, a welcome note and
    * branding. Null = never customized; the client renders a per-format default.

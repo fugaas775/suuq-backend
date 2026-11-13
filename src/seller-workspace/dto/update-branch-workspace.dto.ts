@@ -358,4 +358,14 @@ export class UpdateBranchWorkspaceDto {
   @IsOptional()
   @IsBoolean()
   qsrCustomerCopyOnSend?: boolean;
+
+  @ApiPropertyOptional({
+    description:
+      'SCHOOL: a public school that collects no fees from its pupils. Off by ' +
+      'default.',
+    example: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  schoolFeeFree?: boolean;
 }

@@ -62,6 +62,9 @@ function toBranchItem(
     name: branch.name,
     serviceFormat: branch.serviceFormat ?? null,
     serviceFormatLabel: toFormatLabel(branch.serviceFormat),
+    // SCHOOL: a public school that collects no fees — the public page and the
+    // enrolment application say nothing about money.
+    schoolFeeFree: branch.schoolFeeFree === true,
     address: branch.address ?? null,
     city: branch.city ?? null,
     phone: branch.phone ?? null,

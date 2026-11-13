@@ -427,6 +427,12 @@ export class SellerWorkspaceBranchWorkspaceDto {
   qsrCustomerCopyOnSend?: boolean;
 
   @ApiPropertyOptional({
+    description:
+      'SCHOOL: a public school that collects no fees from its pupils.',
+  })
+  schoolFeeFree?: boolean;
+
+  @ApiPropertyOptional({
     nullable: true,
     description: 'Consumer store ID linked to this branch, if any.',
   })

@@ -96,6 +96,7 @@ export interface PosBranchSummary {
   taxName: string | null;
   homeConfig: BranchHomeConfig | null;
   qsrCustomerCopyOnSend: boolean;
+  schoolFeeFree: boolean;
   posExperienceProfileCode: string | null;
 }
 
@@ -122,6 +123,7 @@ export interface PosWorkspaceActivationCandidate {
   taxName: string | null;
   homeConfig: BranchHomeConfig | null;
   qsrCustomerCopyOnSend: boolean;
+  schoolFeeFree: boolean;
   role: BranchStaffRole;
   permissions: string[];
   assignedSurfaces: string[] | null;
@@ -752,6 +754,7 @@ export class BranchStaffService {
           taxName: summary.taxName ?? null,
           homeConfig: summary.homeConfig ?? null,
           qsrCustomerCopyOnSend: Boolean(summary.qsrCustomerCopyOnSend),
+          schoolFeeFree: Boolean(summary.schoolFeeFree),
           role: summary.role,
           isOwner: summary.isOwner,
           isTenantOwner: summary.isTenantOwner,
@@ -1162,6 +1165,7 @@ export class BranchStaffService {
         taxName: branch.taxName ?? null,
         homeConfig: branch.homeConfig ?? null,
         qsrCustomerCopyOnSend: Boolean(branch.qsrCustomerCopyOnSend),
+        schoolFeeFree: Boolean(branch.schoolFeeFree),
         role: BranchStaffRole.MANAGER,
         permissions: [],
         assignedSurfaces: null,
@@ -1223,6 +1227,7 @@ export class BranchStaffService {
           taxName: branch.taxName ?? null,
           homeConfig: branch.homeConfig ?? null,
           qsrCustomerCopyOnSend: Boolean(branch.qsrCustomerCopyOnSend),
+          schoolFeeFree: Boolean(branch.schoolFeeFree),
           role: BranchStaffRole.MANAGER,
           permissions: [],
           assignedSurfaces: null,
@@ -1308,6 +1313,9 @@ export class BranchStaffService {
           existing?.qsrCustomerCopyOnSend ??
             assignment.branch.qsrCustomerCopyOnSend ??
             false,
+        ),
+        schoolFeeFree: Boolean(
+          existing?.schoolFeeFree ?? assignment.branch.schoolFeeFree ?? false,
         ),
         role: assignment.role ?? existing?.role ?? BranchStaffRole.OPERATOR,
         permissions: mergedPermissions,

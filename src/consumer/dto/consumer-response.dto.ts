@@ -82,6 +82,8 @@ export class ConsumerBranchItemDto {
   nextOpenAt!: string | null;
   serviceFormat!: string | null;
   serviceFormatLabel!: string;
+  /** SCHOOL: a public school that collects no fees. */
+  schoolFeeFree?: boolean;
   address!: string | null;
   city!: string | null;
   phone!: string | null;

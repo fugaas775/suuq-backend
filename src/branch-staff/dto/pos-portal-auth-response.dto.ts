@@ -161,6 +161,12 @@ export class PosPortalBranchSummaryDto {
       'QSR: also print the customer copy every time an order is sent to the kitchen.',
   })
   qsrCustomerCopyOnSend!: boolean;
+
+  @ApiPropertyOptional({
+    description:
+      'SCHOOL: a public school that collects no fees from its pupils.',
+  })
+  schoolFeeFree!: boolean;
 }
 
 export class PosPortalSessionResponseDto {

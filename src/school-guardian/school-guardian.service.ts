@@ -1123,6 +1123,9 @@ export class SchoolGuardianService {
       taxRate: Number(branch.taxRate) || 0,
       taxInclusive: branch.taxInclusive === true,
       taxName: branch.taxName ?? null,
+      // A public school collects no fees: the portals drop the statement,
+      // the balance and the payments, and say nothing about money.
+      feeFree: branch.schoolFeeFree === true,
     };
   }
 
