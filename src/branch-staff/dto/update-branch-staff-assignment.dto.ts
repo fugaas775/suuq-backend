@@ -26,6 +26,19 @@ export class UpdateBranchStaffAssignmentDto {
   @IsEnum(BranchStaffRole)
   role?: BranchStaffRole;
 
+  /**
+   * The name a staff LOGIN the branch created carries — what every receipt it
+   * rings is stamped with. Only a branch-made account (`pos.m.…@sys.internal`)
+   * can be renamed here; a person's own account keeps the name they gave it.
+   * Found at SMAG (2026-11-14): the cashier's login was created as "Cashier",
+   * so 437 receipts named nobody.
+   */
+  @IsOptional()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @IsString()
+  @MaxLength(80)
+  displayName?: string;
+
   @IsOptional()
   @IsArray()
   @ArrayUnique()

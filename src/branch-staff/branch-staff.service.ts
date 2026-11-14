@@ -1894,6 +1894,7 @@ export class BranchStaffService {
       posExperienceProfileCode?: string | null;
       serviceSharePct?: number | null;
       isActive?: boolean;
+      displayName?: string;
     },
     actor: { id?: number | null; email?: string | null; roles?: string[] },
   ) {
@@ -1944,6 +1945,25 @@ export class BranchStaffService {
       assignment.isActive = dto.isActive;
     }
 
+    // The login's NAME — branch-made accounts only. Checked before anything is
+    // written, so a refused rename leaves the rest of the edit unapplied too.
+    let nextDisplayName: string | null = null;
+    if (dto.displayName !== undefined) {
+      const name = String(dto.displayName || '').trim();
+      if (!name) {
+        throw new BadRequestException('A staff login needs a name.');
+      }
+      const email = String(assignment.user?.email || '').toLowerCase();
+      if (!email.endsWith('@sys.internal')) {
+        throw new ForbiddenException(
+          'Only a staff login created by the branch can be renamed here.',
+        );
+      }
+      if (name !== String(assignment.user?.displayName || '')) {
+        nextDisplayName = name;
+      }
+    }
+
     // A quick-unlock PIN belongs to the waiter lane, not to the person. Moving
     // someone off QSR_WAITER — or deactivating them — must drop the PIN with
     // them, so a demotion can never leave fast register access behind.
@@ -1976,6 +1996,13 @@ export class BranchStaffService {
         unlockPinSetAt: assignment.unlockPinSetAt,
       },
     );
+    if (nextDisplayName !== null) {
+      await this.usersRepository.update(
+        { id: userId },
+        { displayName: nextDisplayName },
+      );
+      if (assignment.user) assignment.user.displayName = nextDisplayName;
+    }
     const saved = assignment;
 
     if (dto.role && dto.role !== previousRole) {

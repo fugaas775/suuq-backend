@@ -44,7 +44,7 @@ describe('BranchStaffService', () => {
     findOne: jest.Mock;
     find: jest.Mock;
   };
-  let usersRepository: { findOne: jest.Mock };
+  let usersRepository: { findOne: jest.Mock; update: jest.Mock };
   let retailTenantsRepository: { find: jest.Mock };
   let tenantSubscriptionsRepository: any;
   let emailService: { send: jest.Mock };
@@ -75,6 +75,7 @@ describe('BranchStaffService', () => {
     };
     usersRepository = {
       findOne: jest.fn(),
+      update: jest.fn().mockResolvedValue({ affected: 1 }),
     };
     retailTenantsRepository = {
       find: jest.fn().mockResolvedValue([]),
@@ -708,6 +709,69 @@ describe('BranchStaffService', () => {
         capabilities: [BranchStaffCapability.MANAGE_BRANCH_STAFF],
       }),
     );
+  });
+
+  describe('renaming a staff login (SMAG 2026-11-14: the cashier login was "Cashier")', () => {
+    const assignmentFor = (email: string, displayName = 'Cashier') => ({
+      id: 324,
+      branchId: 128,
+      userId: 2381,
+      role: BranchStaffRole.OPERATOR,
+      permissions: [],
+      assignedSurfaces: null,
+      capabilities: [],
+      isActive: true,
+      user: { id: 2381, email, displayName },
+    });
+    const owner = { id: 1863, roles: ['VENDOR'] };
+    const asOwnerFinding = (row: unknown) => {
+      // assertCanManageBranchStaff reads the actor's own assignment first.
+      assignmentsRepository.findOne
+        .mockResolvedValueOnce({
+          id: 314,
+          capabilities: [BranchStaffCapability.MANAGE_BRANCH_STAFF],
+        })
+        .mockResolvedValueOnce(row);
+    };
+
+    it('renames a branch-made login, so its receipts carry the person’s name', async () => {
+      asOwnerFinding(assignmentFor('pos.m.smag.cashier@sys.internal'));
+      const saved = await service.updateAssignment(
+        128,
+        2381,
+        { displayName: '  Naxwo ' },
+        owner,
+      );
+      expect(usersRepository.update).toHaveBeenCalledWith(
+        { id: 2381 },
+        { displayName: 'Naxwo' },
+      );
+      expect(saved.user?.displayName).toBe('Naxwo');
+    });
+
+    it('never renames a person’s own account', async () => {
+      asOwnerFinding(assignmentFor('someone@gmail.com', 'Someone'));
+      await expect(
+        service.updateAssignment(128, 2381, { displayName: 'Other' }, owner),
+      ).rejects.toThrow(/created by the branch/);
+      expect(usersRepository.update).not.toHaveBeenCalled();
+      expect(assignmentsRepository.update).not.toHaveBeenCalled();
+    });
+
+    it('refuses a blank name, and writes nothing when the name is unchanged', async () => {
+      asOwnerFinding(assignmentFor('pos.m.smag.cashier@sys.internal'));
+      await expect(
+        service.updateAssignment(128, 2381, { displayName: '   ' }, owner),
+      ).rejects.toThrow(/needs a name/);
+      asOwnerFinding(assignmentFor('pos.m.smag.cashier@sys.internal', 'Naxwo'));
+      await service.updateAssignment(
+        128,
+        2381,
+        { displayName: 'Naxwo' },
+        owner,
+      );
+      expect(usersRepository.update).not.toHaveBeenCalled();
+    });
   });
 
   it('returns activation candidates for branches that exist but are not yet activated for POS-S', async () => {
