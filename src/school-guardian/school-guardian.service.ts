@@ -26,6 +26,7 @@ import {
 import { SchoolClass } from '../school/entities/school-class.entity';
 import { SchoolTextbookLoan } from '../school/entities/school-textbook-loan.entity';
 import { SchoolTimetableService } from '../school/school-timetable.service';
+import { SchoolExamTimetableService } from '../school/school-exam-timetable.service';
 import { User } from '../users/entities/user.entity';
 import {
   CreateSchoolGuardianDto,
@@ -118,6 +119,10 @@ export class SchoolGuardianService {
     private readonly statementCodes: SchoolStatementCodeService,
     // Optional so the spec's hand-built service needs no shelf.
     @Optional() private readonly curriculum?: SchoolCurriculumService,
+    // Last and optional, so the specs that build this service by position
+    // keep working; absent, the portal simply lists no exams.
+    @Optional()
+    private readonly examTimetables?: SchoolExamTimetableService,
   ) {}
 
   // ── shared reads ─────────────────────────────────────────────────────────
@@ -1373,6 +1378,7 @@ export class SchoolGuardianService {
       loans,
       timetable,
       classRow,
+      exams,
     ] = await Promise.all([
       this.attendance.list(AttendanceSubjectType.STUDENT, {
         branchId,
@@ -1404,6 +1410,10 @@ export class SchoolGuardianService {
             .andWhere('lower(k.code) = :code', { code: fold(p.classCode) })
             .getOne()
         : Promise.resolve(null),
+      // The class's PUBLISHED exam timetables (Mid Exam I and the like).
+      this.examTimetables
+        ? this.examTimetables.publishedFor(branchId, p.classCode)
+        : Promise.resolve([]),
     ]);
 
     // Refunds are RETURN rows; the ones minted before the folio id was
@@ -1558,6 +1568,7 @@ export class SchoolGuardianService {
         billedAmount: l.billedAmount ?? null,
         billedAt: l.billedAt ?? null,
       })),
+      exams,
       timetable: {
         title: timetable.title,
         periods: timetable.periods,

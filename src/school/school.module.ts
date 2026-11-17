@@ -9,6 +9,9 @@ import { Branch } from '../branches/entities/branch.entity';
 import { BranchStaffAssignment } from '../branch-staff/entities/branch-staff-assignment.entity';
 import { SchoolClass } from './entities/school-class.entity';
 import { SchoolTimetable } from './entities/school-timetable.entity';
+import { SchoolExamTimetable } from './entities/school-exam-timetable.entity';
+import { SchoolExamTimetableService } from './school-exam-timetable.service';
+import { SchoolExamTimetableController } from './school-exam-timetable.controller';
 import { SchoolTextbookLoan } from './entities/school-textbook-loan.entity';
 import { SchoolTextbookTitle } from './entities/school-textbook-title.entity';
 import { SchoolClassController } from './school-class.controller';
@@ -48,6 +51,8 @@ import { SchoolStaffWarningController } from './school-staff-warning.controller'
     TypeOrmModule.forFeature([
       SchoolClass,
       SchoolTimetable,
+      // Exam timetables — Mid Exam I and the like.
+      SchoolExamTimetable,
       // Read-only: refusing to delete a class that still holds children means
       // counting the student folios sitting in it.
       PosSuspendedCart,
@@ -75,6 +80,7 @@ import { SchoolStaffWarningController } from './school-staff-warning.controller'
   controllers: [
     SchoolClassController,
     SchoolTimetableController,
+    SchoolExamTimetableController,
     SchoolTextbookController,
     SchoolLessonPlanController,
     SchoolRoomController,
@@ -85,6 +91,7 @@ import { SchoolStaffWarningController } from './school-staff-warning.controller'
   providers: [
     SchoolClassService,
     SchoolTimetableService,
+    SchoolExamTimetableService,
     SchoolClassScopeService,
     SchoolLessonPlanService,
     SchoolRoomService,
@@ -98,6 +105,7 @@ import { SchoolStaffWarningController } from './school-staff-warning.controller'
   exports: [
     SchoolClassService,
     SchoolTimetableService,
+    SchoolExamTimetableService,
     SchoolClassScopeService,
   ],
 })
