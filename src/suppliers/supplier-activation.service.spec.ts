@@ -101,6 +101,58 @@ describe('SupplierActivationService.completeEbirrActivationPayment', () => {
     expect(result).toEqual({ id: 9, status: 'ACTIVE' });
     expect(subscriptions.save).not.toHaveBeenCalled();
   });
+
+  it('grants the term when the old one ran out but is still stored ACTIVE', async () => {
+    // Ended this afternoon; the midnight pass has not relabelled it. A payment
+    // made in between used to be swallowed as a "duplicate".
+    const lapsed = {
+      id: 9,
+      supplierProfileId: 55,
+      status: 'ACTIVE',
+      endsAt: new Date(Date.now() - 3 * 3_600_000),
+      metadata: { lastActivationReferenceId: 'SUPACT-55-100' },
+    };
+    const subscriptions = {
+      findOne: jest.fn().mockResolvedValue(lapsed),
+      create: jest.fn((v: any) => v),
+      save: jest.fn(async (v: any) => v),
+    };
+    const profiles = {
+      findOne: jest.fn().mockResolvedValue({ id: 55 }),
+      save: jest.fn(async (v: any) => v),
+    };
+    const svc = makeService({ profiles, subscriptions });
+
+    const result: any =
+      await svc.completeEbirrActivationPayment('SUPACT-55-200');
+
+    expect(result.endsAt.getTime()).toBeGreaterThan(
+      Date.now() + 27 * 86_400_000,
+    );
+    expect(result.autoRenew).toBe(false);
+    expect(result.metadata.lastActivationReferenceId).toBe('SUPACT-55-200');
+  });
+
+  it('applies one supplier payment once, however often it is confirmed', async () => {
+    const subscriptions = {
+      findOne: jest.fn().mockResolvedValue({
+        id: 9,
+        status: 'ACTIVE',
+        endsAt: new Date(Date.now() - 3_600_000),
+        metadata: { lastActivationReferenceId: 'SUPACT-55-200' },
+      }),
+      save: jest.fn(),
+    };
+    const profiles = {
+      findOne: jest.fn().mockResolvedValue({ id: 55 }),
+      save: jest.fn(),
+    };
+    const svc = makeService({ profiles, subscriptions });
+
+    await svc.completeEbirrActivationPayment('SUPACT-55-200');
+
+    expect(subscriptions.save).not.toHaveBeenCalled();
+  });
 });
 
 describe('SupplierActivationService.grantFreePeriod', () => {

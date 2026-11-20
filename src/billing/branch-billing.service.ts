@@ -39,6 +39,19 @@ import { PayrollRun } from '../payroll/entities/payroll-run.entity';
 import { PurchaseRun } from '../purchasing/entities/purchase-run.entity';
 import { POS_WORKSPACE_REFERENCE_PREFIX } from '../branch-staff/pos-workspace-activation.service';
 import {
+  POS_BRANCH_SUBSCRIPTION_OPTIONS,
+  findPosBranchSubscriptionOption,
+} from '../branch-staff/pos-workspace-pricing';
+import {
+  POS_EARLY_RENEWAL_WINDOW_DAYS,
+  canRenewEarly,
+  collectAppliedActivationReferences,
+  isActivationReferenceApplied,
+  parseActivationReferencePeriod,
+  resolveNextTermStart,
+} from '../branch-staff/pos-branch-renewal.policy';
+import { addCalendarMonths } from '../retail/subscription-summary';
+import {
   BranchAccruedLiability,
   BranchAccruedLiabilityStatus,
 } from './entities/branch-accrued-liability.entity';
@@ -76,7 +89,21 @@ export interface OwnerBranchBilling {
     autoRenew: boolean;
     amountTotal: number | null;
     currency: string | null;
+    planCode: string | null;
+    /** Months this term covers; null on legacy open-ended rows. */
+    periodMonths: number | null;
   } | null;
+  /**
+   * What paying now would do. `startsAt` is the end of the running term when
+   * there is one (no paid day is lost), otherwise now.
+   */
+  renewal: {
+    allowed: boolean;
+    /** Paying ahead of a term that is still running. */
+    early: boolean;
+    startsAt: Date;
+    windowDays: number;
+  };
   lastPayment: {
     referenceId: string;
     amount: number;
@@ -347,12 +374,21 @@ export class BranchBillingService {
         isTrialWorkspace: false,
         trialEndsAt: null,
       };
+      const nowDate = new Date();
+      const early = canRenewEarly(sub, nowDate.getTime());
+      const canStartRenewal = workspace.canStartRenewal || early;
       return {
         branchId: branch.id,
         branchName: branch.name,
         serviceFormat: (branch as any).serviceFormat ?? null,
         workspaceStatus: workspace.workspaceStatus,
-        canStartRenewal: workspace.canStartRenewal,
+        canStartRenewal,
+        renewal: {
+          allowed: canStartRenewal,
+          early,
+          startsAt: resolveNextTermStart(sub, nowDate),
+          windowDays: POS_EARLY_RENEWAL_WINDOW_DAYS,
+        },
         activationBlockers: workspace.activationBlockers,
         isTrialWorkspace: workspace.isTrialWorkspace,
         trialEndsAt: workspace.trialEndsAt,
@@ -369,6 +405,8 @@ export class BranchBillingService {
               amountTotal:
                 sub.amountTotal != null ? Number(sub.amountTotal) : null,
               currency: sub.currency ?? null,
+              planCode: sub.planCode ?? null,
+              periodMonths: sub.periodMonths ?? null,
             }
           : null,
         lastPayment: lastPaymentByBranch.get(branch.id) || null,
@@ -470,27 +508,113 @@ export class BranchBillingService {
     return branch;
   }
 
-  /** Return Ebirr ledger entries scoped to a branch's POS activation refs. */
-  async listBranchPayments(branchId: number) {
-    const prefix = `${POS_WORKSPACE_REFERENCE_PREFIX}-${branchId}-`;
-    const rows = await this.ebirrRepo
-      .createQueryBuilder('e')
-      .where('e.merch_order_id LIKE :prefix', { prefix: `${prefix}%` })
-      .orderBy('e.created_at', 'DESC')
-      .getMany();
-    return rows.map((row) => ({
+  /** The renewal catalogue the billing screen offers — the prices actually charged. */
+  listRenewalOptions() {
+    return POS_BRANCH_SUBSCRIPTION_OPTIONS.map((option) => ({
+      period: option.period,
+      months: option.months,
+      amount: option.amount,
+      currency: option.currency,
+      planCode: option.planCode,
+    }));
+  }
+
+  /**
+   * One answer to "what happened to this payment", whatever the provider or an
+   * older code path called it. Ebirr confirmations are stored as COMPLETED; a
+   * request approved in the provider's own response used to be left INITIATED
+   * and then swept to EXPIRED, so a reference that demonstrably bought a term
+   * is PAID regardless of the stored label.
+   */
+  private resolvePaymentState(
+    row: Pick<EbirrTransaction, 'status' | 'merch_order_id'>,
+    appliedReferences: Set<string>,
+  ): 'PAID' | 'PENDING' | 'FAILED' | 'EXPIRED' {
+    const status = String(row.status || '').toUpperCase();
+    if (
+      ['COMPLETED', 'SUCCESS', 'APPROVED', 'PAID'].includes(status) ||
+      appliedReferences.has(row.merch_order_id)
+    ) {
+      return 'PAID';
+    }
+    if (status === 'PENDING' || status === 'INITIATED') return 'PENDING';
+    if (status === 'EXPIRED') return 'EXPIRED';
+    return 'FAILED';
+  }
+
+  private async loadBranchSubscriptionRows(branchId: number) {
+    return this.subscriptionsRepo.find({
+      where: { branchId },
+      order: { createdAt: 'DESC' },
+    });
+  }
+
+  /** The term a payment bought, read off the row that recorded its reference. */
+  private findTermForReference(
+    referenceId: string,
+    rows: TenantSubscription[],
+  ): { startsAt: Date; endsAt: Date | null } | null {
+    const row = rows.find(
+      (entry) =>
+        (entry.metadata as any)?.lastActivationReferenceId === referenceId,
+    );
+    return row ? { startsAt: row.startsAt, endsAt: row.endsAt ?? null } : null;
+  }
+
+  private describePayment(row: EbirrTransaction, rows: TenantSubscription[]) {
+    const state = this.resolvePaymentState(
+      row,
+      collectAppliedActivationReferences(rows),
+    );
+    const option = findPosBranchSubscriptionOption(
+      parseActivationReferencePeriod(row.merch_order_id),
+    );
+    const term = this.findTermForReference(row.merch_order_id, rows);
+    return {
       id: row.id,
       referenceId: row.merch_order_id,
       status: row.status,
+      /** PAID | PENDING | FAILED | EXPIRED — what the screens should show. */
+      state,
       amount: Number(row.amount),
       currency: row.currency || 'ETB',
+      /** MONTHLY | ONE_YEAR; null on references issued before the suffix. */
+      period: option?.period ?? null,
+      periodMonths: option?.months ?? null,
+      termStartsAt: term?.startsAt ?? null,
+      termEndsAt: term?.endsAt ?? null,
+      receiptNumber:
+        state === 'PAID' ? `RCT-${String(row.id).padStart(6, '0')}` : null,
       payerAccount: row.payer_account || null,
       transactionId: row.trans_id || null,
       issuerTransactionId: row.issuer_trans_id || null,
       requestTimestamp: row.request_timestamp || null,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
-    }));
+      paidAt: state === 'PAID' ? row.updated_at || row.created_at : null,
+      /**
+       * Money confirmed by the provider with no term on the books for it — the
+       * one state support must act on. Extending the branch by hand, quoting
+       * this reference, is the remedy.
+       */
+      unapplied:
+        state === 'PAID' &&
+        !isActivationReferenceApplied(row.merch_order_id, rows),
+    };
+  }
+
+  /** Return Ebirr ledger entries scoped to a branch's POS activation refs. */
+  async listBranchPayments(branchId: number) {
+    const prefix = `${POS_WORKSPACE_REFERENCE_PREFIX}-${branchId}-`;
+    const [rows, subscriptionRows] = await Promise.all([
+      this.ebirrRepo
+        .createQueryBuilder('e')
+        .where('e.merch_order_id LIKE :prefix', { prefix: `${prefix}%` })
+        .orderBy('e.created_at', 'DESC')
+        .getMany(),
+      this.loadBranchSubscriptionRows(branchId),
+    ]);
+    return rows.map((row) => this.describePayment(row, subscriptionRows));
   }
 
   async getPaymentForReceipt(branchId: number, paymentId: number) {
@@ -502,7 +626,25 @@ export class BranchBillingService {
         'Payment does not belong to the requested branch.',
       );
     }
-    return row;
+    const payment = this.describePayment(
+      row,
+      await this.loadBranchSubscriptionRows(branchId),
+    );
+    // A term bought before rows recorded their own period: derive it, clearly
+    // from the payment date, rather than print a receipt with no period on it.
+    if (
+      payment.state === 'PAID' &&
+      !payment.termStartsAt &&
+      payment.periodMonths &&
+      payment.paidAt
+    ) {
+      payment.termStartsAt = payment.paidAt;
+      payment.termEndsAt = addCalendarMonths(
+        payment.paidAt,
+        payment.periodMonths,
+      );
+    }
+    return payment;
   }
 
   /**
@@ -1231,24 +1373,33 @@ export class BranchBillingService {
     const result = new Map<number, OwnerBranchBilling['lastPayment']>();
     if (!branchIds.length) return result;
 
-    for (const branchId of branchIds) {
-      const prefix = `${POS_WORKSPACE_REFERENCE_PREFIX}-${branchId}-`;
-      const row = await this.ebirrRepo
-        .createQueryBuilder('e')
-        .where('e.merch_order_id LIKE :prefix', { prefix: `${prefix}%` })
-        .andWhere(`e.status IN ('SUCCESS', 'APPROVED')`)
-        .orderBy('e.created_at', 'DESC')
-        .limit(1)
-        .getOne();
-      if (row) {
-        result.set(branchId, {
-          referenceId: row.merch_order_id,
-          amount: Number(row.amount),
-          currency: row.currency || 'ETB',
-          status: row.status,
-          paidAt: row.created_at,
-        });
-      }
+    // One pass over the activation ledger, newest first — the first paid row
+    // seen for a branch is its last payment. COMPLETED is what a confirmed
+    // Ebirr payment is stored as; filtering on SUCCESS/APPROVED alone reported
+    // "no payment yet" for every branch that had paid.
+    const wanted = new Set(branchIds);
+    const rows = await this.ebirrRepo
+      .createQueryBuilder('e')
+      .where('e.merch_order_id ~ :pattern', {
+        // Branch ids are integers from our own table, so the alternation is safe.
+        pattern: `^${POS_WORKSPACE_REFERENCE_PREFIX}-(${branchIds.join('|')})-`,
+      })
+      .andWhere('e.status IN (:...statuses)', {
+        statuses: ['COMPLETED', 'SUCCESS', 'APPROVED', 'PAID'],
+      })
+      .orderBy('e.created_at', 'DESC')
+      .getMany();
+    for (const row of rows) {
+      const match = row.merch_order_id.match(/^POSACT-(\d+)-/u);
+      const branchId = match ? Number(match[1]) : null;
+      if (!branchId || !wanted.has(branchId) || result.has(branchId)) continue;
+      result.set(branchId, {
+        referenceId: row.merch_order_id,
+        amount: Number(row.amount),
+        currency: row.currency || 'ETB',
+        status: row.status,
+        paidAt: row.updated_at || row.created_at,
+      });
     }
     return result;
   }

@@ -12,12 +12,14 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { NotificationType } from '../notifications/entities/notification.entity';
 
 /**
- * How many days before a PAID term ends we warn the owner.
+ * How many days before a PAID term ends we warn the owner: a week out, three
+ * days out, and the day before. A term can be renewed from 30 days ahead with
+ * no paid day lost, so each of these is a reminder the owner can act on.
  *
  * Paid subscriptions only. A free workspace is never warned that its free period
  * is running out — see the note on this service's class doc.
  */
-const PAID_REMINDER_DAYS = [3];
+const PAID_REMINDER_DAYS = [7, 3, 1];
 const MAX_REMINDER_DAYS = Math.max(...PAID_REMINDER_DAYS);
 const DAY_MS = 86_400_000;
 
@@ -125,9 +127,36 @@ export class RetailSubscriptionLifecycleService {
       },
     });
 
+    // A branch whose next term is already on the books (renewed early, or
+    // extended by an admin) is not "due": its running row is ending, but a later
+    // one takes over. Reminding it to pay again would be asking for money twice.
+    const branchIds = Array.from(
+      new Set(
+        dueSoon
+          .map((sub) => sub.branchId)
+          .filter((id): id is number => typeof id === 'number'),
+      ),
+    );
+    const laterRows = branchIds.length
+      ? ((await this.subscriptionsRepo.find({
+          where: {
+            status: TenantSubscriptionStatus.ACTIVE,
+            branchId: In(branchIds),
+          },
+        })) ?? [])
+      : [];
+    const isSuperseded = (sub: TenantSubscription) =>
+      sub.branchId != null &&
+      laterRows.some(
+        (other) =>
+          other.id !== sub.id &&
+          other.branchId === sub.branchId &&
+          (!other.endsAt || other.endsAt.getTime() > sub.endsAt.getTime()),
+      );
+
     let sent = 0;
     for (const sub of dueSoon) {
-      if (!sub.endsAt) {
+      if (!sub.endsAt || isSuperseded(sub)) {
         continue;
       }
       const endsAtIso = sub.endsAt.toISOString();
@@ -149,7 +178,7 @@ export class RetailSubscriptionLifecycleService {
       await this.notificationsService.createAndDispatch({
         userId: ownerUserId,
         title: 'POS subscription renewal due soon',
-        body: `Your branch POS subscription ends on ${sub.endsAt.toDateString()}. Renew via Ebirr to keep the workspace active.`,
+        body: `Your branch POS subscription ends on ${sub.endsAt.toDateString()}. Renew now via Ebirr from Billing — the new term is added after your current one, so no paid day is lost.`,
         type: NotificationType.ACCOUNT,
         data: {
           kind: 'POS_SUBSCRIPTION_RENEWAL',

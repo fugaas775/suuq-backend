@@ -44,10 +44,13 @@ describe('PosWorkspaceActivationService', () => {
     expireStalePendingTransactionsForPrefix: jest
       .fn()
       .mockResolvedValue(undefined),
+    findRecentOpenTransactionForPrefix: jest.fn().mockResolvedValue(null),
+    markTransactionCompleted: jest.fn().mockResolvedValue(undefined),
   };
 
   const tenantSubscriptionsRepository = {
     findOne: jest.fn(),
+    find: jest.fn().mockResolvedValue([]),
     create: jest.fn((value) => value),
     save: jest.fn(async (value) => value),
   };
@@ -66,6 +69,9 @@ describe('PosWorkspaceActivationService', () => {
     ebirrServiceMock.expireStalePendingTransactionsForPrefix.mockResolvedValue(
       undefined,
     );
+    ebirrServiceMock.findRecentOpenTransactionForPrefix.mockResolvedValue(null);
+    ebirrServiceMock.markTransactionCompleted.mockResolvedValue(undefined);
+    tenantSubscriptionsRepository.find.mockResolvedValue([]);
     branchesRepository.find.mockReset();
     branchStaffAssignmentsRepository.find.mockReset();
 
@@ -246,7 +252,8 @@ describe('PosWorkspaceActivationService', () => {
         amountTotal: 3900,
         periodMonths: 1,
         currency: 'ETB',
-        autoRenew: true,
+        // Ebirr holds no mandate — nothing renews by itself.
+        autoRenew: false,
         metadata: expect.objectContaining({
           lastActivationReferenceId: 'POSACT-21-1731100000000',
           branchId: 21,
@@ -589,11 +596,11 @@ describe('PosWorkspaceActivationService', () => {
 
       const saved = tenantSubscriptionsRepository.save.mock.calls[0][0];
       expect(saved.status).toBe(TenantSubscriptionStatus.ACTIVE);
-      // 30 days from today. The 120 free days still on the trial are given up —
-      // stacking them would push a paid month four months out.
-      expect(saved.endsAt.getTime()).toBeLessThan(Date.now() + 31 * 86_400_000);
+      // One calendar month from today. The 120 free days still on the trial are
+      // given up — stacking them would push a paid month four months out.
+      expect(saved.endsAt.getTime()).toBeLessThan(Date.now() + 32 * 86_400_000);
       expect(saved.endsAt.getTime()).toBeGreaterThan(
-        Date.now() + 29 * 86_400_000,
+        Date.now() + 27 * 86_400_000,
       );
       // The trial is over: the row no longer carries a trial plan code, and the
       // free time it gave up is on the record.
@@ -629,8 +636,187 @@ describe('PosWorkspaceActivationService', () => {
 
       const saved = tenantSubscriptionsRepository.save.mock.calls[0][0];
       expect(saved.endsAt.getTime()).toBeGreaterThan(
-        Date.now() + 29 * 86_400_000,
+        Date.now() + 27 * 86_400_000,
       );
+    });
+  });
+
+  describe('renewing a paid term', () => {
+    const DAY = 86_400_000;
+    const paidSummary = {
+      branchId: 21,
+      branchName: 'Bole Bites',
+      serviceFormat: 'QSR',
+      retailTenantId: 31,
+      isOwner: true,
+      isTenantOwner: false,
+      role: 'MANAGER',
+      workspaceStatus: 'ACTIVE',
+      isTrialWorkspace: false,
+      planCode: 'POS_BRANCH_1M',
+      subscriptionStatus: TenantSubscriptionStatus.ACTIVE,
+      canStartActivation: false,
+      canPayNow: false,
+    };
+    const stubWorkspace = () =>
+      retailEntitlementsServiceMock.getBranchWorkspaceStatus.mockResolvedValue({
+        tenant: { id: 31, name: 'Bole Retail' },
+        branch: { serviceFormat: 'QSR' },
+        entitlements: [{ module: RetailModule.POS_CORE }],
+      });
+    const paidRow = (overrides: Record<string, any> = {}) => ({
+      id: 8,
+      tenantId: 31,
+      branchId: 21,
+      planCode: 'POS_BRANCH_1M',
+      status: TenantSubscriptionStatus.ACTIVE,
+      startsAt: new Date(Date.now() - 25 * DAY),
+      endsAt: new Date(Date.now() + 5 * DAY),
+      metadata: {
+        lastActivationReferenceId: 'POSACT-21-1700000000000-MONTHLY',
+        lastActivatedAt: new Date(Date.now() - 25 * DAY).toISOString(),
+      },
+      ...overrides,
+    });
+
+    beforeEach(() => {
+      stubWorkspace();
+      branchStaffServiceMock.getPosWorkspaceActivationCandidatesForUser.mockResolvedValue(
+        [],
+      );
+      tenantModuleEntitlementsRepository.findOne.mockResolvedValue({
+        enabled: true,
+      });
+      ebirrServiceMock.initiatePayment.mockResolvedValue({
+        errorCode: '0',
+        params: { state: 'PENDING' },
+      });
+    });
+
+    it('lets an owner pay for the next term while the current one is still running', async () => {
+      branchStaffServiceMock.getPosBranchSummariesForUser.mockResolvedValue([
+        { ...paidSummary, subscriptionEndsAt: new Date(Date.now() + 5 * DAY) },
+      ]);
+      tenantSubscriptionsRepository.findOne.mockResolvedValue(null);
+
+      const result = await service.startEbirrActivationPayment(
+        { id: 41, roles: ['POS_MANAGER'] },
+        { branchId: 21, phoneNumber: '251911223344' },
+      );
+
+      expect(result).toMatchObject({ branchId: 21 });
+      expect(ebirrServiceMock.initiatePayment).toHaveBeenCalled();
+    });
+
+    it('does not take payment for a term that is months from ending', async () => {
+      branchStaffServiceMock.getPosBranchSummariesForUser.mockResolvedValue([
+        {
+          ...paidSummary,
+          subscriptionEndsAt: new Date(Date.now() + 200 * DAY),
+        },
+      ]);
+
+      await expect(
+        service.startEbirrActivationPayment(
+          { id: 41, roles: ['POS_MANAGER'] },
+          { branchId: 21, phoneNumber: '251911223344' },
+        ),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(ebirrServiceMock.initiatePayment).not.toHaveBeenCalled();
+    });
+
+    it('refuses a second request while one is still waiting for the PIN', async () => {
+      branchStaffServiceMock.getPosBranchSummariesForUser.mockResolvedValue([
+        { ...paidSummary, subscriptionEndsAt: new Date(Date.now() + 5 * DAY) },
+      ]);
+      ebirrServiceMock.findRecentOpenTransactionForPrefix.mockResolvedValue({
+        id: 77,
+        merch_order_id: 'POSACT-21-1-MONTHLY',
+        status: 'INITIATED',
+      });
+
+      await expect(
+        service.startEbirrActivationPayment(
+          { id: 41, roles: ['POS_MANAGER'] },
+          { branchId: 21, phoneNumber: '251911223344' },
+        ),
+      ).rejects.toMatchObject({ status: 409 });
+      expect(ebirrServiceMock.initiatePayment).not.toHaveBeenCalled();
+    });
+
+    it('adds an early renewal after the days already paid for, on a row of its own', async () => {
+      const current = paidRow();
+      tenantSubscriptionsRepository.findOne.mockResolvedValue(current);
+      tenantSubscriptionsRepository.find.mockResolvedValue([current]);
+      const reference = `POSACT-21-${Date.now()}-MONTHLY`;
+
+      await service.completeEbirrActivationPayment(reference);
+
+      const saved = tenantSubscriptionsRepository.save.mock.calls[0][0];
+      expect(saved.id).toBeUndefined();
+      expect(saved.startsAt.getTime()).toBe(current.endsAt.getTime());
+      expect(saved.endsAt.getTime()).toBeGreaterThan(
+        current.endsAt.getTime() + 27 * DAY,
+      );
+      expect(saved.metadata).toMatchObject({
+        lastActivationReferenceId: reference,
+        renewsSubscriptionId: 8,
+        chainsFromPreviousEnd: true,
+      });
+      // The term it renews is left exactly as it was paid for.
+      expect(current.metadata.lastActivationReferenceId).toBe(
+        'POSACT-21-1700000000000-MONTHLY',
+      );
+      expect(ebirrServiceMock.markTransactionCompleted).toHaveBeenCalledWith(
+        reference,
+      );
+    });
+
+    it('grants the term when the old one has run out but is still stored ACTIVE', async () => {
+      // Ended this afternoon; the midnight pass has not relabelled it yet. The
+      // owner paid in between — this used to be swallowed as a "duplicate".
+      const lapsed = paidRow({ endsAt: new Date(Date.now() - 3 * 3_600_000) });
+      tenantSubscriptionsRepository.findOne.mockResolvedValue(lapsed);
+      tenantSubscriptionsRepository.find.mockResolvedValue([lapsed]);
+
+      await service.completeEbirrActivationPayment(
+        `POSACT-21-${Date.now()}-ONE_YEAR`,
+      );
+
+      const saved = tenantSubscriptionsRepository.save.mock.calls[0][0];
+      expect(saved.status).toBe(TenantSubscriptionStatus.ACTIVE);
+      expect(saved.periodMonths).toBe(12);
+      expect(saved.startsAt.getTime()).toBeGreaterThan(Date.now() - 60_000);
+      // A year is a year, not twelve 30-day blocks.
+      expect(saved.endsAt.getTime()).toBeGreaterThan(Date.now() + 364 * DAY);
+    });
+
+    it('applies one payment once, however many times it is confirmed', async () => {
+      const reference = `POSACT-21-${Date.now()}-MONTHLY`;
+      const current = paidRow({
+        metadata: {
+          lastActivationReferenceId: reference,
+          appliedActivationReferences: [reference],
+        },
+      });
+      tenantSubscriptionsRepository.findOne.mockResolvedValue(current);
+      tenantSubscriptionsRepository.find.mockResolvedValue([current]);
+
+      await service.completeEbirrActivationPayment(reference);
+
+      expect(tenantSubscriptionsRepository.save).not.toHaveBeenCalled();
+    });
+
+    it('ignores a replay of a payment older than the last one a legacy row recorded', async () => {
+      const current = paidRow();
+      tenantSubscriptionsRepository.findOne.mockResolvedValue(current);
+      tenantSubscriptionsRepository.find.mockResolvedValue([current]);
+
+      await service.completeEbirrActivationPayment(
+        'POSACT-21-1600000000000-MONTHLY',
+      );
+
+      expect(tenantSubscriptionsRepository.save).not.toHaveBeenCalled();
     });
   });
 });

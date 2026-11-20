@@ -66,10 +66,38 @@ describe('RetailSubscriptionLifecycleService', () => {
       expect.objectContaining({ userId: 900 }),
     );
     // Idempotency record persisted for this term end.
+    // One day out, so it is the day-before reminder that went.
     expect(sub.metadata?.lifecycleRemindersSent).toEqual({
       endsAt: sub.endsAt.toISOString(),
-      milestones: [3],
+      milestones: [1],
     });
+  });
+
+  it('does not ask a branch to pay again when its next term is already booked', async () => {
+    const { service, subscriptionsRepo, notificationsService } =
+      createService();
+    const ending = {
+      id: 7,
+      tenantId: 34,
+      branchId: 21,
+      status: TenantSubscriptionStatus.ACTIVE,
+      endsAt: new Date('2026-06-10T00:00:00.000Z'),
+      metadata: null,
+    };
+    const renewed = {
+      id: 9,
+      tenantId: 34,
+      branchId: 21,
+      status: TenantSubscriptionStatus.ACTIVE,
+      endsAt: new Date('2026-07-10T00:00:00.000Z'),
+      metadata: null,
+    };
+    subscriptionsRepo.find
+      .mockResolvedValueOnce([ending])
+      .mockResolvedValueOnce([ending, renewed]);
+
+    expect(await service.sendUpcomingRenewalReminders(now)).toBe(0);
+    expect(notificationsService.createAndDispatch).not.toHaveBeenCalled();
   });
 
   it('does not re-send a reminder already sent for the same term end', async () => {

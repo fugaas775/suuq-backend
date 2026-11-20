@@ -1,4 +1,5 @@
 import {
+  ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -41,6 +42,17 @@ import {
   findPosBranchSubscriptionOption,
   requirePosBranchSubscriptionOption,
 } from './pos-workspace-pricing';
+import {
+  POS_RENEWAL_OPEN_ATTEMPT_WINDOW_MS,
+  canRenewEarly,
+  collectAppliedActivationReferences,
+  isActivationReferenceApplied,
+  isLivePaidTerm,
+  parseActivationReferencePeriod,
+  recordsSettledTerm,
+  resolveNextTermStart,
+} from './pos-branch-renewal.policy';
+import { addCalendarMonths } from '../retail/subscription-summary';
 
 /**
  * What `getPayableActivationCandidate` needs from either source: a closed
@@ -73,6 +85,11 @@ export const POS_FIT_CATEGORY_BLOCKER = 'Choose a POS fit category.';
 @Injectable()
 export class PosWorkspaceActivationService {
   private readonly logger = new Logger(PosWorkspaceActivationService.name);
+  /** Completions in flight, by payment reference — see completeEbirrActivationPayment. */
+  private readonly completionsInFlight = new Map<
+    string,
+    Promise<TenantSubscription | null>
+  >();
 
   constructor(
     private readonly branchStaffService: BranchStaffService,
@@ -116,6 +133,18 @@ export class PosWorkspaceActivationService {
     const option =
       findPosBranchSubscriptionOption(params.subscriptionPeriod) ??
       requirePosBranchSubscriptionOption(DEFAULT_POS_BRANCH_PERIOD);
+    // One unconfirmed request per branch at a time. A second tap would send a
+    // second PIN prompt, and approving both collects the price twice.
+    const openAttempt =
+      await this.ebirrService.findRecentOpenTransactionForPrefix(
+        `${POS_WORKSPACE_REFERENCE_PREFIX}-${candidate.branchId}-`,
+        POS_RENEWAL_OPEN_ATTEMPT_WINDOW_MS,
+      );
+    if (openAttempt) {
+      throw new ConflictException(
+        'A payment for this branch is already waiting for confirmation in Ebirr. Approve it on the phone, or wait a few minutes before trying again.',
+      );
+    }
     // The period rides on the reference so completion can recover it even when
     // the branch has no subscription row to stash `pendingActivation` on.
     // parseBranchIdFromReference is anchored (/^POSACT-(\d+)-/), so appending a
@@ -235,11 +264,34 @@ export class PosWorkspaceActivationService {
     await this.tenantSubscriptionsRepository.save(latest);
   }
 
+  /**
+   * Turn a confirmed Ebirr payment into the term it paid for — exactly once.
+   *
+   * The webhook, the return URL and the provider's own retries all land here
+   * for the same payment, sometimes at the same moment, so a completion already
+   * running for a reference is joined rather than started again.
+   */
   async completeEbirrActivationPayment(
     referenceId: string,
     explicitPeriod?: PosBranchSubscriptionPeriod,
     explicitReferralCode?: string | null,
-  ) {
+  ): Promise<TenantSubscription | null> {
+    const inFlight = this.completionsInFlight.get(referenceId);
+    if (inFlight !== undefined) return inFlight;
+    const run = this.applyEbirrActivationPayment(
+      referenceId,
+      explicitPeriod,
+      explicitReferralCode,
+    ).finally(() => this.completionsInFlight.delete(referenceId));
+    this.completionsInFlight.set(referenceId, run);
+    return run;
+  }
+
+  private async applyEbirrActivationPayment(
+    referenceId: string,
+    explicitPeriod?: PosBranchSubscriptionPeriod,
+    explicitReferralCode?: string | null,
+  ): Promise<TenantSubscription | null> {
     const branchId = this.parseBranchIdFromReference(referenceId);
     if (!branchId) {
       this.logger.warn(
@@ -288,7 +340,28 @@ export class PosWorkspaceActivationService {
         });
     const reference = branchSubscription ?? tenantWideFallback;
 
-    if (branchSubscription?.status === TenantSubscriptionStatus.ACTIVE) {
+    const now = new Date();
+    // Has THIS payment already bought its term? Asked of the reference, not of
+    // the branch: "the row says ACTIVE" used to stand in for "already done",
+    // and that swallowed real money — a term that ran out in the afternoon is
+    // still stored ACTIVE until the midnight pass, so an owner who paid in
+    // between was charged and given nothing.
+    const branchRows =
+      (await this.tenantSubscriptionsRepository.find({
+        where: { tenantId: workspace.tenant.id, branchId },
+      })) ?? [];
+    const knownRows = branchSubscription
+      ? [branchSubscription, ...branchRows]
+      : branchRows;
+    if (isActivationReferenceApplied(referenceId, knownRows)) {
+      return branchSubscription ?? null;
+    }
+    // An open-ended active row has no end to extend, and nothing could have
+    // been charged against it.
+    if (
+      branchSubscription?.status === TenantSubscriptionStatus.ACTIVE &&
+      !branchSubscription.endsAt
+    ) {
       return branchSubscription;
     }
 
@@ -304,7 +377,7 @@ export class PosWorkspaceActivationService {
       explicitPeriod ??
       (findPosBranchSubscriptionOption(pendingMeta?.period)?.period ||
         findPosBranchSubscriptionOption(
-          this.parsePeriodFromReference(referenceId),
+          parseActivationReferencePeriod(referenceId),
         )?.period ||
         DEFAULT_POS_BRANCH_PERIOD);
     const option = requirePosBranchSubscriptionOption(resolvedPeriod);
@@ -313,7 +386,6 @@ export class PosWorkspaceActivationService {
         ? TenantBillingInterval.ONE_YEAR
         : TenantBillingInterval.MONTHLY;
 
-    const now = new Date();
     // Payment ends the trial there and then: the paid period starts today, not
     // at the trial's tail. Stacking the two made sense at 14 days; at six free
     // months it would park a paid year half a year out, and an owner who pays
@@ -330,13 +402,21 @@ export class PosWorkspaceActivationService {
       convertedFromLiveTrial && branchSubscription?.endsAt
         ? new Date(branchSubscription.endsAt).toISOString()
         : null;
-    const paidPeriodStartsAt = now.getTime();
+    // A paid term that is still running is renewed from its END, so paying a
+    // week early costs the owner nothing. Anything else starts today.
+    const renewsLiveTerm = isLivePaidTerm(branchSubscription, now.getTime());
+    const termStartsAt = resolveNextTermStart(branchSubscription, now);
+    // A row that already records a settled term is history — the next term gets
+    // a row of its own, so every payment keeps the period it bought. A free
+    // period or a never-paid row is converted where it stands.
+    const writesNewRow = recordsSettledTerm(branchSubscription);
     const nextSubscription =
-      branchSubscription ??
-      this.tenantSubscriptionsRepository.create({
-        tenantId: workspace.tenant.id,
-        branchId,
-      });
+      branchSubscription && !writesNewRow
+        ? branchSubscription
+        : this.tenantSubscriptionsRepository.create({
+            tenantId: workspace.tenant.id,
+            branchId,
+          });
 
     nextSubscription.tenantId = workspace.tenant.id;
     nextSubscription.branchId = branchId;
@@ -347,15 +427,29 @@ export class PosWorkspaceActivationService {
     nextSubscription.amountTotal = option.amount;
     nextSubscription.periodMonths = option.months;
     nextSubscription.currency = option.currency;
-    // startsAt records when they paid, which is also when the paid term begins.
-    nextSubscription.startsAt = now;
-    nextSubscription.endsAt = new Date(
-      paidPeriodStartsAt + option.months * 30 * 86_400_000,
-    );
-    nextSubscription.autoRenew = true;
+    nextSubscription.startsAt = termStartsAt;
+    // Calendar months: a month bought on the 5th runs to the 5th, and a year is
+    // a year — not 30-day blocks, which sold 360 days as "1 year".
+    nextSubscription.endsAt = addCalendarMonths(termStartsAt, option.months);
+    // Ebirr holds no mandate, so nothing renews by itself. Saying otherwise
+    // told owners they were covered when they were not.
+    nextSubscription.autoRenew = false;
     nextSubscription.metadata = {
-      ...(branchSubscription?.metadata || {}),
+      ...(writesNewRow ? {} : branchSubscription?.metadata || {}),
       lastActivationReferenceId: referenceId,
+      appliedActivationReferences: [
+        ...collectAppliedActivationReferences(knownRows),
+        referenceId,
+      ].slice(-50),
+      ...(writesNewRow
+        ? {
+            renewsSubscriptionId: branchSubscription?.id ?? null,
+            previousEndsAt: branchSubscription?.endsAt
+              ? new Date(branchSubscription.endsAt).toISOString()
+              : null,
+            chainsFromPreviousEnd: renewsLiveTerm,
+          }
+        : {}),
       lastActivationPaymentMethod: 'EBIRR',
       lastActivatedAt: now.toISOString(),
       posWorkspacePlanCode: option.planCode,
@@ -377,6 +471,24 @@ export class PosWorkspaceActivationService {
 
     const saved =
       await this.tenantSubscriptionsRepository.save(nextSubscription);
+
+    if (writesNewRow && branchSubscription?.metadata?.pendingActivation) {
+      // The pending marker sat on the old row; it is spent.
+      branchSubscription.metadata = {
+        ...branchSubscription.metadata,
+        pendingActivation: undefined,
+      };
+      await this.tenantSubscriptionsRepository.save(branchSubscription);
+    }
+
+    // The ledger entry is paid, whichever path confirmed it.
+    try {
+      await this.ebirrService.markTransactionCompleted(referenceId);
+    } catch (err: any) {
+      this.logger.warn(
+        `Could not mark Ebirr transaction ${referenceId} completed: ${err?.message}`,
+      );
+    }
 
     // Resolve the referral code: explicit caller > pendingActivation metadata.
     const pendingReferralCode =
@@ -414,8 +526,7 @@ export class PosWorkspaceActivationService {
     // Generate equity payouts proportional to the full subscription period.
     const periodStart = saved.startsAt ?? now;
     const periodEnd =
-      saved.endsAt ??
-      new Date(periodStart.getTime() + option.months * 30 * 86_400_000);
+      saved.endsAt ?? addCalendarMonths(periodStart, option.months);
     void this.equityPartnerService
       .createMonthlyPayoutsForBranch(
         branchId,
@@ -863,14 +974,6 @@ export class PosWorkspaceActivationService {
     return { branchId: savedBranch.id, created: true };
   }
 
-  /** Reads the period suffix off a `POSACT-<branchId>-<ts>-<PERIOD>` reference. */
-  private parsePeriodFromReference(referenceId: string): string | null {
-    const match = String(referenceId || '').match(
-      /^POSACT-\d+-\d+-([A-Z_]+)$/u,
-    );
-    return match?.[1] ?? null;
-  }
-
   private parseBranchIdFromReference(referenceId: string): number | null {
     const match = String(referenceId || '').match(/^POSACT-(\d+)-/u);
     if (!match?.[1]) {
@@ -904,6 +1007,31 @@ export class PosWorkspaceActivationService {
       if (convertibleTrial) {
         candidate = convertibleTrial;
       }
+
+      // A paid branch nearing the end of its term: the owner or a manager may
+      // pay for the next one now, and it is added after the days already paid.
+      // Without this the only moment a branch could be renewed was AFTER it had
+      // locked its tills.
+      const renewable = !candidate
+        ? summaries.find(
+            (entry) =>
+              entry.branchId === branchId &&
+              (entry.isOwner ||
+                entry.isTenantOwner ||
+                entry.role === BranchStaffRole.MANAGER) &&
+              canRenewEarly(
+                {
+                  planCode: entry.planCode,
+                  status: entry.subscriptionStatus,
+                  endsAt: entry.subscriptionEndsAt,
+                },
+                Date.now(),
+              ),
+          )
+        : null;
+      if (renewable) {
+        candidate = { ...renewable, canPayNow: true };
+      }
     }
 
     if (!candidate) {
@@ -912,7 +1040,11 @@ export class PosWorkspaceActivationService {
       );
     }
 
-    if (!candidate.isOwner && candidate.role !== BranchStaffRole.MANAGER) {
+    if (
+      !candidate.isOwner &&
+      !(candidate as { isTenantOwner?: boolean }).isTenantOwner &&
+      candidate.role !== BranchStaffRole.MANAGER
+    ) {
       throw new ForbiddenException(
         'Only a branch owner or manager can activate POS billing for this workspace.',
       );

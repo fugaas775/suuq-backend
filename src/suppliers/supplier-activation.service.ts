@@ -1,3 +1,4 @@
+import { addCalendarMonths } from '../retail/subscription-summary';
 import {
   ForbiddenException,
   Injectable,
@@ -200,7 +201,18 @@ export class SupplierActivationService {
           where: { supplierProfileId },
           order: { createdAt: 'DESC' },
         });
-        if (latest?.status === TenantSubscriptionStatus.ACTIVE) {
+        const now = new Date();
+        // Already applied, or nothing owed: the same payment confirmed twice,
+        // or a term that is still running. "The row says ACTIVE" alone is not
+        // that — a term that ran out this afternoon stays stored ACTIVE until
+        // the midnight pass, and a supplier who paid in between was charged
+        // and given nothing.
+        const alreadyApplied =
+          latest?.metadata?.lastActivationReferenceId === referenceId;
+        const termStillRunning =
+          latest?.status === TenantSubscriptionStatus.ACTIVE &&
+          (!latest.endsAt || new Date(latest.endsAt).getTime() > now.getTime());
+        if (latest && (alreadyApplied || termStillRunning)) {
           return latest;
         }
 
@@ -217,7 +229,6 @@ export class SupplierActivationService {
             ? TenantBillingInterval.ONE_YEAR
             : TenantBillingInterval.MONTHLY;
 
-        const now = new Date();
         const next =
           latest ?? this.subscriptionsRepository.create({ supplierProfileId });
         next.supplierProfileId = supplierProfileId;
@@ -229,8 +240,10 @@ export class SupplierActivationService {
         next.periodMonths = option.months;
         next.currency = option.currency;
         next.startsAt = now;
-        next.endsAt = new Date(now.getTime() + option.months * 30 * 86_400_000);
-        next.autoRenew = true;
+        // Calendar months — a year is a year, not twelve 30-day blocks.
+        next.endsAt = addCalendarMonths(now, option.months);
+        // Ebirr holds no mandate, so nothing renews by itself.
+        next.autoRenew = false;
         next.metadata = {
           ...(latest?.metadata || {}),
           lastActivationReferenceId: referenceId,
