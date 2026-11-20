@@ -35,6 +35,7 @@ import { BranchBillingService } from './branch-billing.service';
 import { BranchFinancialReportsService } from './branch-financial-reports.service';
 import { LedgerReconciliationService } from './ledger-reconciliation.service';
 import { OwnerBillingController } from './owner-billing.controller';
+import { PublicPricingController } from './public-pricing.controller';
 import { BranchFinancialReportsController } from './branch-financial-reports.controller';
 
 @Module({
@@ -64,7 +65,11 @@ import { BranchFinancialReportsController } from './branch-financial-reports.con
       IngredientMovement,
     ]),
   ],
-  controllers: [OwnerBillingController, BranchFinancialReportsController],
+  controllers: [
+    OwnerBillingController,
+    BranchFinancialReportsController,
+    PublicPricingController,
+  ],
   providers: [
     BranchBillingService,
     BranchFinancialReportsService,

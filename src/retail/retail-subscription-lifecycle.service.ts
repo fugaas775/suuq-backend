@@ -9,6 +9,7 @@ import {
 import { RetailTenant } from './entities/retail-tenant.entity';
 import { POS_SELF_SERVE_TRIAL_PLAN_CODES } from './pos-self-serve-trial.policy';
 import { NotificationsService } from '../notifications/notifications.service';
+import { getPosPaidGraceDays } from '../branch-staff/pos-branch-renewal.policy';
 import { NotificationType } from '../notifications/entities/notification.entity';
 
 /**
@@ -62,6 +63,7 @@ export class RetailSubscriptionLifecycleService {
     try {
       await this.expireOverdueSubscriptions(now);
       await this.sendUpcomingRenewalReminders(now);
+      await this.sendGraceNotices(now);
     } catch (err) {
       this.logger.error('POS subscription lifecycle pass failed', err as Error);
     }
@@ -80,11 +82,15 @@ export class RetailSubscriptionLifecycleService {
    * never swept up.
    */
   async expireOverdueSubscriptions(now: Date): Promise<number> {
+    // A paid term is expired only once its grace days are spent; until then
+    // the branch is still trading and the row must keep saying so. A free
+    // period has no grace and expires on its end date.
+    const paidCutoff = new Date(now.getTime() - getPosPaidGraceDays() * DAY_MS);
     const overdue = await this.subscriptionsRepo.find({
       where: [
         {
           status: TenantSubscriptionStatus.ACTIVE,
-          endsAt: LessThan(now),
+          endsAt: LessThan(paidCutoff),
         },
         {
           status: TenantSubscriptionStatus.TRIAL,
@@ -202,6 +208,76 @@ export class RetailSubscriptionLifecycleService {
 
     if (sent) {
       this.logger.log(`Sent ${sent} POS subscription renewal reminder(s).`);
+    }
+    return sent;
+  }
+
+  /**
+   * Tell the owner of a PAID branch whose term has just ended that the tills
+   * are still open, until when, and that paying now loses nothing. Once per
+   * term end. Free periods never reach this: they are TRIAL rows, not ACTIVE.
+   */
+  async sendGraceNotices(now: Date): Promise<number> {
+    const graceDays = getPosPaidGraceDays();
+    if (graceDays <= 0) return 0;
+    const ended =
+      (await this.subscriptionsRepo.find({
+        where: {
+          status: TenantSubscriptionStatus.ACTIVE,
+          endsAt: Between(new Date(now.getTime() - graceDays * DAY_MS), now),
+        },
+      })) ?? [];
+    if (!ended.length) return 0;
+
+    const branchIds = Array.from(
+      new Set(
+        ended
+          .map((sub) => sub.branchId)
+          .filter((id): id is number => typeof id === 'number'),
+      ),
+    );
+    const others = branchIds.length
+      ? ((await this.subscriptionsRepo.find({
+          where: {
+            status: TenantSubscriptionStatus.ACTIVE,
+            branchId: In(branchIds),
+          },
+        })) ?? [])
+      : [];
+
+    let sent = 0;
+    for (const sub of ended) {
+      if (!sub.endsAt) continue;
+      const endsAtIso = sub.endsAt.toISOString();
+      const meta = sub.metadata || {};
+      if (meta.graceNoticeSentForEndsAt === endsAtIso) continue;
+      const renewed = others.some(
+        (other) =>
+          other.id !== sub.id &&
+          other.branchId === sub.branchId &&
+          (!other.endsAt || other.endsAt.getTime() > sub.endsAt.getTime()),
+      );
+      if (renewed) continue;
+      const ownerUserId = await this.resolveOwnerUserId(sub.tenantId);
+      if (!ownerUserId) continue;
+
+      const graceEndsAt = new Date(sub.endsAt.getTime() + graceDays * DAY_MS);
+      await this.notificationsService.createAndDispatch({
+        userId: ownerUserId,
+        title: 'POS subscription ended — pay to keep the tills open',
+        body: `Your branch POS subscription ended on ${sub.endsAt.toDateString()}. The tills stay open until ${graceEndsAt.toDateString()}. Pay now via Ebirr from Billing to continue without interruption.`,
+        type: NotificationType.ACCOUNT,
+        data: {
+          kind: 'POS_SUBSCRIPTION_GRACE',
+          subscriptionId: sub.id,
+          branchId: sub.branchId ?? null,
+          endsAt: endsAtIso,
+          graceEndsAt: graceEndsAt.toISOString(),
+        },
+      });
+      sub.metadata = { ...meta, graceNoticeSentForEndsAt: endsAtIso };
+      await this.subscriptionsRepo.save(sub);
+      sent += 1;
     }
     return sent;
   }

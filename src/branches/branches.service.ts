@@ -1,8 +1,11 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
+import { EquityPartnerService } from '../retail/equity-partner.service';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, ILike, Repository } from 'typeorm';
 import { Branch } from './entities/branch.entity';
@@ -69,6 +72,8 @@ function ownerHasNoCredentials(owner?: User | null): boolean {
 
 @Injectable()
 export class BranchesService {
+  private readonly logger = new Logger(BranchesService.name);
+
   constructor(
     @InjectRepository(Branch)
     private readonly branchesRepository: Repository<Branch>,
@@ -76,6 +81,8 @@ export class BranchesService {
     private readonly vendorStoresRepository: Repository<VendorStore>,
     @InjectDataSource()
     private readonly dataSource: DataSource,
+    @Optional()
+    private readonly equityPartnerService?: EquityPartnerService,
   ) {}
 
   async create(dto: CreateBranchDto): Promise<Branch> {
@@ -325,7 +332,30 @@ export class BranchesService {
       }),
     );
 
+    // Money collected for a term is money a referring equity partner shares
+    // in, whichever way it was collected — a hand-recorded term used to pay
+    // them nothing. A free goodwill term (0) creates no payout.
+    let equityPayoutsCreated = 0;
+    if (amountTotal > 0 && this.equityPartnerService) {
+      try {
+        const payouts =
+          await this.equityPartnerService.createMonthlyPayoutsForBranch(
+            branch.id,
+            startsAt,
+            endsAt,
+            amountTotal,
+            currency,
+          );
+        equityPayoutsCreated = payouts?.length ?? 0;
+      } catch (err: any) {
+        this.logger.warn(
+          `Equity payouts for the extension of branch #${branch.id} failed: ${err?.message}`,
+        );
+      }
+    }
+
     return {
+      equityPayoutsCreated,
       branch: {
         id: branch.id,
         name: branch.name,

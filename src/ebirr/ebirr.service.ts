@@ -501,6 +501,17 @@ export class EbirrService {
       .getOne();
   }
 
+  /** The ledger row for a payment reference, if there is one. */
+  async findTransactionByReference(
+    referenceId: string,
+  ): Promise<EbirrTransaction | null> {
+    const refId = String(referenceId || '').trim();
+    if (!refId) return null;
+    return this.ebirrTransactionRepo.findOne({
+      where: { merch_order_id: refId },
+    });
+  }
+
   /**
    * Record that a payment was confirmed and what it bought was delivered.
    *

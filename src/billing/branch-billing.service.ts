@@ -46,6 +46,9 @@ import {
   POS_EARLY_RENEWAL_WINDOW_DAYS,
   canRenewEarly,
   collectAppliedActivationReferences,
+  getPosPaidGraceDays,
+  isInPaidGrace,
+  resolveGraceEndsAt,
   isActivationReferenceApplied,
   parseActivationReferencePeriod,
   resolveNextTermStart,
@@ -103,6 +106,10 @@ export interface OwnerBranchBilling {
     early: boolean;
     startsAt: Date;
     windowDays: number;
+    /** The paid term has ended and the branch is trading on its grace days. */
+    inGrace: boolean;
+    /** When the tills stop if nothing is paid; null outside grace. */
+    graceEndsAt: Date | null;
   };
   lastPayment: {
     referenceId: string;
@@ -375,7 +382,9 @@ export class BranchBillingService {
         trialEndsAt: null,
       };
       const nowDate = new Date();
-      const early = canRenewEarly(sub, nowDate.getTime());
+      const graceDays = getPosPaidGraceDays();
+      const inGrace = isInPaidGrace(sub, nowDate.getTime(), graceDays);
+      const early = canRenewEarly(sub, nowDate.getTime(), graceDays);
       const canStartRenewal = workspace.canStartRenewal || early;
       return {
         branchId: branch.id,
@@ -386,8 +395,10 @@ export class BranchBillingService {
         renewal: {
           allowed: canStartRenewal,
           early,
-          startsAt: resolveNextTermStart(sub, nowDate),
+          startsAt: resolveNextTermStart(sub, nowDate, graceDays),
           windowDays: POS_EARLY_RENEWAL_WINDOW_DAYS,
+          inGrace,
+          graceEndsAt: inGrace ? resolveGraceEndsAt(sub, graceDays) : null,
         },
         activationBlockers: workspace.activationBlockers,
         isTrialWorkspace: workspace.isTrialWorkspace,

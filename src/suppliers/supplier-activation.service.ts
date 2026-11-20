@@ -1,5 +1,15 @@
 import { addCalendarMonths } from '../retail/subscription-summary';
 import {
+  POS_EARLY_RENEWAL_WINDOW_DAYS,
+  POS_RENEWAL_OPEN_ATTEMPT_WINDOW_MS,
+  canRenewEarly,
+  collectAppliedActivationReferences,
+  isActivationReferenceApplied,
+  isLivePaidTerm,
+  resolveNextTermStart,
+} from '../branch-staff/pos-branch-renewal.policy';
+import {
+  ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -105,6 +115,40 @@ export class SupplierActivationService {
     const option =
       findSupplierSubscriptionOption(params.subscriptionPeriod) ??
       requireSupplierSubscriptionOption(DEFAULT_SUPPLIER_PERIOD);
+
+    // Refuse BEFORE charging when there is nothing to buy yet. A paid term that
+    // is still running can be renewed from 30 days before its end — the new
+    // term is added after it — but not earlier: money taken months ahead used
+    // to be accepted here and then dropped on the floor.
+    const current = await this.subscriptionsRepository.findOne({
+      where: { supplierProfileId: profile.id },
+      order: { createdAt: 'DESC' },
+    });
+    const nowMs = Date.now();
+    if (isLivePaidTerm(current, nowMs) && !canRenewEarly(current, nowMs)) {
+      throw new ConflictException(
+        `This subscription is paid until ${new Date(current.endsAt).toDateString()}. It can be renewed from ${POS_EARLY_RENEWAL_WINDOW_DAYS} days before that date.`,
+      );
+    }
+    if (
+      current?.status === TenantSubscriptionStatus.ACTIVE &&
+      !current.endsAt
+    ) {
+      throw new ConflictException(
+        'This subscription has no end date, so there is nothing to renew.',
+      );
+    }
+    const openAttempt =
+      await this.ebirrService.findRecentOpenTransactionForPrefix(
+        `${SUPPLIER_ACTIVATION_REFERENCE_PREFIX}-${profile.id}-`,
+        POS_RENEWAL_OPEN_ATTEMPT_WINDOW_MS,
+      );
+    if (openAttempt) {
+      throw new ConflictException(
+        'A payment for this account is already waiting for confirmation in Ebirr. Approve it on the phone, or wait a few minutes before trying again.',
+      );
+    }
+
     const referenceId = `${SUPPLIER_ACTIVATION_REFERENCE_PREFIX}-${profile.id}-${Date.now()}`;
     const invoiceId = `${SUPPLIER_ACTIVATION_REFERENCE_PREFIX}INV-${profile.id}`;
 
@@ -202,17 +246,18 @@ export class SupplierActivationService {
           order: { createdAt: 'DESC' },
         });
         const now = new Date();
-        // Already applied, or nothing owed: the same payment confirmed twice,
-        // or a term that is still running. "The row says ACTIVE" alone is not
-        // that — a term that ran out this afternoon stays stored ACTIVE until
-        // the midnight pass, and a supplier who paid in between was charged
-        // and given nothing.
-        const alreadyApplied =
-          latest?.metadata?.lastActivationReferenceId === referenceId;
-        const termStillRunning =
+        // Has THIS payment already bought its term? Asked of the reference,
+        // never of "the row says ACTIVE": a row can be active and still be owed
+        // the term just paid for — a renewal made ahead of the end date, or one
+        // made after the term ran out but before the midnight pass relabelled it.
+        if (latest && isActivationReferenceApplied(referenceId, [latest])) {
+          return latest;
+        }
+        // An open-ended active row has no end to extend.
+        if (
           latest?.status === TenantSubscriptionStatus.ACTIVE &&
-          (!latest.endsAt || new Date(latest.endsAt).getTime() > now.getTime());
-        if (latest && (alreadyApplied || termStillRunning)) {
+          !latest.endsAt
+        ) {
           return latest;
         }
 
@@ -239,20 +284,39 @@ export class SupplierActivationService {
         next.amountTotal = option.amount;
         next.periodMonths = option.months;
         next.currency = option.currency;
-        next.startsAt = now;
+        // A paid term still running is renewed from its END — no paid day lost.
+        const renewsLiveTerm = isLivePaidTerm(latest, now.getTime());
+        const termStartsAt = resolveNextTermStart(latest, now);
+        const priorReferences = latest
+          ? [...collectAppliedActivationReferences([latest])]
+          : [];
+        // The row keeps its original start when a term is added to it, so
+        // startsAt → endsAt stays the whole span that has been paid for.
+        if (!renewsLiveTerm) next.startsAt = now;
         // Calendar months — a year is a year, not twelve 30-day blocks.
-        next.endsAt = addCalendarMonths(now, option.months);
+        next.endsAt = addCalendarMonths(termStartsAt, option.months);
         // Ebirr holds no mandate, so nothing renews by itself.
         next.autoRenew = false;
         next.metadata = {
           ...(latest?.metadata || {}),
           lastActivationReferenceId: referenceId,
+          appliedActivationReferences: [...priorReferences, referenceId].slice(
+            -50,
+          ),
+          lastTermStartsAt: termStartsAt.toISOString(),
           lastActivationPaymentMethod: 'EBIRR',
           lastActivatedAt: now.toISOString(),
           subscriptionPeriod: option.period,
           pendingActivation: undefined,
         };
         const saved = await manager.save(next);
+        try {
+          await this.ebirrService.markTransactionCompleted(referenceId);
+        } catch (err: any) {
+          this.logger.warn(
+            `Could not mark Ebirr transaction ${referenceId} completed: ${err?.message}`,
+          );
+        }
 
         profile.activationStatus = SupplierActivationStatus.ACTIVE;
         profile.lastActivatedAt = now;
@@ -326,7 +390,7 @@ export class SupplierActivationService {
     next.periodMonths = option.months;
     next.currency = option.currency;
     next.startsAt = now;
-    next.endsAt = new Date(now.getTime() + option.months * 30 * 86_400_000);
+    next.endsAt = addCalendarMonths(now, option.months);
     next.autoRenew = false;
     next.metadata = {
       ...(latest?.metadata || {}),

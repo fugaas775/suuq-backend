@@ -1318,4 +1318,43 @@ export class EmailService {
 
     await this.send(mail);
   }
+  /**
+   * The receipt for a subscription payment, sent the moment the payment is
+   * confirmed. The HTML is the same document the owner can open from Billing.
+   */
+  async sendSubscriptionReceiptEmail(params: {
+    to: string;
+    branchName: string;
+    receiptNumber: string | null;
+    amount: number;
+    currency: string;
+    coveredUntil?: Date | null;
+    html: string;
+  }) {
+    if (!params.to) return;
+    const until = params.coveredUntil
+      ? new Intl.DateTimeFormat('en-GB', {
+          timeZone: 'Africa/Addis_Ababa',
+          day: '2-digit',
+          month: 'short',
+          year: 'numeric',
+        }).format(new Date(params.coveredUntil))
+      : null;
+    await this.send({
+      to: params.to,
+      subject:
+        `Receipt ${params.receiptNumber ?? ''} — Suuq POS subscription for "${params.branchName}"`
+          .replace(/\s+/g, ' ')
+          .trim(),
+      text: [
+        `Payment received: ${params.currency} ${params.amount.toFixed(2)} for the Suuq POS subscription of ${params.branchName}.`,
+        until ? `The branch is covered until ${until}.` : '',
+        params.receiptNumber ? `Receipt number: ${params.receiptNumber}` : '',
+        'The full receipt is in this email and under Billing in Suuq POS.',
+      ]
+        .filter(Boolean)
+        .join('\n'),
+      html: params.html,
+    });
+  }
 }

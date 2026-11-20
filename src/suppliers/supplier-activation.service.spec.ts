@@ -21,7 +21,10 @@ const makeService = ({ profiles = {}, subscriptions = {}, grants }: any) => {
     transaction: jest.fn(async (cb: any) => cb(txManager)),
   };
   return new SupplierActivationService(
-    {} as any, // ebirrService
+    {
+      markTransactionCompleted: jest.fn().mockResolvedValue(undefined),
+      findRecentOpenTransactionForPrefix: jest.fn().mockResolvedValue(null),
+    } as any, // ebirrService
     {} as any, // supplierStaffService
     { ensureOutletForSupplier: jest.fn().mockResolvedValue(null) } as any, // supplierOutletService
     profiles,
@@ -131,6 +134,41 @@ describe('SupplierActivationService.completeEbirrActivationPayment', () => {
     );
     expect(result.autoRenew).toBe(false);
     expect(result.metadata.lastActivationReferenceId).toBe('SUPACT-55-200');
+  });
+
+  it('adds a renewal paid ahead of the end date after the days already paid', async () => {
+    const endsAt = new Date(Date.now() + 5 * 86_400_000);
+    const startsAt = new Date(Date.now() - 25 * 86_400_000);
+    const running = {
+      id: 9,
+      supplierProfileId: 55,
+      planCode: 'SUPPLIER_1M',
+      status: 'ACTIVE',
+      startsAt,
+      endsAt,
+      metadata: { lastActivationReferenceId: 'SUPACT-55-1700000000000' },
+    };
+    const subscriptions = {
+      findOne: jest.fn().mockResolvedValue(running),
+      create: jest.fn((v: any) => v),
+      save: jest.fn(async (v: any) => v),
+    };
+    const profiles = {
+      findOne: jest.fn().mockResolvedValue({ id: 55 }),
+      save: jest.fn(async (v: any) => v),
+    };
+    const svc = makeService({ profiles, subscriptions });
+
+    const result: any = await svc.completeEbirrActivationPayment(
+      `SUPACT-55-${Date.now()}`,
+    );
+
+    // Not swallowed, and not restarted from today.
+    expect(result.endsAt.getTime()).toBeGreaterThan(
+      endsAt.getTime() + 27 * 86_400_000,
+    );
+    expect(result.startsAt).toBe(startsAt);
+    expect(result.metadata.appliedActivationReferences).toHaveLength(2);
   });
 
   it('applies one supplier payment once, however often it is confirmed', async () => {

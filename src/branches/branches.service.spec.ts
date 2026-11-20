@@ -1,3 +1,4 @@
+import { EquityPartnerService } from '../retail/equity-partner.service';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getDataSourceToken, getRepositoryToken } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
@@ -202,6 +203,9 @@ describe('BranchesService.adminListBranches', () => {
  * branch's own price.
  */
 describe('BranchesService.extendAdminBranchSubscription', () => {
+  const equityPartnerService = {
+    createMonthlyPayoutsForBranch: jest.fn(),
+  };
   const NOW = new Date('2026-11-01T09:00:00Z');
   let service: BranchesService;
   let branchesRepository: { findOne: jest.Mock };
@@ -259,6 +263,9 @@ describe('BranchesService.extendAdminBranchSubscription', () => {
     const dataSource = {
       getRepository: jest.fn(() => subscriptionsRepo),
     } as unknown as DataSource;
+    equityPartnerService.createMonthlyPayoutsForBranch
+      .mockReset()
+      .mockResolvedValue([{ id: 1 }]);
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -266,6 +273,7 @@ describe('BranchesService.extendAdminBranchSubscription', () => {
         { provide: getRepositoryToken(Branch), useValue: branchesRepository },
         { provide: getRepositoryToken(VendorStore), useValue: {} },
         { provide: getDataSourceToken(), useValue: dataSource },
+        { provide: EquityPartnerService, useValue: equityPartnerService },
       ],
     }).compile();
 
@@ -274,6 +282,37 @@ describe('BranchesService.extendAdminBranchSubscription', () => {
 
   afterEach(() => {
     jest.useRealTimers();
+  });
+
+  it('shares a paid extension with the referring equity partner, and a free one with nobody', async () => {
+    branchesRepository.findOne.mockResolvedValue(muntaha());
+    subscriptions = [sixMonthRow()];
+
+    const paid = await service.extendAdminBranchSubscription(
+      47,
+      { months: 6, reason: 'Paid 23,400 ETB by bank transfer' },
+      actor,
+    );
+    expect(
+      equityPartnerService.createMonthlyPayoutsForBranch,
+    ).toHaveBeenCalledWith(
+      47,
+      expect.any(Date),
+      expect.any(Date),
+      23400,
+      'ETB',
+    );
+    expect(paid.equityPayoutsCreated).toBe(1);
+
+    equityPartnerService.createMonthlyPayoutsForBranch.mockClear();
+    await service.extendAdminBranchSubscription(
+      47,
+      { months: 1, reason: 'Goodwill month', amountTotal: 0 },
+      actor,
+    );
+    expect(
+      equityPartnerService.createMonthlyPayoutsForBranch,
+    ).not.toHaveBeenCalled();
   });
 
   it("chains six months from the running period's end at the platform rate", async () => {

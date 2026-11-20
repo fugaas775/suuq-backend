@@ -45,6 +45,43 @@ describe('RetailSubscriptionLifecycleService', () => {
     expect(subscriptionsRepo.save).toHaveBeenCalledWith([sub]);
   });
 
+  it('leaves a paid term ACTIVE through its grace days', async () => {
+    const { service, subscriptionsRepo } = createService();
+    subscriptionsRepo.find.mockResolvedValueOnce([]);
+
+    await service.expireOverdueSubscriptions(now);
+
+    // Paid rows are only swept once they ended more than the grace ago.
+    const paidWhere = subscriptionsRepo.find.mock.calls[0][0].where[0];
+    expect(paidWhere.endsAt.value.getTime()).toBe(
+      now.getTime() - 3 * 86_400_000,
+    );
+  });
+
+  it('tells a paying owner once that the term ended and the tills are still open', async () => {
+    const { service, subscriptionsRepo, tenantsRepo, notificationsService } =
+      createService();
+    const sub = {
+      id: 7,
+      tenantId: 34,
+      branchId: 21,
+      status: TenantSubscriptionStatus.ACTIVE,
+      endsAt: new Date('2026-06-08T00:00:00.000Z'),
+      metadata: null as Record<string, any> | null,
+    };
+    subscriptionsRepo.find.mockResolvedValue([sub]);
+    tenantsRepo.findOne.mockResolvedValue({ id: 34, ownerUserId: 900 });
+
+    expect(await service.sendGraceNotices(now)).toBe(1);
+    expect(notificationsService.createAndDispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 900,
+        data: expect.objectContaining({ kind: 'POS_SUBSCRIPTION_GRACE' }),
+      }),
+    );
+    expect(await service.sendGraceNotices(now)).toBe(0);
+  });
+
   it('sends a one-time renewal reminder to the tenant owner', async () => {
     const { service, subscriptionsRepo, tenantsRepo, notificationsService } =
       createService();

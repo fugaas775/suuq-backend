@@ -46,13 +46,15 @@ import {
   POS_RENEWAL_OPEN_ATTEMPT_WINDOW_MS,
   canRenewEarly,
   collectAppliedActivationReferences,
+  continuesFromTermEnd,
+  getPosPaidGraceDays,
   isActivationReferenceApplied,
-  isLivePaidTerm,
   parseActivationReferencePeriod,
   recordsSettledTerm,
   resolveNextTermStart,
 } from './pos-branch-renewal.policy';
 import { addCalendarMonths } from '../retail/subscription-summary';
+import { renderSubscriptionReceiptHtml } from '../billing/subscription-receipt';
 
 /**
  * What `getPayableActivationCandidate` needs from either source: a closed
@@ -404,8 +406,19 @@ export class PosWorkspaceActivationService {
         : null;
     // A paid term that is still running is renewed from its END, so paying a
     // week early costs the owner nothing. Anything else starts today.
-    const renewsLiveTerm = isLivePaidTerm(branchSubscription, now.getTime());
-    const termStartsAt = resolveNextTermStart(branchSubscription, now);
+    // A term in its grace days is renewed from its end too: grace keeps the
+    // tills open, it is not free time.
+    const graceDays = getPosPaidGraceDays();
+    const renewsLiveTerm = continuesFromTermEnd(
+      branchSubscription,
+      now.getTime(),
+      graceDays,
+    );
+    const termStartsAt = resolveNextTermStart(
+      branchSubscription,
+      now,
+      graceDays,
+    );
     // A row that already records a settled term is history — the next term gets
     // a row of its own, so every payment keeps the period it bought. A free
     // period or a never-paid row is converted where it stands.
@@ -490,6 +503,17 @@ export class PosWorkspaceActivationService {
       );
     }
 
+    // The owner gets the receipt by email the moment the payment is confirmed.
+    void this.emailSubscriptionReceipt({
+      referenceId,
+      subscription: saved,
+      option,
+      branchId,
+      branchName: workspace.branch?.name || `Branch #${branchId}`,
+      ownerUserId:
+        workspace.branch?.ownerId ?? workspace.tenant.ownerUserId ?? null,
+    });
+
     // Resolve the referral code: explicit caller > pendingActivation metadata.
     const pendingReferralCode =
       typeof (pendingMeta as any)?.referralCode === 'string'
@@ -542,6 +566,58 @@ export class PosWorkspaceActivationService {
       );
 
     return saved;
+  }
+
+  /** Non-fatal: a mail hiccup must never undo or delay a paid term. */
+  private async emailSubscriptionReceipt(input: {
+    referenceId: string;
+    subscription: TenantSubscription;
+    option: PosBranchSubscriptionOption;
+    branchId: number;
+    branchName: string;
+    ownerUserId: number | null;
+  }): Promise<void> {
+    try {
+      if (!input.ownerUserId) return;
+      const [owner, tx] = await Promise.all([
+        this.usersRepository.findOne({ where: { id: input.ownerUserId } }),
+        this.ebirrService.findTransactionByReference(input.referenceId),
+      ]);
+      if (!owner?.email || !tx) return;
+      const receiptNumber = `RCT-${String(tx.id).padStart(6, '0')}`;
+      const html = renderSubscriptionReceiptHtml(
+        { id: input.branchId, name: input.branchName },
+        {
+          id: tx.id,
+          referenceId: input.referenceId,
+          state: 'PAID',
+          amount: Number(tx.amount ?? input.option.amount),
+          currency: tx.currency || input.option.currency,
+          periodMonths: input.option.months,
+          termStartsAt: input.subscription.startsAt,
+          termEndsAt: input.subscription.endsAt ?? null,
+          receiptNumber,
+          payerAccount: tx.payer_account || null,
+          transactionId: tx.trans_id || null,
+          issuerTransactionId: tx.issuer_trans_id || null,
+          createdAt: tx.created_at,
+          paidAt: new Date(),
+        },
+      );
+      await this.emailService.sendSubscriptionReceiptEmail({
+        to: owner.email,
+        branchName: input.branchName,
+        receiptNumber,
+        amount: Number(tx.amount ?? input.option.amount),
+        currency: tx.currency || input.option.currency,
+        coveredUntil: input.subscription.endsAt ?? null,
+        html,
+      });
+    } catch (err: any) {
+      this.logger.warn(
+        `Subscription receipt email failed for ${input.referenceId}: ${err?.message}`,
+      );
+    }
   }
 
   isPosWorkspaceActivationReference(referenceId: string | null | undefined) {
@@ -1026,6 +1102,7 @@ export class PosWorkspaceActivationService {
                   endsAt: entry.subscriptionEndsAt,
                 },
                 Date.now(),
+                getPosPaidGraceDays(),
               ),
           )
         : null;

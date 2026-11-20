@@ -53,6 +53,10 @@ import {
   POS_SELF_SERVE_TRIAL_PLAN_CODE,
 } from './pos-self-serve-trial.policy';
 import { FreeWorkspaceGrantService } from '../free-workspace/free-workspace-grant.service';
+import {
+  getPosPaidGraceDays,
+  isInPaidGrace,
+} from '../branch-staff/pos-branch-renewal.policy';
 import { FreeWorkspaceGrantKind } from '../free-workspace/entities/account-free-workspace-grant.entity';
 
 type PosWorkspaceStatus =
@@ -1072,6 +1076,12 @@ export class RetailEntitlementsService {
     const endsAt = subscription.endsAt
       ? new Date(subscription.endsAt).getTime()
       : null;
+
+    // A paid term that has just ended keeps the workspace open for its grace
+    // days; a free period gets none.
+    if (isInPaidGrace(subscription, now, getPosPaidGraceDays())) {
+      return subscription.status;
+    }
 
     if (
       endsAt != null &&

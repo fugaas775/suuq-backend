@@ -20,6 +20,17 @@ export const POS_EARLY_RENEWAL_WINDOW_DAYS = 30;
  */
 export const POS_RENEWAL_OPEN_ATTEMPT_WINDOW_MS = 3 * 60 * 1000;
 
+/**
+ * Days a PAID branch keeps trading after its term ends, so a renewal that is a
+ * day late does not stop a shop mid-service. Not free time: a renewal paid in
+ * grace is counted from the day the old term ended. Free periods get none — a
+ * free period simply stops. Override with POS_PAID_GRACE_DAYS (0 switches it off).
+ */
+export function getPosPaidGraceDays(): number {
+  const raw = Number(process.env.POS_PAID_GRACE_DAYS);
+  return Number.isFinite(raw) && raw >= 0 && raw <= 30 ? Math.floor(raw) : 3;
+}
+
 const DAY_MS = 86_400_000;
 const TRIAL_PLAN_CODES: readonly string[] = POS_SELF_SERVE_TRIAL_PLAN_CODES;
 
@@ -37,7 +48,9 @@ function toTime(value: Date | string | null | undefined): number | null {
 }
 
 function isFreePeriodRow(sub: RenewableSubscriptionLike): boolean {
-  return TRIAL_PLAN_CODES.includes(String(sub.planCode || ''));
+  const planCode = String(sub.planCode || '');
+  // Branch free-period codes, and the supplier one (`SUPPLIER_FREE_…`).
+  return TRIAL_PLAN_CODES.includes(planCode) || /FREE|TRIAL/u.test(planCode);
 }
 
 /** A paid (or admin-granted) term that is still running. */
@@ -52,29 +65,67 @@ export function isLivePaidTerm(
 }
 
 /**
- * May the next term be paid for now, while this one is still running?
+ * A paid term that has ended but is inside its grace: the workspace still
+ * trades and the owner is expected to pay now.
+ */
+export function isInPaidGrace(
+  sub: RenewableSubscriptionLike | null | undefined,
+  now: number,
+  graceDays = 0,
+): boolean {
+  if (!sub || graceDays <= 0 || isFreePeriodRow(sub)) return false;
+  if (sub.status !== TenantSubscriptionStatus.ACTIVE) return false;
+  const endsAt = toTime(sub.endsAt);
+  return endsAt != null && endsAt <= now && now < endsAt + graceDays * DAY_MS;
+}
+
+/** When grace runs out for this row; null when grace does not apply to it. */
+export function resolveGraceEndsAt(
+  sub: RenewableSubscriptionLike | null | undefined,
+  graceDays = 0,
+): Date | null {
+  if (!sub || graceDays <= 0 || isFreePeriodRow(sub)) return null;
+  const endsAt = toTime(sub.endsAt);
+  return endsAt == null ? null : new Date(endsAt + graceDays * DAY_MS);
+}
+
+/**
+ * May the next term be paid for now, while this one is still serving?
  *
- * Only a dated paid term inside the renewal window. An open-ended row has
- * nothing to extend; a free period converts through its own path.
+ * A dated paid term inside the renewal window, or one in its grace. An
+ * open-ended row has nothing to extend; a free period converts through its own
+ * path.
  */
 export function canRenewEarly(
   sub: RenewableSubscriptionLike | null | undefined,
   now: number,
+  graceDays = 0,
 ): boolean {
+  if (isInPaidGrace(sub, now, graceDays)) return true;
   if (!isLivePaidTerm(sub, now)) return false;
   const endsAt = toTime(sub.endsAt);
   return endsAt - now <= POS_EARLY_RENEWAL_WINDOW_DAYS * DAY_MS;
 }
 
+/** Does a term bought now continue from this row's end rather than from today? */
+export function continuesFromTermEnd(
+  sub: RenewableSubscriptionLike | null | undefined,
+  now: number,
+  graceDays = 0,
+): boolean {
+  return isLivePaidTerm(sub, now) || isInPaidGrace(sub, now, graceDays);
+}
+
 /**
- * When a term bought now begins: at the end of a still-running paid term, so no
- * paid day is lost, otherwise immediately.
+ * When a term bought now begins: at the end of a paid term that is still
+ * running or in grace — no paid day lost, no grace day free — otherwise now.
  */
 export function resolveNextTermStart(
   sub: RenewableSubscriptionLike | null | undefined,
   now: Date,
+  graceDays = 0,
 ): Date {
-  if (isLivePaidTerm(sub, now.getTime())) {
+  if (continuesFromTermEnd(sub, now.getTime(), graceDays)) {
     return new Date(toTime(sub.endsAt));
   }
   return now;
@@ -88,11 +139,14 @@ export function recordsSettledTerm(
   return Boolean(meta.lastActivationReferenceId || meta.manualExtension);
 }
 
-/** `POSACT-<branchId>-<epoch ms>[-PERIOD]` → the epoch ms it was issued at. */
+/**
+ * `<PREFIX>-<id>-<epoch ms>[-PERIOD]` → the epoch ms it was issued at. Branch
+ * (POSACT) and supplier (SUPACT) references share the shape.
+ */
 export function parseActivationReferenceIssuedAt(
   referenceId: string,
 ): number | null {
-  const match = String(referenceId || '').match(/^POSACT-\d+-(\d{10,})/u);
+  const match = String(referenceId || '').match(/^[A-Z]+-\d+-(\d{10,})/u);
   if (!match?.[1]) return null;
   const issuedAt = Number(match[1]);
   return Number.isFinite(issuedAt) ? issuedAt : null;

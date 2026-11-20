@@ -55,6 +55,13 @@ describe('PosWorkspaceActivationService', () => {
     save: jest.fn(async (value) => value),
   };
 
+  const emailServiceMock = {
+    sendPosBranchCreatedEmail: jest.fn(),
+    sendBranchActivationPaymentEmail: jest.fn(),
+    sendSubscriptionReceiptEmail: jest.fn(),
+  };
+  const usersRepositoryMock = { findOne: jest.fn() };
+
   const tenantModuleEntitlementsRepository = {
     findOne: jest.fn(),
   };
@@ -72,6 +79,12 @@ describe('PosWorkspaceActivationService', () => {
     ebirrServiceMock.findRecentOpenTransactionForPrefix.mockResolvedValue(null);
     ebirrServiceMock.markTransactionCompleted.mockResolvedValue(undefined);
     tenantSubscriptionsRepository.find.mockResolvedValue([]);
+    emailServiceMock.sendPosBranchCreatedEmail.mockResolvedValue(undefined);
+    emailServiceMock.sendBranchActivationPaymentEmail.mockResolvedValue(
+      undefined,
+    );
+    emailServiceMock.sendSubscriptionReceiptEmail.mockResolvedValue(undefined);
+    usersRepositoryMock.findOne.mockResolvedValue(null);
     branchesRepository.find.mockReset();
     branchStaffAssignmentsRepository.find.mockReset();
 
@@ -109,19 +122,8 @@ describe('PosWorkspaceActivationService', () => {
             findActivePartnerByReferralCode: jest.fn().mockResolvedValue(null),
           },
         },
-        {
-          provide: EmailService,
-          useValue: {
-            sendPosBranchCreatedEmail: jest.fn().mockResolvedValue(undefined),
-            sendBranchActivationPaymentEmail: jest
-              .fn()
-              .mockResolvedValue(undefined),
-          },
-        },
-        {
-          provide: getRepositoryToken(User),
-          useValue: { findOne: jest.fn().mockResolvedValue(null) },
-        },
+        { provide: EmailService, useValue: emailServiceMock },
+        { provide: getRepositoryToken(User), useValue: usersRepositoryMock },
       ],
     }).compile();
 
@@ -772,10 +774,47 @@ describe('PosWorkspaceActivationService', () => {
       );
     });
 
+    it('emails the owner the receipt for the term the payment bought', async () => {
+      const current = paidRow();
+      tenantSubscriptionsRepository.findOne.mockResolvedValue(current);
+      tenantSubscriptionsRepository.find.mockResolvedValue([current]);
+      retailEntitlementsServiceMock.getBranchWorkspaceStatus.mockResolvedValue({
+        tenant: { id: 31, name: 'Bole Retail', ownerUserId: 41 },
+        branch: { serviceFormat: 'QSR', name: 'Bole Bites', ownerId: 41 },
+        entitlements: [{ module: RetailModule.POS_CORE }],
+      });
+      usersRepositoryMock.findOne.mockResolvedValue({
+        id: 41,
+        email: 'owner@suuq.test',
+      });
+      const reference = `POSACT-21-${Date.now()}-MONTHLY`;
+      (ebirrServiceMock as any).findTransactionByReference = jest
+        .fn()
+        .mockResolvedValue({
+          id: 512,
+          amount: 3900,
+          currency: 'ETB',
+          created_at: new Date(),
+        });
+
+      await service.completeEbirrActivationPayment(reference);
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(
+        emailServiceMock.sendSubscriptionReceiptEmail,
+      ).toHaveBeenCalledWith(
+        expect.objectContaining({
+          to: 'owner@suuq.test',
+          receiptNumber: 'RCT-000512',
+          html: expect.stringContaining('Payment receipt'),
+        }),
+      );
+    });
+
     it('grants the term when the old one has run out but is still stored ACTIVE', async () => {
-      // Ended this afternoon; the midnight pass has not relabelled it yet. The
-      // owner paid in between — this used to be swallowed as a "duplicate".
-      const lapsed = paidRow({ endsAt: new Date(Date.now() - 3 * 3_600_000) });
+      // Ended days ago, past its grace, and never relabelled. A payment against
+      // it used to be swallowed as a "duplicate"; it must buy a term from today.
+      const lapsed = paidRow({ endsAt: new Date(Date.now() - 5 * DAY) });
       tenantSubscriptionsRepository.findOne.mockResolvedValue(lapsed);
       tenantSubscriptionsRepository.find.mockResolvedValue([lapsed]);
 
@@ -789,6 +828,22 @@ describe('PosWorkspaceActivationService', () => {
       expect(saved.startsAt.getTime()).toBeGreaterThan(Date.now() - 60_000);
       // A year is a year, not twelve 30-day blocks.
       expect(saved.endsAt.getTime()).toBeGreaterThan(Date.now() + 364 * DAY);
+    });
+
+    it('counts a renewal paid in the grace days from the day the term ended', async () => {
+      // Grace keeps the tills open; it is not free time.
+      const endedAt = new Date(Date.now() - 3 * 3_600_000);
+      const inGrace = paidRow({ endsAt: endedAt });
+      tenantSubscriptionsRepository.findOne.mockResolvedValue(inGrace);
+      tenantSubscriptionsRepository.find.mockResolvedValue([inGrace]);
+
+      await service.completeEbirrActivationPayment(
+        `POSACT-21-${Date.now()}-MONTHLY`,
+      );
+
+      const saved = tenantSubscriptionsRepository.save.mock.calls[0][0];
+      expect(saved.startsAt.getTime()).toBe(endedAt.getTime());
+      expect(saved.metadata.chainsFromPreviousEnd).toBe(true);
     });
 
     it('applies one payment once, however many times it is confirmed', async () => {
