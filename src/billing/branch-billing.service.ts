@@ -42,6 +42,12 @@ import { POS_WORKSPACE_REFERENCE_PREFIX } from '../branch-staff/pos-workspace-ac
 import {
   POS_BRANCH_STARTER_OPTION,
   POS_BRANCH_SUBSCRIPTION_OPTIONS,
+  isComplimentaryBranch,
+  listMonthlyRateForFormat,
+  monthlyRateForBranch,
+  normalizeDiscountPercent,
+  starterOptionForBranch,
+  subscriptionOptionsForBranch,
   findPosBranchPaymentOption,
   monthsOfPaymentOption,
 } from '../branch-staff/pos-workspace-pricing';
@@ -478,11 +484,31 @@ export class BranchBillingService {
           branch.id,
         ).eligible
           ? {
-              amount: POS_BRANCH_STARTER_OPTION.amount,
+              amount: starterOptionForBranch(branch).amount,
               currency: POS_BRANCH_STARTER_OPTION.currency,
               days: POS_BRANCH_STARTER_OPTION.days,
             }
           : null,
+        // What THIS branch is charged — its format's rate, less any discount
+        // it has been granted. The billing screen shows these, not the
+        // standard catalogue.
+        pricing: {
+          listMonthlyRate: listMonthlyRateForFormat(branch.serviceFormat),
+          monthlyRate: monthlyRateForBranch(branch),
+          discountPercent: normalizeDiscountPercent(
+            branch.subscriptionDiscountPercent,
+          ),
+          // Nothing to pay, ever: the platform renews the term itself.
+          complimentary: isComplimentaryBranch(branch),
+          options: subscriptionOptionsForBranch(branch).map((option) => ({
+            period: option.period,
+            months: option.months,
+            amount: option.amount,
+            listAmount: option.listAmount,
+            currency: option.currency,
+            planCode: option.planCode,
+          })),
+        },
         onStarterTrial: sub?.planCode === POS_BRANCH_STARTER_OPTION.planCode,
         lastPayment: lastPaymentByBranch.get(branch.id) || null,
         pendingPayment: this.pendingPaymentOf(branchClaims, branch.id),

@@ -154,6 +154,30 @@ export class Branch {
   taxEnabled!: boolean;
 
   /**
+   * A discount the platform has granted this branch on its POS subscription,
+   * as a percentage of its format's list price (0 = none, 100 = complimentary).
+   *
+   * Set only by a platform admin, with a reason, from the admin's Branches
+   * page. Every price quoted to or charged from the branch has it applied
+   * (see `priceOptionForBranch`). At 100 the branch owes nothing: it is never
+   * asked to pay or reminded, and the platform renews its term itself.
+   */
+  @Column('decimal', {
+    precision: 5,
+    scale: 2,
+    default: 0,
+    transformer: {
+      to: (value?: number | null) => value ?? 0,
+      from: (value: string | number | null) => Number(value ?? 0),
+    },
+  })
+  subscriptionDiscountPercent!: number;
+
+  /** Why the discount was granted — shown to admins, never to the branch. */
+  @Column({ type: 'text', nullable: true })
+  subscriptionDiscountReason?: string | null;
+
+  /**
    * Tax (VAT) rate as a FRACTION — 0.1500 is 15%. The fraction is the single
    * unit used end to end: DB, wire (`items[].taxRate`), and the POS session.
    * Percent exists only inside the Seller HQ input. Defaults to the Ethiopian

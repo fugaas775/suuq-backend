@@ -7,6 +7,7 @@ import {
   TenantSubscription,
   TenantSubscriptionStatus,
 } from './entities/tenant-subscription.entity';
+import { Branch } from '../branches/entities/branch.entity';
 import { RetailTenant } from './entities/retail-tenant.entity';
 import { POS_SELF_SERVE_TRIAL_PLAN_CODES } from './pos-self-serve-trial.policy';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -14,7 +15,11 @@ import { getPosPaidGraceDays } from '../branch-staff/pos-branch-renewal.policy';
 import {
   POS_BRANCH_STARTER_OPTION,
   POS_BRANCH_SUBSCRIPTION_MONTHLY_EQUIVALENT,
-  POS_BRANCH_SUBSCRIPTION_OPTIONS,
+  BranchPricingProfile,
+  isComplimentaryBranch,
+  monthlyRateForBranch,
+  starterOptionForBranch,
+  subscriptionOptionsForBranch,
 } from '../branch-staff/pos-workspace-pricing';
 import { monthlyEquivalent } from './subscription-summary';
 import { NotificationType } from '../notifications/entities/notification.entity';
@@ -32,11 +37,13 @@ const MAX_REMINDER_DAYS = Math.max(...PAID_REMINDER_DAYS);
 const DAY_MS = 86_400_000;
 /** How far ahead a free workspace is told, once, that it can be paid for. */
 const FREE_PAY_AHEAD_NOTICE_DAYS = 30;
-const RENEWAL_PRICES = POS_BRANCH_SUBSCRIPTION_OPTIONS.map((option) => ({
-  label: option.label,
-  amount: option.amount,
-  currency: option.currency,
-}));
+/** The terms on offer as THIS branch would be charged for them. */
+const renewalPricesFor = (profile: BranchPricingProfile | null | undefined) =>
+  subscriptionOptionsForBranch(profile).map((option) => ({
+    label: option.label,
+    amount: option.amount,
+    currency: option.currency,
+  }));
 
 /**
  * Daily lifecycle pass for per-branch POS subscriptions. With the monthly plan
@@ -178,9 +185,15 @@ export class RetailSubscriptionLifecycleService {
           (!other.endsAt || other.endsAt.getTime() > sub.endsAt.getTime()),
       );
 
+    const profileOf = await this.loadPricingProfiles(branchIds);
+
     let sent = 0;
     for (const sub of dueSoon) {
       if (!sub.endsAt || isSuperseded(sub)) {
+        continue;
+      }
+      // A complimentary branch owes nothing and is renewed by the platform.
+      if (isComplimentaryBranch(profileOf(sub.branchId))) {
         continue;
       }
       const endsAtIso = sub.endsAt.toISOString();
@@ -220,11 +233,11 @@ export class RetailSubscriptionLifecycleService {
         branchId: sub.branchId ?? null,
         endsAt: sub.endsAt,
         daysLeft: milestone,
-        prices: RENEWAL_PRICES,
+        prices: renewalPricesFor(profileOf(sub.branchId)),
         // A term sold at an older rate is told the rate has changed, here and
         // not at the moment of paying.
         previousMonthlyRate: monthlyEquivalent(sub),
-        currentMonthlyRate: POS_BRANCH_SUBSCRIPTION_MONTHLY_EQUIVALENT,
+        currentMonthlyRate: monthlyRateForBranch(profileOf(sub.branchId)),
       });
 
       sub.metadata = {
@@ -362,9 +375,12 @@ export class RetailSubscriptionLifecycleService {
         })) ?? [])
       : [];
 
+    const profileOf = await this.loadPricingProfiles(branchIds);
+
     let sent = 0;
     for (const sub of ending) {
       if (!sub.endsAt) continue;
+      if (isComplimentaryBranch(profileOf(sub.branchId))) continue;
       const endsAtIso = sub.endsAt.toISOString();
       const meta = sub.metadata || {};
       if (meta.payAheadNoticeSentForEndsAt === endsAtIso) continue;
@@ -392,9 +408,9 @@ export class RetailSubscriptionLifecycleService {
         prices: [
           {
             label: POS_BRANCH_STARTER_OPTION.label,
-            amount: POS_BRANCH_STARTER_OPTION.amount,
+            amount: starterOptionForBranch(profileOf(sub.branchId)).amount,
           },
-          ...RENEWAL_PRICES,
+          ...renewalPricesFor(profileOf(sub.branchId)),
         ],
       });
       sub.metadata = { ...meta, payAheadNoticeSentForEndsAt: endsAtIso };
@@ -451,6 +467,36 @@ export class RetailSubscriptionLifecycleService {
     }
 
     return reached;
+  }
+
+  /**
+   * Format and discount for the branches in a pass, so a reminder quotes the
+   * price that branch will actually be charged — and a complimentary branch
+   * is left alone. A branch that cannot be read is priced at the standard rate.
+   */
+  private async loadPricingProfiles(
+    branchIds: number[],
+  ): Promise<(branchId?: number | null) => BranchPricingProfile | null> {
+    if (!branchIds.length) return () => null;
+    let rows: Branch[] = [];
+    try {
+      rows =
+        (await this.subscriptionsRepo.manager.getRepository(Branch).find({
+          where: { id: In(branchIds) },
+          select: {
+            id: true,
+            serviceFormat: true,
+            subscriptionDiscountPercent: true,
+          },
+        })) ?? [];
+    } catch (err) {
+      this.logger.warn(
+        `Could not read branch pricing profiles: ${(err as Error)?.message}`,
+      );
+    }
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    return (branchId) =>
+      branchId != null ? (byId.get(branchId) ?? null) : null;
   }
 
   private async resolveOwnerUserId(tenantId: number): Promise<number | null> {

@@ -2,7 +2,9 @@ import { Controller, Get } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import {
   POS_BRANCH_STARTER_OPTION,
+  POS_BRANCH_MONTHLY_LIST_PRICE_BY_FORMAT,
   POS_BRANCH_SUBSCRIPTION_OPTIONS,
+  subscriptionOptionsForBranch,
 } from '../branch-staff/pos-workspace-pricing';
 import { SUBSCRIPTION_PAYMENT_DESTINATIONS } from '../subscription-payments/payment-destinations';
 import {
@@ -45,6 +47,14 @@ export class PublicPricingController {
       // The paid trial a new branch can start on.
       posBranchStarter: { ...POS_BRANCH_STARTER_OPTION },
       posBranch: POS_BRANCH_SUBSCRIPTION_OPTIONS.map(describe),
+      // Formats priced off the standard rate (a school is 4,900 a month).
+      // Screens choosing a format for a NEW branch read the price from here.
+      posBranchByFormat: Object.fromEntries(
+        Object.keys(POS_BRANCH_MONTHLY_LIST_PRICE_BY_FORMAT).map((format) => [
+          format,
+          subscriptionOptionsForBranch({ serviceFormat: format }).map(describe),
+        ]),
+      ),
       supplier: SUPPLIER_SUBSCRIPTION_OPTIONS.map(describe),
       supplierStarter: { ...SUPPLIER_STARTER_OPTION },
     };

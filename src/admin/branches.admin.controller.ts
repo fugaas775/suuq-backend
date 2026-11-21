@@ -197,6 +197,48 @@ export class BranchesAdminController {
   }
 
   /**
+   * PATCH /api/admin/branches/:id/subscription/discount
+   *
+   * Grants, changes or removes the branch's subscription discount (0–100 %).
+   * 100 makes the branch complimentary: nothing to pay, renewed by the
+   * platform. The reason and the change are written to the audit log.
+   */
+  @Patch(':id/subscription/discount')
+  @ApiOperation({ summary: 'Set a branch subscription discount (admin)' })
+  async setSubscriptionDiscount(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { percent?: number; reason?: string },
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const actor = {
+      id: req.user?.id ?? null,
+      email: req.user?.email ?? null,
+    };
+    const result = await this.branchesService.setAdminBranchDiscount(
+      id,
+      { percent: Number(body?.percent), reason: String(body?.reason ?? '') },
+      actor,
+    );
+    await this.auditService.log({
+      action: 'branch.subscription.discount',
+      targetType: 'branch',
+      targetId: id,
+      actorId: actor.id,
+      actorEmail: actor.email,
+      reason: result.reason ?? String(body?.reason ?? '').trim(),
+      meta: {
+        branchName: result.branch.name,
+        previousPercent: result.previousPercent,
+        percent: result.percent,
+        listMonthlyRate: result.listMonthlyRate,
+        monthlyRate: result.monthlyRate,
+        coverGranted: result.coverGranted,
+      },
+    });
+    return result;
+  }
+
+  /**
    * DELETE /api/admin/branches/bulk
    * Bulk delete branches by id array in request body.
    * Must be declared before :id route.

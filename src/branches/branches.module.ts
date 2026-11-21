@@ -28,6 +28,7 @@ import { Branch } from './entities/branch.entity';
 import { RetailModule as RetailAccessModule } from '../retail/retail.module';
 import { VendorStore } from '../vendor/entities/vendor-store.entity';
 import { BranchSalesService } from './branch-sales.service';
+import { BranchComplimentaryRenewalService } from './branch-complimentary-renewal.service';
 
 @Module({
   imports: [
@@ -54,6 +55,7 @@ import { BranchSalesService } from './branch-sales.service';
   providers: [
     BranchesService,
     BranchSalesService,
+    BranchComplimentaryRenewalService,
     InventoryLedgerService,
     VariantInventoryService,
     BranchTransfersService,

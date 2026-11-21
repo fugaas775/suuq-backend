@@ -679,3 +679,192 @@ describe('BranchesService.adminListBranches — sales', () => {
     });
   });
 });
+
+/**
+ * A discount is the platform's gift to one branch. Setting 100 % must leave
+ * the branch unable to lock: it is given cover at once, exactly once however
+ * many times the question is asked, and only while it has little left.
+ */
+describe('BranchesService — subscription discount', () => {
+  const DAY = 86_400_000;
+  const build = (opts: {
+    branch: Partial<Branch>;
+    subscriptions?: Partial<TenantSubscription>[];
+  }) => {
+    const branch = Object.assign(new Branch(), {
+      id: 115,
+      name: 'SMAQ School',
+      serviceFormat: 'SCHOOL',
+      retailTenantId: 60,
+      subscriptionDiscountPercent: 0,
+      ...opts.branch,
+    });
+    const subscriptions = opts.subscriptions ?? [];
+    const saved: Partial<TenantSubscription>[] = [];
+    const repository = {
+      findOne: jest.fn().mockResolvedValue(branch),
+      find: jest.fn().mockResolvedValue([branch]),
+      update: jest.fn().mockResolvedValue(undefined),
+    };
+    const subscriptionsRepo = {
+      createQueryBuilder: () => ({
+        where: jest.fn().mockReturnThis(),
+        orWhere: jest.fn().mockReturnThis(),
+        getMany: () => Promise.resolve([...subscriptions, ...saved]),
+      }),
+      create: (value: Partial<TenantSubscription>) => value,
+      save: jest.fn((value: Partial<TenantSubscription>) => {
+        const row = { id: 900 + saved.length, ...value };
+        saved.push(row);
+        return Promise.resolve(row);
+      }),
+    };
+    const dataSource = {
+      getRepository: () => subscriptionsRepo,
+      transaction: (work: (manager: unknown) => unknown) =>
+        work({ query: jest.fn().mockResolvedValue([]) }),
+    } as unknown as DataSource;
+    const service = new BranchesService(
+      repository as never,
+      {} as never,
+      dataSource,
+      undefined,
+      undefined,
+    );
+    return { service, repository, saved, branch };
+  };
+  const actor = { id: 1, email: 'admin@suuq.test' };
+  const active = (endsInDays: number): Partial<TenantSubscription> => ({
+    id: 5,
+    branchId: 115,
+    tenantId: 60,
+    status: TenantSubscriptionStatus.ACTIVE,
+    billingInterval: TenantBillingInterval.ONE_YEAR,
+    planCode: 'POS_BRANCH_1Y',
+    currency: 'ETB',
+    startsAt: new Date(Date.now() - 300 * DAY),
+    endsAt: new Date(Date.now() + endsInDays * DAY),
+  });
+
+  it('saves the discount with its reason and reports the new price', async () => {
+    const { service, repository, saved } = build({ branch: {} });
+
+    const result = await service.setAdminBranchDiscount(
+      115,
+      { percent: 25, reason: 'Founding school' },
+      actor,
+    );
+
+    expect(repository.update).toHaveBeenCalledWith(
+      { id: 115 },
+      {
+        subscriptionDiscountPercent: 25,
+        subscriptionDiscountReason: 'Founding school',
+      },
+    );
+    expect(result).toMatchObject({
+      previousPercent: 0,
+      percent: 25,
+      listMonthlyRate: 4900,
+      monthlyRate: 3675,
+      complimentary: false,
+      coverGranted: null,
+    });
+    expect(saved).toHaveLength(0);
+  });
+
+  it('refuses a discount outside 0–100 or without a reason', async () => {
+    const { service } = build({ branch: {} });
+    await expect(
+      service.setAdminBranchDiscount(
+        115,
+        { percent: 120, reason: 'x y z' },
+        actor,
+      ),
+    ).rejects.toThrow('between 0 and 100');
+    await expect(
+      service.setAdminBranchDiscount(115, { percent: 10, reason: ' ' }, actor),
+    ).rejects.toThrow('reason');
+  });
+
+  it('gives a branch made complimentary a free year at once when it has no cover', async () => {
+    const { service, saved } = build({ branch: {} });
+
+    const result = await service.setAdminBranchDiscount(
+      115,
+      { percent: 100, reason: 'Owned by the platform' },
+      actor,
+    );
+
+    expect(result.complimentary).toBe(true);
+    expect(result.monthlyRate).toBe(0);
+    expect(saved).toHaveLength(1);
+    expect(saved[0]).toMatchObject({
+      branchId: 115,
+      amount: 0,
+      amountTotal: 0,
+      periodMonths: 12,
+      status: TenantSubscriptionStatus.ACTIVE,
+    });
+  });
+
+  it('adds the free year after a term that is about to end, losing no day of it', async () => {
+    const running = active(10);
+    const { service, saved } = build({
+      branch: { subscriptionDiscountPercent: 100 },
+      subscriptions: [running],
+    });
+
+    await service.ensureComplimentaryCover(115);
+
+    expect(saved).toHaveLength(1);
+    expect(saved[0].startsAt).toEqual(running.endsAt);
+  });
+
+  it('leaves a well-covered complimentary branch alone, however often it is asked', async () => {
+    const { service, saved } = build({
+      branch: { subscriptionDiscountPercent: 100 },
+      subscriptions: [active(200)],
+    });
+
+    await service.ensureComplimentaryCover(115);
+    await service.ensureComplimentaryCover(115);
+
+    expect(saved).toHaveLength(0);
+  });
+
+  it('renews once, not once per asking, when cover has run low', async () => {
+    const { service, saved } = build({
+      branch: { subscriptionDiscountPercent: 100 },
+      subscriptions: [active(5)],
+    });
+
+    await service.ensureComplimentaryCover(115);
+    await service.ensureComplimentaryCover(115);
+    await service.renewComplimentaryBranches();
+
+    expect(saved).toHaveLength(1);
+  });
+
+  it('never grants cover to a branch that is not complimentary', async () => {
+    const { service, saved } = build({
+      branch: { subscriptionDiscountPercent: 90 },
+    });
+    await expect(service.ensureComplimentaryCover(115)).resolves.toBeNull();
+    expect(saved).toHaveLength(0);
+  });
+
+  it('extends a school by hand at the school rate, less its discount', async () => {
+    const { service, saved } = build({
+      branch: { subscriptionDiscountPercent: 50 },
+    });
+
+    await service.extendAdminBranchSubscription(
+      115,
+      { months: 6, reason: 'Paid by bank transfer' },
+      actor,
+    );
+
+    expect(saved[0]).toMatchObject({ amount: 2450, amountTotal: 14700 });
+  });
+});

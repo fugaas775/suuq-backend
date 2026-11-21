@@ -20,6 +20,7 @@ import { User } from '../users/entities/user.entity';
 import { UserRole } from '../auth/roles.enum';
 import {
   POS_BRANCH_SUBSCRIPTION_OPTIONS,
+  priceOptionForBranch,
   PosBranchSubscriptionPeriod,
   requirePosBranchSubscriptionOption,
 } from '../branch-staff/pos-workspace-pricing';
@@ -181,7 +182,12 @@ export class EquityPartnerBnplService {
       );
     }
 
-    const option = requirePosBranchSubscriptionOption(input.period);
+    // A partner-funded branch is priced like any other new branch of its
+    // format — a school at the school rate.
+    const option = priceOptionForBranch(
+      requirePosBranchSubscriptionOption(input.period),
+      { serviceFormat: input.serviceFormat },
+    );
     const grossAmount = option.amount;
     const equityCreditAmount = isDirect
       ? 0

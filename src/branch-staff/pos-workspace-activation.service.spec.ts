@@ -33,6 +33,7 @@ describe('PosWorkspaceActivationService', () => {
 
   const branchesRepository = {
     find: jest.fn(),
+    findOne: jest.fn(),
   };
 
   const branchStaffAssignmentsRepository = {
@@ -210,6 +211,85 @@ describe('PosWorkspaceActivationService', () => {
       status: 'PENDING_VERIFICATION',
     });
     expect(result.referenceId).toMatch(/^POSACT-21-/);
+  });
+
+  describe('what a branch is charged', () => {
+    const candidateFor = (serviceFormat: string) => {
+      branchStaffServiceMock.getPosWorkspaceActivationCandidatesForUser.mockResolvedValue(
+        [
+          {
+            branchId: 21,
+            branchName: 'Bole Flagship',
+            serviceFormat,
+            role: 'MANAGER',
+            isOwner: true,
+            retailTenantId: 31,
+            workspaceStatus: 'PAYMENT_REQUIRED',
+            canStartActivation: true,
+            canPayNow: true,
+            canOpenNow: false,
+          },
+        ],
+      );
+      retailEntitlementsServiceMock.getBranchWorkspaceStatus.mockResolvedValue({
+        branch: { id: 21, serviceFormat },
+        governance: {
+          activationReadiness: { canActivate: true, blockers: [] },
+        },
+      });
+      tenantModuleEntitlementsRepository.findOne.mockResolvedValue({
+        module: RetailModule.POS_CORE,
+        enabled: true,
+      });
+    };
+    const pay = (subscriptionPeriod?: string) =>
+      service.startActivationPayment(
+        { id: 9, roles: ['POS_MANAGER'] },
+        { branchId: 21, subscriptionPeriod, ...proof },
+      );
+    const claimedAmount = () =>
+      paymentClaimsMock.submit.mock.calls[0][0].amount as number;
+
+    it('charges a school 4,900 a month and 52,920 a year', async () => {
+      candidateFor('SCHOOL');
+      branchesRepository.findOne.mockResolvedValue({
+        id: 21,
+        serviceFormat: 'SCHOOL',
+        subscriptionDiscountPercent: 0,
+      });
+
+      await pay('MONTHLY');
+      expect(claimedAmount()).toBe(4900);
+
+      paymentClaimsMock.submit.mockClear();
+      await pay('ONE_YEAR');
+      expect(claimedAmount()).toBe(52920);
+    });
+
+    it('takes the branch discount off the amount claimed', async () => {
+      candidateFor('RETAIL');
+      branchesRepository.findOne.mockResolvedValue({
+        id: 21,
+        serviceFormat: 'RETAIL',
+        subscriptionDiscountPercent: 50,
+      });
+
+      await pay('MONTHLY');
+
+      expect(claimedAmount()).toBe(1950);
+    });
+
+    it('takes no payment from a complimentary branch', async () => {
+      candidateFor('SCHOOL');
+      branchesRepository.findOne.mockResolvedValue({
+        id: 21,
+        serviceFormat: 'SCHOOL',
+        subscriptionDiscountPercent: 100,
+      });
+
+      await expect(pay('MONTHLY')).rejects.toMatchObject({ status: 409 });
+      expect(paymentClaimsMock.submit).not.toHaveBeenCalled();
+    });
   });
 
   it('rejects activation attempts from non-manager staff', async () => {

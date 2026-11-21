@@ -29,7 +29,12 @@ import {
   TenantBillingInterval,
   TenantSubscriptionStatus,
 } from '../retail/entities/tenant-subscription.entity';
-import { POS_BRANCH_SUBSCRIPTION_MONTHLY_EQUIVALENT } from '../branch-staff/pos-workspace-pricing';
+import {
+  isComplimentaryBranch,
+  listMonthlyRateForFormat,
+  monthlyRateForBranch,
+  normalizeDiscountPercent,
+} from '../branch-staff/pos-workspace-pricing';
 
 export interface AdminListBranchesQuery {
   search?: string;
@@ -49,6 +54,9 @@ export interface ExtendAdminBranchSubscriptionInput {
   reason: string;
   amountTotal?: number | null;
 }
+
+/** A complimentary branch is renewed once this little of its term is left. */
+export const COMPLIMENTARY_RENEW_WITHIN_DAYS = 30;
 
 export interface AdminActor {
   id: number | null;
@@ -233,6 +241,9 @@ export class BranchesService {
           billingState: billingStateOf(current, now),
           subscription: current ? summarizeSubscription(current, now) : null,
           sales: salesOf ? (salesOf.get(branch.id) ?? null) : null,
+          // What this branch is charged a month, and what its format lists at.
+          listMonthlyRate: listMonthlyRateForFormat(branch.serviceFormat),
+          monthlyRate: monthlyRateForBranch(branch),
         });
       }),
       salesSummary,
@@ -413,7 +424,8 @@ export class BranchesService {
     const monthlyRate =
       explicitTotal !== null
         ? round2(explicitTotal / months)
-        : POS_BRANCH_SUBSCRIPTION_MONTHLY_EQUIVALENT;
+        : // The branch's own rate: its format's price, less any discount.
+          monthlyRateForBranch(branch);
     const amountTotal =
       explicitTotal !== null
         ? round2(explicitTotal)
@@ -501,6 +513,134 @@ export class BranchesService {
       amountTotal,
       monthlyRate,
     };
+  }
+
+  /**
+   * Grant, change or remove a branch's subscription discount.
+   *
+   * The discount applies from the next price quoted: a term already paid for
+   * is not repriced. At 100 % the branch becomes complimentary, and is given
+   * cover at once if it has none (or little) left — it must not be able to
+   * lock on the day its owner was told it is free.
+   */
+  async setAdminBranchDiscount(
+    id: number,
+    input: { percent: number; reason: string },
+    actor: AdminActor,
+  ) {
+    const percent = Number(input.percent);
+    if (!Number.isFinite(percent) || percent < 0 || percent > 100) {
+      throw new BadRequestException('percent must be between 0 and 100');
+    }
+    const reason = String(input.reason ?? '').trim();
+    if (reason.length < 3) {
+      throw new BadRequestException(
+        'A reason is required (3 characters or more)',
+      );
+    }
+    const branch = await this.branchesRepository.findOne({ where: { id } });
+    if (!branch) throw new NotFoundException(`Branch #${id} not found`);
+
+    const previousPercent = normalizeDiscountPercent(
+      branch.subscriptionDiscountPercent,
+    );
+    const nextPercent = normalizeDiscountPercent(percent);
+    await this.branchesRepository.update(
+      { id },
+      {
+        subscriptionDiscountPercent: nextPercent,
+        subscriptionDiscountReason: nextPercent > 0 ? reason : null,
+      },
+    );
+    branch.subscriptionDiscountPercent = nextPercent;
+    branch.subscriptionDiscountReason = nextPercent > 0 ? reason : null;
+
+    const cover =
+      nextPercent >= 100
+        ? await this.ensureComplimentaryCover(id, actor, reason)
+        : null;
+
+    return {
+      branch: { id: branch.id, name: branch.name },
+      previousPercent,
+      percent: nextPercent,
+      reason: branch.subscriptionDiscountReason,
+      listMonthlyRate: listMonthlyRateForFormat(branch.serviceFormat),
+      monthlyRate: monthlyRateForBranch(branch),
+      complimentary: nextPercent >= 100,
+      coverGranted: cover,
+    };
+  }
+
+  /**
+   * A complimentary branch is kept covered by the platform: when its current
+   * term has `COMPLIMENTARY_RENEW_WITHIN_DAYS` or fewer left (or it has none),
+   * a free twelve-month term is added after it.
+   *
+   * Runs from the admin action and from the nightly pass, on every server
+   * worker at once — the per-branch lock and the re-check inside it are what
+   * stop four workers writing four terms.
+   */
+  async ensureComplimentaryCover(
+    id: number,
+    actor: AdminActor = { id: null, email: null },
+    reason = 'Complimentary branch — renewed by the platform',
+  ): Promise<{ subscriptionId: number; endsAt: Date | null } | null> {
+    return this.dataSource.transaction(async (manager) => {
+      await manager.query(
+        'SELECT pg_advisory_xact_lock(hashtext($1)::bigint)',
+        [`branch-complimentary-cover:${id}`],
+      );
+      const branch = await this.branchesRepository.findOne({ where: { id } });
+      if (!branch || !isComplimentaryBranch(branch)) return null;
+      if (branch.retailTenantId == null) return null;
+
+      const current = (await this.loadCurrentSubscriptions([branch]))(branch);
+      const now = Date.now();
+      const endsAt = current?.endsAt
+        ? new Date(current.endsAt).getTime()
+        : null;
+      const stillLive =
+        current != null &&
+        [
+          TenantSubscriptionStatus.ACTIVE,
+          TenantSubscriptionStatus.TRIAL,
+        ].includes(current.status);
+      const covered =
+        stillLive &&
+        (endsAt === null ||
+          endsAt - now > COMPLIMENTARY_RENEW_WITHIN_DAYS * 86_400_000);
+      if (covered) return null;
+
+      const result = await this.extendAdminBranchSubscription(
+        id,
+        { months: 12, reason, amountTotal: 0 },
+        actor,
+      );
+      return {
+        subscriptionId: result.subscription.id,
+        endsAt: result.subscription.endsAt ?? null,
+      };
+    });
+  }
+
+  /** Nightly: keep every complimentary branch covered. Returns terms added. */
+  async renewComplimentaryBranches(): Promise<number> {
+    const branches = await this.branchesRepository.find({
+      where: { subscriptionDiscountPercent: 100 },
+      select: { id: true },
+    });
+    let renewed = 0;
+    for (const branch of branches) {
+      try {
+        if (await this.ensureComplimentaryCover(branch.id)) renewed += 1;
+      } catch (error) {
+        this.logger.warn(
+          `Complimentary cover failed for branch ${branch.id}: ${(error as Error)?.message}`,
+        );
+      }
+    }
+    return renewed;
   }
 
   async patchAdminBranch(

@@ -35,7 +35,11 @@ import {
 import { isPosSelfServeTrialSubscription } from '../retail/pos-self-serve-trial.policy';
 import { PosSessionRevocationService } from '../auth/pos-session-revocation.service';
 import { User } from '../users/entities/user.entity';
-import { POS_BRANCH_SUBSCRIPTION_OPTIONS } from './pos-workspace-pricing';
+import {
+  BranchPricingProfile,
+  monthlyRateForBranch,
+  subscriptionOptionsForBranch,
+} from './pos-workspace-pricing';
 import {
   buildUnlockPinFingerprint,
   isPinEligibleLane,
@@ -768,7 +772,7 @@ export class BranchStaffService {
           canPayNow: canStartActivation,
           canOpenNow: false,
           activationBlockers: this.describeActivationBlockers(workspace),
-          pricing: this.getPosWorkspacePricing(),
+          pricing: this.getPosWorkspacePricing(workspace.branch),
         };
       },
     );
@@ -984,24 +988,31 @@ export class BranchStaffService {
     });
   }
 
-  getPosWorkspacePricing(): PosWorkspaceActivationCandidate['pricing'] {
+  getPosWorkspacePricing(
+    branch?: BranchPricingProfile | null,
+  ): PosWorkspaceActivationCandidate['pricing'] {
     // Effective monthly price is 3,900 ETB; derived metrics such as
     // equity-partner payouts (1/2 = 1,950 ETB) scale with it. The activation
     // surface should additionally show the per-period totals from
     // `subscriptionOptions` and let the user pick 6 months or 1 year.
     return {
-      amount: POS_WORKSPACE_MONTHLY_PRICE,
+      // With a branch, its own price: a school's rate, less any discount.
+      amount: branch
+        ? monthlyRateForBranch(branch)
+        : POS_WORKSPACE_MONTHLY_PRICE,
       currency: POS_WORKSPACE_CURRENCY,
       billingInterval: TenantBillingInterval.MONTHLY,
       paymentMethod: POS_WORKSPACE_PAYMENT_METHOD,
-      subscriptionOptions: POS_BRANCH_SUBSCRIPTION_OPTIONS.map((option) => ({
-        period: option.period,
-        months: option.months,
-        amount: option.amount,
-        currency: option.currency,
-        label: option.label,
-        planCode: option.planCode,
-      })),
+      subscriptionOptions: subscriptionOptionsForBranch(branch).map(
+        (option) => ({
+          period: option.period,
+          months: option.months,
+          amount: option.amount,
+          currency: option.currency,
+          label: option.label,
+          planCode: option.planCode,
+        }),
+      ),
     };
   }
 

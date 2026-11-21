@@ -38,7 +38,9 @@ import {
 } from '../retail/entities/tenant-module-entitlement.entity';
 import {
   POS_BRANCH_SUBSCRIPTION_CURRENCY,
-  POS_BRANCH_SUBSCRIPTION_MONTHLY_EQUIVALENT,
+  BranchPricingProfile,
+  isComplimentaryBranch,
+  priceOptionForBranch,
   POS_BRANCH_SUBSCRIPTION_OPTIONS,
   PosBranchSubscriptionOption,
   PosBranchSubscriptionPeriod,
@@ -149,9 +151,19 @@ export class PosWorkspaceActivationService {
       user,
       params.branchId,
     );
-    const option: PosBranchPaymentOption =
+    // Priced for THIS branch: a school's rate, less any discount it has been
+    // granted. The amount on the claim is the amount the admin will check.
+    const pricingProfile = await this.loadPricingProfile(candidate.branchId);
+    if (isComplimentaryBranch(pricingProfile)) {
+      throw new ConflictException(
+        'This branch is complimentary — there is nothing to pay. Its subscription is renewed by Suuq.',
+      );
+    }
+    const option: PosBranchPaymentOption = priceOptionForBranch(
       findPosBranchPaymentOption(params.subscriptionPeriod) ??
-      requirePosBranchSubscriptionOption(DEFAULT_POS_BRANCH_PERIOD);
+        requirePosBranchSubscriptionOption(DEFAULT_POS_BRANCH_PERIOD),
+      pricingProfile,
+    );
     if (isPosBranchStarterOption(option)) {
       await this.assertStarterEligible(
         candidate.retailTenantId ?? null,
@@ -208,6 +220,21 @@ export class PosWorkspaceActivationService {
       subscriptionPeriod: option.period,
       providerMessage: this.paymentClaims.describeForCustomer(claim).message,
     };
+  }
+
+  /** The two facts a branch's price depends on: its format and its discount. */
+  private async loadPricingProfile(
+    branchId: number,
+  ): Promise<BranchPricingProfile | null> {
+    const branch = await this.branchesRepository.findOne({
+      where: { id: branchId },
+      select: {
+        id: true,
+        serviceFormat: true,
+        subscriptionDiscountPercent: true,
+      },
+    });
+    return branch ?? null;
   }
 
   /** Throws with the reason when the paid trial is not on offer for this branch. */
@@ -384,9 +411,22 @@ export class PosWorkspaceActivationService {
         findPosBranchPaymentOption(parseActivationReferencePeriod(referenceId))
           ?.period ||
         DEFAULT_POS_BRANCH_PERIOD);
-    const option: PosBranchPaymentOption =
+    // Priced for this branch (format, discount). Where a claim was verified,
+    // the amount on it is what was actually paid and is what the term records
+    // — a discount changed between paying and approval must not rewrite it.
+    const pricedOption = priceOptionForBranch(
       findPosBranchPaymentOption(resolvedPeriod) ??
-      requirePosBranchSubscriptionOption(DEFAULT_POS_BRANCH_PERIOD);
+        requirePosBranchSubscriptionOption(DEFAULT_POS_BRANCH_PERIOD),
+      workspace.branch ?? (await this.loadPricingProfile(branchId)),
+    );
+    const claimedAmount = Number(paymentClaim?.amount);
+    const option: PosBranchPaymentOption = {
+      ...pricedOption,
+      amount:
+        Number.isFinite(claimedAmount) && claimedAmount >= 0
+          ? claimedAmount
+          : pricedOption.amount,
+    };
     const isStarter = isPosBranchStarterOption(option);
     const billingInterval = isStarter
       ? TenantBillingInterval.CUSTOM
@@ -444,9 +484,9 @@ export class PosWorkspaceActivationService {
     nextSubscription.billingInterval = billingInterval;
     // The trial is priced in days, not months: no monthly rate, and CUSTOM with
     // no period length keeps it out of the run-rate figures.
-    nextSubscription.amount = isStarter
+    nextSubscription.amount = isPosBranchStarterOption(option)
       ? option.amount
-      : POS_BRANCH_SUBSCRIPTION_MONTHLY_EQUIVALENT;
+      : Math.round((option.amount / option.months) * 100) / 100;
     nextSubscription.amountTotal = option.amount;
     nextSubscription.periodMonths = monthsOfPaymentOption(option);
     nextSubscription.currency = option.currency;
@@ -717,9 +757,12 @@ export class PosWorkspaceActivationService {
     // Resolve the billing period the caller chose (Monthly or 1-year −10%),
     // defaulting to the monthly plan when omitted. The period is persisted in
     // the pending metadata so completion charges/pays out the matching amount.
-    const additionalBranchOption: PosBranchPaymentOption =
+    // A branch that does not exist yet has no discount; its format sets the rate.
+    const additionalBranchOption: PosBranchPaymentOption = priceOptionForBranch(
       findPosBranchPaymentOption(dto.subscriptionPeriod) ??
-      requirePosBranchSubscriptionOption(DEFAULT_POS_BRANCH_PERIOD);
+        requirePosBranchSubscriptionOption(DEFAULT_POS_BRANCH_PERIOD),
+      { serviceFormat: dto.serviceFormat },
+    );
     if (isPosBranchStarterOption(additionalBranchOption)) {
       // A branch that does not exist yet: only the workspace rule applies.
       await this.assertStarterEligible(tenantId, null);
@@ -865,9 +908,11 @@ export class PosWorkspaceActivationService {
 
     // Resolve the billing period chosen at initiation (persisted in metadata)
     // so the equity-partner payout amount / description match what was charged.
-    const additionalBranchOption: PosBranchPaymentOption =
+    const additionalBranchOption: PosBranchPaymentOption = priceOptionForBranch(
       findPosBranchPaymentOption(pending.period) ??
-      requirePosBranchSubscriptionOption(DEFAULT_POS_BRANCH_PERIOD);
+        requirePosBranchSubscriptionOption(DEFAULT_POS_BRANCH_PERIOD),
+      { serviceFormat: pending.serviceFormat },
+    );
 
     const code = await this.generateBranchCode(
       this.branchesRepository,
@@ -948,9 +993,12 @@ export class PosWorkspaceActivationService {
           : additionalBranchOption.period === 'ONE_YEAR'
             ? TenantBillingInterval.ONE_YEAR
             : TenantBillingInterval.MONTHLY,
-        amount: startsOnTrial
+        amount: isPosBranchStarterOption(additionalBranchOption)
           ? additionalBranchOption.amount
-          : POS_BRANCH_SUBSCRIPTION_MONTHLY_EQUIVALENT,
+          : Math.round(
+              (additionalBranchOption.amount / additionalBranchOption.months) *
+                100,
+            ) / 100,
         amountTotal: additionalBranchOption.amount,
         periodMonths: monthsOfPaymentOption(additionalBranchOption),
         currency: additionalBranchOption.currency,

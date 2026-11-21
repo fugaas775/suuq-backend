@@ -159,3 +159,131 @@ export function resolvePaymentOptionEnd(
     ? new Date(startsAt.getTime() + option.days * 86_400_000)
     : addMonths(startsAt, option.months);
 }
+
+/* ------------------------------------------------------------------ */
+/* What a particular branch pays                                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The list above is the standard rate. Two things move a branch off it:
+ *
+ *  - its FORMAT — a school runs admissions, fees, classes, exams and payroll
+ *    on the same subscription, and is priced at 4,900 ETB a month;
+ *  - a DISCOUNT the platform has granted that one branch (0–100 %), set by an
+ *    admin with a reason. At 100 % the branch is complimentary: it owes
+ *    nothing, is never asked to pay, and is renewed by the platform.
+ *
+ * Everything that quotes, charges or records a branch price goes through
+ * `priceOptionForBranch` / `monthlyRateForBranch`, so the figure an owner is
+ * shown, the amount on their payment claim and the amount written on the term
+ * cannot drift apart.
+ */
+export interface BranchPricingProfile {
+  serviceFormat?: string | null;
+  subscriptionDiscountPercent?: number | string | null;
+}
+
+/** Monthly list price by format; anything not named here pays the standard rate. */
+export const POS_BRANCH_MONTHLY_LIST_PRICE_BY_FORMAT: Readonly<
+  Record<string, number>
+> = { SCHOOL: 4_900 };
+
+/** Paying a year up front takes 10 % off twelve months, for every format. */
+const YEARLY_DISCOUNT_RATE = 0.1;
+
+const roundMoney = (value: number): number => Math.round(value * 100) / 100;
+
+/** 0–100, two decimals; anything unreadable is no discount. */
+export function normalizeDiscountPercent(value: unknown): number {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return Math.min(100, roundMoney(n));
+}
+
+/** The monthly price before any discount: 4,900 for a school, else 3,900. */
+export function listMonthlyRateForFormat(
+  serviceFormat: string | null | undefined,
+): number {
+  const key = String(serviceFormat || '')
+    .trim()
+    .toUpperCase();
+  return (
+    POS_BRANCH_MONTHLY_LIST_PRICE_BY_FORMAT[key] ??
+    POS_BRANCH_SUBSCRIPTION_MONTHLY_EQUIVALENT
+  );
+}
+
+/** A term's price before any discount, for the branch's format. */
+function listAmountFor(
+  option: PosBranchPaymentOption,
+  serviceFormat: string | null | undefined,
+): number {
+  if (isPosBranchStarterOption(option)) return option.amount;
+  const monthly = listMonthlyRateForFormat(serviceFormat);
+  if (monthly === POS_BRANCH_SUBSCRIPTION_MONTHLY_EQUIVALENT) {
+    return option.amount;
+  }
+  const full = monthly * option.months;
+  return option.period === 'ONE_YEAR'
+    ? roundMoney(full * (1 - YEARLY_DISCOUNT_RATE))
+    : full;
+}
+
+export function isComplimentaryBranch(
+  profile: BranchPricingProfile | null | undefined,
+): boolean {
+  return normalizeDiscountPercent(profile?.subscriptionDiscountPercent) >= 100;
+}
+
+/** What this branch pays a month: its format's rate, less its discount. */
+export function monthlyRateForBranch(
+  profile: BranchPricingProfile | null | undefined,
+): number {
+  const discount = normalizeDiscountPercent(
+    profile?.subscriptionDiscountPercent,
+  );
+  return roundMoney(
+    listMonthlyRateForFormat(profile?.serviceFormat) * (1 - discount / 100),
+  );
+}
+
+export type PricedForBranch<T extends PosBranchPaymentOption> = T & {
+  /** The price before this branch's discount. */
+  listAmount: number;
+  discountPercent: number;
+};
+
+/**
+ * The same option, priced for one branch. `amount` is what is charged;
+ * `listAmount` is what it would have been without the discount.
+ */
+export function priceOptionForBranch<T extends PosBranchPaymentOption>(
+  option: T,
+  profile: BranchPricingProfile | null | undefined,
+): PricedForBranch<T> {
+  const listAmount = listAmountFor(option, profile?.serviceFormat);
+  const discountPercent = normalizeDiscountPercent(
+    profile?.subscriptionDiscountPercent,
+  );
+  return {
+    ...option,
+    amount: roundMoney(listAmount * (1 - discountPercent / 100)),
+    listAmount,
+    discountPercent,
+  } as unknown as PricedForBranch<T>;
+}
+
+/** The monthly and yearly terms as this branch would be charged for them. */
+export function subscriptionOptionsForBranch(
+  profile: BranchPricingProfile | null | undefined,
+): PricedForBranch<PosBranchSubscriptionOption>[] {
+  return POS_BRANCH_SUBSCRIPTION_OPTIONS.map((option) =>
+    priceOptionForBranch(option, profile),
+  );
+}
+
+export function starterOptionForBranch(
+  profile: BranchPricingProfile | null | undefined,
+): PricedForBranch<PosBranchStarterOption> {
+  return priceOptionForBranch(POS_BRANCH_STARTER_OPTION, profile);
+}
