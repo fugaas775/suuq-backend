@@ -8,14 +8,20 @@ function makeService({
   profiles = [] as any[],
 }: { subs?: any[]; profiles?: any[] } = {}) {
   const subscriptionsRepo: any = {
-    find: jest.fn(async ({ where }: any) =>
-      subs.filter((sub) => {
-        if (where.status && sub.status !== where.status) return false;
-        if (where.planCode && !where.planCode._value.includes(sub.planCode))
+    find: jest.fn(async ({ where }: any) => {
+      const clauses = Array.isArray(where) ? where : [where];
+      const matches = (sub: any, clause: any) => {
+        if (clause.status && sub.status !== clause.status) return false;
+        if (clause.planCode) {
+          const codes = clause.planCode._value ?? [clause.planCode];
+          if (!codes.includes(sub.planCode)) return false;
+        }
+        if (clause.endsAt?._value && !(sub.endsAt < clause.endsAt._value))
           return false;
         return true;
-      }),
-    ),
+      };
+      return subs.filter((sub) => clauses.some((c: any) => matches(sub, c)));
+    }),
     findOne: jest.fn(
       async ({ where }: any) =>
         subs
@@ -104,5 +110,46 @@ describe('SupplierSubscriptionLifecycleService.expireLapsedFreePeriods', () => {
 
     expect(freeRow.status).toBe('EXPIRED');
     expect(profile.activationStatus).toBe('ACTIVE');
+  });
+
+  it('closes a supplier whose paid 14-day trial has run out', async () => {
+    // Nothing else expires a supplier term, so without this a 500 ETB trial
+    // would keep the account open for good.
+    const sub = {
+      id: 1,
+      supplierProfileId: 55,
+      planCode: 'SUPPLIER_STARTER_14D',
+      status: 'ACTIVE',
+      endsAt: new Date('2026-12-20T00:00:00.000Z'),
+      metadata: null,
+    };
+    const profile = { id: 55, userId: 9, activationStatus: 'ACTIVE' };
+    const { service } = makeService({ subs: [sub], profiles: [profile] });
+
+    expect(await service.expireLapsedFreePeriods(NOW)).toBe(1);
+    expect(sub.status).toBe('EXPIRED');
+    expect(profile.activationStatus).toBe('EXPIRED');
+  });
+
+  it('leaves a trial that is still running, and a full-price term, alone', async () => {
+    const running = {
+      id: 1,
+      supplierProfileId: 55,
+      planCode: 'SUPPLIER_STARTER_14D',
+      status: 'ACTIVE',
+      endsAt: new Date('2027-01-09T00:00:00.000Z'),
+    };
+    const paid = {
+      id: 2,
+      supplierProfileId: 56,
+      planCode: 'SUPPLIER_1M',
+      status: 'ACTIVE',
+      endsAt: new Date('2026-06-01T00:00:00.000Z'),
+    };
+    const { service } = makeService({ subs: [running, paid] });
+
+    expect(await service.expireLapsedFreePeriods(NOW)).toBe(0);
+    expect(running.status).toBe('ACTIVE');
+    expect(paid.status).toBe('ACTIVE');
   });
 });

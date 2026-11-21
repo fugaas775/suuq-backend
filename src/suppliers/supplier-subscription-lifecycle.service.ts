@@ -1,3 +1,4 @@
+import { SUPPLIER_STARTER_OPTION } from './supplier-subscription-pricing';
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -24,7 +25,8 @@ import { SUPPLIER_FREE_PERIOD_PLAN_CODES } from './supplier-free-period.policy';
  * and the billing page explains itself when the owner next opens it. Do not add
  * a reminder back here: the silence is the requirement, not an oversight.
  *
- * Deliberately scoped to free-period rows. Lapsed PAID supplier subscriptions
+ * Deliberately scoped to free-period rows and the paid 14-day trial. Lapsed
+ * full-price supplier subscriptions
  * are NOT swept: nothing has ever expired them, so a live wholesaler whose paid
  * month ran out months ago is still trading today, and closing them all in one
  * midnight pass is a business decision rather than a bug fix.
@@ -64,11 +66,24 @@ export class SupplierSubscriptionLifecycleService {
    */
   async expireLapsedFreePeriods(now: Date): Promise<number> {
     const lapsed = await this.subscriptionsRepo.find({
-      where: {
-        status: TenantSubscriptionStatus.TRIAL,
-        planCode: In([...SUPPLIER_FREE_PERIOD_PLAN_CODES]),
-        endsAt: LessThan(now),
-      },
+      where: [
+        {
+          status: TenantSubscriptionStatus.TRIAL,
+          planCode: In([...SUPPLIER_FREE_PERIOD_PLAN_CODES]),
+          endsAt: LessThan(now),
+        },
+        // The paid 14-day trial ends like the free period does. Without this a
+        // 500 ETB trial would be a supplier account for life: nothing else
+        // closes a supplier whose term has run out (see the class note — the
+        // sweep of lapsed full-price terms is still a decision, not a default).
+        // A supplier who went on to subscribe has had this same row re-stamped
+        // with the term's plan code, so it is no longer matched here.
+        {
+          status: TenantSubscriptionStatus.ACTIVE,
+          planCode: SUPPLIER_STARTER_OPTION.planCode,
+          endsAt: LessThan(now),
+        },
+      ],
     });
 
     if (!lapsed.length) {
