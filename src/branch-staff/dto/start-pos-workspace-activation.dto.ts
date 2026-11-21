@@ -1,3 +1,4 @@
+import { PaymentProofDto } from '../../subscription-payments/dto/payment-proof.dto';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsIn,
@@ -9,19 +10,11 @@ import {
   Min,
 } from 'class-validator';
 
-export class StartPosWorkspaceActivationDto {
+export class StartPosWorkspaceActivationDto extends PaymentProofDto {
   @ApiProperty({ example: 21 })
   @IsInt()
   @Min(1)
   branchId!: number;
-
-  @ApiProperty({ example: '0911223344' })
-  @IsNotEmpty()
-  @IsString()
-  @Matches(/^(09|2519|9)\d{8}$/u, {
-    message: 'Phone number must be a valid Ethiopian mobile number.',
-  })
-  phoneNumber!: string;
 
   @ApiPropertyOptional({
     description:

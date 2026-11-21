@@ -67,7 +67,7 @@ describe('PosPortalOnboardingService', () => {
       amount: 1900,
       currency: 'ETB',
       billingInterval: 'MONTHLY',
-      paymentMethod: 'EBIRR',
+      paymentMethod: 'TRANSFER',
       subscriptionOptions: [
         {
           period: 'SIX_MONTHS',

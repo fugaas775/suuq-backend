@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuditModule } from '../audit/audit.module';
-import { EbirrModule } from '../ebirr/ebirr.module';
+import { SubscriptionPaymentsModule } from '../subscription-payments/subscription-payments.module';
 import { User } from '../users/entities/user.entity';
 import { Branch } from '../branches/entities/branch.entity';
 import { SupplierProfile } from './entities/supplier-profile.entity';
@@ -19,7 +19,7 @@ import { SupplierSubscriptionLifecycleService } from './supplier-subscription-li
 @Module({
   imports: [
     AuditModule,
-    EbirrModule,
+    SubscriptionPaymentsModule,
     // Branch is registered here so SupplierStaffService can resolve a supplier's
     // backing outlet branch for the supplier context. SupplierOutletService uses
     // the global DataSource (getRepository / manager) for its cross-aggregate

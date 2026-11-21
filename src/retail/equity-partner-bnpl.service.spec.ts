@@ -17,7 +17,7 @@ import { TenantSubscription } from './entities/tenant-subscription.entity';
 import { RetailTenant } from './entities/retail-tenant.entity';
 import { TenantModuleEntitlement } from './entities/tenant-module-entitlement.entity';
 import { EquityPartnerService } from './equity-partner.service';
-import { EbirrService } from '../ebirr/ebirr.service';
+import { SubscriptionPaymentClaimsService } from '../subscription-payments/subscription-payment-claims.service';
 import { SupplierProfile } from '../suppliers/entities/supplier-profile.entity';
 import { SupplierOnboardingService } from '../suppliers/supplier-onboarding.service';
 import { SupplierActivationService } from '../suppliers/supplier-activation.service';
@@ -192,7 +192,7 @@ describe('EquityPartnerBnplService', () => {
           useValue: {},
         },
         {
-          provide: EbirrService,
+          provide: SubscriptionPaymentClaimsService,
           useValue: {},
         },
         {

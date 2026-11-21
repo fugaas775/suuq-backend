@@ -54,6 +54,12 @@ import {
   resolveNextTermStart,
 } from '../branch-staff/pos-branch-renewal.policy';
 import { addCalendarMonths } from '../retail/subscription-summary';
+import { SubscriptionPaymentClaimsService } from '../subscription-payments/subscription-payment-claims.service';
+import { SubscriptionPaymentClaim } from '../subscription-payments/entities/subscription-payment-claim.entity';
+import {
+  SUBSCRIPTION_PAYMENT_DESTINATIONS,
+  findSubscriptionPaymentDestination,
+} from '../subscription-payments/payment-destinations';
 import {
   BranchAccruedLiability,
   BranchAccruedLiabilityStatus,
@@ -111,6 +117,14 @@ export interface OwnerBranchBilling {
     /** When the tills stop if nothing is paid; null outside grace. */
     graceEndsAt: Date | null;
   };
+  /** A transfer the owner has reported that is still waiting to be verified. */
+  pendingPayment: {
+    referenceId: string;
+    amount: number;
+    currency: string;
+    channel: string;
+    submittedAt: Date;
+  } | null;
   lastPayment: {
     referenceId: string;
     amount: number;
@@ -157,6 +171,7 @@ export class BranchBillingService {
     @InjectRepository(PurchaseRun)
     private readonly purchaseRunsRepo: Repository<PurchaseRun>,
     private readonly dataSource: DataSource,
+    private readonly paymentClaims: SubscriptionPaymentClaimsService,
   ) {}
 
   private readonly logger = new Logger(BranchBillingService.name);
@@ -275,6 +290,25 @@ export class BranchBillingService {
     }
   }
 
+  /** A payment for the branch that an admin has not checked yet, if any. */
+  private pendingPaymentOf(
+    claims: SubscriptionPaymentClaim[],
+    branchId: number,
+  ) {
+    const claim = claims.find(
+      (entry) => entry.branchId === branchId && entry.status === 'SUBMITTED',
+    );
+    return claim
+      ? {
+          referenceId: claim.referenceId,
+          amount: Number(claim.amount),
+          currency: claim.currency,
+          channel: claim.channel,
+          submittedAt: claim.createdAt,
+        }
+      : null;
+  }
+
   /** Return per-branch billing summary for branches owned by the user. */
   async listOwnerBranches(
     userId: number,
@@ -320,8 +354,10 @@ export class BranchBillingService {
         legacySubByTenant.set(s.tenantId, s);
     }
 
-    const lastPaymentByBranch =
-      await this.findLastPaymentsForBranches(branchIds);
+    const [lastPaymentByBranch, branchClaims] = await Promise.all([
+      this.findLastPaymentsForBranches(branchIds),
+      this.paymentClaims.listForBranches(branchIds),
+    ]);
     const [activeSummaries, activationCandidates] = await Promise.all([
       this.branchStaffService.getPosBranchSummariesForUser({
         id: userId,
@@ -421,6 +457,7 @@ export class BranchBillingService {
             }
           : null,
         lastPayment: lastPaymentByBranch.get(branch.id) || null,
+        pendingPayment: this.pendingPaymentOf(branchClaims, branch.id),
         nextRenewalAt: sub?.endsAt ?? null,
       };
     });
@@ -520,6 +557,10 @@ export class BranchBillingService {
   }
 
   /** The renewal catalogue the billing screen offers — the prices actually charged. */
+  listPaymentDestinations() {
+    return SUBSCRIPTION_PAYMENT_DESTINATIONS.map((entry) => ({ ...entry }));
+  }
+
   listRenewalOptions() {
     return POS_BRANCH_SUBSCRIPTION_OPTIONS.map((option) => ({
       period: option.period,
@@ -614,10 +655,66 @@ export class BranchBillingService {
     };
   }
 
-  /** Return Ebirr ledger entries scoped to a branch's POS activation refs. */
+  /**
+   * A payment made by transfer, in the same shape the legacy Ebirr rows use, so
+   * history, receipts and the admin drawer read one list.
+   */
+  private describeClaim(
+    claim: SubscriptionPaymentClaim,
+    rows: TenantSubscription[],
+  ) {
+    const state: 'PAID' | 'PENDING' | 'FAILED' =
+      claim.status === 'APPROVED'
+        ? 'PAID'
+        : claim.status === 'REJECTED'
+          ? 'FAILED'
+          : 'PENDING';
+    const term = this.findTermForReference(claim.referenceId, rows);
+    const destination = findSubscriptionPaymentDestination(claim.channel);
+    return {
+      // Prefixed so a claim id can never be read as a legacy ledger id.
+      id: `M${claim.id}`,
+      source: 'TRANSFER' as const,
+      referenceId: claim.referenceId,
+      status: claim.status,
+      state,
+      /** Submitted and not yet checked by an admin. */
+      awaitingReview: claim.status === 'SUBMITTED',
+      amount: Number(claim.amount),
+      currency: claim.currency || 'ETB',
+      period: claim.period ?? null,
+      periodMonths: claim.periodMonths ?? null,
+      termStartsAt: term?.startsAt ?? null,
+      termEndsAt: term?.endsAt ?? null,
+      receiptNumber:
+        state === 'PAID' ? `RCT-M${String(claim.id).padStart(6, '0')}` : null,
+      method: claim.channel,
+      paidTo: destination
+        ? `${destination.label} ${destination.account}`
+        : claim.channel,
+      payerAccount: claim.payerName || null,
+      transactionId: claim.payerReference,
+      issuerTransactionId: null as string | null,
+      /** The customer's own attached receipt, when they attached one. */
+      attachedReceiptUrl: claim.receiptUrl ?? null,
+      /** Why it was rejected — shown to the customer. */
+      reviewNote: claim.reviewNote ?? null,
+      requestTimestamp: null as string | null,
+      createdAt: claim.createdAt,
+      updatedAt: claim.updatedAt,
+      paidAt: state === 'PAID' ? (claim.reviewedAt ?? claim.updatedAt) : null,
+      unapplied: false,
+    };
+  }
+
+  /**
+   * Every subscription payment for a branch, newest first: payments made by
+   * transfer, then the Ebirr charges from before transfers replaced them.
+   */
   async listBranchPayments(branchId: number) {
     const prefix = `${POS_WORKSPACE_REFERENCE_PREFIX}-${branchId}-`;
-    const [rows, subscriptionRows] = await Promise.all([
+    const [claims, rows, subscriptionRows] = await Promise.all([
+      this.paymentClaims.listForBranch(branchId),
       this.ebirrRepo
         .createQueryBuilder('e')
         .where('e.merch_order_id LIKE :prefix', { prefix: `${prefix}%` })
@@ -625,22 +722,30 @@ export class BranchBillingService {
         .getMany(),
       this.loadBranchSubscriptionRows(branchId),
     ]);
-    return rows.map((row) => this.describePayment(row, subscriptionRows));
+    return [
+      ...claims.map((claim) => this.describeClaim(claim, subscriptionRows)),
+      ...rows.map((row) => ({
+        ...this.describePayment(row, subscriptionRows),
+        source: 'EBIRR_LEGACY' as const,
+        awaitingReview: false,
+        method: null,
+      })),
+    ].sort(
+      (a, b) =>
+        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+    );
   }
 
-  async getPaymentForReceipt(branchId: number, paymentId: number) {
-    const prefix = `${POS_WORKSPACE_REFERENCE_PREFIX}-${branchId}-`;
-    const row = await this.ebirrRepo.findOne({ where: { id: paymentId } });
-    if (!row) throw new NotFoundException(`Payment #${paymentId} not found.`);
-    if (!row.merch_order_id.startsWith(prefix)) {
-      throw new ForbiddenException(
-        'Payment does not belong to the requested branch.',
+  async getPaymentForReceipt(branchId: number, paymentId: string) {
+    const payments = await this.listBranchPayments(branchId);
+    const payment = payments.find(
+      (entry) => String(entry.id) === String(paymentId),
+    );
+    if (!payment) {
+      throw new NotFoundException(
+        `Payment ${paymentId} not found for this branch.`,
       );
     }
-    const payment = this.describePayment(
-      row,
-      await this.loadBranchSubscriptionRows(branchId),
-    );
     // A term bought before rows recorded their own period: derive it, clearly
     // from the payment date, rather than print a receipt with no period on it.
     if (
@@ -1400,6 +1505,21 @@ export class BranchBillingService {
       })
       .orderBy('e.created_at', 'DESC')
       .getMany();
+    // Payments by transfer are the current way to pay, and newer than any
+    // legacy charge once one exists.
+    const approved = (
+      await this.paymentClaims.listForBranches(branchIds)
+    ).filter((claim) => claim.status === 'APPROVED');
+    for (const claim of approved) {
+      if (claim.branchId == null || result.has(claim.branchId)) continue;
+      result.set(claim.branchId, {
+        referenceId: claim.referenceId,
+        amount: Number(claim.amount),
+        currency: claim.currency || 'ETB',
+        status: 'PAID',
+        paidAt: claim.reviewedAt ?? claim.updatedAt,
+      });
+    }
     for (const row of rows) {
       const match = row.merch_order_id.match(/^POSACT-(\d+)-/u);
       const branchId = match ? Number(match[1]) : null;

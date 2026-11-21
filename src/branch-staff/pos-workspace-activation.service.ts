@@ -15,7 +15,10 @@ import {
 } from './branch-staff.service';
 
 import { RetailEntitlementsService } from '../retail/retail-entitlements.service';
-import { EbirrService } from '../ebirr/ebirr.service';
+import {
+  PaymentProof,
+  SubscriptionPaymentClaimsService,
+} from '../subscription-payments/subscription-payment-claims.service';
 import { EmailService } from '../email/email.service';
 import { EquityPartnerService } from '../retail/equity-partner.service';
 import {
@@ -87,7 +90,7 @@ export const POS_FIT_CATEGORY_BLOCKER = 'Choose a POS fit category.';
 @Injectable()
 export class PosWorkspaceActivationService {
   private readonly logger = new Logger(PosWorkspaceActivationService.name);
-  /** Completions in flight, by payment reference — see completeEbirrActivationPayment. */
+  /** Completions in flight, by payment reference — see completeActivationPayment. */
   private readonly completionsInFlight = new Map<
     string,
     Promise<TenantSubscription | null>
@@ -96,7 +99,7 @@ export class PosWorkspaceActivationService {
   constructor(
     private readonly branchStaffService: BranchStaffService,
     private readonly retailEntitlementsService: RetailEntitlementsService,
-    private readonly ebirrService: EbirrService,
+    private readonly paymentClaims: SubscriptionPaymentClaimsService,
     @InjectRepository(TenantSubscription)
     private readonly tenantSubscriptionsRepository: Repository<TenantSubscription>,
     @InjectRepository(TenantModuleEntitlement)
@@ -119,14 +122,21 @@ export class PosWorkspaceActivationService {
     return POS_BRANCH_SUBSCRIPTION_OPTIONS;
   }
 
-  async startEbirrActivationPayment(
+  /**
+   * Record that the owner has paid for a branch term by transfer.
+   *
+   * Nothing is granted here. The claim — amount, channel, the transaction
+   * number on their receipt, the receipt itself — goes to the admin queue, and
+   * the term is created when an admin has checked it against the account
+   * (SubscriptionPaymentReviewService → completeActivationPayment).
+   */
+  async startActivationPayment(
     user: { id: number; roles?: string[] },
     params: {
       branchId: number;
-      phoneNumber: string;
       subscriptionPeriod?: string | null;
       referralCode?: string | null;
-    },
+    } & PaymentProof,
   ) {
     const candidate = await this.getPayableActivationCandidate(
       user,
@@ -135,94 +145,55 @@ export class PosWorkspaceActivationService {
     const option =
       findPosBranchSubscriptionOption(params.subscriptionPeriod) ??
       requirePosBranchSubscriptionOption(DEFAULT_POS_BRANCH_PERIOD);
-    // One unconfirmed request per branch at a time. A second tap would send a
-    // second PIN prompt, and approving both collects the price twice.
-    const openAttempt =
-      await this.ebirrService.findRecentOpenTransactionForPrefix(
-        `${POS_WORKSPACE_REFERENCE_PREFIX}-${candidate.branchId}-`,
-        POS_RENEWAL_OPEN_ATTEMPT_WINDOW_MS,
-      );
-    if (openAttempt) {
-      throw new ConflictException(
-        'A payment for this branch is already waiting for confirmation in Ebirr. Approve it on the phone, or wait a few minutes before trying again.',
-      );
-    }
+    // Refused before anything is written: an unknown channel, a transaction
+    // number already used for another payment, or a claim for this branch that
+    // is still waiting to be checked.
+    await this.paymentClaims.assertProofAcceptable(params, {
+      kind: 'POS_BRANCH',
+      branchId: candidate.branchId,
+    });
     // The period rides on the reference so completion can recover it even when
     // the branch has no subscription row to stash `pendingActivation` on.
-    // parseBranchIdFromReference is anchored (/^POSACT-(\d+)-/), so appending a
-    // suffix stays compatible with every reference already in the Ebirr ledger.
+    // parseBranchIdFromReference is anchored (/^POSACT-(\d+)-/), so the suffix
+    // stays compatible with every reference already on the books.
     const referenceId = `${POS_WORKSPACE_REFERENCE_PREFIX}-${candidate.branchId}-${Date.now()}-${option.period}`;
-    const invoiceId = `${POS_WORKSPACE_REFERENCE_PREFIX}INV-${candidate.branchId}`;
-    const paymentResponse = await this.ebirrService.initiatePayment({
-      phoneNumber: params.phoneNumber,
-      amount: option.amount.toFixed(2),
-      referenceId,
-      invoiceId,
-      description: `POS workspace activation (${option.label}) for ${candidate.branchName}`,
-    });
-
-    const rawCheckoutUrl =
-      paymentResponse?.toPayUrl && typeof paymentResponse.toPayUrl === 'string'
-        ? paymentResponse.toPayUrl.trim()
-        : null;
-    const checkoutUrl =
-      rawCheckoutUrl && /^https?:\/\//i.test(rawCheckoutUrl)
-        ? rawCheckoutUrl
-        : null;
-    const receiveCode =
-      typeof paymentResponse?.receiverCode === 'string' &&
-      paymentResponse.receiverCode.trim()
-        ? paymentResponse.receiverCode.trim()
-        : typeof paymentResponse?.ussd === 'string' &&
-            paymentResponse.ussd.trim()
-          ? paymentResponse.ussd.trim()
-          : null;
-    const providerMessage =
-      typeof paymentResponse?.responseMsg === 'string'
-        ? paymentResponse.responseMsg
-        : typeof paymentResponse?.message === 'string'
-          ? paymentResponse.message
-          : checkoutUrl || receiveCode
-            ? 'Confirm the payment in Ebirr, then return to POS-S.'
-            : 'Confirm the payment request in Ebirr on the selected mobile line.';
-
-    const approvedImmediately =
-      paymentResponse?.errorCode === '0' &&
-      paymentResponse?.params?.state === 'APPROVED';
 
     const normalizedReferralCode =
       typeof params.referralCode === 'string' && params.referralCode.trim()
         ? params.referralCode.trim().toUpperCase()
         : null;
 
-    if (approvedImmediately) {
-      await this.completeEbirrActivationPayment(
-        referenceId,
-        option.period,
-        normalizedReferralCode,
-      );
-    } else {
-      // Stash the chosen period on the latest subscription so the async
-      // Ebirr callback can recover it without parsing the reference again.
-      await this.recordPendingPeriodOnSubscription(
-        candidate.branchId,
-        option,
-        referenceId,
-        normalizedReferralCode,
-      );
-    }
-
-    return {
-      branchId: candidate.branchId,
-      branchName: candidate.branchName,
+    // Stash the chosen period and referral code so approval finds them.
+    await this.recordPendingPeriodOnSubscription(
+      candidate.branchId,
+      option,
       referenceId,
-      status: approvedImmediately ? 'ACTIVE' : 'PENDING_CONFIRMATION',
-      subscriptionPeriod: option.period,
+      normalizedReferralCode,
+    );
+
+    const claim = await this.paymentClaims.submit({
+      referenceId,
+      kind: 'POS_BRANCH',
+      userId: user.id,
+      branchId: candidate.branchId,
+      tenantId: candidate.retailTenantId ?? null,
+      subjectName: candidate.branchName,
+      period: option.period,
+      periodMonths: option.months,
       amount: option.amount,
       currency: option.currency,
-      checkoutUrl,
-      receiveCode,
-      providerMessage,
+      channel: params.channel,
+      payerReference: params.payerReference,
+      payerName: params.payerName,
+      receiptUrl: params.receiptUrl,
+    });
+
+    return {
+      ...this.paymentClaims.describeForCustomer(claim),
+      branchId: candidate.branchId,
+      branchName: candidate.branchName,
+      subscriptionPeriod: option.period,
+      providerMessage: this.paymentClaims.describeForCustomer(claim).message,
     };
   }
 
@@ -236,7 +207,7 @@ export class PosWorkspaceActivationService {
       await this.retailEntitlementsService.getBranchWorkspaceStatus(branchId);
     if (!workspace.tenant) return;
 
-    // Must use the SAME precedence as the reader in completeEbirrActivationPayment
+    // Must use the SAME precedence as the reader in completeActivationPayment
     // (branch row, else the legacy tenant-wide row) — a plain `{ tenantId }`
     // lookup stamps the pending period onto a sibling branch's row, where the
     // reader never looks, and the payment silently completes as MONTHLY.
@@ -267,20 +238,21 @@ export class PosWorkspaceActivationService {
   }
 
   /**
-   * Turn a confirmed Ebirr payment into the term it paid for — exactly once.
+   * Turn a verified payment into the term it paid for — exactly once.
    *
-   * The webhook, the return URL and the provider's own retries all land here
-   * for the same payment, sometimes at the same moment, so a completion already
-   * running for a reference is joined rather than started again.
+   * Called when an admin approves the payment claim. Two approvals of the same
+   * claim can arrive together (a double click, two admins), so a completion
+   * already running for a reference is joined rather than started again, and a
+   * reference that has already bought its term buys nothing more.
    */
-  async completeEbirrActivationPayment(
+  async completeActivationPayment(
     referenceId: string,
     explicitPeriod?: PosBranchSubscriptionPeriod,
     explicitReferralCode?: string | null,
   ): Promise<TenantSubscription | null> {
     const inFlight = this.completionsInFlight.get(referenceId);
     if (inFlight !== undefined) return inFlight;
-    const run = this.applyEbirrActivationPayment(
+    const run = this.applyActivationPayment(
       referenceId,
       explicitPeriod,
       explicitReferralCode,
@@ -289,7 +261,7 @@ export class PosWorkspaceActivationService {
     return run;
   }
 
-  private async applyEbirrActivationPayment(
+  private async applyActivationPayment(
     referenceId: string,
     explicitPeriod?: PosBranchSubscriptionPeriod,
     explicitReferralCode?: string | null,
@@ -343,6 +315,7 @@ export class PosWorkspaceActivationService {
     const reference = branchSubscription ?? tenantWideFallback;
 
     const now = new Date();
+    const paymentClaim = await this.paymentClaims.findByReference(referenceId);
     // Has THIS payment already bought its term? Asked of the reference, not of
     // the branch: "the row says ACTIVE" used to stand in for "already done",
     // and that swallowed real money — a term that ran out in the afternoon is
@@ -444,8 +417,8 @@ export class PosWorkspaceActivationService {
     // Calendar months: a month bought on the 5th runs to the 5th, and a year is
     // a year — not 30-day blocks, which sold 360 days as "1 year".
     nextSubscription.endsAt = addCalendarMonths(termStartsAt, option.months);
-    // Ebirr holds no mandate, so nothing renews by itself. Saying otherwise
-    // told owners they were covered when they were not.
+    // Every term is paid by hand, so nothing renews by itself. Saying
+    // otherwise told owners they were covered when they were not.
     nextSubscription.autoRenew = false;
     nextSubscription.metadata = {
       ...(writesNewRow ? {} : branchSubscription?.metadata || {}),
@@ -463,7 +436,7 @@ export class PosWorkspaceActivationService {
             chainsFromPreviousEnd: renewsLiveTerm,
           }
         : {}),
-      lastActivationPaymentMethod: 'EBIRR',
+      lastActivationPaymentMethod: paymentClaim?.channel ?? 'TRANSFER',
       lastActivatedAt: now.toISOString(),
       posWorkspacePlanCode: option.planCode,
       subscriptionPeriod: option.period,
@@ -492,15 +465,6 @@ export class PosWorkspaceActivationService {
         pendingActivation: undefined,
       };
       await this.tenantSubscriptionsRepository.save(branchSubscription);
-    }
-
-    // The ledger entry is paid, whichever path confirmed it.
-    try {
-      await this.ebirrService.markTransactionCompleted(referenceId);
-    } catch (err: any) {
-      this.logger.warn(
-        `Could not mark Ebirr transaction ${referenceId} completed: ${err?.message}`,
-      );
     }
 
     // The owner gets the receipt by email the moment the payment is confirmed.
@@ -579,28 +543,29 @@ export class PosWorkspaceActivationService {
   }): Promise<void> {
     try {
       if (!input.ownerUserId) return;
-      const [owner, tx] = await Promise.all([
+      const [owner, claim] = await Promise.all([
         this.usersRepository.findOne({ where: { id: input.ownerUserId } }),
-        this.ebirrService.findTransactionByReference(input.referenceId),
+        this.paymentClaims.findByReference(input.referenceId),
       ]);
-      if (!owner?.email || !tx) return;
-      const receiptNumber = `RCT-${String(tx.id).padStart(6, '0')}`;
+      if (!owner?.email || !claim) return;
+      const receiptNumber = `RCT-M${String(claim.id).padStart(6, '0')}`;
       const html = renderSubscriptionReceiptHtml(
         { id: input.branchId, name: input.branchName },
         {
-          id: tx.id,
+          id: claim.id,
           referenceId: input.referenceId,
           state: 'PAID',
-          amount: Number(tx.amount ?? input.option.amount),
-          currency: tx.currency || input.option.currency,
+          amount: Number(claim.amount ?? input.option.amount),
+          currency: claim.currency || input.option.currency,
           periodMonths: input.option.months,
           termStartsAt: input.subscription.startsAt,
           termEndsAt: input.subscription.endsAt ?? null,
           receiptNumber,
-          payerAccount: tx.payer_account || null,
-          transactionId: tx.trans_id || null,
-          issuerTransactionId: tx.issuer_trans_id || null,
-          createdAt: tx.created_at,
+          method: claim.channel,
+          payerAccount: claim.payerName || null,
+          transactionId: claim.payerReference,
+          issuerTransactionId: null,
+          createdAt: claim.createdAt,
           paidAt: new Date(),
         },
       );
@@ -608,8 +573,8 @@ export class PosWorkspaceActivationService {
         to: owner.email,
         branchName: input.branchName,
         receiptNumber,
-        amount: Number(tx.amount ?? input.option.amount),
-        currency: tx.currency || input.option.currency,
+        amount: Number(claim.amount ?? input.option.amount),
+        currency: claim.currency || input.option.currency,
         coveredUntil: input.subscription.endsAt ?? null,
         html,
       });
@@ -641,13 +606,12 @@ export class PosWorkspaceActivationService {
       country?: string;
       address?: string;
       defaultCurrency?: string;
-      phoneNumber: string;
       phone?: string;
       tinNumber?: string;
       referralCode?: string;
       ownerEmail?: string;
       subscriptionPeriod?: string;
-    },
+    } & PaymentProof,
   ) {
     // Resolve the user's tenant via their branch assignments
     const assignments = await this.branchStaffAssignmentsRepository.find({
@@ -690,9 +654,17 @@ export class PosWorkspaceActivationService {
       );
     }
 
+    // The pending branch is held in ONE slot on the tenant's subscription, so a
+    // second request while the first is still being verified would overwrite
+    // it. Refused here, before anything is written.
+    await this.paymentClaims.assertProofAcceptable(dto, {
+      kind: 'POS_BRANCH_CREATE',
+      tenantId,
+      userId: user.id,
+    });
+
     const branchName = dto.branchName.trim();
     const referenceId = `${BRANCH_CREATE_REFERENCE_PREFIX}-${tenantId}-${user.id}-${Date.now()}`;
-    const invoiceId = `${BRANCH_CREATE_REFERENCE_PREFIX}INV-${tenantId}-${Date.now()}`;
 
     // Resolve the billing period the caller chose (Monthly or 1-year −10%),
     // defaulting to the monthly plan when omitted. The period is persisted in
@@ -723,104 +695,64 @@ export class PosWorkspaceActivationService {
     };
     await this.tenantSubscriptionsRepository.save(subscription);
 
-    // Expire any stale PENDING/INITIATED POSBRANCH transactions for this
-    // tenant+user before initiating a new one. Multiple pending transactions
-    // for the same phone number cause Ebirr to return E102051 Gateway Timeout.
-    const staleTxPrefix = `${BRANCH_CREATE_REFERENCE_PREFIX}-${tenantId}-${user.id}-`;
-    await this.ebirrService
-      .expireStalePendingTransactionsForPrefix(staleTxPrefix)
-      .catch((err: any) =>
-        this.logger.warn(
-          `Failed to expire stale branch transactions for ${staleTxPrefix}: ${err?.message}`,
-        ),
-      );
-
-    let paymentResponse: any;
-    try {
-      paymentResponse = await this.ebirrService.initiatePayment({
-        phoneNumber: dto.phoneNumber,
-        amount: additionalBranchOption.amount.toFixed(2),
-        referenceId,
-        invoiceId,
-        description: `New branch "${branchName}" activation (${additionalBranchOption.label}) for tenant ${tenantId}`,
-      });
-    } catch (payErr: any) {
-      const providerCode = String(payErr?.providerCode || '').trim();
-      const isRecoverableGatewayTimeout =
-        payErr?.isEbirrTimeout ||
-        providerCode === 'E102051' ||
-        /gateway timeout|transaction timeout/i.test(
-          String(payErr?.message || ''),
-        );
-
-      if (isRecoverableGatewayTimeout) {
-        // The subscription record is already persisted — the provider callback
-        // can still complete branch creation if Ebirr settles after timing out.
-        this.logger.warn(
-          `Ebirr timeout on branch creation payment ${referenceId} — returning PENDING and waiting for provider confirmation`,
-        );
-        return {
-          status: 'PENDING' as const,
-          branchId: null,
-          referenceId,
-          checkoutUrl: null,
-          receiveCode: null,
-          providerMessage:
-            'The payment request was sent but no confirmation was received from Ebirr. If you received a payment notification on your phone, complete it there and wait for provider confirmation to create the branch automatically.',
-        };
-      }
-      throw payErr;
-    }
-
-    const rawCheckoutUrl =
-      paymentResponse?.toPayUrl && typeof paymentResponse.toPayUrl === 'string'
-        ? paymentResponse.toPayUrl.trim()
-        : null;
-    const checkoutUrl =
-      rawCheckoutUrl && /^https?:\/\//i.test(rawCheckoutUrl)
-        ? rawCheckoutUrl
-        : null;
-    const receiveCode =
-      typeof paymentResponse?.receiverCode === 'string' &&
-      paymentResponse.receiverCode.trim()
-        ? paymentResponse.receiverCode.trim()
-        : typeof paymentResponse?.ussd === 'string' &&
-            paymentResponse.ussd.trim()
-          ? paymentResponse.ussd.trim()
-          : null;
-    const providerMessage =
-      typeof paymentResponse?.responseMsg === 'string'
-        ? paymentResponse.responseMsg
-        : typeof paymentResponse?.message === 'string'
-          ? paymentResponse.message
-          : checkoutUrl || receiveCode
-            ? 'Complete the payment in Ebirr and wait for provider confirmation to create the branch automatically.'
-            : 'Confirm the payment request in Ebirr on the selected mobile line and wait for provider confirmation.';
-
-    const approvedImmediately =
-      paymentResponse?.errorCode === '0' &&
-      paymentResponse?.params?.state === 'APPROVED';
-
-    if (approvedImmediately) {
-      const created = await this.completeBranchCreationPayment(referenceId);
-      return {
-        status: 'CREATED' as const,
-        branchId: created.branchId,
-        referenceId,
-        checkoutUrl: null,
-        receiveCode: null,
-        providerMessage: `Branch "${branchName}" has been created and is ready.`,
-      };
-    }
+    const claim = await this.paymentClaims.submit({
+      referenceId,
+      kind: 'POS_BRANCH_CREATE',
+      userId: user.id,
+      tenantId,
+      subjectName: branchName,
+      period: additionalBranchOption.period,
+      periodMonths: additionalBranchOption.months,
+      amount: additionalBranchOption.amount,
+      currency: additionalBranchOption.currency,
+      channel: dto.channel,
+      payerReference: dto.payerReference,
+      payerName: dto.payerName,
+      receiptUrl: dto.receiptUrl,
+    });
+    const submitted = this.paymentClaims.describeForCustomer(claim);
 
     return {
+      ...submitted,
+      // `status` stays PENDING for the screens that poll it; the branch is
+      // created when an admin has verified the payment.
       status: 'PENDING' as const,
       branchId: null,
-      referenceId,
-      checkoutUrl,
-      receiveCode,
-      providerMessage,
+      checkoutUrl: null,
+      receiveCode: null,
+      providerMessage: `Payment submitted. "${branchName}" will be created as soon as the payment is verified — you will be notified.`,
     };
+  }
+
+  /**
+   * Where a new-branch payment stands, for the screen that submitted it. Reads
+   * only: a branch is created by an admin approving the claim, never by the
+   * customer asking whether it has been.
+   */
+  async getBranchCreationPaymentStatus(
+    user: { id: number },
+    referenceId: string,
+  ): Promise<{
+    status: 'PENDING' | 'CREATED' | 'REJECTED';
+    branchId: number | null;
+    reason?: string | null;
+  }> {
+    const claim = await this.paymentClaims.findByReference(
+      String(referenceId || '').trim(),
+    );
+    if (!claim || claim.userId !== user.id) {
+      throw new NotFoundException('Payment not found.');
+    }
+    if (claim.status === 'REJECTED') {
+      return { status: 'REJECTED', branchId: null, reason: claim.reviewNote };
+    }
+    if (claim.status !== 'APPROVED') {
+      return { status: 'PENDING', branchId: null };
+    }
+    const created = await this.completeBranchCreationPayment(claim.referenceId);
+    return created.branchId
+      ? { status: 'CREATED', branchId: created.branchId }
+      : { status: 'PENDING', branchId: null };
   }
 
   async completeBranchCreationPayment(
@@ -856,6 +788,16 @@ export class PosWorkspaceActivationService {
           createdBranchId?: number | null;
         }
       | undefined;
+
+    // The pending slot must be THIS payment's. Without the check, completing
+    // any reference for the tenant created whatever branch happened to be
+    // pending.
+    if (pending?.referenceId && pending.referenceId !== referenceId) {
+      this.logger.warn(
+        `Branch creation reference ${referenceId} does not match the pending one (${pending.referenceId}).`,
+      );
+      return { branchId: 0, created: false };
+    }
 
     if (!pending?.branchName) {
       this.logger.warn(
@@ -951,7 +893,7 @@ export class PosWorkspaceActivationService {
     }
 
     this.logger.log(
-      `Branch ${savedBranch.id} "${savedBranch.name}" created via Ebirr payment ref ${referenceId}`,
+      `Branch ${savedBranch.id} "${savedBranch.name}" created via verified payment ref ${referenceId}`,
     );
 
     // Link equity partner and generate first-month payout if a referral code was used

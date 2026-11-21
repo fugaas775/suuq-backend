@@ -204,7 +204,8 @@ export interface PosPortalSupportDiagnostic {
 
 const POS_WORKSPACE_MONTHLY_PRICE = 3900;
 const POS_WORKSPACE_CURRENCY = 'ETB';
-const POS_WORKSPACE_PAYMENT_METHOD = 'EBIRR';
+// Paid by a transfer the owner makes (Ebirr or CBE) and an admin verifies.
+const POS_WORKSPACE_PAYMENT_METHOD = 'TRANSFER';
 
 /**
  * Clean a staff row's permission codes before anything is decided on them.

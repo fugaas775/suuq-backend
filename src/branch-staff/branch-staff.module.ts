@@ -5,7 +5,7 @@ import { Branch } from '../branches/entities/branch.entity';
 import { EmailModule } from '../email/email.module';
 import { User } from '../users/entities/user.entity';
 import { RetailModule } from '../retail/retail.module';
-import { EbirrModule } from '../ebirr/ebirr.module';
+import { SubscriptionPaymentsModule } from '../subscription-payments/subscription-payments.module';
 import { RedisModule } from '../redis/redis.module';
 import { RetailTenant } from '../retail/entities/retail-tenant.entity';
 import { TenantSubscription } from '../retail/entities/tenant-subscription.entity';
@@ -32,7 +32,7 @@ import { SuppliersModule } from '../suppliers/suppliers.module';
     AuditModule,
     EmailModule,
     RetailModule,
-    EbirrModule,
+    SubscriptionPaymentsModule,
     RedisModule,
     SuppliersModule,
     TypeOrmModule.forFeature([

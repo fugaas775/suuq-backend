@@ -1,3 +1,5 @@
+import { Type } from 'class-transformer';
+import { PaymentProofDto } from '../subscription-payments/dto/payment-proof.dto';
 import {
   Body,
   Controller,
@@ -22,6 +24,7 @@ import {
   IsOptional,
   IsString,
   ValidateIf,
+  ValidateNested,
 } from 'class-validator';
 import { EquityPartnerBnplAccountKind } from './entities/equity-partner-bnpl-activation.entity';
 import {
@@ -34,16 +37,18 @@ class StartEquityBnplActivationDto implements StartBnplActivationInput {
   @IsIn(['BRANCH', 'SUPPLIER'])
   accountKind?: EquityPartnerBnplAccountKind;
 
-  // 'BNPL' (default) draws equity credit + a slot; 'DIRECT_EBIRR' pays now.
+  // 'BNPL' (default) draws equity credit + a slot; 'DIRECT' means the partner
+  // has paid in full by transfer and attaches the proof.
   @IsOptional()
-  @IsIn(['BNPL', 'DIRECT_EBIRR'])
-  fundingType?: 'BNPL' | 'DIRECT_EBIRR';
+  @IsIn(['BNPL', 'DIRECT', 'DIRECT_EBIRR'])
+  fundingType?: 'BNPL' | 'DIRECT' | 'DIRECT_EBIRR';
 
-  // Ebirr line to charge — required for direct payment.
-  @ValidateIf((o) => o.fundingType === 'DIRECT_EBIRR')
-  @IsString()
-  @IsNotEmpty()
-  paymentPhone?: string;
+  @ValidateIf(
+    (o) => o.fundingType === 'DIRECT' || o.fundingType === 'DIRECT_EBIRR',
+  )
+  @ValidateNested()
+  @Type(() => PaymentProofDto)
+  paymentProof?: PaymentProofDto;
 
   @IsEmail()
   targetOwnerEmail!: string;
@@ -103,11 +108,7 @@ class StartEquityBnplActivationDto implements StartBnplActivationInput {
   countriesServed?: string[];
 }
 
-class SettleEquityBnplActivationDto {
-  @IsString()
-  @IsNotEmpty()
-  phoneNumber!: string;
-}
+class SettleEquityBnplActivationDto extends PaymentProofDto {}
 
 @ApiTags('Seller Equity BNPL')
 @Controller('seller/v1/equity/bnpl')
@@ -148,18 +149,19 @@ export class SellerEquityBnplController {
     );
   }
 
-  /** Initiate Ebirr settlement for an outstanding activation. */
+  /** Submit proof of a transfer settling an outstanding activation. */
   @Post('activations/:id/settle')
   settle(
     @Req() req: AuthenticatedRequest,
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: SettleEquityBnplActivationDto,
   ) {
-    return this.bnplService.initiateSettlementPayment(
-      req.user.id,
-      id,
-      dto.phoneNumber,
-    );
+    return this.bnplService.initiateSettlementPayment(req.user.id, id, {
+      channel: dto.channel,
+      payerReference: dto.payerReference,
+      payerName: dto.payerName,
+      receiptUrl: dto.receiptUrl,
+    });
   }
 
   /** Cancel an outstanding BNPL activation (releases the BNPL slot). */

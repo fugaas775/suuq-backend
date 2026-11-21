@@ -16,7 +16,7 @@
  *   BILLING_SELLER_VAT_NOTE  free text printed under the table.
  */
 export interface SubscriptionReceiptPayment {
-  id: number;
+  id: number | string;
   referenceId: string;
   state: 'PAID' | 'PENDING' | 'FAILED' | 'EXPIRED';
   amount: number;
@@ -25,6 +25,8 @@ export interface SubscriptionReceiptPayment {
   termStartsAt: Date | null;
   termEndsAt: Date | null;
   receiptNumber: string | null;
+  /** EBIRR | CBE for a verified transfer; absent on a legacy Ebirr charge. */
+  method?: string | null;
   payerAccount: string | null;
   transactionId: string | null;
   issuerTransactionId: string | null;
@@ -96,8 +98,8 @@ export function renderSubscriptionReceiptHtml(
       : '';
   const stateLabel: Record<string, string> = {
     PAID: 'Paid',
-    PENDING: 'Awaiting confirmation',
-    FAILED: 'Not completed',
+    PENDING: 'Awaiting verification',
+    FAILED: 'Not verified',
     EXPIRED: 'Expired — not charged',
   };
   const row = (label: string, value: unknown) =>
@@ -113,6 +115,12 @@ export function renderSubscriptionReceiptHtml(
   const vatRows = vatSplit
     ? `${row('Amount excl. VAT', money(vatSplit.net))}${row(`VAT ${vatRate}%`, money(vatSplit.vat))}${row('Total incl. VAT', money(Number(payment.amount)))}`
     : '';
+  const methodLabel =
+    payment.method === 'CBE'
+      ? 'Bank transfer — CBE'
+      : payment.method === 'EBIRR'
+        ? 'Ebirr transfer'
+        : 'Ebirr mobile money';
   const title = paid
     ? vatRate
       ? 'Tax receipt'
@@ -153,11 +161,11 @@ ${row('Billed to', `${branch.name} (branch #${branch.id})`)}
 ${row('For', planLabel)}
 ${row('Period covered', covered)}
 ${vatRows}
-${row('Payment method', 'Ebirr mobile money')}
+${row('Payment method', methodLabel)}
 ${row('Payer account', payment.payerAccount)}
 ${row(paid ? 'Paid on' : 'Requested on', when(paid ? payment.paidAt : payment.createdAt))}
 ${row('Payment reference', payment.referenceId)}
-${row('Ebirr transaction', payment.transactionId)}
+${row('Transaction number', payment.transactionId)}
 ${row('Issuer transaction', payment.issuerTransactionId)}
 </table>
 ${vatNote ? `<div class="foot">${escape(vatNote)}</div>` : ''}

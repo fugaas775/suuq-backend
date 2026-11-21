@@ -1,12 +1,9 @@
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
+import { ApiPropertyOptional } from '@nestjs/swagger';
+import { IsIn, IsOptional, IsString } from 'class-validator';
+import { PaymentProofDto } from '../../subscription-payments/dto/payment-proof.dto';
 
-export class StartSupplierActivationDto {
-  @ApiProperty({ example: '0911223344', description: 'Ebirr mobile line' })
-  @IsString()
-  @MaxLength(32)
-  phoneNumber!: string;
-
+/** "I have paid for my supplier subscription" — the period plus the proof. */
+export class StartSupplierActivationDto extends PaymentProofDto {
   @ApiPropertyOptional({ enum: ['MONTHLY', 'ONE_YEAR'], example: 'MONTHLY' })
   @IsOptional()
   @IsString()

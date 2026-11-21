@@ -1,7 +1,6 @@
 import { addCalendarMonths } from '../retail/subscription-summary';
 import {
   POS_EARLY_RENEWAL_WINDOW_DAYS,
-  POS_RENEWAL_OPEN_ATTEMPT_WINDOW_MS,
   canRenewEarly,
   collectAppliedActivationReferences,
   isActivationReferenceApplied,
@@ -17,7 +16,10 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { EbirrService } from '../ebirr/ebirr.service';
+import {
+  PaymentProof,
+  SubscriptionPaymentClaimsService,
+} from '../subscription-payments/subscription-payment-claims.service';
 import {
   TenantBillingInterval,
   TenantSubscriptionStatus,
@@ -49,8 +51,7 @@ const SUPPLIER_ACTIVATION_REFERENCE_PREFIX = 'SUPACT';
 export { SUPPLIER_ACTIVATION_REFERENCE_PREFIX };
 const DEFAULT_SUPPLIER_PERIOD: SupplierSubscriptionPeriod = 'MONTHLY';
 // Postgres advisory-lock namespace used to serialize concurrent supplier
-// activation completions (the Ebirr webhook and the return-redirect can both
-// fire for the same reference) so the read-then-write activation guard below
+// activation completions (two approvals of one claim can arrive together) so the read-then-write activation guard below
 // can't be raced into a double activation.
 const SUPPLIER_ACTIVATION_LOCK_NAMESPACE = 100;
 
@@ -65,7 +66,7 @@ export class SupplierActivationService {
   private readonly logger = new Logger(SupplierActivationService.name);
 
   constructor(
-    private readonly ebirrService: EbirrService,
+    private readonly paymentClaims: SubscriptionPaymentClaimsService,
     private readonly supplierStaffService: SupplierStaffService,
     private readonly supplierOutletService: SupplierOutletService,
     @InjectRepository(SupplierProfile)
@@ -104,9 +105,13 @@ export class SupplierActivationService {
     );
   }
 
-  async startEbirrActivationPayment(
+  /**
+   * Record that the supplier has paid for a term by transfer. Grants nothing:
+   * the claim goes to the admin queue and the term is created on approval.
+   */
+  async startActivationPayment(
     user: { id: number; roles?: string[]; supplierId?: number | null },
-    params: { phoneNumber: string; subscriptionPeriod?: string | null },
+    params: { subscriptionPeriod?: string | null } & PaymentProof,
   ) {
     // Only an owner/manager of a supplier account may pay to activate it.
     const profile =
@@ -138,78 +143,43 @@ export class SupplierActivationService {
         'This subscription has no end date, so there is nothing to renew.',
       );
     }
-    const openAttempt =
-      await this.ebirrService.findRecentOpenTransactionForPrefix(
-        `${SUPPLIER_ACTIVATION_REFERENCE_PREFIX}-${profile.id}-`,
-        POS_RENEWAL_OPEN_ATTEMPT_WINDOW_MS,
-      );
-    if (openAttempt) {
-      throw new ConflictException(
-        'A payment for this account is already waiting for confirmation in Ebirr. Approve it on the phone, or wait a few minutes before trying again.',
-      );
-    }
-
-    const referenceId = `${SUPPLIER_ACTIVATION_REFERENCE_PREFIX}-${profile.id}-${Date.now()}`;
-    const invoiceId = `${SUPPLIER_ACTIVATION_REFERENCE_PREFIX}INV-${profile.id}`;
-
-    const paymentResponse = await this.ebirrService.initiatePayment({
-      phoneNumber: params.phoneNumber,
-      amount: option.amount.toFixed(2),
-      referenceId,
-      invoiceId,
-      description: `Supplier subscription activation (${option.label}) for ${profile.companyName}`,
+    await this.paymentClaims.assertProofAcceptable(params, {
+      kind: 'SUPPLIER',
+      supplierProfileId: profile.id,
     });
 
-    const rawCheckoutUrl =
-      typeof paymentResponse?.toPayUrl === 'string'
-        ? paymentResponse.toPayUrl.trim()
-        : null;
-    const checkoutUrl =
-      rawCheckoutUrl && /^https?:\/\//i.test(rawCheckoutUrl)
-        ? rawCheckoutUrl
-        : null;
-    const receiveCode =
-      typeof paymentResponse?.receiverCode === 'string' &&
-      paymentResponse.receiverCode.trim()
-        ? paymentResponse.receiverCode.trim()
-        : typeof paymentResponse?.ussd === 'string' &&
-            paymentResponse.ussd.trim()
-          ? paymentResponse.ussd.trim()
-          : null;
-    const providerMessage =
-      typeof paymentResponse?.responseMsg === 'string'
-        ? paymentResponse.responseMsg
-        : typeof paymentResponse?.message === 'string'
-          ? paymentResponse.message
-          : checkoutUrl || receiveCode
-            ? 'Confirm the payment in Ebirr, then return to the supplier portal.'
-            : 'Confirm the payment request in Ebirr on the selected mobile line.';
+    const referenceId = `${SUPPLIER_ACTIVATION_REFERENCE_PREFIX}-${profile.id}-${Date.now()}`;
+    await this.recordPendingPeriod(profile.id, option, referenceId);
 
-    const approvedImmediately =
-      paymentResponse?.errorCode === '0' &&
-      paymentResponse?.params?.state === 'APPROVED';
-
-    if (approvedImmediately) {
-      await this.completeEbirrActivationPayment(referenceId, option.period);
-    } else {
-      await this.recordPendingPeriod(profile.id, option, referenceId);
-    }
-
-    return {
-      supplierProfileId: profile.id,
-      companyName: profile.companyName,
+    const claim = await this.paymentClaims.submit({
       referenceId,
-      status: approvedImmediately ? 'ACTIVE' : 'PENDING_CONFIRMATION',
-      subscriptionPeriod: option.period,
+      kind: 'SUPPLIER',
+      userId: user.id,
+      supplierProfileId: profile.id,
+      subjectName: profile.companyName,
+      period: option.period,
+      periodMonths: option.months,
       amount: option.amount,
       currency: option.currency,
-      checkoutUrl,
-      receiveCode,
-      providerMessage,
+      channel: params.channel,
+      payerReference: params.payerReference,
+      payerName: params.payerName,
+      receiptUrl: params.receiptUrl,
+    });
+    const submitted = this.paymentClaims.describeForCustomer(claim);
+
+    return {
+      ...submitted,
+      supplierProfileId: profile.id,
+      companyName: profile.companyName,
+      subscriptionPeriod: option.period,
+      checkoutUrl: null,
+      receiveCode: null,
+      providerMessage: submitted.message,
     };
   }
 
-  async completeEbirrActivationPayment(
+  async completeActivationPayment(
     referenceId: string,
     explicitPeriod?: SupplierSubscriptionPeriod,
   ): Promise<SupplierSubscription | null> {
@@ -295,7 +265,7 @@ export class SupplierActivationService {
         if (!renewsLiveTerm) next.startsAt = now;
         // Calendar months — a year is a year, not twelve 30-day blocks.
         next.endsAt = addCalendarMonths(termStartsAt, option.months);
-        // Ebirr holds no mandate, so nothing renews by itself.
+        // Every term is paid by hand, so nothing renews by itself.
         next.autoRenew = false;
         next.metadata = {
           ...(latest?.metadata || {}),
@@ -304,19 +274,12 @@ export class SupplierActivationService {
             -50,
           ),
           lastTermStartsAt: termStartsAt.toISOString(),
-          lastActivationPaymentMethod: 'EBIRR',
+          lastActivationPaymentMethod: 'TRANSFER',
           lastActivatedAt: now.toISOString(),
           subscriptionPeriod: option.period,
           pendingActivation: undefined,
         };
         const saved = await manager.save(next);
-        try {
-          await this.ebirrService.markTransactionCompleted(referenceId);
-        } catch (err: any) {
-          this.logger.warn(
-            `Could not mark Ebirr transaction ${referenceId} completed: ${err?.message}`,
-          );
-        }
 
         profile.activationStatus = SupplierActivationStatus.ACTIVE;
         profile.lastActivatedAt = now;
@@ -341,8 +304,8 @@ export class SupplierActivationService {
   /**
    * Activate a supplier subscription that was paid for out-of-band — currently
    * an equity partner BNPL-funding the supplier go-live fee. Mirrors the
-   * subscription-create + profile-ACTIVE half of completeEbirrActivationPayment,
-   * but takes the profile + period directly (no Ebirr reference to parse) and
+   * subscription-create + profile-ACTIVE half of completeActivationPayment,
+   * but takes the profile + period directly (no payment reference to parse) and
    * records the funding source in metadata. Idempotent: returns the existing
    * ACTIVE subscription if the supplier is already live.
    */
@@ -548,6 +511,23 @@ export class SupplierActivationService {
           }
         : null,
       pricing: SUPPLIER_SUBSCRIPTION_OPTIONS,
+      payTo: this.paymentClaims.destinations(),
+      // What the supplier has reported paying, newest first — a rejected one
+      // carries the reason, a submitted one is still being checked.
+      payments: (await this.paymentClaims.listForSupplier(profile.id))
+        .slice(0, 10)
+        .map((claim) => ({
+          id: claim.id,
+          referenceId: claim.referenceId,
+          status: claim.status,
+          amount: Number(claim.amount),
+          currency: claim.currency,
+          channel: claim.channel,
+          payerReference: claim.payerReference,
+          receiptUrl: claim.receiptUrl ?? null,
+          reviewNote: claim.reviewNote ?? null,
+          createdAt: claim.createdAt,
+        })),
     };
   }
 
@@ -562,7 +542,7 @@ export class SupplierActivationService {
     });
     if (!latest) {
       // Seed a placeholder PAST_DUE row to carry the pending period across the
-      // async Ebirr callback (mirrors POS stashing on the latest subscription).
+      // approval of the payment claim (mirrors POS stashing on the latest subscription).
       latest = this.subscriptionsRepository.create({
         supplierProfileId,
         planCode: option.planCode,

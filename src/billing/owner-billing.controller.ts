@@ -79,12 +79,15 @@ export class OwnerBillingController {
       user.id,
       user.roles,
     );
-    return this.activationService.startEbirrActivationPayment(
+    return this.activationService.startActivationPayment(
       { id: user.id, roles: user.roles },
       {
         branchId,
-        phoneNumber: dto.phoneNumber,
         subscriptionPeriod: dto.subscriptionPeriod,
+        channel: dto.channel,
+        payerReference: dto.payerReference,
+        payerName: dto.payerName,
+        receiptUrl: dto.receiptUrl,
       },
     );
   }
@@ -93,7 +96,7 @@ export class OwnerBillingController {
   async receiptHtml(
     @Req() req: AuthenticatedRequest,
     @Param('branchId', ParseIntPipe) branchId: number,
-    @Param('paymentId', ParseIntPipe) paymentId: number,
+    @Param('paymentId') paymentId: string,
     @Res() res: Response,
   ) {
     const userId = (req.user as any).id;

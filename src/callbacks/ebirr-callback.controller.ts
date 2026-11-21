@@ -13,9 +13,6 @@ import {
 import { OrdersService } from '../orders/orders.service';
 import { ProductsService } from '../products/products.service';
 import { EbirrService } from '../ebirr/ebirr.service';
-import { PosWorkspaceActivationService } from '../branch-staff/pos-workspace-activation.service';
-import { SupplierActivationService } from '../suppliers/supplier-activation.service';
-import { EquityPartnerBnplService } from '../retail/equity-partner-bnpl.service';
 import { BoostTier } from '../products/boost-pricing.service';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { Response } from 'express';
@@ -194,9 +191,6 @@ export class EbirrCallbackController {
     private readonly ordersService: OrdersService,
     private readonly productsService: ProductsService,
     private readonly ebirrService: EbirrService,
-    private readonly posWorkspaceActivationService: PosWorkspaceActivationService,
-    private readonly supplierActivationService: SupplierActivationService,
-    private readonly equityPartnerBnplService: EquityPartnerBnplService,
   ) {}
 
   @Post('webhook')
@@ -207,52 +201,12 @@ export class EbirrCallbackController {
   ) {
     this.assertWebhookAuthorized(headers, body);
     this.logger.log(`Received Ebirr Webhook: ${JSON.stringify(body)}`);
-    const result = await this.ebirrService.processCallback(body);
+    await this.ebirrService.processCallback(body);
 
-    if (
-      result?.status === 'COMPLETED' &&
-      this.posWorkspaceActivationService.isPosWorkspaceActivationReference(
-        result.referenceId,
-      )
-    ) {
-      await this.posWorkspaceActivationService.completeEbirrActivationPayment(
-        result.referenceId,
-      );
-    }
-
-    if (
-      result?.status === 'COMPLETED' &&
-      this.posWorkspaceActivationService.isBranchCreationPaymentReference(
-        result.referenceId,
-      )
-    ) {
-      await this.posWorkspaceActivationService.completeBranchCreationPayment(
-        result.referenceId,
-      );
-    }
-
-    if (
-      result?.status === 'COMPLETED' &&
-      this.supplierActivationService.isSupplierActivationReference(
-        result.referenceId,
-      )
-    ) {
-      await this.supplierActivationService.completeEbirrActivationPayment(
-        result.referenceId,
-      );
-    }
-
-    if (
-      result?.status === 'COMPLETED' &&
-      this.equityPartnerBnplService.isBnplActivationReference(
-        result.referenceId,
-      )
-    ) {
-      await this.equityPartnerBnplService.completeEbirrSettlement(
-        result.referenceId,
-      );
-    }
-
+    // Subscriptions, new-branch payments and equity BNPL settlement no longer
+    // come through Ebirr — they are paid by transfer and verified by an admin
+    // (see SubscriptionPaymentReviewService). This webhook now serves
+    // marketplace orders and boosts only.
     return { status: 'OK' };
   }
 
@@ -274,92 +228,9 @@ export class EbirrCallbackController {
         this.logger.warn(
           `Ebirr return callback rejected before completion: ${JSON.stringify(verifiedReturn)}`,
         );
-        if (
-          this.posWorkspaceActivationService.isPosWorkspaceActivationReference(
-            verifiedReturn.referenceId,
-          ) ||
-          this.supplierActivationService.isSupplierActivationReference(
-            verifiedReturn.referenceId,
-          ) ||
-          this.equityPartnerBnplService.isBnplActivationReference(
-            verifiedReturn.referenceId,
-          )
-        ) {
-          return res.redirect(
-            this.buildPosActivationRedirect({
-              status: 'failed',
-              referenceId: verifiedReturn.referenceId,
-              reason: String(verifiedReturn.reason || 'invalid_return'),
-            }),
-          );
-        }
         const siteUrl = process.env.SITE_URL || 'https://suuq-s.com';
         return res.redirect(
           `${siteUrl}/payment/ebirr/finish?status=failed&reason=${encodeURIComponent(String(verifiedReturn.reason || 'invalid_return'))}`,
-        );
-      }
-
-      if (
-        this.posWorkspaceActivationService.isPosWorkspaceActivationReference(
-          verifiedReturn.referenceId,
-        )
-      ) {
-        await this.posWorkspaceActivationService.completeEbirrActivationPayment(
-          verifiedReturn.referenceId,
-        );
-        return res.redirect(
-          this.buildPosActivationRedirect({
-            status: 'success',
-            referenceId: verifiedReturn.referenceId,
-          }),
-        );
-      }
-
-      if (
-        this.posWorkspaceActivationService.isBranchCreationPaymentReference(
-          verifiedReturn.referenceId,
-        )
-      ) {
-        await this.posWorkspaceActivationService.completeBranchCreationPayment(
-          verifiedReturn.referenceId,
-        );
-        return res.redirect(
-          this.buildPosActivationRedirect({
-            status: 'success',
-            referenceId: verifiedReturn.referenceId,
-          }),
-        );
-      }
-
-      if (
-        this.supplierActivationService.isSupplierActivationReference(
-          verifiedReturn.referenceId,
-        )
-      ) {
-        await this.supplierActivationService.completeEbirrActivationPayment(
-          verifiedReturn.referenceId,
-        );
-        return res.redirect(
-          this.buildPosActivationRedirect({
-            status: 'success',
-            referenceId: verifiedReturn.referenceId,
-          }),
-        );
-      }
-
-      if (
-        this.equityPartnerBnplService.isBnplActivationReference(
-          verifiedReturn.referenceId,
-        )
-      ) {
-        await this.equityPartnerBnplService.completeEbirrSettlement(
-          verifiedReturn.referenceId,
-        );
-        return res.redirect(
-          this.buildPosActivationRedirect({
-            status: 'success',
-            referenceId: verifiedReturn.referenceId,
-          }),
         );
       }
 
@@ -444,29 +315,6 @@ export class EbirrCallbackController {
       }
     } catch (e: any) {
       this.logger.error(`Ebirr callback processing failed: ${e.message}`);
-      const failedRefId =
-        query.referenceId ||
-        query.refId ||
-        query.ReferenceId ||
-        query.ref ||
-        null;
-      if (
-        this.posWorkspaceActivationService.isPosWorkspaceActivationReference(
-          failedRefId,
-        ) ||
-        this.supplierActivationService.isSupplierActivationReference(
-          failedRefId,
-        ) ||
-        this.equityPartnerBnplService.isBnplActivationReference(failedRefId)
-      ) {
-        return res.redirect(
-          this.buildPosActivationRedirect({
-            status: 'failed',
-            referenceId: failedRefId,
-            reason: e?.message || 'callback_processing_failed',
-          }),
-        );
-      }
       // Redirect to failure page
       const siteUrl = process.env.SITE_URL || 'https://suuq-s.com';
       return res.redirect(`${siteUrl}/payment/ebirr/finish?status=error`);

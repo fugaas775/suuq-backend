@@ -28,7 +28,7 @@ const DAY_MS = 86_400_000;
  * Daily lifecycle pass for per-branch POS subscriptions. With the monthly plan
  * now the headline option, branches roll over far more often, so the platform
  * must (a) move lapsed ACTIVE subscriptions to EXPIRED promptly and (b) warn
- * owners a few days ahead so they can re-pay via Ebirr.
+ * owners a few days ahead so they can pay for the next term.
  *
  * Free periods ride the same expiry pass. They are singled out by plan code
  * rather than by status: a hand-set TRIAL row (an admin extending someone
@@ -41,7 +41,7 @@ const DAY_MS = 86_400_000;
  * absence is the requirement, not an oversight. Seller HQ and the register still
  * show the remaining days to an owner who opens them.
  *
- * Ebirr is a customer-initiated push payment — there is no stored auto-debit
+ * Every term is paid by a transfer the owner makes — there is no auto-debit
  * mandate — so paid renewal is "prepaid term + reminder", not silent
  * auto-charge. That reminder stays: a paying customer is owed one.
  */
@@ -184,7 +184,7 @@ export class RetailSubscriptionLifecycleService {
       await this.notificationsService.createAndDispatch({
         userId: ownerUserId,
         title: 'POS subscription renewal due soon',
-        body: `Your branch POS subscription ends on ${sub.endsAt.toDateString()}. Renew now via Ebirr from Billing — the new term is added after your current one, so no paid day is lost.`,
+        body: `Your branch POS subscription ends on ${sub.endsAt.toDateString()}. Renew now from Billing — the new term is added after your current one, so no paid day is lost.`,
         type: NotificationType.ACCOUNT,
         data: {
           kind: 'POS_SUBSCRIPTION_RENEWAL',
@@ -265,7 +265,7 @@ export class RetailSubscriptionLifecycleService {
       await this.notificationsService.createAndDispatch({
         userId: ownerUserId,
         title: 'POS subscription ended — pay to keep the tills open',
-        body: `Your branch POS subscription ended on ${sub.endsAt.toDateString()}. The tills stay open until ${graceEndsAt.toDateString()}. Pay now via Ebirr from Billing to continue without interruption.`,
+        body: `Your branch POS subscription ended on ${sub.endsAt.toDateString()}. The tills stay open until ${graceEndsAt.toDateString()}. Pay now from Billing to continue without interruption.`,
         type: NotificationType.ACCOUNT,
         data: {
           kind: 'POS_SUBSCRIPTION_GRACE',

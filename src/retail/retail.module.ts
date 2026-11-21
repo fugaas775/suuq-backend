@@ -10,7 +10,7 @@ import { BranchTransfer } from '../branches/entities/branch-transfer.entity';
 import { StockMovement } from '../branches/entities/stock-movement.entity';
 import { RolesGuard } from '../auth/roles.guard';
 import { BranchStaffAssignment } from '../branch-staff/entities/branch-staff-assignment.entity';
-import { EbirrModule } from '../ebirr/ebirr.module';
+import { SubscriptionPaymentsModule } from '../subscription-payments/subscription-payments.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { EmailModule } from '../email/email.module';
 import { PosSyncJob } from '../pos-sync/entities/pos-sync-job.entity';
@@ -59,7 +59,7 @@ import { AdminEquityPartnersController } from './admin-equity-partners.controlle
     forwardRef(() => PurchaseOrdersModule),
     AuditModule,
     RedisModule,
-    EbirrModule,
+    SubscriptionPaymentsModule,
     NotificationsModule,
     // The subscription lifecycle emails trial owners off-app.
     EmailModule,

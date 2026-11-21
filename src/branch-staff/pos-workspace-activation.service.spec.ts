@@ -1,10 +1,14 @@
-import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { BranchStaffService } from './branch-staff.service';
 import { PosWorkspaceActivationService } from './pos-workspace-activation.service';
 import { RetailEntitlementsService } from '../retail/retail-entitlements.service';
-import { EbirrService } from '../ebirr/ebirr.service';
+import { SubscriptionPaymentClaimsService } from '../subscription-payments/subscription-payment-claims.service';
 import { Branch } from '../branches/entities/branch.entity';
 import { BranchStaffAssignment } from './entities/branch-staff-assignment.entity';
 import { User } from '../users/entities/user.entity';
@@ -39,13 +43,12 @@ describe('PosWorkspaceActivationService', () => {
     getBranchWorkspaceStatus: jest.fn(),
   };
 
-  const ebirrServiceMock = {
-    initiatePayment: jest.fn(),
-    expireStalePendingTransactionsForPrefix: jest
-      .fn()
-      .mockResolvedValue(undefined),
-    findRecentOpenTransactionForPrefix: jest.fn().mockResolvedValue(null),
-    markTransactionCompleted: jest.fn().mockResolvedValue(undefined),
+  const proof = { channel: 'CBE', payerReference: 'FT24123ABCD' };
+  const paymentClaimsMock = {
+    assertProofAcceptable: jest.fn(),
+    submit: jest.fn(),
+    describeForCustomer: jest.fn(),
+    findByReference: jest.fn(),
   };
 
   const tenantSubscriptionsRepository = {
@@ -73,11 +76,24 @@ describe('PosWorkspaceActivationService', () => {
     tenantSubscriptionsRepository.save.mockImplementation(
       async (value) => value,
     );
-    ebirrServiceMock.expireStalePendingTransactionsForPrefix.mockResolvedValue(
-      undefined,
-    );
-    ebirrServiceMock.findRecentOpenTransactionForPrefix.mockResolvedValue(null);
-    ebirrServiceMock.markTransactionCompleted.mockResolvedValue(undefined);
+    paymentClaimsMock.assertProofAcceptable.mockResolvedValue(undefined);
+    paymentClaimsMock.submit.mockImplementation(async (input) => ({
+      id: 1,
+      status: 'SUBMITTED',
+      createdAt: new Date(),
+      ...input,
+    }));
+    paymentClaimsMock.describeForCustomer.mockImplementation((claim) => ({
+      claimId: claim.id,
+      referenceId: claim.referenceId,
+      status: 'PENDING_VERIFICATION',
+      amount: claim.amount,
+      currency: claim.currency,
+      channel: claim.channel,
+      payerReference: claim.payerReference,
+      message: 'Payment submitted.',
+    }));
+    paymentClaimsMock.findByReference.mockResolvedValue(null);
     tenantSubscriptionsRepository.find.mockResolvedValue([]);
     emailServiceMock.sendPosBranchCreatedEmail.mockResolvedValue(undefined);
     emailServiceMock.sendBranchActivationPaymentEmail.mockResolvedValue(
@@ -96,7 +112,10 @@ describe('PosWorkspaceActivationService', () => {
           provide: RetailEntitlementsService,
           useValue: retailEntitlementsServiceMock,
         },
-        { provide: EbirrService, useValue: ebirrServiceMock },
+        {
+          provide: SubscriptionPaymentClaimsService,
+          useValue: paymentClaimsMock,
+        },
         {
           provide: getRepositoryToken(TenantSubscription),
           useValue: tenantSubscriptionsRepository,
@@ -132,7 +151,7 @@ describe('PosWorkspaceActivationService', () => {
     );
   });
 
-  it('initiates Ebirr payment for a manager-owned activation candidate', async () => {
+  it('files a payment claim for a manager-owned activation candidate and grants nothing', async () => {
     branchStaffServiceMock.getPosWorkspaceActivationCandidatesForUser.mockResolvedValue(
       [
         {
@@ -166,30 +185,29 @@ describe('PosWorkspaceActivationService', () => {
       module: RetailModule.POS_CORE,
       enabled: true,
     });
-    ebirrServiceMock.initiatePayment.mockResolvedValue({
-      errorCode: '0',
-      params: { state: 'PENDING' },
-      toPayUrl: 'https://checkout.ebirr.test/session/1',
-      responseMsg: 'Confirm the payment in Ebirr, then return to POS-S.',
-    });
 
-    const result = await service.startEbirrActivationPayment(
+    const result = await service.startActivationPayment(
       { id: 9, roles: ['POS_MANAGER'] },
-      { branchId: 21, phoneNumber: '0911223344' },
+      { branchId: 21, ...proof },
     );
 
-    expect(ebirrServiceMock.initiatePayment).toHaveBeenCalledWith(
+    // Nothing is granted: the claim goes to the admin queue with the proof.
+    expect(paymentClaimsMock.submit).toHaveBeenCalledWith(
       expect.objectContaining({
-        phoneNumber: '0911223344',
-        amount: '3900.00',
-        invoiceId: 'POSACTINV-21',
+        kind: 'POS_BRANCH',
+        branchId: 21,
+        amount: 3900,
+        channel: 'CBE',
+        payerReference: 'FT24123ABCD',
       }),
+    );
+    expect(tenantSubscriptionsRepository.save).not.toHaveBeenCalledWith(
+      expect.objectContaining({ status: TenantSubscriptionStatus.ACTIVE }),
     );
     expect(result).toMatchObject({
       branchId: 21,
       branchName: 'Bole Flagship',
-      status: 'PENDING_CONFIRMATION',
-      checkoutUrl: 'https://checkout.ebirr.test/session/1',
+      status: 'PENDING_VERIFICATION',
     });
     expect(result.referenceId).toMatch(/^POSACT-21-/);
   });
@@ -215,9 +233,9 @@ describe('PosWorkspaceActivationService', () => {
     );
 
     await expect(
-      service.startEbirrActivationPayment(
+      service.startActivationPayment(
         { id: 9, roles: ['POS_OPERATOR'] },
-        { branchId: 21, phoneNumber: '0911223344' },
+        { branchId: 21, ...proof },
       ),
     ).rejects.toBeInstanceOf(ForbiddenException);
   });
@@ -240,7 +258,7 @@ describe('PosWorkspaceActivationService', () => {
       metadata: { previous: true },
     });
 
-    const result = await service.completeEbirrActivationPayment(
+    const result = await service.completeActivationPayment(
       'POSACT-21-1731100000000',
     );
 
@@ -283,7 +301,7 @@ describe('PosWorkspaceActivationService', () => {
       status: TenantSubscriptionStatus.ACTIVE,
     });
 
-    const result = await service.completeEbirrActivationPayment(
+    const result = await service.completeActivationPayment(
       'POSACT-21-1731100000000',
     );
 
@@ -304,17 +322,17 @@ describe('PosWorkspaceActivationService', () => {
     });
 
     await expect(
-      service.completeEbirrActivationPayment('POSACT-21-1731100000000'),
+      service.completeActivationPayment('POSACT-21-1731100000000'),
     ).rejects.toBeInstanceOf(ForbiddenException);
   });
 
   it('ignores unsupported activation references', async () => {
     await expect(
-      service.completeEbirrActivationPayment('POSACT-invalid'),
+      service.completeActivationPayment('POSACT-invalid'),
     ).resolves.toBeNull();
   });
 
-  it('returns pending additional branch creation when Ebirr responds with gateway-timeout code E102051', async () => {
+  it('holds a new branch until its payment is verified', async () => {
     branchStaffAssignmentsRepository.find.mockResolvedValue([
       { branchId: 21, userId: 9, isActive: true },
     ]);
@@ -325,11 +343,6 @@ describe('PosWorkspaceActivationService', () => {
       status: TenantSubscriptionStatus.ACTIVE,
       metadata: null,
     });
-    const gatewayTimeoutError: any = new Error(
-      'Transaction TIMEOUT (Gateway Timeout Error) (Code: E102051)',
-    );
-    gatewayTimeoutError.providerCode = 'E102051';
-    ebirrServiceMock.initiatePayment.mockRejectedValue(gatewayTimeoutError);
 
     const result = await service.startAdditionalBranchCreationPayment(
       { id: 9, roles: ['POS_MANAGER'], email: 'seller@suuq.test' },
@@ -340,21 +353,21 @@ describe('PosWorkspaceActivationService', () => {
         country: 'Ethiopia',
         address: 'Bole',
         defaultCurrency: 'ETB',
-        phoneNumber: '0911223344',
         phone: '0911223344',
         tinNumber: '1234567890',
+        ...proof,
       },
     );
 
-    expect(result).toMatchObject({
-      status: 'PENDING',
-      branchId: null,
-      checkoutUrl: null,
-      receiveCode: null,
-    });
+    expect(result).toMatchObject({ status: 'PENDING', branchId: null });
     expect(result.referenceId).toMatch(/^POSBRANCH-31-9-/);
-    expect(result.providerMessage).toMatch(
-      /wait for provider confirmation to create the branch automatically/i,
+    expect(paymentClaimsMock.submit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'POS_BRANCH_CREATE',
+        tenantId: 31,
+        subjectName: 'Smart Retail',
+        amount: 3900,
+      }),
     );
     expect(tenantSubscriptionsRepository.save).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -366,6 +379,26 @@ describe('PosWorkspaceActivationService', () => {
         }),
       }),
     );
+  });
+
+  it('will not create a branch for a reference that is not the pending one', async () => {
+    tenantSubscriptionsRepository.findOne.mockResolvedValue({
+      id: 8,
+      tenantId: 31,
+      status: TenantSubscriptionStatus.ACTIVE,
+      metadata: {
+        pendingBranchCreation: {
+          referenceId: 'POSBRANCH-31-9-111',
+          branchName: 'Smart Retail',
+          serviceFormat: 'RETAIL',
+        },
+      },
+    });
+
+    const result =
+      await service.completeBranchCreationPayment('POSBRANCH-31-9-999');
+
+    expect(result).toEqual({ branchId: 0, created: false });
   });
 
   it('does not import or depend on Product / BranchInventory entities (no product copy on equity-partner activation)', () => {
@@ -406,7 +439,7 @@ describe('PosWorkspaceActivationService', () => {
         },
       );
 
-      await service.completeEbirrActivationPayment('POSACT-21-1731100000000');
+      await service.completeActivationPayment('POSACT-21-1731100000000');
 
       // A fresh row is created for branch 21 rather than branch 99's being reused.
       expect(tenantSubscriptionsRepository.save).toHaveBeenCalledWith(
@@ -423,10 +456,6 @@ describe('PosWorkspaceActivationService', () => {
       tenantSubscriptionsRepository.findOne.mockImplementation(
         async ({ where }: any) => (where.branchId === 21 ? branchRow : null),
       );
-      ebirrServiceMock.initiatePayment.mockResolvedValue({
-        errorCode: '0',
-        params: { state: 'PENDING' },
-      });
       branchStaffServiceMock.getPosWorkspaceActivationCandidatesForUser.mockResolvedValue(
         [
           {
@@ -447,11 +476,11 @@ describe('PosWorkspaceActivationService', () => {
         enabled: true,
       });
 
-      await service.startEbirrActivationPayment(
+      await service.startActivationPayment(
         { id: 41, roles: ['POS_MANAGER'] },
         {
           branchId: 21,
-          phoneNumber: '251911223344',
+          ...proof,
           subscriptionPeriod: 'ONE_YEAR',
         },
       );
@@ -476,7 +505,7 @@ describe('PosWorkspaceActivationService', () => {
       // year that was already charged.
       tenantSubscriptionsRepository.findOne.mockResolvedValue(null);
 
-      await service.completeEbirrActivationPayment(
+      await service.completeActivationPayment(
         'POSACT-21-1731100000000-ONE_YEAR',
       );
 
@@ -493,7 +522,7 @@ describe('PosWorkspaceActivationService', () => {
       stubWorkspace();
       tenantSubscriptionsRepository.findOne.mockResolvedValue(null);
 
-      await service.completeEbirrActivationPayment('POSACT-21-1731100000000');
+      await service.completeActivationPayment('POSACT-21-1731100000000');
 
       expect(tenantSubscriptionsRepository.save).toHaveBeenCalledWith(
         expect.objectContaining({ branchId: 21, periodMonths: 1 }),
@@ -528,11 +557,6 @@ describe('PosWorkspaceActivationService', () => {
         enabled: true,
       });
       tenantSubscriptionsRepository.findOne.mockResolvedValue(null);
-      ebirrServiceMock.initiatePayment.mockResolvedValue({
-        errorCode: '0',
-        params: { state: 'PENDING' },
-        toPayUrl: 'https://checkout.ebirr.test/1',
-      });
     });
 
     it('accepts an early payment for a branch that is open on a trial', async () => {
@@ -540,13 +564,13 @@ describe('PosWorkspaceActivationService', () => {
         trialSummary,
       ]);
 
-      const result = await service.startEbirrActivationPayment(
+      const result = await service.startActivationPayment(
         { id: 41, roles: ['POS_MANAGER'] },
-        { branchId: 21, phoneNumber: '251911223344' },
+        { branchId: 21, ...proof },
       );
 
       expect(result).toMatchObject({ branchId: 21 });
-      expect(ebirrServiceMock.initiatePayment).toHaveBeenCalled();
+      expect(paymentClaimsMock.submit).toHaveBeenCalled();
     });
 
     it('refuses an operator who cannot pay for the trial branch', async () => {
@@ -555,12 +579,12 @@ describe('PosWorkspaceActivationService', () => {
       ]);
 
       await expect(
-        service.startEbirrActivationPayment(
+        service.startActivationPayment(
           { id: 41, roles: ['POS_OPERATOR'] },
-          { branchId: 21, phoneNumber: '251911223344' },
+          { branchId: 21, ...proof },
         ),
       ).rejects.toBeInstanceOf(NotFoundException);
-      expect(ebirrServiceMock.initiatePayment).not.toHaveBeenCalled();
+      expect(paymentClaimsMock.submit).not.toHaveBeenCalled();
     });
 
     it('still refuses a paid ACTIVE branch that has nothing to pay for', async () => {
@@ -569,9 +593,9 @@ describe('PosWorkspaceActivationService', () => {
       ]);
 
       await expect(
-        service.startEbirrActivationPayment(
+        service.startActivationPayment(
           { id: 41, roles: ['POS_MANAGER'] },
-          { branchId: 21, phoneNumber: '251911223344' },
+          { branchId: 21, ...proof },
         ),
       ).rejects.toBeInstanceOf(NotFoundException);
     });
@@ -592,7 +616,7 @@ describe('PosWorkspaceActivationService', () => {
         metadata: {},
       });
 
-      await service.completeEbirrActivationPayment(
+      await service.completeActivationPayment(
         'POSACT-21-1731100000000-MONTHLY',
       );
 
@@ -632,7 +656,7 @@ describe('PosWorkspaceActivationService', () => {
         metadata: {},
       });
 
-      await service.completeEbirrActivationPayment(
+      await service.completeActivationPayment(
         'POSACT-21-1731100000000-MONTHLY',
       );
 
@@ -689,10 +713,6 @@ describe('PosWorkspaceActivationService', () => {
       tenantModuleEntitlementsRepository.findOne.mockResolvedValue({
         enabled: true,
       });
-      ebirrServiceMock.initiatePayment.mockResolvedValue({
-        errorCode: '0',
-        params: { state: 'PENDING' },
-      });
     });
 
     it('lets an owner pay for the next term while the current one is still running', async () => {
@@ -701,13 +721,13 @@ describe('PosWorkspaceActivationService', () => {
       ]);
       tenantSubscriptionsRepository.findOne.mockResolvedValue(null);
 
-      const result = await service.startEbirrActivationPayment(
+      const result = await service.startActivationPayment(
         { id: 41, roles: ['POS_MANAGER'] },
-        { branchId: 21, phoneNumber: '251911223344' },
+        { branchId: 21, ...proof },
       );
 
       expect(result).toMatchObject({ branchId: 21 });
-      expect(ebirrServiceMock.initiatePayment).toHaveBeenCalled();
+      expect(paymentClaimsMock.submit).toHaveBeenCalled();
     });
 
     it('does not take payment for a term that is months from ending', async () => {
@@ -719,31 +739,29 @@ describe('PosWorkspaceActivationService', () => {
       ]);
 
       await expect(
-        service.startEbirrActivationPayment(
+        service.startActivationPayment(
           { id: 41, roles: ['POS_MANAGER'] },
-          { branchId: 21, phoneNumber: '251911223344' },
+          { branchId: 21, ...proof },
         ),
       ).rejects.toBeInstanceOf(NotFoundException);
-      expect(ebirrServiceMock.initiatePayment).not.toHaveBeenCalled();
+      expect(paymentClaimsMock.submit).not.toHaveBeenCalled();
     });
 
-    it('refuses a second request while one is still waiting for the PIN', async () => {
+    it('refuses a second payment while one is still waiting to be verified', async () => {
       branchStaffServiceMock.getPosBranchSummariesForUser.mockResolvedValue([
         { ...paidSummary, subscriptionEndsAt: new Date(Date.now() + 5 * DAY) },
       ]);
-      ebirrServiceMock.findRecentOpenTransactionForPrefix.mockResolvedValue({
-        id: 77,
-        merch_order_id: 'POSACT-21-1-MONTHLY',
-        status: 'INITIATED',
-      });
+      paymentClaimsMock.assertProofAcceptable.mockRejectedValue(
+        new ConflictException('already waiting'),
+      );
 
       await expect(
-        service.startEbirrActivationPayment(
+        service.startActivationPayment(
           { id: 41, roles: ['POS_MANAGER'] },
-          { branchId: 21, phoneNumber: '251911223344' },
+          { branchId: 21, ...proof },
         ),
       ).rejects.toMatchObject({ status: 409 });
-      expect(ebirrServiceMock.initiatePayment).not.toHaveBeenCalled();
+      expect(paymentClaimsMock.submit).not.toHaveBeenCalled();
     });
 
     it('adds an early renewal after the days already paid for, on a row of its own', async () => {
@@ -752,7 +770,7 @@ describe('PosWorkspaceActivationService', () => {
       tenantSubscriptionsRepository.find.mockResolvedValue([current]);
       const reference = `POSACT-21-${Date.now()}-MONTHLY`;
 
-      await service.completeEbirrActivationPayment(reference);
+      await service.completeActivationPayment(reference);
 
       const saved = tenantSubscriptionsRepository.save.mock.calls[0][0];
       expect(saved.id).toBeUndefined();
@@ -768,9 +786,6 @@ describe('PosWorkspaceActivationService', () => {
       // The term it renews is left exactly as it was paid for.
       expect(current.metadata.lastActivationReferenceId).toBe(
         'POSACT-21-1700000000000-MONTHLY',
-      );
-      expect(ebirrServiceMock.markTransactionCompleted).toHaveBeenCalledWith(
-        reference,
       );
     });
 
@@ -788,16 +803,16 @@ describe('PosWorkspaceActivationService', () => {
         email: 'owner@suuq.test',
       });
       const reference = `POSACT-21-${Date.now()}-MONTHLY`;
-      (ebirrServiceMock as any).findTransactionByReference = jest
-        .fn()
-        .mockResolvedValue({
-          id: 512,
-          amount: 3900,
-          currency: 'ETB',
-          created_at: new Date(),
-        });
+      paymentClaimsMock.findByReference.mockResolvedValue({
+        id: 512,
+        amount: 3900,
+        currency: 'ETB',
+        channel: 'CBE',
+        payerReference: 'FT24123ABCD',
+        createdAt: new Date(),
+      });
 
-      await service.completeEbirrActivationPayment(reference);
+      await service.completeActivationPayment(reference);
       await new Promise((resolve) => setImmediate(resolve));
 
       expect(
@@ -805,7 +820,7 @@ describe('PosWorkspaceActivationService', () => {
       ).toHaveBeenCalledWith(
         expect.objectContaining({
           to: 'owner@suuq.test',
-          receiptNumber: 'RCT-000512',
+          receiptNumber: 'RCT-M000512',
           html: expect.stringContaining('Payment receipt'),
         }),
       );
@@ -818,7 +833,7 @@ describe('PosWorkspaceActivationService', () => {
       tenantSubscriptionsRepository.findOne.mockResolvedValue(lapsed);
       tenantSubscriptionsRepository.find.mockResolvedValue([lapsed]);
 
-      await service.completeEbirrActivationPayment(
+      await service.completeActivationPayment(
         `POSACT-21-${Date.now()}-ONE_YEAR`,
       );
 
@@ -837,7 +852,7 @@ describe('PosWorkspaceActivationService', () => {
       tenantSubscriptionsRepository.findOne.mockResolvedValue(inGrace);
       tenantSubscriptionsRepository.find.mockResolvedValue([inGrace]);
 
-      await service.completeEbirrActivationPayment(
+      await service.completeActivationPayment(
         `POSACT-21-${Date.now()}-MONTHLY`,
       );
 
@@ -857,7 +872,7 @@ describe('PosWorkspaceActivationService', () => {
       tenantSubscriptionsRepository.findOne.mockResolvedValue(current);
       tenantSubscriptionsRepository.find.mockResolvedValue([current]);
 
-      await service.completeEbirrActivationPayment(reference);
+      await service.completeActivationPayment(reference);
 
       expect(tenantSubscriptionsRepository.save).not.toHaveBeenCalled();
     });
@@ -867,7 +882,7 @@ describe('PosWorkspaceActivationService', () => {
       tenantSubscriptionsRepository.findOne.mockResolvedValue(current);
       tenantSubscriptionsRepository.find.mockResolvedValue([current]);
 
-      await service.completeEbirrActivationPayment(
+      await service.completeActivationPayment(
         'POSACT-21-1600000000000-MONTHLY',
       );
 

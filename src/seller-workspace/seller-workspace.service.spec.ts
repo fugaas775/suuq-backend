@@ -184,7 +184,7 @@ describe('SellerWorkspaceService', () => {
         amount: 1900,
         currency: 'ETB',
         billingInterval: TenantBillingInterval.MONTHLY,
-        paymentMethod: 'EBIRR',
+        paymentMethod: 'TRANSFER',
       })),
     };
     equityPartnerService = {
@@ -649,7 +649,7 @@ describe('SellerWorkspaceService', () => {
             amount: 1900,
             currency: 'ETB',
             billingInterval: TenantBillingInterval.MONTHLY,
-            paymentMethod: 'EBIRR',
+            paymentMethod: 'TRANSFER',
           },
         },
       ],
@@ -682,7 +682,7 @@ describe('SellerWorkspaceService', () => {
       canStartActivation: true,
       pricing: expect.objectContaining({
         amount: 1900,
-        paymentMethod: 'EBIRR',
+        paymentMethod: 'TRANSFER',
       }),
     });
   });

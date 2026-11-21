@@ -36,11 +36,23 @@ import { BranchFinancialReportsService } from './branch-financial-reports.servic
 import { LedgerReconciliationService } from './ledger-reconciliation.service';
 import { OwnerBillingController } from './owner-billing.controller';
 import { PublicPricingController } from './public-pricing.controller';
+import { AdminSubscriptionPaymentsController } from './admin-subscription-payments.controller';
+import { SubscriptionPaymentReviewService } from './subscription-payment-review.service';
+import { SubscriptionPaymentsModule } from '../subscription-payments/subscription-payments.module';
+import { SuppliersModule } from '../suppliers/suppliers.module';
+import { RetailModule as RetailAccessModule } from '../retail/retail.module';
+import { NotificationsModule } from '../notifications/notifications.module';
+import { AuditModule } from '../audit/audit.module';
 import { BranchFinancialReportsController } from './branch-financial-reports.controller';
 
 @Module({
   imports: [
     BranchStaffModule,
+    SubscriptionPaymentsModule,
+    SuppliersModule,
+    RetailAccessModule,
+    NotificationsModule,
+    AuditModule,
     AccountingModule,
     TypeOrmModule.forFeature([
       Branch,
@@ -69,12 +81,14 @@ import { BranchFinancialReportsController } from './branch-financial-reports.con
     OwnerBillingController,
     BranchFinancialReportsController,
     PublicPricingController,
+    AdminSubscriptionPaymentsController,
   ],
   providers: [
     BranchBillingService,
     BranchFinancialReportsService,
     LedgerReconciliationService,
     ProductCostService,
+    SubscriptionPaymentReviewService,
   ],
   exports: [
     BranchBillingService,

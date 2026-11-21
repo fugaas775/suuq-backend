@@ -514,7 +514,7 @@ describe('BranchStaffService', () => {
             amount: 1900,
             currency: 'ETB',
             billingInterval: TenantBillingInterval.MONTHLY,
-            paymentMethod: 'EBIRR',
+            paymentMethod: 'TRANSFER',
             subscriptionOptions: [
               {
                 period: 'MONTHLY',
@@ -818,7 +818,7 @@ describe('BranchStaffService', () => {
           amount: 3900,
           currency: 'ETB',
           billingInterval: TenantBillingInterval.MONTHLY,
-          paymentMethod: 'EBIRR',
+          paymentMethod: 'TRANSFER',
           subscriptionOptions: [
             {
               period: 'MONTHLY',

@@ -828,22 +828,24 @@ export class PosPortalAuthController {
     };
   }
 
-  @Post('activation/ebirr')
+  // 'activation/ebirr' is the old path, kept so a till that has not reloaded
+  // yet still reaches this handler.
+  @Post(['activation/payment', 'activation/ebirr'])
   @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.OK)
   @Throttle(PORTAL_AUTH_WRITE_THROTTLE)
   @ApiOperation({
     summary:
-      'Initiate an Ebirr payment to activate a pending POS branch workspace',
+      'Submit proof of a transfer made to activate a pending POS branch workspace',
   })
   @ApiBody({ type: StartPosWorkspaceActivationDto })
   @ApiOkResponse({ type: PosWorkspaceActivationPaymentResponseDto })
   @ApiUnauthorizedResponse({ description: 'Missing or invalid access token' })
-  async activateWorkspaceWithEbirr(
+  async submitWorkspaceActivationPayment(
     @Body() dto: StartPosWorkspaceActivationDto,
     @Req() req: AuthenticatedRequest,
   ) {
-    return this.posWorkspaceActivationService.startEbirrActivationPayment(
+    return this.posWorkspaceActivationService.startActivationPayment(
       {
         id: req.user.id,
         roles: req.user.roles,
@@ -934,20 +936,21 @@ export class PosPortalAuthController {
     };
   }
 
-  @Post('supplier-activation/ebirr')
+  @Post(['supplier-activation/payment', 'supplier-activation/ebirr'])
   @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.OK)
   @Throttle(PORTAL_AUTH_WRITE_THROTTLE)
   @ApiOperation({
-    summary: 'Initiate an Ebirr payment to activate a supplier subscription',
+    summary:
+      'Submit proof of a transfer made to activate a supplier subscription',
   })
   @ApiBody({ type: StartSupplierActivationDto })
   @ApiUnauthorizedResponse({ description: 'Missing or invalid access token' })
-  async activateSupplierWithEbirr(
+  async submitSupplierActivationPayment(
     @Body() dto: StartSupplierActivationDto,
     @Req() req: AuthenticatedRequest,
   ) {
-    return this.supplierActivationService.startEbirrActivationPayment(
+    return this.supplierActivationService.startActivationPayment(
       {
         id: req.user.id,
         roles: req.user.roles,

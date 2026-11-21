@@ -48,7 +48,7 @@ describe('PosPortalAuthController', () => {
   };
 
   const posWorkspaceActivationServiceMock = {
-    startEbirrActivationPayment: jest.fn(),
+    startActivationPayment: jest.fn(),
   };
 
   const posPortalOnboardingServiceMock = {
@@ -66,7 +66,7 @@ describe('PosPortalAuthController', () => {
   };
 
   const supplierActivationServiceMock = {
-    startEbirrActivationPayment: jest.fn(),
+    startActivationPayment: jest.fn(),
     getActivationState: jest.fn(),
   };
 
@@ -128,7 +128,7 @@ describe('PosPortalAuthController', () => {
       amount: 1900,
       currency: 'ETB',
       billingInterval: 'MONTHLY',
-      paymentMethod: 'EBIRR',
+      paymentMethod: 'TRANSFER',
       subscriptionOptions: [
         {
           period: 'SIX_MONTHS',
@@ -493,7 +493,7 @@ describe('PosPortalAuthController', () => {
             amount: 1900,
             currency: 'ETB',
             billingInterval: 'MONTHLY',
-            paymentMethod: 'EBIRR',
+            paymentMethod: 'TRANSFER',
             subscriptionOptions: [
               {
                 period: 'SIX_MONTHS',
@@ -723,7 +723,7 @@ describe('PosPortalAuthController', () => {
             amount: 1900,
             currency: 'ETB',
             billingInterval: 'MONTHLY',
-            paymentMethod: 'EBIRR',
+            paymentMethod: 'TRANSFER',
             subscriptionOptions: [
               {
                 period: 'SIX_MONTHS',
@@ -766,7 +766,7 @@ describe('PosPortalAuthController', () => {
         pricing: expect.objectContaining({
           amount: 1900,
           currency: 'ETB',
-          paymentMethod: 'EBIRR',
+          paymentMethod: 'TRANSFER',
           subscriptionOptions: [
             {
               period: 'SIX_MONTHS',
@@ -809,23 +809,22 @@ describe('PosPortalAuthController', () => {
     );
   });
 
-  it('starts an Ebirr activation payment for an authenticated workspace activation request', async () => {
-    posWorkspaceActivationServiceMock.startEbirrActivationPayment.mockResolvedValue(
-      {
-        branchId: 9,
-        branchName: 'Airport Branch',
-        referenceId: 'POSACT-9-1731100000000',
-        status: 'PENDING_CONFIRMATION',
-        checkoutUrl: 'https://checkout.ebirr.test/session/1',
-        receiveCode: null,
-        providerMessage: 'Confirm the payment in Ebirr, then return to POS-S.',
-      },
-    );
+  it('files a transfer payment claim for an authenticated workspace activation request', async () => {
+    posWorkspaceActivationServiceMock.startActivationPayment.mockResolvedValue({
+      branchId: 9,
+      branchName: 'Airport Branch',
+      referenceId: 'POSACT-9-1731100000000',
+      status: 'PENDING_CONFIRMATION',
+      checkoutUrl: 'https://checkout.ebirr.test/session/1',
+      receiveCode: null,
+      providerMessage: 'Confirm the payment in Ebirr, then return to POS-S.',
+    });
 
-    const result = await controller.activateWorkspaceWithEbirr(
+    const result = await controller.submitWorkspaceActivationPayment(
       {
         branchId: 9,
-        phoneNumber: '0911223344',
+        channel: 'CBE',
+        payerReference: 'FT24123ABCD',
       },
       {
         user: { id: 51, roles: [UserRole.POS_MANAGER] },
@@ -833,12 +832,13 @@ describe('PosPortalAuthController', () => {
     );
 
     expect(
-      posWorkspaceActivationServiceMock.startEbirrActivationPayment,
+      posWorkspaceActivationServiceMock.startActivationPayment,
     ).toHaveBeenCalledWith(
       { id: 51, roles: [UserRole.POS_MANAGER] },
       {
         branchId: 9,
-        phoneNumber: '0911223344',
+        channel: 'CBE',
+        payerReference: 'FT24123ABCD',
       },
     );
     expect(result).toMatchObject({
@@ -868,7 +868,7 @@ describe('PosPortalAuthController', () => {
         amount: 1900,
         currency: 'ETB',
         billingInterval: 'MONTHLY',
-        paymentMethod: 'EBIRR',
+        paymentMethod: 'TRANSFER',
         subscriptionOptions: [
           {
             period: 'SIX_MONTHS',
@@ -904,7 +904,7 @@ describe('PosPortalAuthController', () => {
             amount: 1900,
             currency: 'ETB',
             billingInterval: 'MONTHLY',
-            paymentMethod: 'EBIRR',
+            paymentMethod: 'TRANSFER',
             subscriptionOptions: [
               {
                 period: 'SIX_MONTHS',

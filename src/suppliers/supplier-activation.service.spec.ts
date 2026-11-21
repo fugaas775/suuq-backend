@@ -1,7 +1,7 @@
 import { SupplierActivationService } from './supplier-activation.service';
 
 const makeService = ({ profiles = {}, subscriptions = {}, grants }: any) => {
-  // completeEbirrActivationPayment now runs inside
+  // completeActivationPayment now runs inside
   // subscriptionsRepository.manager.transaction(...). Mock a transactional
   // manager that routes findOne/save to the per-entity mocks (matching the
   // production manager.findOne(Entity, …) / manager.save(entity) calls) and
@@ -22,9 +22,11 @@ const makeService = ({ profiles = {}, subscriptions = {}, grants }: any) => {
   };
   return new SupplierActivationService(
     {
-      markTransactionCompleted: jest.fn().mockResolvedValue(undefined),
-      findRecentOpenTransactionForPrefix: jest.fn().mockResolvedValue(null),
-    } as any, // ebirrService
+      assertProofAcceptable: jest.fn().mockResolvedValue(undefined),
+      submit: jest.fn(),
+      describeForCustomer: jest.fn(),
+      findByReference: jest.fn().mockResolvedValue(null),
+    } as any, // paymentClaims
     {} as any, // supplierStaffService
     { ensureOutletForSupplier: jest.fn().mockResolvedValue(null) } as any, // supplierOutletService
     profiles,
@@ -51,10 +53,10 @@ describe('SupplierActivationService.isSupplierActivationReference', () => {
   });
 });
 
-describe('SupplierActivationService.completeEbirrActivationPayment', () => {
+describe('SupplierActivationService.completeActivationPayment', () => {
   it('ignores an unrecognized reference', async () => {
     const svc = makeService({});
-    expect(await svc.completeEbirrActivationPayment('POSACT-1-123')).toBeNull();
+    expect(await svc.completeActivationPayment('POSACT-1-123')).toBeNull();
   });
 
   it('activates the profile and writes an ACTIVE subscription', async () => {
@@ -74,7 +76,7 @@ describe('SupplierActivationService.completeEbirrActivationPayment', () => {
     };
     const svc = makeService({ profiles, subscriptions });
 
-    const result = await svc.completeEbirrActivationPayment(
+    const result = await svc.completeActivationPayment(
       'SUPACT-55-1700000000000',
       'ONE_YEAR',
     );
@@ -100,7 +102,7 @@ describe('SupplierActivationService.completeEbirrActivationPayment', () => {
       save: jest.fn(),
     };
     const svc = makeService({ profiles, subscriptions });
-    const result = await svc.completeEbirrActivationPayment('SUPACT-55-123');
+    const result = await svc.completeActivationPayment('SUPACT-55-123');
     expect(result).toEqual({ id: 9, status: 'ACTIVE' });
     expect(subscriptions.save).not.toHaveBeenCalled();
   });
@@ -126,8 +128,7 @@ describe('SupplierActivationService.completeEbirrActivationPayment', () => {
     };
     const svc = makeService({ profiles, subscriptions });
 
-    const result: any =
-      await svc.completeEbirrActivationPayment('SUPACT-55-200');
+    const result: any = await svc.completeActivationPayment('SUPACT-55-200');
 
     expect(result.endsAt.getTime()).toBeGreaterThan(
       Date.now() + 27 * 86_400_000,
@@ -159,7 +160,7 @@ describe('SupplierActivationService.completeEbirrActivationPayment', () => {
     };
     const svc = makeService({ profiles, subscriptions });
 
-    const result: any = await svc.completeEbirrActivationPayment(
+    const result: any = await svc.completeActivationPayment(
       `SUPACT-55-${Date.now()}`,
     );
 
@@ -187,7 +188,7 @@ describe('SupplierActivationService.completeEbirrActivationPayment', () => {
     };
     const svc = makeService({ profiles, subscriptions });
 
-    await svc.completeEbirrActivationPayment('SUPACT-55-200');
+    await svc.completeActivationPayment('SUPACT-55-200');
 
     expect(subscriptions.save).not.toHaveBeenCalled();
   });

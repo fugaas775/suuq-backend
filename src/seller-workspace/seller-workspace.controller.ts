@@ -206,22 +206,18 @@ export class SellerWorkspaceController {
     );
   }
 
+  /**
+   * Where a submitted new-branch payment stands. The branch is created when an
+   * admin has verified the payment — this only reports it.
+   */
   @Post('branch-workspaces/confirm-payment')
   async confirmAdditionalBranchCreationPayment(
     @Req() req: AuthenticatedRequest,
     @Body() body: { referenceId: string },
   ) {
-    const result =
-      await this.posWorkspaceActivationService.completeBranchCreationPayment(
-        body.referenceId,
-      );
-    if (!result.branchId) {
-      return { status: 'PENDING', branchId: null };
-    }
-    return {
-      status: 'CREATED',
-      branchId: result.branchId,
-      created: result.created,
-    };
+    return this.posWorkspaceActivationService.getBranchCreationPaymentStatus(
+      { id: req.user.id },
+      body?.referenceId,
+    );
   }
 }

@@ -1,3 +1,4 @@
+import { PaymentProofDto } from '../../subscription-payments/dto/payment-proof.dto';
 import { Transform } from 'class-transformer';
 import {
   IsEmail,
@@ -10,7 +11,7 @@ import {
 } from 'class-validator';
 import { SellerBranchServiceFormat } from './create-seller-branch-workspace.dto';
 
-export class InitiateAdditionalBranchCreationDto {
+export class InitiateAdditionalBranchCreationDto extends PaymentProofDto {
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   @IsString()
   @MinLength(1)
@@ -47,11 +48,6 @@ export class InitiateAdditionalBranchCreationDto {
   @IsString()
   @MinLength(3)
   defaultCurrency!: string;
-
-  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
-  @IsString()
-  @MinLength(9)
-  phoneNumber!: string;
 
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   @IsOptional()

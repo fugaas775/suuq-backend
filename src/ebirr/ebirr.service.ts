@@ -478,60 +478,6 @@ export class EbirrService {
   }
 
   /**
-   * The newest unconfirmed request for a reference prefix, if one was started
-   * recently enough that the payer may still be looking at the PIN prompt.
-   * Lets a caller refuse a second charge for the same thing instead of sending
-   * two prompts and collecting twice.
-   */
-  async findRecentOpenTransactionForPrefix(
-    referencePrefix: string,
-    withinMs: number,
-  ): Promise<EbirrTransaction | null> {
-    const prefix = String(referencePrefix || '').trim();
-    if (!prefix) return null;
-    const since = new Date(Date.now() - withinMs);
-    return this.ebirrTransactionRepo
-      .createQueryBuilder('tx')
-      .where('tx.status IN (:...statuses)', {
-        statuses: ['PENDING', 'INITIATED'],
-      })
-      .andWhere('tx.merch_order_id LIKE :prefix', { prefix: `${prefix}%` })
-      .andWhere('tx.created_at >= :since', { since })
-      .orderBy('tx.created_at', 'DESC')
-      .getOne();
-  }
-
-  /** The ledger row for a payment reference, if there is one. */
-  async findTransactionByReference(
-    referenceId: string,
-  ): Promise<EbirrTransaction | null> {
-    const refId = String(referenceId || '').trim();
-    if (!refId) return null;
-    return this.ebirrTransactionRepo.findOne({
-      where: { merch_order_id: refId },
-    });
-  }
-
-  /**
-   * Record that a payment was confirmed and what it bought was delivered.
-   *
-   * A request the provider approves in its own response never passes through
-   * processCallback, so it would sit at INITIATED until the sweep relabelled a
-   * paid transaction EXPIRED. Whoever fulfils a payment calls this so the
-   * ledger says what happened.
-   */
-  async markTransactionCompleted(referenceId: string): Promise<void> {
-    const refId = String(referenceId || '').trim();
-    if (!refId) return;
-    const tx = await this.ebirrTransactionRepo.findOne({
-      where: { merch_order_id: refId },
-    });
-    if (!tx || tx.status === 'COMPLETED') return;
-    tx.status = 'COMPLETED';
-    await this.ebirrTransactionRepo.save(tx);
-  }
-
-  /**
    * Expire any PENDING/INITIATED Ebirr transactions whose merch_order_id starts
    * with the given prefix. Called before initiating a new payment for the same
    * user/tenant so that stale timed-out transactions don't cause Ebirr to reject
