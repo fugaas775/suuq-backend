@@ -1,4 +1,5 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
+import { SubscriptionPaymentMailerService } from '../subscription-payments/subscription-payment-mailer.service';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Between, In, LessThan, Repository } from 'typeorm';
@@ -55,6 +56,8 @@ export class RetailSubscriptionLifecycleService {
     @InjectRepository(RetailTenant)
     private readonly tenantsRepo: Repository<RetailTenant>,
     private readonly notificationsService: NotificationsService,
+    @Optional()
+    private readonly mailer?: SubscriptionPaymentMailerService,
   ) {}
 
   @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
@@ -194,6 +197,15 @@ export class RetailSubscriptionLifecycleService {
           daysLeft: milestone,
         },
       });
+      // The same reminder by email — a paying owner who is not in the app that
+      // week still has to hear that the term is ending. Paid terms only: this
+      // loop never sees a free period.
+      void this.mailer?.renewalDue({
+        ownerUserId,
+        branchId: sub.branchId ?? null,
+        endsAt: sub.endsAt,
+        daysLeft: milestone,
+      });
 
       sub.metadata = {
         ...meta,
@@ -274,6 +286,12 @@ export class RetailSubscriptionLifecycleService {
           endsAt: endsAtIso,
           graceEndsAt: graceEndsAt.toISOString(),
         },
+      });
+      void this.mailer?.termEnded({
+        ownerUserId,
+        branchId: sub.branchId ?? null,
+        endsAt: sub.endsAt,
+        graceEndsAt,
       });
       sub.metadata = { ...meta, graceNoticeSentForEndsAt: endsAtIso };
       await this.subscriptionsRepo.save(sub);

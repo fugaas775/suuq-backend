@@ -3,7 +3,9 @@ import {
   ConflictException,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
+import { SubscriptionPaymentMailerService } from './subscription-payment-mailer.service';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import {
@@ -61,6 +63,8 @@ export class SubscriptionPaymentClaimsService {
   constructor(
     @InjectRepository(SubscriptionPaymentClaim)
     private readonly claimsRepo: Repository<SubscriptionPaymentClaim>,
+    @Optional()
+    private readonly mailer?: SubscriptionPaymentMailerService,
   ) {}
 
   destinations() {
@@ -154,7 +158,7 @@ export class SubscriptionPaymentClaimsService {
     if (!(Number(input.amount) > 0)) {
       throw new BadRequestException('A payment claim needs an amount.');
     }
-    return this.claimsRepo.save(
+    const saved = await this.claimsRepo.save(
       this.claimsRepo.create({
         referenceId: input.referenceId,
         kind: input.kind,
@@ -175,6 +179,11 @@ export class SubscriptionPaymentClaimsService {
         receiptUrl: input.receiptUrl?.trim() || null,
       }),
     );
+    // Every way of paying files its claim here, so this is the one place the
+    // admins are told there is a payment to verify. Not awaited: the customer's
+    // request does not wait on the mail queue.
+    void this.mailer?.paymentSubmitted(saved);
+    return saved;
   }
 
   /** The reply every "I have paid" endpoint gives the customer. */

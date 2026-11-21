@@ -3,6 +3,7 @@ import {
   ConflictException,
   Injectable,
   Logger,
+  Optional,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
@@ -12,6 +13,7 @@ import { EquityPartnerBnplService } from '../retail/equity-partner-bnpl.service'
 import { NotificationsService } from '../notifications/notifications.service';
 import { NotificationType } from '../notifications/entities/notification.entity';
 import { SubscriptionPaymentClaimsService } from '../subscription-payments/subscription-payment-claims.service';
+import { SubscriptionPaymentMailerService } from '../subscription-payments/subscription-payment-mailer.service';
 import { SubscriptionPaymentClaim } from '../subscription-payments/entities/subscription-payment-claim.entity';
 import { findSubscriptionPaymentDestination } from '../subscription-payments/payment-destinations';
 import { EbirrTransaction } from '../payments/entities/ebirr-transaction.entity';
@@ -74,6 +76,8 @@ export class SubscriptionPaymentReviewService {
     private readonly branchesRepo: Repository<Branch>,
     @InjectRepository(User)
     private readonly usersRepo: Repository<User>,
+    @Optional()
+    private readonly mailer?: SubscriptionPaymentMailerService,
   ) {}
 
   async list(filter: { status?: string; limit?: number }) {
@@ -179,6 +183,11 @@ export class SubscriptionPaymentReviewService {
       body: `Your payment of ${saved.currency} ${Number(saved.amount).toLocaleString('en-US')} for ${saved.subjectName || 'your subscription'} has been verified. Thank you.`,
       kind: 'SUBSCRIPTION_PAYMENT_APPROVED',
     });
+    // A branch term already emails its receipt on completion; the other kinds
+    // get the "verified" email here.
+    void this.mailer?.paymentApproved(saved, {
+      receiptAlreadySent: saved.kind === 'POS_BRANCH',
+    });
     return saved;
   }
 
@@ -211,6 +220,7 @@ export class SubscriptionPaymentReviewService {
       body: `We could not verify your payment for ${saved.subjectName || 'your subscription'}: ${trimmed} Please check the details and submit it again.`,
       kind: 'SUBSCRIPTION_PAYMENT_REJECTED',
     });
+    void this.mailer?.paymentRejected(saved);
     return saved;
   }
 
