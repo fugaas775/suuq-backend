@@ -39,8 +39,10 @@ import { PayrollRun } from '../payroll/entities/payroll-run.entity';
 import { PurchaseRun } from '../purchasing/entities/purchase-run.entity';
 import { POS_WORKSPACE_REFERENCE_PREFIX } from '../branch-staff/pos-workspace-activation.service';
 import {
+  POS_BRANCH_STARTER_OPTION,
   POS_BRANCH_SUBSCRIPTION_OPTIONS,
-  findPosBranchSubscriptionOption,
+  findPosBranchPaymentOption,
+  monthsOfPaymentOption,
 } from '../branch-staff/pos-workspace-pricing';
 import {
   POS_EARLY_RENEWAL_WINDOW_DAYS,
@@ -52,6 +54,7 @@ import {
   isActivationReferenceApplied,
   parseActivationReferencePeriod,
   resolveNextTermStart,
+  resolveStarterEligibility,
 } from '../branch-staff/pos-branch-renewal.policy';
 import { addCalendarMonths } from '../retail/subscription-summary';
 import { SubscriptionPaymentClaimsService } from '../subscription-payments/subscription-payment-claims.service';
@@ -117,6 +120,10 @@ export interface OwnerBranchBilling {
     /** When the tills stop if nothing is paid; null outside grace. */
     graceEndsAt: Date | null;
   };
+  /** The paid 14-day trial, when this branch may still start on it. */
+  starter: { amount: number; currency: string; days: number } | null;
+  /** The branch is on its paid trial right now. */
+  onStarterTrial: boolean;
   /** A transfer the owner has reported that is still waiting to be verified. */
   pendingPayment: {
     referenceId: string;
@@ -456,6 +463,17 @@ export class BranchBillingService {
               periodMonths: sub.periodMonths ?? null,
             }
           : null,
+        starter: resolveStarterEligibility(
+          [...subs, ...legacyTenantSubs],
+          branch.id,
+        ).eligible
+          ? {
+              amount: POS_BRANCH_STARTER_OPTION.amount,
+              currency: POS_BRANCH_STARTER_OPTION.currency,
+              days: POS_BRANCH_STARTER_OPTION.days,
+            }
+          : null,
+        onStarterTrial: sub?.planCode === POS_BRANCH_STARTER_OPTION.planCode,
         lastPayment: lastPaymentByBranch.get(branch.id) || null,
         pendingPayment: this.pendingPaymentOf(branchClaims, branch.id),
         nextRenewalAt: sub?.endsAt ?? null,
@@ -618,7 +636,7 @@ export class BranchBillingService {
       row,
       collectAppliedActivationReferences(rows),
     );
-    const option = findPosBranchSubscriptionOption(
+    const option = findPosBranchPaymentOption(
       parseActivationReferencePeriod(row.merch_order_id),
     );
     const term = this.findTermForReference(row.merch_order_id, rows);
@@ -632,7 +650,7 @@ export class BranchBillingService {
       currency: row.currency || 'ETB',
       /** MONTHLY | ONE_YEAR; null on references issued before the suffix. */
       period: option?.period ?? null,
-      periodMonths: option?.months ?? null,
+      periodMonths: option ? monthsOfPaymentOption(option) : null,
       termStartsAt: term?.startsAt ?? null,
       termEndsAt: term?.endsAt ?? null,
       receiptNumber:

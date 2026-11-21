@@ -889,4 +889,221 @@ describe('PosWorkspaceActivationService', () => {
       expect(tenantSubscriptionsRepository.save).not.toHaveBeenCalled();
     });
   });
+  describe('a new branch paid for by transfer', () => {
+    const pendingRow = (period: string) => ({
+      id: 8,
+      tenantId: 31,
+      status: TenantSubscriptionStatus.ACTIVE,
+      metadata: {
+        pendingBranchCreation: {
+          referenceId: 'POSBRANCH-31-9-1790000000000',
+          branchName: 'Smart Retail',
+          serviceFormat: 'RETAIL',
+          period,
+        },
+      },
+    });
+
+    beforeEach(() => {
+      (branchesRepository as any).findOne = jest.fn().mockResolvedValue(null);
+      (branchesRepository as any).create = jest.fn((value) => value);
+      (branchesRepository as any).save = jest.fn(async (value) => ({
+        id: 88,
+        ...value,
+      }));
+      (branchStaffAssignmentsRepository as any).create = jest.fn((v) => v);
+      (branchStaffAssignmentsRepository as any).save = jest.fn(async (v) => v);
+    });
+
+    const createdTerm = () =>
+      tenantSubscriptionsRepository.save.mock.calls
+        .map(([row]) => row)
+        .find((row) => row.branchId === 88);
+
+    it('gives the new branch the term that was paid for, on a row of its own', async () => {
+      tenantSubscriptionsRepository.findOne.mockResolvedValue(
+        pendingRow('ONE_YEAR'),
+      );
+
+      const result = await service.completeBranchCreationPayment(
+        'POSBRANCH-31-9-1790000000000',
+      );
+
+      expect(result).toEqual({ branchId: 88, created: true });
+      const term = createdTerm();
+      expect(term).toMatchObject({
+        tenantId: 31,
+        branchId: 88,
+        planCode: 'POS_BRANCH_1Y',
+        status: TenantSubscriptionStatus.ACTIVE,
+        amountTotal: 42120,
+        periodMonths: 12,
+      });
+      expect(term.endsAt.getTime()).toBeGreaterThan(
+        Date.now() + 364 * 86_400_000,
+      );
+      expect(term.metadata.lastActivationReferenceId).toBe(
+        'POSBRANCH-31-9-1790000000000',
+      );
+    });
+
+    it('opens a new branch on the 14-day trial when that is what was paid', async () => {
+      tenantSubscriptionsRepository.findOne.mockResolvedValue(
+        pendingRow('STARTER'),
+      );
+
+      await service.completeBranchCreationPayment(
+        'POSBRANCH-31-9-1790000000000',
+      );
+
+      const term = createdTerm();
+      expect(term).toMatchObject({
+        planCode: 'POS_BRANCH_STARTER_14D',
+        amountTotal: 500,
+        periodMonths: null,
+      });
+      expect(
+        Math.round(
+          (term.endsAt.getTime() - term.startsAt.getTime()) / 86_400_000,
+        ),
+      ).toBe(14);
+    });
+  });
+
+  describe('the paid 14-day trial for a new branch', () => {
+    const DAY = 86_400_000;
+    const candidate = {
+      branchId: 21,
+      branchName: 'Bole Flagship',
+      serviceFormat: 'RETAIL',
+      role: 'MANAGER',
+      isOwner: true,
+      retailTenantId: 31,
+      workspaceStatus: 'PAYMENT_REQUIRED',
+      canStartActivation: true,
+      canPayNow: true,
+    };
+
+    beforeEach(() => {
+      branchStaffServiceMock.getPosWorkspaceActivationCandidatesForUser.mockResolvedValue(
+        [candidate],
+      );
+      retailEntitlementsServiceMock.getBranchWorkspaceStatus.mockResolvedValue({
+        tenant: { id: 31, name: 'Bole Retail' },
+        branch: { id: 21, serviceFormat: 'RETAIL' },
+        entitlements: [{ module: RetailModule.POS_CORE }],
+        governance: {
+          activationReadiness: { canActivate: true, blockers: [] },
+        },
+      });
+      tenantModuleEntitlementsRepository.findOne.mockResolvedValue({
+        module: RetailModule.POS_CORE,
+        enabled: true,
+      });
+      tenantSubscriptionsRepository.findOne.mockResolvedValue(null);
+    });
+
+    it('asks a new branch for 500 ETB, not a month', async () => {
+      const result = await service.startActivationPayment(
+        { id: 9, roles: ['POS_MANAGER'] },
+        { branchId: 21, subscriptionPeriod: 'STARTER', ...proof },
+      );
+
+      expect(paymentClaimsMock.submit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kind: 'POS_BRANCH',
+          period: 'STARTER',
+          periodMonths: null,
+          amount: 500,
+        }),
+      );
+      expect(result.referenceId).toMatch(/^POSACT-21-\d+-STARTER$/);
+    });
+
+    it('refuses the trial to a branch that has subscribed before', async () => {
+      tenantSubscriptionsRepository.find.mockResolvedValue([
+        {
+          branchId: 21,
+          planCode: 'POS_BRANCH_1M',
+          metadata: { lastActivationReferenceId: 'POSACT-21-1-MONTHLY' },
+        },
+      ]);
+
+      await expect(
+        service.startActivationPayment(
+          { id: 9, roles: ['POS_MANAGER'] },
+          { branchId: 21, subscriptionPeriod: 'STARTER', ...proof },
+        ),
+      ).rejects.toMatchObject({ status: 409 });
+      expect(paymentClaimsMock.submit).not.toHaveBeenCalled();
+    });
+
+    it('refuses a second trial while another branch never followed its own with a subscription', async () => {
+      tenantSubscriptionsRepository.find.mockResolvedValue([
+        {
+          branchId: 55,
+          planCode: 'POS_BRANCH_STARTER_14D',
+          metadata: { lastActivationReferenceId: 'POSACT-55-1-STARTER' },
+        },
+      ]);
+
+      await expect(
+        service.startActivationPayment(
+          { id: 9, roles: ['POS_MANAGER'] },
+          { branchId: 21, subscriptionPeriod: 'STARTER', ...proof },
+        ),
+      ).rejects.toMatchObject({ status: 409 });
+    });
+
+    it('opens the branch for 14 days on approval, shares nothing with a partner, and stays out of the run-rate', async () => {
+      const equity = (service as any).equityPartnerService;
+
+      await service.completeActivationPayment(
+        `POSACT-21-${Date.now()}-STARTER`,
+        'STARTER',
+      );
+
+      const saved = tenantSubscriptionsRepository.save.mock.calls[0][0];
+      expect(saved).toMatchObject({
+        planCode: 'POS_BRANCH_STARTER_14D',
+        status: TenantSubscriptionStatus.ACTIVE,
+        billingInterval: 'CUSTOM',
+        amountTotal: 500,
+        periodMonths: null,
+        autoRenew: false,
+      });
+      const length = saved.endsAt.getTime() - saved.startsAt.getTime();
+      expect(Math.round(length / DAY)).toBe(14);
+      expect(equity.createMonthlyPayoutsForBranch).not.toHaveBeenCalled();
+    });
+
+    it('adds the first full term after the trial days when the owner subscribes during the trial', async () => {
+      const trialEndsAt = new Date(Date.now() + 9 * DAY);
+      const trialRow = {
+        id: 8,
+        tenantId: 31,
+        branchId: 21,
+        planCode: 'POS_BRANCH_STARTER_14D',
+        status: TenantSubscriptionStatus.ACTIVE,
+        startsAt: new Date(Date.now() - 5 * DAY),
+        endsAt: trialEndsAt,
+        metadata: {
+          lastActivationReferenceId: 'POSACT-21-1790000000000-STARTER',
+          appliedActivationReferences: ['POSACT-21-1790000000000-STARTER'],
+        },
+      };
+      tenantSubscriptionsRepository.findOne.mockResolvedValue(trialRow);
+      tenantSubscriptionsRepository.find.mockResolvedValue([trialRow]);
+
+      await service.completeActivationPayment(
+        `POSACT-21-${Date.now()}-MONTHLY`,
+      );
+
+      const saved = tenantSubscriptionsRepository.save.mock.calls[0][0];
+      expect(saved.planCode).toBe('POS_BRANCH_1M');
+      expect(saved.amountTotal).toBe(3900);
+      // No trial day is lost by subscribing early.
+      expect(saved.startsAt.getTime()).toBe(trialEndsAt.getTime());
+    });
+  });
 });

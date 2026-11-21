@@ -219,3 +219,58 @@ export function isActivationReferenceApplied(
   }
   return legacyWatermark != null && issuedAt <= legacyWatermark;
 }
+
+const STARTER_PLAN_CODE = 'POS_BRANCH_STARTER_14D';
+
+export interface StarterEligibilityRow extends RenewableSubscriptionLike {
+  branchId?: number | null;
+}
+
+/**
+ * May this branch start on the paid trial?
+ *
+ * Only a branch that has never had a term — the trial is for trying, not a
+ * cheaper way to keep going — and only when the workspace has no OTHER branch
+ * sitting on a trial it never followed with a full term. Without the second
+ * rule an owner could open a fresh 500 ETB branch every fortnight instead of
+ * paying for one.
+ */
+export function resolveStarterEligibility(
+  tenantRows: StarterEligibilityRow[],
+  branchId: number | null,
+): { eligible: boolean; reason: string | null } {
+  if (
+    branchId != null &&
+    tenantRows.some(
+      (row) =>
+        row.branchId === branchId &&
+        (recordsSettledTerm(row) || row.planCode === STARTER_PLAN_CODE),
+    )
+  ) {
+    return {
+      eligible: false,
+      reason:
+        'The 14-day trial is for a branch that has not been subscribed before. Choose 1 month or 1 year.',
+    };
+  }
+
+  const byBranch = new Map<number, StarterEligibilityRow[]>();
+  for (const row of tenantRows) {
+    if (row.branchId == null || row.branchId === branchId) continue;
+    byBranch.set(row.branchId, [...(byBranch.get(row.branchId) ?? []), row]);
+  }
+  for (const rows of byBranch.values()) {
+    const tookStarter = rows.some((row) => row.planCode === STARTER_PLAN_CODE);
+    const wentOnToPay = rows.some(
+      (row) => row.planCode !== STARTER_PLAN_CODE && recordsSettledTerm(row),
+    );
+    if (tookStarter && !wentOnToPay) {
+      return {
+        eligible: false,
+        reason:
+          'Another branch in this workspace is on a trial that has not been followed by a subscription. Subscribe that branch first, or choose 1 month or 1 year here.',
+      };
+    }
+  }
+  return { eligible: true, reason: null };
+}

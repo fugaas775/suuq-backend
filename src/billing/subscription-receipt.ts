@@ -22,6 +22,8 @@ export interface SubscriptionReceiptPayment {
   amount: number;
   currency: string;
   periodMonths: number | null;
+  /** Overrides the plan line — used for the paid 14-day trial. */
+  planLabel?: string | null;
   termStartsAt: Date | null;
   termEndsAt: Date | null;
   receiptNumber: string | null;
@@ -85,13 +87,14 @@ export function renderSubscriptionReceiptHtml(
     }).format(date);
   };
   const planLabel =
-    payment.periodMonths === 12
+    payment.planLabel ||
+    (payment.periodMonths === 12
       ? 'POS branch subscription — 1 year'
       : payment.periodMonths === 1
         ? 'POS branch subscription — 1 month'
         : payment.periodMonths
           ? `POS branch subscription — ${payment.periodMonths} months`
-          : 'POS branch subscription';
+          : 'POS branch subscription');
   const covered =
     paid && payment.termStartsAt
       ? `${when(payment.termStartsAt, false)} – ${when(payment.termEndsAt, false) || 'open'}`

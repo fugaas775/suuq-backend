@@ -42,8 +42,14 @@ import {
   POS_BRANCH_SUBSCRIPTION_OPTIONS,
   PosBranchSubscriptionOption,
   PosBranchSubscriptionPeriod,
+  PosBranchPaymentOption,
+  PosBranchPaymentPeriod,
+  findPosBranchPaymentOption,
   findPosBranchSubscriptionOption,
+  isPosBranchStarterOption,
+  monthsOfPaymentOption,
   requirePosBranchSubscriptionOption,
+  resolvePaymentOptionEnd,
 } from './pos-workspace-pricing';
 import {
   POS_RENEWAL_OPEN_ATTEMPT_WINDOW_MS,
@@ -55,6 +61,7 @@ import {
   parseActivationReferencePeriod,
   recordsSettledTerm,
   resolveNextTermStart,
+  resolveStarterEligibility,
 } from './pos-branch-renewal.policy';
 import { addCalendarMonths } from '../retail/subscription-summary';
 import { renderSubscriptionReceiptHtml } from '../billing/subscription-receipt';
@@ -142,9 +149,15 @@ export class PosWorkspaceActivationService {
       user,
       params.branchId,
     );
-    const option =
-      findPosBranchSubscriptionOption(params.subscriptionPeriod) ??
+    const option: PosBranchPaymentOption =
+      findPosBranchPaymentOption(params.subscriptionPeriod) ??
       requirePosBranchSubscriptionOption(DEFAULT_POS_BRANCH_PERIOD);
+    if (isPosBranchStarterOption(option)) {
+      await this.assertStarterEligible(
+        candidate.retailTenantId ?? null,
+        candidate.branchId,
+      );
+    }
     // Refused before anything is written: an unknown channel, a transaction
     // number already used for another payment, or a claim for this branch that
     // is still waiting to be checked.
@@ -179,7 +192,7 @@ export class PosWorkspaceActivationService {
       tenantId: candidate.retailTenantId ?? null,
       subjectName: candidate.branchName,
       period: option.period,
-      periodMonths: option.months,
+      periodMonths: monthsOfPaymentOption(option),
       amount: option.amount,
       currency: option.currency,
       channel: params.channel,
@@ -197,9 +210,26 @@ export class PosWorkspaceActivationService {
     };
   }
 
+  /** Throws with the reason when the paid trial is not on offer for this branch. */
+  private async assertStarterEligible(
+    tenantId: number | null,
+    branchId: number | null,
+  ): Promise<void> {
+    if (!tenantId) return;
+    const tenantRows =
+      (await this.tenantSubscriptionsRepository.find({
+        where: { tenantId },
+      })) ?? [];
+    const { eligible, reason } = resolveStarterEligibility(
+      tenantRows,
+      branchId,
+    );
+    if (!eligible) throw new ConflictException(reason);
+  }
+
   private async recordPendingPeriodOnSubscription(
     branchId: number,
-    option: PosBranchSubscriptionOption,
+    option: PosBranchPaymentOption,
     referenceId: string,
     referralCode?: string | null,
   ): Promise<void> {
@@ -227,7 +257,7 @@ export class PosWorkspaceActivationService {
       pendingActivation: {
         branchId,
         period: option.period,
-        periodMonths: option.months,
+        periodMonths: monthsOfPaymentOption(option),
         amountTotal: option.amount,
         currency: option.currency,
         referenceId,
@@ -247,7 +277,7 @@ export class PosWorkspaceActivationService {
    */
   async completeActivationPayment(
     referenceId: string,
-    explicitPeriod?: PosBranchSubscriptionPeriod,
+    explicitPeriod?: PosBranchPaymentPeriod,
     explicitReferralCode?: string | null,
   ): Promise<TenantSubscription | null> {
     const inFlight = this.completionsInFlight.get(referenceId);
@@ -263,7 +293,7 @@ export class PosWorkspaceActivationService {
 
   private async applyActivationPayment(
     referenceId: string,
-    explicitPeriod?: PosBranchSubscriptionPeriod,
+    explicitPeriod?: PosBranchPaymentPeriod,
     explicitReferralCode?: string | null,
   ): Promise<TenantSubscription | null> {
     const branchId = this.parseBranchIdFromReference(referenceId);
@@ -348,16 +378,19 @@ export class PosWorkspaceActivationService {
     const pendingMeta = reference?.metadata?.pendingActivation as
       | { period?: string; referenceId?: string }
       | undefined;
-    const resolvedPeriod: PosBranchSubscriptionPeriod =
+    const resolvedPeriod: PosBranchPaymentPeriod =
       explicitPeriod ??
-      (findPosBranchSubscriptionOption(pendingMeta?.period)?.period ||
-        findPosBranchSubscriptionOption(
-          parseActivationReferencePeriod(referenceId),
-        )?.period ||
+      (findPosBranchPaymentOption(pendingMeta?.period)?.period ||
+        findPosBranchPaymentOption(parseActivationReferencePeriod(referenceId))
+          ?.period ||
         DEFAULT_POS_BRANCH_PERIOD);
-    const option = requirePosBranchSubscriptionOption(resolvedPeriod);
-    const billingInterval =
-      option.period === 'ONE_YEAR'
+    const option: PosBranchPaymentOption =
+      findPosBranchPaymentOption(resolvedPeriod) ??
+      requirePosBranchSubscriptionOption(DEFAULT_POS_BRANCH_PERIOD);
+    const isStarter = isPosBranchStarterOption(option);
+    const billingInterval = isStarter
+      ? TenantBillingInterval.CUSTOM
+      : option.period === 'ONE_YEAR'
         ? TenantBillingInterval.ONE_YEAR
         : TenantBillingInterval.MONTHLY;
 
@@ -409,14 +442,22 @@ export class PosWorkspaceActivationService {
     nextSubscription.planCode = option.planCode;
     nextSubscription.status = TenantSubscriptionStatus.ACTIVE;
     nextSubscription.billingInterval = billingInterval;
-    nextSubscription.amount = POS_BRANCH_SUBSCRIPTION_MONTHLY_EQUIVALENT;
+    // The trial is priced in days, not months: no monthly rate, and CUSTOM with
+    // no period length keeps it out of the run-rate figures.
+    nextSubscription.amount = isStarter
+      ? option.amount
+      : POS_BRANCH_SUBSCRIPTION_MONTHLY_EQUIVALENT;
     nextSubscription.amountTotal = option.amount;
-    nextSubscription.periodMonths = option.months;
+    nextSubscription.periodMonths = monthsOfPaymentOption(option);
     nextSubscription.currency = option.currency;
     nextSubscription.startsAt = termStartsAt;
     // Calendar months: a month bought on the 5th runs to the 5th, and a year is
     // a year — not 30-day blocks, which sold 360 days as "1 year".
-    nextSubscription.endsAt = addCalendarMonths(termStartsAt, option.months);
+    nextSubscription.endsAt = resolvePaymentOptionEnd(
+      option,
+      termStartsAt,
+      addCalendarMonths,
+    );
     // Every term is paid by hand, so nothing renews by itself. Saying
     // otherwise told owners they were covered when they were not.
     nextSubscription.autoRenew = false;
@@ -440,7 +481,7 @@ export class PosWorkspaceActivationService {
       lastActivatedAt: now.toISOString(),
       posWorkspacePlanCode: option.planCode,
       subscriptionPeriod: option.period,
-      periodMonths: option.months,
+      periodMonths: monthsOfPaymentOption(option),
       amountTotal: option.amount,
       branchId,
       pendingActivation: undefined,
@@ -511,6 +552,10 @@ export class PosWorkspaceActivationService {
       })();
     }
 
+    // The trial fee is not shared: a referring partner earns on the first full
+    // term, which is paid at the full price.
+    if (isStarter) return saved;
+
     // Generate equity payouts proportional to the full subscription period.
     const periodStart = saved.startsAt ?? now;
     const periodEnd =
@@ -536,7 +581,7 @@ export class PosWorkspaceActivationService {
   private async emailSubscriptionReceipt(input: {
     referenceId: string;
     subscription: TenantSubscription;
-    option: PosBranchSubscriptionOption;
+    option: PosBranchPaymentOption;
     branchId: number;
     branchName: string;
     ownerUserId: number | null;
@@ -557,7 +602,10 @@ export class PosWorkspaceActivationService {
           state: 'PAID',
           amount: Number(claim.amount ?? input.option.amount),
           currency: claim.currency || input.option.currency,
-          periodMonths: input.option.months,
+          periodMonths: monthsOfPaymentOption(input.option),
+          planLabel: isPosBranchStarterOption(input.option)
+            ? `POS branch — ${input.option.label}`
+            : null,
           termStartsAt: input.subscription.startsAt,
           termEndsAt: input.subscription.endsAt ?? null,
           receiptNumber,
@@ -669,9 +717,13 @@ export class PosWorkspaceActivationService {
     // Resolve the billing period the caller chose (Monthly or 1-year −10%),
     // defaulting to the monthly plan when omitted. The period is persisted in
     // the pending metadata so completion charges/pays out the matching amount.
-    const additionalBranchOption =
-      findPosBranchSubscriptionOption(dto.subscriptionPeriod) ??
+    const additionalBranchOption: PosBranchPaymentOption =
+      findPosBranchPaymentOption(dto.subscriptionPeriod) ??
       requirePosBranchSubscriptionOption(DEFAULT_POS_BRANCH_PERIOD);
+    if (isPosBranchStarterOption(additionalBranchOption)) {
+      // A branch that does not exist yet: only the workspace rule applies.
+      await this.assertStarterEligible(tenantId, null);
+    }
 
     // Store pending creation params in subscription metadata
     subscription.metadata = {
@@ -702,7 +754,7 @@ export class PosWorkspaceActivationService {
       tenantId,
       subjectName: branchName,
       period: additionalBranchOption.period,
-      periodMonths: additionalBranchOption.months,
+      periodMonths: monthsOfPaymentOption(additionalBranchOption),
       amount: additionalBranchOption.amount,
       currency: additionalBranchOption.currency,
       channel: dto.channel,
@@ -813,8 +865,8 @@ export class PosWorkspaceActivationService {
 
     // Resolve the billing period chosen at initiation (persisted in metadata)
     // so the equity-partner payout amount / description match what was charged.
-    const additionalBranchOption =
-      findPosBranchSubscriptionOption(pending.period) ??
+    const additionalBranchOption: PosBranchPaymentOption =
+      findPosBranchPaymentOption(pending.period) ??
       requirePosBranchSubscriptionOption(DEFAULT_POS_BRANCH_PERIOD);
 
     const code = await this.generateBranchCode(
@@ -879,6 +931,48 @@ export class PosWorkspaceActivationService {
       );
     }
 
+    // The term that was paid for belongs to THIS branch. It used to be written
+    // nowhere: the new branch was left to whatever tenant-wide row existed — or,
+    // for a workspace with only per-branch rows, to nothing at all, so a branch
+    // paid for in full opened asking to be paid for again.
+    const termStartsAt = new Date();
+    const startsOnTrial = isPosBranchStarterOption(additionalBranchOption);
+    await this.tenantSubscriptionsRepository.save(
+      this.tenantSubscriptionsRepository.create({
+        tenantId,
+        branchId: savedBranch.id,
+        planCode: additionalBranchOption.planCode,
+        status: TenantSubscriptionStatus.ACTIVE,
+        billingInterval: startsOnTrial
+          ? TenantBillingInterval.CUSTOM
+          : additionalBranchOption.period === 'ONE_YEAR'
+            ? TenantBillingInterval.ONE_YEAR
+            : TenantBillingInterval.MONTHLY,
+        amount: startsOnTrial
+          ? additionalBranchOption.amount
+          : POS_BRANCH_SUBSCRIPTION_MONTHLY_EQUIVALENT,
+        amountTotal: additionalBranchOption.amount,
+        periodMonths: monthsOfPaymentOption(additionalBranchOption),
+        currency: additionalBranchOption.currency,
+        startsAt: termStartsAt,
+        endsAt: resolvePaymentOptionEnd(
+          additionalBranchOption,
+          termStartsAt,
+          addCalendarMonths,
+        ),
+        autoRenew: false,
+        metadata: {
+          lastActivationReferenceId: referenceId,
+          appliedActivationReferences: [referenceId],
+          lastActivatedAt: termStartsAt.toISOString(),
+          posWorkspacePlanCode: additionalBranchOption.planCode,
+          subscriptionPeriod: additionalBranchOption.period,
+          branchId: savedBranch.id,
+          createdWithBranch: true,
+        },
+      }),
+    );
+
     // Record the created branch ID for idempotency
     if (subscription) {
       subscription.metadata = {
@@ -914,8 +1008,14 @@ export class PosWorkspaceActivationService {
               savedBranch.id,
               tenantId,
             );
-            const now = new Date();
-            const periodEnd = new Date(now.getTime() + 30 * 86_400_000);
+            // The trial fee is not shared; the partner earns on the first full term.
+            if (startsOnTrial) return;
+            const now = termStartsAt;
+            const periodEnd = resolvePaymentOptionEnd(
+              additionalBranchOption,
+              termStartsAt,
+              addCalendarMonths,
+            );
             await this.equityPartnerService.createMonthlyPayoutsForBranch(
               savedBranch.id,
               now,

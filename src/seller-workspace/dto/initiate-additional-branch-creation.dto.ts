@@ -69,8 +69,9 @@ export class InitiateAdditionalBranchCreationDto extends PaymentProofDto {
     typeof value === 'string' ? value.trim().toUpperCase() : value,
   )
   @IsOptional()
-  @IsIn(['MONTHLY', 'ONE_YEAR'])
-  subscriptionPeriod?: 'MONTHLY' | 'ONE_YEAR';
+  // STARTER = the paid 14-day trial, for a branch that has never subscribed.
+  @IsIn(['MONTHLY', 'ONE_YEAR', 'STARTER'])
+  subscriptionPeriod?: 'MONTHLY' | 'ONE_YEAR' | 'STARTER';
 
   /** Optional equity partner referral code (e.g. PART-X7K2). */
   @Transform(({ value }) =>

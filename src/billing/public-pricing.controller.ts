@@ -1,6 +1,9 @@
 import { Controller, Get } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
-import { POS_BRANCH_SUBSCRIPTION_OPTIONS } from '../branch-staff/pos-workspace-pricing';
+import {
+  POS_BRANCH_STARTER_OPTION,
+  POS_BRANCH_SUBSCRIPTION_OPTIONS,
+} from '../branch-staff/pos-workspace-pricing';
 import { SUBSCRIPTION_PAYMENT_DESTINATIONS } from '../subscription-payments/payment-destinations';
 import { SUPPLIER_SUBSCRIPTION_OPTIONS } from '../suppliers/supplier-subscription-pricing';
 
@@ -36,6 +39,8 @@ export class PublicPricingController {
       // The only places a subscription is paid to. Screens print these and
       // nothing else.
       payTo: SUBSCRIPTION_PAYMENT_DESTINATIONS.map((entry) => ({ ...entry })),
+      // The paid trial a new branch can start on.
+      posBranchStarter: { ...POS_BRANCH_STARTER_OPTION },
       posBranch: POS_BRANCH_SUBSCRIPTION_OPTIONS.map(describe),
       supplier: SUPPLIER_SUBSCRIPTION_OPTIONS.map(describe),
     };

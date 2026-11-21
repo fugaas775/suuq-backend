@@ -81,3 +81,81 @@ export function requirePosBranchSubscriptionOption(
   }
   return option;
 }
+
+/**
+ * The paid trial a NEW branch starts on: a small transfer up front, then the
+ * branch trades for a fortnight before the first full term is due.
+ *
+ * Why 500 ETB / 14 days. Every payment is now a transfer an admin verifies by
+ * hand, so a trial has to cost enough that only someone who means to open a
+ * shop sends it (and that it is worth a person checking the account) — and
+ * little enough that it is no obstacle: 500 is about an eighth of the 3,900
+ * monthly price, a round figure to send, and roughly a quarter of what 14 days
+ * cost at the full rate. Fourteen days covers two weekly trading cycles, which
+ * is what it takes to load a catalogue, train staff and close a week's books.
+ *
+ * It is a term like any other once paid: the branch can pay for its first full
+ * term at any point in the trial and that term is added AFTER the trial days,
+ * so trying before buying costs nothing extra.
+ */
+export interface PosBranchStarterOption {
+  period: 'STARTER';
+  days: number;
+  amount: number;
+  currency: 'ETB';
+  label: string;
+  planCode: string;
+}
+
+export const POS_BRANCH_STARTER_OPTION: PosBranchStarterOption = {
+  period: 'STARTER',
+  days: 14,
+  amount: 500,
+  currency: POS_BRANCH_SUBSCRIPTION_CURRENCY,
+  label: '14-day trial',
+  // Deliberately not "TRIAL"/"FREE" in the code: those mark a FREE period, which
+  // gets no grace, no reminders and cannot be renewed early. This one is paid.
+  planCode: 'POS_BRANCH_STARTER_14D',
+};
+
+export type PosBranchPaymentPeriod = PosBranchSubscriptionPeriod | 'STARTER';
+export type PosBranchPaymentOption =
+  | PosBranchSubscriptionOption
+  | PosBranchStarterOption;
+
+export function isPosBranchStarterOption(
+  option: PosBranchPaymentOption | null | undefined,
+): option is PosBranchStarterOption {
+  return option?.period === 'STARTER';
+}
+
+/** A regular term, or the starter trial — anything a branch payment can be for. */
+export function findPosBranchPaymentOption(
+  period: string | null | undefined,
+): PosBranchPaymentOption | undefined {
+  const normalized = String(period || '')
+    .trim()
+    .toUpperCase();
+  if (normalized === POS_BRANCH_STARTER_OPTION.period) {
+    return POS_BRANCH_STARTER_OPTION;
+  }
+  return findPosBranchSubscriptionOption(normalized);
+}
+
+/** Months a payment option covers; null for the starter, which is in days. */
+export function monthsOfPaymentOption(
+  option: PosBranchPaymentOption,
+): number | null {
+  return isPosBranchStarterOption(option) ? null : option.months;
+}
+
+/** When a term bought with this option ends, counted from `startsAt`. */
+export function resolvePaymentOptionEnd(
+  option: PosBranchPaymentOption,
+  startsAt: Date,
+  addMonths: (from: Date, months: number) => Date,
+): Date {
+  return isPosBranchStarterOption(option)
+    ? new Date(startsAt.getTime() + option.days * 86_400_000)
+    : addMonths(startsAt, option.months);
+}

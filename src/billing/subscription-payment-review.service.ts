@@ -124,7 +124,7 @@ export class SubscriptionPaymentReviewService {
       case 'POS_BRANCH': {
         const granted = await this.posActivation.completeActivationPayment(
           claim.referenceId,
-          (claim.period as 'MONTHLY' | 'ONE_YEAR') || undefined,
+          (claim.period as 'MONTHLY' | 'ONE_YEAR' | 'STARTER') || undefined,
         );
         if (!granted) {
           throw new BadRequestException(

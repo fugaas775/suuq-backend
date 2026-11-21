@@ -24,8 +24,9 @@ export class StartPosWorkspaceActivationDto extends PaymentProofDto {
   })
   @IsOptional()
   @IsString()
-  @IsIn(['MONTHLY', 'ONE_YEAR'])
-  subscriptionPeriod?: 'MONTHLY' | 'ONE_YEAR';
+  // STARTER = the paid 14-day trial, for a branch that has never subscribed.
+  @IsIn(['MONTHLY', 'ONE_YEAR', 'STARTER'])
+  subscriptionPeriod?: 'MONTHLY' | 'ONE_YEAR' | 'STARTER';
 
   @ApiPropertyOptional({
     description: 'Optional referral code from an active equity partner.',
@@ -53,7 +54,7 @@ export class PosWorkspaceActivationPaymentResponseDto {
     enum: ['MONTHLY', 'ONE_YEAR'],
     example: 'MONTHLY',
   })
-  subscriptionPeriod?: 'MONTHLY' | 'ONE_YEAR';
+  subscriptionPeriod?: 'MONTHLY' | 'ONE_YEAR' | 'STARTER';
 
   @ApiPropertyOptional({ example: 3900 })
   amount?: number;
