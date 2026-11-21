@@ -3,6 +3,8 @@ import {
   POS_EARLY_RENEWAL_WINDOW_DAYS,
   canRenewEarly,
   collectAppliedActivationReferences,
+  continuesFromTermEnd,
+  getPosPaidGraceDays,
   isActivationReferenceApplied,
   isLivePaidTerm,
   resolveNextTermStart,
@@ -274,8 +276,14 @@ export class SupplierActivationService {
         next.periodMonths = isStarter ? null : option.months;
         next.currency = option.currency;
         // A paid term still running is renewed from its END — no paid day lost.
-        const renewsLiveTerm = isLivePaidTerm(latest, now.getTime());
-        const termStartsAt = resolveNextTermStart(latest, now);
+        // In its grace days too — grace keeps the account open, it is not free.
+        const graceDays = getPosPaidGraceDays();
+        const renewsLiveTerm = continuesFromTermEnd(
+          latest,
+          now.getTime(),
+          graceDays,
+        );
+        const termStartsAt = resolveNextTermStart(latest, now, graceDays);
         const priorReferences = latest
           ? [...collectAppliedActivationReferences([latest])]
           : [];

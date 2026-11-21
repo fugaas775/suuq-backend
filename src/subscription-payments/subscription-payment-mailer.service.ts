@@ -278,44 +278,113 @@ export class SubscriptionPaymentMailerService {
     });
   }
 
-  /** A paid branch term is about to end — the email twin of the in-app reminder. */
+  /**
+   * A paid term is about to end — the email twin of the in-app reminder. Says
+   * what the next term costs, and says so plainly when that is more than the
+   * term now ending was sold at: nobody should meet a new price at the moment
+   * they are trying to pay it.
+   */
   async renewalDue(input: {
     ownerUserId: number;
     branchId?: number | null;
+    /** Used instead of the branch name — e.g. a supplier's company name. */
+    subjectName?: string | null;
     endsAt: Date;
     daysLeft: number;
+    /** What the next term costs, e.g. [{ label: '1 month', amount: 3900 }]. */
+    prices?: Array<{ label: string; amount: number; currency?: string }>;
+    /** The monthly rate the ending term was sold at, when known. */
+    previousMonthlyRate?: number | null;
+    /** Today's monthly rate, to compare with the one above. */
+    currentMonthlyRate?: number | null;
+    supplier?: boolean;
   }): Promise<void> {
     await this.safely('renewal-due', async () => {
       const when = input.endsAt.toDateString();
-      const branchName = await this.branchNameOf(input.branchId);
+      const name =
+        input.subjectName || (await this.branchNameOf(input.branchId));
+      const priceChanged =
+        Number(input.previousMonthlyRate) > 0 &&
+        Number(input.currentMonthlyRate) > Number(input.previousMonthlyRate);
       await this.deliver(await this.emailOf(input.ownerUserId), {
-        subject: `Suuq POS subscription for ${branchName} ends ${input.daysLeft <= 1 ? 'tomorrow' : `in ${input.daysLeft} days`}`,
+        subject: `Suuq ${input.supplier ? 'supplier' : 'POS'} subscription for ${name} ends ${input.daysLeft <= 1 ? 'tomorrow' : `in ${input.daysLeft} days`}`,
         heading: 'Your subscription is ending soon',
         intro: [
-          `The Suuq POS subscription for ${branchName} ends on ${when}.`,
+          `The subscription for ${name} ends on ${when}.`,
           'You can pay for the next term now from Billing. It is added after your current term, so no paid day is lost.',
+          ...(priceChanged
+            ? [
+                `Please note the price has changed since your last term: it was ${money(Number(input.previousMonthlyRate), 'ETB')} a month and is now ${money(Number(input.currentMonthlyRate), 'ETB')} a month.`,
+              ]
+            : []),
         ],
-        action: { label: 'Open Billing', url: this.billingUrl() },
+        rows: (input.prices ?? []).map((price) => [
+          price.label,
+          money(price.amount, price.currency || 'ETB'),
+        ]),
+        action: {
+          label: 'Open Billing',
+          url: this.billingUrl(
+            input.supplier ? ({ kind: 'SUPPLIER' } as any) : undefined,
+          ),
+        },
       });
     });
   }
 
-  /** A paid branch term has ended and the branch is on its grace days. */
+  /** A paid term has ended and the account is on its grace days. */
   async termEnded(input: {
     ownerUserId: number;
     branchId?: number | null;
+    subjectName?: string | null;
     endsAt: Date;
     graceEndsAt: Date;
+    supplier?: boolean;
   }): Promise<void> {
     await this.safely('term-ended', async () => {
-      const branchName = await this.branchNameOf(input.branchId);
+      const name =
+        input.subjectName || (await this.branchNameOf(input.branchId));
       await this.deliver(await this.emailOf(input.ownerUserId), {
-        subject: `Suuq POS subscription for ${branchName} has ended — tills stay open until ${input.graceEndsAt.toDateString()}`,
+        subject: `Suuq ${input.supplier ? 'supplier' : 'POS'} subscription for ${name} has ended — open until ${input.graceEndsAt.toDateString()}`,
         heading: 'Your subscription has ended',
         intro: [
-          `The Suuq POS subscription for ${branchName} ended on ${input.endsAt.toDateString()}.`,
-          `The tills stay open until ${input.graceEndsAt.toDateString()}. Pay from Billing before then to continue without interruption.`,
+          `The subscription for ${name} ended on ${input.endsAt.toDateString()}.`,
+          `${input.supplier ? 'Your account stays' : 'The tills stay'} open until ${input.graceEndsAt.toDateString()}. Pay from Billing before then to continue without interruption.`,
         ],
+        action: {
+          label: 'Open Billing',
+          url: this.billingUrl(
+            input.supplier ? ({ kind: 'SUPPLIER' } as any) : undefined,
+          ),
+        },
+      });
+    });
+  }
+
+  /**
+   * The one message a free workspace is ever sent about its free period: that
+   * it can be paid for now and nothing is lost by doing so. Sent once.
+   */
+  async freePeriodCanBePaidAhead(input: {
+    ownerUserId: number;
+    branchId?: number | null;
+    endsAt: Date;
+    prices?: Array<{ label: string; amount: number; currency?: string }>;
+  }): Promise<void> {
+    await this.safely('free-period-pay-ahead', async () => {
+      const name = await this.branchNameOf(input.branchId);
+      await this.deliver(await this.emailOf(input.ownerUserId), {
+        subject: `Keep ${name} open after ${input.endsAt.toDateString()} — pay any time, lose no free day`,
+        heading: 'Your free period ends soon',
+        intro: [
+          `The free period for ${name} runs until ${input.endsAt.toDateString()}.`,
+          'You can pay for your subscription at any time before then from Billing. It begins the day your free period ends, so paying early costs you no free days — and your branch carries on without a gap.',
+          'Payment is by transfer to our account; we verify it and confirm, usually within a working day, so it is worth not leaving it to the last evening.',
+        ],
+        rows: (input.prices ?? []).map((price) => [
+          price.label,
+          money(price.amount, price.currency || 'ETB'),
+        ]),
         action: { label: 'Open Billing', url: this.billingUrl() },
       });
     });

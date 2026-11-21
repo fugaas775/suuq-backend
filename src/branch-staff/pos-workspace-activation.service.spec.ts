@@ -600,13 +600,13 @@ describe('PosWorkspaceActivationService', () => {
       ).rejects.toBeInstanceOf(NotFoundException);
     });
 
-    it('ends a live trial on payment and starts the paid period today', async () => {
-      const trialEndsAt = new Date(Date.now() + 120 * 86_400_000);
+    it('starts a term paid during the free period when the free period ends — no free day lost', async () => {
+      const trialEndsAt = new Date(Date.now() + 40 * 86_400_000);
       retailEntitlementsServiceMock.getBranchWorkspaceStatus.mockResolvedValue({
         tenant: { id: 31, name: 'Bole Retail' },
         entitlements: [{ module: RetailModule.POS_CORE }],
       });
-      tenantSubscriptionsRepository.findOne.mockResolvedValue({
+      const freeRow = {
         id: 8,
         tenantId: 31,
         branchId: 21,
@@ -614,30 +614,29 @@ describe('PosWorkspaceActivationService', () => {
         status: TenantSubscriptionStatus.TRIAL,
         endsAt: trialEndsAt,
         metadata: {},
-      });
+      };
+      tenantSubscriptionsRepository.findOne.mockResolvedValue(freeRow);
 
       await service.completeActivationPayment(
         'POSACT-21-1731100000000-MONTHLY',
       );
 
       const saved = tenantSubscriptionsRepository.save.mock.calls[0][0];
+      // A row of its own, beginning the instant the free period runs out.
+      expect(saved.id).toBeUndefined();
       expect(saved.status).toBe(TenantSubscriptionStatus.ACTIVE);
-      // One calendar month from today. The 120 free days still on the trial are
-      // given up — stacking them would push a paid month four months out.
-      expect(saved.endsAt.getTime()).toBeLessThan(Date.now() + 32 * 86_400_000);
+      expect(saved.startsAt.getTime()).toBe(trialEndsAt.getTime());
       expect(saved.endsAt.getTime()).toBeGreaterThan(
-        Date.now() + 27 * 86_400_000,
+        trialEndsAt.getTime() + 27 * 86_400_000,
       );
-      // The trial is over: the row no longer carries a trial plan code, and the
-      // free time it gave up is on the record.
-      expect(saved.planCode).not.toMatch(/TRIAL/);
+      expect(saved.metadata).toMatchObject({
+        chainsFromPreviousEnd: true,
+        trialWouldHaveEndedAt: trialEndsAt.toISOString(),
+      });
       expect(saved.metadata.convertedFromTrialAt).toBeTruthy();
-      expect(saved.metadata.trialWouldHaveEndedAt).toBe(
-        trialEndsAt.toISOString(),
-      );
-      // One row, converted in place.
-      expect(saved.id).toBe(8);
-      expect(tenantSubscriptionsRepository.save).toHaveBeenCalledTimes(1);
+      // The free row is left exactly as it was, to run out on its own date.
+      expect(freeRow.status).toBe(TenantSubscriptionStatus.TRIAL);
+      expect(freeRow.endsAt.getTime()).toBe(trialEndsAt.getTime());
     });
 
     it('does not back-date a paid period when the trial has already lapsed', async () => {

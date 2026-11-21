@@ -1,3 +1,4 @@
+import { isLivePosSelfServeTrial } from '../retail/pos-self-serve-trial.policy';
 import {
   BadRequestException,
   ConflictException,
@@ -115,6 +116,8 @@ export interface OwnerBranchBilling {
     early: boolean;
     startsAt: Date;
     windowDays: number;
+    /** On a free period: a term paid now begins when the free period ends. */
+    afterFreePeriod: boolean;
     /** The paid term has ended and the branch is trading on its grace days. */
     inGrace: boolean;
     /** When the tills stop if nothing is paid; null outside grace. */
@@ -428,6 +431,7 @@ export class BranchBillingService {
       const graceDays = getPosPaidGraceDays();
       const inGrace = isInPaidGrace(sub, nowDate.getTime(), graceDays);
       const early = canRenewEarly(sub, nowDate.getTime(), graceDays);
+      const onFreePeriod = isLivePosSelfServeTrial(sub, nowDate.getTime());
       const canStartRenewal = workspace.canStartRenewal || early;
       return {
         branchId: branch.id,
@@ -438,7 +442,13 @@ export class BranchBillingService {
         renewal: {
           allowed: canStartRenewal,
           early,
-          startsAt: resolveNextTermStart(sub, nowDate, graceDays),
+          // A branch on its free period keeps its free days: a term paid now
+          // starts when the free period ends.
+          startsAt:
+            onFreePeriod && sub?.endsAt
+              ? sub.endsAt
+              : resolveNextTermStart(sub, nowDate, graceDays),
+          afterFreePeriod: onFreePeriod,
           windowDays: POS_EARLY_RENEWAL_WINDOW_DAYS,
           inGrace,
           graceEndsAt: inGrace ? resolveGraceEndsAt(sub, graceDays) : null,

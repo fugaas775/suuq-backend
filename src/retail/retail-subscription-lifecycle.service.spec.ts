@@ -209,6 +209,57 @@ describe('RetailSubscriptionLifecycleService', () => {
       expect(notificationsService.createAndDispatch).not.toHaveBeenCalled();
     });
 
+    it('tells a free branch once that it can pay ahead with no free day lost', async () => {
+      const { service, subscriptionsRepo, tenantsRepo, notificationsService } =
+        createService();
+      const sub = {
+        id: 3,
+        tenantId: 34,
+        branchId: 21,
+        planCode: POS_SELF_SERVE_TRIAL_PLAN_CODE,
+        status: TenantSubscriptionStatus.TRIAL,
+        endsAt: new Date('2026-06-30T00:00:00.000Z'), // 21 days out
+        metadata: null as Record<string, any> | null,
+      };
+      subscriptionsRepo.find
+        .mockResolvedValueOnce([sub])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([sub])
+        .mockResolvedValueOnce([]);
+      tenantsRepo.findOne.mockResolvedValue({ id: 34, ownerUserId: 900 });
+
+      expect(await service.sendFreePeriodPayAheadNotices(now)).toBe(1);
+      expect(notificationsService.createAndDispatch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ kind: 'POS_FREE_PERIOD_PAY_AHEAD' }),
+        }),
+      );
+      // Once. The next night says nothing.
+      expect(await service.sendFreePeriodPayAheadNotices(now)).toBe(0);
+    });
+
+    it('says nothing to a free branch that has already paid for what comes next', async () => {
+      const { service, subscriptionsRepo, notificationsService } =
+        createService();
+      const sub = {
+        id: 3,
+        tenantId: 34,
+        branchId: 21,
+        planCode: POS_SELF_SERVE_TRIAL_PLAN_CODE,
+        status: TenantSubscriptionStatus.TRIAL,
+        endsAt: new Date('2026-06-30T00:00:00.000Z'),
+        metadata: null,
+      };
+      subscriptionsRepo.find
+        .mockResolvedValueOnce([sub])
+        .mockResolvedValueOnce([
+          { id: 9, branchId: 21, status: TenantSubscriptionStatus.ACTIVE },
+        ]);
+
+      expect(await service.sendFreePeriodPayAheadNotices(now)).toBe(0);
+      expect(notificationsService.createAndDispatch).not.toHaveBeenCalled();
+    });
+
     it('sends no countdown either, however close the deadline is', async () => {
       // The exclusion is at the QUERY, so there is no arrangement of flags that
       // can put a free workspace back into the reminder loop: the row is never

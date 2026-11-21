@@ -11,6 +11,12 @@ import { RetailTenant } from './entities/retail-tenant.entity';
 import { POS_SELF_SERVE_TRIAL_PLAN_CODES } from './pos-self-serve-trial.policy';
 import { NotificationsService } from '../notifications/notifications.service';
 import { getPosPaidGraceDays } from '../branch-staff/pos-branch-renewal.policy';
+import {
+  POS_BRANCH_STARTER_OPTION,
+  POS_BRANCH_SUBSCRIPTION_MONTHLY_EQUIVALENT,
+  POS_BRANCH_SUBSCRIPTION_OPTIONS,
+} from '../branch-staff/pos-workspace-pricing';
+import { monthlyEquivalent } from './subscription-summary';
 import { NotificationType } from '../notifications/entities/notification.entity';
 
 /**
@@ -24,6 +30,13 @@ import { NotificationType } from '../notifications/entities/notification.entity'
 const PAID_REMINDER_DAYS = [7, 3, 1];
 const MAX_REMINDER_DAYS = Math.max(...PAID_REMINDER_DAYS);
 const DAY_MS = 86_400_000;
+/** How far ahead a free workspace is told, once, that it can be paid for. */
+const FREE_PAY_AHEAD_NOTICE_DAYS = 30;
+const RENEWAL_PRICES = POS_BRANCH_SUBSCRIPTION_OPTIONS.map((option) => ({
+  label: option.label,
+  amount: option.amount,
+  currency: option.currency,
+}));
 
 /**
  * Daily lifecycle pass for per-branch POS subscriptions. With the monthly plan
@@ -36,8 +49,9 @@ const DAY_MS = 86_400_000;
  * indefinitely) must keep its old open-ended meaning, while a granted free
  * period is a real term that expires and takes the workspace with it.
  *
- * They are NOT reminded, by email or in-app, at any point — deliberately, by
- * product decision. The free period simply runs out and the branch lands on the
+ * They are NOT reminded, by email or in-app — deliberately, by product
+ * decision — with one exception: a single notice thirty days out that the
+ * branch can be paid for with no free day lost (sendFreePeriodPayAheadNotices). The free period simply runs out and the branch lands on the
  * paywall, which explains itself. Do not add a countdown nudge back here: the
  * absence is the requirement, not an oversight. Seller HQ and the register still
  * show the remaining days to an owner who opens them.
@@ -67,6 +81,7 @@ export class RetailSubscriptionLifecycleService {
       await this.expireOverdueSubscriptions(now);
       await this.sendUpcomingRenewalReminders(now);
       await this.sendGraceNotices(now);
+      await this.sendFreePeriodPayAheadNotices(now);
     } catch (err) {
       this.logger.error('POS subscription lifecycle pass failed', err as Error);
     }
@@ -205,6 +220,11 @@ export class RetailSubscriptionLifecycleService {
         branchId: sub.branchId ?? null,
         endsAt: sub.endsAt,
         daysLeft: milestone,
+        prices: RENEWAL_PRICES,
+        // A term sold at an older rate is told the rate has changed, here and
+        // not at the moment of paying.
+        previousMonthlyRate: monthlyEquivalent(sub),
+        currentMonthlyRate: POS_BRANCH_SUBSCRIPTION_MONTHLY_EQUIVALENT,
       });
 
       sub.metadata = {
@@ -296,6 +316,93 @@ export class RetailSubscriptionLifecycleService {
       sub.metadata = { ...meta, graceNoticeSentForEndsAt: endsAtIso };
       await this.subscriptionsRepo.save(sub);
       sent += 1;
+    }
+    return sent;
+  }
+
+  /**
+   * Tell the owner of a branch on its FREE period — once, thirty days out —
+   * that it can be paid for at any time and the term begins when the free
+   * period ends, so nothing is lost by paying early.
+   *
+   * This is the single exception to "a free workspace is never reminded"
+   * (owner's decision, 21 November 2026). The reason is operational, not
+   * promotional: every free period ends on the same night, payment is by
+   * transfer verified by hand, and without this every one of those branches
+   * would lock together and wait in one queue. It is sent once and never
+   * repeated; there is still no countdown.
+   */
+  async sendFreePeriodPayAheadNotices(now: Date): Promise<number> {
+    const windowEnd = new Date(
+      now.getTime() + FREE_PAY_AHEAD_NOTICE_DAYS * DAY_MS,
+    );
+    const ending =
+      (await this.subscriptionsRepo.find({
+        where: {
+          status: TenantSubscriptionStatus.TRIAL,
+          planCode: In([...POS_SELF_SERVE_TRIAL_PLAN_CODES]),
+          endsAt: Between(now, windowEnd),
+        },
+      })) ?? [];
+    if (!ending.length) return 0;
+
+    const branchIds = Array.from(
+      new Set(
+        ending
+          .map((sub) => sub.branchId)
+          .filter((id): id is number => typeof id === 'number'),
+      ),
+    );
+    const paidRows = branchIds.length
+      ? ((await this.subscriptionsRepo.find({
+          where: {
+            status: TenantSubscriptionStatus.ACTIVE,
+            branchId: In(branchIds),
+          },
+        })) ?? [])
+      : [];
+
+    let sent = 0;
+    for (const sub of ending) {
+      if (!sub.endsAt) continue;
+      const endsAtIso = sub.endsAt.toISOString();
+      const meta = sub.metadata || {};
+      if (meta.payAheadNoticeSentForEndsAt === endsAtIso) continue;
+      // Already paid for what comes next: nothing to say.
+      if (paidRows.some((row) => row.branchId === sub.branchId)) continue;
+      const ownerUserId = await this.resolveOwnerUserId(sub.tenantId);
+      if (!ownerUserId) continue;
+
+      await this.notificationsService.createAndDispatch({
+        userId: ownerUserId,
+        title: 'Your free period ends soon',
+        body: `Your free period ends on ${sub.endsAt.toDateString()}. You can pay from Billing at any time — the subscription begins when the free period ends, so no free day is lost.`,
+        type: NotificationType.ACCOUNT,
+        data: {
+          kind: 'POS_FREE_PERIOD_PAY_AHEAD',
+          subscriptionId: sub.id,
+          branchId: sub.branchId ?? null,
+          endsAt: endsAtIso,
+        },
+      });
+      void this.mailer?.freePeriodCanBePaidAhead({
+        ownerUserId,
+        branchId: sub.branchId ?? null,
+        endsAt: sub.endsAt,
+        prices: [
+          {
+            label: POS_BRANCH_STARTER_OPTION.label,
+            amount: POS_BRANCH_STARTER_OPTION.amount,
+          },
+          ...RENEWAL_PRICES,
+        ],
+      });
+      sub.metadata = { ...meta, payAheadNoticeSentForEndsAt: endsAtIso };
+      await this.subscriptionsRepo.save(sub);
+      sent += 1;
+    }
+    if (sent) {
+      this.logger.log(`Sent ${sent} free-period pay-ahead notice(s).`);
     }
     return sent;
   }

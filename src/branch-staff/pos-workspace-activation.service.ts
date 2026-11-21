@@ -394,18 +394,16 @@ export class PosWorkspaceActivationService {
         ? TenantBillingInterval.ONE_YEAR
         : TenantBillingInterval.MONTHLY;
 
-    // Payment ends the trial there and then: the paid period starts today, not
-    // at the trial's tail. Stacking the two made sense at 14 days; at six free
-    // months it would park a paid year half a year out, and an owner who pays
-    // in month one would not see the subscription they just bought begin until
-    // month seven. The remaining free days are given up — the copy on both the
-    // pay screens and the reminder email says so.
+    // A branch still on its free period keeps every free day it was given: the
+    // term paid for now begins the moment the free period ends. It used to
+    // begin at once and give the remaining free days up, which made sense when
+    // months of free time were left — but it also meant nobody had any reason
+    // to pay before the deadline, so every free branch would have hit the
+    // paywall, and the admin's verification queue, on the same night.
     const convertedFromLiveTrial = isLivePosSelfServeTrial(
       branchSubscription,
       now.getTime(),
     );
-    // Read before the writes below: the trial row is converted IN PLACE, so
-    // `branchSubscription.endsAt` becomes the paid end date a few lines on.
     const trialWouldHaveEndedAt =
       convertedFromLiveTrial && branchSubscription?.endsAt
         ? new Date(branchSubscription.endsAt).toISOString()
@@ -420,15 +418,17 @@ export class PosWorkspaceActivationService {
       now.getTime(),
       graceDays,
     );
-    const termStartsAt = resolveNextTermStart(
-      branchSubscription,
-      now,
-      graceDays,
-    );
+    const termStartsAt =
+      convertedFromLiveTrial && branchSubscription?.endsAt
+        ? new Date(branchSubscription.endsAt)
+        : resolveNextTermStart(branchSubscription, now, graceDays);
     // A row that already records a settled term is history — the next term gets
-    // a row of its own, so every payment keeps the period it bought. A free
-    // period or a never-paid row is converted where it stands.
-    const writesNewRow = recordsSettledTerm(branchSubscription);
+    // a row of its own, so every payment keeps the period it bought. So does a
+    // free period that is still running: its row has to stay as it is until the
+    // free days are used up. A lapsed free period or a never-paid row is
+    // converted where it stands.
+    const writesNewRow =
+      recordsSettledTerm(branchSubscription) || convertedFromLiveTrial;
     const nextSubscription =
       branchSubscription && !writesNewRow
         ? branchSubscription
@@ -474,7 +474,7 @@ export class PosWorkspaceActivationService {
             previousEndsAt: branchSubscription?.endsAt
               ? new Date(branchSubscription.endsAt).toISOString()
               : null,
-            chainsFromPreviousEnd: renewsLiveTerm,
+            chainsFromPreviousEnd: renewsLiveTerm || convertedFromLiveTrial,
           }
         : {}),
       lastActivationPaymentMethod: paymentClaim?.channel ?? 'TRANSFER',

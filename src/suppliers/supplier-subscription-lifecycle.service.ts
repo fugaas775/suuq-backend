@@ -1,8 +1,12 @@
-import { SUPPLIER_STARTER_OPTION } from './supplier-subscription-pricing';
-import { Injectable, Logger } from '@nestjs/common';
+import { SUPPLIER_SUBSCRIPTION_OPTIONS } from './supplier-subscription-pricing';
+import { SubscriptionPaymentMailerService } from '../subscription-payments/subscription-payment-mailer.service';
+import { getPosPaidGraceDays } from '../branch-staff/pos-branch-renewal.policy';
+
+const DAY_MS = 86_400_000;
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, LessThan, Repository } from 'typeorm';
+import { Between, In, LessThan, Not, Repository } from 'typeorm';
 import { TenantSubscriptionStatus } from '../retail/entities/tenant-subscription.entity';
 import {
   SupplierActivationStatus,
@@ -25,11 +29,10 @@ import { SUPPLIER_FREE_PERIOD_PLAN_CODES } from './supplier-free-period.policy';
  * and the billing page explains itself when the owner next opens it. Do not add
  * a reminder back here: the silence is the requirement, not an oversight.
  *
- * Deliberately scoped to free-period rows and the paid 14-day trial. Lapsed
- * full-price supplier subscriptions
- * are NOT swept: nothing has ever expired them, so a live wholesaler whose paid
- * month ran out months ago is still trading today, and closing them all in one
- * midnight pass is a business decision rather than a bug fix.
+ * Paid terms follow the branch rules: a reminder by email 7, 3 and 1 days
+ * before the end, a notice when the term ends that the account stays open for
+ * the grace days, and then the account closes. Free periods still close on
+ * their date without a word.
  */
 @Injectable()
 export class SupplierSubscriptionLifecycleService {
@@ -42,6 +45,8 @@ export class SupplierSubscriptionLifecycleService {
     private readonly subscriptionsRepo: Repository<SupplierSubscription>,
     @InjectRepository(SupplierProfile)
     private readonly profilesRepo: Repository<SupplierProfile>,
+    @Optional()
+    private readonly mailer?: SubscriptionPaymentMailerService,
   ) {}
 
   @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
@@ -49,6 +54,7 @@ export class SupplierSubscriptionLifecycleService {
     const now = new Date();
     try {
       await this.expireLapsedFreePeriods(now);
+      await this.sendPaidTermNotices(now);
     } catch (err) {
       this.logger.error(
         'Supplier subscription lifecycle pass failed',
@@ -72,16 +78,18 @@ export class SupplierSubscriptionLifecycleService {
           planCode: In([...SUPPLIER_FREE_PERIOD_PLAN_CODES]),
           endsAt: LessThan(now),
         },
-        // The paid 14-day trial ends like the free period does. Without this a
-        // 500 ETB trial would be a supplier account for life: nothing else
-        // closes a supplier whose term has run out (see the class note — the
-        // sweep of lapsed full-price terms is still a decision, not a default).
-        // A supplier who went on to subscribe has had this same row re-stamped
-        // with the term's plan code, so it is no longer matched here.
+        // A PAID term — the 14-day trial or a full one — closes once its
+        // grace days are spent. Nothing used to expire these at all: a
+        // wholesaler whose paid month ran out simply kept trading. (At the time
+        // this was switched on, 21 November 2026, no supplier was past its end
+        // date, so nobody was closed by surprise.) A supplier who renewed has
+        // had this same row moved forward, so it is not matched.
         {
           status: TenantSubscriptionStatus.ACTIVE,
-          planCode: SUPPLIER_STARTER_OPTION.planCode,
-          endsAt: LessThan(now),
+          planCode: Not(In([...SUPPLIER_FREE_PERIOD_PLAN_CODES])),
+          endsAt: LessThan(
+            new Date(now.getTime() - getPosPaidGraceDays() * DAY_MS),
+          ),
         },
       ],
     });
@@ -124,5 +132,78 @@ export class SupplierSubscriptionLifecycleService {
     );
 
     return lapsed.length;
+  }
+
+  /**
+   * Email the owner of a PAID supplier term that is about to end (7, 3, 1 days
+   * out) or has just ended and is on its grace days. Once per milestone.
+   */
+  async sendPaidTermNotices(now: Date): Promise<number> {
+    if (!this.mailer) return 0;
+    const graceDays = getPosPaidGraceDays();
+    const rows =
+      (await this.subscriptionsRepo.find({
+        where: {
+          status: TenantSubscriptionStatus.ACTIVE,
+          planCode: Not(In([...SUPPLIER_FREE_PERIOD_PLAN_CODES])),
+          endsAt: Between(
+            new Date(now.getTime() - graceDays * DAY_MS),
+            new Date(now.getTime() + 7 * DAY_MS),
+          ),
+        },
+      })) ?? [];
+
+    let sent = 0;
+    for (const sub of rows) {
+      if (!sub.endsAt) continue;
+      const profile = await this.profilesRepo.findOne({
+        where: { id: sub.supplierProfileId },
+      });
+      if (!profile?.userId || profile.isActive === false) continue;
+
+      const endsAtIso = sub.endsAt.toISOString();
+      const meta = sub.metadata || {};
+      const record =
+        meta.lifecycleNotices?.endsAt === endsAtIso
+          ? (meta.lifecycleNotices.sent as string[]) || []
+          : [];
+      const msLeft = sub.endsAt.getTime() - now.getTime();
+      const daysLeft = Math.ceil(msLeft / DAY_MS);
+      const milestone =
+        msLeft <= 0
+          ? 'ended'
+          : String([1, 3, 7].find((day) => day >= daysLeft) ?? '');
+      if (!milestone || record.includes(milestone)) continue;
+
+      if (milestone === 'ended') {
+        await this.mailer.termEnded({
+          ownerUserId: profile.userId,
+          subjectName: profile.companyName,
+          endsAt: sub.endsAt,
+          graceEndsAt: new Date(sub.endsAt.getTime() + graceDays * DAY_MS),
+          supplier: true,
+        });
+      } else {
+        await this.mailer.renewalDue({
+          ownerUserId: profile.userId,
+          subjectName: profile.companyName,
+          endsAt: sub.endsAt,
+          daysLeft: Number(milestone),
+          prices: SUPPLIER_SUBSCRIPTION_OPTIONS.map((option) => ({
+            label: option.label,
+            amount: option.amount,
+            currency: option.currency,
+          })),
+          supplier: true,
+        });
+      }
+      sub.metadata = {
+        ...meta,
+        lifecycleNotices: { endsAt: endsAtIso, sent: [...record, milestone] },
+      };
+      await this.subscriptionsRepo.save(sub);
+      sent += 1;
+    }
+    return sent;
   }
 }

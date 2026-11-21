@@ -13,10 +13,26 @@ function makeService({
       const matches = (sub: any, clause: any) => {
         if (clause.status && sub.status !== clause.status) return false;
         if (clause.planCode) {
-          const codes = clause.planCode._value ?? [clause.planCode];
-          if (!codes.includes(sub.planCode)) return false;
+          const op = clause.planCode;
+          if (op._type === 'not') {
+            if (op._value._value.includes(sub.planCode)) return false;
+          } else {
+            const codes = op._value ?? [op];
+            if (!codes.includes(sub.planCode)) return false;
+          }
         }
-        if (clause.endsAt?._value && !(sub.endsAt < clause.endsAt._value))
+        if (
+          clause.endsAt?._type === 'lessThan' &&
+          !(sub.endsAt < clause.endsAt._value)
+        )
+          return false;
+        if (
+          clause.endsAt?._type === 'between' &&
+          !(
+            sub.endsAt >= clause.endsAt._value[0] &&
+            sub.endsAt <= clause.endsAt._value[1]
+          )
+        )
           return false;
         return true;
       };
@@ -67,18 +83,44 @@ describe('SupplierSubscriptionLifecycleService.expireLapsedFreePeriods', () => {
     expect(profile.activationStatus).toBe('EXPIRED');
   });
 
-  it('closes it silently — the owner is never told it is ending', async () => {
-    // By product decision: no countdown, no ending notice, no ended notice, on
-    // any channel. The service holds no way to send one, which is the point —
-    // this test fails the moment a notification dependency is added back.
-    const service: any = new (SupplierSubscriptionLifecycleService as any)(
-      { find: jest.fn(async () => []), findOne: jest.fn(), save: jest.fn() },
-      { findOne: jest.fn(), save: jest.fn() },
+  it('closes a FREE period silently — the owner is never told it is ending', async () => {
+    // By product decision: no countdown, no ending notice, no ended notice for
+    // a free supplier account. The service now holds a mailer, but only for
+    // PAID terms — so the guard is on behaviour: a free row about to end, and
+    // one that just ended, must produce no email at all.
+    const mailer = { renewalDue: jest.fn(), termEnded: jest.fn() };
+    const { subscriptionsRepo, profilesRepo } = makeService({
+      subs: [
+        {
+          id: 1,
+          supplierProfileId: 55,
+          planCode: 'SUPPLIER_FREE_2026',
+          status: 'ACTIVE',
+          endsAt: new Date('2027-01-02T00:00:00.000Z'),
+        },
+        {
+          id: 2,
+          supplierProfileId: 56,
+          planCode: 'SUPPLIER_FREE_2026',
+          status: 'TRIAL',
+          endsAt: new Date('2026-12-31T20:59:59.999Z'),
+        },
+      ],
+      profiles: [
+        { id: 55, userId: 9, companyName: 'A', isActive: true },
+        { id: 56, userId: 10, companyName: 'B', isActive: true },
+      ],
+    });
+    const service: any = new SupplierSubscriptionLifecycleService(
+      subscriptionsRepo,
+      profilesRepo,
+      mailer as any,
     );
 
-    expect(SupplierSubscriptionLifecycleService.length).toBe(2);
     expect(typeof service.sendUpcomingFreePeriodReminders).toBe('undefined');
-    expect(await service.expireLapsedFreePeriods(NOW)).toBe(0);
+    expect(await service.sendPaidTermNotices(NOW)).toBe(0);
+    expect(mailer.renewalDue).not.toHaveBeenCalled();
+    expect(mailer.termEnded).not.toHaveBeenCalled();
   });
 
   it('does not knock offline a supplier who paid before the deadline', async () => {
@@ -131,7 +173,7 @@ describe('SupplierSubscriptionLifecycleService.expireLapsedFreePeriods', () => {
     expect(profile.activationStatus).toBe('EXPIRED');
   });
 
-  it('leaves a trial that is still running, and a full-price term, alone', async () => {
+  it('leaves a paid term alone while it is running or in its grace days', async () => {
     const running = {
       id: 1,
       supplierProfileId: 55,
@@ -139,17 +181,85 @@ describe('SupplierSubscriptionLifecycleService.expireLapsedFreePeriods', () => {
       status: 'ACTIVE',
       endsAt: new Date('2027-01-09T00:00:00.000Z'),
     };
-    const paid = {
+    const inGrace = {
       id: 2,
       supplierProfileId: 56,
       planCode: 'SUPPLIER_1M',
       status: 'ACTIVE',
-      endsAt: new Date('2026-06-01T00:00:00.000Z'),
+      endsAt: new Date('2026-12-30T12:00:00.000Z'), // ended 1.6 days ago
     };
-    const { service } = makeService({ subs: [running, paid] });
+    const { service } = makeService({ subs: [running, inGrace] });
 
     expect(await service.expireLapsedFreePeriods(NOW)).toBe(0);
     expect(running.status).toBe('ACTIVE');
-    expect(paid.status).toBe('ACTIVE');
+    expect(inGrace.status).toBe('ACTIVE');
+  });
+
+  it('closes a paid supplier term once its grace days are spent', async () => {
+    const sub = {
+      id: 2,
+      supplierProfileId: 56,
+      planCode: 'SUPPLIER_1Y',
+      status: 'ACTIVE',
+      endsAt: new Date('2026-12-20T00:00:00.000Z'),
+    };
+    const profile = { id: 56, userId: 9, activationStatus: 'ACTIVE' };
+    const { service } = makeService({ subs: [sub], profiles: [profile] });
+
+    expect(await service.expireLapsedFreePeriods(NOW)).toBe(1);
+    expect(profile.activationStatus).toBe('EXPIRED');
+  });
+
+  it('emails a paying supplier before the term ends and once when it has, and never twice', async () => {
+    const mailer = { renewalDue: jest.fn(), termEnded: jest.fn() };
+    const dueSoon = {
+      id: 3,
+      supplierProfileId: 57,
+      planCode: 'SUPPLIER_1Y',
+      status: 'ACTIVE',
+      endsAt: new Date('2027-01-03T03:00:00.000Z'), // 2 days out
+      metadata: null as any,
+    };
+    const ended = {
+      id: 4,
+      supplierProfileId: 58,
+      planCode: 'SUPPLIER_1M',
+      status: 'ACTIVE',
+      endsAt: new Date('2026-12-31T03:00:00.000Z'), // ended yesterday
+      metadata: null as any,
+    };
+    const { subscriptionsRepo, profilesRepo } = makeService({
+      subs: [dueSoon, ended],
+      profiles: [
+        { id: 57, userId: 9, companyName: 'Horn Trading', isActive: true },
+        {
+          id: 58,
+          userId: 10,
+          companyName: 'Jigjiga Wholesale',
+          isActive: true,
+        },
+      ],
+    });
+    const service = new SupplierSubscriptionLifecycleService(
+      subscriptionsRepo,
+      profilesRepo,
+      mailer as any,
+    );
+
+    expect(await service.sendPaidTermNotices(NOW)).toBe(2);
+    expect(mailer.renewalDue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        subjectName: 'Horn Trading',
+        daysLeft: 3,
+        supplier: true,
+      }),
+    );
+    expect(mailer.termEnded).toHaveBeenCalledWith(
+      expect.objectContaining({
+        subjectName: 'Jigjiga Wholesale',
+        supplier: true,
+      }),
+    );
+    expect(await service.sendPaidTermNotices(NOW)).toBe(0);
   });
 });
