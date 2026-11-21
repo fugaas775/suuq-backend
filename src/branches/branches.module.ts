@@ -27,6 +27,7 @@ import { BranchesService } from './branches.service';
 import { Branch } from './entities/branch.entity';
 import { RetailModule as RetailAccessModule } from '../retail/retail.module';
 import { VendorStore } from '../vendor/entities/vendor-store.entity';
+import { BranchSalesService } from './branch-sales.service';
 
 @Module({
   imports: [
@@ -52,6 +53,7 @@ import { VendorStore } from '../vendor/entities/vendor-store.entity';
   controllers: [BranchesController, BranchTransfersController],
   providers: [
     BranchesService,
+    BranchSalesService,
     InventoryLedgerService,
     VariantInventoryService,
     BranchTransfersService,
@@ -59,6 +61,7 @@ import { VendorStore } from '../vendor/entities/vendor-store.entity';
   ],
   exports: [
     BranchesService,
+    BranchSalesService,
     InventoryLedgerService,
     VariantInventoryService,
     BranchTransfersService,

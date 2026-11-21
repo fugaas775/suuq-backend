@@ -22,6 +22,13 @@ import { AuthenticatedRequest } from '../common/interfaces/authenticated-request
 import { AuditService } from '../audit/audit.service';
 import { BranchesService } from '../branches/branches.service';
 import { ExtendBranchSubscriptionDto } from '../branches/dto/extend-branch-subscription.dto';
+import {
+  BRANCH_ACTIVITY_FILTERS,
+  BRANCH_SALES_SORTS,
+  BranchActivityFilter,
+  BranchSalesService,
+  BranchSalesSort,
+} from '../branches/branch-sales.service';
 
 @UseGuards(AuthGuard('jwt'), RolesGuard)
 @SkipThrottle()
@@ -32,6 +39,7 @@ export class BranchesAdminController {
   constructor(
     private readonly branchesService: BranchesService,
     private readonly auditService: AuditService,
+    private readonly branchSalesService: BranchSalesService,
   ) {}
 
   /**
@@ -44,6 +52,9 @@ export class BranchesAdminController {
    *   search        — partial match on branch name (case-insensitive)
    *   serviceFormat — filter by service format (RETAIL, QSR, FSR, HOTEL, etc.)
    *   isActive      — true | false
+   *   activity      — SOLD_TODAY | SOLD_THIS_MONTH | SILENT_7_DAYS | NEVER_SOLD
+   *   sort          — today | month | lastSale (default: newest branch first)
+   *   order         — asc | desc (default desc)
    *   page          — 1-based page number (default 1)
    *   limit         — items per page (default 25, max 100)
    */
@@ -56,6 +67,9 @@ export class BranchesAdminController {
     @Query('search') search?: string,
     @Query('serviceFormat') serviceFormat?: string,
     @Query('isActive') isActive?: string,
+    @Query('activity') activityRaw?: string,
+    @Query('sort') sortRaw?: string,
+    @Query('order') orderRaw?: string,
     @Query('page') pageRaw?: string,
     @Query('limit') limitRaw?: string,
   ) {
@@ -70,9 +84,33 @@ export class BranchesAdminController {
       search,
       serviceFormat,
       isActive: isActiveParsed,
+      // Anything unrecognised is ignored rather than refused, so an old link
+      // still opens the list.
+      activity: BRANCH_ACTIVITY_FILTERS.includes(
+        activityRaw as BranchActivityFilter,
+      )
+        ? (activityRaw as BranchActivityFilter)
+        : undefined,
+      sort: BRANCH_SALES_SORTS.includes(sortRaw as BranchSalesSort)
+        ? (sortRaw as BranchSalesSort)
+        : undefined,
+      order: String(orderRaw || '').toLowerCase() === 'asc' ? 'ASC' : 'DESC',
       page,
       limit,
     });
+  }
+
+  /**
+   * GET /api/admin/branches/:id/sales
+   *
+   * What the branch has receipted: today, yesterday, this month against last,
+   * a 30-day daily strip, this month's payment methods, first and last sale.
+   * Days and months follow the Addis Ababa calendar. Read-only.
+   */
+  @Get(':id/sales')
+  @ApiOperation({ summary: 'Sales activity for one branch (admin)' })
+  async branchSales(@Param('id', ParseIntPipe) id: number) {
+    return this.branchSalesService.detailFor(id);
   }
 
   /**

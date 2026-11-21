@@ -7,7 +7,12 @@ import {
 } from '@nestjs/common';
 import { EquityPartnerService } from '../retail/equity-partner.service';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
-import { DataSource, EntityManager, ILike, Repository } from 'typeorm';
+import { DataSource, EntityManager, ILike, In, Repository } from 'typeorm';
+import {
+  BranchActivityFilter,
+  BranchSalesService,
+  BranchSalesSort,
+} from './branch-sales.service';
 import { Branch } from './entities/branch.entity';
 import { CreateBranchDto } from './dto/create-branch.dto';
 import { User } from '../users/entities/user.entity';
@@ -30,6 +35,11 @@ export interface AdminListBranchesQuery {
   search?: string;
   serviceFormat?: string;
   isActive?: boolean;
+  /** Narrow to branches by what their tills have done. */
+  activity?: BranchActivityFilter;
+  /** Rank by sales instead of by newest. */
+  sort?: BranchSalesSort;
+  order?: 'ASC' | 'DESC';
   page?: number;
   limit?: number;
 }
@@ -83,6 +93,8 @@ export class BranchesService {
     private readonly dataSource: DataSource,
     @Optional()
     private readonly equityPartnerService?: EquityPartnerService,
+    @Optional()
+    private readonly branchSalesService?: BranchSalesService,
   ) {}
 
   async create(dto: CreateBranchDto): Promise<Branch> {
@@ -117,13 +129,37 @@ export class BranchesService {
       where.isActive = isActive;
     }
 
-    const [items, total] = await this.branchesRepository.findAndCount({
-      where,
-      order: { createdAt: 'DESC' },
-      relations: { owner: true, retailTenant: true },
-      skip: (page - 1) * limit,
-      take: limit,
-    });
+    const { activity, sort, order } = query;
+    const now = new Date();
+    let items: Branch[];
+    let total: number;
+    if ((activity || sort) && this.branchSalesService) {
+      // Ranked or narrowed by sales: the checkouts decide which branches make
+      // the page, so they are picked first and loaded after, in that order.
+      const ranked = await this.branchSalesService.rankBranchIds(
+        { search, serviceFormat, isActive, activity, sort, order, page, limit },
+        now,
+      );
+      const found = ranked.ids.length
+        ? await this.branchesRepository.find({
+            where: { id: In(ranked.ids) },
+            relations: { owner: true, retailTenant: true },
+          })
+        : [];
+      const byId = new Map(found.map((branch) => [branch.id, branch]));
+      items = ranked.ids
+        .map((id) => byId.get(id))
+        .filter((branch): branch is Branch => Boolean(branch));
+      total = ranked.total;
+    } else {
+      [items, total] = await this.branchesRepository.findAndCount({
+        where,
+        order: { createdAt: 'DESC' },
+        relations: { owner: true, retailTenant: true },
+        skip: (page - 1) * limit,
+        take: limit,
+      });
+    }
 
     // Count active/inactive scoped to same search+serviceFormat filters (ignoring isActive filter)
     const countWhere = { ...where } as Record<string, unknown>;
@@ -138,7 +174,31 @@ export class BranchesService {
     ]);
 
     const currentSubscriptionOf = await this.loadCurrentSubscriptions(items);
-    const now = new Date();
+
+    // What each branch has receipted, and the platform's day so far. A failure
+    // here must not take the whole list down with it: the page still has to
+    // open for billing work, so the figures are simply left off.
+    let salesOf: Awaited<
+      ReturnType<BranchSalesService['summariesFor']>
+    > | null = null;
+    let salesSummary: Awaited<
+      ReturnType<BranchSalesService['platformToday']>
+    > | null = null;
+    if (this.branchSalesService) {
+      try {
+        [salesOf, salesSummary] = await Promise.all([
+          this.branchSalesService.summariesFor(
+            items.map((branch) => branch.id),
+            now,
+          ),
+          this.branchSalesService.platformToday({ search, serviceFormat }, now),
+        ]);
+      } catch (error) {
+        this.logger.warn(
+          `Branch sales figures unavailable: ${(error as Error)?.message}`,
+        );
+      }
+    }
 
     return {
       // Mutated in place rather than spread into a plain object on purpose: the
@@ -150,8 +210,10 @@ export class BranchesService {
           ownerNeverSignedIn: ownerHasNoCredentials(branch.owner),
           billingState: billingStateOf(current, now),
           subscription: current ? summarizeSubscription(current, now) : null,
+          sales: salesOf ? (salesOf.get(branch.id) ?? null) : null,
         });
       }),
+      salesSummary,
       total,
       page,
       limit,

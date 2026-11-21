@@ -1,6 +1,7 @@
 import { AuditService } from '../audit/audit.service';
 import { BranchesService } from '../branches/branches.service';
 import { AuthenticatedRequest } from '../common/interfaces/authenticated-request.interface';
+import { BranchSalesService } from '../branches/branch-sales.service';
 import { BranchesAdminController } from './branches.admin.controller';
 
 /**
@@ -36,6 +37,7 @@ describe('BranchesAdminController.extendSubscription', () => {
     const controller = new BranchesAdminController(
       branchesService as unknown as BranchesService,
       auditService as unknown as AuditService,
+      {} as unknown as BranchSalesService,
     );
     const req = {
       user: { id: 1, email: 'admin@suuq.test' },
@@ -82,6 +84,7 @@ describe('BranchesAdminController.extendSubscription', () => {
     const controller = new BranchesAdminController(
       branchesService as unknown as BranchesService,
       auditService as unknown as AuditService,
+      {} as unknown as BranchSalesService,
     );
     const req = { user: { id: 1 } } as unknown as AuthenticatedRequest;
 
