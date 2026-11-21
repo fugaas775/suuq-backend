@@ -74,7 +74,7 @@ export class SuppliersController {
   @Patch('me')
   @ApiOperation({
     summary:
-      'Update the signed-in user’s supplier profile (draft / rejected only)',
+      'Update the signed-in user’s supplier profile (any review status; audited)',
   })
   updateMine(@Body() dto: UpdateSupplierProfileDto, @Req() req) {
     return this.suppliersService.updateForUser(

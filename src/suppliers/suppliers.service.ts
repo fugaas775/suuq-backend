@@ -34,7 +34,8 @@ export interface AdminSearchSuppliersQuery {
   limit?: number;
 }
 
-// States a supplier may edit / (re)submit from.
+// States a supplier may (re)submit for review from. Editing is not gated on
+// these — see updateForUser.
 const EDITABLE_STATES: SupplierOnboardingStatus[] = [
   SupplierOnboardingStatus.DRAFT,
   SupplierOnboardingStatus.REJECTED,
@@ -105,17 +106,56 @@ export class SuppliersService {
       activeSupplierId,
       actingRoles,
     );
-    this.assertEditable(profile);
+    // Editable at EVERY review status. The lock this replaced (draft / rejected
+    // only) dated from when admin approval was the go-live gate. The gate is
+    // the subscription now, so the lock protected nothing — and it froze the
+    // payout details of every supplier that had ever pressed "Submit for
+    // review", which is exactly what a live supplier must be able to keep
+    // current. An edit does not move `onboardingStatus`; what changed, and by
+    // whom, goes to the audit log instead.
+    const next = {
+      companyName: dto.companyName,
+      legalName:
+        dto.legalName === undefined ? undefined : (dto.legalName ?? null),
+      taxId: dto.taxId === undefined ? undefined : (dto.taxId ?? null),
+      countriesServed:
+        dto.countriesServed === undefined
+          ? undefined
+          : (dto.countriesServed ?? []),
+      payoutDetails:
+        dto.payoutDetails === undefined
+          ? undefined
+          : (dto.payoutDetails ?? null),
+    };
+    const changedFields: string[] = [];
+    for (const [field, value] of Object.entries(next)) {
+      if (value === undefined) continue;
+      const before = (profile as any)[field] ?? null;
+      if (JSON.stringify(before) !== JSON.stringify(value ?? null)) {
+        changedFields.push(field);
+      }
+      (profile as any)[field] = value;
+    }
 
-    if (dto.companyName !== undefined) profile.companyName = dto.companyName;
-    if (dto.legalName !== undefined) profile.legalName = dto.legalName ?? null;
-    if (dto.taxId !== undefined) profile.taxId = dto.taxId ?? null;
-    if (dto.countriesServed !== undefined)
-      profile.countriesServed = dto.countriesServed ?? [];
-    if (dto.payoutDetails !== undefined)
-      profile.payoutDetails = dto.payoutDetails ?? null;
-
-    return this.profilesRepository.save(profile);
+    const saved = await this.profilesRepository.save(profile);
+    if (changedFields.length) {
+      // Field NAMES only — payout details are bank account numbers and do not
+      // belong in a log. Best-effort: the save has landed, and a failed log
+      // line must not tell the supplier it did not.
+      await Promise.resolve(
+        this.auditService.log({
+          action: 'supplier_profile.updated',
+          targetType: 'SUPPLIER_PROFILE',
+          targetId: profile.id,
+          actorId: userId ?? null,
+          meta: {
+            changedFields,
+            onboardingStatus: profile.onboardingStatus,
+          },
+        }),
+      ).catch(() => undefined);
+    }
+    return saved;
   }
 
   async submitForReview(
@@ -285,14 +325,6 @@ export class SuppliersService {
   }
 
   // ---- Helpers -------------------------------------------------------------
-
-  private assertEditable(profile: SupplierProfile): void {
-    if (!EDITABLE_STATES.includes(profile.onboardingStatus)) {
-      throw new BadRequestException(
-        'A supplier profile can only be edited while it is a draft or after rejection',
-      );
-    }
-  }
 
   private assertPendingReview(profile: SupplierProfile): void {
     if (profile.onboardingStatus !== SupplierOnboardingStatus.PENDING_REVIEW) {

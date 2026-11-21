@@ -55,20 +55,79 @@ describe('SuppliersService', () => {
   });
 
   describe('updateForUser', () => {
-    it('blocks edits once pending review', async () => {
-      const repo = {
-        find: jest.fn().mockResolvedValue([
-          {
-            id: 1,
-            userId: 7,
-            onboardingStatus: 'PENDING_REVIEW',
-          },
-        ]),
+    it.each(['PENDING_REVIEW', 'APPROVED'])(
+      'saves an edit while %s, leaves the review status alone, and audits the field names only',
+      async (status) => {
+        const profile: any = {
+          id: 1,
+          userId: 7,
+          onboardingStatus: status,
+          companyName: 'Rift Valley',
+          payoutDetails: 'CBE 1000123',
+        };
+        const repo = {
+          find: jest.fn().mockResolvedValue([profile]),
+          save: jest.fn(async (v: any) => v),
+        };
+        const audit = { log: jest.fn() };
+        const service = makeService({ repo, audit });
+
+        const result = await service.updateForUser(7, {
+          companyName: 'Rift Valley',
+          payoutDetails: 'Awash 0099887',
+        });
+
+        expect(result.payoutDetails).toBe('Awash 0099887');
+        expect(result.onboardingStatus).toBe(status);
+        expect(audit.log).toHaveBeenCalledWith(
+          expect.objectContaining({
+            action: 'supplier_profile.updated',
+            targetId: 1,
+            actorId: 7,
+            meta: {
+              changedFields: ['payoutDetails'],
+              onboardingStatus: status,
+            },
+          }),
+        );
+        // The account number itself never reaches the log.
+        expect(JSON.stringify(audit.log.mock.calls)).not.toContain('0099887');
+      },
+    );
+
+    it('writes no audit line when a save changes nothing', async () => {
+      const profile: any = {
+        id: 1,
+        userId: 7,
+        onboardingStatus: 'APPROVED',
+        companyName: 'Rift Valley',
+        countriesServed: ['ET'],
       };
-      const service = makeService({ repo });
+      const repo = {
+        find: jest.fn().mockResolvedValue([profile]),
+        save: jest.fn(async (v: any) => v),
+      };
+      const audit = { log: jest.fn() };
+      const service = makeService({ repo, audit });
+      await service.updateForUser(7, {
+        companyName: 'Rift Valley',
+        countriesServed: ['ET'],
+      });
+      expect(repo.save).toHaveBeenCalled();
+      expect(audit.log).not.toHaveBeenCalled();
+    });
+
+    it('still saves when the audit log itself fails', async () => {
+      const profile: any = { id: 1, userId: 7, onboardingStatus: 'DRAFT' };
+      const repo = {
+        find: jest.fn().mockResolvedValue([profile]),
+        save: jest.fn(async (v: any) => v),
+      };
+      const audit = { log: jest.fn().mockRejectedValue(new Error('db down')) };
+      const service = makeService({ repo, audit });
       await expect(
         service.updateForUser(7, { companyName: 'New' }),
-      ).rejects.toBeInstanceOf(BadRequestException);
+      ).resolves.toMatchObject({ companyName: 'New' });
     });
 
     it('persists provided fields while draft', async () => {
