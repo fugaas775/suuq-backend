@@ -546,3 +546,136 @@ describe('BranchesService.extendAdminBranchSubscription', () => {
     expect(saved).toHaveLength(0);
   });
 });
+
+/**
+ * The admin list carries what each branch's tills have taken. Those figures
+ * are an extra: whatever happens to them, the list itself — the place billing
+ * work is done from — has to keep opening.
+ */
+describe('BranchesService.adminListBranches — sales', () => {
+  const branch = (id: number, billing?: 'PAYING') =>
+    Object.assign(new Branch(), {
+      id,
+      name: `Branch ${id}`,
+      isActive: true,
+      retailTenantId: null,
+      billing,
+    });
+
+  const build = (
+    sales: Record<string, jest.Mock>,
+    subscriptions: Partial<TenantSubscription>[] = [],
+  ) => {
+    const repository = {
+      findAndCount: jest.fn().mockResolvedValue([[branch(1), branch(2)], 2]),
+      find: jest.fn().mockResolvedValue([branch(1), branch(2)]),
+      count: jest.fn().mockResolvedValue(0),
+    };
+    const dataSource = {
+      getRepository: () => ({
+        createQueryBuilder: () => ({
+          where: jest.fn().mockReturnThis(),
+          orWhere: jest.fn().mockReturnThis(),
+          getMany: () => Promise.resolve(subscriptions),
+        }),
+      }),
+    } as unknown as DataSource;
+    const service = new BranchesService(
+      repository as never,
+      {} as never,
+      dataSource,
+      undefined,
+      sales as never,
+    );
+    return { service, repository };
+  };
+
+  const summary = {
+    today: { net: 100, count: 2 },
+    month: { net: 900, count: 20 },
+    lastSaleAt: new Date('2026-11-21T08:00:00Z'),
+    currency: 'ETB',
+  };
+  const platform = { soldTodayCount: 1, todayNet: 100, currency: 'ETB' };
+
+  it('attaches each branch its figures, and null where it has none', async () => {
+    const { service } = build({
+      summariesFor: jest.fn().mockResolvedValue(new Map([[1, summary]])),
+      platformToday: jest.fn().mockResolvedValue(platform),
+    });
+
+    const result = await service.adminListBranches();
+
+    expect(result.items[0].sales).toEqual(summary);
+    expect(result.items[1].sales).toBeNull();
+    expect(result.salesSummary).toEqual(platform);
+    expect(result.salesOrderUnavailable).toBe(false);
+  });
+
+  it('returns the page in the order the sales ranking gave', async () => {
+    const { service, repository } = build({
+      rankBranchIds: jest.fn().mockResolvedValue({ ids: [2, 1], total: 7 }),
+      summariesFor: jest.fn().mockResolvedValue(new Map()),
+      platformToday: jest.fn().mockResolvedValue(platform),
+    });
+
+    const result = await service.adminListBranches({ sort: 'month' });
+
+    expect(result.items.map((b) => b.id)).toEqual([2, 1]);
+    expect(result.total).toBe(7);
+    expect(repository.findAndCount).not.toHaveBeenCalled();
+  });
+
+  it('still opens, newest first and saying so, when the ranking cannot be read', async () => {
+    const { service, repository } = build({
+      rankBranchIds: jest.fn().mockRejectedValue(new Error('relation busy')),
+      summariesFor: jest.fn().mockRejectedValue(new Error('relation busy')),
+      platformToday: jest.fn().mockResolvedValue(platform),
+    });
+
+    const result = await service.adminListBranches({
+      activity: 'SILENT_7_DAYS',
+    });
+
+    expect(repository.findAndCount).toHaveBeenCalled();
+    expect(result.items).toHaveLength(2);
+    expect(result.items[0].sales).toBeNull();
+    expect(result.salesSummary).toBeNull();
+    expect(result.salesOrderUnavailable).toBe(true);
+  });
+
+  it('lists only paying or trial branches as gone quiet', async () => {
+    const now = Date.now();
+    const { service } = build(
+      {
+        rankBranchIds: jest.fn().mockResolvedValue({ ids: [1, 2], total: 2 }),
+        summariesFor: jest.fn().mockResolvedValue(new Map([[1, summary]])),
+        platformToday: jest.fn().mockResolvedValue(platform),
+        platformTrading: jest.fn().mockResolvedValue({ currency: 'ETB' }),
+      },
+      [
+        {
+          id: 9,
+          branchId: 1,
+          tenantId: 5,
+          status: TenantSubscriptionStatus.ACTIVE,
+          billingInterval: TenantBillingInterval.MONTHLY,
+          planCode: 'POS_BRANCH',
+          amount: 3900,
+          currency: 'ETB',
+          startsAt: new Date(now - 5 * 86400000),
+          endsAt: new Date(now + 25 * 86400000),
+        },
+      ],
+    );
+
+    const overview = await service.adminTradingOverview();
+
+    expect(overview.goneQuiet.count).toBe(1);
+    expect(overview.goneQuiet.rows[0]).toMatchObject({
+      branchId: 1,
+      billingState: 'PAYING',
+      lastSaleAt: summary.lastSaleAt,
+    });
+  });
+});

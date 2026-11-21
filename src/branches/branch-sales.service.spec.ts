@@ -211,4 +211,65 @@ describe('BranchSalesService', () => {
     ]);
     expect(detail.firstSaleAt).toEqual(new Date('2026-02-01T07:00:00Z'));
   });
+
+  it('adds up the platform: today against yesterday, and who is busiest', async () => {
+    query
+      .mockResolvedValueOnce([
+        {
+          todayNet: '52000',
+          todayCount: '140',
+          todayBranches: '9',
+          yesterdayNet: '47000',
+          yesterdayCount: '131',
+          yesterdayBranches: '10',
+          monthNet: '900000',
+          monthCount: '2600',
+          monthBranches: '14',
+          lastMonthNet: '1200000',
+          lastMonthCount: '3500',
+          lastMonthBranches: '15',
+          lastMonthToDateNet: '800000',
+          lastMonthToDateCount: '2400',
+          lastMonthToDateBranches: '13',
+          currency: 'ETB',
+        },
+      ])
+      .mockResolvedValueOnce([
+        { date: '2026-11-21', net: '52000', count: '140', branches: '9' },
+      ])
+      .mockResolvedValueOnce([
+        {
+          branchId: 47,
+          name: 'Muntaha Hotel',
+          serviceFormat: 'HOTEL',
+          net: '14250',
+          count: '37',
+        },
+      ]);
+
+    const trading = await service.platformTrading(now);
+
+    expect(trading.today).toEqual({ net: 52000, count: 140, branches: 9 });
+    expect(trading.lastMonthToDate).toEqual({
+      net: 800000,
+      count: 2400,
+      branches: 13,
+    });
+    expect(trading.daily).toHaveLength(30);
+    expect(trading.daily[29]).toEqual({
+      date: '2026-11-21',
+      net: 52000,
+      count: 140,
+      branches: 9,
+    });
+    expect(trading.topToday).toEqual([
+      {
+        branchId: 47,
+        name: 'Muntaha Hotel',
+        serviceFormat: 'HOTEL',
+        net: 14250,
+        count: 37,
+      },
+    ]);
+  });
 });

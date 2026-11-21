@@ -18,9 +18,17 @@ export class AddPosCheckoutBranchOccurredAtIndex20261122090000
     await queryRunner.query(
       `CREATE INDEX IF NOT EXISTS "IDX_pos_checkouts_branch_occurred_at" ON "pos_checkouts" ("branchId", "occurredAt")`,
     );
+    // The platform-wide figures on the overview ask about a period across
+    // every branch at once, which the index above cannot serve.
+    await queryRunner.query(
+      `CREATE INDEX IF NOT EXISTS "IDX_pos_checkouts_occurred_at" ON "pos_checkouts" ("occurredAt")`,
+    );
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
+    await queryRunner.query(
+      `DROP INDEX IF EXISTS "IDX_pos_checkouts_occurred_at"`,
+    );
     await queryRunner.query(
       `DROP INDEX IF EXISTS "IDX_pos_checkouts_branch_occurred_at"`,
     );

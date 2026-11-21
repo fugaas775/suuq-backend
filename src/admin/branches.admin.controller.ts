@@ -101,6 +101,20 @@ export class BranchesAdminController {
   }
 
   /**
+   * GET /api/admin/branches/trading
+   *
+   * The platform's trading for the admin overview: receipted today and this
+   * month against the period before, 30 days day by day, today's busiest
+   * branches, and the paying or trial branches that have gone quiet or never
+   * sold. Read-only.
+   */
+  @Get('trading')
+  @ApiOperation({ summary: 'Platform trading overview (admin)' })
+  async trading() {
+    return this.branchesService.adminTradingOverview();
+  }
+
+  /**
    * GET /api/admin/branches/:id/sales
    *
    * What the branch has receipted: today, yesterday, this month against last,

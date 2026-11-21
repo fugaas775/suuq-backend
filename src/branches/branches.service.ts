@@ -133,13 +133,35 @@ export class BranchesService {
     const now = new Date();
     let items: Branch[];
     let total: number;
+    // Ranked or narrowed by sales: the checkouts decide which branches make
+    // the page, so they are picked first and loaded after, in that order.
+    let ranked: { ids: number[]; total: number } | null = null;
+    let salesOrderUnavailable = false;
     if ((activity || sort) && this.branchSalesService) {
-      // Ranked or narrowed by sales: the checkouts decide which branches make
-      // the page, so they are picked first and loaded after, in that order.
-      const ranked = await this.branchSalesService.rankBranchIds(
-        { search, serviceFormat, isActive, activity, sort, order, page, limit },
-        now,
-      );
+      try {
+        ranked = await this.branchSalesService.rankBranchIds(
+          {
+            search,
+            serviceFormat,
+            isActive,
+            activity,
+            sort,
+            order,
+            page,
+            limit,
+          },
+          now,
+        );
+      } catch (error) {
+        // The list must still open. It falls back to newest-first, and says
+        // so, rather than showing an order or a filter it did not apply.
+        salesOrderUnavailable = true;
+        this.logger.warn(
+          `Branch sales ranking unavailable: ${(error as Error)?.message}`,
+        );
+      }
+    }
+    if (ranked) {
       const found = ranked.ids.length
         ? await this.branchesRepository.find({
             where: { id: In(ranked.ids) },
@@ -214,12 +236,61 @@ export class BranchesService {
         });
       }),
       salesSummary,
+      salesOrderUnavailable,
       total,
       page,
       limit,
       totalPages: Math.ceil(total / limit),
       activeCount,
       inactiveCount,
+    };
+  }
+
+  /**
+   * The admin overview's trading panel: the platform's figures, plus the two
+   * lists worth acting on — accounts that are paying or on trial whose tills
+   * have gone quiet for a week, and ones that have never rung up a sale.
+   */
+  async adminTradingOverview() {
+    if (!this.branchSalesService) {
+      throw new NotFoundException('Sales figures are not available.');
+    }
+    const billed = (state: string) => state === 'PAYING' || state === 'TRIAL';
+    const [trading, silent, never] = await Promise.all([
+      this.branchSalesService.platformTrading(),
+      this.adminListBranches({
+        activity: 'SILENT_7_DAYS',
+        sort: 'lastSale',
+        order: 'ASC',
+        isActive: true,
+        limit: 100,
+      }),
+      this.adminListBranches({
+        activity: 'NEVER_SOLD',
+        isActive: true,
+        limit: 100,
+      }),
+    ]);
+    const rowsOf = (list: typeof silent) => {
+      const rows = list.items
+        .filter((branch) => billed(branch.billingState))
+        .map((branch) => ({
+          branchId: branch.id,
+          name: branch.name,
+          serviceFormat: branch.serviceFormat ?? null,
+          ownerEmail: branch.owner?.email ?? null,
+          phone: branch.phone ?? null,
+          billingState: branch.billingState,
+          subscriptionEndsAt: branch.subscription?.endsAt ?? null,
+          lastSaleAt: branch.sales?.lastSaleAt ?? null,
+          createdAt: branch.createdAt,
+        }));
+      return { count: rows.length, rows: rows.slice(0, 12) };
+    };
+    return {
+      ...trading,
+      goneQuiet: rowsOf(silent),
+      neverSold: rowsOf(never),
     };
   }
 

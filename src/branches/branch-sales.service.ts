@@ -283,6 +283,100 @@ export class BranchSalesService {
     };
   }
 
+  /**
+   * The platform's trading, for the admin overview: how much every branch
+   * together receipted today and this month, against the period before, the
+   * last 30 days day by day, and today's busiest branches.
+   */
+  async platformTrading(now: Date = new Date()) {
+    const cal = addisCalendar(now);
+    const toAddisMinutes = 180 + now.getTimezoneOffset();
+    const between = (from: string, to: string) =>
+      `c."occurredAt" >= ${from} AND c."occurredAt" < ${to}`;
+    const figure = (alias: string, range: string) => `
+      COALESCE(SUM(${SIGNED}) FILTER (WHERE ${range}), 0) AS "${alias}Net",
+      COUNT(*) FILTER (WHERE ${range} AND ${IS_SALE}) AS "${alias}Count",
+      COUNT(DISTINCT c."branchId") FILTER (WHERE ${range} AND ${IS_SALE}) AS "${alias}Branches"`;
+
+    const [totalsRows, dailyRows, topRows]: Array<
+      Array<Record<string, unknown>>
+    > = await Promise.all([
+      this.dataSource.query(
+        `SELECT ${figure('today', between('$2', '$3'))},
+                ${figure('yesterday', between('$4', '$2'))},
+                ${figure('month', between('$5', '$3'))},
+                ${figure('lastMonth', between('$1', '$5'))},
+                ${figure('lastMonthToDate', between('$1', '$6'))},
+                MAX(c.currency) AS "currency"
+           FROM pos_checkouts c
+          WHERE ${STANDS} AND ${between('$1', '$3')}`,
+        [
+          cal.lastMonthStart,
+          cal.dayStart,
+          cal.tomorrowStart,
+          cal.yesterdayStart,
+          cal.monthStart,
+          cal.lastMonthSamePoint,
+        ],
+      ),
+      this.dataSource.query(
+        `SELECT to_char(c."occurredAt" + ($3::int * interval '1 minute'), 'YYYY-MM-DD') AS "date",
+                COALESCE(SUM(${SIGNED}), 0) AS "net",
+                COUNT(*) FILTER (WHERE ${IS_SALE}) AS "count",
+                COUNT(DISTINCT c."branchId") FILTER (WHERE ${IS_SALE}) AS "branches"
+           FROM pos_checkouts c
+          WHERE ${STANDS} AND ${between('$1', '$2')}
+          GROUP BY 1`,
+        [cal.thirtyDaysStart, cal.tomorrowStart, toAddisMinutes],
+      ),
+      this.dataSource.query(
+        `SELECT b.id AS "branchId", b.name AS "name", b."serviceFormat" AS "serviceFormat",
+                COALESCE(SUM(${SIGNED}), 0) AS "net",
+                COUNT(*) FILTER (WHERE ${IS_SALE}) AS "count"
+           FROM pos_checkouts c
+           JOIN branches b ON b.id = c."branchId"
+          WHERE ${STANDS} AND ${between('$1', '$2')}
+          GROUP BY b.id, b.name, b."serviceFormat"
+         HAVING COUNT(*) FILTER (WHERE ${IS_SALE}) > 0
+          ORDER BY 4 DESC
+          LIMIT 8`,
+        [cal.dayStart, cal.tomorrowStart],
+      ),
+    ]);
+
+    const totals = totalsRows[0] ?? {};
+    const pick = (alias: string) => ({
+      net: num(totals[`${alias}Net`]),
+      count: int(totals[`${alias}Count`]),
+      branches: int(totals[`${alias}Branches`]),
+    });
+    const byDate = new Map(dailyRows.map((row) => [String(row.date), row]));
+
+    return {
+      currency: totals.currency ? String(totals.currency) : 'ETB',
+      timezone: 'Africa/Addis_Ababa',
+      generatedAt: now,
+      today: pick('today'),
+      yesterday: pick('yesterday'),
+      month: pick('month'),
+      lastMonth: pick('lastMonth'),
+      lastMonthToDate: pick('lastMonthToDate'),
+      daily: cal.thirtyDayKeys.map((date) => ({
+        date,
+        net: num(byDate.get(date)?.net),
+        count: int(byDate.get(date)?.count),
+        branches: int(byDate.get(date)?.branches),
+      })),
+      topToday: topRows.map((row) => ({
+        branchId: int(row.branchId),
+        name: String(row.name ?? ''),
+        serviceFormat: row.serviceFormat ? String(row.serviceFormat) : null,
+        net: num(row.net),
+        count: int(row.count),
+      })),
+    };
+  }
+
   /** The drawer's Sales block for one branch. */
   async detailFor(branchId: number, now: Date = new Date()) {
     const cal = addisCalendar(now);
