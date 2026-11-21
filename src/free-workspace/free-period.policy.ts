@@ -52,7 +52,35 @@ export function getFreePeriodEndsAt(): Date {
  * entirely and fall through to the ordinary paywall.
  */
 export function isFreePeriodOpen(now: number = Date.now()): boolean {
+  if (now >= getFreeGrantsClosedAt().getTime()) return false;
   return getFreePeriodEndsAt().getTime() > now;
+}
+
+/**
+ * When the platform stopped handing out NEW free workspaces.
+ *
+ * The promotion was replaced on 21 November 2026 by a paid 14-day trial (500
+ * ETB by transfer — see POS_BRANCH_STARTER_OPTION and its supplier twin). From
+ * that moment a new account is no longer given a free workspace; it starts on
+ * the trial or on a full term.
+ *
+ * This closes the DOOR, not the room: a workspace that was already granted its
+ * free period keeps it to the end date written on its own row (31 December
+ * 2026). Nothing here shortens, expires or touches an existing grant — those
+ * owners were promised that date.
+ *
+ * POS_FREE_GRANTS_CLOSED_AT moves the moment (an ISO date; a far-future one
+ * reopens the promotion). An unparseable value is ignored.
+ */
+const FREE_GRANTS_CLOSED_AT_DEFAULT = '2026-11-21T00:00:00.000+03:00';
+
+export function getFreeGrantsClosedAt(): Date {
+  const configured = String(process.env.POS_FREE_GRANTS_CLOSED_AT || '').trim();
+  if (configured) {
+    const parsed = new Date(configured);
+    if (!Number.isNaN(parsed.getTime())) return parsed;
+  }
+  return new Date(FREE_GRANTS_CLOSED_AT_DEFAULT);
 }
 
 /** The deadline as an owner reads it — "31 December 2026". */

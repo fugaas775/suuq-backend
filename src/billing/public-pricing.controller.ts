@@ -5,7 +5,10 @@ import {
   POS_BRANCH_SUBSCRIPTION_OPTIONS,
 } from '../branch-staff/pos-workspace-pricing';
 import { SUBSCRIPTION_PAYMENT_DESTINATIONS } from '../subscription-payments/payment-destinations';
-import { SUPPLIER_SUBSCRIPTION_OPTIONS } from '../suppliers/supplier-subscription-pricing';
+import {
+  SUPPLIER_STARTER_OPTION,
+  SUPPLIER_SUBSCRIPTION_OPTIONS,
+} from '../suppliers/supplier-subscription-pricing';
 
 /**
  * The subscription price list, readable without a session.
@@ -43,6 +46,7 @@ export class PublicPricingController {
       posBranchStarter: { ...POS_BRANCH_STARTER_OPTION },
       posBranch: POS_BRANCH_SUBSCRIPTION_OPTIONS.map(describe),
       supplier: SUPPLIER_SUBSCRIPTION_OPTIONS.map(describe),
+      supplierStarter: { ...SUPPLIER_STARTER_OPTION },
     };
   }
 }

@@ -69,3 +69,64 @@ export function requireSupplierSubscriptionOption(
   }
   return option;
 }
+
+/**
+ * The paid trial a NEW supplier account starts on — the same offer a new POS
+ * branch gets, at the same figure, so there is one number to tell people:
+ * 500 ETB by transfer for 14 days, then a full term. It is a paid term in every
+ * respect (it can be followed by a full term at any point, which is added after
+ * the trial days) and is only for an account that has never subscribed.
+ */
+export interface SupplierStarterOption {
+  period: 'STARTER';
+  days: number;
+  amount: number;
+  currency: 'ETB';
+  label: string;
+  planCode: string;
+}
+
+export const SUPPLIER_STARTER_OPTION: SupplierStarterOption = {
+  period: 'STARTER',
+  days: 14,
+  amount: 500,
+  currency: SUPPLIER_SUBSCRIPTION_CURRENCY,
+  label: '14-day trial',
+  // Not "TRIAL"/"FREE": those mark the free period, which behaves differently.
+  planCode: 'SUPPLIER_STARTER_14D',
+};
+
+export type SupplierPaymentPeriod = SupplierSubscriptionPeriod | 'STARTER';
+export type SupplierPaymentOption =
+  | SupplierSubscriptionOption
+  | SupplierStarterOption;
+
+export function isSupplierStarterOption(
+  option: SupplierPaymentOption | null | undefined,
+): option is SupplierStarterOption {
+  return option?.period === 'STARTER';
+}
+
+export function findSupplierPaymentOption(
+  period: string | null | undefined,
+): SupplierPaymentOption | undefined {
+  const normalized = String(period || '')
+    .trim()
+    .toUpperCase();
+  if (normalized === SUPPLIER_STARTER_OPTION.period) {
+    return SUPPLIER_STARTER_OPTION;
+  }
+  return findSupplierSubscriptionOption(normalized);
+}
+
+/**
+ * May this supplier account start on the trial? Only one that has never had a
+ * paid term or a trial. The supplier row is updated in place, so the history
+ * is read off its metadata.
+ */
+export function isSupplierStarterEligible(
+  latest: { metadata?: Record<string, any> | null } | null | undefined,
+): boolean {
+  const meta = latest?.metadata || {};
+  return !meta.lastActivationReferenceId && !meta.starterUsedAt;
+}

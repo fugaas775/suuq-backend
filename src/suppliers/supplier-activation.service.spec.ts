@@ -1,5 +1,17 @@
 import { SupplierActivationService } from './supplier-activation.service';
 
+// These tests exercise the free-workspace promotion itself. New grants were
+// closed on 2026-11-21 (see getFreeGrantsClosedAt); the mechanism is kept, so it
+// is tested with the door held open.
+const savedGrantsClosedAt = process.env.POS_FREE_GRANTS_CLOSED_AT;
+beforeAll(() => {
+  process.env.POS_FREE_GRANTS_CLOSED_AT = '2099-01-01T00:00:00.000Z';
+});
+afterAll(() => {
+  if (savedGrantsClosedAt == null) delete process.env.POS_FREE_GRANTS_CLOSED_AT;
+  else process.env.POS_FREE_GRANTS_CLOSED_AT = savedGrantsClosedAt;
+});
+
 const makeService = ({ profiles = {}, subscriptions = {}, grants }: any) => {
   // completeActivationPayment now runs inside
   // subscriptionsRepository.manager.transaction(...). Mock a transactional
@@ -170,6 +182,49 @@ describe('SupplierActivationService.completeActivationPayment', () => {
     );
     expect(result.startsAt).toBe(startsAt);
     expect(result.metadata.appliedActivationReferences).toHaveLength(2);
+  });
+
+  it('opens a new supplier account for 14 days on the paid trial, then adds the first term after it', async () => {
+    const subscriptions: any = {
+      findOne: jest.fn().mockResolvedValue(null),
+      create: jest.fn((v: any) => v),
+      save: jest.fn(async (v: any) => v),
+    };
+    const profiles = {
+      findOne: jest.fn().mockResolvedValue({ id: 55 }),
+      save: jest.fn(async (v: any) => v),
+    };
+    const svc = makeService({ profiles, subscriptions });
+
+    const trial: any = await svc.completeActivationPayment(
+      `SUPACT-55-${Date.now()}`,
+      'STARTER',
+    );
+
+    expect(trial).toMatchObject({
+      planCode: 'SUPPLIER_STARTER_14D',
+      status: 'ACTIVE',
+      amountTotal: 500,
+      periodMonths: null,
+      billingInterval: 'CUSTOM',
+    });
+    expect(
+      Math.round(
+        (trial.endsAt.getTime() - trial.startsAt.getTime()) / 86_400_000,
+      ),
+    ).toBe(14);
+
+    // Subscribing during the trial loses none of its days.
+    const trialEndsAt = trial.endsAt;
+    subscriptions.findOne.mockResolvedValue({ id: 9, ...trial });
+    const term: any = await svc.completeActivationPayment(
+      `SUPACT-55-${Date.now() + 5}`,
+      'MONTHLY',
+    );
+    expect(term.planCode).toBe('SUPPLIER_1M');
+    expect(term.endsAt.getTime()).toBeGreaterThan(
+      trialEndsAt.getTime() + 27 * 86_400_000,
+    );
   });
 
   it('applies one supplier payment once, however often it is confirmed', async () => {

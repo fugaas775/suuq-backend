@@ -148,7 +148,7 @@ export class SubscriptionPaymentReviewService {
       case 'SUPPLIER': {
         const granted = await this.supplierActivation.completeActivationPayment(
           claim.referenceId,
-          (claim.period as 'MONTHLY' | 'ONE_YEAR') || undefined,
+          (claim.period as 'MONTHLY' | 'ONE_YEAR' | 'STARTER') || undefined,
         );
         if (!granted) {
           throw new BadRequestException(

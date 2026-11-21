@@ -30,6 +30,18 @@ import {
   TenantSubscriptionStatus,
 } from './entities/tenant-subscription.entity';
 
+// These tests exercise the free-workspace promotion itself. New grants were
+// closed on 2026-11-21 (see getFreeGrantsClosedAt); the mechanism is kept, so it
+// is tested with the door held open.
+const savedGrantsClosedAt = process.env.POS_FREE_GRANTS_CLOSED_AT;
+beforeAll(() => {
+  process.env.POS_FREE_GRANTS_CLOSED_AT = '2099-01-01T00:00:00.000Z';
+});
+afterAll(() => {
+  if (savedGrantsClosedAt == null) delete process.env.POS_FREE_GRANTS_CLOSED_AT;
+  else process.env.POS_FREE_GRANTS_CLOSED_AT = savedGrantsClosedAt;
+});
+
 describe('RetailEntitlementsService', () => {
   let service: RetailEntitlementsService;
   let retailTenantsRepository: any;

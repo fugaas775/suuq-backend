@@ -35,7 +35,13 @@ import {
   SUPPLIER_SUBSCRIPTION_OPTIONS,
   SupplierSubscriptionOption,
   SupplierSubscriptionPeriod,
+  SUPPLIER_STARTER_OPTION,
+  SupplierPaymentOption,
+  SupplierPaymentPeriod,
+  findSupplierPaymentOption,
   findSupplierSubscriptionOption,
+  isSupplierStarterEligible,
+  isSupplierStarterOption,
   requireSupplierSubscriptionOption,
 } from './supplier-subscription-pricing';
 import {
@@ -117,8 +123,8 @@ export class SupplierActivationService {
     const profile =
       await this.supplierStaffService.requireManagedSupplierProfile(user);
 
-    const option =
-      findSupplierSubscriptionOption(params.subscriptionPeriod) ??
+    const option: SupplierPaymentOption =
+      findSupplierPaymentOption(params.subscriptionPeriod) ??
       requireSupplierSubscriptionOption(DEFAULT_SUPPLIER_PERIOD);
 
     // Refuse BEFORE charging when there is nothing to buy yet. A paid term that
@@ -129,6 +135,14 @@ export class SupplierActivationService {
       where: { supplierProfileId: profile.id },
       order: { createdAt: 'DESC' },
     });
+    if (
+      isSupplierStarterOption(option) &&
+      !isSupplierStarterEligible(current)
+    ) {
+      throw new ConflictException(
+        'The 14-day trial is for an account that has not subscribed before. Choose 1 month or 1 year.',
+      );
+    }
     const nowMs = Date.now();
     if (isLivePaidTerm(current, nowMs) && !canRenewEarly(current, nowMs)) {
       throw new ConflictException(
@@ -158,7 +172,7 @@ export class SupplierActivationService {
       supplierProfileId: profile.id,
       subjectName: profile.companyName,
       period: option.period,
-      periodMonths: option.months,
+      periodMonths: isSupplierStarterOption(option) ? null : option.months,
       amount: option.amount,
       currency: option.currency,
       channel: params.channel,
@@ -181,7 +195,7 @@ export class SupplierActivationService {
 
   async completeActivationPayment(
     referenceId: string,
-    explicitPeriod?: SupplierSubscriptionPeriod,
+    explicitPeriod?: SupplierPaymentPeriod,
   ): Promise<SupplierSubscription | null> {
     const supplierProfileId = this.parseSupplierProfileId(referenceId);
     if (!supplierProfileId) {
@@ -234,13 +248,17 @@ export class SupplierActivationService {
         const pendingMeta = latest?.metadata?.pendingActivation as
           | { period?: string }
           | undefined;
-        const resolvedPeriod: SupplierSubscriptionPeriod =
+        const resolvedPeriod: SupplierPaymentPeriod =
           explicitPeriod ??
-          (findSupplierSubscriptionOption(pendingMeta?.period)?.period ||
+          (findSupplierPaymentOption(pendingMeta?.period)?.period ||
             DEFAULT_SUPPLIER_PERIOD);
-        const option = requireSupplierSubscriptionOption(resolvedPeriod);
-        const billingInterval =
-          option.period === 'ONE_YEAR'
+        const option: SupplierPaymentOption =
+          findSupplierPaymentOption(resolvedPeriod) ??
+          requireSupplierSubscriptionOption(DEFAULT_SUPPLIER_PERIOD);
+        const isStarter = isSupplierStarterOption(option);
+        const billingInterval = isStarter
+          ? TenantBillingInterval.CUSTOM
+          : option.period === 'ONE_YEAR'
             ? TenantBillingInterval.ONE_YEAR
             : TenantBillingInterval.MONTHLY;
 
@@ -252,7 +270,8 @@ export class SupplierActivationService {
         next.billingInterval = billingInterval;
         next.amount = option.amount;
         next.amountTotal = option.amount;
-        next.periodMonths = option.months;
+        // The trial is in days: no period length, so it stays out of run-rate.
+        next.periodMonths = isStarter ? null : option.months;
         next.currency = option.currency;
         // A paid term still running is renewed from its END — no paid day lost.
         const renewsLiveTerm = isLivePaidTerm(latest, now.getTime());
@@ -264,7 +283,9 @@ export class SupplierActivationService {
         // startsAt → endsAt stays the whole span that has been paid for.
         if (!renewsLiveTerm) next.startsAt = now;
         // Calendar months — a year is a year, not twelve 30-day blocks.
-        next.endsAt = addCalendarMonths(termStartsAt, option.months);
+        next.endsAt = isStarter
+          ? new Date(termStartsAt.getTime() + option.days * 86_400_000)
+          : addCalendarMonths(termStartsAt, option.months);
         // Every term is paid by hand, so nothing renews by itself.
         next.autoRenew = false;
         next.metadata = {
@@ -277,6 +298,7 @@ export class SupplierActivationService {
           lastActivationPaymentMethod: 'TRANSFER',
           lastActivatedAt: now.toISOString(),
           subscriptionPeriod: option.period,
+          ...(isStarter ? { starterUsedAt: now.toISOString() } : {}),
           pendingActivation: undefined,
         };
         const saved = await manager.save(next);
@@ -511,6 +533,12 @@ export class SupplierActivationService {
           }
         : null,
       pricing: SUPPLIER_SUBSCRIPTION_OPTIONS,
+      // The paid 14-day trial, while this account may still start on it.
+      starter: isSupplierStarterEligible(subscription)
+        ? { ...SUPPLIER_STARTER_OPTION }
+        : null,
+      onStarterTrial:
+        subscription?.planCode === SUPPLIER_STARTER_OPTION.planCode,
       payTo: this.paymentClaims.destinations(),
       // What the supplier has reported paying, newest first — a rejected one
       // carries the reason, a submitted one is still being checked.
@@ -533,7 +561,7 @@ export class SupplierActivationService {
 
   private async recordPendingPeriod(
     supplierProfileId: number,
-    option: SupplierSubscriptionOption,
+    option: SupplierPaymentOption,
     referenceId: string,
   ): Promise<void> {
     let latest = await this.subscriptionsRepository.findOne({
@@ -559,7 +587,7 @@ export class SupplierActivationService {
       ...(latest.metadata ?? {}),
       pendingActivation: {
         period: option.period,
-        periodMonths: option.months,
+        periodMonths: isSupplierStarterOption(option) ? null : option.months,
         amountTotal: option.amount,
         currency: option.currency,
         referenceId,
