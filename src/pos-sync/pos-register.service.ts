@@ -8,6 +8,8 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, Repository } from 'typeorm';
 import { BranchStaffAssignment } from '../branch-staff/entities/branch-staff-assignment.entity';
+import { BranchEmployee } from '../payroll/entities/branch-employee.entity';
+import { SchoolClass } from '../school/entities/school-class.entity';
 import { Branch } from '../branches/entities/branch.entity';
 import {
   isSchoolOwner,
@@ -236,11 +238,124 @@ export class PosRegisterService {
     return this.toSessionResponse(saved);
   }
 
-  /** The list's WHERE, shared by the page read and its version check. */
-  private suspendedCartsScope(query: ListPosSuspendedCartsQueryDto) {
+  /**
+   * The classes a TEACHER's roll is held to, or null for everybody else.
+   *
+   * Owner 2026-11-22: a teacher sees the students of the class they are
+   * home-room teacher of, and a teacher with no class sees none. The page hid
+   * the rest; this route still handed any teacher's login the whole school —
+   * a thousand names, parents' phones and fee lines, eleven requests on a
+   * phone. Now the list itself is the teacher's classes: the home room the
+   * registry names them on and any `SCHOOL_CLASS:` on their login, exactly
+   * the server's own class scope (school-class-scope.policy).
+   *
+   * Only a login in the SCHOOL_TEACHER lane is held: the cashier, the office,
+   * a manager, the owner and the platform's staff read the whole roll, as
+   * every other format's till does. Decided from the staff row, cached for a
+   * minute per worker — this list is polled, and the answer changes when the
+   * office edits a class or a login, not between two polls.
+   */
+  private readonly teacherScopeCache = new Map<
+    string,
+    { at: number; codes: string[] | null }
+  >();
+
+  async teacherClassScope(
+    branchId: number,
+    actor: { id?: number | null; roles?: string[] | null } | null | undefined,
+  ): Promise<string[] | null> {
+    const actorId = Number(actor?.id) || null;
+    if (!actorId || !branchId) return null;
+    const roles = (actor?.roles ?? []).map((r) => String(r).toUpperCase());
+    // Every owner and manager account holds POS_MANAGER globally; none of
+    // them is a teacher-lane login, and none costs a lookup here.
+    if (roles.some((r) => ['SUPER_ADMIN', 'ADMIN', 'POS_MANAGER'].includes(r)))
+      return null;
+
+    const key = `${branchId}:${actorId}`;
+    const hit = this.teacherScopeCache.get(key);
+    if (hit && Date.now() - hit.at < 60_000) return hit.codes;
+
+    const codes = await this.resolveTeacherClassScope(branchId, actorId);
+    if (this.teacherScopeCache.size > 5000) this.teacherScopeCache.clear();
+    this.teacherScopeCache.set(key, { at: Date.now(), codes });
+    return codes;
+  }
+
+  private async resolveTeacherClassScope(
+    branchId: number,
+    actorId: number,
+  ): Promise<string[] | null> {
+    const assignment = await this.staffAssignmentsRepository.findOne({
+      where: { branchId, userId: actorId },
+    });
+    if (!assignment || assignment.isActive === false) return null;
+    if (
+      String(assignment.posExperienceProfileCode ?? '')
+        .trim()
+        .toUpperCase() !== 'SCHOOL_TEACHER'
+    )
+      return null;
+    if (String(assignment.role ?? '').toUpperCase() === 'MANAGER') return null;
+    const branch = await this.branchesRepository.findOne({
+      where: { id: branchId },
+      select: { id: true, ownerId: true },
+    });
+    const ownerId = (branch as { ownerId?: number } | null)?.ownerId ?? null;
+    if (ownerId != null && Number(ownerId) === actorId) return null;
+
+    const codes = new Set<string>();
+    for (const cap of assignment.capabilities ?? []) {
+      const c = String(cap ?? '').trim();
+      if (c.toUpperCase().startsWith('SCHOOL_CLASS:')) {
+        const code = c.slice('SCHOOL_CLASS:'.length).trim().toLowerCase();
+        if (code) codes.add(code);
+      }
+    }
+    const manager = this.suspendedCartsRepository.manager;
+    const employees = await manager.find(BranchEmployee, {
+      where: { branchId, userId: actorId },
+    });
+    const employee =
+      employees.find((e) => String(e.status).toUpperCase() !== 'INACTIVE') ??
+      employees[0] ??
+      null;
+    if (employee) {
+      const rooms = await manager.find(SchoolClass, {
+        where: { branchId, homeroomEmployeeId: Number(employee.id) },
+        select: { id: true, code: true },
+      });
+      for (const room of rooms) {
+        const code = String(room.code ?? '')
+          .trim()
+          .toLowerCase();
+        if (code) codes.add(code);
+      }
+    }
+    return [...codes];
+  }
+
+  /**
+   * The list's WHERE, shared by the page read and its version check.
+   * `classCodes` (see teacherClassScope) holds it to those classes' pupils;
+   * an empty list is a teacher with no class, and reads nothing.
+   */
+  private suspendedCartsScope(
+    query: ListPosSuspendedCartsQueryDto,
+    classCodes: string[] | null = null,
+  ) {
     const qb = this.suspendedCartsRepository
       .createQueryBuilder('cart')
       .where('cart.branchId = :branchId', { branchId: query.branchId });
+
+    if (classCodes) {
+      if (!classCodes.length) qb.andWhere('1 = 0');
+      else
+        qb.andWhere(
+          `lower(trim(coalesce(cart."cartSnapshot" ->> 'hotelRoomNumber', ''))) IN (:...classCodes)`,
+          { classCodes },
+        );
+    }
 
     if (query.status) {
       qb.andWhere('cart.status = :status', { status: query.status });
@@ -279,9 +394,10 @@ export class PosRegisterService {
 
   async findSuspendedCarts(
     query: ListPosSuspendedCartsQueryDto,
+    classCodes: string[] | null = null,
   ): Promise<PosSuspendedCartPageResponseDto> {
     const { page, perPage } = this.suspendedCartsPaging(query);
-    const qb = this.suspendedCartsScope(query)
+    const qb = this.suspendedCartsScope(query, classCodes)
       .orderBy('cart.createdAt', 'DESC')
       .addOrderBy('cart.id', 'DESC')
       .skip((page - 1) * perPage)
@@ -310,13 +426,14 @@ export class PosRegisterService {
   async findSuspendedCartsConditional(
     query: ListPosSuspendedCartsQueryDto,
     ifNoneMatch?: string | string[] | null,
+    classCodes: string[] | null = null,
   ): Promise<{
     etag: string;
     notModified: boolean;
     page: PosSuspendedCartPageResponseDto | null;
   }> {
     const { page, perPage } = this.suspendedCartsPaging(query);
-    const version = await this.suspendedCartsScope(query)
+    const version = await this.suspendedCartsScope(query, classCodes)
       .select('COUNT(cart.id)', 'count')
       .addSelect('MAX(cart.updatedAt)', 'latest')
       .getRawOne<{ count?: string | number; latest?: Date | string | null }>();
@@ -332,7 +449,7 @@ export class PosRegisterService {
     return {
       etag,
       notModified: false,
-      page: await this.findSuspendedCarts(query),
+      page: await this.findSuspendedCarts(query, classCodes),
     };
   }
 
@@ -340,10 +457,25 @@ export class PosRegisterService {
   async findSuspendedCartOnBranch(
     id: number,
     branchId: number,
+    classCodes: string[] | null = null,
   ): Promise<PosSuspendedCartResponseDto> {
-    const cart = await this.suspendedCartsRepository.findOne({
+    const found = await this.suspendedCartsRepository.findOne({
       where: { id, branchId },
     });
+    // A teacher's read is their classes' pupils: any other row is not there.
+    const cart =
+      found &&
+      classCodes &&
+      !classCodes.includes(
+        String(
+          (found.cartSnapshot as Record<string, unknown> | null)
+            ?.hotelRoomNumber ?? '',
+        )
+          .trim()
+          .toLowerCase(),
+      )
+        ? null
+        : found;
     if (!cart) {
       throw new NotFoundException(
         `Suspended cart ${id} not found on branch ${branchId}`,

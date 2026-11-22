@@ -158,9 +158,15 @@ export class PosRegisterController {
     // The register's poll: a tag from one aggregate, a 304 before any row
     // is read when the till already holds this version. The ETag set here
     // is the one the global interceptor leaves alone.
+    // A teacher's list is their own classes' pupils (teacherClassScope).
+    const classCodes = await this.posRegisterService.teacherClassScope(
+      query.branchId,
+      req?.user,
+    );
     const result = await this.posRegisterService.findSuspendedCartsConditional(
       query,
       req?.headers?.['if-none-match'],
+      classCodes,
     );
     res.setHeader('ETag', result.etag);
     if (result.notModified) {
@@ -194,13 +200,18 @@ export class PosRegisterController {
   @RequireRetailModules(RetailOsModule.POS_CORE)
   @RetailBranchContext('query.branchId')
   @ApiOkResponse({ type: PosSuspendedCartResponseDto })
-  findSuspendedCart(
+  async findSuspendedCart(
     @Param('id', ParseIntPipe) id: number,
     @Query() query: GetPosSuspendedCartQueryDto,
+    @Req() req,
   ) {
     return this.posRegisterService.findSuspendedCartOnBranch(
       id,
       query.branchId,
+      await this.posRegisterService.teacherClassScope(
+        query.branchId,
+        req?.user,
+      ),
     );
   }
 
