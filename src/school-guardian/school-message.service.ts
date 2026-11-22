@@ -247,13 +247,30 @@ export class SchoolMessageService {
 
   // ── staff ────────────────────────────────────────────────────────────────
 
+  /**
+   * Whose families a member of staff writes to and reads.
+   *
+   * Owner 2026-11-22: "Homeroom teacher and parent should only see their
+   * respective class or student messages." So a teacher's messages are the
+   * classes the office ASSIGNED them — the home room the registry names them
+   * on, and any class written on their login — and no longer every class
+   * their timetable passes through: a family's word to the school was being
+   * read by all eight of a class's subject teachers. The heads still reach
+   * every family. (Homework keeps the wider, timetable reach — it is each
+   * subject teacher's own work; see SchoolStaffReachService.)
+   */
+  private reachesFamily(reach: StaffReach, classCode: unknown): boolean {
+    if (reach.head) return true;
+    return reach.assigned.has(fold(classCode));
+  }
+
   private assertReach(reach: StaffReach, classCode: unknown) {
-    if (this.reachSvc.reachesClass(reach, classCode)) return;
+    if (this.reachesFamily(reach, classCode)) return;
     throw new ForbiddenException({
       code: 'SCHOOL_CLASS_OUT_OF_SCOPE',
-      message: reach.classes?.size
-        ? `${text(classCode) || 'This class'} is not one of your classes (${[...reach.classes].join(', ')}).`
-        : 'No class is assigned to you yet — the office assigns your classes and timetable in Branch Staff.',
+      message: reach.assigned.size
+        ? `${text(classCode) || 'This class'} is not your class (${[...reach.assigned].join(', ')}) — its home-room teacher and the office answer its families.`
+        : 'You are not the home-room teacher of a class, so there are no family messages for you — the home-room teacher and the office answer them.',
     });
   }
 
@@ -280,7 +297,7 @@ export class SchoolMessageService {
     const visible = rows.filter((t) => {
       const f = folioById.get(Number(t.folioId));
       const code = f ? fold(pupilOf(f).classCode) : fold(t.classCode);
-      return this.reachSvc.reachesClass(reach, code);
+      return this.reachesFamily(reach, code);
     });
     const names = await this.guardianNames(
       visible.map((t) => Number(t.guardianId)),
@@ -308,9 +325,7 @@ export class SchoolMessageService {
       )
       .map((f) => pupilOf(f))
       .filter(
-        (p) =>
-          p.status === 'ACTIVE' &&
-          this.reachSvc.reachesClass(reach, p.classCode),
+        (p) => p.status === 'ACTIVE' && this.reachesFamily(reach, p.classCode),
       )
       .map((p) => ({
         folioId: p.folioId,
@@ -334,7 +349,7 @@ export class SchoolMessageService {
     return {
       employee: reach.employee,
       head: reach.head,
-      reach: reach.head ? null : [...(reach.classes ?? [])].sort(),
+      reach: reach.head ? null : [...reach.assigned].sort(),
       unread: visible.reduce((n, t) => n + (Number(t.staffUnread) || 0), 0),
       items: visible.map((t) => {
         const f = folioById.get(Number(t.folioId));

@@ -55,13 +55,16 @@ function make() {
     if (actor.id === 30)
       return {
         head: false,
-        classes: ['3aad', '4aad'],
+        // Teaches in 5aad too — the timetable does not make its families theirs.
+        classes: ['3aad', '4aad', '5aad'],
+        assigned: ['3aad', '4aad'],
         employee: { id: 30, fullName: 'Mustafe' },
       };
     if (actor.id === 31)
       return {
         head: false,
         classes: ['5aad'],
+        assigned: ['5aad'],
         employee: { id: 31, fullName: 'Deq' },
       };
     return { head: true, employee: null, name: 'Suuq S' };
@@ -132,6 +135,29 @@ describe('SchoolMessageService — the school’s side', () => {
     await expect(
       svc.openThread({ branchId: 128, folioId: 13, body: 'x' }, TEACHER),
     ).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it('a subject teacher does not read or answer the families of a class they only teach in — its home-room teacher does', async () => {
+    const { svc } = make();
+    // 5aad: Deq's home room; Mustafe's timetable passes through it.
+    const opened = await svc.openThread(
+      { branchId: 128, folioId: 12, body: 'b' },
+      OTHER,
+    );
+    const id = opened.thread.id;
+    await expect(svc.getThread(id, 128, TEACHER)).rejects.toThrow(
+      /is not your class/,
+    );
+    await expect(
+      svc.reply(id, { branchId: 128, body: 'x' }, TEACHER),
+    ).rejects.toThrow(/is not your class/);
+    await expect(
+      svc.openThread({ branchId: 128, folioId: 12, body: 'x' }, TEACHER),
+    ).rejects.toThrow(/is not your class/);
+    const mine = await svc.listThreads(128, TEACHER);
+    expect(mine.items).toHaveLength(0);
+    expect(mine.reach).toEqual(['3aad', '4aad']);
+    await expect(svc.getThread(id, 128, OTHER)).resolves.toBeTruthy();
   });
 
   it('lists the threads in reach with the unread total and the families that can be reached; the office sees every thread', async () => {
