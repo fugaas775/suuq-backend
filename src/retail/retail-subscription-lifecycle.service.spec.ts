@@ -110,6 +110,50 @@ describe('RetailSubscriptionLifecycleService', () => {
     });
   });
 
+  it('reminds once when two rows for one branch end at the same moment', async () => {
+    const { service, subscriptionsRepo, tenantsRepo, notificationsService } =
+      createService();
+    const endsAt = new Date('2026-06-10T00:00:00.000Z');
+    const rows = [5, 6, 7].map((id) => ({
+      id,
+      tenantId: 34,
+      branchId: 21,
+      status: TenantSubscriptionStatus.ACTIVE,
+      endsAt,
+      metadata: null as Record<string, any> | null,
+    }));
+    subscriptionsRepo.find.mockResolvedValue(rows);
+    tenantsRepo.findOne.mockResolvedValue({ id: 34, ownerUserId: 900 });
+
+    expect(await service.sendUpcomingRenewalReminders(now)).toBe(1);
+    expect(notificationsService.createAndDispatch).toHaveBeenCalledTimes(1);
+    // Every twin is marked, so none of them speaks up tomorrow.
+    for (const row of rows) {
+      expect(row.metadata?.lifecycleRemindersSent?.milestones).toEqual([1]);
+    }
+  });
+
+  describe('in a pm2 cluster', () => {
+    const original = process.env.NODE_APP_INSTANCE;
+    afterEach(() => {
+      if (original === undefined) delete process.env.NODE_APP_INSTANCE;
+      else process.env.NODE_APP_INSTANCE = original;
+    });
+
+    it('only the first worker runs the daily pass', async () => {
+      const { service, subscriptionsRepo } = createService();
+      subscriptionsRepo.find.mockResolvedValue([]);
+
+      process.env.NODE_APP_INSTANCE = '2';
+      await service.handleSubscriptionLifecycle();
+      expect(subscriptionsRepo.find).not.toHaveBeenCalled();
+
+      process.env.NODE_APP_INSTANCE = '0';
+      await service.handleSubscriptionLifecycle();
+      expect(subscriptionsRepo.find).toHaveBeenCalled();
+    });
+  });
+
   it('does not ask a branch to pay again when its next term is already booked', async () => {
     const { service, subscriptionsRepo, notificationsService } =
       createService();

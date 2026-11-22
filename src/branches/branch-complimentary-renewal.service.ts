@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { BranchesService } from './branches.service';
+import { isCronLeaderInstance } from '../common/utils/cron-instance';
 
 /**
  * Keeps complimentary branches (100 % subscription discount) covered without
@@ -15,6 +16,8 @@ export class BranchComplimentaryRenewalService {
 
   @Cron('0 30 23 * * *')
   async handle(): Promise<void> {
+    // One worker only — see isCronLeaderInstance.
+    if (!isCronLeaderInstance()) return;
     try {
       const renewed = await this.branchesService.renewComplimentaryBranches();
       if (renewed) {

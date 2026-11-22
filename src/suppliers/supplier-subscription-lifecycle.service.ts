@@ -1,6 +1,7 @@
 import { SUPPLIER_SUBSCRIPTION_OPTIONS } from './supplier-subscription-pricing';
 import { SubscriptionPaymentMailerService } from '../subscription-payments/subscription-payment-mailer.service';
 import { getPosPaidGraceDays } from '../branch-staff/pos-branch-renewal.policy';
+import { isCronLeaderInstance } from '../common/utils/cron-instance';
 
 const DAY_MS = 86_400_000;
 import { Injectable, Logger, Optional } from '@nestjs/common';
@@ -51,6 +52,8 @@ export class SupplierSubscriptionLifecycleService {
 
   @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
   async handleSupplierSubscriptionLifecycle(): Promise<void> {
+    // One worker only — see isCronLeaderInstance.
+    if (!isCronLeaderInstance()) return;
     const now = new Date();
     try {
       await this.expireLapsedFreePeriods(now);

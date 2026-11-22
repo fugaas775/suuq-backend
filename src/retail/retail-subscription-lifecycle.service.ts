@@ -23,6 +23,7 @@ import {
 } from '../branch-staff/pos-workspace-pricing';
 import { monthlyEquivalent } from './subscription-summary';
 import { NotificationType } from '../notifications/entities/notification.entity';
+import { isCronLeaderInstance } from '../common/utils/cron-instance';
 
 /**
  * How many days before a PAID term ends we warn the owner: a week out, three
@@ -83,6 +84,9 @@ export class RetailSubscriptionLifecycleService {
 
   @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
   async handleSubscriptionLifecycle(): Promise<void> {
+    // One worker only: every pm2 worker fires this cron at the same instant,
+    // and each would send the same reminder before any had recorded it.
+    if (!isCronLeaderInstance()) return;
     const now = new Date();
     try {
       await this.expireOverdueSubscriptions(now);
@@ -187,6 +191,10 @@ export class RetailSubscriptionLifecycleService {
 
     const profileOf = await this.loadPricingProfiles(branchIds);
 
+    // Two rows for one branch ending at the same moment are one term to the
+    // owner, and are reminded once.
+    const remindedThisPass = new Set<string>();
+
     let sent = 0;
     for (const sub of dueSoon) {
       if (!sub.endsAt || isSuperseded(sub)) {
@@ -211,6 +219,23 @@ export class RetailSubscriptionLifecycleService {
       if (!ownerUserId) {
         continue;
       }
+
+      const recordSent = async () => {
+        sub.metadata = {
+          ...meta,
+          lifecycleRemindersSent: {
+            endsAt: endsAtIso,
+            milestones: [...alreadySent, milestone].sort((a, b) => b - a),
+          },
+        };
+        await this.subscriptionsRepo.save(sub);
+      };
+      const termKey = `${ownerUserId}:${sub.branchId ?? `sub-${sub.id}`}:${endsAtIso}`;
+      if (remindedThisPass.has(termKey)) {
+        await recordSent();
+        continue;
+      }
+      remindedThisPass.add(termKey);
 
       await this.notificationsService.createAndDispatch({
         userId: ownerUserId,
@@ -240,14 +265,7 @@ export class RetailSubscriptionLifecycleService {
         currentMonthlyRate: monthlyRateForBranch(profileOf(sub.branchId)),
       });
 
-      sub.metadata = {
-        ...meta,
-        lifecycleRemindersSent: {
-          endsAt: endsAtIso,
-          milestones: [...alreadySent, milestone].sort((a, b) => b - a),
-        },
-      };
-      await this.subscriptionsRepo.save(sub);
+      await recordSent();
       sent += 1;
     }
 
