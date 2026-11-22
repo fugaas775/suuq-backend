@@ -793,11 +793,8 @@ describe('SchoolMarksService.saveReports', () => {
 });
 
 describe('home-room marks — entered as a draft, published by the office', () => {
-  const HOMEROOM = {
-    role: 'OPERATOR',
-    isActive: true,
-    capabilities: ['ENTER_HOMEROOM_MARKS'],
-  };
+  // No capability: the registry naming them home-room teacher is the grant.
+  const HOMEROOM = { role: 'OPERATOR', isActive: true, capabilities: [] };
   const mine3 = {
     employee: { id: 27, fullName: 'Nimo' },
     items: [{ code: '3aad' }],
@@ -851,7 +848,7 @@ describe('home-room marks — entered as a draft, published by the office', () =
     expect(other.saved).toHaveLength(0);
     const none = makeService({ carts: [pupil(1)], assignment: HOMEROOM });
     await expect(none.svc.save(SHEET, { id: 2465 })).rejects.toThrow(
-      /No class names you as its home-room teacher/,
+      /a class's home-room teacher, or a staff account/,
     );
   });
 
@@ -877,7 +874,55 @@ describe('home-room marks — entered as a draft, published by the office', () =
     expect(published.saved).toHaveLength(0);
   });
 
-  it('leaves ENTER_MARKS as it was: published as saved, and a draft it touches stays a draft', async () => {
+  it('a teacher holding ENTER_MARKS enters a draft too — their subjects, plus any subject of their own home room', async () => {
+    const TEACHER = {
+      role: 'OPERATOR',
+      isActive: true,
+      capabilities: ['ENTER_MARKS'],
+    };
+    const mine = {
+      employee: { id: 27, fullName: 'Nimo' },
+      slots: [{ classCode: '4aad', subject: 'Maths' }],
+    };
+    const taught = makeService({
+      carts: [pupil(1, '4aad')],
+      assignment: TEACHER,
+      mine,
+      homerooms: mine3,
+    });
+    await expect(taught.svc.save(SHEET, { id: 2465 })).resolves.toMatchObject({
+      draft: true,
+    });
+    const home = makeService({
+      carts: [pupil(1)],
+      assignment: TEACHER,
+      mine,
+      homerooms: mine3,
+    });
+    await home.svc.save({ ...SHEET, subject: 'Art' }, { id: 2465 });
+    expect(
+      home.saved[0].cartSnapshot.schoolAcademicRecord.reports[0].draft,
+    ).toBe(true);
+    const neither = makeService({
+      carts: [pupil(1, '4aad')],
+      assignment: TEACHER,
+      mine,
+      homerooms: mine3,
+    });
+    await expect(
+      neither.svc.save({ ...SHEET, subject: 'Art' }, { id: 2465 }),
+    ).rejects.toThrow(/not your home room/);
+    const published = makeService({
+      carts: [withReport(1, report(), '4aad')],
+      assignment: TEACHER,
+      mine,
+    });
+    await expect(published.svc.save(SHEET, { id: 2465 })).rejects.toThrow(
+      /already published for 4aad/,
+    );
+  });
+
+  it('the owner and a named manager still file as published, and a draft they touch stays a draft', async () => {
     const owner = makeService({ carts: [pupil(1)] });
     const res = await owner.svc.save(SHEET, { id: 1863 });
     expect(res.draft).toBe(false);
@@ -893,7 +938,7 @@ describe('home-room marks — entered as a draft, published by the office', () =
     ).toBe(true);
   });
 
-  it('publishes a class’s term for the owner or a named manager, and reopens it', async () => {
+  it('publishes a class’s term for the owner, and reopens it', async () => {
     const carts = [
       withReport(1, report({ draft: true })),
       withReport(2, report()), // already published — left alone
@@ -926,11 +971,11 @@ describe('home-room marks — entered as a draft, published by the office', () =
     expect(again.publishedAt).toBeUndefined();
   });
 
-  it('refuses the teacher who entered the draft, and an unnamed manager', async () => {
+  it('refuses a teacher, whatever they hold; lets any manager — the director — approve', async () => {
     for (const assignment of [
       HOMEROOM,
       { role: 'OPERATOR', isActive: true, capabilities: ['ENTER_MARKS'] },
-      { role: 'MANAGER', isActive: true, capabilities: [] },
+      { role: 'MANAGER', isActive: false, capabilities: [] },
     ]) {
       const { svc, saved } = makeService({
         carts: [withReport(1, report({ draft: true }))],
@@ -944,16 +989,12 @@ describe('home-room marks — entered as a draft, published by the office', () =
       ).rejects.toThrow(/approved and published by/);
       expect(saved).toHaveLength(0);
     }
-    const named = makeService({
+    const director = makeService({
       carts: [withReport(1, report({ draft: true }))],
-      assignment: {
-        role: 'MANAGER',
-        isActive: true,
-        capabilities: ['ENTER_MARKS'],
-      },
+      assignment: { role: 'MANAGER', isActive: true, capabilities: [] },
     });
     await expect(
-      named.svc.publish(
+      director.svc.publish(
         { branchId: 128, classCode: '3aad', term: '2019-S1' },
         { id: 9 },
       ),

@@ -15,37 +15,48 @@
 export const ENTER_MARKS_CAPABILITY = 'ENTER_MARKS';
 
 /**
- * The home-room teacher's grant (2026-11-22, Future Generation Academy): "allow
- * all home-room teachers to enter marks of their own class, but they must be
- * draft before the director or manager approves them for publishing."
+ * Draft, then approved (2026-11-22, every SCHOOL branch): "allow all home-room
+ * teachers to enter marks of their own class, but they must be draft before
+ * the director or manager approves them for publishing."
  *
- * A different thing from ENTER_MARKS on both halves. WHERE: the classes the
- * registry names this person the home-room teacher of — every subject there,
- * and no other class, whatever the timetable says. HOW: what they enter is a
- * DRAFT (`report.draft`), which the family's portal does not show, until the
- * owner or a manager publishes the class's term; and a published term is
- * closed to them until it is reopened. A school that grants nobody this
- * capability has no drafts and nothing changes for it.
+ * WHO ENTERS, beside the owner and a named manager: the HOME-ROOM teacher of a
+ * class, for every subject of it — the registry naming them is the grant, no
+ * capability is ticked — and a teacher holding ENTER_MARKS, for the subjects
+ * their timetable puts them in front of. HOW: what a teacher enters is a
+ * DRAFT (`report.draft`), which the family's portal does not show, until a
+ * class's term is published; and a published term is closed to them until it
+ * is reopened. The owner and a named manager still file as published.
+ *
+ * WHO APPROVES: the owner, the platform's super-admin, or any MANAGER of the
+ * branch — the director. By rank here, unlike entering: approving is the
+ * office's check on the teachers, and the owner asked for "managers or
+ * directors" without naming them one by one.
  */
-export const ENTER_HOMEROOM_MARKS_CAPABILITY = 'ENTER_HOMEROOM_MARKS';
-
-export function canEnterHomeroomMarks(
-  assignment:
-    | { isActive?: boolean; capabilities?: string[] | null }
-    | null
-    | undefined,
-): boolean {
+export function canPublishMarks({
+  actorId,
+  ownerId,
+  roles,
+  assignment,
+}: {
+  actorId: number | null | undefined;
+  ownerId: number | null | undefined;
+  roles?: string[] | null;
+  assignment?: { role?: string | null; isActive?: boolean } | null;
+}): boolean {
+  if ((roles ?? []).some((r) => String(r).toUpperCase() === 'SUPER_ADMIN')) {
+    return true;
+  }
+  if (actorId == null) return false;
+  if (ownerId != null && Number(ownerId) === Number(actorId)) return true;
   if (!assignment || assignment.isActive === false) return false;
-  return (assignment.capabilities ?? [])
-    .map((c) => String(c).trim().toUpperCase())
-    .includes(ENTER_HOMEROOM_MARKS_CAPABILITY);
+  return String(assignment.role ?? '').toUpperCase() === 'MANAGER';
 }
 
 export const SCHOOL_MARKS_PUBLISH_REFUSED_MESSAGE =
-  "Marks are approved and published by the school's owner, or a manager the owner has granted ENTER_MARKS.";
+  "Marks are approved and published by the school's owner, a manager or a director.";
 
 export const SCHOOL_MARKS_REFUSED_MESSAGE =
-  "Only the school's owner account, or a staff account the owner has granted ENTER_MARKS, can enter marks.";
+  "Only the school's owner account, a class's home-room teacher, or a staff account the owner has granted ENTER_MARKS, can enter marks.";
 
 const fold = (v: unknown) =>
   String(v ?? '')

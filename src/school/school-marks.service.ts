@@ -24,9 +24,9 @@ import {
   SCHOOL_MARK_REPORTS_REFUSED_MESSAGE,
   SCHOOL_MARKS_PUBLISH_REFUSED_MESSAGE,
   SCHOOL_MARKS_REFUSED_MESSAGE,
-  canEnterHomeroomMarks,
   canEnterMarks,
   canFileMarkReports,
+  canPublishMarks,
   isScopedToTimetable,
   taughtPairs,
   teachesSubjectIn,
@@ -519,14 +519,13 @@ export class SchoolMarksService {
   ) {
     const actorId = actor.id ?? null;
     const { ownerId, assignment } = await this.whoIs(dto.branchId, actorId);
-    // Two grants. ENTER_MARKS (or the owner): the subjects the timetable
-    // names, published as they are saved. ENTER_HOMEROOM_MARKS alone: every
-    // subject of the home room, as a draft the office approves.
-    const full = canEnterMarks({ actorId, ownerId, assignment });
-    const homeroomOnly = !full && canEnterHomeroomMarks(assignment);
-    if (!full && !homeroomOnly) {
-      throw new ForbiddenException(SCHOOL_MARKS_REFUSED_MESSAGE);
-    }
+    // The owner and a named manager file as published, anything. A TEACHER
+    // enters a draft the office approves: every subject of a class the
+    // registry names them home-room teacher of, and — holding ENTER_MARKS —
+    // the subjects their timetable puts them in front of elsewhere.
+    const named = canEnterMarks({ actorId, ownerId, assignment });
+    const teacher =
+      !named || isScopedToTimetable({ actorId, ownerId, assignment });
 
     const term = text(dto.term);
     const subject = text(dto.subject);
@@ -552,19 +551,20 @@ export class SchoolMarksService {
     let recordedBy = actorNameFromEmail(actor.email) || `user ${actorId}`;
     let pairs: Set<string> | null = null;
     let homerooms: Set<string> | null = null;
-    if (homeroomOnly) {
-      const mine = await this.classes.mine(dto.branchId, actorId);
-      if (mine.employee?.fullName) recordedBy = mine.employee.fullName;
-      homerooms = new Set(mine.items.map((c) => fold(c.code)).filter(Boolean));
-      if (!homerooms.size) {
-        throw new ForbiddenException(
-          'No class names you as its home-room teacher yet, so there are no marks for you to enter — the office sets the home room under Classes.',
-        );
+    if (teacher) {
+      const [home, mine] = await Promise.all([
+        this.classes.mine(dto.branchId, actorId),
+        named
+          ? this.timetable.mine(dto.branchId, actorId)
+          : Promise.resolve(null),
+      ]);
+      const name = mine?.employee?.fullName || home.employee?.fullName;
+      if (name) recordedBy = name;
+      homerooms = new Set(home.items.map((c) => fold(c.code)).filter(Boolean));
+      pairs = named ? taughtPairs(mine?.slots) : new Set<string>();
+      if (!named && !homerooms.size) {
+        throw new ForbiddenException(SCHOOL_MARKS_REFUSED_MESSAGE);
       }
-    } else if (isScopedToTimetable({ actorId, ownerId, assignment })) {
-      const mine = await this.timetable.mine(dto.branchId, actorId);
-      if (mine.employee?.fullName) recordedBy = mine.employee.fullName;
-      pairs = taughtPairs(mine.slots);
     }
 
     const recordedAt = new Date().toISOString();
@@ -583,13 +583,18 @@ export class SchoolMarksService {
     return this.carts.manager.transaction(async (em) => {
       const carts = await this.lockPupilFolios(em, dto.branchId, ids);
 
-      if (homerooms) {
+      if (teacher) {
         for (const cart of carts) {
           const snap = (cart.cartSnapshot ?? {}) as Record<string, unknown>;
           const classCode = text(snap.hotelRoomNumber);
-          if (!homerooms.has(fold(classCode))) {
+          if (
+            !homerooms.has(fold(classCode)) &&
+            !teachesSubjectIn(pairs, classCode, subject)
+          ) {
             throw new ForbiddenException(
-              `${classCode || 'This class'} is not your home room, so you cannot enter its marks.`,
+              named
+                ? `Your timetable does not put you in front of ${classCode || 'this class'} for ${subject}, and it is not your home room, so you cannot enter its marks.`
+                : `${classCode || 'This class'} is not your home room, so you cannot enter its marks.`,
             );
           }
           // A term the office has published is the family's report card. It
@@ -600,17 +605,6 @@ export class SchoolMarksService {
           if (report && !report.draft && report.subjects.length) {
             throw new ForbiddenException(
               `${term} is already published for ${classCode || 'this class'}. Ask the director to reopen it before changing a mark.`,
-            );
-          }
-        }
-      }
-
-      if (pairs) {
-        for (const cart of carts) {
-          const classCode = (cart.cartSnapshot as any)?.hotelRoomNumber;
-          if (!teachesSubjectIn(pairs, classCode, subject)) {
-            throw new ForbiddenException(
-              `Your timetable does not put you in front of ${text(classCode) || 'this class'} for ${subject}, so you cannot enter its marks.`,
             );
           }
         }
@@ -643,12 +637,12 @@ export class SchoolMarksService {
           score: scoreByFolio.get(Number(cart.id)) ?? null,
           recordedAt,
           recordedBy,
-          draft: homeroomOnly,
+          draft: teacher,
         });
         await this.writeRecord(em, cart, next);
         saved += 1;
       }
-      return { saved, term, subject, assessment, outOf, draft: homeroomOnly };
+      return { saved, term, subject, assessment, outOf, draft: teacher };
     });
   }
 
@@ -670,7 +664,7 @@ export class SchoolMarksService {
     const actorId = actor.id ?? null;
     const { ownerId, assignment } = await this.whoIs(dto.branchId, actorId);
     if (
-      !canFileMarkReports({
+      !canPublishMarks({
         actorId,
         ownerId,
         roles: actor.roles ?? null,
