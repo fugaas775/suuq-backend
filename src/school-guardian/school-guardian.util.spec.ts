@@ -453,3 +453,38 @@ describe('students’ logins start at Grade 6', () => {
     expect(studentLoginGradeAllowed('7A', null)).toBe(true);
   });
 });
+
+describe('draft marks are the school’s working copy, not the family’s', () => {
+  const row = {
+    id: 7,
+    branchId: 150,
+    cartSnapshot: {
+      hotelGuestName: 'Amina',
+      schoolAcademicRecord: {
+        version: 1,
+        reports: [
+          {
+            term: '2019-S1',
+            draft: true,
+            subjects: [{ subject: 'Maths', total: 40, outOf: 100 }],
+          },
+          {
+            term: '2018-S2',
+            subjects: [{ subject: 'Maths', total: 70, outOf: 100 }],
+          },
+        ],
+      },
+    },
+  };
+
+  it('leaves a draft term out of the folio the family reads, and keeps the published one', () => {
+    const record = guardianFolioView(row).cartSnapshot.schoolAcademicRecord as {
+      reports: Array<{ term: string }>;
+    };
+    expect(record.reports.map((r) => r.term)).toEqual(['2018-S2']);
+  });
+
+  it('leaves a draft term out of the rank', () => {
+    expect(readReports(row).map((r) => r.term)).toEqual(['2018-S2']);
+  });
+});

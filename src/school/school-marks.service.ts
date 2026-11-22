@@ -14,6 +14,7 @@ import { Branch } from '../branches/entities/branch.entity';
 import { BranchStaffAssignment } from '../branch-staff/entities/branch-staff-assignment.entity';
 import { isSchoolPupilFolio } from '../pos-sync/school-withdrawal.policy';
 import {
+  PublishSchoolMarksDto,
   SaveSchoolMarkReportsDto,
   SaveSchoolMarksDto,
   SchoolMarkReportEntryDto,
@@ -21,7 +22,9 @@ import {
 } from './dto/school-marks.dto';
 import {
   SCHOOL_MARK_REPORTS_REFUSED_MESSAGE,
+  SCHOOL_MARKS_PUBLISH_REFUSED_MESSAGE,
   SCHOOL_MARKS_REFUSED_MESSAGE,
+  canEnterHomeroomMarks,
   canEnterMarks,
   canFileMarkReports,
   isScopedToTimetable,
@@ -29,6 +32,7 @@ import {
   teachesSubjectIn,
 } from './school-marks.policy';
 import { SchoolTimetableService } from './school-timetable.service';
+import { SchoolClassService } from './school-class.service';
 import { actorNameFromEmail } from './school-actor-name.util';
 
 const text = (v: unknown) => String(v ?? '').trim();
@@ -120,6 +124,14 @@ type Report = {
   recordedAt: string;
   recordedBy: string;
   subjects: SubjectRecord[];
+  /**
+   * Entered by a home-room teacher and not yet approved: the office reads it,
+   * the family's portal does not. Absent = published, which is every report
+   * written before drafts existed and every one the office writes itself.
+   */
+  draft?: boolean;
+  publishedAt?: string;
+  publishedBy?: string;
 };
 export type AcademicRecord = { version: number; reports: Report[] };
 
@@ -139,6 +151,9 @@ export function normalizeAcademicRecord(record: unknown): AcademicRecord {
       remark: text(r?.remark),
       recordedAt: text(r?.recordedAt),
       recordedBy: text(r?.recordedBy),
+      ...(r?.draft === true ? { draft: true } : {}),
+      ...(text(r?.publishedAt) ? { publishedAt: text(r.publishedAt) } : {}),
+      ...(text(r?.publishedBy) ? { publishedBy: text(r.publishedBy) } : {}),
       subjects: (Array.isArray(r?.subjects) ? r.subjects : [])
         .map((s: any) => ({
           subject: text(s?.subject),
@@ -215,6 +230,7 @@ export function mergeMark(
     score,
     recordedAt,
     recordedBy,
+    draft = false,
   }: {
     term: string;
     className: string;
@@ -224,6 +240,8 @@ export function mergeMark(
     score: number | null;
     recordedAt: string;
     recordedBy: string;
+    /** A home-room teacher's entry: a term it OPENS is opened as a draft. */
+    draft?: boolean;
   },
 ): AcademicRecord {
   if (isTotalAssessment(assessment)) {
@@ -243,6 +261,7 @@ export function mergeMark(
       recordedAt,
       recordedBy,
       subjects: [],
+      ...(draft ? { draft: true } : {}),
     };
     reports.push(report);
   }
@@ -407,6 +426,7 @@ export class SchoolMarksService {
     @InjectRepository(BranchStaffAssignment)
     private readonly assignments: Repository<BranchStaffAssignment>,
     private readonly timetable: SchoolTimetableService,
+    private readonly classes: SchoolClassService,
   ) {}
 
   private async whoIs(branchId: number, actorId: number | null) {
@@ -499,7 +519,12 @@ export class SchoolMarksService {
   ) {
     const actorId = actor.id ?? null;
     const { ownerId, assignment } = await this.whoIs(dto.branchId, actorId);
-    if (!canEnterMarks({ actorId, ownerId, assignment })) {
+    // Two grants. ENTER_MARKS (or the owner): the subjects the timetable
+    // names, published as they are saved. ENTER_HOMEROOM_MARKS alone: every
+    // subject of the home room, as a draft the office approves.
+    const full = canEnterMarks({ actorId, ownerId, assignment });
+    const homeroomOnly = !full && canEnterHomeroomMarks(assignment);
+    if (!full && !homeroomOnly) {
       throw new ForbiddenException(SCHOOL_MARKS_REFUSED_MESSAGE);
     }
 
@@ -526,7 +551,17 @@ export class SchoolMarksService {
     // BEFORE the transaction — the lock is held only for the write itself.
     let recordedBy = actorNameFromEmail(actor.email) || `user ${actorId}`;
     let pairs: Set<string> | null = null;
-    if (isScopedToTimetable({ actorId, ownerId, assignment })) {
+    let homerooms: Set<string> | null = null;
+    if (homeroomOnly) {
+      const mine = await this.classes.mine(dto.branchId, actorId);
+      if (mine.employee?.fullName) recordedBy = mine.employee.fullName;
+      homerooms = new Set(mine.items.map((c) => fold(c.code)).filter(Boolean));
+      if (!homerooms.size) {
+        throw new ForbiddenException(
+          'No class names you as its home-room teacher yet, so there are no marks for you to enter — the office sets the home room under Classes.',
+        );
+      }
+    } else if (isScopedToTimetable({ actorId, ownerId, assignment })) {
       const mine = await this.timetable.mine(dto.branchId, actorId);
       if (mine.employee?.fullName) recordedBy = mine.employee.fullName;
       pairs = taughtPairs(mine.slots);
@@ -547,6 +582,28 @@ export class SchoolMarksService {
     // same copy and the later save erasing the earlier.
     return this.carts.manager.transaction(async (em) => {
       const carts = await this.lockPupilFolios(em, dto.branchId, ids);
+
+      if (homerooms) {
+        for (const cart of carts) {
+          const snap = (cart.cartSnapshot ?? {}) as Record<string, unknown>;
+          const classCode = text(snap.hotelRoomNumber);
+          if (!homerooms.has(fold(classCode))) {
+            throw new ForbiddenException(
+              `${classCode || 'This class'} is not your home room, so you cannot enter its marks.`,
+            );
+          }
+          // A term the office has published is the family's report card. It
+          // is closed to the teacher until the office reopens it.
+          const report = normalizeAcademicRecord(
+            snap.schoolAcademicRecord,
+          ).reports.find((r) => r.term === term);
+          if (report && !report.draft && report.subjects.length) {
+            throw new ForbiddenException(
+              `${term} is already published for ${classCode || 'this class'}. Ask the director to reopen it before changing a mark.`,
+            );
+          }
+        }
+      }
 
       if (pairs) {
         for (const cart of carts) {
@@ -586,11 +643,93 @@ export class SchoolMarksService {
           score: scoreByFolio.get(Number(cart.id)) ?? null,
           recordedAt,
           recordedBy,
+          draft: homeroomOnly,
         });
         await this.writeRecord(em, cart, next);
         saved += 1;
       }
-      return { saved, term, subject, assessment, outOf };
+      return { saved, term, subject, assessment, outOf, draft: homeroomOnly };
+    });
+  }
+
+  /**
+   * Approve a class's term — every draft report of that term on the class's
+   * roll becomes the published one — or reopen it (`publish: false`), which
+   * puts every report of that term back to draft so the home-room teacher
+   * can correct it. Only the academic record is written, under the same
+   * locks a sheet takes.
+   */
+  async publish(
+    dto: PublishSchoolMarksDto,
+    actor: {
+      id?: number | null;
+      email?: string | null;
+      roles?: string[] | null;
+    },
+  ) {
+    const actorId = actor.id ?? null;
+    const { ownerId, assignment } = await this.whoIs(dto.branchId, actorId);
+    if (
+      !canFileMarkReports({
+        actorId,
+        ownerId,
+        roles: actor.roles ?? null,
+        assignment,
+      })
+    ) {
+      throw new ForbiddenException(SCHOOL_MARKS_PUBLISH_REFUSED_MESSAGE);
+    }
+    const term = text(dto.term);
+    const classCode = text(dto.classCode);
+    const publish = dto.publish !== false;
+    if (!term || !classCode) {
+      throw new BadRequestException('A class and a term are required.');
+    }
+    let publishedBy = actorNameFromEmail(actor.email) || `user ${actorId}`;
+    if (actorId != null) {
+      const mine = await this.timetable.mine(dto.branchId, actorId);
+      if (mine.employee?.fullName) publishedBy = mine.employee.fullName;
+    }
+    const publishedAt = new Date().toISOString();
+
+    return this.carts.manager.transaction(async (em) => {
+      const carts = await em
+        .createQueryBuilder(PosSuspendedCart, 'c')
+        .where('c.branchId = :branchId', { branchId: dto.branchId })
+        .andWhere('c.status = :status', {
+          status: PosSuspendedCartStatus.SUSPENDED,
+        })
+        .andWhere(
+          `lower(trim(coalesce(c."cartSnapshot" ->> 'hotelRoomNumber', ''))) = :cls`,
+          { cls: fold(classCode) },
+        )
+        .orderBy('c.id', 'ASC')
+        .setLock('pessimistic_write')
+        .getMany();
+
+      let changed = 0;
+      let pupils = 0;
+      for (const cart of carts) {
+        if (!isSchoolPupilFolio(cart)) continue;
+        const snap = (cart.cartSnapshot ?? {}) as Record<string, unknown>;
+        const record = normalizeAcademicRecord(snap.schoolAcademicRecord);
+        const report = record.reports.find((r) => r.term === term);
+        if (!report) continue;
+        pupils += 1;
+        if (publish === !report.draft) continue;
+        if (publish) {
+          delete report.draft;
+          report.publishedAt = publishedAt;
+          report.publishedBy = publishedBy;
+        } else {
+          report.draft = true;
+          delete report.publishedAt;
+          delete report.publishedBy;
+        }
+        await this.writeRecord(em, cart, record);
+        changed += 1;
+      }
+      return { classCode, term, published: publish, changed, pupils };
     });
   }
 

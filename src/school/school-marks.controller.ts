@@ -13,6 +13,7 @@ import { RetailModule as RetailOsModule } from '../retail/entities/tenant-module
 import { RetailModulesGuard } from '../retail/retail-modules.guard';
 import { PosSchoolPermission } from './permissions/pos-school-permission.enum';
 import {
+  PublishSchoolMarksDto,
   SaveSchoolMarkReportsDto,
   SaveSchoolMarksDto,
 } from './dto/school-marks.dto';
@@ -48,6 +49,26 @@ export class SchoolMarksController {
     return this.svc.save(dto, {
       id: Number(user?.id) || null,
       email: user?.email ?? null,
+    });
+  }
+
+  /**
+   * Approve a class's draft term so the families see it, or reopen it. The
+   * decision is the service's: the owner, the platform's super-admin, or a
+   * manager granted ENTER_MARKS — never the teacher who entered the draft.
+   */
+  @Patch('marks/publish')
+  @RetailBranchContext('body.branchId')
+  @RequirePosPermissions(PosSchoolPermission.VIEW_CLASS_BOARD)
+  publish(
+    @Body() dto: PublishSchoolMarksDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const user = req.user as { id?: number; email?: string; roles?: string[] };
+    return this.svc.publish(dto, {
+      id: Number(user?.id) || null,
+      email: user?.email ?? null,
+      roles: Array.isArray(user?.roles) ? user.roles : [],
     });
   }
 

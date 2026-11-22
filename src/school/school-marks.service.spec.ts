@@ -248,6 +248,7 @@ function makeService({
   assignment = null as any,
   carts = [] as any[],
   mine = { employee: null, slots: [] } as any,
+  homerooms = { employee: null, items: [] } as any,
 } = {}) {
   // What reached the database: one entry per snapshot-only UPDATE, and the
   // options every locked read was made with.
@@ -270,6 +271,27 @@ function makeService({
       saved.push({ id: criteria.id, ...partial });
       return { affected: 1 };
     },
+    // The publish route reads the class's roll by class code, locked.
+    createQueryBuilder: () => {
+      const q: any = { cls: '', locked: false };
+      q.where = () => q;
+      q.andWhere = (_sql: string, params: any) => {
+        if (params?.cls !== undefined) q.cls = params.cls;
+        return q;
+      };
+      q.orderBy = () => q;
+      q.setLock = (mode: string) => {
+        reads.push({ lock: { mode } });
+        return q;
+      };
+      q.getMany = async () =>
+        carts.filter(
+          (c) =>
+            String(c.cartSnapshot?.hotelRoomNumber ?? '').toLowerCase() ===
+            q.cls,
+        );
+      return q;
+    },
   };
   const cartsRepo: any = {
     manager: { transaction: async (fn: any) => fn(em) },
@@ -287,6 +309,7 @@ function makeService({
     branches,
     assignments,
     timetable,
+    { mine: async () => homerooms } as any,
   );
   return { svc, saved, reads };
 }
@@ -766,5 +789,174 @@ describe('SchoolMarksService.saveReports', () => {
       ),
     ).rejects.toThrow(/Total is the sum/);
     expect(saved).toHaveLength(0);
+  });
+});
+
+describe('home-room marks — entered as a draft, published by the office', () => {
+  const HOMEROOM = {
+    role: 'OPERATOR',
+    isActive: true,
+    capabilities: ['ENTER_HOMEROOM_MARKS'],
+  };
+  const mine3 = {
+    employee: { id: 27, fullName: 'Nimo' },
+    items: [{ code: '3aad' }],
+  };
+  const withReport = (id: number, report: any, cls = '3aad') => {
+    const p: any = pupil(id, cls);
+    p.cartSnapshot.schoolAcademicRecord = { version: 1, reports: [report] };
+    return p;
+  };
+  const report = (over: any = {}) => ({
+    term: '2019-S1',
+    className: '3aad',
+    subjects: [
+      {
+        subject: 'Maths',
+        total: 40,
+        outOf: 100,
+        assessments: [{ name: 'Mid-exam 1', score: 40 }],
+      },
+    ],
+    ...over,
+  });
+
+  it('lets the home-room teacher enter ANY subject of their own class, as a draft', async () => {
+    const { svc, saved } = makeService({
+      carts: [pupil(1)],
+      assignment: HOMEROOM,
+      homerooms: mine3,
+      // The timetable does not put them in front of Maths — it does not matter.
+      mine: { employee: { id: 27, fullName: 'Nimo' }, slots: [] },
+    });
+    const res = await svc.save(SHEET, { id: 2465, email: 't@x' });
+    expect(res).toMatchObject({ saved: 1, draft: true });
+    const r = saved[0].cartSnapshot.schoolAcademicRecord.reports[0];
+    expect(r).toMatchObject({
+      term: '2019-S1',
+      draft: true,
+      recordedBy: 'Nimo',
+    });
+  });
+
+  it('refuses another class, and a teacher no class names', async () => {
+    const other = makeService({
+      carts: [pupil(1, '4aad')],
+      assignment: HOMEROOM,
+      homerooms: mine3,
+    });
+    await expect(other.svc.save(SHEET, { id: 2465 })).rejects.toThrow(
+      /4aad is not your home room/,
+    );
+    expect(other.saved).toHaveLength(0);
+    const none = makeService({ carts: [pupil(1)], assignment: HOMEROOM });
+    await expect(none.svc.save(SHEET, { id: 2465 })).rejects.toThrow(
+      /No class names you as its home-room teacher/,
+    );
+  });
+
+  it('keeps a draft a draft on the next sheet, and closes a published term to the teacher', async () => {
+    const draft = makeService({
+      carts: [withReport(1, report({ draft: true }))],
+      assignment: HOMEROOM,
+      homerooms: mine3,
+    });
+    await draft.svc.save({ ...SHEET, subject: 'English' }, { id: 2465 });
+    const r = draft.saved[0].cartSnapshot.schoolAcademicRecord.reports[0];
+    expect(r.draft).toBe(true);
+    expect(r.subjects.map((x: any) => x.subject)).toEqual(['Maths', 'English']);
+
+    const published = makeService({
+      carts: [withReport(1, report())],
+      assignment: HOMEROOM,
+      homerooms: mine3,
+    });
+    await expect(published.svc.save(SHEET, { id: 2465 })).rejects.toThrow(
+      /2019-S1 is already published for 3aad/,
+    );
+    expect(published.saved).toHaveLength(0);
+  });
+
+  it('leaves ENTER_MARKS as it was: published as saved, and a draft it touches stays a draft', async () => {
+    const owner = makeService({ carts: [pupil(1)] });
+    const res = await owner.svc.save(SHEET, { id: 1863 });
+    expect(res.draft).toBe(false);
+    expect(
+      owner.saved[0].cartSnapshot.schoolAcademicRecord.reports[0].draft,
+    ).toBeUndefined();
+    const onDraft = makeService({
+      carts: [withReport(1, report({ draft: true }))],
+    });
+    await onDraft.svc.save(SHEET, { id: 1863 });
+    expect(
+      onDraft.saved[0].cartSnapshot.schoolAcademicRecord.reports[0].draft,
+    ).toBe(true);
+  });
+
+  it('publishes a class’s term for the owner or a named manager, and reopens it', async () => {
+    const carts = [
+      withReport(1, report({ draft: true })),
+      withReport(2, report()), // already published — left alone
+      withReport(3, report({ draft: true }), '4aad'), // another class
+      pupil(4), // no marks this term
+    ];
+    const { svc, saved } = makeService({ carts });
+    const out = await svc.publish(
+      { branchId: 128, classCode: '3AAD', term: '2019-S1' },
+      { id: 1863, email: 'owner@x' },
+    );
+    expect(out).toMatchObject({ published: true, changed: 1, pupils: 2 });
+    expect(saved.map((w) => w.id)).toEqual([1]);
+    const r = saved[0].cartSnapshot.schoolAcademicRecord.reports[0];
+    expect(r.draft).toBeUndefined();
+    expect(r.publishedAt).toBeTruthy();
+    // The money on the row is not this route's: the snapshot column alone.
+    expect(Object.keys(saved[0]).sort()).toEqual(['cartSnapshot', 'id']);
+
+    const back = makeService({
+      carts: [withReport(1, report({ publishedAt: 'x', publishedBy: 'y' }))],
+    });
+    const reopened = await back.svc.publish(
+      { branchId: 128, classCode: '3aad', term: '2019-S1', publish: false },
+      { id: 1863 },
+    );
+    expect(reopened).toMatchObject({ published: false, changed: 1 });
+    const again = back.saved[0].cartSnapshot.schoolAcademicRecord.reports[0];
+    expect(again.draft).toBe(true);
+    expect(again.publishedAt).toBeUndefined();
+  });
+
+  it('refuses the teacher who entered the draft, and an unnamed manager', async () => {
+    for (const assignment of [
+      HOMEROOM,
+      { role: 'OPERATOR', isActive: true, capabilities: ['ENTER_MARKS'] },
+      { role: 'MANAGER', isActive: true, capabilities: [] },
+    ]) {
+      const { svc, saved } = makeService({
+        carts: [withReport(1, report({ draft: true }))],
+        assignment,
+      });
+      await expect(
+        svc.publish(
+          { branchId: 128, classCode: '3aad', term: '2019-S1' },
+          { id: 9 },
+        ),
+      ).rejects.toThrow(/approved and published by/);
+      expect(saved).toHaveLength(0);
+    }
+    const named = makeService({
+      carts: [withReport(1, report({ draft: true }))],
+      assignment: {
+        role: 'MANAGER',
+        isActive: true,
+        capabilities: ['ENTER_MARKS'],
+      },
+    });
+    await expect(
+      named.svc.publish(
+        { branchId: 128, classCode: '3aad', term: '2019-S1' },
+        { id: 9 },
+      ),
+    ).resolves.toMatchObject({ changed: 1 });
   });
 });

@@ -14,6 +14,36 @@
  */
 export const ENTER_MARKS_CAPABILITY = 'ENTER_MARKS';
 
+/**
+ * The home-room teacher's grant (2026-11-22, Future Generation Academy): "allow
+ * all home-room teachers to enter marks of their own class, but they must be
+ * draft before the director or manager approves them for publishing."
+ *
+ * A different thing from ENTER_MARKS on both halves. WHERE: the classes the
+ * registry names this person the home-room teacher of — every subject there,
+ * and no other class, whatever the timetable says. HOW: what they enter is a
+ * DRAFT (`report.draft`), which the family's portal does not show, until the
+ * owner or a manager publishes the class's term; and a published term is
+ * closed to them until it is reopened. A school that grants nobody this
+ * capability has no drafts and nothing changes for it.
+ */
+export const ENTER_HOMEROOM_MARKS_CAPABILITY = 'ENTER_HOMEROOM_MARKS';
+
+export function canEnterHomeroomMarks(
+  assignment:
+    | { isActive?: boolean; capabilities?: string[] | null }
+    | null
+    | undefined,
+): boolean {
+  if (!assignment || assignment.isActive === false) return false;
+  return (assignment.capabilities ?? [])
+    .map((c) => String(c).trim().toUpperCase())
+    .includes(ENTER_HOMEROOM_MARKS_CAPABILITY);
+}
+
+export const SCHOOL_MARKS_PUBLISH_REFUSED_MESSAGE =
+  "Marks are approved and published by the school's owner, or a manager the owner has granted ENTER_MARKS.";
+
 export const SCHOOL_MARKS_REFUSED_MESSAGE =
   "Only the school's owner account, or a staff account the owner has granted ENTER_MARKS, can enter marks.";
 

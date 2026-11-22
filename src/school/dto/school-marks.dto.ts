@@ -28,6 +28,30 @@ export class SchoolMarkEntryDto {
 }
 
 /**
+ * Approve a class's term for the families to see — or reopen it. Acts on
+ * every pupil on the class's roll at once: a report card is a whole class's.
+ */
+export class PublishSchoolMarksDto {
+  @IsInt()
+  branchId!: number;
+
+  @IsString()
+  @MinLength(1)
+  @MaxLength(64)
+  classCode!: string;
+
+  @IsString()
+  @MinLength(1)
+  @MaxLength(32)
+  term!: string;
+
+  /** false reopens a published term: it goes back to draft. Default true. */
+  @IsOptional()
+  @IsBoolean()
+  publish?: boolean;
+}
+
+/**
  * One mark sheet: a term, a subject, an assessment, a score per pupil — the
  * shape a teacher marks in. Merged into each pupil's academic record at the
  * assessment level, so a sheet for Mid-exam 1 never touches Final-exam 1.

@@ -245,6 +245,12 @@ export function guardianFolioView(row: {
   const cartSnapshot: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(snap)) {
     if (isActorStamp(key)) continue;
+    // Marks a home-room teacher entered and the office has not approved yet
+    // are the school's working copy, not the family's report card.
+    if (key === 'schoolAcademicRecord') {
+      cartSnapshot[key] = scrubNestedActors(withoutDraftReports(value));
+      continue;
+    }
     // Every list and object under it too: leaving bills, class moves, fee
     // refunds, lines.
     cartSnapshot[key] = scrubNestedActors(value);
@@ -329,7 +335,23 @@ const parseScore = (v: unknown): number | null => {
   return Number.isFinite(n) ? n : null;
 };
 
-/** The marks on a pupil's record, normalised as the FE's `readAcademicRecord` reads them. */
+/** An academic record without its draft (unapproved) terms. */
+export function withoutDraftReports(record: unknown): unknown {
+  const raw = record as { reports?: unknown } | null | undefined;
+  if (!raw || !Array.isArray(raw.reports)) return record;
+  return {
+    ...(raw as Record<string, unknown>),
+    reports: raw.reports.filter(
+      (r) => (r as { draft?: unknown } | null)?.draft !== true,
+    ),
+  };
+}
+
+/**
+ * The marks on a pupil's record, normalised as the FE's `readAcademicRecord`
+ * reads them. Draft terms are left out: this module is the family's side,
+ * and a classmate's unapproved marks must not move a child's position either.
+ */
 export function readReports(row: {
   cartSnapshot?: Record<string, unknown> | null;
 }): Report[] {
@@ -340,6 +362,7 @@ export function readReports(row: {
   for (const report of reports) {
     const term = text(report?.term);
     if (!term) continue;
+    if (report?.draft === true) continue;
     const subjects: ReportSubject[] = [];
     for (const s of Array.isArray(report?.subjects) ? report.subjects : []) {
       const name = text(s?.subject);
