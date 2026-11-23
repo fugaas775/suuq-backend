@@ -52,6 +52,21 @@ export class PublishSchoolMarksDto {
 }
 
 /**
+ * The approvals board: every class's terms, or — with `classCode` — one
+ * class's roll beside them.
+ */
+export class SchoolMarksPublicationQueryDto {
+  @Type(() => Number)
+  @IsInt()
+  branchId!: number;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  classCode?: string;
+}
+
+/**
  * One mark sheet: a term, a subject, an assessment, a score per pupil — the
  * shape a teacher marks in. Merged into each pupil's academic record at the
  * assessment level, so a sheet for Mid-exam 1 never touches Final-exam 1.

@@ -1,4 +1,12 @@
-import { Body, Controller, Patch, Req, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Patch,
+  Query,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { AuthenticatedRequest } from '../common/interfaces/authenticated-request.interface';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -16,6 +24,7 @@ import {
   PublishSchoolMarksDto,
   SaveSchoolMarkReportsDto,
   SaveSchoolMarksDto,
+  SchoolMarksPublicationQueryDto,
 } from './dto/school-marks.dto';
 import { SchoolMarksService } from './school-marks.service';
 
@@ -68,6 +77,25 @@ export class SchoolMarksController {
     return this.svc.publish(dto, {
       id: Number(user?.id) || null,
       email: user?.email ?? null,
+      roles: Array.isArray(user?.roles) ? user.roles : [],
+    });
+  }
+
+  /**
+   * The approvals board the heads read on Branch Staff: which classes' terms
+   * still wait as a draft. The same door; the service refuses whoever may
+   * not approve.
+   */
+  @Get('marks/publication')
+  @RetailBranchContext('query.branchId')
+  @RequirePosPermissions(PosSchoolPermission.VIEW_CLASS_BOARD)
+  publication(
+    @Query() query: SchoolMarksPublicationQueryDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const user = req.user as { id?: number; roles?: string[] };
+    return this.svc.publication(query, {
+      id: Number(user?.id) || null,
       roles: Array.isArray(user?.roles) ? user.roles : [],
     });
   }

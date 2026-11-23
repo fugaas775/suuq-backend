@@ -295,6 +295,25 @@ function makeService({
   };
   const cartsRepo: any = {
     manager: { transaction: async (fn: any) => fn(em) },
+    // The approvals board reads without a lock, off the repository.
+    createQueryBuilder: () => {
+      const q: any = { cls: null };
+      q.select = () => q;
+      q.where = () => q;
+      q.andWhere = (_sql: string, params: any) => {
+        if (params?.cls !== undefined) q.cls = params.cls;
+        return q;
+      };
+      q.orderBy = () => q;
+      q.getMany = async () =>
+        carts.filter(
+          (c) =>
+            q.cls === null ||
+            String(c.cartSnapshot?.hotelRoomNumber ?? '').toLowerCase() ===
+              q.cls,
+        );
+      return q;
+    },
     // A whole-entity save would write back total, status and metadata from
     // the copy read — the marks routes must never use it.
     save: async () => {
@@ -969,6 +988,74 @@ describe('home-room marks — entered as a draft, published by the office', () =
     const again = back.saved[0].cartSnapshot.schoolAcademicRecord.reports[0];
     expect(again.draft).toBe(true);
     expect(again.publishedAt).toBeUndefined();
+  });
+
+  it('reads the approvals board for whoever approves: drafts first, and one class’s roll on request', async () => {
+    const carts = [
+      withReport(
+        1,
+        report({
+          draft: true,
+          recordedBy: 'Nimo',
+          recordedAt: '2026-11-20T08:00:00.000Z',
+        }),
+      ),
+      withReport(
+        2,
+        report({
+          draft: true,
+          recordedBy: 'Nimo',
+          recordedAt: '2026-11-21T08:00:00.000Z',
+        }),
+      ),
+      withReport(
+        3,
+        report({
+          publishedAt: '2026-11-19T08:00:00.000Z',
+          publishedBy: 'Hibo',
+        }),
+        '2aad',
+      ),
+      withReport(5, report({ subjects: [] }), '2aad'), // an empty report is nobody's result
+      pupil(4), // no marks
+    ];
+    const { svc, saved } = makeService({ carts });
+    const board = await svc.publication({ branchId: 128 }, { id: 1863 });
+    expect(board.waiting).toBe(1);
+    expect(board.items).toEqual([
+      expect.objectContaining({
+        classCode: '3aad',
+        term: '2019-S1',
+        draft: 2,
+        published: 0,
+        recordedBy: ['Nimo'],
+        lastRecordedAt: '2026-11-21T08:00:00.000Z',
+      }),
+      expect.objectContaining({
+        classCode: '2aad',
+        term: '2019-S1',
+        draft: 0,
+        published: 1,
+        publishedBy: 'Hibo',
+      }),
+    ]);
+    expect(board).not.toHaveProperty('folios');
+    const one = await svc.publication(
+      { branchId: 128, classCode: '3AAD' },
+      { id: 1863 },
+    );
+    expect(one.folios?.map((f: any) => f.id)).toEqual([1, 2, 4]);
+    expect(one.items).toHaveLength(1);
+    expect(saved).toHaveLength(0);
+    // A teacher — home room or not — does not read it.
+    const asTeacher = makeService({
+      carts,
+      assignment: HOMEROOM,
+      homerooms: mine3,
+    });
+    await expect(
+      asTeacher.svc.publication({ branchId: 128 }, { id: 2465 }),
+    ).rejects.toThrow(/approved and published by/);
   });
 
   it('refuses a teacher, whatever they hold; lets any manager — the director — approve', async () => {

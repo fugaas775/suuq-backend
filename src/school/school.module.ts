@@ -35,6 +35,9 @@ import { SchoolLeaveController } from './school-leave.controller';
 import { SchoolStaffWarning } from './entities/school-staff-warning.entity';
 import { SchoolStaffWarningService } from './school-staff-warning.service';
 import { SchoolStaffWarningController } from './school-staff-warning.controller';
+import { SchoolStaffNotice } from './entities/school-staff-notice.entity';
+import { SchoolStaffNoticeService } from './school-staff-notice.service';
+import { SchoolStaffNoticeController } from './school-staff-notice.controller';
 
 /**
  * SCHOOL — a term-based POS format whose board unit is a CLASS: a container
@@ -70,6 +73,8 @@ import { SchoolStaffWarningController } from './school-staff-warning.controller'
       SchoolLeaveRequest,
       // Formal warnings — the steps before a dismissal.
       SchoolStaffWarning,
+      // Messages from the heads to the staff, and who has read them.
+      SchoolStaffNotice,
       // Marks: the policy reads the branch's owner and the caller's
       // assignment (its ENTER_MARKS capability), as withdrawal does.
       Branch,
@@ -87,6 +92,7 @@ import { SchoolStaffWarningController } from './school-staff-warning.controller'
     SchoolMarksController,
     SchoolLeaveController,
     SchoolStaffWarningController,
+    SchoolStaffNoticeController,
   ],
   providers: [
     SchoolClassService,
@@ -97,6 +103,7 @@ import { SchoolStaffWarningController } from './school-staff-warning.controller'
     SchoolRoomService,
     SchoolLeaveService,
     SchoolStaffWarningService,
+    SchoolStaffNoticeService,
     SchoolTextbookService,
     SchoolMarksService,
     PosBranchAccessGuard,

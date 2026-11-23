@@ -728,6 +728,128 @@ export class SchoolMarksService {
   }
 
   /**
+   * The approvals board (Branch Staff → Marks): every class's terms, how many
+   * pupils' reports are still a draft and how many the families already see,
+   * and who entered them last. With `classCode`, the class's own roll comes
+   * back too, so the director reads the sheet before approving it — one
+   * class's folios, never the school's.
+   *
+   * Read by whoever may approve ({@link canPublishMarks}); nobody else.
+   */
+  async publication(
+    query: { branchId: number; classCode?: string },
+    actor: { id?: number | null; roles?: string[] | null },
+  ) {
+    const actorId = actor.id ?? null;
+    const { ownerId, assignment } = await this.whoIs(query.branchId, actorId);
+    if (
+      !canPublishMarks({
+        actorId,
+        ownerId,
+        roles: actor.roles ?? null,
+        assignment,
+      })
+    ) {
+      throw new ForbiddenException(SCHOOL_MARKS_PUBLISH_REFUSED_MESSAGE);
+    }
+    const classCode = text(query.classCode);
+    const qb = this.carts
+      .createQueryBuilder('c')
+      .select(['c.id', 'c.cartSnapshot'])
+      .where('c.branchId = :branchId', { branchId: query.branchId })
+      .andWhere('c.status = :status', {
+        status: PosSuspendedCartStatus.SUSPENDED,
+      });
+    if (classCode) {
+      qb.andWhere(
+        `lower(trim(coalesce(c."cartSnapshot" ->> 'hotelRoomNumber', ''))) = :cls`,
+        { cls: fold(classCode) },
+      );
+    }
+    const carts = (await qb.orderBy('c.id', 'ASC').getMany()).filter((c) =>
+      isSchoolPupilFolio(c),
+    );
+
+    type Row = {
+      classCode: string;
+      term: string;
+      draft: number;
+      published: number;
+      lastRecordedAt: string | null;
+      recordedBy: string[];
+      publishedAt: string | null;
+      publishedBy: string | null;
+    };
+    const rows = new Map<string, Row>();
+    for (const cart of carts) {
+      const snap = (cart.cartSnapshot ?? {}) as Record<string, unknown>;
+      const cls = text(snap.hotelRoomNumber);
+      if (!cls) continue;
+      const record = normalizeAcademicRecord(snap.schoolAcademicRecord);
+      for (const report of record.reports) {
+        if (!report.term || !report.subjects.length) continue;
+        const key = `${fold(cls)}|${report.term}`;
+        let row = rows.get(key);
+        if (!row) {
+          row = {
+            classCode: cls,
+            term: report.term,
+            draft: 0,
+            published: 0,
+            lastRecordedAt: null,
+            recordedBy: [],
+            publishedAt: null,
+            publishedBy: null,
+          };
+          rows.set(key, row);
+        }
+        if (report.draft) row.draft += 1;
+        else row.published += 1;
+        if (
+          report.recordedAt &&
+          (!row.lastRecordedAt || report.recordedAt > row.lastRecordedAt)
+        ) {
+          row.lastRecordedAt = report.recordedAt;
+        }
+        if (
+          report.recordedBy &&
+          !row.recordedBy.includes(report.recordedBy) &&
+          row.recordedBy.length < 6
+        ) {
+          row.recordedBy.push(report.recordedBy);
+        }
+        if (
+          report.publishedAt &&
+          (!row.publishedAt || report.publishedAt > row.publishedAt)
+        ) {
+          row.publishedAt = report.publishedAt;
+          row.publishedBy = report.publishedBy ?? null;
+        }
+      }
+    }
+    // Waiting for approval first; then by class, the newest term on top.
+    const items = [...rows.values()].sort(
+      (a, b) =>
+        Number(b.draft > 0) - Number(a.draft > 0) ||
+        a.classCode.localeCompare(b.classCode, undefined, { numeric: true }) ||
+        b.term.localeCompare(a.term),
+    );
+    return {
+      items,
+      waiting: items.filter((r) => r.draft > 0).length,
+      ...(classCode
+        ? {
+            classCode,
+            folios: carts.map((c) => ({
+              id: Number(c.id),
+              cartSnapshot: c.cartSnapshot,
+            })),
+          }
+        : {}),
+    };
+  }
+
+  /**
    * The office's marks writes — a hand correction of a pupil's term, a marks
    * import — merged per SUBJECT under the same lock, touching nothing but the
    * academic record. See {@link applyMarkReport} for the merge and
