@@ -120,13 +120,16 @@ export function findSupplierPaymentOption(
 }
 
 /**
- * May this supplier account start on the trial? Only one that has never had a
- * paid term or a trial. The supplier row is updated in place, so the history
- * is read off its metadata.
+ * May this supplier account start on the trial? Only a NEW one — no
+ * subscription row at all. Any row (the free period, a paid, BNPL or
+ * admin-written term, an expired one) means the account is renewing, and
+ * renews at 1 month or 1 year. Reading "no payment reference" instead offered
+ * the trial on the Billing page of free-period and BNPL suppliers (owner
+ * 2026-11-23). A row is only written once a payment is approved or a period
+ * granted, so an account waiting on its first payment still has none.
  */
 export function isSupplierStarterEligible(
   latest: { metadata?: Record<string, any> | null } | null | undefined,
 ): boolean {
-  const meta = latest?.metadata || {};
-  return !meta.lastActivationReferenceId && !meta.starterUsedAt;
+  return !latest;
 }

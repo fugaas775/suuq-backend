@@ -65,4 +65,44 @@ describe('the paid 14-day trial', () => {
     // ...nor by opening a fresh branch each fortnight.
     expect(resolveStarterEligibility(tookTrial, null).eligible).toBe(false);
   });
+
+  it('is never offered to a branch that is renewing, whatever its row says', () => {
+    // A free period, a term written without a payment reference (admin, older
+    // flows, BNPL), and an expired one: each is a branch that renews.
+    const renewing = [
+      {
+        branchId: 21,
+        planCode: 'POS_SELF_SERVE_TRIAL',
+        status: 'TRIAL',
+        metadata: {},
+      },
+      {
+        branchId: 22,
+        planCode: 'POS_BRANCH_1Y',
+        status: 'ACTIVE',
+        metadata: null,
+      },
+      {
+        branchId: 23,
+        planCode: 'POS_BRANCH_6M',
+        status: 'EXPIRED',
+        metadata: {},
+      },
+    ];
+    for (const id of [21, 22, 23]) {
+      expect(resolveStarterEligibility(renewing, id).eligible).toBe(false);
+    }
+    // A branch riding the workspace-wide row is renewing too.
+    const wide = [
+      {
+        branchId: null,
+        planCode: 'POS_BRANCH_1Y',
+        status: 'ACTIVE',
+        metadata: {},
+      },
+    ];
+    expect(resolveStarterEligibility(wide, 44).eligible).toBe(false);
+    // A brand-new branch beside them still may.
+    expect(resolveStarterEligibility(renewing, 99).eligible).toBe(true);
+  });
 });

@@ -229,11 +229,20 @@ export interface StarterEligibilityRow extends RenewableSubscriptionLike {
 /**
  * May this branch start on the paid trial?
  *
- * Only a branch that has never had a term — the trial is for trying, not a
- * cheaper way to keep going — and only when the workspace has no OTHER branch
- * sitting on a trial it never followed with a full term. Without the second
- * rule an owner could open a fresh 500 ETB branch every fortnight instead of
- * paying for one.
+ * Only a NEW branch — one with no subscription row at all. The trial is for
+ * trying, not a cheaper way to keep going: a branch that has ever had a row
+ * (a free period, a paid or admin-written term, an expired one, a BNPL term,
+ * or the workspace-wide row older branches ride) is RENEWING, and renews at
+ * 1 month or 1 year. The rule used to be "no row carrying a payment
+ * reference", and every free-period branch and every term written without a
+ * reference was then offered "14-day trial — 500" on its Billing page
+ * (owner 2026-11-23: "logically it is not good"). Rows are only ever written
+ * once a payment is approved or a period granted, so a branch waiting on its
+ * first payment still has none.
+ *
+ * And only when the workspace has no OTHER branch sitting on a trial it never
+ * followed with a full term. Without that an owner could open a fresh 500 ETB
+ * branch every fortnight instead of paying for one.
  */
 export function resolveStarterEligibility(
   tenantRows: StarterEligibilityRow[],
@@ -241,16 +250,12 @@ export function resolveStarterEligibility(
 ): { eligible: boolean; reason: string | null } {
   if (
     branchId != null &&
-    tenantRows.some(
-      (row) =>
-        row.branchId === branchId &&
-        (recordsSettledTerm(row) || row.planCode === STARTER_PLAN_CODE),
-    )
+    tenantRows.some((row) => row.branchId === branchId || row.branchId == null)
   ) {
     return {
       eligible: false,
       reason:
-        'The 14-day trial is for a branch that has not been subscribed before. Choose 1 month or 1 year.',
+        'The 14-day trial is only for a new branch. This branch renews for 1 month or 1 year.',
     };
   }
 
