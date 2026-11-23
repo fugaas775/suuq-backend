@@ -22,7 +22,10 @@ import { RequireRetailModules } from '../retail/decorators/require-retail-module
 import { RetailBranchContext } from '../retail/decorators/retail-branch-context.decorator';
 import { RetailModule as RetailOsModule } from '../retail/entities/tenant-module-entitlement.entity';
 import { RetailModulesGuard } from '../retail/retail-modules.guard';
-import { PosSchoolPermission } from './permissions/pos-school-permission.enum';
+import {
+  POS_SCHOOL_PERMISSION_VALUES,
+  PosSchoolPermission,
+} from './permissions/pos-school-permission.enum';
 import {
   ListSchoolStaffNoticesQueryDto,
   ReadSchoolStaffNoticeDto,
@@ -50,6 +53,13 @@ const TEACHER_PERMISSIONS = [
   PosSchoolPermission.MARK_ATTENDANCE,
 ];
 
+/* READING is everybody's on the school's staff — the cashier and the office
+   as much as a teacher: a message "to all staff" that only the teachers'
+   permissions could open reached half the staff room. Any school permission
+   opens the two routes a reader uses; the service still shows a person only
+   what is addressed to them. */
+const ANY_SCHOOL_STAFF = [...POS_SCHOOL_PERMISSION_VALUES];
+
 /** Messages from the heads to the staff — one person, several, or everyone. */
 @ApiTags('School Staff Notices')
 @Controller('pos/v1/school/staff-notices')
@@ -70,7 +80,7 @@ export class SchoolStaffNoticeController {
 
   @Get()
   @RetailBranchContext('query.branchId')
-  @RequirePosPermissions(...TEACHER_PERMISSIONS)
+  @RequirePosPermissions(...ANY_SCHOOL_STAFF)
   list(
     @Query() query: ListSchoolStaffNoticesQueryDto,
     @Req() req: AuthenticatedRequest,
@@ -101,7 +111,7 @@ export class SchoolStaffNoticeController {
 
   @Patch(':id/read')
   @RetailBranchContext('body.branchId')
-  @RequirePosPermissions(...TEACHER_PERMISSIONS)
+  @RequirePosPermissions(...ANY_SCHOOL_STAFF)
   read(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: ReadSchoolStaffNoticeDto,
