@@ -259,6 +259,20 @@ export class SchoolClassService {
     if (!employee) return empty;
 
     const id = Number(employee.id);
+    // A teacher who has LEFT answers for no class. Their staff row still
+    // names them (so what they recorded keeps its name), but the home room
+    // is what now gives a login its students, their marks and their
+    // families' messages — and a leaver's login kept all three.
+    if (String(employee.status).toUpperCase() === 'INACTIVE') {
+      return {
+        employee: {
+          id,
+          fullName: employee.fullName,
+          jobTitle: employee.jobTitle ?? null,
+        },
+        items: [],
+      };
+    }
     const classes = await this.repo
       .createQueryBuilder('c')
       .where('c."branchId" = :branchId', { branchId })
@@ -543,9 +557,31 @@ export class SchoolClassService {
           return { ...shift, classCodes: next };
         },
       );
-      if (counts.timetableSlots || counts.timetableShifts) {
+      // The bell's own class lists too. A period kept for some classes
+      // (a second bell — KG beside the grades) names them by code; left on
+      // the old code, the renamed class had no period at all: an empty grid,
+      // every lesson "only for <old code>", and a week nobody could save.
+      let periodsChanged = false;
+      const periods = (Array.isArray(doc.periods) ? doc.periods : []).map(
+        (period) => {
+          const codes = Array.isArray(period?.classCodes)
+            ? period.classCodes
+            : [];
+          if (!codes.some((c) => foldCode(c) === fromKey)) return period;
+          periodsChanged = true;
+          const next: string[] = [];
+          for (const c of codes) {
+            const code = foldCode(c) === fromKey ? to : c;
+            if (!next.some((n) => foldCode(n) === foldCode(code)))
+              next.push(code);
+          }
+          return { ...period, classCodes: next };
+        },
+      );
+      if (counts.timetableSlots || counts.timetableShifts || periodsChanged) {
         doc.slots = slots;
         doc.shifts = shifts;
+        doc.periods = periods;
         await timetables.save(doc);
       }
     }

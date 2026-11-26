@@ -316,9 +316,9 @@ export class PosRegisterService {
     const employees = await manager.find(BranchEmployee, {
       where: { branchId, userId: actorId },
     });
+    // An ACTIVE staff row only: a teacher who has left answers for no class.
     const employee =
       employees.find((e) => String(e.status).toUpperCase() !== 'INACTIVE') ??
-      employees[0] ??
       null;
     if (employee) {
       const rooms = await manager.find(SchoolClass, {

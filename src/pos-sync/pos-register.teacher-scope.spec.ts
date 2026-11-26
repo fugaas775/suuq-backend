@@ -78,6 +78,15 @@ describe('teacherClassScope — who is held, and to what', () => {
     ]);
   });
 
+  it('gives a teacher who has LEFT no home room', async () => {
+    const { service } = make({
+      assignment: TEACHER,
+      employees: [{ id: 83, status: 'INACTIVE' }],
+      rooms: [{ id: 42, code: '1A' }],
+    });
+    expect(await service.teacherClassScope(150, teacher)).toEqual([]);
+  });
+
   it('gives a teacher with no class an empty scope — nothing, not everything', async () => {
     const { service } = make({ assignment: TEACHER });
     expect(await service.teacherClassScope(150, teacher)).toEqual([]);
