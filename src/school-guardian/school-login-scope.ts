@@ -53,6 +53,7 @@ export function loginsWholeSchool({
     isActive?: boolean;
     role?: string | null;
     permissions?: string[] | null;
+    posExperienceProfileCode?: string | null;
   } | null;
 }): boolean {
   const global = (roles ?? []).map((r) => String(r).trim().toUpperCase());
@@ -61,6 +62,16 @@ export function loginsWholeSchool({
   if (isSchoolOwner(actorId, ownerId, tenantOwnerId)) return true;
   if (!assignment || assignment.isActive === false) return false;
   if (String(assignment.role ?? '').toUpperCase() === 'MANAGER') return true;
+  // The Teacher lane is the office's own statement that this login is a
+  // teacher — held to its classes whatever was ticked beside it, exactly as
+  // the register holds it (school-class-scope.policy). A teacher with the
+  // whole-school box ticked could reset every family's login.
+  if (
+    String(assignment.posExperienceProfileCode ?? '')
+      .trim()
+      .toUpperCase() === 'SCHOOL_TEACHER'
+  )
+    return false;
   const perms = (assignment.permissions ?? []).map((p) =>
     String(p).trim().toUpperCase(),
   );

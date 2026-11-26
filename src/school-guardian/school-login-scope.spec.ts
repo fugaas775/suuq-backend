@@ -80,3 +80,35 @@ describe('school-login-scope', () => {
     ).toBe(true);
   });
 });
+
+describe('the Teacher lane is held to its classes, whatever is ticked beside it', () => {
+  const base = { actorId: 9, ownerId: 1, roles: ['POS_OPERATOR'] };
+  it('does not give a teacher the whole school’s logins for a ticked box', () => {
+    for (const permissions of [['MANAGE_SCHOOL_LOGINS'], ['ENROL_STUDENT']]) {
+      expect(
+        loginsWholeSchool({
+          ...base,
+          assignment: {
+            isActive: true,
+            role: 'OPERATOR',
+            permissions,
+            posExperienceProfileCode: 'SCHOOL_TEACHER',
+          },
+        }),
+      ).toBe(false);
+    }
+  });
+  it('still gives the cashier and the office the whole school', () => {
+    expect(
+      loginsWholeSchool({
+        ...base,
+        assignment: {
+          isActive: true,
+          role: 'OPERATOR',
+          permissions: ['MANAGE_SCHOOL_LOGINS'],
+          posExperienceProfileCode: 'SCHOOL_CASHIER',
+        },
+      }),
+    ).toBe(true);
+  });
+});

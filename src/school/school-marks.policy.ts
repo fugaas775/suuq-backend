@@ -43,7 +43,13 @@ export function canPublishMarks({
   roles?: string[] | null;
   assignment?: { role?: string | null; isActive?: boolean } | null;
 }): boolean {
-  if ((roles ?? []).some((r) => String(r).toUpperCase() === 'SUPER_ADMIN')) {
+  // The platform's own staff, as on the other heads' desks (leave, warnings,
+  // notices): an ADMIN was shown the Marks tab and refused on it alone.
+  if (
+    (roles ?? []).some((r) =>
+      ['SUPER_ADMIN', 'ADMIN'].includes(String(r).toUpperCase()),
+    )
+  ) {
     return true;
   }
   if (actorId == null) return false;

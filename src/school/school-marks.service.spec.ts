@@ -1088,3 +1088,25 @@ describe('home-room marks — entered as a draft, published by the office', () =
     ).resolves.toMatchObject({ changed: 1 });
   });
 });
+
+describe('who approves — the platform’s staff and the business owner too', () => {
+  const { canPublishMarks } = jest.requireActual('./school-marks.policy');
+  it('lets a platform ADMIN approve, as on the other heads’ desks', () => {
+    expect(
+      canPublishMarks({
+        actorId: 9,
+        ownerId: 1,
+        roles: ['ADMIN'],
+        assignment: null,
+      }),
+    ).toBe(true);
+    expect(
+      canPublishMarks({
+        actorId: 9,
+        ownerId: 1,
+        roles: ['POS_MANAGER'],
+        assignment: null,
+      }),
+    ).toBe(false);
+  });
+});

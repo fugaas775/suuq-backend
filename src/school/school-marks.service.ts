@@ -33,6 +33,7 @@ import {
 } from './school-marks.policy';
 import { SchoolTimetableService } from './school-timetable.service';
 import { SchoolClassService } from './school-class.service';
+import { isSchoolOwner, tenantOwnerOf } from './school-branch-owner.util';
 import { actorNameFromEmail } from './school-actor-name.util';
 
 const text = (v: unknown) => String(v ?? '').trim();
@@ -432,7 +433,7 @@ export class SchoolMarksService {
   private async whoIs(branchId: number, actorId: number | null) {
     const branch = await this.branches.findOne({
       where: { id: branchId },
-      select: { id: true, ownerId: true },
+      select: { id: true, ownerId: true, retailTenantId: true },
     });
     const assignment =
       actorId != null
@@ -440,7 +441,19 @@ export class SchoolMarksService {
             where: { branchId, userId: actorId },
           })
         : null;
-    const ownerId = (branch as { ownerId?: number } | null)?.ownerId ?? null;
+    const branchOwnerId =
+      (branch as { ownerId?: number } | null)?.ownerId ?? null;
+    // The business's owner is the school's owner too, as the app and every
+    // other school rule already read it (isSchoolOwner): an owner whose
+    // branch row names somebody else was offered the approval and refused.
+    const tenantOwnerId = await tenantOwnerOf(
+      this.branches.manager,
+      (branch as { retailTenantId?: number | null } | null)?.retailTenantId,
+    );
+    const ownerId =
+      actorId != null && isSchoolOwner(actorId, branchOwnerId, tenantOwnerId)
+        ? actorId
+        : branchOwnerId;
     return { ownerId, assignment };
   }
 
