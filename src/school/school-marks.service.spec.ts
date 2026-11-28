@@ -368,6 +368,22 @@ describe('SchoolMarksService.save — who may, and for what', () => {
     expect(saved[0].cartSnapshot.hotelGuestName).toBe('P1');
   });
 
+  /* SMAQ, 2026-11-28: the platform's super-admin acting as the owner was
+     refused re-filing a paper from the approvals board — an account that is
+     not the owner's id and holds no assignment. */
+  it('lets the platform’s super-admin file a sheet as the owner does, and not as a draft', async () => {
+    const { svc, saved } = makeService({ carts: [pupil(1)] });
+    const out = await svc.save(SHEET, { id: 7, roles: ['SUPER_ADMIN'] });
+    expect(out).toMatchObject({ saved: 1, draft: false });
+    expect(
+      saved[0].cartSnapshot.schoolAcademicRecord.reports[0].draft,
+    ).toBeUndefined();
+    // No other stranger: the same account without the role is refused.
+    await expect(svc.save(SHEET, { id: 7 })).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+  });
+
   it('refuses a manager who was not named — a mark is not a rank’s to rewrite', async () => {
     const { svc } = makeService({
       carts: [pupil(1)],

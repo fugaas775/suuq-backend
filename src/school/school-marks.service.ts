@@ -528,17 +528,30 @@ export class SchoolMarksService {
 
   async save(
     dto: SaveSchoolMarksDto,
-    actor: { id?: number | null; email?: string | null },
+    actor: {
+      id?: number | null;
+      email?: string | null;
+      roles?: string[] | null;
+    },
   ) {
     const actorId = actor.id ?? null;
     const { ownerId, assignment } = await this.whoIs(dto.branchId, actorId);
+    // The platform's SUPER_ADMIN, working in the owner's place, files as the
+    // owner does. They may already rewrite a WHOLE report
+    // (`canFileMarkReports`) — and were refused the narrower sheet, so a
+    // paper filed out of the wrong figure could not be re-filed from the
+    // approvals board (SMAQ, 2026-11-28).
+    const platform = (actor.roles ?? []).some(
+      (r) => String(r).toUpperCase() === 'SUPER_ADMIN',
+    );
     // The owner and a named manager file as published, anything. A TEACHER
     // enters a draft the office approves: every subject of a class the
     // registry names them home-room teacher of, and — holding ENTER_MARKS —
     // the subjects their timetable puts them in front of elsewhere.
-    const named = canEnterMarks({ actorId, ownerId, assignment });
+    const named = platform || canEnterMarks({ actorId, ownerId, assignment });
     const teacher =
-      !named || isScopedToTimetable({ actorId, ownerId, assignment });
+      !platform &&
+      (!named || isScopedToTimetable({ actorId, ownerId, assignment }));
 
     const term = text(dto.term);
     const subject = text(dto.subject);

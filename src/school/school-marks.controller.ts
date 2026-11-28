@@ -54,10 +54,11 @@ export class SchoolMarksController {
   @RetailBranchContext('body.branchId')
   @RequirePosPermissions(PosSchoolPermission.VIEW_CLASS_BOARD)
   save(@Body() dto: SaveSchoolMarksDto, @Req() req: AuthenticatedRequest) {
-    const user = req.user as { id?: number; email?: string };
+    const user = req.user as { id?: number; email?: string; roles?: string[] };
     return this.svc.save(dto, {
       id: Number(user?.id) || null,
       email: user?.email ?? null,
+      roles: Array.isArray(user?.roles) ? user.roles : [],
     });
   }
 
