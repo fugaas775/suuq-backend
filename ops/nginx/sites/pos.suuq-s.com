@@ -39,6 +39,20 @@ server {
         include snippets/pos-suuq-s-security.conf;
     }
 
+    # The service worker (pos-s src/sw/serviceWorker.js, emitted as /sw.js).
+    # Two things `location /` gets wrong for it:
+    #   - it must never be cached by the browser or anything in between — a
+    #     stale worker is a till pinned to an old build;
+    #   - when the file is absent (a build from before it existed) the answer
+    #     must be a 404, not the SPA fallback: index.html served as a script
+    #     fails the update with a MIME error and tells nobody why.
+    location = /sw.js {
+        add_header Cache-Control "no-cache, no-store, must-revalidate";
+        expires 0;
+        include snippets/pos-suuq-s-security.conf;
+        try_files $uri =404;
+    }
+
     location / {
         try_files $uri $uri/ /index.html;
     }
