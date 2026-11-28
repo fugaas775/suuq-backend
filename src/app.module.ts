@@ -52,6 +52,7 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { FavoritesModule } from './favorites/favorites.module';
 import { HealthModule } from './health/health.module';
+import { ClientTelemetryModule } from './client-telemetry/client-telemetry.module';
 import { ModerationModule } from './moderation/moderation.module';
 import { IdempotencyInterceptor } from './common/interceptors/idempotency.interceptor';
 import { FeatureFlagsModule } from './common/feature-flags/feature-flags.module';
@@ -248,6 +249,7 @@ import { ParkedOrdersModule } from './parked-orders/parked-orders.module';
     FavoritesModule,
     MetricsModule,
     HealthModule,
+    ClientTelemetryModule,
     RedisModule,
     RolesModule,
     ModerationModule,
