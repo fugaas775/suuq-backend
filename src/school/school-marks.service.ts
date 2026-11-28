@@ -271,6 +271,13 @@ export function mergeMark(
     subj = { subject, total: null, outOf, assessments: [] };
     report.subjects.push(subj);
   }
+  // The same score filed again under another out-of is a re-file, not an
+  // entry: the mark is still the teacher's who entered it. Putting a class's
+  // Mid-exam right from 100 to 20 used to sign every report with the
+  // office's name (SMAQ 3aad, 2026-11-28: "Entered by suuqsapp").
+  const before = subj.assessments.find((a) => assessmentKey(a.name) === key);
+  const sameScore =
+    before !== undefined && score !== null && before.score === score;
   subj.assessments = subj.assessments.filter(
     (a) => assessmentKey(a.name) !== key,
   );
@@ -289,8 +296,10 @@ export function mergeMark(
   report.subjects = report.subjects.filter(
     (s) => s.assessments.length || s.total !== null,
   );
-  report.recordedAt = recordedAt;
-  report.recordedBy = recordedBy;
+  if (!sameScore || !report.recordedBy) {
+    report.recordedAt = recordedAt;
+    report.recordedBy = recordedBy;
+  }
   if (!report.className) report.className = className;
 
   return sortReports(reports);

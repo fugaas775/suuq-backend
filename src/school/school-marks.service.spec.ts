@@ -957,6 +957,42 @@ describe('home-room marks — entered as a draft, published by the office', () =
     );
   });
 
+  /* SMAQ 3aad, 2026-11-28: re-filing a class's Mid-exam from out of 100 to
+     out of 20 signed every report "Entered by suuqsapp" — and never
+     published anything: a re-file keeps a draft a draft. */
+  it('keeps the teacher as the one who entered a mark the office only re-files, and keeps it a draft', async () => {
+    const teacherDraft = report({
+      draft: true,
+      recordedBy: 'Cabdirisaaq Faarax Cabdi',
+      recordedAt: '2026-11-27T08:00:00.000Z',
+    });
+    const refiled = makeService({ carts: [withReport(1, teacherDraft)] });
+    await refiled.svc.save(
+      { ...SHEET, outOf: 40, entries: [{ folioId: 1, score: 40 }] },
+      { id: 7, email: 'suuqsapp@x', roles: ['SUPER_ADMIN'] },
+    );
+    const kept = refiled.saved[0].cartSnapshot.schoolAcademicRecord.reports[0];
+    expect(kept).toMatchObject({
+      draft: true,
+      recordedBy: 'Cabdirisaaq Faarax Cabdi',
+      recordedAt: '2026-11-27T08:00:00.000Z',
+    });
+    expect(kept.publishedBy).toBeUndefined();
+    expect(kept.subjects[0].assessments[0]).toMatchObject({
+      score: 40,
+      outOf: 40,
+    });
+    // A changed score is a new entry, and is signed by whoever changed it.
+    const changed = makeService({ carts: [withReport(1, teacherDraft)] });
+    await changed.svc.save(
+      { ...SHEET, entries: [{ folioId: 1, score: 35 }] },
+      { id: 1863, email: 'owner@x' },
+    );
+    expect(
+      changed.saved[0].cartSnapshot.schoolAcademicRecord.reports[0].recordedBy,
+    ).not.toBe('Cabdirisaaq Faarax Cabdi');
+  });
+
   it('the owner and a named manager still file as published, and a draft they touch stays a draft', async () => {
     const owner = makeService({ carts: [pupil(1)] });
     const res = await owner.svc.save(SHEET, { id: 1863 });
