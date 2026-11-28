@@ -679,11 +679,19 @@ export class EquityPartnerBnplService {
 
   async listForPartnerAdmin(
     partnerId: number,
-  ): Promise<EquityPartnerBnplActivation[]> {
-    return this.activationsRepo.find({
+  ): Promise<
+    Array<
+      EquityPartnerBnplActivation & { branchName: string; displayName: string }
+    >
+  > {
+    const rows = await this.activationsRepo.find({
       where: { equityPartnerId: partnerId },
       order: { createdAt: 'DESC' },
     });
+    // Named, as the credit ledger already is: the admin screen listed every
+    // activation as "#135", and an owner looking for "Happy Cafe" (2026-11-28)
+    // could not find the one to forgive.
+    return this.attachDisplayNames(rows);
   }
 
   async listCreditLedgerForPartnerAdmin(
